@@ -6,6 +6,29 @@
 //! rather than a later rewrite: a theme replaces what a slot resolves to and
 //! never who asks for it.
 //!
+//! **Which slot a span takes is one rule, in three levels.**
+//!
+//! 1. **Accent** is the one thing on a line the eye should land on: the
+//!    selected row, the version in a release heading, a running tool's name,
+//!    a link, the key in a key hint. It is [`Slot::Accent`] for the mark or
+//!    the key, and the slots drawn in the accent's ink for a reason of their
+//!    own: [`Slot::Strong`] for the name or version beside a mark,
+//!    [`Slot::Link`] and [`Slot::Code`].
+//! 2. **Meaning** is a fact a reader acts on: success, a warning, trouble, a
+//!    line added or removed, a mode, a task's state, a bar's categories.
+//! 3. **Plain and quiet** is everything else. What a model says is
+//!    [`Slot::Plain`]; times, counts, paths in passing, captions, frames and
+//!    footers are [`Slot::Quiet`].
+//!
+//! A line that is not selected holds at most one span of [`Slot::Accent`];
+//! a run of it parted only by blank text is one span, and blank text in it is
+//! none. A row under the pointer is selected for this, since that is where
+//! the eye already is. A footer naming several keys stays quiet throughout,
+//! because an accent on each would be several on one line. Nothing is said by
+//! colour alone: every accent is also a mark or a position, and every meaning
+//! has a sign or a word. No colour is asked for except through a slot, and the
+//! `ansi` theme spells every slot in the terminal's own sixteen.
+//!
 //! **The ground behind a row belongs to the reader.** This process takes the
 //! whole screen and every cell on it, so the ground is a thing it could paint
 //! and deliberately does not: a cell nothing gave a background attribute to is
