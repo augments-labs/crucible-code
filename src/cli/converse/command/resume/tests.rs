@@ -674,10 +674,10 @@ fn wheeling_the_preview_back_never_empties_the_pane() {
     // to shrink past the pane is a pane going blank under a reader who is
     // only wheeling back through a tail that has more.
     let room = 30;
-    let shows = Picker::previews(room);
+    let shows = Picker::previews(room, 0);
     assert!(shows > 0, "a window this tall keeps the pane");
 
-    let behind = furthest(shows + 12, room);
+    let behind = furthest(shows + 12, room, 0);
     assert_eq!(
         shows + 12 - behind,
         shows,
@@ -685,8 +685,12 @@ fn wheeling_the_preview_back_never_empties_the_pane() {
     );
 
     // A tail no longer than the pane has nothing to wheel back through.
-    assert_eq!(furthest(shows, room), 0);
-    assert_eq!(furthest(shows / 2, room), 0);
+    assert_eq!(furthest(shows, room, 0), 0);
+    assert_eq!(furthest(shows / 2, room, 0), 0);
+
+    // A notice of two rows takes one from the pane, and the pane's floor
+    // moves with it.
+    assert_eq!(furthest(shows + 12, room, 2), 13);
 }
 
 #[test]
@@ -1216,7 +1220,7 @@ fn drawn_keys(forms: &[String], columns: usize) -> String {
         nothing: NEVER,
         noview: NOVIEW,
         keys: &forms,
-        notice: None,
+        notice: &[],
         pointer: None,
     };
     let rows = picker.within(columns, 30, Glyphs::Unicode);
@@ -1309,12 +1313,15 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
     assert_eq!(stood.standing.marked, marked);
     assert_eq!(stood.told.as_ref(), Some(&away));
     let root = yonder.root().display().to_string();
+    let command = format!("cd {root} && crucible --resume {}", away.as_str());
     assert_eq!(
-        elsewhere(stood.marked().expect("marked"), None),
-        format!(
-            "In {root}: cd {root} && crucible --resume {}",
-            away.as_str()
-        )
+        elsewhere(
+            stood.marked().expect("marked"),
+            None,
+            wide(&command) + 2,
+            Glyphs::Unicode
+        ),
+        [command]
     );
 
     // The foot under its preview says what Enter does there, which is not
@@ -1340,6 +1347,82 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
         Moved::Took
     );
     assert_eq!(stood.told, None);
+}
+
+#[test]
+fn the_command_to_resume_elsewhere_breaks_after_its_and_and_never_cuts_the_id() {
+    // A real id, as long as one ever is, and a directory longer than the
+    // window: at eighty columns the command takes two rows, broken where a
+    // shell carries on reading, and only the directory is cut.
+    let sample = Sample::new("resume-broken");
+    let long = "a-directory-whose-name-runs-past-half-the-window";
+    let yonder = beside(&sample, long);
+    let away = recorded_in(&sample, &yonder, None, Some("away"));
+    let listed = scanned(&sample.logs());
+    let session = listed
+        .iter()
+        .find(|session| session.id() == &away)
+        .expect("listed");
+    assert_eq!(away.as_str().len(), 36, "{away:?}");
+
+    let rows = elsewhere(session, None, 80, Glyphs::Unicode);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let (first, second) = (rows.first().expect("one"), rows.get(1).expect("two"));
+    assert!(
+        wide(&format!("cd {} &&", yonder.root().display())) > 78,
+        "the directory alone is wider than the window"
+    );
+    assert!(first.starts_with("cd "), "{first:?}");
+    assert!(first.ends_with(" &&"), "{first:?}");
+    assert!(first.contains('…'), "the cut is said: {first:?}");
+    assert!(first.ends_with(&format!("{long} &&")), "{first:?}");
+    assert_eq!(second, &format!("crucible --resume {}", away.as_str()));
+
+    // Drawn, every row is whole on an eighty-column window.
+    for row in &rows {
+        assert!(wide(row) <= 78, "{row:?}");
+    }
+    let notice: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let picker = crucible_tui::Picker {
+        heading: "Resume a session",
+        query: "",
+        typed: 0,
+        hint: HINT,
+        sessions: &[],
+        marked: 0,
+        renaming: None,
+        refused: None,
+        preview: &[],
+        preview_meta: "",
+        takes: TAKES,
+        nothing: NEVER,
+        noview: NOVIEW,
+        keys: &["esc"],
+        notice: &notice,
+        pointer: None,
+    };
+    let drawn: Vec<String> = picker
+        .within(80, 24, Glyphs::Unicode)
+        .iter()
+        .map(Row::text)
+        .collect();
+    assert!(
+        drawn
+            .iter()
+            .any(|row| row.trim() == format!("crucible --resume {}", away.as_str())),
+        "{drawn:#?}"
+    );
+
+    // Where the whole command fits one row, it is one row.
+    let short = elsewhere(session, None, 400, Glyphs::Unicode);
+    assert_eq!(
+        short,
+        [format!(
+            "cd {} && crucible --resume {}",
+            yonder.root().display(),
+            away.as_str()
+        )]
+    );
 }
 
 #[test]

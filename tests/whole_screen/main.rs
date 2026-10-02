@@ -1968,7 +1968,22 @@ fn enter_on_another_projects_session_says_how_to_resume_it_there() {
         "{picture}"
     );
 
-    // The id is this run's own, and at eighty columns only its start fits.
+    // The command is wider than the window, so it breaks after its `&&` and
+    // the id stands whole on a row of its own: copied, both rows run.
+    let rows: Vec<&str> = picture.lines().map(str::trim_end).collect();
+    let resume = format!("| crucible --resume {}", planted.website.as_str());
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with(&resume))
+        .unwrap_or_else(|| panic!("the whole id on a row: {picture}"));
+    assert!(
+        at.checked_sub(1)
+            .and_then(|before| rows.get(before))
+            .is_some_and(|row| row.starts_with("| cd ~/projects/website &&")),
+        "{picture}"
+    );
+
+    // The id is this run's own, so the capture writes it as a mask.
     insta::assert_snapshot!(reaching::unnamed(&picture, &planted.website));
 }
 

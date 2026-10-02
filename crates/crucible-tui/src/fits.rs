@@ -682,7 +682,7 @@ fn a_picker_fits_the_window_it_stands_in() {
         nothing: PROSE,
         noview: LONG,
         keys: &[LONG, PROSE, LONG],
-        notice: Some(LONG),
+        notice: &[LONG, LONG],
         pointer: Some((6, 3)),
     };
     down("a picker", |columns, room, glyphs| {

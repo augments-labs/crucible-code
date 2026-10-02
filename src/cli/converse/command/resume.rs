@@ -46,6 +46,7 @@ use crucible_client_api::Command;
 use crucible_session::{Glimpse, Pruned, Reach, Recorded, Roots, glimpse, recent, retitle};
 use crucible_tui::{
     Editor, Glyphs, Kept, Key, Picker, Pressed, Renderer, Row, Slot, Terminal, clip,
+    columns as wide,
 };
 use crucible_types::{Compacting, SessionId};
 use crucible_workspace::Workspace;
@@ -447,18 +448,49 @@ fn quoted(place: &str) -> String {
     format!("{tilde}'{}'", rest.replace('\'', "'\\''"))
 }
 
-/// What Enter on a session recorded somewhere else says: the directory, and
-/// the command that picks it up there.
+/// What Enter on a session recorded somewhere else says: the command that
+/// picks it up in its own directory, a row at a time across `columns`.
 ///
 /// Said rather than done, because a session stays bound to the directory it
-/// was recorded in — every path it holds is that checkout's.
-fn elsewhere(session: &Recorded, home: Option<&Path>) -> String {
-    let place = homed(session.workspace(), home);
-    format!(
-        "In {place}: cd {} && crucible --resume {}",
-        quoted(&place),
-        session.id().as_str()
-    )
+/// was recorded in — every path it holds is that checkout's. One row where it
+/// fits; otherwise broken after the `&&`, where a shell reads on to the next
+/// line, so a copy of both rows still runs. The id is never cut, because a
+/// command with part of an id resumes nothing; where even the `cd` row is too
+/// wide, it is the directory that gives way, from its front, so the end that
+/// names the project stays — and the cut is marked, because a directory with
+/// its front missing is not one to run.
+fn elsewhere(
+    session: &Recorded,
+    home: Option<&Path>,
+    columns: usize,
+    glyphs: Glyphs,
+) -> Vec<String> {
+    let room = columns.saturating_sub(2);
+    let place = quoted(&homed(session.workspace(), home));
+    let resume = format!("crucible --resume {}", session.id().as_str());
+
+    let whole = format!("cd {place} && {resume}");
+    if wide(&whole) <= room {
+        return vec![whole];
+    }
+
+    let fits = room.saturating_sub(wide("cd  &&"));
+    let place = if wide(&place) <= fits {
+        place
+    } else {
+        let mark = glyphs.ellipsis();
+        format!("{mark}{}", ending(&place, fits.saturating_sub(wide(mark))))
+    };
+    vec![format!("cd {place} &&"), resume]
+}
+
+/// The longest end of `text` at most `columns` wide.
+fn ending(text: &str, columns: usize) -> &str {
+    text.char_indices()
+        .map(|(at, _)| at)
+        .chain(std::iter::once(text.len()))
+        .find_map(|at| text.get(at..).filter(|rest| wide(rest) <= columns))
+        .unwrap_or_default()
 }
 
 /// What the picker keeps between frames, and the frames' own workings beside
@@ -612,7 +644,9 @@ fn stood<T: Terminal>(
             // Said for as long as the mark stays on the session it is about.
             let notice = marked
                 .filter(|session| stood.told.as_ref() == Some(session.id()))
-                .map(|session| elsewhere(session, here.home.as_deref()));
+                .map(|session| elsewhere(session, here.home.as_deref(), columns, glyphs))
+                .unwrap_or_default();
+            let notice: Vec<&str> = notice.iter().map(String::as_str).collect();
 
             // The marked session's tail, read once and kept. The window over
             // it is handed to the picker as a shorter slice: the pane shows
@@ -648,7 +682,7 @@ fn stood<T: Terminal>(
                 None => (&[], String::new()),
             };
 
-            stood.standing.over = furthest(full.len(), room);
+            stood.standing.over = furthest(full.len(), room, notice.len());
             stood.standing.behind = stood.standing.behind.min(stood.standing.over);
             let end = full.len().saturating_sub(stood.standing.behind);
             let windowed = full.get(..end).unwrap_or_default();
@@ -695,7 +729,7 @@ fn stood<T: Terminal>(
                 nothing: &empty,
                 noview: NOVIEW,
                 keys: &forms.iter().map(String::as_str).collect::<Vec<_>>(),
-                notice: notice.as_deref(),
+                notice: &notice,
                 pointer: stood.standing.pointer,
             };
 
@@ -959,8 +993,8 @@ fn previewed(held: &Glimpse, against: &replaying::Replay<'_>, room: usize) -> Ve
 /// handing it a shorter one — and a slice shorter than the pane is a pane
 /// standing half empty rather than one scrolled back. The floor is therefore
 /// the pane's own count, which it is the pane's to say.
-fn furthest(rows: usize, room: usize) -> usize {
-    rows.saturating_sub(Picker::previews(room))
+fn furthest(rows: usize, room: usize, notice: usize) -> usize {
+    rows.saturating_sub(Picker::previews(room, notice))
 }
 
 /// The line over the panes: what this is, how much of what the keys left the

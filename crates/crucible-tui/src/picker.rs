@@ -30,7 +30,8 @@ use crate::width::{clip, columns as wide, windowed};
 ///
 /// The three the search line's frame costs, the heading under it, its blank,
 /// the two the panes' frames cost, the row over the keys — blank unless there
-/// is a notice to stand on it — and the keys.
+/// is a notice to stand on it — and the keys. A notice of more rows than one
+/// takes the rest from the panes; see [`spared`].
 const CHROME: usize = 9;
 
 /// The fewest body rows a picker stands in: one entry of the list.
@@ -154,9 +155,9 @@ pub struct Picker<'a> {
     /// room for is drawn, and the last, cut, where none fits.
     pub keys: &'a [&'a str],
     /// What the picker has to tell the reader about the last key they pressed,
-    /// said on the row between the panes and the keys. `None` leaves that row
-    /// blank.
-    pub notice: Option<&'a str>,
+    /// a row at a time, said between the panes and the keys. Empty leaves the
+    /// one row there blank; each row past the first is taken from the panes.
+    pub notice: &'a [&'a str],
     /// Where the pointer is resting: a row of what [`Picker::within`] answered,
     /// and a column of the window. `None` is a pointer never reported.
     pub pointer: Option<(usize, usize)>,
@@ -185,7 +186,8 @@ impl Picker<'_> {
         if columns < Self::NARROWEST || room < CHROME + FLOOR {
             return Vec::new();
         }
-        let body = room - CHROME;
+        let spared = spared(room, self.notice.len());
+        let body = room - CHROME - spared;
 
         // Worked out once and handed down: the frame's colour and the band
         // under a pair are one answer about where the pointer is, and asking
@@ -202,7 +204,7 @@ impl Picker<'_> {
         rows.push(self.edged(columns, glyphs, glyphs.top()));
         rows.extend(self.split(columns, body, glyphs, under));
         rows.push(self.edged(columns, glyphs, glyphs.bottom()));
-        rows.push(self.noticed(columns));
+        rows.extend(self.noticed(columns, spared));
         rows.push(self.keyed(columns));
         rows
     }
@@ -262,15 +264,17 @@ impl Picker<'_> {
     /// shows the end of what it is handed, so a slice shorter than this is a
     /// pane standing half empty rather than one scrolled back.
     #[must_use]
-    pub const fn previews(room: usize) -> usize {
+    /// A notice of `notice` rows takes from the pane what [`spared`] says it
+    /// does, so the count is asked with it.
+    pub const fn previews(room: usize, notice: usize) -> usize {
         if room < CHROME + FLOOR {
             return 0;
         }
 
         // The pane's foot stands under the tail rather than over it, so the
-        // rows a session gets are what is left once the foot has been paid
-        // for.
-        (room - CHROME).saturating_sub(FOOTED)
+        // rows a session gets are what is left once the foot and the notice
+        // have been paid for.
+        (room - CHROME - spared(room, notice)).saturating_sub(FOOTED)
     }
 
     /// The framed line the query is typed into.
@@ -486,17 +490,24 @@ impl Picker<'_> {
             .collect()
     }
 
-    /// The row between the panes and the keys: blank, or what the picker was
-    /// handed to tell the reader, cut where the window ends.
-    fn noticed(&self, columns: usize) -> Row {
-        let Some(notice) = self.notice else {
-            return Row::new();
-        };
+    /// The rows between the panes and the keys: one blank, or what the picker
+    /// was handed to tell the reader, each row cut where the window ends and
+    /// only as many past the first as the room `spared`.
+    fn noticed(&self, columns: usize, spared: usize) -> Vec<Row> {
+        if self.notice.is_empty() {
+            return vec![Row::new()];
+        }
 
-        let mut row = Row::new();
-        row.push(Slot::Plain, " ");
-        row.push(Slot::Plain, clip(notice, columns.saturating_sub(2)));
-        row.clipped(columns)
+        self.notice
+            .iter()
+            .take(1 + spared)
+            .map(|said| {
+                let mut row = Row::new();
+                row.push(Slot::Plain, " ");
+                row.push(Slot::Plain, clip(said, columns.saturating_sub(2)));
+                row.clipped(columns)
+            })
+            .collect()
     }
 
     /// What the keys do, in the longest form the window has room for.
@@ -527,7 +538,7 @@ impl Picker<'_> {
         if columns < Self::NARROWEST || room < CHROME + FLOOR {
             return Hit::Nothing;
         }
-        let body = room - CHROME;
+        let body = room - CHROME - spared(room, self.notice.len());
 
         match self.under(columns, body) {
             Under::Nothing => Hit::Nothing,
@@ -556,7 +567,10 @@ impl Picker<'_> {
         let last = columns.saturating_sub(2);
 
         if let Some(renaming) = self.renaming {
-            let pairs = shown(room.saturating_sub(CHROME));
+            let pairs = shown(
+                room.saturating_sub(CHROME)
+                    .saturating_sub(spared(room, self.notice.len())),
+            );
             let from = scrolled(self.marked, pairs, self.sessions.len());
 
             // The same window the row was drawn from, asked for again rather
@@ -614,6 +628,19 @@ impl Picker<'_> {
 
         Under::Nothing
     }
+}
+
+/// The rows past its first that a notice of `notice` rows takes from the panes
+/// in `room`.
+///
+/// Every one it has, where the panes can give them up and still hold one entry
+/// of the list; otherwise as many as they can. A picker that stood fine before
+/// a key was pressed does not vanish because the key had something to say —
+/// the rows that do not fit are the ones left unsaid.
+const fn spared(room: usize, notice: usize) -> usize {
+    let wanted = notice.saturating_sub(1);
+    let spare = room.saturating_sub(CHROME + FLOOR);
+    if wanted < spare { wanted } else { spare }
 }
 
 /// The slot a span takes, given whether the pointer is resting on its row.

@@ -77,7 +77,7 @@ fn picker<'a>(sessions: &'a [Kept<'a>], preview: &'a [Row]) -> Picker<'a> {
         nothing: "no earlier session for this workspace",
         noview: "nothing to show",
         keys: KEYS,
-        notice: None,
+        notice: &[],
         pointer: None,
     }
 }
@@ -271,13 +271,13 @@ fn a_session_from_another_directory_names_it_under_its_title() {
 fn a_notice_stands_on_the_row_between_the_panes_and_the_keys() {
     let preview = tail();
     let mut picker = picker(&FIVE, &preview);
-    picker.notice = Some("In ~/other: cd ~/other && crucible --resume 1");
+    picker.notice = &["cd ~/other && crucible --resume 1"];
 
     let rows = picker.within(100, 30, Glyphs::Unicode);
 
     let under = said(&rows, 30 - 2);
     assert!(
-        under.contains("In ~/other: cd ~/other && crucible --resume 1"),
+        under.contains("cd ~/other && crucible --resume 1"),
         "{under:?}"
     );
     assert!(
@@ -285,6 +285,38 @@ fn a_notice_stands_on_the_row_between_the_panes_and_the_keys() {
         "{:?}",
         said(&rows, 30 - 1)
     );
+}
+
+#[test]
+fn a_notice_of_two_rows_takes_its_second_from_the_panes() {
+    // Both rows stand over the keys, in order, and the window is no taller
+    // for them: the panes are a row shorter, and the preview is the one that
+    // gives it up.
+    let preview = tail();
+    let mut picker = picker(&FIVE, &preview);
+    let plain = picker.within(100, 30, Glyphs::Unicode);
+    picker.notice = &["cd ~/other &&", "crucible --resume 1"];
+
+    let rows = picker.within(100, 30, Glyphs::Unicode);
+
+    assert_eq!(rows.len(), 30);
+    assert_eq!(said(&rows, 30 - 3).trim(), "cd ~/other &&");
+    assert_eq!(said(&rows, 30 - 2).trim(), "crucible --resume 1");
+    assert!(said(&rows, 30 - 1).contains("↑↓ to walk"), "{rows:?}");
+    assert!(
+        said(&rows, 30 - 4).contains('╰'),
+        "{:?}",
+        said(&rows, 30 - 4)
+    );
+    assert_eq!(said(&plain, 30 - 4), said(&rows, 30 - 5));
+    assert_eq!(Picker::previews(30, 2), Picker::previews(30, 1) - 1);
+    assert_eq!(Picker::previews(30, 0), Picker::previews(30, 1));
+
+    // Where the panes have no row left to give, the picker still stands, and
+    // what is left unsaid is the notice's second row.
+    let tight = picker.within(100, CHROME + FLOOR, Glyphs::Unicode);
+    assert_eq!(tight.len(), CHROME + FLOOR);
+    assert_eq!(said(&tight, CHROME + FLOOR - 2).trim(), "cd ~/other &&");
 }
 
 #[test]
@@ -338,7 +370,7 @@ fn the_pane_says_how_many_rows_of_a_session_it_shows() {
             .lines()
             .filter(|line| line.contains("line "))
             .count();
-        assert_eq!(Picker::previews(room), drawn, "in room for {room}");
+        assert_eq!(Picker::previews(room, 0), drawn, "in room for {room}");
     }
 }
 
@@ -348,13 +380,13 @@ fn a_pane_handed_exactly_what_it_shows_has_no_blank_left_over_the_rule() {
     // nothing between them: a gap there is the pane half empty while the
     // reader is still wheeling back through a tail that has more.
     let room = 30;
-    let preview: Vec<Row> = (0..Picker::previews(room))
+    let preview: Vec<Row> = (0..Picker::previews(room, 0))
         .map(|line| Row::new().then(Slot::Plain, format!("line {line}")))
         .collect();
 
     let rows = picker(&FIVE, &preview).within(100, room, Glyphs::Unicode);
     let drawn = picture(&rows, 100);
-    let last = format!("line {}", Picker::previews(room) - 1);
+    let last = format!("line {}", Picker::previews(room, 0) - 1);
     let at = drawn
         .lines()
         .position(|line| line.contains(&last))
