@@ -1674,3 +1674,29 @@ fn a_failed_lookup_settles_as_an_individual_call() {
     assert_eq!(returned.len(), 1);
     assert!(returned.first().unwrap().looking.is_none());
 }
+
+#[test]
+fn usage_a_turn_keeps_what_it_last_reported_for_the_panel_over_it() {
+    // `/usage` stands over a running turn while the runner is away on it, so
+    // the footing keeps what it started from and then what the turn posts.
+    use crucible_types::{Window, WindowReading};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let windows = |percent| {
+        crucible_types::PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+            .with(Window::Weekly, WindowReading::new(percent, None))
+    };
+    let seeded = Totals::new();
+    let mut turning = Turning::started(Breakdown::default()).using(seeded, Some(windows(10)));
+    assert_eq!(turning.totals(), seeded);
+    assert_eq!(turning.limits(), Some(windows(10)));
+
+    let posted = Totals::new();
+    turning.saw(&Event::Used { totals: posted });
+    turning.saw(&Event::PlanLimits {
+        windows: windows(42),
+    });
+
+    assert_eq!(turning.totals(), posted);
+    assert_eq!(turning.limits(), Some(windows(42)));
+}

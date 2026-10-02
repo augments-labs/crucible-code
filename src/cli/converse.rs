@@ -1294,8 +1294,16 @@ impl Turn<'_, '_> {
         // once a pass. The keyboard is not the turn's here, which is why this
         // is `drain` rather than `step` — and why the hook is handed the
         // renderer rather than closing over it.
-        let context = crucible_app::client::context(&self.says.model, &self.turning.breakdown());
-        command::live(renderer, self.terms, command, &context, &mut |renderer| {
+        let counted = command::Counted {
+            usage: crucible_app::client::usage(
+                &self.says.model,
+                &self.turning.breakdown(),
+                &self.turning.totals(),
+                self.turning.limits().as_ref(),
+            ),
+            serving: self.serving,
+        };
+        command::live(renderer, self.terms, command, &counted, &mut |renderer| {
             self.drain(renderer);
             Ok(())
         })
@@ -1411,7 +1419,9 @@ fn take<T: Terminal>(
     // Started before the worker rather than on the first thing it reports, so
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
-    let mut turning = Turning::started(conversation.runner().breakdown());
+    let runner = conversation.runner();
+    let mut turning =
+        Turning::started(runner.breakdown()).using(runner.totals(), runner.plan_limits());
 
     // A turn can start with prompts already behind it: room is made before the
     // queue is read, so a line typed during the last turn is still waiting when

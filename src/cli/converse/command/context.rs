@@ -100,7 +100,7 @@ fn stood<T: Terminal>(
 /// What a key does to the panel: escape, the key its footer names, closes it,
 /// as interrupt and end of input close every panel; a new size redraws it;
 /// nothing else, enter among it, touches it.
-fn closing(pressed: &Pressed) -> Moved {
+pub(super) fn closing(pressed: &Pressed) -> Moved {
     match pressed {
         Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
         Pressed::Resized => Moved::Redraw,

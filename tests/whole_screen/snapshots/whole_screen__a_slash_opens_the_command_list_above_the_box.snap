@@ -1,14 +1,13 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 391
 expression: window.picture()
 ---
 80x24 cursor 21,5 scrolled 0
-|variable. Then use /model to select a model.                                   │|
 |                                                                               ┃|
 |› /help            what these are                                               |
 |  /release-notes   what changed in each release                                 |
 |  /context         what fills the model's window                                |
+|  /usage           what the session has used, and plan limits                   |
 |  /model           pick which model answers                                     |
 |  /effort          pick how hard it thinks                                      |
 |  /fast            pick how fast it answers                                     |
