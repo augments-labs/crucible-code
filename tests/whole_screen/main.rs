@@ -33,6 +33,7 @@
 
 mod fast;
 mod providers;
+mod reaching;
 mod screen;
 mod vendor;
 mod warning;
@@ -1812,7 +1813,10 @@ fn the_session_picker_stands_over_the_whole_window() {
     for said in [
         "Resume a session · 1 of 1 ·",
         "Enter to resume · Esc to cancel",
-        "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel",
+        // The long form of the keys row is wider than eighty columns, so this
+        // is the middle one, each toggle named by what it does next; no
+        // branch is checked out here, so Ctrl+B is not offered.
+        "ctrl+r rename · ctrl+a all projects · ctrl+w worktrees · esc",
     ] {
         assert!(rows.iter().any(|row| row.contains(said)), "{picture}");
     }
@@ -1822,13 +1826,219 @@ fn the_session_picker_stands_over_the_whole_window() {
     // loses exactly this row, and loses it silently.
     let keys = rows
         .iter()
-        .rposition(|row| row.contains("↑↓ to walk"))
+        .rposition(|row| row.contains("ctrl+r rename"))
         .expect("the keys row");
     let framed = rows
         .iter()
         .rposition(|row| row.contains('╯'))
         .expect("the foot of the panes");
     assert!(keys > framed, "the keys stand above the panes: {picture}");
+}
+
+// How far `/resume` looks, on a real screen at a real size. Each case starts in
+// the home `reaching::planted` leaves, and each picture is the picker after the
+// keys the case is about, at eighty columns: the width the keys row has to give
+// up its long form in.
+
+#[test]
+fn the_resume_picker_opens_on_this_directory() {
+    let planted = reaching::planted("reach-here");
+    let mut window = Watched::launched(
+        "reach-here",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_a_shows_every_project_and_says_where_each_session_is() {
+    let planted = reaching::planted("reach-all");
+    let mut window = Watched::launched(
+        "reach-all",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x01", "all projects");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_w_adds_this_repositorys_other_checkouts() {
+    let planted = reaching::planted("reach-worktrees");
+    let mut window = Watched::launched(
+        "reach-worktrees",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x17", "this repository's worktrees");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_b_keeps_the_branch_checked_out_here() {
+    let planted = reaching::planted("reach-branch");
+    let mut window = Watched::launched(
+        "reach-branch",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x02", "1 of 1");
+
+    // The branch is before the directory, so a long directory is what is cut.
+    let picture = window.picture();
+    assert!(
+        picture.contains("Resume a session · 1 of 1 · main · ~"),
+        "{picture}"
+    );
+
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
+fn enter_on_another_projects_session_says_how_to_resume_it_there() {
+    let planted = reaching::planted("reach-elsewhere");
+    let mut window = Watched::launched(
+        "reach-elsewhere",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    // Found by the directory its row shows, which nothing in what it asked
+    // says.
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x01", "all projects");
+    window.types_until("website", "1 of 4");
+    window.types_until("\r", "crucible --resume");
+
+    // The picker is still standing, with the session's own tail beside it:
+    // a row the keys put on the list is a row the pane can show.
+    let picture = window.picture();
+    assert!(picture.contains("Resume a session"), "{picture}");
+    assert!(
+        picture
+            .lines()
+            .any(|row| row.contains("│ │ › tidy the stylesheet")),
+        "{picture}"
+    );
+    // Its foot says what Enter does to it, which is not resuming it here.
+    assert!(
+        picture.contains("│ Enter to see how to resume · Esc to cancel"),
+        "{picture}"
+    );
+
+    // The command is wider than the window, so it breaks after its `&&` and
+    // the id stands whole on a row of its own: copied, both rows run.
+    let rows: Vec<&str> = picture.lines().map(str::trim_end).collect();
+    let resume = format!("| crucible --resume {}", planted.website.as_str());
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with(&resume))
+        .unwrap_or_else(|| panic!("the whole id on a row: {picture}"));
+    assert!(
+        at.checked_sub(1)
+            .and_then(|before| rows.get(before))
+            .is_some_and(|row| row.starts_with("| cd ~/projects/website &&")),
+        "{picture}"
+    );
+
+    // The id is this run's own, so the capture writes it as a mask.
+    insta::assert_snapshot!(reaching::unnamed(&picture, &planted.website));
+}
+
+#[test]
+fn a_directory_with_no_session_of_its_own_still_reaches_the_others() {
+    // Nothing was recorded here, but something was elsewhere: the picker
+    // opens on this directory's empty list and says so, and Ctrl+A is one key
+    // away rather than behind a line that ends the command.
+    let earlier = reaching::away("reach-none-here", true);
+    let mut window = Watched::launched(
+        "reach-none-here",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "no earlier session for this workspace");
+    let picture = window.picture();
+    assert!(
+        picture.contains("Resume a session · 0 of 0 · "),
+        "{picture}"
+    );
+    assert!(picture.contains("ctrl+a all projects"), "{picture}");
+    assert!(picture.contains("ctrl+w worktrees"), "{picture}");
+
+    window.types_until("\x01", "1 of 1 · all projects");
+    let picture = window.picture();
+    assert!(picture.contains("tidy the stylesheet"), "{picture}");
+}
+
+#[test]
+fn a_session_that_never_got_past_its_header_is_still_nothing_to_resume() {
+    // A log another directory left with nothing in it is no session, so the
+    // one line saying there is none stands where the picker would.
+    let earlier = reaching::away("reach-header-only", false);
+    let mut window = Watched::launched(
+        "reach-header-only",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "no earlier session for this workspace");
+    let picture = window.picture();
+    assert!(!picture.contains("Resume a session"), "{picture}");
 }
 
 #[test]

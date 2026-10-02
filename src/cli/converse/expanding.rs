@@ -699,6 +699,7 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Copy
         | Pressed::PasteImage
         | Pressed::Rename
+        | Pressed::All
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

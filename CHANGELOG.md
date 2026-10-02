@@ -14,6 +14,14 @@ change in any release with no deprecation period.
   `ask_user`, one answer may be marked recommended and listed first, and it is
   drawn with `(Recommended)` after its name. What you choose and what is sent
   back is still the name alone.
+- **`/resume` reaches every indexed session and can show other projects,
+  branches and worktrees.** It lists up to 100 of this directory's sessions
+  where it used to stop at those among the 64 newest logs, and opens even where
+  only another directory has any. <kbd>Ctrl+A</kbd> shows every project,
+  <kbd>Ctrl+B</kbd> keeps this branch and <kbd>Ctrl+W</kbd> adds this
+  repository's other worktrees, each named on the keys row by what it does next.
+  Enter on another directory's session says the `cd … && crucible --resume <id>`
+  that picks it up there, on two rows where one is too narrow to hold it.
 
 ### Changed
 

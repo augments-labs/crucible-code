@@ -819,7 +819,12 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // put a directory in time order and opens only the newest few files it
     // finds there. A directory nobody has worked in costs one read and draws
     // the heading with nothing under it.
-    let sessions = crucible_session::recent(home.sessions(), &workspace, Welcome::WANTED);
+    let sessions = crucible_session::recent(
+        home.sessions(),
+        crucible_session::Roots::These(&[workspace.root()]),
+        crucible_session::Reach::FirstFrame,
+        Welcome::WANTED,
+    );
 
     // Off the disk, so no socket is opened on the path the first frame is
     // measured on. Nothing said is asking: a release check is the sort of thing

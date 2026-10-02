@@ -855,6 +855,19 @@ fn the_three_edits_every_shell_answers_to_reach_the_line_here_too() {
 }
 
 #[test]
+fn ctrl_w_rubs_out_the_same_word_backspace_held_does() {
+    // Two spellings of one edit, kept apart only for whoever reads the keys
+    // before the editor does: the word that goes is the same word.
+    let mut held = lines("first line\nsecond word here");
+    let mut lettered = lines("first line\nsecond word here");
+
+    assert_eq!(held.press(Key::RubWord), Typed::Changed);
+    assert_eq!(lettered.press(Key::WordErase), Typed::Changed);
+    assert_eq!(lettered.text(), held.text());
+    assert_eq!(lettered.column(), held.column());
+}
+
+#[test]
 fn the_rest_of_a_line_ahead_goes_without_the_line_under_it() {
     let mut editor = lines("keep this\nand this");
     assert_eq!(editor.press(Key::Home), Typed::Changed);

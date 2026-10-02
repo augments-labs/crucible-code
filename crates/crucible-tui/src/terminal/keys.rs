@@ -126,6 +126,14 @@ pub enum Pressed {
     /// the one "rename" starts with. A component with nothing to rename reads
     /// it as any other key it has no use for.
     Rename,
+    /// Ctrl+A: widen a listing to everything it could list, or back.
+    ///
+    /// Readline's start-of-line, but the box moves to the line's start on the
+    /// Home key and never bound Ctrl+A to it, so the letter is free; it is the
+    /// one "all" starts with. Like [`Pressed::Rename`] it means something only
+    /// where a listing has a narrower and a wider reach, and every other
+    /// component reads it as a key it has no use for.
+    All,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -464,6 +472,11 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // and it is the one "rename" starts with.
         KeyCode::Char('r') if bound => Pressed::Rename,
 
+        // Ctrl+A is readline's start-of-line, but the box moves to the line's
+        // start on Home and was never given Ctrl+A for it. The letter is free,
+        // and it is the one "all" starts with.
+        KeyCode::Char('a') if bound => Pressed::All,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -484,8 +497,9 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // Ctrl+W and Ctrl+U are the terminal's own, older than readline and
         // still what the line discipline does when nothing has taken it off.
         // Somebody who has never learned a binding here has already learned
-        // these two.
-        KeyCode::Char('w') if bound => Pressed::Key(Key::RubWord),
+        // these two. Ctrl+W keeps a spelling of its own, apart from Backspace
+        // held below, because a listing may read the letter as its own key.
+        KeyCode::Char('w') if bound => Pressed::Key(Key::WordErase),
         KeyCode::Char('u') if bound => Pressed::Key(Key::RubToStart),
         KeyCode::Char('k') if bound => Pressed::Key(Key::RubToEnd),
 
@@ -635,6 +649,14 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_a_arrives_as_the_press_that_widens_a_listing() {
+        // Readline's start-of-line, which the box answers with Home. Alt with
+        // the same letter is still nothing, for the reason any alt binding is.
+        assert_eq!(meaning(control(KeyCode::Char('a'))), Pressed::All);
+        assert_eq!(meaning(alt(KeyCode::Char('a'))), Pressed::Ignored);
+    }
+
+    #[test]
     fn a_letter_held_with_shift_as_well_is_not_the_binding_control_alone_is() {
         // Ctrl+Shift+C is the copy every desktop has, and a terminal asked to
         // spell modified keys distinctly forwards it rather than answering it
@@ -747,9 +769,11 @@ mod tests {
     fn the_edits_a_shell_answers_to_reach_the_editor_here_too() {
         // The letters are free, and somebody who has never learned a binding in
         // this program has already learned Ctrl+W and Ctrl+U from their shell.
+        // Ctrl+W is spelled apart from Backspace held, though the editor does
+        // the same with both: a listing may read the letter as its own key.
         assert_eq!(
             meaning(control(KeyCode::Char('w'))),
-            Pressed::Key(Key::RubWord)
+            Pressed::Key(Key::WordErase)
         );
         assert_eq!(
             meaning(control(KeyCode::Char('u'))),
@@ -872,14 +896,14 @@ mod tests {
 
     #[test]
     fn a_binding_this_release_has_no_meaning_for_types_nothing() {
-        // Ctrl-A is the start of a line in one program and select-all in the
-        // next. Typing a bare `a` for it would be the worst of the three.
-        assert_eq!(meaning(control(KeyCode::Char('a'))), Pressed::Ignored);
+        // Ctrl-X is a prefix in one program and cut in the next. Typing a bare
+        // `x` for it would be the worst of the three.
+        assert_eq!(meaning(control(KeyCode::Char('x'))), Pressed::Ignored);
 
         // Alt is the modifier a reader is most likely to be holding for
         // something this program has never heard of — a window manager's, an
         // emulator's — and the letter under it is not what they meant to type.
-        assert_eq!(meaning(alt(KeyCode::Char('a'))), Pressed::Ignored);
+        assert_eq!(meaning(alt(KeyCode::Char('x'))), Pressed::Ignored);
     }
 
     #[test]
