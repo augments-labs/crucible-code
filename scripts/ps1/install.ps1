@@ -220,8 +220,11 @@ function Invoke-CrucibleInstall {
 
     # Stops with `Status`, naming the step that was running and why. Before
     # the first step, and on standard error in the plain form, the reason is
-    # worded as install.sh words it.
+    # worded as install.sh words it. A reason can carry a server's words, such
+    # as an HTTP reason phrase, so every control character in it is shown as
+    # `?` rather than handed to the console to act on.
     function Stop-Install([int]$Status, [string]$Reason) {
+        $Reason = $Reason -replace '[\x00-\x1F\x7F-\x9F]', '?'
         if ($ui.Step) {
             if ($fancy) {
                 Write-Row $failMark $red $Reason

@@ -195,6 +195,12 @@ try {
     if ($run.Status -ne 2) { Stop-Test "an archive without checksums exited $($run.Status)" }
     Assert-Contains $run.Err 'install: -Archive requires -Checksums and -Version' 'archive without checksums'
 
+    # A reason never hands the console a control character to act on.
+    $run = Invoke-Installer @('-Version', "9.8.7$esc[31m")
+    if ($run.Status -ne 2) { Stop-Test "a version with an escape sequence exited $($run.Status)" }
+    Assert-Contains $run.Err 'install: invalid version 9.8.7?[31m' 'escape sequence in a reason'
+    Assert-Lacks $run.Err $esc 'escape sequence in a reason'
+
     # Every install above ran without -AddToPath, and left PATH alone.
     if (-not (Test-UserPathAsFound)) { Stop-Test 'an install without -AddToPath changed the user PATH' }
 
