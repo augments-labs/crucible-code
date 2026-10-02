@@ -346,6 +346,20 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_System_Threading",
 ] }
 
+# The hour a plan window starts again, in the zone the reader lives in. `std`
+# knows instants and nothing of zones: turning one into a local wall clock means
+# reading the system's zone (`/etc/localtime` and `TZ` on Unix, the registry on
+# Windows) and the TZif rules behind it, which is a parser and a platform
+# branch apiece. Only the system zone and the zoneinfo directory are turned
+# on, so no copy of the zone database is bundled; a machine where the zone
+# cannot be read is shown its times in UTC, and says so.
+jiff = { version = "=0.2.28", default-features = false, features = [
+    "std",
+    "tz-system",
+    "tzdb-zoneinfo",
+    "tzdb-concatenated",
+] }
+
 # --- Encoded standards -------------------------------------------------------
 # These lint tables are the Rust compiler standard. Cross-file repository
 # policy is enforced by `scripts/sh/repo-checks.sh`.
@@ -514,6 +528,9 @@ sha2.workspace = true
 # documents, so this is the same version compiled once.
 serde_json.workspace = true
 thiserror.workspace = true
+# The local hour `/usage` says a plan window starts again at. Read only when the
+# panel is drawn, so starting pays nothing for it.
+jiff.workspace = true
 
 [dev-dependencies]
 # Named by the integration tests alone, which drive the seams these two own from
