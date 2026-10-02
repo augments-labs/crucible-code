@@ -1818,6 +1818,8 @@ fn breaks(one: &Seen) -> bool {
             | Event::Spent { .. }
             | Event::PromptCache { .. }
             | Event::Sandbox { .. }
+            | Event::Used { .. }
+            | Event::PlanLimits { .. }
             | Event::Retrying => false,
 
             // Everything else is a row, or is about to be one. The model

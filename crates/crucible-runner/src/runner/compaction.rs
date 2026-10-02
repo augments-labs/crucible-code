@@ -74,12 +74,28 @@ const PROTECT: u64 = TOOL_RESULT_BYTES as u64;
 /// the recap alone is the answer.
 const MINIMUM: u64 = 30_000;
 
+/// Sends a recap request, and says when it went out.
+async fn timed(
+    provider: &dyn crucible_models::Provider,
+    pace: &mut super::fast::Pace,
+    request: Request<'_>,
+    run: &RunContext<'_>,
+) -> (
+    std::time::Instant,
+    Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
+) {
+    let went = std::time::Instant::now();
+    (went, super::fast::sent(provider, pace, request, run).await)
+}
+
 struct RecapReading<'a> {
     events: crate::Reporter<'a>,
     touched: &'a TrackedFiles,
     spent: &'a mut Spend,
     cache: super::CacheObservation,
     why: Compacting,
+    /// When the request went out, so the time waited on it is counted.
+    went: std::time::Instant,
 }
 
 /// How far a recap has run when the row that says so reads half done, in bytes.
@@ -646,7 +662,7 @@ impl Runner {
             prompt_cache: Some(&cache),
             ..request
         };
-        let asked = super::fast::sent(&*self.provider, &mut self.pace, request, run).await;
+        let (went, asked) = timed(&*self.provider, &mut self.pace, request, run).await;
         // Recorded and reported before a failure ends the compaction, as a
         // turn's own request is.
         let disposition = super::request_disposition(&asked);
@@ -683,6 +699,7 @@ impl Runner {
                     spent,
                     cache,
                     why,
+                    went,
                 },
             )
             .await;
@@ -723,8 +740,25 @@ impl Runner {
         .await;
     }
 
-    /// Reads one standalone recap response while preserving attempt accounting.
+    /// Reads one standalone recap response, and counts it in the session's
+    /// totals however it ended.
     async fn read_recap(
+        &mut self,
+        asked: Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
+        reading: RecapReading<'_>,
+    ) -> Result<Recap, TurnError> {
+        let (events, went) = (reading.events, reading.went);
+        self.limited(
+            asked.as_ref().ok().and_then(|stream| stream.limits()),
+            events,
+        );
+        let said = self.hear_recap(asked, reading).await;
+        self.answered(went, events);
+        said
+    }
+
+    /// Reads one standalone recap response while preserving attempt accounting.
+    async fn hear_recap(
         &mut self,
         asked: Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
         reading: RecapReading<'_>,
@@ -735,6 +769,7 @@ impl Runner {
             spent,
             cache,
             why,
+            went: _,
         } = reading;
         let mut stream = match asked {
             Ok(stream) => stream,
@@ -772,6 +807,7 @@ impl Runner {
                     }
                 }
                 Delta::Spent(reported) => {
+                    self.state.totals.spent(reported.tokens());
                     *spent = before.and(reported);
                     events.post(crate::Event::Spent { spend: *spent });
                 }
@@ -802,6 +838,7 @@ impl Runner {
                         .flatten()
                         .and_then(|pricing| pricing.cost(&usage).ok())
                         .unwrap_or(UsageCost::UNKNOWN);
+                    self.state.totals.used(&usage, cost.total);
                     let outcome = usage.input.outcome(cache.reporting);
                     if let Some(attempt) = self
                         .state
@@ -824,9 +861,9 @@ impl Runner {
                     )
                     .await;
                 }
+                Delta::Carried(carried) => self.state.totals.carried(carried.tokens()),
                 Delta::ToolStarted { .. }
                 | Delta::ToolArgs(_)
-                | Delta::Carried(_)
                 | Delta::Continuation(_)
                 | Delta::Progress => {}
                 Delta::Stopped(reason) => {

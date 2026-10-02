@@ -21,8 +21,8 @@ use crucible_tools::{
     ToolError, ToolOutput, Verdict, Wrote,
 };
 use crucible_types::{
-    CredentialScopeId, Diff, Fragment, Message, Modalities, Modality, PricingCurrency, PricingDate,
-    PricingError, PricingUnit, PromptCacheEncoding, PromptCacheResourceError,
+    CredentialScopeId, Diff, Fragment, Message, Modalities, Modality, PlanWindows, PricingCurrency,
+    PricingDate, PricingError, PricingUnit, PromptCacheEncoding, PromptCacheResourceError,
     PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheRetentionClass, ToolArgs,
     ToolCall,
 };
@@ -149,6 +149,9 @@ pub(crate) struct Script {
     resource_delete: ResourceDelete,
     /// How this fixture answers the speed a request is asked at.
     fast: FastFixture,
+    /// The plan windows each answer's headers report, in the order the
+    /// answers go out; an answer past the end reports none.
+    limits: Mutex<VecDeque<Option<PlanWindows>>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -204,7 +207,15 @@ impl Script {
             restricts: None,
             reach: Reach::Model,
             fast: FastFixture::default(),
+            limits: Mutex::new(VecDeque::new()),
         }
+    }
+
+    /// Answers whose headers report these plan windows, one per answer in
+    /// order.
+    pub(crate) fn limiting(self, each: impl IntoIterator<Item = Option<PlanWindows>>) -> Self {
+        *self.limits.lock().unwrap() = each.into_iter().collect();
+        self
     }
 
     /// A provider that refuses every request asked at [`Speed::Fast`] the way
@@ -654,6 +665,7 @@ impl Provider for Script {
                         .collect(),
                     breaks: true,
                     served: Served::Unsaid,
+                    limits: None,
                 }) as Box<dyn DeltaStream>);
             }
             drop(drops);
@@ -666,12 +678,14 @@ impl Provider for Script {
                     deltas: VecDeque::new(),
                     breaks: self.breaks,
                     served: self.fast.serves,
+                    limits: None,
                 }) as Box<dyn DeltaStream>);
             };
             Ok(Box::new(Recited {
                 deltas: round.into(),
                 breaks: self.breaks,
                 served: self.fast.serves,
+                limits: self.limits.lock().unwrap().pop_front().flatten(),
             }) as Box<dyn DeltaStream>)
         })
     }
@@ -823,11 +837,17 @@ struct Recited {
     breaks: bool,
     /// What the answer says about the speed it was served at.
     served: Served,
+    /// The plan windows its headers report.
+    limits: Option<PlanWindows>,
 }
 
 impl DeltaStream for Recited {
     fn served(&self) -> Served {
         self.served
+    }
+
+    fn limits(&self) -> Option<PlanWindows> {
+        self.limits
     }
 
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {

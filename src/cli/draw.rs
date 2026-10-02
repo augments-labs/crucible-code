@@ -142,16 +142,19 @@ pub(crate) fn event<T: Terminal>(
         // moment the next arrived.
         Event::TurnStarted { .. } => renderer.apart(),
 
-        // All four are transient live-foot state rather than transcript lines.
-        // Spend, retries and compaction shape the working row; carried load
-        // refreshes the remaining-window fact in the prompt. Each is true only
-        // until its next event, so committing every reading would leave a
-        // column of stale state in front of the answer.
+        // All of these are transient live-foot state rather than transcript
+        // lines. Spend, retries and compaction shape the working row; carried
+        // load refreshes the remaining-window fact in the prompt; what the
+        // session has used and the plan windows are kept for `/usage`. Each is
+        // true only until its next event, so committing every reading would
+        // leave a column of stale state in front of the answer.
         Event::Spent { .. }
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Retrying
         | Event::Carried { .. }
+        | Event::Used { .. }
+        | Event::PlanLimits { .. }
         | Event::Compacting { .. } => Ok(()),
 
         // What it came to does not. Room having been made is a thing that

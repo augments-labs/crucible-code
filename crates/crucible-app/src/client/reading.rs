@@ -109,6 +109,10 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         | Event::Wrote { .. }
         | Event::Aged { .. }
         | Event::Unread { .. }
+        // The session's totals and the plan windows are asked for with
+        // `Command::Usage`, between turns; they are not streamed.
+        | Event::Used { .. }
+        | Event::PlanLimits { .. }
         | Event::Steered { .. } => return None,
     })
 }
