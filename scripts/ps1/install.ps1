@@ -592,7 +592,9 @@ function Invoke-CrucibleInstall {
         }
         # Either everything lands or nothing changes. A file being replaced is
         # moved aside first, which Windows allows even while it runs, and put
-        # back if anything after it fails. The broker lands first so the
+        # back if anything after it fails or the install is interrupted. Each
+        # is noted before it is moved, so an interruption at any point leaves
+        # nothing that will not be put back. The broker lands first so the
         # executable never runs beside a stale broker.
         foreach ($pair in @(@($broker, $brokerPath), @($binary, $binaryPath), @($binary, $aliasPath))) {
             $source = $pair[0]
@@ -601,18 +603,18 @@ function Invoke-CrucibleInstall {
             if (Test-Path -LiteralPath $target) {
                 $previous = Join-Path $destination ('.' + (Split-Path -Leaf $target) + '.previous.' +
                     [Guid]::NewGuid().ToString('N'))
-                Move-Item -LiteralPath $target -Destination $previous
             }
             $landed.Add(@($target, $previous))
+            if ($previous) { Move-Item -LiteralPath $target -Destination $previous }
             Copy-Item -LiteralPath $source -Destination $target
         }
-        foreach ($entry in $landed) {
-            if ($entry[1]) {
-                Remove-Item -LiteralPath $entry[1] -Force -ErrorAction SilentlyContinue
-                if (Test-Path -LiteralPath $entry[1]) { $stuck.Add($entry[1]) }
-            }
-        }
+        # Everything has landed: from here on nothing is put back.
+        $replaced = @($landed | ForEach-Object { $_[1] } | Where-Object { $_ })
         $landed.Clear()
+        foreach ($previous in $replaced) {
+            Remove-Item -LiteralPath $previous -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $previous) { $stuck.Add($previous) }
+        }
         Complete-Step $where $destination
 
         $onPath = Test-OnPath $destination
@@ -661,15 +663,21 @@ function Invoke-CrucibleInstall {
             $reason = Get-Reason $_.Exception
             try { Stop-Install 1 $reason } catch { }
         }
-        # Put back what was moved aside, newest first.
+        return $ui.Status
+    } finally {
+        # Put back what was moved aside, newest first. This is here and not in
+        # catch because Ctrl+C runs finally alone. A file noted but not yet
+        # moved aside is still where it was, and stays.
         for ($i = $landed.Count - 1; $i -ge 0; $i--) {
             $target = $landed[$i][0]
             $previous = $landed[$i][1]
-            Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
-            if ($previous) { Move-Item -LiteralPath $previous -Destination $target -Force -ErrorAction SilentlyContinue }
+            if (-not $previous) {
+                Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+            } elseif (Test-Path -LiteralPath $previous) {
+                Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+                Move-Item -LiteralPath $previous -Destination $target -Force -ErrorAction SilentlyContinue
+            }
         }
-        return $ui.Status
-    } finally {
         if ($work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }
