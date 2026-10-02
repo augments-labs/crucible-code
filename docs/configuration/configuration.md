@@ -548,7 +548,10 @@ every hue.
 
 Every table spends colour the same way. A line has at most one thing in the
 accent, the one your eye should land on: the selected row, a tool call's mark, a
-key that opens something, the rule that opens a panel. Colour that means
+key that opens something, the rule that opens a panel. A frame in the accent,
+such as the one around a question, is not counted against the lines inside it:
+its edges are the frame, and each line between them still has one accent at
+most. Colour that means
 something (a line added or taken out, success, trouble, a mode that lets
 crucible act without asking) means it in every table, and everything else is
 your own foreground or a quieter grey. Nothing is said by colour alone: every

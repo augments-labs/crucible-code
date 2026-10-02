@@ -10,11 +10,14 @@
 //!
 //! 1. **Accent** is the one thing on a line the eye should land on: the
 //!    selected row's caret, a call's mark, a release heading's mark, a link,
-//!    a key or a count that opens something, and the rule that opens a panel
-//!    or the frame around a question, each of which is the whole of its line.
-//!    It is [`Slot::Accent`]. The slots drawn in the accent's ink for a reason
-//!    of their own are not a second accent: [`Slot::Strong`] for the name,
-//!    version or figure a row is read for, [`Slot::Link`] and [`Slot::Code`].
+//!    a key or a count that opens something, and the rule that opens a panel,
+//!    which is the whole of its line. It is [`Slot::Accent`]. A frame in the
+//!    accent, as around a question, is the frame and not a span of what it
+//!    holds: its top and bottom are whole lines, and its edges run down both
+//!    sides of every row inside, which is counted between them. The slots
+//!    drawn in the accent's ink for a reason of their own are not a second
+//!    accent: [`Slot::Strong`] for the name, version or figure a row is read
+//!    for, [`Slot::Link`] and [`Slot::Code`].
 //! 2. **Meaning** is a fact a reader acts on: success, a warning, trouble, a
 //!    line added or removed, a permissive mode, a task's state, a bar's
 //!    categories.
@@ -24,11 +27,12 @@
 //!    it are [`Slot::Quiet`], and so is the sentence naming the mode that asks
 //!    before acting.
 //!
-//! A line that is not selected holds at most one span of [`Slot::Accent`]:
-//! a run of it, ended by text in any other slot, blank or not, in which blank
-//! text counts for nothing. A row under the pointer is selected for this,
-//! since that is where the eye already is. A footer naming several keys stays
-//! quiet throughout, because an accent on each would be several on one line.
+//! A line that is not selected holds at most one span of [`Slot::Accent`],
+//! besides the edges of a frame around it: a run of it, ended by text in any
+//! other slot, blank or not, in which blank text counts for nothing. A row
+//! under the pointer is selected for this, since that is where the eye already
+//! is. A footer naming several keys stays quiet throughout, because an accent
+//! on each would be several on one line.
 //! Nothing is said by colour alone: every accent is also a mark or a
 //! position, and every meaning has a sign or a word. With colour off, what a
 //! model says keeps the markdown markers it arrived with, so emphasis a slot
@@ -115,7 +119,9 @@ pub enum Slot {
     Plain,
     /// The one thing on a line the eye should land on: a mark, the selected
     /// row's caret, the live prompt's mark, a key that opens something, and
-    /// the rule that opens a panel or the frame around a question. The prompt
+    /// the rule that opens a panel. A frame around a question is drawn in it
+    /// too, with an edge each side of every row inside; the edges are the
+    /// frame, and the row's one accent is counted between them. The prompt
     /// box's own border is [`Slot::Quiet`]; see `Prompt::BORDER`.
     Accent,
     /// The accent, emphasised: the product's name, and a command's name.

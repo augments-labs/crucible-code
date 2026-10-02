@@ -61,7 +61,8 @@ change in any release with no deprecation period.
 ### Changed
 
 - **Colour follows one written rule.** Each line has at most one accented thing
-  for the eye to land on, colour that means something keeps that meaning in
+  for the eye to land on, not counting the edges of a frame around it, such as
+  the one around a question; colour that means something keeps that meaning in
   every theme, and nothing is said by colour alone, so the colourblind themes
   and `color` set to `never` lose nothing. The rule is in the theme section of
   the configuration docs.
