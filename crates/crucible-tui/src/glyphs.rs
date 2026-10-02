@@ -331,6 +331,20 @@ impl Glyphs {
         }
     }
 
+    /// The mark on a turn that stopped because the plan behind it is used up.
+    ///
+    /// Neither [`Glyphs::done`] nor [`Glyphs::failed`]: nothing went wrong,
+    /// and nothing was finished either. The same square as [`Glyphs::filled`]
+    /// where the font has one; where it does not, a `#` rather than the `*`
+    /// that opens a call, since a stop is not a call.
+    #[must_use]
+    pub fn stopped(self) -> &'static str {
+        match self {
+            Self::Unicode => "■",
+            Self::Ascii => "#",
+        }
+    }
+
     /// And the same mark with its middle out.
     #[must_use]
     pub fn hollow(self) -> &'static str {

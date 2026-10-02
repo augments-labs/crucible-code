@@ -53,7 +53,7 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_builtins::Ended;
-use crucible_runner::{Event, Turned};
+use crucible_runner::{Event, TurnError, Turned};
 use crucible_tools::{Sensitivity, Summary, ToolOutput};
 use crucible_tui::{
     Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
@@ -65,10 +65,12 @@ use crucible_types::{
 use crucible_workspace::{Workspace, written};
 
 use super::converse::Parting;
+use super::converse::command::Clock;
 use super::kept::Kept;
 use super::style::Style;
 
 pub(crate) mod opening;
+pub(crate) mod used_up;
 pub(crate) mod when;
 
 pub(crate) use opening::{Opening, opening};
@@ -256,6 +258,29 @@ pub(crate) fn event<T: Terminal>(
         // No mark in front of it either. The mark hangs a result off the line
         // that asked for it, and a failed turn was asked for by nobody's line
         // — it stands on its own, in the one colour kept for it.
+        //
+        // A used-up plan is the exception: nothing went wrong, and the turn
+        // waits on a clock rather than on a fix, so it gets a notice of its
+        // own in this program's words and never the error's sentence.
+        Event::Failed {
+            error:
+                TurnError::PlanLimit {
+                    window,
+                    resets_at,
+                    stopped,
+                },
+        } => {
+            renderer.settle()?;
+            renderer.apart()?;
+            let rows = used_up::rows(
+                (window, resets_at),
+                stopped,
+                columns,
+                style.glyphs(),
+                &Clock::system(),
+            );
+            renderer.present(&rows)
+        }
         Event::Failed { error } => {
             renderer.settle()?;
             renderer.apart()?;

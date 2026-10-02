@@ -24,6 +24,8 @@
 //! It reads and changes nothing, so it stands over a running turn too, with
 //! the figures that turn last reported.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::providers::{CredentialSource, credential_source, in_use, offered};
@@ -100,6 +102,22 @@ impl Clock {
         } else {
             format!("resets {read}")
         })
+    }
+
+    /// The phrase a turn stopped on a used-up plan names its reset with:
+    /// `resets Mon 09:00` for one still to come, and `resets soon` for one the
+    /// clock has reached. The stop happened against a reset still ahead, so
+    /// one behind the clock now says the plan is about to be usable again
+    /// rather than that it already is. `None` where the time cannot be read.
+    pub(crate) fn reset_by(&self, at: SystemTime) -> Option<String> {
+        let Ok(since) = at.duration_since(UNIX_EPOCH) else {
+            return Some("resets soon".to_owned());
+        };
+        let at = since.as_secs();
+        if i64::try_from(at).is_ok_and(|at| at <= self.now.as_second()) {
+            return Some("resets soon".to_owned());
+        }
+        self.reads(at).map(|read| format!("resets {read}"))
     }
 
     /// When a window starts again, as a wall clock reads it: the time alone
