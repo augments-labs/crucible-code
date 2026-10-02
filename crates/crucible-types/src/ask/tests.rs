@@ -36,6 +36,17 @@ fn an_answer_that_was_given_no_line_and_no_specimen_reads_back_empty_rather_than
 }
 
 #[test]
+fn an_answer_is_recommended_only_where_it_was_marked_and_its_name_stays_as_given() {
+    let plain = Answer::new("Rust");
+    assert!(!plain.is_recommended());
+
+    let marked = Answer::new("Rust").saying("the one").recommending();
+    assert!(marked.is_recommended());
+    assert_eq!(marked.answer(), "Rust");
+    assert_eq!(marked.says(), "the one");
+}
+
+#[test]
 fn a_question_takes_one_answer_unless_it_was_asked_to_take_several() {
     let one = Question::new("Language", "Which one?", [Answer::new("Rust")]);
     assert!(!one.takes_several());

@@ -19,6 +19,7 @@ pub struct Answer {
     name: Box<str>,
     says: Box<str>,
     shows: Box<[Box<str>]>,
+    recommended: bool,
 }
 
 impl Answer {
@@ -29,6 +30,7 @@ impl Answer {
             name: answer.into(),
             says: Box::from(""),
             shows: Box::new([]),
+            recommended: false,
         }
     }
 
@@ -48,6 +50,25 @@ impl Answer {
             shows: shows.into_iter().map(Into::into).collect(),
             ..self
         }
+    }
+
+    /// The same answer, marked as the one the asker would pick.
+    ///
+    /// A flag of its own and not part of the name: the name is what the reader
+    /// chooses and what is handed back, and a label written into it would be
+    /// handed back too.
+    #[must_use]
+    pub fn recommending(self) -> Self {
+        Self {
+            recommended: true,
+            ..self
+        }
+    }
+
+    /// Whether the asker marked it as the one they would pick.
+    #[must_use]
+    pub fn is_recommended(&self) -> bool {
+        self.recommended
     }
 
     /// What the answer is called.

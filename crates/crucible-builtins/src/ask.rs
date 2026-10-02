@@ -57,6 +57,7 @@ const ANSWERS: &str = "answers";
 const ANSWER: &str = "answer";
 const SAYS: &str = "says";
 const SHOWS: &str = "shows";
+const RECOMMENDED: &str = "recommended";
 
 /// How many questions one call may put.
 ///
@@ -171,6 +172,14 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                                         .into(),
                                     needed: false,
                                     shape: Shape::Text,
+                                },
+                                Field {
+                                    name: RECOMMENDED,
+                                    about: "The one answer you would pick; at most one per \
+                                            question, and listed first."
+                                        .into(),
+                                    needed: false,
+                                    shape: Shape::Flag,
                                 },
                                 Field {
                                     name: SHOWS,
@@ -349,6 +358,23 @@ fn question(args: &Args) -> Result<Question, ToolError> {
         return Err(args.wrong(format!("{twice} is offered twice")));
     }
 
+    // The one the model would pick is the one the reader is shown first, so a
+    // call that marks two, or marks one that is not at the top, is asking for a
+    // list that says something its order does not.
+    let marked = answers.iter().filter(|one| one.is_recommended()).count();
+    if marked > 1 {
+        return Err(args.wrong(format!(
+            "more than one {RECOMMENDED} answer, {marked} in all; \
+             mark only the one you would pick"
+        )));
+    }
+    if answers.iter().skip(1).any(Answer::is_recommended) {
+        return Err(args.wrong(format!(
+            "the {RECOMMENDED} answer must be listed first, and it is not; \
+             move it to the top of {ANSWERS}"
+        )));
+    }
+
     let question = Question::new(heading, asked, answers);
     Ok(if args.flag(SEVERAL, false)? {
         question.several()
@@ -359,13 +385,17 @@ fn question(args: &Args) -> Result<Question, ToolError> {
 
 /// One answer, with what it means and what it would look like.
 fn answer(args: &Args) -> Result<Answer, ToolError> {
-    args.only(&[ANSWER, SAYS, SHOWS])?;
+    args.only(&[ANSWER, SAYS, SHOWS, RECOMMENDED])?;
 
     let name = bounded(args, ANSWER, args.text(ANSWER)?, SHORT)?;
     let mut answer = Answer::new(name);
 
     if let Some(says) = args.optional_text(SAYS)? {
         answer = answer.saying(bounded(args, SAYS, says, SHORT)?);
+    }
+
+    if args.flag(RECOMMENDED, false)? {
+        answer = answer.recommending();
     }
 
     if args.holds(SHOWS) {
