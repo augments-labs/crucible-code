@@ -98,15 +98,20 @@ const KEYS: [&str; 72] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 19] = [
+const MORE_KEYS: [&str; 27] = [
+    "context",
     "count",
     "date",
+    "free",
     "groups",
+    "instructions",
+    "mcp",
     "missing",
     "newest",
     "notes",
     "release",
     "releases",
+    "reserve",
     "route",
     "running",
     "sentence",
@@ -114,10 +119,13 @@ const MORE_KEYS: [&str; 19] = [
     "shown",
     "source",
     "speed",
+    "system",
+    "tools",
     "unwritten",
     "variable",
     "version",
     "why",
+    "window",
 ];
 
 /// What a field name may not say, whatever else it says.
@@ -306,6 +314,7 @@ fn commands() -> Vec<Command> {
         Command::ReleaseNotes {
             version: Some(name("v0.41.1")),
         },
+        Command::Context,
         Command::Exit,
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
@@ -388,6 +397,37 @@ fn login_outcomes() -> Vec<Outcome> {
 }
 
 /// A release, with its words where there are some.
+/// How a window is spent, where everything about it is known, and where none
+/// of what may be left out is there.
+fn contexts() -> [Context; 2] {
+    [
+        Context {
+            model: Model::new(MARKER),
+            window: Some(200_000),
+            left: Percent::new(62),
+            system: 3_100,
+            instructions: 1_200,
+            tools: 9_400,
+            mcp: 4_800,
+            messages: 41_600,
+            reserve: 36_000,
+            free: 103_900,
+        },
+        Context {
+            model: None,
+            window: None,
+            left: None,
+            system: 3_100,
+            instructions: 0,
+            tools: 9_400,
+            mcp: 0,
+            messages: 41_600,
+            reserve: 0,
+            free: 0,
+        },
+    ]
+}
+
 fn release(text: Option<Text>) -> Release {
     Release {
         version: name("0.41.1"),
@@ -496,6 +536,7 @@ fn outcomes() -> Vec<Outcome> {
         }),
         Outcome::Leaving,
     ];
+    outcomes.extend(contexts().into_iter().map(Outcome::Context));
     outcomes.extend(login_outcomes());
     outcomes.extend(turn_outcomes().into_iter().map(Outcome::Turn));
     outcomes.extend(Mode::EVERY.into_iter().map(Outcome::Mode));
@@ -690,32 +731,33 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 24),
-        Command::Compact => (1, 24),
-        Command::Cancel => (2, 24),
-        Command::Decide(_) => (3, 24),
-        Command::Clear => (4, 24),
-        Command::Resume(_) => (5, 24),
+        Command::Prompt(_) => (0, 25),
+        Command::Compact => (1, 25),
+        Command::Cancel => (2, 25),
+        Command::Decide(_) => (3, 25),
+        Command::Clear => (4, 25),
+        Command::Resume(_) => (5, 25),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 24),
-        Command::SelectModel { effort: None, .. } => (7, 24),
-        Command::SetEffort(_) => (8, 24),
-        Command::SetMode(_) => (9, 24),
-        Command::CycleMode => (10, 24),
-        Command::Login { .. } => (11, 24),
-        Command::Logout { .. } => (12, 24),
-        Command::InspectCache => (13, 24),
-        Command::CleanCache => (14, 24),
-        Command::Sandbox { enabled: true } => (15, 24),
-        Command::Sandbox { enabled: false } => (16, 24),
-        Command::Theme(Theme::Drawing(_)) => (17, 24),
-        Command::Theme(Theme::Syntax(_)) => (18, 24),
-        Command::Help => (19, 24),
-        Command::ReleaseNotes { version: None } => (20, 24),
-        Command::ReleaseNotes { version: Some(_) } => (21, 24),
-        Command::Exit => (22, 24),
-        Command::SetSpeed(_) => (23, 24),
+        } => (6, 25),
+        Command::SelectModel { effort: None, .. } => (7, 25),
+        Command::SetEffort(_) => (8, 25),
+        Command::SetMode(_) => (9, 25),
+        Command::CycleMode => (10, 25),
+        Command::Login { .. } => (11, 25),
+        Command::Logout { .. } => (12, 25),
+        Command::InspectCache => (13, 25),
+        Command::CleanCache => (14, 25),
+        Command::Sandbox { enabled: true } => (15, 25),
+        Command::Sandbox { enabled: false } => (16, 25),
+        Command::Theme(Theme::Drawing(_)) => (17, 25),
+        Command::Theme(Theme::Syntax(_)) => (18, 25),
+        Command::Help => (19, 25),
+        Command::ReleaseNotes { version: None } => (20, 25),
+        Command::ReleaseNotes { version: Some(_) } => (21, 25),
+        Command::Exit => (22, 25),
+        Command::SetSpeed(_) => (23, 25),
+        Command::Context => (24, 25),
     }
 }
 
@@ -747,6 +789,7 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         | Outcome::Cancelling
         | Outcome::Mode(_)
         | Outcome::Help(_)
+        | Outcome::Context(_)
         | Outcome::Leaving => (0, 1),
         Outcome::Turn(turn) => turn_arm(turn),
         Outcome::Unasked(missing) => match missing {
@@ -875,6 +918,11 @@ fn every_arm_that_crosses_has_a_specimen() {
             }
         }
     }
+    for context in contexts() {
+        either("context.model", context.model.is_some());
+        either("context.window", context.window.is_some());
+        either("context.left", context.left.is_some());
+    }
     for snapshot in snapshots() {
         either("snapshot.session", snapshot.session.is_some());
         either("snapshot.provider", snapshot.provider.is_some());
@@ -887,6 +935,9 @@ fn every_arm_that_crosses_has_a_specimen() {
     for what in [
         "response.correlation",
         "resource.expires_at",
+        "context.model",
+        "context.window",
+        "context.left",
         "snapshot.session",
         "snapshot.provider",
         "snapshot.model",
@@ -1703,7 +1754,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 11_474_190_890_111_485_080),
+        (1, 7_232_262_667_776_103_646),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

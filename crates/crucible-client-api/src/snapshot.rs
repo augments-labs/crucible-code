@@ -70,7 +70,7 @@ impl Model {
     }
 
     /// `text` as a model, where it holds any words.
-    fn of(text: Text) -> Option<Self> {
+    pub(crate) fn of(text: Text) -> Option<Self> {
         if text.as_str().is_empty() {
             return None;
         }

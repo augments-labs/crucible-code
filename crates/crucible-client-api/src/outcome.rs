@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use crate::bounds::{Name, Text};
 use crate::command::{Command, Mode};
+use crate::context::Context;
 use crate::error::{ErrorCode, Refusal};
 use crate::request::Correlation;
 use crate::wire::{Fields, Writing, frame, parsed};
@@ -551,6 +552,8 @@ pub enum Outcome {
     Help(Vec<Name>),
     /// Asking for the release notes ended.
     Notes(NotesOutcome),
+    /// How the window of the next request is spent.
+    Context(Context),
     /// The client is leaving; the host closes what it owns.
     Leaving,
 }
@@ -619,7 +622,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 20] = [
+    pub const KINDS: [&'static str; 21] = [
         "refused",
         "turn",
         "room",
@@ -639,6 +642,7 @@ impl Outcome {
         "theme",
         "help",
         "notes",
+        "context",
         "leaving",
     ];
 
@@ -665,6 +669,7 @@ impl Outcome {
             Self::Theme(_) => "theme",
             Self::Help(_) => "help",
             Self::Notes(_) => "notes",
+            Self::Context(_) => "context",
             Self::Leaving => "leaving",
         }
     }
@@ -694,6 +699,7 @@ impl Outcome {
                 commands.iter().map(Name::as_str).collect::<Vec<_>>(),
             ),
             Self::Notes(notes) => object.with("notes", notes.written()),
+            Self::Context(context) => object.with("context", context.written()),
         }
         .finish()
     }
@@ -727,6 +733,7 @@ impl Outcome {
                     .collect::<Result<_, _>>()?,
             ),
             "notes" => Self::Notes(NotesOutcome::read(fields.take("notes")?)?),
+            "context" => Self::Context(Context::read(fields.take("context")?)?),
             "leaving" => Self::Leaving,
             _ => return Err(ErrorCode::Malformed.into()),
         };

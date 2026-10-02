@@ -87,13 +87,15 @@ pub enum Command {
         /// The release asked for, as it was written, or every release.
         version: Option<Name>,
     },
+    /// Show how the window of the next request is spent. Changes nothing.
+    Context,
     /// Leave the conversation.
     Exit,
 }
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 20] = [
+    pub const KINDS: [&'static str; 21] = [
         "prompt",
         "compact",
         "cancel",
@@ -113,6 +115,7 @@ impl Command {
         "theme",
         "help",
         "release_notes",
+        "context",
         "exit",
     ];
 
@@ -139,6 +142,7 @@ impl Command {
             Self::Theme(_) => "theme",
             Self::Help => "help",
             Self::ReleaseNotes { .. } => "release_notes",
+            Self::Context => "context",
             Self::Exit => "exit",
         }
     }
@@ -175,6 +179,7 @@ impl Command {
             | Self::InspectCache
             | Self::CleanCache
             | Self::Help
+            | Self::Context
             | Self::Exit => object,
         }
         .finish()
@@ -221,6 +226,7 @@ impl Command {
                     .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
                     .transpose()?,
             },
+            "context" => Self::Context,
             "exit" => Self::Exit,
             _ => return Err(ErrorCode::UnknownCommand.into()),
         };
