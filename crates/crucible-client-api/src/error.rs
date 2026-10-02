@@ -39,11 +39,15 @@ pub enum ErrorCode {
     /// The application tried and could not; the sentence beside the code says
     /// what its owner would have shown.
     Failed,
+    /// The plan behind the sign-in is used up until one of its windows starts
+    /// again. Nothing was lost, and a prompt after the reset continues; the
+    /// sentence beside the code names the window and the reset where known.
+    PlanLimit,
 }
 
 impl ErrorCode {
     /// Every code, in the order they are declared.
-    pub const EVERY: [Self; 12] = [
+    pub const EVERY: [Self; 13] = [
         Self::Malformed,
         Self::TooLarge,
         Self::UnsupportedVersion,
@@ -56,6 +60,7 @@ impl ErrorCode {
         Self::UnknownProvider,
         Self::Abandoned,
         Self::Failed,
+        Self::PlanLimit,
     ];
 
     /// The word this code crosses as.
@@ -74,6 +79,7 @@ impl ErrorCode {
             Self::UnknownProvider => "unknown_provider",
             Self::Abandoned => "abandoned",
             Self::Failed => "failed",
+            Self::PlanLimit => "plan_limit",
         }
     }
 
@@ -98,6 +104,7 @@ impl ErrorCode {
             Self::UnknownProvider => "the command names a provider that is not offered",
             Self::Abandoned => "the action was answered too often with nothing that fits it",
             Self::Failed => "the application could not do what was asked",
+            Self::PlanLimit => "the plan's usage limit is reached until one of its windows resets",
         }
     }
 }
