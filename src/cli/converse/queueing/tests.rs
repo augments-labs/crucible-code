@@ -426,6 +426,60 @@ fn x_still_edits_what_e_edits() {
 }
 
 #[test]
+fn editing_a_queued_line_the_box_cannot_take_keeps_it_queued() {
+    // The box already holds a draft, and the marked line is too long to go in
+    // beside it. Taken out of the queue before the box refused it, the line was
+    // in neither place: something the reader typed, gone without a word.
+    use crucible_tui::Typed;
+
+    let (mut queue, steer) = queued(&["first"]);
+    let long = "y".repeat(Editor::MAX_BYTES - 16);
+    let mut typing = Editor::new();
+    assert_eq!(typing.paste(&long), Typed::Changed);
+    steer.say(long.clone());
+    assert_eq!(queue.accept(&mut typing), Retained::Accepted);
+
+    let draft = "a draft still being written";
+    let mut editor = Editor::new();
+    assert_eq!(editor.paste(draft), Typed::Changed);
+
+    let mut standing = Standing::default();
+    standing.open(&queue, &steer);
+    against(&mut standing, &Pressed::Down, &mut queue, &steer);
+
+    for key in ['e', 'x'] {
+        standing.against(
+            &Pressed::Key(Key::Char(key)),
+            Reading {
+                queue: &mut queue,
+                editor: &mut editor,
+                steer: &steer,
+            },
+        );
+
+        // Compared by length, so a failure does not print a megabyte.
+        assert_eq!(
+            queue.waiting_all().map(str::len).collect::<Vec<_>>(),
+            vec!["first".len(), long.len()],
+            "{key} lost a line the box could not take"
+        );
+        assert_eq!(queue.waiting_all().nth(1), Some(long.as_str()));
+        assert_eq!(queue.bytes, "first".len() + long.len());
+        assert_eq!(editor.text(), draft, "the draft is as it was");
+        assert_eq!(standing, Standing::Open(1), "the mark is still on it");
+    }
+
+    steer.release();
+    let taken = steer.take();
+    assert_eq!(
+        taken.iter().map(String::len).collect::<Vec<_>>(),
+        vec!["first".len(), long.len()],
+        "the turn still reads it"
+    );
+    assert!(taken.last().is_some_and(|last| *last == long));
+}
+
+#[test]
 fn deleting_a_queued_line_removes_it_without_taking_it_back() {
     // The line is gone from the queue and from what the turn reads, and the box
     // is exactly as it was: nothing was put there to be sent by accident.

@@ -56,6 +56,13 @@ change in any release with no deprecation period.
   the tools found by search, with no instruction dropped and no tool, argument
   or choice renamed.
 
+### Fixed
+
+- **Editing a queued message no longer loses it when the box cannot take it.**
+  With text already in the box, <kbd>e</kbd> or <kbd>x</kbd> on a queued message
+  too long to fit beside it took the message out of the queue and put it
+  nowhere. It now stays queued and marked, and the box keeps what you typed.
+
 ## [0.44.2] - 2026-10-01
 
 **Every model crucible knows now starts at its native context window, and a
