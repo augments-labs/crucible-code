@@ -20,14 +20,15 @@
 //!    [`Slot::Plain`]; times, counts, paths in passing, captions, frames and
 //!    footers are [`Slot::Quiet`].
 //!
-//! A line that is not selected holds at most one span of [`Slot::Accent`];
-//! a run of it parted only by blank text is one span, and blank text in it is
-//! none. A row under the pointer is selected for this, since that is where
-//! the eye already is. A footer naming several keys stays quiet throughout,
-//! because an accent on each would be several on one line. Nothing is said by
-//! colour alone: every accent is also a mark or a position, and every meaning
-//! has a sign or a word. No colour is asked for except through a slot, and the
-//! `ansi` theme spells every slot in the terminal's own sixteen.
+//! A line that is not selected holds at most one span of [`Slot::Accent`]:
+//! a run of it, ended by text in any other slot, blank or not, in which blank
+//! text counts for nothing. A row under the pointer is selected for this,
+//! since that is where the eye already is. A footer naming several keys stays
+//! quiet throughout, because an accent on each would be several on one line.
+//! Nothing is said by colour alone: every accent is also a mark or a
+//! position, and every meaning has a sign or a word. No colour is asked for
+//! except through a slot, and the `ansi` theme spells every slot in the
+//! terminal's own sixteen.
 //!
 //! **The ground behind a row belongs to the reader.** This process takes the
 //! whole screen and every cell on it, so the ground is a thing it could paint

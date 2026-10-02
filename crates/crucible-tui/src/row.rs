@@ -390,25 +390,20 @@ impl Row {
     /// How many accent spans the colour rule in `crate::color` counts on this
     /// row.
     ///
-    /// A span is a run of [`Slot::Accent`] that shows something, and runs
-    /// parted only by blank text are one: the `›` of a selected line and the
-    /// words after it are one thing to land on, drawn as two runs. Blank text
-    /// in the accent counts for nothing, because it puts nothing in front of
-    /// the eye.
+    /// A span is a run of [`Slot::Accent`] that shows something, ended by text
+    /// in any other slot, blank or not. Blank text in the accent counts for
+    /// nothing, because it puts nothing in front of the eye.
     #[must_use]
     pub fn accents(&self) -> usize {
         let mut counted = 0;
         let mut inside = false;
 
         for span in &self.0 {
-            if span.text.trim().is_empty() {
-                continue;
-            }
-            if span.slot == Slot::Accent {
+            if span.slot != Slot::Accent {
+                inside = false;
+            } else if !span.text.trim().is_empty() {
                 counted += usize::from(!inside);
                 inside = true;
-            } else {
-                inside = false;
             }
         }
 
@@ -533,7 +528,9 @@ mod tests {
     }
 
     #[test]
-    fn the_colour_rule_counts_accent_runs_joined_across_blanks_and_nothing_else() {
+    fn the_colour_rule_counts_runs_of_the_accent_slot_and_nothing_else() {
+        // Strong, code and the pointer's slot share the accent's ink or ground
+        // and are not counted: the rule is about the accent slot.
         let none = Row::new()
             .then(Slot::Strong, "4")
             .then(Slot::Quiet, " lines, removed ")
@@ -541,9 +538,14 @@ mod tests {
             .then(Slot::Code, "wait")
             .then(Slot::Pointed, "here");
         let one = Row::new()
-            .then(Slot::Accent, "›")
+            .then(Slot::Accent, "ctrl")
+            .then(Slot::Accent, "+q");
+        // Any other slot between two runs parts them, a blank one too: a
+        // border and a key with a space between are two things lit.
+        let parted = Row::new()
+            .then(Slot::Accent, "╰────")
             .then(Slot::Plain, " ")
-            .then(Slot::Accent, "and add a test");
+            .then(Slot::Accent, "ctrl+q");
         let two = Row::new()
             .then(Slot::Accent, "●")
             .then(Slot::Plain, " Read ")
@@ -551,6 +553,7 @@ mod tests {
 
         assert_eq!(none.accents(), 0);
         assert_eq!(one.accents(), 1);
+        assert_eq!(parted.accents(), 2);
         assert_eq!(two.accents(), 2);
 
         // The caret's place on a row that is not marked is blank, and blank

@@ -880,7 +880,21 @@ fn the_resume_picker_follows_the_colour_rule() {
         ]
     })
     .collect();
-    let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
+    let resting = picker(&FIVE, &preview);
+    let renaming = Picker {
+        renaming: Some("Release 0.23.0 smoke"),
+        ..picker(&FIVE, &preview)
+    };
 
-    crate::colour_rule::holds("resume picker", &rows, |_| false);
+    for (name, shown) in [("resume picker", resting), ("renaming", renaming)] {
+        let rows = shown.within(100, 30, Glyphs::Unicode);
+        // The marked session's title row: its caret, and the title being
+        // typed into while it is renamed.
+        let marked = |at: usize| {
+            rows.get(at)
+                .is_some_and(|row| row.text().starts_with("│ › "))
+        };
+
+        crate::colour_rule::holds(name, &rows, marked);
+    }
 }
