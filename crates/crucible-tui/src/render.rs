@@ -267,12 +267,6 @@ pub struct Renderer<T: Terminal> {
     /// the row it was taken by, so a drag that starts on its middle does not
     /// jump to put its top there.
     grip: Option<usize>,
-    /// The prompt a press on its rail mark last landed on, by its stable line
-    /// number in the record.
-    ///
-    /// The rail's current prompt while that prompt starts in the band; a
-    /// prompt that has left the record names nothing.
-    landed: Option<usize>,
     /// How many rows of the transcript one notch of the wheel moves.
     ///
     /// Held here for the reason the palette and the glyphs are: it is settled
@@ -339,7 +333,6 @@ impl<T: Terminal> Renderer<T> {
             glyphs: Glyphs::default(),
             rails: false,
             grip: None,
-            landed: None,
             notch: NOTCH,
             taken: None,
             held: None,
@@ -533,11 +526,7 @@ impl<T: Terminal> Renderer<T> {
                 let at = row - bands.transcript.start;
                 if !thumb.contains(&at) {
                     let top = if let Some(prompt) = rail.prompt_at(at, self.record.prompts()) {
-                        self.landed = self
-                            .record
-                            .landmarked()
-                            .find(|(_, row)| *row == prompt)
-                            .map(|(line, _)| line);
+                        self.record.lands(prompt);
                         prompt
                     } else {
                         rail.top_for(at.saturating_sub(thumb.len() / 2))
@@ -602,13 +591,11 @@ impl<T: Terminal> Renderer<T> {
     fn rail(&self, bands: &Bands) -> Option<ScrollRail> {
         self.rail_column()?;
         let place = self.record.place(bands.transcript.len());
-        let landed = self.landed.and_then(|landed| {
-            self.record
-                .landmarked()
-                .find(|(line, _)| *line == landed)
-                .map(|(_, row)| row)
-        });
-        Some(ScrollRail::new(place, self.record.prompts(), landed))
+        Some(ScrollRail::new(
+            place,
+            self.record.prompts(),
+            self.record.landed(),
+        ))
     }
 
     /// The rail row the pointer is on, where it is on a rail with a thumb.

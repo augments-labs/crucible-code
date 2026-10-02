@@ -1927,6 +1927,45 @@ fn the_prompt_a_rail_click_lands_on_stays_current_while_it_is_in_the_band() {
 }
 
 #[test]
+fn the_prompt_a_rail_click_lands_on_stays_current_across_a_resize_that_relays_the_opening() {
+    // An opening one row tall at the railed sixty columns and four below
+    // fifty-five, so pulling the window to fifty renumbers every line under
+    // it. The prompts are at lines 0, 20, 40, 48 and 60 of what follows it.
+    let mut drawn = Drawn::new(60, 10);
+    drawn.rails(true);
+    drawn
+        .opens(Box::new(|columns| {
+            let rows = if columns < 55 { 4 } else { 1 };
+            (0..rows).map(|row| Row::plain(format!("card {row}"))).collect()
+        }))
+        .unwrap();
+    for line in 0..80 {
+        if [0, 20, 40, 48, 60].contains(&line) {
+            drawn.landmark();
+        }
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+
+    assert_eq!(rail_click(&mut drawn, 5), None);
+    assert!(
+        drawn.screen().row(0).starts_with("line 40 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+    assert_eq!(rail_of(&drawn), "•│•││●┃•││");
+
+    drawn.render.terminal.resize(50, 10);
+    drawn.resized().unwrap();
+
+    assert!(
+        drawn.screen().row(0).starts_with("line 40 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+    assert_eq!(rail_of(&drawn), "•│•││●┃•││");
+}
+
+#[test]
 fn a_pointer_on_a_rail_over_a_record_that_fits_changes_nothing() {
     let mut drawn = Drawn::new(60, 10);
     drawn.rails(true);
