@@ -62,7 +62,28 @@ never asks for `sudo` or edits a shell profile. Use `--version`, `--dir` or
 `--dry-run` when the defaults are not the ones you want. The matching
 `uninstall.sh` removes only those executables and preserves `~/.crucible`;
 deleting configuration, credentials and sessions requires the explicit
-`--purge --yes` pair.
+`--purge --yes` pair. In a terminal the installer shows each step as it runs,
+with a bar while the archive downloads; piped, or under `NO_COLOR` or
+`TERM=dumb`, it prints one plain line per step instead. Either way a failure
+names the step that failed.
+
+On Windows, in PowerShell 5.1 or 7, run the release installer:
+
+```powershell
+irm https://github.com/augments-labs/crucible-code/releases/latest/download/install.ps1 | iex
+```
+
+It detects the architecture, verifies the Windows archive against the release's
+`SHA256SUMS` before unpacking it, and installs `crucible.exe`,
+`crucible-sandbox-broker.exe` and a `cru.exe` copy in
+`%LOCALAPPDATA%\Programs\crucible\bin`, without asking for elevation. It says
+whether that directory is on your `PATH` and prints the command that adds it,
+but changes `PATH` only when asked to. To pass options, such as `-AddToPath`,
+`-Version`, `-Dir` or `-DryRun`, run it as a script block:
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/augments-labs/crucible-code/releases/latest/download/install.ps1))) -AddToPath
+```
 
 For a manual Unix install, download the archive and `SHA256SUMS` from the
 [releases page](https://github.com/augments-labs/crucible-code/releases). On
