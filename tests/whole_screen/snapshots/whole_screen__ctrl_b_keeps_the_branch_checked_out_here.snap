@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 2006
 expression: picture
 ---
 80x24 cursor 1,10 scrolled 0
@@ -20,10 +21,10 @@ expression: picture
 |│                              │ │                                             │|
 |│                              │ │                                             │|
 |│                              │ │                                             │|
+|│                              │ │                                             │|
 |│                              │ │ ────────────────────────────────────────────│|
 |│                              │ │ just now · 1 message · main                 │|
 |│                              │ │ Enter to resume · Esc to cancel             │|
 |╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
 |                                                                                |
 | ctrl+a all projects · ctrl+b all branches · ctrl+w worktrees · esc             |
-|                                                                                |

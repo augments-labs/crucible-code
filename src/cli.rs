@@ -813,6 +813,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // which is a thing only its owner can say.
     renderer.rolls(settings.scroll_speed(&from)?.rows());
 
+    // And whether the transcript keeps its last column for the scroll rail.
+    // Read before anything is written into the transcript, so the first line
+    // is already folded at the width it will stay at.
+    renderer.rails(settings.scroll_rail());
+
     // What was worked on here before. This is on the startup path, which is
     // budgeted at twenty milliseconds, so it is bounded at both ends: the
     // component says how many rows it can use, and the scan reads names to

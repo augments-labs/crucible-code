@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 1957
 expression: window.picture()
 ---
 80x24 cursor 1,10 scrolled 0
@@ -20,10 +21,10 @@ expression: window.picture()
 |│                              │ │                                             │|
 |│   tidy the stylesheet        │ │                                             │|
 |│   just now · main · …website │ │                                             │|
+|│                              │ │                                             │|
 |│                              │ │ ────────────────────────────────────────────│|
 |│                              │ │ just now · 1 message · main                 │|
 |│                              │ │ Enter to resume · Esc to cancel             │|
 |╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
 |                                                                                |
 | ctrl+a this project · ctrl+b this branch · ctrl+w worktrees · esc              |
-|                                                                                |

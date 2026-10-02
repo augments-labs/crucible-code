@@ -1,17 +1,19 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 3568
 expression: picture
 ---
-80x24 cursor 22,0 scrolled 0
-||                                  | Tips                                      ||
-||                                  |                                           ||
-||                                  | - /          opens the command list       ||
-||                                  | - \ enter    adds a line without sending  ||
-||                                  | - shift+tab  steps the permission mode    ||
-||                                  | - ctrl+c     clears the line typed so far ||
-|+------------------------------------------------------------------------------+|
-|                                                                                |
-|> /fast                                                                         |
+80x24 cursor 23,0 scrolled 0
+||                                                                             |||
+|| Tips                                                                        |||
+||                                                                             |||
+|| - /          opens the command list                                         |||
+|| - \ enter    adds a line without sending                                    |||
+|| - shift+tab  steps the permission mode                                      |#|
+|| - ctrl+c     clears the line typed so far                                   |#|
+|+-----------------------------------------------------------------------------+#|
+|                                                                               #|
+|> /fast                                                                        #|
 |--------------------------------------------------------------------------------|
 |                                                                                |
 |Speed - google - gemini-3.8-flash - Google key                                  |
@@ -26,4 +28,3 @@ expression: picture
 |  75-100% more than Standard                                                    |
 |                                                                                |
 |enter to choose - esc to cancel                                                 |
-|                                                                                |

@@ -309,7 +309,9 @@ can run past what one window shows: the highlight stays on the words it began
 on, and what scrolled off the window is copied with the rest. Resizing lets go
 of it, because a new width moves the words out from under the two ends. Holding
 <kbd>Shift</kbd> while you drag still hands the pointer back to your terminal,
-if its own selection is the one you wanted.
+if its own selection is the one you wanted. A press on the scroll rail, the
+transcript's last column, scrolls rather than selects, and no selection takes
+the rail.
 
 What a drag over the box takes is the picture: a border down each side, and
 blank ground out to the last column. So <kbd>Ctrl+Y</kbd> is still there for the

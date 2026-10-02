@@ -1,29 +1,30 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 2231
 expression: picture
 ---
-80x24 cursor 20,4 scrolled 0
-|                                                                                |
-|› the first thing                                                               |
-|                                                                                |
-|Notes on the first thing.                                                       |
-|                                                                                |
-|› the second thing                                                              |
-|                                                                                |
-|Notes on the second thing.                                                      |
-|                                                                                |
-|› the third thing                                                               |
-|                                                                                |
-|Notes on the third thing.                                                       |
-|                                                                                |
-|────────────────────────────────────────────────────────────────────────────────|
-| compacted · you chose notes over carrying this session whole                   |
-| 4 messages became a recap · 5k → 5k carried · 2 turns kept whole               |
-|────────────────────────────────────────────────────────────────────────────────|
+80x24 cursor 21,4 scrolled 0
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                               │|
+|› the first thing                                                              │|
+|                                                                               │|
+|Notes on the first thing.                                                      │|
+|                                                                               │|
+|› the second thing                                                             │|
+|                                                                               │|
+|Notes on the second thing.                                                     ┃|
+|                                                                               ┃|
+|› the third thing                                                              ┃|
+|                                                                               ┃|
+|Notes on the third thing.                                                      ┃|
+|                                                                               ┃|
+|───────────────────────────────────────────────────────────────────────────────┃|
+| compacted · you chose notes over carrying this session whole                  ┃|
+| 4 messages became a recap · 5k → 5k carried · 2 turns kept whole              ┃|
+|───────────────────────────────────────────────────────────────────────────────┃|
 |                                                                                |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                               transcript map → |

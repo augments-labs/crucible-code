@@ -1,19 +1,21 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 1744
 expression: picture
 ---
-80x24 cursor 20,66 scrolled 0
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|                                                                                |
-|Warning: No models available. Use /login or set an API key environment variable.|
-|Then use /model to select a model.                                              |
-|                                                                                |
-|› /login                                                                        |
+80x24 cursor 21,66 scrolled 0
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      ││|
+|│ · ctrl+c     clears the line typed so far                                   ││|
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                               ┃|
+|                                                                               ┃|
+|Warning: No models available. Use /login or set an API key environment         ┃|
+|variable. Then use /model to select a model.                                   ┃|
+|                                                                               ┃|
+|› /login                                                                       ┃|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Log in                                                                          |
@@ -26,4 +28,3 @@ expression: picture
 |│ › ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••             │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |enter to save · esc to go back                                                  |
-|                                                                                |

@@ -1,29 +1,30 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 934
 expression: window.picture()
 ---
-80x24 cursor 20,4 scrolled 0
-|│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|› rename that comment                                                           |
-|                                                                                |
-|● Edit(release.yml)                                                             |
-|  ⎿ Added 1 line, removed 1 line                                                |
-|        1 -  # trend data                                                       |
-|        1 +  # what stops a tag                                                 |
-|        2    budgets:                                                           |
-|        3      name: release budgets                                            |
-|                                                                                |
-|Renamed. Nothing else in the file moved.                                        |
+80x24 cursor 21,4 scrolled 0
+|│ Tips                                                                        ││|
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      ││|
+|│ · ctrl+c     clears the line typed so far                                   ││|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› rename that comment                                                          ┃|
+|                                                                               ┃|
+|● Edit(release.yml)                                                            ┃|
+|  ⎿ Added 1 line, removed 1 line                                               ┃|
+|        1 -  # trend data                                                      ┃|
+|        1 +  # what stops a tag                                                ┃|
+|        2    budgets:                                                          ┃|
+|        3      name: release budgets                                           ┃|
+|                                                                               ┃|
+|Renamed. Nothing else in the file moved.                                       ┃|
 |                                                                                |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                               transcript map → |

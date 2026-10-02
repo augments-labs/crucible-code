@@ -1,20 +1,19 @@
 //! How a window's rows are shared out.
 //!
-//! Four bands, always in this order down the screen: the transcript is
+//! Three bands, always in this order down the screen: the transcript is
 //! everything that has been said and the only band that scrolls; the turn says
 //! what is happening while one runs and holds whatever else stands over the box
 //! between turns; the prompt is the box, where the reader is typing, and grows
-//! upwards as they do; the foot holds a blank spacer and the transcript map
-//! below the prompt's own status. Bands do not overlap and together they are
-//! the window, which is what lets a frame place a row absolutely and never
-//! wonder what else is there.
+//! upwards as they do, with its own status as its last row. Bands do not
+//! overlap and together they are the window, which is what lets a frame place
+//! a row absolutely and never wonder what else is there.
 //!
-//! Their sizes are not a layout so much as an order of surrender. Two of them
-//! want a fixed number of rows, one wants as many as it has, and one takes what
-//! is left — and on a window too small for that, something has to go. What goes
-//! is stated here once, from the least missed to the most: the transcript
-//! shrinks to nothing first, then the turn, then the foot, and the prompt is
-//! last because a reader who cannot see what they are typing has no way to fix
+//! Their sizes are not a layout so much as an order of surrender. One of them
+//! wants a fixed number of rows, one wants as many as it has, and one takes
+//! what is left — and on a window too small for that, something has to go.
+//! What goes is stated here once, from the least missed to the most: the
+//! transcript shrinks to nothing first, then the turn, and the prompt is last
+//! because a reader who cannot see what they are typing has no way to fix
 //! anything else. A window of one row is a prompt.
 //!
 //! Nothing here reads the terminal. It is given a number of rows and answers
@@ -47,8 +46,6 @@ pub(crate) struct Wants {
     pub(crate) turn: usize,
     /// How tall the box has grown.
     pub(crate) prompt: usize,
-    /// One transcript-map row below the prompt, or none.
-    pub(crate) foot: usize,
 }
 
 /// Where each band is, in screen rows.
@@ -63,16 +60,14 @@ pub(crate) struct Bands {
     pub(crate) turn: Range<usize>,
     /// The box being typed into.
     pub(crate) prompt: Range<usize>,
-    /// The transcript-map row below the prompt.
-    pub(crate) foot: Range<usize>,
 }
 
 impl Bands {
     /// Share `rows` out between the bands that asked for a number.
     pub(crate) fn share(rows: usize, wants: Wants) -> Self {
-        // Bottom up, because the two that answer to a reader's hands — the
-        // prompt and the status under it — are the two at the bottom, and
-        // taking their rows first is what makes the order of surrender above
+        // Bottom up, because the band that answers to a reader's hands — the
+        // prompt and the status under it — is the one at the bottom, and
+        // taking its rows first is what makes the order of surrender above
         // true rather than merely intended.
         //
         // A band nobody put anything in takes no rows at all. Only the prompt
@@ -83,27 +78,22 @@ impl Bands {
         } else {
             wants.prompt.max(1).min((rows / SHARE).max(1))
         };
-        let mut left = rows - prompt;
-
-        let foot = wants.foot.min(left);
-        left -= foot;
+        let left = rows - prompt;
 
         let turn = wants.turn.min(left);
         let transcript = left - turn;
 
         // Laid out top-first, each band starting where the one above it ended,
-        // so the four ranges are the window exactly once — no gap a frame would
+        // so the three ranges are the window exactly once — no gap a frame would
         // leave stale and no overlap two bands would fight over.
         let transcript = 0..transcript;
         let turn = transcript.end..transcript.end + turn;
         let prompt = turn.end..turn.end + prompt;
-        let foot = prompt.end..prompt.end + foot;
 
         Self {
             transcript,
             turn,
             prompt,
-            foot,
         }
     }
 }
@@ -113,22 +103,18 @@ mod tests {
     use super::{Bands, SHARE, Wants};
 
     /// Every band, top first, for the walks below.
-    fn all(bands: &Bands) -> [&std::ops::Range<usize>; 4] {
-        [&bands.transcript, &bands.turn, &bands.prompt, &bands.foot]
+    fn all(bands: &Bands) -> [&std::ops::Range<usize>; 3] {
+        [&bands.transcript, &bands.turn, &bands.prompt]
     }
 
     /// A session with something in every band: the shape the walks below are
     /// about, since a band nobody filled is one no order of surrender reaches.
     fn full(turn: usize, prompt: usize) -> Wants {
-        Wants {
-            turn,
-            prompt,
-            foot: 1,
-        }
+        Wants { turn, prompt }
     }
 
     #[test]
-    fn the_four_bands_are_the_window_exactly_once() {
+    fn the_three_bands_are_the_window_exactly_once() {
         for rows in 0..80 {
             for turn in 0..4 {
                 for prompt in 1..12 {
@@ -170,15 +156,13 @@ mod tests {
             let bands = Bands::share(rows, full(1, 1));
             (
                 !bands.prompt.is_empty(),
-                !bands.foot.is_empty(),
                 !bands.turn.is_empty(),
                 !bands.transcript.is_empty(),
             )
         };
-        assert_eq!(seen(1), (true, false, false, false));
-        assert_eq!(seen(2), (true, true, false, false));
-        assert_eq!(seen(3), (true, true, true, false));
-        assert_eq!(seen(4), (true, true, true, true));
+        assert_eq!(seen(1), (true, false, false));
+        assert_eq!(seen(2), (true, true, false));
+        assert_eq!(seen(3), (true, true, true));
     }
 
     #[test]
@@ -195,7 +179,7 @@ mod tests {
     fn a_prompt_shorter_than_its_share_takes_only_what_it_has() {
         let bands = Bands::share(24, full(0, 3));
         assert_eq!(bands.prompt.len(), 3);
-        assert_eq!(bands.transcript.len(), 24 - 3 - 1);
+        assert_eq!(bands.transcript.len(), 24 - 3);
     }
 
     #[test]

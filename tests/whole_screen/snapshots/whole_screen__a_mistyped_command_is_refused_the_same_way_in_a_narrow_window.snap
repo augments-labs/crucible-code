@@ -1,15 +1,17 @@
 ---
 source: tests/whole_screen/main.rs
-expression: "refused_as_a_slip(\"mistyped-narrow\", 40)"
+assertion_line: 619
+expression: refused_as_a_slip(&mut window)
 ---
-40x24 cursor 20,4 scrolled 0
+40x24 cursor 21,4 scrolled 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
 |                                        |
-|Warning: No models available. Use /login|
-|or set an API key environment variable. |
-|Then use /model to select a model.      |
+|Warning: No models available. Use       |
+|/login or set an API key environment    |
+|variable. Then use /model to select a   |
+|model.                                  |
 |                                        |
 |› /modle                                |
 |⎿ ! no such command: /modle             |
@@ -26,4 +28,3 @@ expression: "refused_as_a_slip(\"mistyped-narrow\", 40)"
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)        |
-|                       transcript map → |

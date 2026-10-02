@@ -1,13 +1,15 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 1612
 expression: picture
 ---
-40x30 cursor 28,0 scrolled 0
-|Warning: No models available. Use /login|
-|or set an API key environment variable. |
-|Then use /model to select a model.      |
-|                                        |
-|› /login kimi                           |
+40x30 cursor 29,0 scrolled 0
+|Warning: No models available. Use      │|
+|/login or set an API key environment   │|
+|variable. Then use /model to select a  ┃|
+|model.                                 ┃|
+|                                       ┃|
+|› /login kimi                          ┃|
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
@@ -32,4 +34,3 @@ expression: picture
 |  may use what is sent · set MOONSHOT_A…|
 |                                        |
 |esc to cancel                           |
-|                                        |

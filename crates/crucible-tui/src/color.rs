@@ -45,11 +45,11 @@
 //! carry, rather than against black and white, because a row that has taken the
 //! ground has none of the reader's left behind it to clear.
 //!
-//! The transcript-map chip is the smallest exception. At rest it spends the
-//! accent as ink; under the pointer that exact accent becomes the ground under
-//! contrasting black or white text, including one padded cell on each side. The
-//! rectangle says the label is one control, and because the ground is made from
-//! the same table entry it cannot drift from the configured theme.
+//! A control under the pointer is the smallest exception. At rest it spends
+//! the accent as ink; under the pointer that exact accent becomes the ground
+//! under contrasting black or white text. The rectangle says the label is one
+//! control, and because the ground is made from the same table entry it cannot
+//! drift from the configured theme.
 //!
 //! The row the reader's own prompt is on is the other, and it is the exception
 //! to the exception: its ground is *their* ground where they have one to give,

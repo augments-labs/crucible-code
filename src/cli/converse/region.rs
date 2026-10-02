@@ -352,11 +352,6 @@ fn drawn<T: Terminal>(
         column: 0,
     });
 
-    // The row beside the box is the panel's too while the panel stands: the
-    // box is covered, and the `transcript map` door on it reports on a screen
-    // the panel owns, so the band goes blank with the box. Up on the way in,
-    // back on the way out — covered and uncovered in the same place the box is.
-    renderer.cover_map()?;
     renderer.live(&[], Caret::default(), style.palette())?;
     renderer.under(rows, Some(caret), style.palette())?;
     Ok(true)

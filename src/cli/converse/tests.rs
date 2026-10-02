@@ -1072,7 +1072,7 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     let cancellation = terms.cancel.clone();
     let mut renderer = Renderer::new(Breaking {
         inner: Recording::new(80, 24),
-        left: 3,
+        left: 2,
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
@@ -1257,20 +1257,12 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
         "the box was not under the reading: {rows:?}"
     );
 
-    // The mode remains directly under the box for the whole stretch it is
-    // deciding things over. The dedicated transcript-map control is the one
-    // row below it now, so the mode is the penultimate row rather than the last.
-    assert!(
-        rows.iter()
-            .rev()
-            .nth(1)
-            .is_some_and(|row| row.contains("full access mode on")),
-        "the row under the box did not say the mode: {rows:?}"
-    );
+    // The mode remains directly under the box, on the window's last row, for
+    // the whole stretch it is deciding things over.
     assert!(
         rows.last()
-            .is_some_and(|row| row.contains("transcript map")),
-        "the map control was not under the mode: {rows:?}"
+            .is_some_and(|row| row.contains("full access mode on")),
+        "the row under the box did not say the mode: {rows:?}"
     );
 
     // And the cursor comes back into the box rather than onto the answer,

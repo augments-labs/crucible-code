@@ -1,30 +1,30 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 2055
+assertion_line: 2591
 expression: window.picture()
 ---
-40x24 cursor 20,4 scrolled 0
-|                                        |
-|* 0.41.1 - 2026-09-14                   |
-|                                        |
-|   Security                             |
-|   - A TLS 1.3 handshake that breaks the|
-|     protocol's encryption rules is     |
-|     refused. crucible now uses rustls  |
-|     0.23.45, which rejects a handshake |
-|     message a server sends in plaintext|
-|     where it must be encrypted         |
-|     (RUSTSEC-2026-0285). The handshake |
-|     stayed authenticated, so no        |
-|     connection could be altered or     |
-|     taken over, but earlier versions   |
-|     accepted a server that broke the   |
-|     rule.                              |
-|                                        |
+40x24 cursor 21,4 scrolled 0
+|> /release-notes v0.41.1               ||
+|                                       ||
+|* 0.41.1 - 2026-09-14                  ||
+|                                       ||
+|   Security                            ||
+|   - A TLS 1.3 handshake that breaks   ||
+|     the protocol's encryption rules is#|
+|     refused. crucible now uses rustls #|
+|     0.23.45, which rejects a handshake#|
+|     message a server sends in         #|
+|     plaintext where it must be        #|
+|     encrypted (RUSTSEC-2026-0285). The#|
+|     handshake stayed authenticated, so#|
+|     no connection could be altered or #|
+|     taken over, but earlier versions  #|
+|     accepted a server that broke the  #|
+|     rule.                             #|
+|                                       #|
 |                                        |
 |                                        |
 |+--------------------------------------+|
 || >                                    ||
 |+--------------------------------------+|
 |ask mode on (shift+tab to cycle)        |
-|                       transcript map > |

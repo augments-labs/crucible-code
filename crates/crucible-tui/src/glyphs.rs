@@ -362,15 +362,17 @@ impl Glyphs {
         }
     }
 
-    /// A semantic place on the transcript map.
+    /// The part of the scroll rail that stands for what is on screen.
     ///
-    /// Hollow so the filled mark showing the current place remains distinct,
-    /// and unlike the horizontal rail in both sets. One column because it
-    /// replaces one cell of that rail rather than widening it.
-    pub(crate) fn landmark(self) -> &'static str {
+    /// Heavier than [`Glyphs::vertical`], which is the track it runs along, so
+    /// the two read apart by weight where colour says nothing; and not
+    /// [`Glyphs::bullet`], which marks a prompt on the same track. One column
+    /// in both sets, because the rail is one column.
+    #[must_use]
+    pub fn thumb(self) -> &'static str {
         match self {
-            Self::Unicode => "○",
-            Self::Ascii => "o",
+            Self::Unicode => "┃",
+            Self::Ascii => "#",
         }
     }
 

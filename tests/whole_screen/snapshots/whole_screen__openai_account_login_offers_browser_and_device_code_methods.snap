@@ -1,18 +1,20 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 1807
 expression: window.picture()
 ---
-80x24 cursor 22,0 scrolled 0
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|                                                                                |
-|Warning: No models available. Use /login or set an API key environment variable.|
-|Then use /model to select a model.                                              |
-|                                                                                |
-|› /login                                                                        |
+80x24 cursor 23,0 scrolled 0
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      ││|
+|│ · ctrl+c     clears the line typed so far                                   ││|
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                               ┃|
+|                                                                               ┃|
+|Warning: No models available. Use /login or set an API key environment         ┃|
+|variable. Then use /model to select a model.                                   ┃|
+|                                                                               ┃|
+|› /login                                                                       ┃|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |OpenAI                                                                          |
@@ -26,4 +28,3 @@ expression: window.picture()
 |  sign in to ChatGPT from another device                                        |
 |                                                                                |
 |esc to go back                                                                  |
-|                                                                                |

@@ -553,11 +553,6 @@ pub(crate) fn converse<T: Terminal>(
             }
         }
 
-        // The fixed foot — the transcript-map door. Said here rather than
-        // once at startup because a session that reopens the screen — a view,
-        // a resize — is one that has to be told again.
-        renderer.foots()?;
-
         // A view opened during the last turn is still open, and it was standing
         // in the rows the box is about to take. So it moves into the region
         // here and reads keys of its own until it is closed, and what comes

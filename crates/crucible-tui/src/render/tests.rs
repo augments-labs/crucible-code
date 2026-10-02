@@ -145,9 +145,8 @@ fn what_a_turn_stands_under_sits_between_the_transcript_and_the_box() {
 }
 
 #[test]
-fn replacing_the_foot_flushes_turn_prompt_status_and_map_once() {
+fn replacing_the_foot_flushes_turn_prompt_and_status_once() {
     let mut drawn = Drawn::new(60, 10);
-    drawn.foots().unwrap();
     let old = vec![Row::plain("old prompt"), Row::plain("old status")];
     drawn
         .replace(
@@ -180,13 +179,6 @@ fn replacing_the_foot_flushes_turn_prompt_status_and_map_once() {
     assert!(screen.iter().any(|row| row == "new turn"), "{screen:?}");
     assert!(screen.iter().any(|row| row == "new prompt"), "{screen:?}");
     assert!(screen.iter().any(|row| row == "new status"), "{screen:?}");
-    assert!(
-        drawn
-            .screen()
-            .row(map_row(&drawn))
-            .ends_with(" transcript map →"),
-        "{screen:?}"
-    );
 }
 
 #[test]
@@ -204,7 +196,6 @@ fn prompt_row_construction_rejects_mismatched_targets_and_carets() {
 #[test]
 fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
     let mut drawn = Drawn::new(60, 10);
-    drawn.foots().unwrap();
     drawn.wears(colourful());
     let prompt = vec![
         Row::plain("prompt"),
@@ -282,69 +273,11 @@ fn a_pointable_prompt_defers_one_frame_until_its_target_is_replaced() {
 }
 
 #[test]
-fn crossing_from_the_command_target_to_the_transcript_map_waits_for_one_foot_frame() {
-    let mut drawn = Drawn::new(60, 10);
-    drawn.wears(colourful());
-    drawn.foots().unwrap();
-    let prompt = vec![
-        Row::plain("prompt"),
-        Row::new().then(Slot::Accent, "2 commands"),
-    ];
-    let pointed = Row::new().then(Slot::Pointed, "2 commands");
-    let packet = || PromptRows {
-        rows: &prompt,
-        caret: Caret::default(),
-        pointed: Some((1, &pointed)),
-    };
-    drawn.replace(packet(), &[], colourful()).unwrap();
-    drawn.take();
-
-    let target = drawn.bands().prompt.start + 1;
-    drawn
-        .took(Pressed::Hovered {
-            row: target,
-            column: 0,
-        })
-        .unwrap();
-    assert!(drawn.pointed_changed());
-    drawn.replace(packet(), &[], colourful()).unwrap();
-    drawn.take();
-
-    let map = map_row(&drawn);
-    let door = transcript_map::door(drawn.columns()).expect("the transcript-map door");
-    let before = drawn.terminal().flushes();
-    drawn
-        .took(Pressed::Hovered {
-            row: map,
-            column: door.start,
-        })
-        .unwrap();
-
-    assert!(drawn.pointed_changed());
-    assert_eq!(drawn.terminal().flushes(), before);
-    assert_eq!(
-        drawn.take(),
-        "",
-        "the map painted before the prompt candidate"
-    );
-
-    drawn.replace(packet(), &[], colourful()).unwrap();
-    assert_eq!(drawn.terminal().flushes(), before + 1);
-    assert!(
-        drawn.take().contains("48;"),
-        "neither target gained a ground"
-    );
-}
-
-#[test]
 fn a_panel_that_fills_the_room_keeps_its_last_row() {
-    // The row under the box is the session's for the whole of its run, so the
-    // height a panel is laid out into is not the window's. A panel handed the
-    // window's own height loses its bottom row — which is the row every one of
-    // them says which keys it answers to on.
+    // The height a panel is laid out into is the room it is given. A panel
+    // handed more than that loses its bottom row — which is the row every one
+    // of them says which keys it answers to on.
     let mut drawn = Drawn::new(40, 10);
-    drawn.foots().unwrap();
-    drawn.cover_map().unwrap();
 
     let room = drawn.room();
     let rows: Vec<Row> = (0..room)
@@ -1533,12 +1466,14 @@ fn a_cut_result_that_moved_out_from_under_a_still_pointer_goes_quiet_again() {
     assert!(frame.contains(&quietly("alpha")), "{frame:?}");
 }
 
-// The transcript map.
+// The scroll rail.
 
-/// A renderer with a fixed foot and enough numbered transcript to seek.
-fn mapped() -> Drawn {
+/// A renderer with the rail on, on a window sixty columns wide and ten rows
+/// tall, holding eighty numbered lines with a prompt mark before every
+/// twentieth. Following the foot, the band shows `line 70` to `line 79`.
+fn railed() -> Drawn {
     let mut drawn = Drawn::new(60, 10);
-    drawn.foots().unwrap();
+    drawn.rails(true);
     for line in 0..80 {
         if line % 20 == 0 {
             drawn.landmark();
@@ -1548,233 +1483,272 @@ fn mapped() -> Drawn {
     drawn
 }
 
-/// The screen row carrying the fixed transcript-map control.
-fn map_row(drawn: &Drawn) -> usize {
-    drawn.bands().foot.end.saturating_sub(1)
+/// The rail's column, read down the transcript band: one character a row,
+/// a space where nothing is drawn.
+fn rail_of(drawn: &Drawn) -> String {
+    let screen = drawn.screen();
+    let column = drawn.columns() - 1;
+    drawn
+        .bands()
+        .transcript
+        .map(|row| screen.row(row).chars().nth(column).unwrap_or(' '))
+        .collect()
+}
+
+/// A press on the rail's column at window row `row`.
+fn rail_click(drawn: &mut Drawn, row: usize) -> Option<Pressed> {
+    let column = drawn.columns() - 1;
+    drawn.took(Pressed::Clicked { row, column }).unwrap()
 }
 
 #[test]
-fn pointing_at_the_transcript_map_uses_the_accent_as_a_background() {
-    let mut drawn = mapped();
-    let at = map_row(&drawn);
+fn a_rail_left_off_draws_nothing_and_takes_no_column() {
+    let mut drawn = Drawn::new(40, 8);
+    let (rows, caret) = boxed();
+    drawn.live(&rows, caret, Palette::plain()).unwrap();
+    for line in 0..40 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    let full = "x".repeat(40);
+    drawn.commit(&full).unwrap();
+
+    // The transcript has the whole width, and no row of the window is held
+    // back for anything under the box.
+    assert_eq!(drawn.transcript_columns(), 40);
+    let screen = drawn.screen();
+    let foot = drawn.bands().transcript.end - 1;
+    assert_eq!(screen.row(foot), full);
+    assert_eq!(screen.row(7), "╰────╯");
+    assert_eq!(drawn.room(), 8);
+    for row in screen.rows() {
+        assert!(
+            !row.contains(['┃', '│', '•']) || row.starts_with('│'),
+            "{row:?}"
+        );
+    }
+}
+
+#[test]
+fn the_rail_takes_the_last_column_and_the_transcript_folds_one_narrower() {
+    let mut drawn = Drawn::new(40, 8);
+    drawn.rails(true);
+    for line in 0..40 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.commit(&"x".repeat(40)).unwrap();
+
+    assert_eq!(drawn.transcript_columns(), 39);
+    let screen = drawn.screen();
+    assert_eq!(screen.row(6), format!("{}┃", "x".repeat(39)));
+    assert_eq!(screen.row(7), format!("x{}┃", " ".repeat(38)));
+
+    // And again at whatever width the window is pulled to.
+    drawn.render.terminal.resize(30, 8);
+    drawn.resized().unwrap();
+    assert_eq!(drawn.transcript_columns(), 29);
+    assert_eq!(drawn.screen().row(6), format!("{}┃", "x".repeat(29)));
+}
+
+#[test]
+fn the_rail_thumb_stands_at_the_end_the_middle_and_the_top_of_the_transcript() {
+    // Eighty rows on a rail of ten: eight to a rail row, the band two rail
+    // rows long, and the prompts at lines 0, 20, 40 and 60 on rail rows 0, 2,
+    // 5 and 7.
+    let mut drawn = railed();
+    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+
+    drawn.scrolled(-35).unwrap();
+    assert_eq!(
+        drawn
+            .screen()
+            .row(0)
+            .split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>(),
+        ["line", "35"]
+    );
+    assert_eq!(rail_of(&drawn), "•│•│┃┃│•││");
+
+    drawn.scrolled(-35).unwrap();
+    assert_eq!(rail_of(&drawn), "┃┃•││•│•││");
+}
+
+#[test]
+fn a_click_on_the_rail_seeks_there_and_goes_no_further() {
+    let mut drawn = railed();
+
+    // Rail row 3 carries no mark, so the thumb's middle goes there: the
+    // band's top is sixteen rows in.
+    assert_eq!(rail_click(&mut drawn, 3), None);
+    assert!(
+        drawn.screen().row(0).starts_with("line 16 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+    assert_eq!(rail_of(&drawn), "•│┃┃│•│•││");
+    assert_eq!(
+        drawn
+            .took(Pressed::Released { row: 3, column: 59 })
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_drag_on_the_rail_thumb_scrolls_the_transcript_with_it() {
+    let mut drawn = railed();
+    let starts = |drawn: &Drawn, line: &str| drawn.screen().row(0).starts_with(&format!("{line} "));
+
+    // Taken by its last row, so that row follows the pointer.
+    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+    assert_eq!(rail_click(&mut drawn, 9), None);
+    assert!(starts(&drawn, "line 70"), "the press on the thumb moved it");
+
+    assert_eq!(
+        drawn.took(Pressed::Dragged { row: 1, column: 0 }).unwrap(),
+        None
+    );
+    assert!(starts(&drawn, "line 0"), "{:?}", drawn.screen().rows());
+
+    assert_eq!(
+        drawn.took(Pressed::Dragged { row: 3, column: 59 }).unwrap(),
+        None
+    );
+    assert!(starts(&drawn, "line 16"), "{:?}", drawn.screen().rows());
+    assert_eq!(rail_of(&drawn), "•│┃┃│•│•││");
+
+    // Past the foot of the band is the foot of the record.
+    assert_eq!(
+        drawn
+            .took(Pressed::Dragged {
+                row: 12,
+                column: 59
+            })
+            .unwrap(),
+        None
+    );
+    assert!(starts(&drawn, "line 70"), "{:?}", drawn.screen().rows());
+
+    assert_eq!(
+        drawn
+            .took(Pressed::Released {
+                row: 12,
+                column: 59
+            })
+            .unwrap(),
+        None
+    );
+
+    // Let go: a drag now is the selection's again, and moves nothing.
+    drawn.took(Pressed::Dragged { row: 1, column: 59 }).unwrap();
+    assert!(starts(&drawn, "line 70"));
+}
+
+#[test]
+fn a_click_on_a_rail_mark_lands_on_its_prompt() {
+    let mut drawn = railed();
+
+    assert_eq!(rail_click(&mut drawn, 5), None);
+    assert!(
+        drawn.screen().row(0).starts_with("line 40 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+
+    assert_eq!(rail_click(&mut drawn, 0), None);
+    assert!(
+        drawn.screen().row(0).starts_with("line 0 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+}
+
+#[test]
+fn a_selection_dragged_across_the_rail_neither_lights_nor_copies_it() {
+    let mut drawn = railed();
+
+    drawn.took(Pressed::Clicked { row: 0, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 1, column: 59 }).unwrap();
+    let lit = drawn.take();
+    assert!(lit.contains("\x1b[7m"), "nothing was lit: {lit:?}");
+    for cell in ["┃", "│", "•"] {
+        let reversed = format!("\x1b[7m{cell}");
+        assert!(!lit.contains(&reversed), "{lit:?}");
+    }
+
+    drawn
+        .took(Pressed::Released { row: 1, column: 59 })
+        .unwrap();
+    let copied = drawn.take();
+    let wanted = onto_the_clipboard("line 70\nline 71");
+    assert!(copied.contains(&wanted), "{copied:?}");
+}
+
+#[test]
+fn a_pointer_on_the_rail_lights_no_cut_result() {
+    let mut drawn = Drawn::new(40, 4);
+    drawn.rails(true);
     drawn.wears(colourful());
-    drawn.foots().unwrap();
-    let door = transcript_map::door(drawn.columns()).expect("the transcript-map door");
-    let resting = transcript_map::resting(drawn.columns(), Glyphs::Unicode, false);
-    assert_eq!(resting.kinds().last(), Some(Slot::Accent));
+    for line in 0..8 {
+        drawn.present(&[cut(&format!("cut {line}"))]).unwrap();
+    }
     drawn.take();
 
+    drawn.took(Pressed::Hovered { row: 0, column: 39 }).unwrap();
+    assert_eq!(drawn.take(), "", "the rail lit the row beside it");
+
+    drawn.took(Pressed::Hovered { row: 0, column: 0 }).unwrap();
+    assert!(!drawn.take().is_empty(), "the row itself did not light");
+}
+
+#[test]
+fn a_rail_over_a_transcript_that_fits_is_blank_and_a_click_there_is_the_transcripts() {
+    let mut drawn = Drawn::new(40, 8);
+    drawn.rails(true);
+    drawn.commit("a line").unwrap();
+
+    assert_eq!(rail_of(&drawn), " ".repeat(8));
+    let click = Pressed::Clicked { row: 0, column: 39 };
+    assert_eq!(drawn.took(click.clone()).unwrap(), Some(click));
+}
+
+#[test]
+fn the_rail_is_not_drawn_at_the_narrowest_width_that_cannot_spare_it() {
+    let narrowest = crate::scroll_rail::NARROWEST;
+    for (columns, drawn_at) in [(narrowest - 1, false), (narrowest, true)] {
+        let mut drawn = Drawn::new(columns, 6);
+        drawn.rails(true);
+        for line in 0..20 {
+            drawn.commit(&format!("{line}")).unwrap();
+        }
+
+        assert_eq!(drawn.transcript_columns(), columns - usize::from(drawn_at));
+        assert_eq!(rail_of(&drawn).contains('┃'), drawn_at, "{columns}");
+        let click = Pressed::Clicked {
+            row: 0,
+            column: columns - 1,
+        };
+        assert_eq!(
+            drawn.took(click.clone()).unwrap().is_some(),
+            !drawn_at,
+            "{columns}"
+        );
+    }
+}
+
+#[test]
+fn a_redirected_run_has_no_rail_to_fold_for() {
+    let mut drawn = Drawn {
+        render: Renderer::new(Recording::redirected(40, 8)),
+    };
+    drawn.rails(true);
+    drawn.commit(&"x".repeat(40)).unwrap();
+
+    assert_eq!(drawn.transcript_columns(), 40);
     assert_eq!(
-        drawn
-            .took(Pressed::Hovered {
-                row: at,
-                column: door.start,
-            })
-            .unwrap(),
-        None
+        drawn.render.terminal.written(),
+        format!("{}\n", "x".repeat(40))
     );
-    let pointed = transcript_map::resting(drawn.columns(), Glyphs::Unicode, true);
-    assert_eq!(pointed.kinds().last(), Some(Slot::Pointed));
-    assert!(
-        drawn.take().contains("48;"),
-        "pointing added no accent ground"
-    );
-
-    // All-motion reporting sends one event per cell. A second cell inside the
-    // same door is the same one-bit state and must cost no frame.
-    drawn
-        .took(Pressed::Hovered {
-            row: at,
-            column: door.start + 1,
-        })
-        .unwrap();
-    assert_eq!(drawn.take(), "");
-
-    drawn
-        .took(Pressed::Hovered {
-            row: at.saturating_sub(1),
-            column: door.start + 1,
-        })
-        .unwrap();
-    assert!(!drawn.take().is_empty(), "leaving the door drew no frame");
-}
-
-#[test]
-fn clicking_the_bottom_transcript_map_label_opens_the_whole_row() {
-    let mut drawn = mapped();
-    let at = map_row(&drawn);
-    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
-
-    assert_eq!(
-        drawn
-            .took(Pressed::Clicked {
-                row: at,
-                column: door.start,
-            })
-            .unwrap(),
-        None
-    );
-
-    let foot = drawn.screen().row(map_row(&drawn)).to_owned();
-    assert!(foot.starts_with("first "), "{foot:?}");
-    assert!(foot.ends_with(" now"), "{foot:?}");
-    assert!(foot.contains('■'), "{foot:?}");
-}
-
-#[test]
-fn dragging_the_map_crosses_the_transcript_without_moving_the_box() {
-    let mut drawn = mapped();
-    let at = map_row(&drawn);
-    let (box_rows, caret) = boxed();
-    drawn.live(&box_rows, caret, Palette::plain()).unwrap();
-    let prompt = drawn.bands().prompt;
-    let box_before: Vec<String> = prompt
-        .clone()
-        .map(|row| drawn.screen().row(row).to_owned())
-        .collect();
-    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
-    drawn
-        .took(Pressed::Clicked {
-            row: at,
-            column: door.start,
-        })
-        .unwrap();
-    let track = transcript_map::track(drawn.columns()).expect("the map track");
-
-    drawn
-        .took(Pressed::Clicked {
-            row: at,
-            column: track.end - 1,
-        })
-        .unwrap();
-    drawn
-        .took(Pressed::Dragged {
-            row: at,
-            column: track.start,
-        })
-        .unwrap();
-    drawn
-        .took(Pressed::Released {
-            row: at,
-            column: track.start,
-        })
-        .unwrap();
-
-    assert_eq!(drawn.screen().row(0), "line 0");
-    let box_after: Vec<String> = prompt
-        .map(|row| drawn.screen().row(row).to_owned())
-        .collect();
-    assert_eq!(box_after, box_before);
-}
-
-#[test]
-fn a_landmark_click_lands_on_the_prompt_boundary() {
-    let mut drawn = mapped();
-    let at = map_row(&drawn);
-    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
-    drawn
-        .took(Pressed::Clicked {
-            row: at,
-            column: door.start,
-        })
-        .unwrap();
-    let track = transcript_map::track(drawn.columns()).expect("the map track");
-    let cell = drawn
-        .record
-        .map_landmarks(drawn.map.span().expect("an open map"), track.len())
-        .iter()
-        .rposition(|marked| *marked)
-        .expect("a prompt landmark");
-
-    drawn
-        .took(Pressed::Clicked {
-            row: at,
-            column: track.start + cell,
-        })
-        .unwrap();
-    drawn
-        .took(Pressed::Released {
-            row: at,
-            column: track.start + cell,
-        })
-        .unwrap();
-
-    assert_eq!(drawn.screen().row(0), "line 60");
-}
-
-#[test]
-fn an_open_map_consumes_the_wheel_before_a_standing_component_can() {
-    let mut drawn = mapped();
-    let at = map_row(&drawn);
-    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
-    drawn
-        .took(Pressed::Clicked {
-            row: at,
-            column: door.start,
-        })
-        .unwrap();
-    let before_map = drawn.screen().row(map_row(&drawn)).to_owned();
-    let before_line = drawn.screen().row(1).to_owned();
-
-    assert_eq!(drawn.took(Pressed::Scrolled { back: true }).unwrap(), None);
-
-    assert_ne!(drawn.screen().row(map_row(&drawn)), before_map);
-    assert_ne!(drawn.screen().row(1), before_line);
-}
-
-#[test]
-fn a_key_keeps_its_meaning_while_the_map_is_open() {
-    let mut drawn = mapped();
-    let at = map_row(&drawn);
-    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
-    drawn
-        .took(Pressed::Clicked {
-            row: at,
-            column: door.start,
-        })
-        .unwrap();
-    let key = Pressed::Key(crate::editor::Key::Char('x'));
-
-    assert_eq!(drawn.took(key.clone()).unwrap(), Some(key));
-    assert!(drawn.screen().row(map_row(&drawn)).starts_with("first "));
-}
-
-#[test]
-fn the_wheel_moves_the_transcript_and_the_open_maps_mark_together() {
-    let mut drawn = mapped();
-    let at = map_row(&drawn);
-    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
-    drawn
-        .took(Pressed::Clicked {
-            row: at,
-            column: door.start,
-        })
-        .unwrap();
-    let before_map = drawn.screen().row(map_row(&drawn)).to_owned();
-    let before_line = drawn.screen().row(1).to_owned();
-
-    assert!(drawn.notched(true).unwrap());
-
-    assert_ne!(drawn.screen().row(map_row(&drawn)), before_map);
-    assert_ne!(drawn.screen().row(1), before_line);
-}
-
-#[test]
-fn a_map_put_to_rest_restores_the_identity_row() {
-    let mut drawn = mapped();
-    let at = map_row(&drawn);
-    let door = transcript_map::door(drawn.columns()).expect("the transcript door");
-    drawn
-        .took(Pressed::Clicked {
-            row: at,
-            column: door.start,
-        })
-        .unwrap();
-    drawn.map.due();
-
-    assert!(drawn.repose().unwrap());
-    let foot = drawn.screen().row(map_row(&drawn)).to_owned();
-    assert!(foot.ends_with(" transcript map →"), "{foot:?}");
 }
 
 // A line amended after it was written.

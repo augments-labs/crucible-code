@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 2063
 expression: "reaching::unnamed(&picture, &planted.website)"
 ---
 80x24 cursor 1,17 scrolled 0
@@ -19,6 +20,7 @@ expression: "reaching::unnamed(&picture, &planted.website)"
 |│                              │ │                                             │|
 |│                              │ │                                             │|
 |│                              │ │                                             │|
+|│                              │ │                                             │|
 |│                              │ │ ────────────────────────────────────────────│|
 |│                              │ │ just now · 1 message · main                 │|
 |│                              │ │ Enter to see how to resume · Esc to cancel  │|
@@ -26,4 +28,3 @@ expression: "reaching::unnamed(&picture, &planted.website)"
 | cd ~/projects/website &&                                                       |
 | crucible --resume <id>                                                         |
 | ctrl+a this project · ctrl+b this branch · ctrl+w worktrees · esc              |
-|                                                                                |

@@ -1,9 +1,10 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 1722
 expression: models
 ---
 80x24 cursor 4,16 scrolled 0
-|› /model                                                                        |
+|› /model                                                                       ┃|
 |Model                                                     now  nothing asked yet|
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
@@ -21,9 +22,9 @@ expression: models
 |│   MiMo            · │                                                        │|
 |│   MiniMax         · │                                                        │|
 |│   MoonshotAI      · │                                                        │|
+|│   OpenAI          · │                                                        │|
 |╰─────────────────────┴────────────────────────────────────────────────────────╯|
 |                                                                                |
 |  Effort   ‹ low ›  medium   high                                               |
 |                                                                                |
 |  tab pane · ↑↓ model · ←→ effort · enter takes both · esc to cancel            |
-|                                                                                |

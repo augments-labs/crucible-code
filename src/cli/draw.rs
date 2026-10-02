@@ -127,7 +127,7 @@ pub(crate) fn event<T: Terminal>(
     style: Style,
     kept: &mut Kept,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     let drawn = match event {
         // The turn number is in the title bar, not in the transcript: a line
@@ -302,7 +302,7 @@ fn refused_fast<T: Terminal>(
         "{provider} refused fast: {}. {then}",
         reason.trim_end_matches('.')
     );
-    let room = renderer.columns().saturating_sub(lead.columns());
+    let room = renderer.transcript_columns().saturating_sub(lead.columns());
     let rows = hung_off(lead, &Row::plain(said), room);
 
     renderer.settle()?;
@@ -370,7 +370,7 @@ pub(crate) fn gone<T: Terminal>(
     // Reserve the status and count before shortening the command. Its original
     // call holds the full heading; repeating a huge script here would undo the
     // compact transcript. Only a window too narrow for the fixed suffix wraps.
-    let window = renderer.columns();
+    let window = renderer.transcript_columns();
     let lead = Row::plain(format!("{mark} "));
     let room = style
         .output(window)
@@ -398,7 +398,7 @@ pub(crate) fn unconfigured<T: Terminal>(
     renderer: &mut Renderer<T>,
     said: &str,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let rows: Vec<Row> = fold(said, columns)
         .into_iter()
         .map(|row| Row::new().then(Slot::Strong, row))
@@ -580,7 +580,7 @@ fn rows<T: Terminal>(
     style: Style,
 ) -> Result<(), TerminalError> {
     let files: Vec<&str> = named.iter().map(String::as_str).collect();
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     renderer.present(&crucible_tui::Prompt::attached(
         &files,
         columns,
@@ -709,7 +709,7 @@ pub(crate) fn question<T: Terminal>(
     sensitivity: &Sensitivity,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     renderer.settle()?;
     for row in asked(call, sensitivity, columns) {
@@ -737,7 +737,7 @@ pub(crate) fn asking<T: Terminal>(
     of: usize,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     renderer.settle()?;
     let counted = if of > 1 {
@@ -918,7 +918,7 @@ pub(crate) fn returned<T: Terminal>(
     said: &str,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let words = words(said, renderer.columns(), style);
+    let words = words(said, renderer.transcript_columns(), style);
     renderer.settle()?;
     renderer.apart()?;
     let mut row = Row::new().then(Slot::Accent, style.glyphs().called());
@@ -953,7 +953,7 @@ pub(crate) fn gathered<T: Terminal>(
     style: Style,
 ) -> Result<usize, TerminalError> {
     let glyphs = style.glyphs();
-    let window = renderer.columns();
+    let window = renderer.transcript_columns();
 
     renderer.settle()?;
     renderer.apart()?;
@@ -1278,9 +1278,9 @@ pub(crate) fn came_back<T: Terminal>(
     output: Shown,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let details = kept
-        .heading(call)
-        .is_some_and(|said| words(said, renderer.columns(), style).text() != flattened(said));
+    let details = kept.heading(call).is_some_and(|said| {
+        words(said, renderer.transcript_columns(), style).text() != flattened(said)
+    });
     // The first line the result writes, which is where the offer goes. Read
     // before the rows go down rather than counted back after them: a change is
     // written as one line however many rows it draws, so counting its rows back
@@ -1288,7 +1288,7 @@ pub(crate) fn came_back<T: Terminal>(
     let at = renderer.lines();
     let rows = if changed(&output).is_some() && renderer.is_terminal() {
         let retained = output.clone();
-        let rows = finished_rows(&retained, renderer.columns(), style, details);
+        let rows = finished_rows(&retained, renderer.transcript_columns(), style, details);
         let bytes = retained.diff.as_ref().map_or(0, Diff::retained);
         renderer.responsive(
             bytes,
@@ -1296,7 +1296,7 @@ pub(crate) fn came_back<T: Terminal>(
         )?;
         rows
     } else {
-        let rows = finished_rows(&output, renderer.columns(), style, details);
+        let rows = finished_rows(&output, renderer.transcript_columns(), style, details);
         renderer.present(&rows)?;
         rows
     };
@@ -1654,7 +1654,7 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
 ///
 /// [`TerminalError::Io`] if the terminal could not be written to.
 pub(crate) fn unmade<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
-    let window = renderer.columns();
+    let window = renderer.transcript_columns();
     let rows = [Row::new().then(Slot::Quiet, clip(NOTHING, window))];
 
     renderer.present(&rows)
@@ -1679,7 +1679,7 @@ const NOTHING: &str = "there is nothing behind this turn worth replacing yet";
 ///
 /// [`TerminalError::Io`] if the terminal could not be written to.
 pub(crate) fn stopped<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
-    let window = renderer.columns();
+    let window = renderer.transcript_columns();
     let said = notice(StopReason::Cancelled).unwrap_or_default();
     let rows = [Row::new().then(Slot::Quiet, clip(said, window))];
 
@@ -1732,7 +1732,7 @@ pub(crate) fn refused<T: Terminal>(
     renderer.settle()?;
     renderer.apart()?;
     let flat = said.split_whitespace().collect::<Vec<_>>().join(" ");
-    let rows: Vec<Row> = fold(&flat, renderer.columns())
+    let rows: Vec<Row> = fold(&flat, renderer.transcript_columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Trouble, row))
         .collect();

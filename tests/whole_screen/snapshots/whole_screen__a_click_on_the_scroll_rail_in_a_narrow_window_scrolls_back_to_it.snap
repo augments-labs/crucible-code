@@ -1,0 +1,22 @@
+---
+source: tests/whole_screen/main.rs
+assertion_line: 838
+expression: window.picture()
+---
+40x16 cursor 13,4 scrolled 0
+|lazy dog. the quick brown fox jumps    •|
+|over the lazy dog. the quick brown fox │|
+|jumps over the lazy dog. the quick     │|
+|brown fox jumps over the lazy dog. the │|
+|quick brown fox jumps over the lazy    ┃|
+|dog. the quick brown fox jumps over the•|
+|lazy dog. the quick brown fox jumps    │|
+|over the lazy dog. the quick brown fox │|
+|jumps over the lazy dog. the quick     │|
+|brown fox jumps over the lazy dog.     │|
+|                                        |
+|                         99% window left|
+|╭──────────────────────────────────────╮|
+|│ ›                                    │|
+|╰──────────────────────────────────────╯|
+|ask mode on    anthropic · claude-test-1|

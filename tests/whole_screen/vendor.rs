@@ -82,6 +82,15 @@ impl Vendor {
         Self::serving(vec![stream(text)])
     }
 
+    /// Starts one that answers each request with the next of `texts`, a word
+    /// at a time, and every request after them with the last.
+    ///
+    /// For a case that needs more than one turn on screen and has to tell the
+    /// end of one from the end of the next.
+    pub(crate) fn answering_each(texts: &[&str]) -> Self {
+        Self::serving(texts.iter().map(|text| stream(text)).collect())
+    }
+
     /// The same answer, arriving in one delta instead of many.
     ///
     /// How the wire happened to be cut is the vendor's business and none of

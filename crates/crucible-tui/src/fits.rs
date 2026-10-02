@@ -44,6 +44,7 @@ use crate::prompt::Prompt;
 use crate::row::Row;
 use crate::running::{Command, Running};
 use crate::sandbox_panel::{SandboxPanel, SandboxTab};
+use crate::scroll_rail::{Place, ScrollRail};
 use crate::shelf::{Pane, Serving, Shelf, Stocked};
 use crate::timeline::{Brief, Timeline, Told};
 use crate::welcome::{Recent, Welcome};
@@ -748,5 +749,26 @@ fn the_release_timeline_fits_the_window_it_is_printed_into() {
     };
     across("the release timeline", |columns, glyphs| {
         timeline.rows(columns, glyphs)
+    });
+}
+
+#[test]
+fn the_scroll_rail_fits_the_band_it_stands_beside() {
+    // A rail is as tall as the transcript band it stands for, and one column
+    // wide where the window can spare one. Three places in a record far longer
+    // than any band, and one that fits, at every height the band can be.
+    down("the scroll rail", |columns, room, glyphs| {
+        let mut rows = Vec::new();
+        for (total, top) in [(0, 0), (100_000, 0), (100_000, 50_000), (100_000, 99_999)] {
+            let place = Place {
+                total,
+                top,
+                height: room,
+            };
+            let laid = ScrollRail::new(place, [0, 7, 49_999, 99_999]).rows(columns, glyphs);
+            assert!(laid.is_empty() || laid.len() == room, "{columns}x{room}");
+            rows = laid;
+        }
+        rows
     });
 }

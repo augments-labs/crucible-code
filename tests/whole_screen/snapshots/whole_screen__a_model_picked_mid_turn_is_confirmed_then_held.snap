@@ -1,18 +1,19 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 749
+assertion_line: 755
 expression: window.picture()
 ---
-100x24 cursor 22,0 scrolled 0
-|│                                  │ · ctrl+c     clears the line typed so far                     │|
-|╰──────────────────────────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                                    |
-|› start it                                                                                          |
-|                                                                                                    |
-|● Bash(sleep 30)                                                                                    |
-|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                                                   |
-|                                                                                                    |
-|It is started. That is all.                                                                         |
+100x24 cursor 23,0 scrolled 0
+|│                                  │ · shift+tab  steps the permission mode                       ││|
+|│                                  │ · ctrl+c     clears the line typed so far                    ││|
+|╰─────────────────────────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                                                   │|
+|› start it                                                                                         │|
+|                                                                                                   ┃|
+|● Bash(sleep 30)                                                                                   ┃|
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                                                  ┃|
+|                                                                                                   ┃|
+|It is started. That is all.                                                                        ┃|
 |────────────────────────────────────────────────────────────────────────────────────────────────────|
 |                                                                                                    |
 |Switch model?                                                                                       |
@@ -27,4 +28,3 @@ expression: window.picture()
 |  go back                                                                                           |
 |                                                                                                    |
 |esc to go back                                                                                      |
-|                                                                                                    |
