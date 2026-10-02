@@ -462,7 +462,7 @@ pub trait Transport: Send + Sync + fmt::Debug {
     /// The same post, handing back the response headers `reading` says the
     /// provider reads.
     ///
-    /// Only those come back to it, as [`Named`] bounds them; every other
+    /// Only those come back to it, as `Named` bounds them; every other
     /// header stays where it arrived. A transport that answers from somewhere
     /// other than a response's head hands back none, which is what this does
     /// unless it is overridden.

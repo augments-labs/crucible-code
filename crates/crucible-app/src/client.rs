@@ -15,9 +15,10 @@
 //! [`Pending`](crucible_client_api::Pending) action until a [`Front`] answers
 //! it. [`interrupt`] and [`keep`] need no conversation at all, which is the
 //! point of them: a turn is stopped, and a look is written down, while the
-//! conversation is away. [`asking`] and [`asked`] are one command split around
-//! the question it puts to a vendor's plan, so the conversation is not held
-//! while the question is out; [`perform`] answers the same command whole.
+//! conversation is away. [`asking`](fn@asking) and [`asked`] are one command
+//! split around the question it puts to a vendor's plan, so the conversation is
+//! not held while the question is out; [`perform`] answers the same command
+//! whole.
 //!
 //! What comes back is the application's own value — [`Performed`], [`Ended`] —
 //! and not yet the contract's. A terminal draws from the first, because a

@@ -153,7 +153,7 @@ pub enum Performed {
     },
     /// `/usage`: what the session has used, and the plan's limits as the
     /// runner holds them once it was asked. Only [`Command::AskLimits`] asks
-    /// a vendor anything, and only as [`asking`](super::asking) allows.
+    /// a vendor anything, and only as [`asking`](fn@super::asking) allows.
     Usage(Box<Usage>),
     /// `/exit`.
     Leaving,

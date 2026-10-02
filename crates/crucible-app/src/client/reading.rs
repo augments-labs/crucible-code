@@ -181,7 +181,7 @@ pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
 ///
 /// Every figure is one the runner already holds, and reading them sends
 /// nothing anywhere: the limits are what the last response or the last
-/// answer to [`asking`](super::asking) left, and asking is apart from this.
+/// answer to [`asking`](fn@super::asking) left, and asking is apart from this.
 /// The wall time is read as this is called. Called between turns by
 /// [`perform`](super::perform), and by the terminal mid-turn with the figures
 /// that turn last reported; a client with no terminal is streamed the same
