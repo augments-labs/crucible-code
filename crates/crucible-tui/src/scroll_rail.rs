@@ -190,7 +190,8 @@ impl ScrollRail {
     /// No rows at all where the window cannot spare the column. Each row is
     /// one column, structural, and blank where the record fits, pointer or
     /// none. The current prompt's mark is grown wherever it falls, in the
-    /// accent on the thumb or under a pointer and quiet on a track at rest.
+    /// accent on the thumb or while the pointer is anywhere on the rail, and
+    /// quiet on a track at rest.
     pub(crate) fn rows(&self, columns: usize, glyphs: Glyphs, pointer: Option<usize>) -> Vec<Row> {
         if !spared(columns) {
             return Vec::new();
