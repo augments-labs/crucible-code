@@ -153,7 +153,7 @@ fn standing_in(session: &Arc<Session>, model: &str) -> Conversation {
 }
 
 /// The prompts `session` recorded, read back off the disk once it is closed.
-fn recorded(sample: &Sample, session: Arc<Session>) -> Vec<Message> {
+pub(super) fn recorded(sample: &Sample, session: Arc<Session>) -> Vec<Message> {
     assert_eq!(session.finish(), None);
     drop(session);
     let (_, transcript) =

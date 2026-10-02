@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crucible_models::{
     Delta, DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
@@ -18,7 +18,7 @@ use crucible_tools::{
     ToolOutput,
 };
 use crucible_types::{
-    CredentialScopeId, Message, Modalities, Modality, PromptCacheEncoding, ToolArgs,
+    CredentialScopeId, Message, Modalities, Modality, PlanWindows, PromptCacheEncoding, ToolArgs,
 };
 
 /// Drives a future to its answer on a current-thread runtime of its own, the
@@ -77,6 +77,15 @@ pub(crate) struct Script {
     /// Refuses every request, for the path where the provider itself fails
     /// rather than the transcript going wrong inside a response.
     refusing: bool,
+    /// The refusal of a used-up plan every request meets, where one does.
+    used_up: Option<UsedUp>,
+}
+
+/// A vendor's refusal of a used-up plan, and the windows its head reported,
+/// where it reported any.
+#[derive(Debug, Clone, Copy)]
+struct UsedUp {
+    reading: Option<PlanWindows>,
 }
 
 impl Script {
@@ -88,6 +97,7 @@ impl Script {
             under: Under::default(),
             sent: Sent::default(),
             refusing: false,
+            used_up: None,
         }
     }
 
@@ -95,6 +105,15 @@ impl Script {
     pub(crate) fn refusing() -> Self {
         Self {
             refusing: true,
+            ..Self::new(Vec::new())
+        }
+    }
+
+    /// A provider whose vendor refuses every request because the plan is used
+    /// up until tomorrow, reporting `reading` on the refusal's head.
+    pub(crate) fn used_up(reading: Option<PlanWindows>) -> Self {
+        Self {
+            used_up: Some(UsedUp { reading }),
             ..Self::new(Vec::new())
         }
     }
@@ -202,6 +221,17 @@ impl Provider for Script {
                     provider: "script",
                     status: 401,
                     message: "no".into(),
+                });
+            }
+
+            if let Some(UsedUp { reading }) = self.used_up {
+                return Err(ProviderError::PlanLimit {
+                    provider: "script",
+                    window: reading
+                        .and_then(|reading| reading.exhausted(SystemTime::now()))
+                        .map(|(window, _)| window),
+                    resets_at: Some(SystemTime::now() + Duration::from_hours(24)),
+                    reading: reading.map(Box::new),
                 });
             }
 

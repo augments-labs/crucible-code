@@ -610,8 +610,9 @@ pub(crate) fn ask<T: Terminal>(
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
             // and has just been taken back. Ctrl+Q among them: between turns
-            // nothing is queued, so the queue view has nothing to show — the key
-            // is the panel's while a turn runs, and the panel is the turn's.
+            // the queue is empty, or held after a used-up plan until the next
+            // turn is sent — the key is the panel's while a turn runs, and the
+            // panel is the turn's.
             // The pointer moving under a held button and the button coming up
             // again among them: both belong to the selection, which was
             // offered every press before this one saw it, so neither reaches

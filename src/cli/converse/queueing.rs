@@ -191,8 +191,12 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
 /// the answer above them was still arriving, and a line written into the middle
 /// of one is a line in the wrong place.
 ///
-/// `None` beside the conversation where nothing was waiting, and otherwise
-/// whether the session is leaving, as [`ran`] says it.
+/// Not after work that stopped on a used-up plan: the lines stay queued for
+/// the reader, who can take them back or send a prompt, because the plan
+/// they would be sent to is spent until its reset.
+///
+/// `None` beside the conversation where nothing was waiting or the queue is
+/// held, and otherwise whether the session is leaving, as [`ran`] says it.
 pub(super) fn taken<T: Terminal>(
     conversation: Conversation,
     renderer: &mut Renderer<T>,
@@ -200,6 +204,10 @@ pub(super) fn taken<T: Terminal>(
     held: &mut Held<'_>,
     style: Style,
 ) -> Result<(Conversation, Option<bool>), Fatal> {
+    if held.used_up {
+        return Ok((conversation, None));
+    }
+
     // Each line gets what it would have got typed at the box with nobody to
     // ask: its row, the warning, and no turn. Not one turn for the batch,
     // because no turn is what is owed, and not one warning, because each line
