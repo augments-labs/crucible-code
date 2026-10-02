@@ -40,10 +40,7 @@ pub(crate) struct Planted {
 /// session names the directory it was recorded in, so these have to be the
 /// same paths, and a case whose directory moved finds nothing to list.
 pub(crate) fn planted(case: &str) -> Planted {
-    let scratch = std::env::temp_dir().join(format!(
-        "crucible-whole-screen-{}-{case}",
-        std::process::id()
-    ));
+    let scratch = crate::watched::scratch(case);
     let here = scratch
         .join("a-directory-to-be-working-in")
         .join("and-something-below-that-again")
@@ -97,10 +94,7 @@ pub(crate) fn planted(case: &str) -> Planted {
 /// With `said` false the session never got past its header — a run that
 /// opened and left — which is no session to offer anywhere.
 pub(crate) fn away(case: &str, said: bool) -> PathBuf {
-    let scratch = std::env::temp_dir().join(format!(
-        "crucible-whole-screen-{}-{case}",
-        std::process::id()
-    ));
+    let scratch = crate::watched::scratch(case);
     let here = scratch
         .join("a-directory-to-be-working-in")
         .join("and-something-below-that-again")

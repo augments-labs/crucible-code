@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 3742
 expression: on_the_first_beat(&picture)
 ---
 80x24 cursor 23,0 scrolled 0
@@ -23,7 +22,7 @@ expression: on_the_first_beat(&picture)
 |  ██ project instructions       0       0%                                      |
 |  ██ tool schemas            3.8k     1.9%                                      |
 |  ██ MCP tool schemas           0       0%                                      |
-|  ██ messages                 419     0.2%                                      |
+|  ██ messages                 482     0.2%                                      |
 |  ██ reserve                28.1k    14.1%                                      |
 |  ░░ free                  166.4k      99%                                      |
 |                                                                                |
