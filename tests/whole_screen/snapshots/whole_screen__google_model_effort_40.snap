@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 1722
 expression: models
 ---
 40x24 cursor 4,16 scrolled 0

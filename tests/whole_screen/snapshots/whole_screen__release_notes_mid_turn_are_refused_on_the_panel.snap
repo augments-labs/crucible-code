@@ -1,6 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 2722
+assertion_line: 2164
 expression: refused
 ---
 60x24 cursor 23,0 scrolled 0

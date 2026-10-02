@@ -369,7 +369,7 @@ impl Glyphs {
     /// [`Glyphs::bullet`], which marks a prompt on the same track. One column
     /// in both sets, because the rail is one column.
     #[must_use]
-    pub fn thumb(self) -> &'static str {
+    pub(crate) fn thumb(self) -> &'static str {
         match self {
             Self::Unicode => "┃",
             Self::Ascii => "#",

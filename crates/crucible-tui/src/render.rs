@@ -394,8 +394,9 @@ impl<T: Terminal> Renderer<T> {
     /// A click is handed back rather than swallowed. It anchors a drag that may
     /// never happen, and until it does it still means whatever it meant to the
     /// loop underneath — a caret placed in the box, a cut result opened. A
-    /// press on the rail is the exception: it moves the transcript and nothing
-    /// else, so it goes no further, and neither does the drag it starts.
+    /// press on the rail is the exception: it moves the transcript, where there
+    /// is anywhere to move it, and nothing else, so it goes no further, and
+    /// neither does the drag it starts.
     ///
     /// # Errors
     ///
@@ -488,7 +489,9 @@ impl<T: Terminal> Renderer<T> {
     /// rail puts the thumb's middle there; either way the thumb is then held
     /// where the pointer is. A drag moves the held thumb, and the transcript
     /// with it, and the release lets go. A rail with no thumb — a record that
-    /// fits — has nowhere to go, so a press on it is the transcript's.
+    /// fits — has nowhere to go, so a press on it moves nothing; it is still
+    /// the rail's, so it names no line beside it, just as a pointer resting
+    /// there lights none.
     ///
     /// # Errors
     ///
@@ -497,15 +500,19 @@ impl<T: Terminal> Renderer<T> {
         let rows = bands.transcript.len();
         match *arrived {
             Pressed::Clicked { row, column } => {
-                let Some(rail) = self.rail(bands) else {
-                    return Ok(false);
-                };
-                let Some(thumb) = rail.thumb() else {
-                    return Ok(false);
-                };
                 if Some(column) != self.rail_column() || !bands.transcript.contains(&row) {
                     return Ok(false);
                 }
+                let Some((rail, thumb)) = self
+                    .rail(bands)
+                    .and_then(|rail| rail.thumb().map(|thumb| (rail, thumb)))
+                else {
+                    self.held = None;
+                    self.creeps = None;
+                    self.unselects();
+                    self.draw()?;
+                    return Ok(true);
+                };
                 let at = row - bands.transcript.start;
                 if !thumb.contains(&at) {
                     let top = rail

@@ -1,6 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 1475
+assertion_line: 1398
 expression: plans
 ---
 40x30 cursor 29,0 scrolled 0

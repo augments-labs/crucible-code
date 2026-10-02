@@ -1,6 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 3444
+assertion_line: 2867
 expression: asked
 ---
 80x30 cursor 29,0 scrolled 0

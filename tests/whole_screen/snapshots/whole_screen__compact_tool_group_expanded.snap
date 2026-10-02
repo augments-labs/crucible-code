@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 2449
 expression: opened
 ---
 80x32 cursor 31,0 scrolled 0

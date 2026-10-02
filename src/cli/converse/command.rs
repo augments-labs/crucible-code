@@ -610,8 +610,8 @@ pub(super) fn apply_speed<T: Terminal>(
 /// reason it cannot run while a turn is, and the key that closes it. A word
 /// that names no command has neither, and is said back with the names nearest
 /// to it, as it would be between turns. The turn
-/// goes on above — the panel stands where the working row, the box, the status
-/// and the map were, and the transcript keeps its own rows. Nothing of the turn
+/// goes on above — the panel stands where the working row, the box and the
+/// status were, and the transcript keeps its own rows. Nothing of the turn
 /// changes: the command did nothing, and this is the whole of what happened.
 pub(super) fn refused<T: Terminal>(
     renderer: &mut Renderer<T>,

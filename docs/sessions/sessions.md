@@ -52,16 +52,17 @@ close to tell apart share one mark.
 Click anywhere on the rail and the transcript moves so the thumb is centred
 there; click a mark and you land on that prompt. Keep the button down and drag
 to scroll with the pointer, holding the thumb where you took it, and drag it to
-the foot to follow the newest line again. The prompt box and everything standing over it stay where they are. The
-rail takes no keyboard binding, and a drag that selects text never takes it.
+the foot to follow the newest line again. The prompt box and everything
+standing over it stay where they are. The rail takes no keyboard binding, and a
+drag that selects text never takes it.
 
 While the whole transcript fits on screen there is nowhere else to go, so the
-column stands blank. The transcript's text wraps one column narrower to leave it
-room, and a window narrower than 24 columns, where the prompt box also drops its
-frame, does not draw it. Set
-[`output.scrollRail`](../configuration/configuration.md) to `false` to give the
-column back to the text. With colour off, the thumb, track and marks still
-differ by shape.
+column stands blank, and a click there opens nothing beside it. The
+transcript's text wraps one column narrower to leave it room, and a window
+narrower than 24 columns, where the prompt box also drops its frame, does not
+draw it. Set [`output.scrollRail`](../configuration/configuration.md) to
+`false` to give the column back to the text. With colour off, the thumb, track
+and marks still differ by shape.
 
 ## Continuing
 

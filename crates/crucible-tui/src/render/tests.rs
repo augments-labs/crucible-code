@@ -1702,14 +1702,30 @@ fn a_pointer_on_the_rail_lights_no_cut_result() {
 }
 
 #[test]
-fn a_rail_over_a_transcript_that_fits_is_blank_and_a_click_there_is_the_transcripts() {
+fn a_rail_over_a_transcript_that_fits_is_blank() {
     let mut drawn = Drawn::new(40, 8);
     drawn.rails(true);
     drawn.commit("a line").unwrap();
 
     assert_eq!(rail_of(&drawn), " ".repeat(8));
-    let click = Pressed::Clicked { row: 0, column: 39 };
-    assert_eq!(drawn.took(click.clone()).unwrap(), Some(click));
+}
+
+#[test]
+fn a_blank_rail_names_no_cut_result_and_with_the_rail_off_the_column_does() {
+    for rails in [true, false] {
+        let mut drawn = Drawn::new(40, 8);
+        drawn.rails(rails);
+        drawn.wears(colourful());
+        drawn.present(&[cut("cut")]).unwrap();
+        drawn.take();
+
+        drawn.took(Pressed::Hovered { row: 0, column: 39 }).unwrap();
+        assert_eq!(drawn.take().is_empty(), rails, "hover, rail {rails}");
+
+        let click = Pressed::Clicked { row: 0, column: 39 };
+        let passed = drawn.took(click.clone()).unwrap();
+        assert_eq!(passed, (!rails).then_some(click), "click, rail {rails}");
+    }
 }
 
 #[test]
