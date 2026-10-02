@@ -394,7 +394,7 @@ them all at once.
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. |
-| <kbd>e</kbd>, <kbd>x</kbd> | Takes the marked prompt back into the box, cursor after it, where it can be edited or sent again. When the queue is then empty the view closes with it. The footer names <kbd>e</kbd>. |
+| <kbd>e</kbd>, <kbd>x</kbd> | Takes the marked prompt back into the box, cursor after it, where it can be edited or sent again. When the queue is then empty the view closes with it. A prompt too long to go in beside what the box already holds (1 MiB together) stays queued and marked, and the box is left as it was. The footer names <kbd>e</kbd>. |
 | <kbd>d</kbd>, <kbd>Delete</kbd> | Deletes the marked prompt without taking it back; the box is left as it was. When the queue is then empty the view closes with it. |
 | <kbd>Esc</kbd>, <kbd>Ctrl+Q</kbd> | Closes it. |
 | Anything else | Nothing while it stands, <kbd>Ctrl+C</kbd> included. |

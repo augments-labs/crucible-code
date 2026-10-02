@@ -5,7 +5,8 @@
 //! few of it. Up and down walk it, `e` takes the marked line back into the box
 //! to be edited or sent sooner (`x` did that before the footer named a key, and
 //! still does), `d` or Delete drops it without taking it back, and `esc` — or
-//! the key that opened it — closes it again.
+//! the key that opened it — closes it again. A line too long to go into the box
+//! beside what is already typed there stays queued, with the mark on it.
 //!
 //! While it stands, the queue is held, and that is the point of it. The turn
 //! above goes on writing and takes none of these lines: a line the reader is
@@ -37,7 +38,7 @@ use std::collections::VecDeque;
 
 use crucible_app::Conversation;
 use crucible_runtime::Steer;
-use crucible_tui::{Caret, Editor, Key, Pressed, Renderer, Row, Terminal};
+use crucible_tui::{Caret, Editor, Key, Pressed, Renderer, Row, Terminal, Typed};
 
 use crate::cli::Fatal;
 use crate::cli::draw;
@@ -443,7 +444,8 @@ fn moving(arrived: &Pressed, open: &mut Open<'_>) -> Moved {
         // because the panel and the turn's own offer hold the same line — one
         // dropped from the panel alone is a prompt the reader deleted that the
         // turn works in anyway. With one line each is also the way out, since the
-        // list it was read from is then empty.
+        // list it was read from is then empty. A line the box refuses leaves
+        // neither: it stays where it was, rather than being in no place at all.
         Pressed::Key(Key::Char('e' | 'x')) => removed(open, at, true),
         Pressed::Key(Key::Char('d') | Key::Delete) => removed(open, at, false),
 
@@ -454,15 +456,25 @@ fn moving(arrived: &Pressed, open: &mut Open<'_>) -> Moved {
 
 /// Takes the line at `at` out of the queue and the turn's offer, into the box
 /// where `back` is set, and answers what that owes the picture.
+///
+/// The box is asked first. A line it refuses — too long to go in beside what
+/// is already typed there — stays queued with the mark on it, and nothing
+/// changes: taken out before the box said no, it would be in neither place.
 fn removed(open: &mut Open<'_>, at: usize, back: bool) -> Moved {
+    if back {
+        let Some(line) = open.reading.queue.waiting_all().nth(at) else {
+            return Moved::Still;
+        };
+        if open.reading.editor.paste(line) == Typed::Refused {
+            return Moved::Still;
+        }
+    }
+
     let Some(line) = open.reading.queue.drop(at) else {
         return Moved::Still;
     };
 
     open.reading.steer.forget(&line);
-    if back {
-        open.reading.editor.paste(&line);
-    }
     open.at = at.min(open.reading.queue.waiting_count().saturating_sub(1));
 
     if open.reading.queue.waiting_count() == 0 {
