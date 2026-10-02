@@ -11,7 +11,7 @@ expression: picture
 |lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     •|
 |jumps over the lazy dog. the quick brown fox jumps over the lazy dog. again.   │|
 |                                                                               ┃|
-|› /context                                                                     ┃|
+|› /context                                                                     ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Context · claude-test-1 · 200k window                                           |

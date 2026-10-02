@@ -2,7 +2,7 @@
   "harness": {
     "tests/whole_screen/screen.rs": "cc2ad5999ac72ed007d79e0197b0bd8782b9a75d05424aa7fb6ba8906b3a0e8f",
     "tests/whole_screen/vendor.rs": "34f9d6bbec72850a23e2c252f03bd859e3d9dce87eb156e8f1350f71fdecbb1c",
-    "tests/whole_screen/watched.rs": "38667fc3c5211495b69f92118a98bd714b6d66b2f3cb6000c2bbf8ec18043d01"
+    "tests/whole_screen/watched.rs": "4b9ced9e9b5a072c6b65caa4b4552643ed77fe6ab81569b2ef2baf2b4de1d84d"
   },
   "captures": [
     {
@@ -12,13 +12,13 @@
         "Vendor::calling( \"edit\", r##\"{\"path\":\"release.yml\",\"find\":\"# trend data\",\"replace\":\"# what stops a tag\"}\"##, \"Renamed. Nothing else in the file moved.\", )",
         "Watched::allowing(\"tool-called\", 80, 24, &vendor, \"edit(*)\")"
       ],
-      "sha256": "889006e356a13a0dcb6c1643c329990d00fa936d53017ee541046346e2b5a126"
+      "sha256": "f2dc66bb59889116ebee1c69d63c51c12886a9353f092731fa1944d1f47b43ad"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks.snap",
       "case": "a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks",
       "opened": [],
-      "sha256": "ded3aabc7b88dc08ac42018086aef694211a7ca218d5e95ebf9804f2d06a65b3"
+      "sha256": "177a776cb24b1c98aed572525132a401d60b281f97729fd5d0b29b7350894bfa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_the_count_opens_the_list_while_a_turn_is_still_running.snap",
@@ -26,13 +26,13 @@
       "opened": [
         "Watched::allowing(\"click-count-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "c493ee096b746a307aeead27a631f650ab44b11aa97fe08cfb5fe66b37277da5"
+      "sha256": "836dac6f440cfee2a652efd56585d2c611f98f0e19fa438a729ba67f9266488a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it.snap",
       "case": "a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it",
       "opened": [],
-      "sha256": "eadd0b47101ba885869d100548362218ebc1c0adcbb8a70de9dfc28895b19095"
+      "sha256": "d6971c539388152a69b8d90fb7f1b0828bb14450942d6169b91ad1d6b593231f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_command_that_cannot_run_mid_turn_says_so_on_a_panel.snap",
@@ -40,7 +40,7 @@
       "opened": [
         "Watched::allowing(\"refuse-command-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "fd7a2fb58e649f0c295bf260369e98bd8cb15358ddc1360d421e811453258a3f"
+      "sha256": "261ec803091a31605c4dba8bce5b8dd80726c3d5caba7b49448fe6ae347b52fa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box.snap",
@@ -57,7 +57,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"logged-in\", 80, 24, &vendor)"
       ],
-      "sha256": "e81ff8ecaf4ac6190e5626adf5d19c2af7c7e62f86b3144961f077fea260614e"
+      "sha256": "30c3d8d09ed3311c27dd957cf3499c16f003e66b7f6a73a918496d75e964c0a6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_key_that_cannot_be_written_down_is_said_without_a_path.snap",
@@ -65,7 +65,7 @@
       "opened": [
         "Watched::open(\"login-store-failed\", 80, 24)"
       ],
-      "sha256": "db8811c4c68d282ccd04af364d7c6760ad060d29cecbb75f8d2f0ea9a80fe035"
+      "sha256": "e0136fac61f1b3ea51a76081b07fe098b01c5fbdf58ba1b313926b29073234fd"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_line_past_what_the_box_has_room_for_scrolls_inside_it.snap",
@@ -89,7 +89,7 @@
       "opened": [
         "Watched::open(\"mistyped\", 80, 24)"
       ],
-      "sha256": "c1a0c17bf30d08d18bcce302590bbbe744a10b1f19abd1bf50206a0b28efebf3"
+      "sha256": "8661bde67b84480041022992b692d2d96130d9943dc43e7093afd9b397f4e0bf"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_mistyped_command_mid_turn_is_refused_on_the_panel_and_not_queued.snap",
@@ -97,7 +97,7 @@
       "opened": [
         "Watched::allowing(\"mistyped-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "4a69ca992d673ac472b3981ef1047f4c3bcfc383ec6690663be30ee80a7402ab"
+      "sha256": "ca6860ff5bdf70ed3470053ebce466bd1f1fadd148989c35e7b2a6cc02ce1e52"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_model_picked_mid_turn_is_confirmed_then_held.snap",
@@ -105,7 +105,7 @@
       "opened": [
         "Watched::allowing(\"model-mid-turn\", 100, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "a1ca1e6c32a8b82ea74470c588461cf03eff94347b6ad0985df3645180124773"
+      "sha256": "90551ccfbc52965d79a4b8ba23df03d5a294b6c97988cc919866b5756aa4b1d5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_panel_that_was_left_writes_one_line_and_not_the_list_under_it.snap",
@@ -113,7 +113,7 @@
       "opened": [
         "Watched::open(\"login-left\", 80, 24)"
       ],
-      "sha256": "ac0b7f91f36f6ec79022b1cbf0b5e2f480eaaab99c775e9620c34c1e0355c33e"
+      "sha256": "6148c8f5e76165bc9a9ec9965bc1f2e87fe707f205cc2a5c38a115e9b687eca5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_paste_of_several_lines_is_one_prompt_and_not_the_first_line_of_one.snap",
@@ -129,7 +129,7 @@
       "opened": [
         "Watched::open(\"login-key-pasted\", 80, 24)"
       ],
-      "sha256": "c860268054f2ed683e5aa28ecbb0fc3df41ca3f6bfb471bd4fcce9f82b3ac75c"
+      "sha256": "5c732d5909428955c098ffd5b9ac41595c4572ba5ac30a24f71672a45f75b0a7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_prompt_typed_while_room_is_being_made_is_sent_once_there_is_room.snap",
@@ -138,7 +138,7 @@
         "Vendor::recapping_after( &[\"one answer\", \"two answer\", \"three answer\"], &notes, Some(\"the answer to what was queued\"), )",
         "Watched::compacting(\"compact-typing\", 80, 24, &vendor)"
       ],
-      "sha256": "06291aa8771fd9881dda233ca1da311c63123c451142a5cf5033e202760fb68d"
+      "sha256": "667c68eb3c0c5ea122f0add8838b5d8693ac7a2f799f80b946596703ab51fe77"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_remembered_provider_without_its_credential_still_opens_the_session.snap",
@@ -163,7 +163,7 @@
       "opened": [
         "Watched::allowing(\"mode-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "24224ae8dc2b025e7ce004c5cc4a5f71ba8e64866755cac6cbd8a6ca1c7d0c71"
+      "sha256": "8630cd15232e9b291da8cc7c8e22229d42d7ed4694611b18912931f0a40d9749"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
@@ -200,7 +200,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, &answer, )",
         "Watched::allowing(\"theme-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "bfb92cc2e01f37a4fc718cdd704f832e39f5dc2ff49d4ef6f071c6dc44c191ea"
+      "sha256": "cee15425954c579381445f442dd743b5608a56a0e5e4648b5052d9304fb393af"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_typed_line_that_reaches_the_edge_wraps_and_grows_the_box.snap",
@@ -225,7 +225,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::answering(\"answered\", 80, 24, &vendor)"
       ],
-      "sha256": "ead21eaa346173a8ae3e06782f9fcb27c57f3fe37fdedf9169dd4b55bcee1a0f"
+      "sha256": "e268fd6dcfe69116932b185e67fbde34f0741ae57bc7fe71c5814ecdce587022"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_longer_than_the_window_leaves_the_box_whole_under_it.snap",
@@ -234,7 +234,7 @@
         "Vendor::answering(&a_long_answer())",
         "Watched::answering(\"answered-long\", 80, 16, &vendor)"
       ],
-      "sha256": "317c59b4cf241450572f5efa448c078c8fb6935b9c5048e010020edcbee8bdd6"
+      "sha256": "7791eee56e81be8d09ffe52fb5e2ebce186ee3b7e3cb77de706adda9e10f4e8c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_reaches_the_screen_with_its_markers_read_rather_than_drawn.snap",
@@ -243,7 +243,7 @@
         "Vendor::answering(IN_MARKDOWN)",
         "Watched::in_colour(\"answered-markdown\", 80, 32, &vendor)"
       ],
-      "sha256": "5dd217cdfd05ce4db1195a120b1d803c444d92e9e742e5ce200299d9c79b1efd"
+      "sha256": "88b23e00d6e3ad947a9ff5f7d72b2f8957f31987f85c46423f1fa1f2ac97a764"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_environment_authenticated_session_never_claims_logout_removed_it.snap",
@@ -252,7 +252,7 @@
         "Vendor::answering(\"still authenticated\")",
         "Watched::answering(\"environment-logout\", 80, 24, &vendor)"
       ],
-      "sha256": "8bc8e6732f2b97aa6aec588fb272b3b128055507e5e837522beb3037ead4a350"
+      "sha256": "1c2244b8004069a74bd2572d57b04681c493bc73f6d20704554f63ea5c15a3ff"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__choosing_notes_makes_room_and_says_what_it_took.snap",
@@ -261,7 +261,7 @@
         "Vendor::recapping_after( &[ \"Notes on the first thing.\", \"Notes on the second thing.\", \"Notes on the third thing.\", ], \"Notes on everything that came before.\", None, )",
         "Watched::compacting(\"resume-notes\", 80, 24, &vendor)"
       ],
-      "sha256": "20f8a2984238e2ab82d909defc4ed7d520f6a424c3c80c11a43af6e2c0f5a6a3"
+      "sha256": "31fc660d9718a3b3af07fca4fac8cd39b9dd3d71d43fd448c1a0e5ae823d035a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__compact_tool_activity.snap",
@@ -270,7 +270,7 @@
         "Vendor::calling_batches(&calls, \"Inspection finished.\")",
         "Watched::configured(\"compact-activity\", 80, 32, &config, true)"
       ],
-      "sha256": "06fbe2bd905d0be7eb785254093f21ba617a165946fc4221175fd1d10a80313e"
+      "sha256": "a2759486aa60ef237fafb0e861d30c95ff1cfe06b774b46e668ff6d9eee0b123"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__compact_tool_group_expanded.snap",
@@ -279,7 +279,7 @@
         "Vendor::calling_batches(&calls, \"Inspection finished.\")",
         "Watched::configured(\"compact-activity\", 80, 32, &config, true)"
       ],
-      "sha256": "ac3c315898a568699a665bf2a77b7e43f5c848f57211806d60fdedb6192c3440"
+      "sha256": "9928111f3de4e65bdb0fbd6e6126ee1de036acaef7ffb6e1d82a726c7fbb8bbc"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_fresh_40.snap",
@@ -297,13 +297,13 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&format!(\"context-fresh-{columns}\"), columns, 24, &vendor)"
       ],
-      "sha256": "2a02db16a1832673d0cf36047dd2e1510953b72c392bcb415dcf7fdaec37949d"
+      "sha256": "65d2ef34dcaa8783a1c4ad220b69c92e086109c16c0ab15f420df75eb1b877f1"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_long_80.snap",
       "case": "context_stands_over_a_long_session_with_what_the_prompt_line_says_is_left",
       "opened": [],
-      "sha256": "79a0dfc9caff7a11e88f0015e6f365f7590fd52e3b9fd6ce8695ef90aa65802c"
+      "sha256": "ea3f2cbf2b6e808d4e549d0f4024c29fa21e84d8d2f6ea1c3c3600ee47498d0c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_mid_turn_80.snap",
@@ -311,7 +311,7 @@
       "opened": [
         "Watched::allowing(\"context-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "6a0066ad59f9340b0fac69ae059eaa12d09b91d9d38a6287ae3287a2218dbccc"
+      "sha256": "73c8d291c6c1108b770cf13117fe8641ad39a85b9cb0c573bd0919f08eff0a9e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_a_shows_every_project_and_says_where_each_session_is.snap",
@@ -352,7 +352,7 @@
         "Vendor::recapping_after(&[\"one answer\", \"two answer\", \"three answer\"], &notes, None)",
         "Watched::compacting(\"compact-stopped\", 80, 24, &vendor)"
       ],
-      "sha256": "ffc4d6a4ee797bc057a53a9d449bedaaab2d5b26fe9cb7bfcfe83219e3ee38a6"
+      "sha256": "52959e3e892c7a29976d6cc300cbf15b3805915697e7f23fd7f7c6a88985b7f8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__every_way_a_terminal_spells_a_newline_grows_the_box_and_sends_nothing.snap",
@@ -368,7 +368,7 @@
       "opened": [
         "Watched::allowing(\"exit-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "37c9143207d39620c6f202dff99997f1903db18632893c3903f04a3b07d65f2e"
+      "sha256": "bdecd86a2c91c67a8835c9f27f29953aa50bafbb33a32a692f22581edd6c8bbf"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_lines_where_no_panel_fits.snap",
@@ -376,7 +376,7 @@
       "opened": [
         "Watched::launched( \"fast-short\", 80, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: None, }, )"
       ],
-      "sha256": "c576f8a7c2a54569821cac2d2e8cf2e904cca1250abc3a353ef978d18d91f5b5"
+      "sha256": "1e85a7049848a623a8f800c2419613e0177d87b562f80a5f217f6af544afd435"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_key_ascii_40.snap",
@@ -392,7 +392,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "e42375a459952b040fffe5c0c61f572419edd7cc1bc68acb8c9225088869c5ad"
+      "sha256": "6ceca77586cc07c5e0ce3ce76c3aaf1637a5fa13e8fc36d573a3c5733d7f81e8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_key_unicode_40.snap",
@@ -408,7 +408,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "01682209adf2def2677ec1405b22544a36e0f637a4a808b0eef3b28f46b90997"
+      "sha256": "d199593447b1a51717662dbfc30108c0060d79c18a515b571051f59f96025433"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_ascii_40.snap",
@@ -424,7 +424,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "18fd6fc8b913f0c5672fcdd8202b24fc691ac7375c7b6168e568e87692388bc2"
+      "sha256": "96e5eea64bdd3e20c2d9d7df727dbb4b66ec287963810459f4f369bb40f7c800"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_unicode_40.snap",
@@ -440,7 +440,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "a05fffd3edb7b029abf005767599bfb73a199ade1115bd894ebce35e671628c7"
+      "sha256": "dd8a9d4fc37edd45ca1675f68e9431c91fe97b697b76078bd7aa380d556ab8e8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_api_key_login_40.snap",
@@ -456,7 +456,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "3dabe7965c075e944c3877aa80a8cc9eaf5b14db07b95ffc4ca3bd9c98d19c2a"
+      "sha256": "f5903500680a054d559b17f8494e3b29437860d52caafc1d4673108d85d4a8f2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_model_effort_40.snap",
@@ -480,7 +480,7 @@
       "opened": [
         "Watched::open(\"login-key-left\", 80, 24)"
       ],
-      "sha256": "4a266781f91c122e15d9ca563bcfda8fdb76a3b2cb6bf84344b714cffc52a522"
+      "sha256": "d901df01fb086b86ed2ba0f6a14467239e899d27a760e03df25b9319dc9ffdd8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_accounts_signed_in_40.snap",
@@ -504,7 +504,7 @@
       "opened": [
         "Watched::open(&format!(\"login-narrowed-{columns}\"), columns, 30)"
       ],
-      "sha256": "12005a417176eb22f201fd5fdb0bcbfc3cb81d57d4d6e7045ebf05b8bb1570f2"
+      "sha256": "5d7c44b15491e0cbd8b68cec56dbed91065d420ecf1f036d1b2806fb67550ff2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_narrowed_80.snap",
@@ -512,7 +512,7 @@
       "opened": [
         "Watched::open(&format!(\"login-narrowed-{columns}\"), columns, 30)"
       ],
-      "sha256": "943ddb2964cf487a8f9670cbc9658db84c83e75d9d73451dee9e3124df898481"
+      "sha256": "de5ee1b6ffe17be9acdbe1735ebf525ae49ba8f1b6b98fc0980cb102ea10a38a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_40.snap",
@@ -549,7 +549,7 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-none-{columns}\"), columns, 24)"
       ],
-      "sha256": "420bbae32297b06ba42e7c5f0a206017c307e60a523454ae0854f0bd2b104fbd"
+      "sha256": "6156e5742fcf157c44df45e65733e2e652a481b06d17c5792a00dbe3303fee27"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_in_ascii_at_40.snap",
@@ -565,7 +565,7 @@
       "opened": [
         "Watched::configured( &format!(\"release-notes-none-ascii-{columns}\"), columns, 24, &config, false, )"
       ],
-      "sha256": "cb4073ac64f5be6f2c2fdcc5c958bde3498c09a129dfa68e405d909e0cb6207d"
+      "sha256": "68c8e238f0a230da34d2a6b38eb5480c56063ec8de85101b656593a7556f1860"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__one_release_at_40.snap",
@@ -573,7 +573,7 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-one-{columns}\"), columns, 24)"
       ],
-      "sha256": "1318d72613b05b00c39cadd49eb967ab722eaa3d56e2665771b2bdd3a35afdf4"
+      "sha256": "11cf1a1165cb37ad53cd49c1bc8690b08ae6fdd4c6e2e56aa5ef3d1529908f50"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__one_release_at_80.snap",
@@ -581,7 +581,7 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-one-{columns}\"), columns, 24)"
       ],
-      "sha256": "cbf59034807c40973ab75cf7bbf57b4b0bf44577b70539c32cb1aafa9e87d5a1"
+      "sha256": "42731cbb818c45c78ab9ae0542724e2fac9d40e9cf6cc56e8804f383a35cfc1d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__one_release_in_ascii_at_40.snap",
@@ -589,7 +589,7 @@
       "opened": [
         "Watched::configured( &format!(\"release-notes-one-ascii-{columns}\"), columns, 24, &config, false, )"
       ],
-      "sha256": "40e46b91b7ae7220fac5d7e1f9a65a45f419a1204ed1070ee59e9ff15c19afe4"
+      "sha256": "4d31f24a9c5b532157f25a82dc491a59c395e50c87e2202ade0c7992e0ab85c6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__one_release_in_ascii_at_80.snap",
@@ -597,7 +597,7 @@
       "opened": [
         "Watched::configured( &format!(\"release-notes-one-ascii-{columns}\"), columns, 24, &config, false, )"
       ],
-      "sha256": "4eb23778563ea05f1960faf405d9b6542df47efb54898fcea5ee716aa42ac285"
+      "sha256": "0d5727c763be94faff9d730b0cdbb00c6c951436b864b3b70e34589cdbbc521d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__openai_account_login_offers_browser_and_device_code_methods.snap",
@@ -605,7 +605,7 @@
       "opened": [
         "Watched::open(\"openai-login-methods\", 80, 24)"
       ],
-      "sha256": "19fc9affc6aef793e63f390fe0a02d12dcb5981b90b0873c8159515763bc24a2"
+      "sha256": "218592f6fbb71b2d205204fb3fb360ccffb25424d8f0a66c2d55ec2b09b798ef"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__picking_a_session_up_asks_before_carrying_it_whole.snap",
@@ -614,19 +614,19 @@
         "Vendor::answering(\"The first thing this session said.\")",
         "Watched::asking_on_resume(\"resume-asks\", 80, 24, &vendor)"
       ],
-      "sha256": "1ccdf376ca3c4f9c6ed4f2d7151f99a8cecd63c3a2208a125edab083899a4f9c"
+      "sha256": "e862f9e93fc8b560883c142ef1e295b1f5295bed321545dd6eaca180388cfb53"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__question_at_openai_plan_80.snap",
       "case": "the_openai_plan_row_asks_with_its_condition_and_going_back_returns_to_its_list",
       "opened": [],
-      "sha256": "eefe4cdcd7b110e7a083ef020688b8743c317742388038268a37252a768ff100"
+      "sha256": "1a4dbecbc2b63f9ce90fb165aafb3f10aa04b505a507a05e5e8db349f56ff590"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__question_at_send_80.snap",
       "case": "a_send_on_a_warned_route_stands_the_question_and_sends_nothing_before_the_yes",
       "opened": [],
-      "sha256": "91fd979550eb0df0df0de000b6c48b87f62051c30e9c491c9c3e80374ae4c0af"
+      "sha256": "021ef8fb5a49e9393784c65199babcfa7626cf4a7f6f1a6ac6cbf86e321c3b74"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_40.snap",
@@ -634,7 +634,7 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-list-{columns}\"), columns, 24)"
       ],
-      "sha256": "8b7b258c2739d949053d26ff428af66e5bd6df16b738c300df9dd3eb2fd90b55"
+      "sha256": "98b0323b7f7787f54eb7f3819b2e47bc67a0724fd0eedac3f3eadae0c59f9799"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_80.snap",
@@ -642,7 +642,7 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-list-{columns}\"), columns, 24)"
       ],
-      "sha256": "e842685d74456546744228aad313a9cdce81366dd01ba4a472c4f22db12d94f4"
+      "sha256": "1e3aa03135b3b24bfa7d75d464f5c4d251475693e36ada3164a3641778bd612d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_reveal_at_80.snap",
@@ -650,7 +650,7 @@
       "opened": [
         "Watched::open(\"release-notes-list-reveal\", 80, 24)"
       ],
-      "sha256": "e531a95ae2d3eb90a6549ee7a5ab08432e3c0bb3f6fa681c7de8d6c4d89f8c13"
+      "sha256": "bf1ed332448d9ace4e41fb5cac9fff15e347bd8792e0fdcfaf496d2dab05ce02"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_mid_turn_are_refused_on_the_panel.snap",
@@ -658,7 +658,7 @@
       "opened": [
         "Watched::allowing(\"release-notes-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "ec95647bfb7c2651d7f6f2ac0aed3242cbb771467784c7981d1a2d149bbf9196"
+      "sha256": "252717d3b3ac45f8b83fe8beaf3c4822d8039d52dc24db1082481aff1ecd7169"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_one_from_the_list_at_40.snap",
@@ -666,7 +666,7 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-list-open-{columns}\"), columns, 24)"
       ],
-      "sha256": "b248cb466f4a81e743069de937682404302308e41499337cfeac3ea03945ff2c"
+      "sha256": "d936da39e7e3df26632fbb2af21da2352b49ef50666936075ebd16253c350626"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_one_from_the_list_at_80.snap",
@@ -674,7 +674,31 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-list-open-{columns}\"), columns, 24)"
       ],
-      "sha256": "adf8d92083feb19ef94646cfe48c8553141b8b10e50776a26b1b66990be6404c"
+      "sha256": "37daf6635337df68c94e3fa58245bdaa950912d38d2b95cdf268ebe4fbd5fc92"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_at_rest_at_40.snap",
+      "case": "the_scroll_rail_at_rest_grows_the_current_prompt_s_mark",
+      "opened": [],
+      "sha256": "91681fe4113d6332019f74d122ef2eb3555ec4eeb551f596c9e0cecb084039ca"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_at_rest_at_80.snap",
+      "case": "the_scroll_rail_at_rest_grows_the_current_prompt_s_mark",
+      "opened": [],
+      "sha256": "5364baeea29f35c922d3317425ab4606fc6a1b7a48fc8f7f5d1724cae31c3ba8"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_hovered_at_40.snap",
+      "case": "a_pointer_on_the_scroll_rail_grows_the_mark_under_it",
+      "opened": [],
+      "sha256": "ba7105aef25be814b795a247ee4fa2c4d0f36e5a1fc1b6a9b804352d3ce2402e"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_hovered_at_80.snap",
+      "case": "a_pointer_on_the_scroll_rail_grows_the_mark_under_it",
+      "opened": [],
+      "sha256": "a349a646c877f0728ac9bdc55648b3b85fb6c67f7795e6613685aaa9ff6a4ad1"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill.snap",
@@ -683,7 +707,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"effort-ladder\", 80, 24, &vendor)"
       ],
-      "sha256": "03625d8169bd1b691b92a7bc296575095eb64e686ad070b5dbc14ab62eade7d9"
+      "sha256": "f98bc4d201a78026a35aabbe251e672a85172ba41d365bf46e0f1d69aa1075c9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_key_box_stands_empty_under_the_provider_it_is_for.snap",
@@ -691,7 +715,7 @@
       "opened": [
         "Watched::open(\"login-key-empty\", 80, 24)"
       ],
-      "sha256": "5b606be0d95b2c97fdc0acc3597e95da6d6d2ccc31e81b3857cf2cefcb3840c2"
+      "sha256": "cd2a77f62cc08d04159074f6966d45adc55d05dbfaa3952466851f3e4e202bcc"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_login_panel_at_40.snap",
@@ -707,13 +731,13 @@
       "opened": [
         "Watched::open(&format!(\"login-ways-{held}-{columns}\"), columns, 24)"
       ],
-      "sha256": "6aac0c3e289794ce4a226b4e26fffd533726b896c455a17a04bc0593a0df63e1"
+      "sha256": "2a23090c109f028c339b1db2a13661b794dba21acc11cceaf8e2c2729181cfb9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_names_the_keys_that_work_on_a_waiting_prompt.snap",
       "case": "the_open_queue_names_the_keys_that_work_on_a_waiting_prompt",
       "opened": [],
-      "sha256": "5f330b6d68731f98f245d3ed39467c6af1bf5dbe9c97fa9cf041f08e0aceed47"
+      "sha256": "84faf2cbe4ec48abf54f5f2d5ee7f78ddb39f5620acc1362c05107d9433210ce"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_wraps_its_keys_in_a_narrow_window.snap",
@@ -728,7 +752,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"login-walked\", 80, 24, &vendor)"
       ],
-      "sha256": "7fecfa6955948d5d395ec1a79e385a5c938d652687970631cf86b447327e4f8c"
+      "sha256": "afd7541047f2f9e7c151d06a70753b6664c60da2e3d36600067ad71df8e6d8a4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_resume_picker_opens_on_this_directory.snap",
@@ -756,6 +780,12 @@
       "sha256": "b24dd7d779727523b63bc7fad6791ff5e0f185d78ba850711cc1d59c7ed999b1"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window.snap",
+      "case": "the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window",
+      "opened": [],
+      "sha256": "71f9803684b924e52ab24980ced818a08a5a0af0efa7d8cd596033b366d06c50"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_key_40.snap",
       "case": "usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape",
       "opened": [
@@ -771,7 +801,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&format!(\"usage-key-{columns}\"), columns, 30, &vendor)"
       ],
-      "sha256": "99cbd628bbdc7ea4661da0e84169a9c3688c373ad7b520c54a51c887ed8bf1e3"
+      "sha256": "59ebb469994271a491dfe5a6c8afb21cd08e9b1284b1ce3719b00c55754223c5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_mid_turn_80.snap",
@@ -779,7 +809,7 @@
       "opened": [
         "Watched::allowing(\"usage-mid-turn\", 80, 30, &vendor, \"bash(*)\")"
       ],
-      "sha256": "cdbee8bf72cd80eced148deba450c98fc30107d12537ab86cd61e97d190728b4"
+      "sha256": "7fb0dfd7e38b753bff945f6ac12a846870a87b0bdafac7680957d5b844602a8c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_40_ascii.snap",
@@ -797,7 +827,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_80_ascii.snap",
       "case": "the_question_stands_at_forty_and_eighty_columns_in_either_glyph_set",
       "opened": [],
-      "sha256": "e4e25b7b1a6a6ffd04631c536994e5f2e5d27da8551607a2e983d84a64d5ba5d"
+      "sha256": "b73901ffdd57b26e2c261946803f947285e16061ab2ff143c0ef2f01fdbaa8d3"
     }
   ]
 }
