@@ -103,6 +103,19 @@ if ! scripts/sh/install-tests.sh; then
     printf '    FAIL the installer did not preserve its checksum, ownership, rollback or output contract\n'
     failed=1
 fi
+# install.ps1 is the Windows peer of install.sh, so the release stages, sums,
+# attests and publishes it wherever it does install.sh. Its tests need a
+# Windows runner, and run in rust-ci.yml.
+while IFS= read -r line; do
+    if [[ $line != *install.ps1* ]]; then
+        printf '    FAIL release.yml handles install.sh without install.ps1: %s\n' "${line#"${line%%[![:space:]]*}"}"
+        failed=1
+    fi
+done < <(grep -E 'install\.sh.*(release-metadata/|SHA256SUMS|assets/uninstall\.sh)' .github/workflows/release.yml)
+if ! grep -qE '^ +assets/install\.ps1$' .github/workflows/release.yml; then
+    printf '    FAIL release.yml does not attest install.ps1 beside install.sh\n'
+    failed=1
+fi
 
 section "tracked source secrets"
 # Deliberately narrow signatures: each names a credential format whose prefix is
