@@ -9,8 +9,13 @@ use super::*;
 /// entries, so the counts differ from row to row and one release has the
 /// single entry that is spelled in the singular.
 fn changelog() -> String {
+    changelog_of(12)
+}
+
+/// `count` releases, `0.<count>.0` the newest, counted as above.
+fn changelog_of(count: usize) -> String {
     let mut text = String::from("# Changelog\n\n## [Unreleased]\n\n### Added\n\n- not yet\n");
-    for minor in (1..=12).rev() {
+    for minor in (1..=count).rev() {
         let _ = write!(
             text,
             "\n## [0.{minor}.0] - 2026-03-{minor:02}\n\n### Added\n\n"
@@ -280,4 +285,56 @@ fn release_notes_list_of_eight_or_fewer_has_no_reveal_row() {
         listing.chosen().map(|release| release.version),
         Some("0.1.0")
     );
+}
+
+#[test]
+fn release_notes_list_opened_counts_what_is_above_and_below_the_rows_shown() {
+    // Thirty releases in a window that holds seven of them between the two
+    // counts: the reveal opens on the ninth, two rows of those before it.
+    let text = changelog_of(30);
+    let mut listing = Listing::new(releases(&text), "0.30.0");
+    listing.rows(80, 24, Glyphs::Unicode);
+    pressed(&mut listing, down(8).chain([enter()]));
+    let rows = said(&listing.rows(80, 24, Glyphs::Unicode));
+
+    assert_eq!(rows.get(4).map(String::as_str), Some("  \u{2191} 6 newer"));
+    assert_eq!(
+        rows.get(5..12).expect("seven versions"),
+        [
+            "  0.24.0      2026-03-24     1 entry",
+            "  0.23.0      2026-03-23     4 entries",
+            "\u{203a} 0.22.0      2026-03-22     3 entries",
+            "  0.21.0      2026-03-21     2 entries",
+            "  0.20.0      2026-03-20     1 entry",
+            "  0.19.0      2026-03-19     4 entries",
+            "  0.18.0      2026-03-18     3 entries",
+        ],
+        "{rows:#?}"
+    );
+    assert_eq!(
+        rows.get(12).map(String::as_str),
+        Some("  \u{2193} 17 older")
+    );
+    // Every release is above, shown or below.
+    assert_eq!(6 + 7 + 17, 30);
+}
+
+#[test]
+fn release_notes_list_of_one_or_two_releases_stands_closed_and_cannot_be_opened() {
+    for count in [1, 2] {
+        let text = changelog_of(count);
+        let mut listing = Listing::new(releases(&text), "0.1.0");
+        let rows = said(&listing.rows(80, 24, Glyphs::Unicode));
+
+        let versions: Vec<&String> = rows.iter().filter(|row| row.contains(" entr")).collect();
+        assert_eq!(versions.len(), count, "{rows:#?}");
+        assert!(
+            rows.iter().all(|row| !row.contains("releases")),
+            "a reveal row for {count}: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("esc to close")),
+            "{rows:#?}"
+        );
+    }
 }

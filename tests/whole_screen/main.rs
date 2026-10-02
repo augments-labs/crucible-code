@@ -2733,6 +2733,62 @@ fn trimmed(picture: &str) -> Vec<String> {
         .collect()
 }
 
+/// `picture` with the numbers a release moves taken out, so that what is
+/// accepted beside it is the list's shape and not the changelog it was drawn
+/// from: every digit is a `#`, the count of entries is always two of them over
+/// the plural, and the number in `6 newer`, `88 older` and `all 101 releases`
+/// is one, with the spaces it leaves put back so every row is as wide as it
+/// was drawn. The line giving the window's size is left as it is.
+fn shape(picture: &str) -> String {
+    let mut shaped = String::new();
+    for (index, line) in picture.lines().enumerate() {
+        if index == 0 {
+            shaped.push_str(line);
+            shaped.push('\n');
+            continue;
+        }
+        let line = line.replacen(" entry  ", " entries", 1);
+        let line = match line.find(" entries") {
+            Some(at) if at >= 2 && line.is_char_boundary(at - 2) => {
+                format!(
+                    "{}##{}",
+                    line.get(..at - 2).unwrap_or(""),
+                    line.get(at..).unwrap_or("")
+                )
+            }
+            _ => line,
+        };
+        let drawn = line.chars().count();
+        let mut row = String::new();
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if !c.is_ascii_digit() {
+                row.push(c);
+                continue;
+            }
+            let mut digits = 1;
+            while chars.next_if(char::is_ascii_digit).is_some() {
+                digits += 1;
+            }
+            let rest: String = chars.clone().collect();
+            let counted = [" newer", " older", " releases"]
+                .iter()
+                .any(|word| rest.starts_with(word));
+            row.push_str(&"#".repeat(if counted { 1 } else { digits }));
+        }
+        // Whatever a counted number lost goes back before the row's edge.
+        let lost = drawn - row.chars().count();
+        if lost > 0 {
+            let edge = row.pop();
+            row.push_str(&" ".repeat(lost));
+            row.extend(edge);
+        }
+        shaped.push_str(&row);
+        shaped.push('\n');
+    }
+    shaped
+}
+
 /// `count` presses of the down arrow, as one string.
 fn downs(count: usize) -> String {
     "\x1b[B".repeat(count)
@@ -2747,6 +2803,7 @@ fn release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest() {
         let mut window = Watched::open(&format!("release-notes-list-{columns}"), columns, 24);
         window.types_until("/release-notes\r", "enter opens it");
         let picture = window.picture();
+        insta::assert_snapshot!(format!("release_notes_list_at_{columns}"), shape(&picture));
         let lines = trimmed(&picture);
         let at = format!("{columns} columns:\n{picture}");
 
@@ -2810,6 +2867,7 @@ fn release_notes_list_reveals_every_release_in_place_on_the_row_that_was_ninth()
     window.types_until("/release-notes\r", "enter opens it");
     window.types_until(&format!("{}\r", downs(8)), "newer");
     let picture = window.picture();
+    insta::assert_snapshot!("release_notes_list_reveal_at_80", shape(&picture));
     let lines = trimmed(&picture);
 
     let title = lines
@@ -2830,16 +2888,16 @@ fn release_notes_list_reveals_every_release_in_place_on_the_row_that_was_ninth()
             .is_some_and(|line| line.starts_with(&format!("\u{203a} {ninth} "))),
         "{picture}"
     );
-    assert!(
-        listed
-            .first()
-            .is_some_and(|line| line.starts_with("  \u{2191} ") && line.ends_with(" newer")),
+    // The window shows seven releases between its counts, opened with two
+    // rows of those before the ninth, so six are above it and the rest below.
+    assert_eq!(
+        listed.first().map(String::as_str),
+        Some("  \u{2191} 6 newer"),
         "{picture}"
     );
-    assert!(
-        listed
-            .last()
-            .is_some_and(|line| line.starts_with("  \u{2193} ") && line.ends_with(" older")),
+    assert_eq!(
+        listed.last().map(String::as_str),
+        Some(format!("  \u{2193} {} older", every.len() - 13).as_str()),
         "{picture}"
     );
     assert!(
@@ -2933,7 +2991,7 @@ fn release_notes_mid_turn_are_refused_on_the_panel() {
     let mut window = Watched::allowing("release-notes-mid-turn", 60, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/release-notes\r", "thousand rows");
+    window.types_and_catches("/release-notes\r", "stands over, the answer");
 
     let refused = window.picture();
     assert!(refused.contains("esc to close"), "{refused}");

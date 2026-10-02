@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 2164
 expression: refused
 ---
 60x24 cursor 23,0 scrolled 0
@@ -25,6 +24,6 @@ expression: refused
 |────────────────────────────────────────────────────────────|
 |                                                            |
 |/release-notes                                              |
-|prints a thousand rows into the answer being written        |
+|prints into, or stands over, the answer being written       |
 |                                                            |
 |esc to close                                                |

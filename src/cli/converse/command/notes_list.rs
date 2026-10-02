@@ -40,8 +40,8 @@ const TAG: &str = "this version";
 /// title, the blank under it, and the blank over the foot.
 const CHROME: usize = 5;
 
-/// The fewest rows of the list worth standing: two counts and a release, which
-/// is what the opened list needs, and the same for the closed one.
+/// The fewest rows the opened list is worth standing in: the two counts and a
+/// release between them. The closed list has no counts and needs one row.
 const FLOOR: usize = 3;
 
 /// Columns from the version's column to the date's, and to the count's where
@@ -212,7 +212,7 @@ impl<'a> Listing<'a> {
         } else {
             self.walkable()
         });
-        if height < FLOOR {
+        if height < if self.all { FLOOR } else { 1 } {
             return Vec::new();
         }
 

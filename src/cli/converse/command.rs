@@ -372,11 +372,11 @@ impl Command {
             }
             Self::Clear => MidTurn::Refused("starts a new session, leaving the one being answered"),
             Self::Exit => MidTurn::Refused("ends the session, turn and all"),
-            // Refused rather than printed under the tail: a thousand rows
-            // would part the answer being written, and they will be there to
-            // print once it is done.
+            // Refused rather than printed under the tail: a list standing over
+            // the answer being written, or every release printed into it,
+            // would part it, and either will be there once it is done.
             Self::ReleaseNotes => {
-                MidTurn::Refused("prints a thousand rows into the answer being written")
+                MidTurn::Refused("prints into, or stands over, the answer being written")
             }
         }
     }

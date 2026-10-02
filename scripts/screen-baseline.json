@@ -585,12 +585,36 @@
       "sha256": "91fd979550eb0df0df0de000b6c48b87f62051c30e9c491c9c3e80374ae4c0af"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_40.snap",
+      "case": "release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-list-{columns}\"), columns, 24)"
+      ],
+      "sha256": "8b7b258c2739d949053d26ff428af66e5bd6df16b738c300df9dd3eb2fd90b55"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_80.snap",
+      "case": "release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-list-{columns}\"), columns, 24)"
+      ],
+      "sha256": "e842685d74456546744228aad313a9cdce81366dd01ba4a472c4f22db12d94f4"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_reveal_at_80.snap",
+      "case": "release_notes_list_reveals_every_release_in_place_on_the_row_that_was_ninth",
+      "opened": [
+        "Watched::open(\"release-notes-list-reveal\", 80, 24)"
+      ],
+      "sha256": "e531a95ae2d3eb90a6549ee7a5ab08432e3c0bb3f6fa681c7de8d6c4d89f8c13"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_mid_turn_are_refused_on_the_panel.snap",
       "case": "release_notes_mid_turn_are_refused_on_the_panel",
       "opened": [
         "Watched::allowing(\"release-notes-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "f3ddb938ccc029878660a5e6fe087ab9086e11d29161b76ed69feebc3c9667fe"
+      "sha256": "ec95647bfb7c2651d7f6f2ac0aed3242cbb771467784c7981d1a2d149bbf9196"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_one_from_the_list_at_40.snap",
