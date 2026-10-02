@@ -587,3 +587,41 @@ fn the_settings_status_tab_shows_a_session_by_the_first_eight_of_its_id() {
         "{status:#?}"
     );
 }
+
+#[test]
+fn a_glyph_set_chosen_in_settings_is_the_one_the_next_answer_is_drawn_in() {
+    let sample = Sample::new("settings-glyphs");
+    let terms = keeping(&sample);
+    let counted = counted();
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    // In colour, where the markdown reader puts its own bullet in place of
+    // the model's dash rather than keeping the dash.
+    renderer.wears(crucible_tui::Palette::resolve(
+        true,
+        crucible_tui::Theme::Dark,
+        None,
+        &|name| (name == "COLORTERM").then(|| "truecolor".to_owned()),
+    ));
+    let mut panel = Panel::new(&terms, &counted);
+    let at = panel
+        .lines
+        .iter()
+        .position(|line| line.row.id() == crucible_config::RowId::Glyphs)
+        .expect("a Glyphs row");
+    panel.asked = Some((at, "ascii".to_owned()));
+    settle(&mut renderer, &terms, &mut panel);
+
+    renderer.stream("- next\n").expect("streamed");
+    renderer.settle().expect("settled");
+    let said = renderer.terminal().picture().said();
+    assert!(
+        said.iter().any(|row| row == "- next"),
+        "the answer is not in the set chosen: {said:#?}"
+    );
+    assert!(
+        !said
+            .iter()
+            .any(|row| row.contains(Glyphs::Unicode.bullet())),
+        "{said:#?}"
+    );
+}
