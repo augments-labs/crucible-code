@@ -82,6 +82,7 @@ surface below, and updates every one it reaches in the same change.
   setup in `CONTRIBUTING.md`, and `CHANGELOG.md`.
 - A boolean environment variable accepts exactly `true`, `false`, `1` and `0`,
   and refuses any other value with a message that names those four.
+- Content added to a request gets a category in `/context`.
 
 ## Dependencies
 

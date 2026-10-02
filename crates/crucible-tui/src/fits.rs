@@ -30,6 +30,7 @@ use std::time::Duration;
 
 use crate::asked::{Asked, Choice, Given, Stop, Writing};
 use crate::asking::Question;
+use crate::bar::{Bar, Fill, Part};
 use crate::color::Slot;
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
@@ -770,5 +771,54 @@ fn the_scroll_rail_fits_the_band_it_stands_beside() {
             rows = laid;
         }
         rows
+    });
+}
+
+#[test]
+fn a_bar_fits_the_width_it_is_drawn_across() {
+    // As wide as the panel it stands in and no wider, whatever it is split
+    // between: more parts with a size than there are columns, a part too small
+    // to round to a cell, and sizes large enough to overflow a product.
+    let parts = [
+        Part {
+            slot: Slot::Plain,
+            fill: Fill::Solid,
+            size: 1,
+        },
+        Part {
+            slot: Slot::DoneMark,
+            fill: Fill::Solid,
+            size: 0,
+        },
+        Part {
+            slot: Slot::DoingMark,
+            fill: Fill::Solid,
+            size: 3,
+        },
+        Part {
+            slot: Slot::Trouble,
+            fill: Fill::Solid,
+            size: u64::MAX / 4,
+        },
+        Part {
+            slot: Slot::Accent,
+            fill: Fill::Solid,
+            size: 7,
+        },
+        Part {
+            slot: Slot::Quiet,
+            fill: Fill::Solid,
+            size: u64::MAX / 4,
+        },
+        Part {
+            slot: Slot::Quiet,
+            fill: Fill::Shaded,
+            size: u64::MAX / 4,
+        },
+    ];
+    across("a bar", |columns, glyphs| {
+        let row = Bar { parts: &parts }.row(columns, glyphs);
+        assert_eq!(row.columns(), columns, "{columns} with {glyphs:?}");
+        vec![row]
     });
 }

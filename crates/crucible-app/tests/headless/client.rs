@@ -99,6 +99,16 @@ fn asking_on(
     script: Script,
     serving: Option<&'static str>,
 ) -> Result<(Conversation, Arc<AtomicUsize>), Failed> {
+    asking_under(tree, script, serving, None)
+}
+
+/// [`asking_on`], of a model whose window holds `window` tokens, where it said.
+fn asking_under(
+    tree: &Tree,
+    script: Script,
+    serving: Option<&'static str>,
+    window: Option<u32>,
+) -> Result<(Conversation, Arc<AtomicUsize>), Failed> {
     let ran = Arc::new(AtomicUsize::new(0));
     let mut tools = Tools::new();
     tools.add_builtin(Counting(Arc::clone(&ran)))?;
@@ -108,7 +118,7 @@ fn asking_on(
         Model {
             name: "script".into(),
             max_tokens: 64,
-            window: None,
+            window,
             accepts: None,
             effort: None,
         },
@@ -1292,5 +1302,132 @@ fn a_prompt_a_model_can_answer_still_takes_the_turn_and_is_recorded() -> Result<
         2,
         "the prompt and its answer"
     );
+    Ok(())
+}
+
+/// What `/context` is answered with, asked for over the wire.
+fn context(conversation: &mut Conversation, tree: &Tree) -> Result<Outcome, Failed> {
+    let standing = Standing::new(tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        notes,
+    };
+    let request = Wire::default().sent(Command::Context)?;
+    let performed = super::runtime()?.block_on(client::perform(conversation, &request, &desk));
+    assert!(standing.reached().is_empty());
+
+    Ok(received(&performed.response(&request))?.outcome)
+}
+
+#[test]
+fn context_is_the_load_the_runner_counts_and_leaves_what_the_prompt_line_reads()
+-> Result<(), Failed> {
+    let tree = Tree::new("client-context")?;
+    let script = Script::new(vec![saying("hello")]);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
+    let request = Wire(500).sent(prompt("hi")?)?;
+    turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    let before = client::snapshot(&conversation);
+
+    let Outcome::Context(context) = context(&mut conversation, &tree)? else {
+        return Err("/context was not answered with a context".into());
+    };
+
+    let runner = conversation.runner();
+    assert_eq!(context.model, before.model);
+    assert!(context.model.is_some(), "{context:?}");
+    assert_eq!(context.window, Some(200_000));
+    let held =
+        context.system + context.instructions + context.tools + context.mcp + context.messages;
+    assert_eq!(held, runner.carrying(), "{context:?}");
+    assert!(context.tools > 0 && context.messages > 0, "{context:?}");
+    assert_eq!(
+        held + context.reserve + context.free,
+        200_000,
+        "{context:?}"
+    );
+    assert_eq!(context.left, before.left, "{context:?}");
+    assert!(context.left.is_some(), "{context:?}");
+    assert_eq!(client::snapshot(&conversation), before);
+    Ok(())
+}
+
+#[test]
+fn context_of_a_model_with_no_reported_window_leaves_the_window_and_free_room_out()
+-> Result<(), Failed> {
+    let tree = Tree::new("client-context-unknown")?;
+    let (mut conversation, _) = asking(&tree, Script::new(Vec::new()))?;
+
+    let Outcome::Context(context) = context(&mut conversation, &tree)? else {
+        return Err("/context was not answered with a context".into());
+    };
+
+    assert_eq!(context.window, None, "{context:?}");
+    assert_eq!(context.left, None, "{context:?}");
+    assert_eq!(context.free, 0, "{context:?}");
+    let held =
+        context.system + context.instructions + context.tools + context.mcp + context.messages;
+    assert_eq!(held, conversation.runner().carrying(), "{context:?}");
+    Ok(())
+}
+
+/// A client with no terminal reads `/context` mid-turn as the terminal draws
+/// it: from the figures each reading of the running turn carried, streamed to
+/// it as progress. Asked for at a door the turn leaves open, it is refused as
+/// busy.
+#[test]
+fn context_mid_turn_is_streamed_by_the_turn_and_refused_as_busy_at_every_door_it_leaves_open()
+-> Result<(), Failed> {
+    let tree = Tree::new("client-context-busy")?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        notes,
+    };
+    let request = Wire::default().sent(Command::Context)?;
+    let busy = Outcome::Refused(ErrorCode::Busy.into());
+
+    assert_eq!(client::keep(&request, &desk).outcome(), busy);
+    assert_eq!(client::interrupt(&request, &Cancel::new()), busy);
+    // A tool's results are a reading the turn carries before its next request.
+    let script = Script::new(vec![calling(), saying("after")]);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    assert_eq!(response.outcome, busy);
+
+    let asked = Wire::default().sent(prompt("change it")?)?;
+    let mut remote = Remote::new(vec![Saying::Fitting(Ruling::Allow)]);
+    let (_, streamed) = turned(&mut conversation, &asked, &mut remote)?;
+    let carried: Vec<_> = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Context(context) => Some(context),
+            _ => None,
+        })
+        .collect();
+    assert!(!carried.is_empty(), "{streamed:?}");
+    for context in carried {
+        assert_eq!(context.model, None, "{context:?}");
+        assert_eq!(context.window, Some(200_000), "{context:?}");
+        assert!(context.left.is_some(), "{context:?}");
+        assert!(context.tools > 0 && context.messages > 0, "{context:?}");
+        let held =
+            context.system + context.instructions + context.tools + context.mcp + context.messages;
+        assert_eq!(
+            held + context.reserve + context.free,
+            200_000,
+            "{context:?}"
+        );
+    }
     Ok(())
 }

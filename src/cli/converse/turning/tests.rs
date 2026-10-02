@@ -19,7 +19,7 @@ fn an_empty_queue_adds_no_row_to_the_footing() {
     // waiting, the footing is the same three rows it has always been — the
     // blank, the word, the blank — and not one row taller for a frame around
     // nothing.
-    let rows = Turning::started(None).rows(&nothing(), "", 80, Style::plain(), 24);
+    let rows = Turning::started(Breakdown::default()).rows(&nothing(), "", 80, Style::plain(), 24);
     assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
 }
 
@@ -42,7 +42,7 @@ fn planned(count: usize) -> Planning {
 
 /// The word the row says after `event`, from a turn that just started.
 fn after(event: &Event) -> &'static str {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(event);
     turning.doing.word()
 }
@@ -94,7 +94,7 @@ fn a_pass_of_calls_out_is_counted_rather_than_named_one_at_a_time() {
     // Eight fetches asked for at once used to put the first of the eight above
     // the box and leave it there until it answered, so a reader watched one
     // URL for as long as the whole batch took. What is out is a count now.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     for at in 0..8 {
         turning.saw(&requested_of_batch(
             &format!("f-{at}"),
@@ -111,7 +111,7 @@ fn a_pass_of_calls_out_is_counted_rather_than_named_one_at_a_time() {
 
 #[test]
 fn a_pass_of_mixed_calls_counts_each_kind_in_the_order_it_was_asked_for() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     for (id, name, about) in [
         ("f-0", "web_fetch", "https://example.com/0"),
         ("r-0", "read", "src/main.rs"),
@@ -129,7 +129,7 @@ fn a_pass_of_mixed_calls_counts_each_kind_in_the_order_it_was_asked_for() {
 fn one_call_out_is_still_named_rather_than_counted() {
     // A count of one says less than the call it counts, and the row a single
     // call has always had is the one thing that still fits.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested_of_batch(
         "f-0",
         "web_fetch",
@@ -146,7 +146,7 @@ fn one_call_out_is_still_named_rather_than_counted() {
 fn a_pass_holding_a_command_keeps_the_command_row_it_can_be_backgrounded_from() {
     // The key that leaves one running points at the row that names it, and a
     // count is not something `ctrl+b` can act on.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested_of_batch("b-0", "bash", "cargo test", true));
     turning.saw(&requested_of_batch(
         "f-0",
@@ -165,7 +165,7 @@ fn a_call_answered_out_of_a_pass_moves_the_frame_the_count_is_drawn_from() {
     // The front of the queue is unchanged when the third of eight answers, so
     // a redraw keyed on which call is at the front would leave the new count
     // to reach the screen on whatever moved next.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     for at in 0..3 {
         turning.saw(&requested_of_batch(
             &format!("f-{at}"),
@@ -214,7 +214,7 @@ fn a_lone_call_with_nothing_live_about_it_is_returned_where_it_is_asked_for() {
     // the start. Nothing about it moves, so nothing about it needs the footing,
     // and holding it there would leave the reader watching the bottom of the
     // screen for as long as the network takes.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
 
     assert_eq!(
         lines(turning.saw(&requested_alone("web_fetch", "https://example.com", false))),
@@ -227,7 +227,7 @@ fn a_call_written_where_it_was_asked_for_does_not_stand_in_the_footing() {
     // And is not handed back a second time when the tool answers: the row is
     // the transcript's already, and a turn that returned it twice would write
     // the call once for the asking and once for the answer.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested_alone("web_search", "rust traits", false));
 
     let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
@@ -248,7 +248,7 @@ fn a_lone_call_that_can_be_backgrounded_stands_in_the_footing_as_before() {
     // The footing is where the key that leaves it running points and where the
     // output it prints goes. A command has both, so being the only call of its
     // pass buys it nothing.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
 
     assert_eq!(
         lines(turning.saw(&requested_alone("bash", "cargo test", true))),
@@ -268,7 +268,7 @@ fn lines(settled: Vec<Settled>) -> Vec<(ToolId, String)> {
 
 #[test]
 fn the_active_call_decides_whether_the_background_key_is_live() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     assert!(!turning.can_background());
 
     turning.saw(&requested_as("web_search", false));
@@ -312,7 +312,7 @@ fn a_response_being_asked_for_again_says_so_until_the_new_one_speaks() {
     // The span it covers is the whole of the second ask — the pause and the
     // request after it — and `thinking` over that span would be a row saying
     // the first answer is still on its way.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&Event::Retrying);
 
     assert_eq!(turning.doing.word(), "retrying");
@@ -326,7 +326,7 @@ fn a_turn_asked_to_stop_goes_on_saying_so_whatever_arrives_after() {
     // The deltas already in flight land after the key. A row that read them
     // and went back to `writing` would be saying the key was missed, at the
     // one moment somebody is watching the row to find out whether it was.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.interrupting();
     turning.saw(&Event::Delta { text: "hi".into() });
 
@@ -344,7 +344,7 @@ fn a_turn_asked_to_stop_goes_on_saying_so_whatever_arrives_after() {
 fn the_row_says_what_the_turn_has_spent_once_the_provider_has_said() {
     // And says nothing in its place until then, which is what every turn
     // looks like until its first response comes back.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     let said = |turning: &Turning| {
         turning
             .rows(&nothing(), "", 80, Style::plain(), 24)
@@ -366,13 +366,15 @@ fn the_row_says_what_the_turn_has_spent_once_the_provider_has_said() {
 fn the_window_left_is_handed_to_the_prompt_and_takes_no_turn_row() {
     // The prompt border now owns the one place this reading stands. Turning
     // retains the latest event value for it, but lays out no duplicate row.
-    let mut turning = Turning::started(None);
-    turning.saw(&Event::Carried { left: Some(72) });
+    let carried = crate::cli::converse::tests::measured();
+    let mut turning = Turning::started(Breakdown::default());
+    turning.saw(&Event::Carried { breakdown: carried });
 
     let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
     let texts: Vec<String> = rows.iter().map(Row::text).collect();
 
-    assert_eq!(turning.left(), Some(72));
+    assert!(carried.left().is_some(), "{carried:?}");
+    assert_eq!(turning.left(), carried.left());
     assert!(
         texts.iter().all(|row| !row.contains("window left")),
         "{texts:?}"
@@ -385,7 +387,7 @@ fn a_turn_asked_to_stop_goes_on_counting_what_it_spends() {
     // The response already in flight goes on arriving and goes on costing,
     // and that stretch is the one somebody is most likely to be watching
     // the number through.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.interrupting();
     turning.saw(&Event::Spent {
         spend: Spend::new(2_900),
@@ -396,15 +398,18 @@ fn a_turn_asked_to_stop_goes_on_counting_what_it_spends() {
 
 #[test]
 fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
-    let mut turning = Turning::started(Some(80));
+    let started = Breakdown::default();
+    let carried = crate::cli::converse::tests::measured();
+    assert_ne!(started.left(), carried.left());
+    let mut turning = Turning::started(started);
     turning.saw(&Event::Compacting {
         why: Compacting::Asked,
         part: 12,
     });
     turning.interrupting();
 
-    turning.saw(&Event::Carried { left: Some(70) });
-    assert_eq!(turning.left(), Some(70));
+    turning.saw(&Event::Carried { breakdown: carried });
+    assert_eq!(turning.left(), carried.left());
 
     turning.saw(&Event::Compacted {
         compacted: crucible_types::Compacted {
@@ -421,7 +426,7 @@ fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
 
 #[test]
 fn completed_compaction_stays_full_long_enough_to_be_seen() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&Event::Compacting {
         why: Compacting::Asked,
         part: 64,
@@ -475,7 +480,7 @@ fn a_row_that_would_be_drawn_the_same_again_is_not_drawn_again() {
     // The whole cost of an animated row on a sixty-times-a-second tick.
     // Without this the box under it is laid out and written on every one of
     // them, to produce the bytes that were already on the screen.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
 
     assert!(turning.moved(), "the first row was never drawn");
     assert!(!turning.moved(), "the same row was drawn twice");
@@ -500,7 +505,7 @@ fn the_bar_moves_on_the_notes_rather_than_on_whatever_else_changes() {
     // something else on the row happens to change with it — and on a
     // request that draws nothing else for a minute, the something else is
     // the clock.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     assert!(turning.moved(), "the first row was never drawn");
 
     turning.saw(&Event::Compacting {
@@ -521,14 +526,16 @@ fn the_bar_moves_on_the_notes_rather_than_on_whatever_else_changes() {
 
 #[test]
 fn compacting_keeps_the_latest_window_reading_until_its_replacement_arrives() {
-    let mut turning = Turning::started(Some(88));
+    let started = crate::cli::converse::tests::measured();
+    let mut turning = Turning::started(started);
 
     turning.saw(&Event::Compacting {
         why: Compacting::Asked,
         part: 12,
     });
 
-    assert_eq!(turning.left(), Some(88));
+    assert!(started.left().is_some(), "{started:?}");
+    assert_eq!(turning.left(), started.left());
 }
 
 #[test]
@@ -559,7 +566,7 @@ fn the_bar_arrives_with_the_notes_rather_than_standing_at_nothing() {
 
 #[test]
 fn another_compaction_before_the_completed_frame_keeps_the_new_progress() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&Event::Compacting {
         why: Compacting::Asked,
         part: 64,
@@ -586,7 +593,7 @@ fn another_compaction_before_the_completed_frame_keeps_the_new_progress() {
 
 #[test]
 fn an_in_progress_value_cannot_claim_or_clear_completion() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&Event::Compacting {
         why: Compacting::Asked,
         part: u8::MAX,
@@ -640,7 +647,7 @@ fn the_compaction_bar_uses_two_thirds_of_the_available_cells_and_never_overflows
 
 #[test]
 fn a_window_with_no_room_for_the_row_keeps_the_turn_s_own_output_instead() {
-    let turning = Turning::started(None);
+    let turning = Turning::started(Breakdown::default());
 
     for room in 0..=ROWS {
         assert!(
@@ -664,7 +671,7 @@ fn a_call_stands_over_the_row_for_as_long_as_its_tool_is_out() {
     // Here rather than in the transcript, because the mark on it moves: a
     // live row cannot also be a fixed record row. It is committed when the
     // tool answers and not before.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     let said = |turning: &Turning| {
         turning
             .rows(&nothing(), "", 80, Style::plain(), 24)
@@ -707,7 +714,7 @@ fn printed(text: &str) -> Event {
 
 #[test]
 fn a_command_shows_its_last_lines_and_says_how_many_there_have_been() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
 
     for line in 1..=41 {
@@ -755,7 +762,7 @@ fn a_command_shows_its_last_lines_and_says_how_many_there_have_been() {
 #[test]
 fn a_native_web_call_does_not_offer_to_leave_it_running() {
     for name in ["web_search", "web_fetch"] {
-        let mut turning = Turning::started(None);
+        let mut turning = Turning::started(Breakdown::default());
         turning.saw(&requested_as(name, false));
 
         let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
@@ -772,7 +779,7 @@ fn the_row_under_a_call_offers_to_leave_it_running_before_it_has_printed_anythin
     // A command silent for thirty-eight seconds is the one most worth putting
     // down, so the row that offers it cannot wait for output to justify
     // itself. It gains the counts in front of the offer once there are any.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested_as("bash", true));
 
     let rows = |turning: &Turning| {
@@ -808,7 +815,7 @@ fn the_row_under_a_call_offers_to_leave_it_running_before_it_has_printed_anythin
 
 #[test]
 fn what_a_command_printed_is_handed_back_when_its_tool_answers() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
     turning.saw(&printed("Compiling one\n"));
 
@@ -834,7 +841,7 @@ fn what_a_command_printed_is_handed_back_when_its_tool_answers() {
 fn a_window_short_of_rows_drops_the_sample_before_the_call_line() {
     // The order things give way. The sample is the one of them a second look
     // gets back whatever the window did, so it goes first.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
     turning.saw(&printed("Compiling one\n"));
 
@@ -859,7 +866,7 @@ fn the_sample_is_on_the_value_the_loop_keys_a_redraw_on() {
     // Otherwise a command's output reaches the screen only on the frames
     // something else on the footing happens to change — a second at a time,
     // when the clock ticks.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
     assert!(turning.moved());
 
@@ -878,7 +885,7 @@ fn a_turn_that_ran_no_command_gets_no_frame_out_of_the_sample() {
     // a command running must not be redrawn for that: the region is being
     // handed back at that moment, and a frame with nothing behind it scrolls
     // the terminal by a row nobody asked for.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&Event::Delta { text: "hi".into() });
     assert!(turning.moved());
 
@@ -897,7 +904,7 @@ fn a_turn_that_ran_no_command_gets_no_frame_out_of_the_sample() {
 fn a_line_rewritten_in_place_replaces_the_row_rather_than_adding_one() {
     // What a progress bar does: a carriage return and the line again. Kept as
     // one row, because that is what the terminal it was written for would do.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
     turning.saw(&printed("Building [==>    ] 41/128\r"));
     turning.saw(&printed("Building [====>  ] 96/128\r"));
@@ -918,7 +925,7 @@ fn a_line_rewritten_in_place_replaces_the_row_rather_than_adding_one() {
 
 #[test]
 fn the_call_line_comes_back_when_its_tool_answers_and_only_then() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
 
     assert!(turning.saw(&requested()).is_empty());
     assert!(turning.saw(&Event::Delta { text: "hi".into() }).is_empty());
@@ -947,7 +954,7 @@ fn the_call_line_comes_back_when_its_tool_answers_and_only_then() {
 fn several_requested_calls_return_the_heading_named_by_each_result() {
     // One response can announce every call before any tool starts. Finish them
     // out of order to prove the result identity, not adjacency, selects the row.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     let requested = |id: &str, name: &str, about: &str| Event::ToolRequested {
         call: ToolCall {
             id: ToolId::new(id),
@@ -982,7 +989,7 @@ fn several_requested_calls_return_the_heading_named_by_each_result() {
 
 #[test]
 fn an_unknown_result_does_not_take_another_calls_heading() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
 
     assert!(
@@ -1020,7 +1027,7 @@ fn a_turn_that_ends_with_a_tool_still_out_hands_its_call_back_anyway() {
             error: TurnError::Refused("read".into()),
         },
     ] {
-        let mut turning = Turning::started(None);
+        let mut turning = Turning::started(Breakdown::default());
         turning.saw(&requested());
 
         assert_eq!(
@@ -1033,7 +1040,7 @@ fn a_turn_that_ends_with_a_tool_still_out_hands_its_call_back_anyway() {
 
 #[test]
 fn a_terminal_event_drains_every_pending_call_in_request_order() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     for (id, path) in [("first", "one"), ("second", "two"), ("third", "three")] {
         turning.saw(&Event::ToolRequested {
             call: ToolCall {
@@ -1073,7 +1080,7 @@ fn a_turn_asked_to_stop_still_lets_the_call_it_had_out_come_back() {
     // The word freezes at `interrupting` when the key is pressed. The line
     // of the call still out is not a word, and freezing it too would lose
     // the record of the call at the one moment there is most to explain.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
     turning.interrupting();
 
@@ -1099,7 +1106,7 @@ fn the_dot_on_a_live_call_appears_and_disappears_in_the_theme_slot() {
             since: now
                 .checked_sub(Duration::from_millis(250 * beat))
                 .expect("a clock past its own epoch"),
-            ..Turning::started(None)
+            ..Turning::started(Breakdown::default())
         };
 
         moment.call("Read(src/main.rs)", 80, style)
@@ -1137,7 +1144,7 @@ fn the_dot_on_a_live_call_appears_and_disappears_in_the_theme_slot() {
                 since: now
                     .checked_sub(Duration::from_millis(250 * beat))
                     .expect("a clock past its own epoch"),
-                ..Turning::started(None)
+                ..Turning::started(Breakdown::default())
             }
             .call("Read(a/very/long/path.rs)", columns, style);
             assert!(row.columns() <= columns, "{columns}: {}", row.text());
@@ -1150,7 +1157,7 @@ fn the_call_line_is_on_the_value_the_loop_keys_a_redraw_on() {
     // Left off it, a call would appear on screen only on the beat some
     // other segment happened to change -- so the line naming what is
     // running would arrive after the tool it names had already answered.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.moved();
 
     turning.saw(&requested());
@@ -1169,7 +1176,7 @@ fn the_call_line_is_on_the_value_the_loop_keys_a_redraw_on() {
 /// One place the queue is filled and the footing read, so the cases below
 /// are about what the panel says rather than how it is fed.
 fn queueing(lines: &[&str], columns: usize, room: usize) -> Vec<String> {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.queueing(lines.iter().copied(), columns, Style::plain());
 
     turning
@@ -1307,7 +1314,7 @@ fn the_one_row_queue_count_keeps_the_blank_every_other_footing_ends_in() {
 fn a_plan_under_the_queue_box_keeps_the_blank_under_the_footing() {
     // The plan stands under the box rather than being the box's own, so the
     // footing's last row is the blank that parts it from the line below.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.queueing(["one", "two"].into_iter(), 80, Style::plain());
 
     let said: Vec<String> = turning
@@ -1368,7 +1375,7 @@ fn a_turn_with_nothing_waiting_behind_it_draws_no_row_for_it() {
     // Absent rather than blank. A row that says nothing is a row of the
     // window spent, and what it is spent against is the turn's own output
     // above it.
-    let turning = Turning::started(None);
+    let turning = Turning::started(Breakdown::default());
     let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
 
     assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
@@ -1397,7 +1404,7 @@ fn what_is_held_of_a_waiting_prompt_is_a_row_of_it_rather_than_all_of_it() {
     // It is cloned into the value the redraw is keyed on, sixty times a
     // second, and the box lets a prompt reach a megabyte. Cutting it where
     // it is taken is what keeps that clone the size of a row.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     let long = "a".repeat(1024 * 1024);
     turning.queueing([long.as_str()].into_iter(), 80, Style::plain());
 
@@ -1411,7 +1418,7 @@ fn the_prompt_waiting_is_on_the_value_the_loop_keys_a_redraw_on() {
     // on the beat some other segment happened to change -- a box emptied by
     // Return with nothing anywhere saying the line was kept, for as long as
     // a quarter of a second after the press.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.moved();
 
     turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
@@ -1433,7 +1440,7 @@ fn the_row_naming_a_waiting_prompt_is_never_drawn_past_the_last_column() {
     for wide in [0, 1, 2, 3, 5, 6, 7, 8, 20, 80] {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             let style = Style::drawn(glyphs);
-            let mut turning = Turning::started(None);
+            let mut turning = Turning::started(Breakdown::default());
             turning.queueing(["fix the failing test"].into_iter(), wide, style);
 
             for row in turning.rows(&nothing(), "", wide, style, 40) {
@@ -1453,7 +1460,7 @@ fn a_window_too_short_for_all_three_drops_the_call_before_the_waiting_prompt() {
     // room. The call joins the transcript the moment its tool answers and
     // the prompt is still in the queue with its own turn to come; the row
     // saying a turn is running exists nowhere else, so it goes last.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
     turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
@@ -1491,7 +1498,7 @@ fn a_window_too_short_for_both_drops_the_call_before_the_row() {
     // The call joins the transcript the moment its tool answers, so a window
     // that drops it loses nothing a second look does not return.
     // The row saying a turn is running exists nowhere else.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
 
     let rows = turning.rows(&nothing(), "", 80, Style::plain(), CALLING - 1);
@@ -1508,7 +1515,7 @@ fn the_plan_stands_under_everything_the_turn_says_and_over_the_box() {
     // out and the row saying one is running — and what it stands over is
     // the line being typed while that happens. The blank at the end parts
     // it from the box, so the panel is the last thing above one.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
     turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
@@ -1530,7 +1537,7 @@ fn a_window_short_of_rows_drops_the_call_and_the_waiting_prompt_before_a_task() 
     // joins the transcript the moment its tool answers and a queued
     // prompt has its own turn coming, while what the agent is working to is
     // on screen nowhere else.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
     turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
@@ -1572,7 +1579,7 @@ fn a_run_of_calls_that_only_looked_around_stands_over_the_call_that_is_out() {
     // doing, and what it is doing at this instant. The run goes on top
     // because it is what has already happened, and the transcript below the
     // footing grows the same way down.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
 
     let rows: Vec<String> = turning
@@ -1595,7 +1602,7 @@ fn a_run_of_calls_that_only_looked_around_stands_over_the_call_that_is_out() {
 
 #[test]
 fn a_footing_with_no_run_going_stands_no_row_for_one() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
 
     let alone = turning.rows(&nothing(), "", 80, Style::plain(), 24).len();
@@ -1610,7 +1617,7 @@ fn a_footing_with_no_run_going_stands_no_row_for_one() {
 fn a_run_still_says_itself_between_the_calls_in_it() {
     // One tool has answered and the next has not gone out yet. The run is
     // still going, and this row is the only thing on the screen saying so.
-    let rows: Vec<String> = Turning::started(None)
+    let rows: Vec<String> = Turning::started(Breakdown::default())
         .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
@@ -1628,7 +1635,7 @@ fn the_run_wears_the_same_mark_as_the_call_beneath_it() {
     // are read out of one layout, so both are of the same instant: a run
     // blinking against the call under it would read as two turns rather than
     // one turn doing two things.
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
 
     let rows: Vec<String> = turning
@@ -1653,7 +1660,7 @@ fn the_run_wears_the_same_mark_as_the_call_beneath_it() {
 
 #[test]
 fn a_failed_lookup_settles_as_an_individual_call() {
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
     let mut requested = requested();
     if let Event::ToolRequested { looking, .. } = &mut requested {
         *looking = Some(Looking::File);

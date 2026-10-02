@@ -21,6 +21,7 @@
 use serde_json::Value;
 
 use crate::bounds::Text;
+use crate::context::Context;
 use crate::error::{ErrorCode, Refusal};
 use crate::outcome::{Problem, Stop};
 use crate::request::Version;
@@ -72,6 +73,13 @@ pub enum Progress {
         /// How many.
         tokens: u64,
     },
+    /// How the window is spent, as `/context` reads it while a turn runs: the
+    /// figures the turn last reported, which include anything it has recorded
+    /// since its last request.
+    ///
+    /// The model is left out, and a frame naming one is refused: a turn does
+    /// not change it, and it is the snapshot's to say.
+    Context(Context),
     /// A turn reported that it finished.
     Finished {
         /// Its ordinal in the session.
@@ -85,7 +93,7 @@ pub enum Progress {
 
 impl Progress {
     /// Every kind of progress, by the word it crosses as.
-    pub const KINDS: [&'static str; 10] = [
+    pub const KINDS: [&'static str; 11] = [
         "started",
         "delta",
         "tool_requested",
@@ -94,6 +102,7 @@ impl Progress {
         "compacting",
         "compacted",
         "spent",
+        "context",
         "finished",
         "failed",
     ];
@@ -110,6 +119,7 @@ impl Progress {
             Self::Compacting { .. } => "compacting",
             Self::Compacted { .. } => "compacted",
             Self::Spent { .. } => "spent",
+            Self::Context(_) => "context",
             Self::Finished { .. } => "finished",
             Self::Failed(_) => "failed",
         }
@@ -139,6 +149,7 @@ impl Progress {
             Self::Compacting { part } => object.with("part", *part),
             Self::Compacted { replaced } => object.with("replaced", *replaced),
             Self::Spent { tokens } => object.with("tokens", *tokens),
+            Self::Context(context) => object.with("context", context.written()),
             Self::Finished { turn, stop } => object.with("turn", *turn).with("stop", stop.as_str()),
             Self::Failed(problem) => object.with("problem", problem.written()),
         }
@@ -193,6 +204,10 @@ impl Progress {
             },
             "spent" => Self::Spent {
                 tokens: fields.number("tokens")?,
+            },
+            "context" => match Context::read(fields.take("context")?)? {
+                Context { model: Some(_), .. } => return Err(ErrorCode::Malformed.into()),
+                context => Self::Context(context),
             },
             "finished" => Self::Finished {
                 turn: fields.number("turn")?,

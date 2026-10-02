@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+80x24 cursor 23,0 scrolled 0
+|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the│|
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     │|
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick•|
+|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.│|
+|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the│|
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     •|
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. again.   │|
+|                                                                               ┃|
+|› /context                                                                     ┃|
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Context · claude-test-1 · 200k window                                           |
+|                                                                                |
+|██████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+|                                                                                |
+|  ██ system prompt           1.0k     0.5%                                      |
+|  ██ project instructions       0       0%                                      |
+|  ██ tool schemas            3.8k     1.9%                                      |
+|  ██ MCP tool schemas           0       0%                                      |
+|  ██ messages                 440     0.2%                                      |
+|  ██ reserve                28.1k    14.1%                                      |
+|  ░░ free                  166.4k      99%                                      |
+|                                                                                |
+|esc to close                                                                    |

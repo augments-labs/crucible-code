@@ -4088,3 +4088,68 @@ fn a_contributor_model_says_trains_where_its_standard_twin_says_nothing() {
     );
     insta::assert_snapshot!("model_trains_80", picture);
 }
+
+// `/context`: how the window of the next request is spent.
+
+/// The percentage the prompt line says is left of the window.
+fn window_left(picture: &str) -> Option<String> {
+    let (before, _) = picture.split_once("% window left")?;
+    let figure = before.rsplit(|cell: char| !cell.is_ascii_digit()).next()?;
+    Some(format!("{figure}%"))
+}
+
+/// The share `/context` prints on its free row.
+fn free_share(picture: &str) -> Option<String> {
+    let row = picture.lines().find(|line| line.contains(" free "))?;
+    row.trim_end_matches('|')
+        .split_whitespace()
+        .last()
+        .map(str::to_owned)
+}
+
+#[test]
+fn context_stands_over_a_fresh_session_and_closes_on_escape() {
+    for columns in [80, 40] {
+        let vendor = Vendor::answering("Hello.");
+        let mut window =
+            Watched::answering(&format!("context-fresh-{columns}"), columns, 24, &vendor);
+        let before = window.picture();
+        window.types_until("/context\r", "esc to close");
+
+        let picture = window.picture();
+        assert!(picture.contains("Context"), "{picture}");
+        assert!(picture.contains("system prompt"), "{picture}");
+        assert_eq!(free_share(&picture), window_left(&before), "{picture}");
+        insta::assert_snapshot!(format!("context_fresh_{columns}"), picture);
+
+        window.types_until("\x1b", "ask mode on");
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
+#[test]
+fn context_stands_over_a_long_session_with_what_the_prompt_line_says_is_left() {
+    let mut window = two_long_turns("context-long", 80, 24);
+    let before = window.picture();
+    window.types_until("/context\r", "esc to close");
+
+    let picture = window.picture();
+    assert!(window_left(&before).is_some(), "{before}");
+    assert_eq!(free_share(&picture), window_left(&before), "{picture}");
+    insta::assert_snapshot!("context_long_80", picture);
+}
+
+#[test]
+fn context_stands_over_a_running_turn_with_the_figures_it_last_carried() {
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("context-mid-turn", 80, 24, &vendor, "bash(*)");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    let before = window.picture();
+
+    window.types_and_catches("/context\r", "esc to close");
+    let picture = window.picture();
+    assert!(window_left(&before).is_some(), "{before}");
+    assert_eq!(free_share(&picture), window_left(&before), "{picture}");
+    insta::assert_snapshot!("context_mid_turn_80", on_the_first_beat(&picture));
+}

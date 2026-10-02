@@ -8,7 +8,7 @@ use crucible_client_api::{
     LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Problem, Refusal, Request,
     Resource, Response, ResumeOutcome, SandboxOutcome, SpeedOutcome, Standing, Theme, ThemeOutcome,
 };
-use crucible_runner::PromptCacheCleanup;
+use crucible_runner::{Breakdown, PromptCacheCleanup};
 use crucible_runtime::Cancel;
 use crucible_session::{Session, SessionError};
 use crucible_tools::Mode;
@@ -123,6 +123,13 @@ pub enum Performed {
     Help,
     /// `/release-notes`, as the host answered it.
     Notes(NotesOutcome),
+    /// `/context`: how the window of the next request is spent.
+    Context {
+        /// The model the request is for.
+        model: Box<str>,
+        /// The runner's count of it.
+        breakdown: Breakdown,
+    },
     /// `/exit`.
     Leaving,
 }
@@ -210,6 +217,10 @@ pub async fn perform(
                 Err(refused) => Performed::Refused(refused),
             }
         }
+        Command::Context => Performed::Context {
+            model: conversation.runner().model().into(),
+            breakdown: conversation.runner().breakdown(),
+        },
         Command::Exit => Performed::Leaving,
     }
 }
@@ -257,6 +268,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::Sandbox { .. }
         | Command::Help
         | Command::ReleaseNotes { .. }
+        | Command::Context
         | Command::Exit => Performed::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -381,6 +393,9 @@ impl Performed {
             }),
             Self::Help => Outcome::help(),
             Self::Notes(notes) => Outcome::Notes(notes.clone()),
+            Self::Context { model, breakdown } => {
+                Outcome::Context(reading::context(model, breakdown))
+            }
             Self::Leaving => Outcome::Leaving,
         }
     }

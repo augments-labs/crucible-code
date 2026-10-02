@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **`/context` shows how the model's window is spent.** One bar across the
+  window and a row each for the system prompt, project instructions, tool
+  schemas, MCP tool schemas, messages, the reserve and what is free, with
+  tokens and share; free reads the same as `window left` on the prompt line.
+  It opens mid-turn too, showing what the turn last reported.
 - **`/release-notes` opens a list of releases to choose from.** It shows the
   eight newest with their dates and entry counts, a row that reveals the rest,
   and Enter prints the chosen release alone. `/release-notes <version>` is

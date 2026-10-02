@@ -89,6 +89,7 @@ mod aiming;
 mod attachments;
 mod attribution;
 mod beside;
+mod breakdown;
 mod cache_operations;
 mod compaction;
 mod context;
@@ -455,7 +456,7 @@ impl Scripted {
         self.seen
             .try_iter()
             .filter_map(|event| match event {
-                Event::Carried { left } => Some(left),
+                Event::Carried { breakdown } => Some(breakdown.left()),
                 _ => None,
             })
             .collect()
@@ -737,7 +738,7 @@ impl Steering {
         self.seen
             .try_iter()
             .filter_map(|event| match event {
-                Event::Carried { left } => Some(left),
+                Event::Carried { breakdown } => Some(breakdown.left()),
                 _ => None,
             })
             .collect()

@@ -147,6 +147,41 @@ fn fixture_document(document: &str) -> String {
 /// replace and does only the other thing it can do.
 const NO_MIDDLE: u64 = 100_000_000;
 
+/// How long the path of every case's scratch directory is, in bytes.
+///
+/// The workspace root is told to the model, so the length of the directory a
+/// case works in is in every count of what a request carries — and `/context`
+/// draws those counts to the token. Left to the host, the same case would read
+/// one figure where the temporary directory is `/tmp`, another under a longer
+/// one, and another again the day this run's process id gains a digit. The
+/// scratch directory's name is padded out to this length instead, so every
+/// machine and every run sends the same number of bytes. Room for a temporary
+/// directory as long as a sandbox gives, while the padded name stays inside the
+/// 255 bytes one name may hold where the temporary directory is short.
+const SCRATCH_LENGTH: usize = 240;
+
+/// The directory `case` is given, which holds everything it makes.
+///
+/// One flat directory per case, so the last thing a case does can take the
+/// whole of what it made with it.
+pub(crate) fn scratch(case: &str) -> PathBuf {
+    let mut named = std::env::temp_dir()
+        .join(format!(
+            "crucible-whole-screen-{}-{case}-",
+            std::process::id()
+        ))
+        .into_os_string();
+    let length = named.len();
+    assert!(
+        length <= SCRATCH_LENGTH,
+        "{} is {length} bytes, past the {SCRATCH_LENGTH} every case's scratch directory is \
+         padded to; run with a shorter TMPDIR",
+        named.display()
+    );
+    named.push("-".repeat(SCRATCH_LENGTH.saturating_sub(length)));
+    PathBuf::from(named)
+}
+
 /// The directory a case is given to work in, below the one it is given.
 ///
 /// Deep enough that everything drawing it shortens it, and shortens it past the
@@ -440,12 +475,7 @@ impl Watched {
         terminal: &TerminalFixture<'_>,
         launch: Option<&Launch<'_>>,
     ) -> Self {
-        // One flat directory per case, so the last thing a case does can take
-        // the whole of what it made with it.
-        let scratch = std::env::temp_dir().join(format!(
-            "crucible-whole-screen-{}-{case}",
-            std::process::id()
-        ));
+        let scratch = scratch(case);
         let home = scratch.join("home");
 
         let workspace = working(&scratch);

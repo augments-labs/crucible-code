@@ -1061,6 +1061,44 @@ fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
 }
 
 #[test]
+fn context_counts_what_settings_append_to_the_system_field_as_project_instructions() {
+    // `/context` shows `systemPrompt.append` apart from crucible's own part of
+    // the field. The definition is what carries the split to the runner.
+    let sample = Sample::new("startup-context-appended");
+    let settings = sample
+        .settings(r#"{"systemPrompt":{"append":"Run the project checks before you finish."}}"#);
+    let told = under(&settings);
+    let appended = told
+        .strip_prefix(&under(&Settings::default()))
+        .expect("what is appended follows crucible's own part");
+
+    let built = specified("claude-opus-5", None, &settings, &told);
+
+    assert!(appended.contains("Run the project checks"), "{appended}");
+    assert_eq!(built.appended(), appended.len());
+}
+
+#[test]
+fn context_leaves_a_replaced_system_field_under_the_system_prompt() {
+    // `systemPrompt.custom` replaces crucible's own part rather than adding to
+    // it, so only what is appended after it is counted apart.
+    let sample = Sample::new("startup-context-custom");
+    let replaced = sample.user(r#"{"systemPrompt":{"custom":"Answer in haiku."}}"#);
+    let both = sample.user(
+        r#"{"systemPrompt":{"custom":"Answer in haiku.","append":"Run the project checks."}}"#,
+    );
+    let told = under(&both);
+    let appended = told
+        .strip_prefix(&under(&replaced))
+        .expect("what is appended follows the replaced part");
+
+    let built = specified("claude-opus-5", None, &both, &told);
+
+    assert!(appended.contains("Run the project checks"), "{appended}");
+    assert_eq!(built.appended(), appended.len());
+}
+
+#[test]
 fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
     // The rule `Agent::telling` enforces, at the one site outside the runner
     // that writes the field: no instructions and empty instructions are two

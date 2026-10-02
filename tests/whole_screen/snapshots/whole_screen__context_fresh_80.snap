@@ -1,0 +1,30 @@
+---
+source: tests/whole_screen/main.rs
+assertion_line: 3711
+expression: picture
+---
+80x24 cursor 23,0 scrolled 0
+|│ Tips                                                                        ││|
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› /context                                                                     ┃|
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Context · claude-test-1 · 200k window                                           |
+|                                                                                |
+|█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+|                                                                                |
+|  ██ system prompt           1.0k     0.5%                                      |
+|  ██ project instructions       0       0%                                      |
+|  ██ tool schemas            3.8k     1.9%                                      |
+|  ██ MCP tool schemas           0       0%                                      |
+|  ██ messages                   0       0%                                      |
+|  ██ reserve                28.1k    14.1%                                      |
+|  ░░ free                  166.9k     100%                                      |
+|                                                                                |
+|esc to close                                                                    |

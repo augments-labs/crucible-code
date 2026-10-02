@@ -61,7 +61,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crucible_runner::Event;
+use crucible_runner::{Breakdown, Event};
 use crucible_tools::Looking;
 use crucible_tui::{Prompt, Row, Slot, Working};
 use crucible_types::{Compacting, ToolId};
@@ -253,9 +253,9 @@ pub(super) struct Turning {
     doing: Doing,
     /// What it has spent so far, or `None` until the provider says.
     spent: Option<u64>,
-    /// How much usable room remained before compaction at the latest reading,
-    /// or `None` where no window is known.
-    left: Option<u8>,
+    /// The latest request divided by what holds the window, which is also
+    /// where the usable room left before compaction is read from.
+    breakdown: Breakdown,
     /// Why room is being made, and `None` when no progress row remains.
     ///
     /// Kept briefly after [`Event::Compacted`] with `part` at 100, so completed
@@ -566,12 +566,13 @@ struct Drawn {
 }
 
 impl Turning {
-    /// A turn that starts now, with the session's latest window reading.
-    pub(super) fn started(left: Option<u8>) -> Self {
+    /// A turn that starts now, from the session's last request divided by
+    /// what holds the window.
+    pub(super) fn started(breakdown: Breakdown) -> Self {
         Self {
             since: Instant::now(),
             doing: Doing::Thinking,
-            left,
+            breakdown,
             making: None,
             part: 0,
             completed: None,
@@ -741,7 +742,9 @@ impl Turning {
         // stop keeps reporting them until the response in flight is actually
         // over, so freezing them would leave the next prompt with stale room.
         match event {
-            Event::Carried { left } => self.left = *left,
+            Event::Carried { breakdown } => {
+                self.breakdown = *breakdown;
+            }
             Event::Compacting { why, part } => {
                 self.making = Some(*why);
                 self.part = (*part).min(99);
@@ -816,7 +819,7 @@ impl Turning {
     pub(super) fn moved(&mut self) -> bool {
         let now = Drawn {
             doing: self.shown_doing(),
-            left: self.left,
+            left: self.breakdown.left(),
             spent: self.spent,
             beat: Working::beat(self.running()),
 
@@ -906,10 +909,17 @@ impl Turning {
         }
     }
 
-    /// The latest session reading, carried into the turn and updated by
-    /// [`Event::Carried`] while it runs.
+    /// The usable room left before compaction, read off [`Turning::breakdown`]
+    /// so the prompt line and `/context` cannot disagree.
     pub(super) const fn left(&self) -> Option<u8> {
-        self.left
+        self.breakdown.left()
+    }
+
+    /// The last request divided by what holds the window: the one the turn
+    /// started from, then each [`Event::Carried`] since. What `/context`
+    /// shows while the runner is away on the turn.
+    pub(super) const fn breakdown(&self) -> Breakdown {
+        self.breakdown
     }
 
     /// The row that says the turn is running, as the footing draws it.

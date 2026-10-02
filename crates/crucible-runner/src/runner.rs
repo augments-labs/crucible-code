@@ -87,7 +87,8 @@ mod work;
 
 use answer::Answer;
 pub use cleanup::PromptCacheCleanup;
-use load::{Counting, Load};
+pub use load::{Breakdown, Category};
+use load::{Counting, Fixed, Load};
 use passes::AgentLoop;
 use state::Judged;
 pub use state::RunState;
@@ -196,25 +197,6 @@ pub struct Runner {
     pace: fast::Pace,
 }
 
-/// What `agent` would be advertised out of `tools`, between turns.
-///
-/// A pass narrows the roster it admits and leaves it behind narrowed, so after
-/// the first one this hands the roster straight back. Before it, the run is
-/// still holding everything it was wired with, and both things read here
-/// between turns — the names under the box and the size of the request the
-/// next turn would send — are about what the definition declares rather than
-/// about what the wiring installed.
-///
-/// A function over the two fields rather than a method, so a caller can hold
-/// the load it is about to write while it asks.
-fn advertising<'a>(agent: &Agent, tools: &'a ToolSnapshot) -> Vec<ToolSchema<'a>> {
-    tools
-        .advertised()
-        .into_iter()
-        .filter(|schema| agent.availability().offers(schema.name))
-        .collect()
-}
-
 struct Tooling {
     source: Arc<dyn Toolset>,
     snapshot: ToolSnapshot,
@@ -299,10 +281,10 @@ impl Runner {
             worker: None,
             pace: fast::Pace::default(),
         };
-        runner.state.load.requesting(
-            runner.agent.instructions(),
-            &advertising(&runner.agent, &runner.state.tools),
-        );
+        runner
+            .state
+            .load
+            .requesting(&Fixed::of(&runner.agent, &runner.state.tools));
         runner
     }
 
@@ -448,10 +430,9 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&Fixed::of(&self.agent, &self.state.tools));
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
@@ -587,7 +568,23 @@ impl Runner {
     /// back less of the window than its session does came to be told the
     /// window was full.
     fn left_under(&self, compaction: Compaction) -> Option<u8> {
-        self.state.load.left(
+        self.breakdown_under(compaction).left()
+    }
+
+    /// What the next request would carry, divided by what holds the window.
+    ///
+    /// The between-turn read `/context` draws, counted with the reserve and
+    /// the arithmetic [`Runner::left`] uses: the categories a request carries
+    /// add up to [`Runner::carrying`], and what is left is [`Runner::left`].
+    #[must_use]
+    pub fn breakdown(&self) -> Breakdown {
+        self.breakdown_under(self.policy.compaction)
+    }
+
+    /// The same, against the compaction answer given; the one reader both the
+    /// breakdown and the bare percentage come from.
+    fn breakdown_under(&self, compaction: Compaction) -> Breakdown {
+        self.state.load.breakdown(
             self.state.window,
             self.reserve(compaction, self.state.window),
         )
@@ -686,9 +683,10 @@ impl Runner {
     /// that. What the reader is shown is the same either way.
     #[must_use]
     pub fn offering(&self) -> Vec<String> {
-        advertising(&self.agent, &self.state.tools)
+        Fixed::of(&self.agent, &self.state.tools)
+            .tools
             .into_iter()
-            .map(|schema| schema.name.to_owned())
+            .map(|(_, schema)| schema.name.to_owned())
             .collect()
     }
 
@@ -794,10 +792,9 @@ impl Runner {
     /// written empty already gets in the documents this text is built from.
     pub fn telling(&mut self, system: &str) {
         self.agent = Arc::new(self.agent.telling(system));
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&Fixed::of(&self.agent, &self.state.tools));
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -1841,7 +1838,7 @@ impl Runner {
                     )
                     .await;
                     events.post(Event::Carried {
-                        left: counting.left(),
+                        breakdown: counting.breakdown(),
                     });
                 }
                 Delta::Spent(said) => {
@@ -1854,7 +1851,7 @@ impl Runner {
                     // the percentage again as it grows rather than leaving the
                     // opening input count on screen for the whole response.
                     events.post(Event::Carried {
-                        left: counting.left(),
+                        breakdown: counting.breakdown(),
                     });
                 }
                 // Not added to the spend beside it, and not accumulated at
@@ -1887,7 +1884,7 @@ impl Runner {
                     }
 
                     events.post(Event::Carried {
-                        left: counting.left(),
+                        breakdown: counting.breakdown(),
                     });
                 }
                 Delta::Stopped(stop) => answer.stopped(stop)?,
@@ -1901,9 +1898,9 @@ impl Runner {
     fn output_grew(events: &Reporter<'_>, counting: &mut Counting, bytes: usize) {
         let before = counting.left();
         counting.load.produced(bytes);
-        let left = counting.left();
-        if left != before {
-            events.post(Event::Carried { left });
+        let breakdown = counting.breakdown();
+        if breakdown.left() != before {
+            events.post(Event::Carried { breakdown });
         }
     }
 

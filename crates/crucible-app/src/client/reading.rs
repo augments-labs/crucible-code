@@ -11,7 +11,7 @@ use crucible_client_api::{
     Capabilities, Capability, Model, Name, Percent, Problem, Progress, Snapshot, Stop, Text,
 };
 use crucible_models::{Effort, Served, Speed};
-use crucible_runner::Event;
+use crucible_runner::{Breakdown, Category, Event};
 use crucible_tools::Mode;
 use crucible_types::StopReason;
 
@@ -93,6 +93,10 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         Event::Spent { spend } => Progress::Spent {
             tokens: spend.tokens(),
         },
+        // What a client with no terminal reads as `/context` while a turn
+        // runs; the terminal takes the same figures from the runner's event.
+        // The model is the snapshot's to say.
+        Event::Carried { breakdown } => Progress::Context(counted(breakdown)),
         Event::TurnFinished { turn, stop } => Progress::Finished {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
@@ -103,11 +107,56 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Wrote { .. }
-        | Event::Carried { .. }
         | Event::Aged { .. }
         | Event::Unread { .. }
         | Event::Steered { .. } => return None,
     })
+}
+
+/// How the window of the next request to `model` is spent, as a client reads
+/// it.
+///
+/// Every category the runner counts is placed by name, so one it adds is a
+/// category this match, and so the contract, has to be told about. The
+/// reading of what is left is the one the prompt line and [`snapshot`] show.
+/// Called between turns by [`perform`](super::perform), and by the terminal
+/// mid-turn with the breakdown the turn last reported; a client with no
+/// terminal is streamed the same figures by [`progress`].
+#[must_use]
+pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
+    api::Context {
+        model: Model::new(model),
+        ..counted(breakdown)
+    }
+}
+
+/// The parts of `breakdown`, with no model named.
+fn counted(breakdown: &Breakdown) -> api::Context {
+    let mut context = api::Context {
+        model: None,
+        window: breakdown.window().map(u64::from),
+        left: breakdown.left().and_then(Percent::new),
+        system: 0,
+        instructions: 0,
+        tools: 0,
+        mcp: 0,
+        messages: 0,
+        reserve: 0,
+        free: 0,
+    };
+    for category in Category::EVERY {
+        let tokens = breakdown.tokens(category);
+        match category {
+            Category::SystemPrompt => context.system = tokens,
+            Category::ProjectInstructions => context.instructions = tokens,
+            Category::ToolSchemas => context.tools = tokens,
+            Category::McpToolSchemas => context.mcp = tokens,
+            Category::Messages => context.messages = tokens,
+            Category::Reserve => context.reserve = tokens,
+            Category::Free => context.free = tokens,
+        }
+    }
+    context
 }
 
 /// A count as it crosses: a `usize` on every machine this builds for fits.
