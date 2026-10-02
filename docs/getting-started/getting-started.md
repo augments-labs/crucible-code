@@ -1049,7 +1049,7 @@ first, and the end of whichever one is marked drawn in the other.
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ Search    a session, or a branch                                             │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- Resume a session · 3 of 12 · /home/you/code/my-project
+ Resume a session · 3 of 12 · ~/code/my-project
 
 ╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮
 │ › rename the parser error    │ │ › rename the parser error type              │
@@ -1067,12 +1067,19 @@ first, and the end of whichever one is marked drawn in the other.
 │                              │ │ Enter to resume · Esc to cancel             │
 ╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯
 
- ↑↓ to walk · ctrl+r to rename · type to search · esc to cancel
+ ↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc
 ```
 
-Type to narrow the list. The line is matched against a session's title *and* the
-branch it was recorded on, and does not ask which of the two it was just given:
-`parser` and `fix/` both leave the first row above. The up and down arrows walk
+The keys row names what each key does in full where the window is wide enough,
+and only the keys at eighty columns. <kbd>Ctrl+A</kbd> shows every project's
+sessions, <kbd>Ctrl+B</kbd> keeps this branch's and <kbd>Ctrl+W</kbd> adds this
+repository's other worktrees; [Switching without
+restarting](../sessions/sessions.md#switching-without-restarting) says what
+each shows and what Enter does on a session from another directory.
+
+Type to narrow the list. The line is matched against a session's title, the
+branch it was recorded on and the directory its row shows, if any, and does not
+ask which it was just given: `parser` and `fix/` both leave the first row above. The up and down arrows walk
 what is left, and the preview follows the mark: it is drawn by the code that
 draws the live transcript, so the prompts, the calls, the rows results came back
 on and the model's prose are what picking that session up would put back on
