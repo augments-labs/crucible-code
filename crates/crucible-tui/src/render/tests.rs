@@ -1750,6 +1750,118 @@ fn after_the_record_is_emptied_the_rail_thumb_still_reaches_the_foot() {
     assert_eq!(rail_of(&drawn), "•│││││││┃┃");
 }
 
+/// The next number from a seeded generator, below `below`.
+///
+/// A linear congruential step, so a failing case is the same case on every
+/// run and its seed is enough to find it again.
+fn next(seed: &mut u64, below: usize) -> usize {
+    *seed = seed
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    usize::try_from(*seed >> 33).unwrap_or(0) % below.max(1)
+}
+
+#[test]
+fn the_rail_thumb_and_marks_stand_on_the_rows_the_drawn_band_scales_to() {
+    // Records of every shape, at every width and band height, scrolled
+    // anywhere. What the rail is checked against is read off the screen: the
+    // band's rows found in the whole record as drawn, so the oracle is the row
+    // space a reader sees rather than the one the record keeps.
+    let mut seed = 0x5eed_u64;
+    for case in 0..300 {
+        let columns = crate::scroll_rail::NARROWEST + next(&mut seed, 100);
+        let mut drawn = Drawn::new(columns, 4 + next(&mut seed, 30));
+        drawn.rails(true);
+        let mut word = 0;
+        let mut session = |drawn: &mut Drawn, seed: &mut u64, lines: usize| {
+            for line in 0..lines {
+                if next(seed, 6) == 0 {
+                    drawn.landmark();
+                    drawn.commit(&format!("› p{case}x{line}")).unwrap();
+                    continue;
+                }
+                // Every word distinct, so every row the record draws is too,
+                // and a long unbroken run now and then to be cut mid-word.
+                let mut text = Vec::new();
+                for _ in 0..next(seed, 40) {
+                    word += 1;
+                    let pad = "abcdefghijklmnop".get(..next(seed, 16)).unwrap_or("");
+                    text.push(format!("w{word}{pad}"));
+                }
+                if next(seed, 8) == 0 {
+                    word += 1;
+                    text.push(format!("r{word}{}", "z".repeat(next(seed, 200))));
+                }
+                let text = text.join(" ");
+                drawn.commit(&format!("l{case}x{line} {text}")).unwrap();
+            }
+        };
+        let lines = 1 + next(&mut seed, 80);
+        session(&mut drawn, &mut seed, lines);
+        if next(&mut seed, 4) == 0 {
+            drawn.empties().unwrap();
+            let lines = 1 + next(&mut seed, 80);
+            session(&mut drawn, &mut seed, lines);
+        }
+
+        // The whole record as drawn, read while the band follows the foot.
+        let all: Vec<String> = drawn
+            .tail(20_000)
+            .iter()
+            .map(|row| row.text().trim_end().to_owned())
+            .collect();
+        let up = next(&mut seed, all.len() + 1);
+        drawn.scrolled(-i32::try_from(up).unwrap()).unwrap();
+
+        let bands = drawn.bands();
+        let height = bands.transcript.len();
+        let screen = drawn.screen();
+        let band: Vec<String> = bands
+            .transcript
+            .clone()
+            .map(|row| {
+                let text: String = screen.row(row).chars().take(columns - 1).collect();
+                text.trim_end().to_owned()
+            })
+            .take(all.len())
+            .collect();
+        let found: Vec<usize> = (0..=all.len() - band.len())
+            .filter(|top| all.get(*top..*top + band.len()) == Some(&band[..]))
+            .collect();
+        let [top] = found[..] else {
+            panic!("case {case}: band found at {found:?}\n{band:#?}");
+        };
+
+        let total = all.len();
+        let rail = drawn.rail(&bands).unwrap();
+        if total <= height {
+            assert_eq!(rail.thumb(), None, "case {case}");
+            continue;
+        }
+        let scaled = |row: usize| row * height / total;
+        let first = scaled(top);
+        let last = scaled(top + height - 1);
+        assert_eq!(
+            rail.thumb(),
+            Some(first..last + 1),
+            "case {case}: {columns} columns, band {height} rows at {top} of {total}"
+        );
+        let prompts: Vec<usize> = all
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.starts_with("› p"))
+            .map(|(at, _)| scaled(at))
+            .collect();
+        for at in 0..height {
+            assert_eq!(
+                rail.marked(at),
+                prompts.contains(&at),
+                "case {case}: rail row {at}, prompts on {prompts:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_rail_over_a_transcript_that_fits_is_blank() {
     let mut drawn = Drawn::new(40, 8);

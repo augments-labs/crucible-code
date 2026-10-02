@@ -85,19 +85,15 @@ impl ScrollRail {
             };
         }
 
-        // The band's share of the record, scaled to the rail: the first row it
-        // shows rounded down and the last rounded up, so the thumb covers every
-        // rail row any part of the band falls on — which puts it on the first
-        // row at the head and on the last at the foot, and makes it a row at
-        // least.
+        // The band's share of the record, scaled to the rail: the rows its
+        // first and last displayed rows fall on, scaled as a mark is, and
+        // every row between. So the thumb covers exactly the rail rows the
+        // band's rows scale to — none that only the row after the band does —
+        // which puts it on the first row at the head and on the last at the
+        // foot, and makes it a row at least.
         let top = place.top.min(total - height);
         let start = scaled(top, total, height);
-        let end = (top + height)
-            .saturating_mul(height)
-            .div_ceil(total)
-            .min(height);
-        let length = end.saturating_sub(start).max(1);
-        let start = start.min(height.saturating_sub(length));
+        let end = scaled(top + height - 1, total, height) + 1;
 
         for prompt in prompts {
             if let Some(mark) = marks.get_mut(scaled(prompt, total, height)) {
@@ -108,7 +104,7 @@ impl ScrollRail {
         Self {
             total,
             height,
-            thumb: Some(start..start + length),
+            thumb: Some(start..end),
             marks,
         }
     }
@@ -127,8 +123,9 @@ impl ScrollRail {
     /// thumb to start on rail row `start`.
     ///
     /// The inverse of the scaling above, rounded up so that the thumb laid out
-    /// from the answer starts on exactly `start`. A thumb asked to reach the
-    /// rail's last row is at the foot, and the band follows it again.
+    /// from the answer starts on exactly `start`. A thumb asked to start below
+    /// where it stands at the foot, or to reach the rail's last row, is at the
+    /// foot, and the band follows it again.
     pub(crate) fn top_for(&self, start: usize) -> usize {
         let (total, height) = (self.total, self.height);
         let foot = total.saturating_sub(height);
@@ -300,16 +297,20 @@ mod tests {
 
     #[test]
     fn the_rail_seeks_the_top_that_puts_the_thumb_on_the_row_asked_for() {
-        // Every start the thumb can take, and back: what the rail shows after
-        // a seek is the row the pointer asked for.
+        // Every row, and back: what the rail shows after a seek is the row the
+        // pointer asked for, or the foot's where the thumb cannot start lower.
         for total in [11, 40, 100, 1_000, 123_457] {
             let first = laid(total, 0, &[]);
-            let length = first.thumb().expect("a thumb").len();
-            for start in 0..=10 - length {
+            let lowest = laid(total, total - 10, &[]).thumb().expect("a thumb");
+            for start in 0..10 {
                 let top = first.top_for(start);
                 assert!(top <= total - 10, "{total}: {start} -> {top}");
                 let after = laid(total, top, &[]).thumb().expect("a thumb");
-                assert_eq!(after.start, start, "{total}: {start} -> {top}");
+                assert_eq!(
+                    after.start,
+                    start.min(lowest.start),
+                    "{total}: {start} -> {top}"
+                );
             }
             assert_eq!(first.top_for(10), total - 10);
         }
