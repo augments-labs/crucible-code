@@ -721,7 +721,7 @@ impl Turning {
         // stop keeps reporting them until the response in flight is actually
         // over, so freezing them would leave the next prompt with stale room.
         match event {
-            Event::Carried { left } => self.left = *left,
+            Event::Carried { left, .. } => self.left = *left,
             Event::Compacting { why, part } => {
                 self.making = Some(*why);
                 self.part = (*part).min(99);

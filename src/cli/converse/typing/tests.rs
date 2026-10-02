@@ -979,7 +979,10 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     let renderer = roomy();
     let editor = typed("next");
     let mut turning = Turning::started(None);
-    turning.saw(&crucible_runner::Event::Carried { left: Some(61) });
+    turning.saw(&crucible_runner::Event::Carried {
+        left: Some(61),
+        breakdown: crucible_runner::Breakdown::default(),
+    });
     let planning = nothing();
     let mut says = settled(Mode::Ask);
     says.left = Some(88);

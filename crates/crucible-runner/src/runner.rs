@@ -87,7 +87,8 @@ mod work;
 
 use answer::Answer;
 pub use cleanup::PromptCacheCleanup;
-use load::{Counting, Load};
+pub use load::{Breakdown, Category};
+use load::{Counting, Fixed, Load};
 use passes::AgentLoop;
 use state::Judged;
 pub use state::RunState;
@@ -215,6 +216,24 @@ fn advertising<'a>(agent: &Agent, tools: &'a ToolSnapshot) -> Vec<ToolSchema<'a>
         .collect()
 }
 
+/// What every request `agent` sends out of `tools` carries before the
+/// transcript, each part beside the category `/context` shows it under.
+///
+/// The roster is the one [`advertising`] reads, and is narrowed the same way.
+fn fixed<'a>(agent: &'a Agent, tools: &'a ToolSnapshot) -> Fixed<'a> {
+    Fixed {
+        system: agent.instructions(),
+        appended: 0,
+        tools: tools
+            .entries()
+            .iter()
+            .map(ToolEntry::descriptor)
+            .filter(|descriptor| agent.availability().offers(descriptor.name()))
+            .map(|descriptor| (descriptor.provenance().kind(), descriptor.advertised()))
+            .collect(),
+    }
+}
+
 struct Tooling {
     source: Arc<dyn Toolset>,
     snapshot: ToolSnapshot,
@@ -299,10 +318,10 @@ impl Runner {
             worker: None,
             pace: fast::Pace::default(),
         };
-        runner.state.load.requesting(
-            runner.agent.instructions(),
-            &advertising(&runner.agent, &runner.state.tools),
-        );
+        runner
+            .state
+            .load
+            .requesting(&fixed(&runner.agent, &runner.state.tools));
         runner
     }
 
@@ -448,10 +467,9 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&fixed(&self.agent, &self.state.tools));
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
@@ -587,7 +605,23 @@ impl Runner {
     /// back less of the window than its session does came to be told the
     /// window was full.
     fn left_under(&self, compaction: Compaction) -> Option<u8> {
-        self.state.load.left(
+        self.breakdown_under(compaction).left()
+    }
+
+    /// What the next request would carry, divided by what holds the window.
+    ///
+    /// The between-turn read `/context` draws, counted with the reserve and
+    /// the arithmetic [`Runner::left`] uses: the categories a request carries
+    /// add up to [`Runner::carrying`], and what is left is [`Runner::left`].
+    #[must_use]
+    pub fn breakdown(&self) -> Breakdown {
+        self.breakdown_under(self.policy.compaction)
+    }
+
+    /// The same, against the compaction answer given; the one reader both the
+    /// breakdown and the bare percentage come from.
+    fn breakdown_under(&self, compaction: Compaction) -> Breakdown {
+        self.state.load.breakdown(
             self.state.window,
             self.reserve(compaction, self.state.window),
         )
@@ -794,10 +828,9 @@ impl Runner {
     /// written empty already gets in the documents this text is built from.
     pub fn telling(&mut self, system: &str) {
         self.agent = Arc::new(self.agent.telling(system));
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&fixed(&self.agent, &self.state.tools));
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -1840,9 +1873,7 @@ impl Runner {
                         })),
                     )
                     .await;
-                    events.post(Event::Carried {
-                        left: counting.left(),
-                    });
+                    events.post(Event::carried(counting.breakdown()));
                 }
                 Delta::Spent(said) => {
                     counting.spent = before.and(said);
@@ -1853,9 +1884,7 @@ impl Runner {
                     // Output occupies the same context window as input. Report
                     // the percentage again as it grows rather than leaving the
                     // opening input count on screen for the whole response.
-                    events.post(Event::Carried {
-                        left: counting.left(),
-                    });
+                    events.post(Event::carried(counting.breakdown()));
                 }
                 // Not added to the spend beside it, and not accumulated at
                 // all. What a request carried is a level rather than a total —
@@ -1886,9 +1915,7 @@ impl Runner {
                         counting.window = None;
                     }
 
-                    events.post(Event::Carried {
-                        left: counting.left(),
-                    });
+                    events.post(Event::carried(counting.breakdown()));
                 }
                 Delta::Stopped(stop) => answer.stopped(stop)?,
             }
@@ -1901,9 +1928,9 @@ impl Runner {
     fn output_grew(events: &Reporter<'_>, counting: &mut Counting, bytes: usize) {
         let before = counting.left();
         counting.load.produced(bytes);
-        let left = counting.left();
-        if left != before {
-            events.post(Event::Carried { left });
+        let breakdown = counting.breakdown();
+        if breakdown.left() != before {
+            events.post(Event::carried(breakdown));
         }
     }
 

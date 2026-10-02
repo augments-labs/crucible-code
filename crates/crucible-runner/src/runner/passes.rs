@@ -134,25 +134,23 @@ impl<'a> AgentLoop<'a> {
             self.runner
                 .record(run.ancestry(), Message::said(line))
                 .await?;
-            events.post(Event::Carried {
-                left: self
-                    .runner
+            events.post(Event::carried(
+                self.runner
                     .state
                     .load
-                    .left(counting.window, counting.reserve),
-            });
+                    .breakdown(counting.window, counting.reserve),
+            ));
         }
         for note in run.aside().take() {
             self.runner
                 .record(run.ancestry(), Message::said(note))
                 .await?;
-            events.post(Event::Carried {
-                left: self
-                    .runner
+            events.post(Event::carried(
+                self.runner
                     .state
                     .load
-                    .left(counting.window, counting.reserve),
-            });
+                    .breakdown(counting.window, counting.reserve),
+            ));
         }
         Ok(())
     }
@@ -286,7 +284,7 @@ impl<'a> AgentLoop<'a> {
             counting.load = self.runner.state.load;
             counting
                 .load
-                .requesting(self.runner.agent.instructions(), &advertised);
+                .requesting(&super::fixed(&self.runner.agent, &tools));
 
             // Worked out per pass rather than once, because what it is measured
             // against can be corrected mid-turn: a window learned from a
@@ -313,9 +311,7 @@ impl<'a> AgentLoop<'a> {
                 // case no preceding load event exists. State the zero the same
                 // arithmetic reached before replacing it with the compaction
                 // activity, so the two cannot appear to disagree.
-                events.post(Event::Carried {
-                    left: counting.left(),
-                });
+                events.post(Event::carried(counting.breakdown()));
                 match self
                     .room(Compacting::Full, &mut fruitless, counting)
                     .await?
@@ -338,7 +334,7 @@ impl<'a> AgentLoop<'a> {
             counting.load = self.runner.state.load;
             counting
                 .load
-                .requesting(self.runner.agent.instructions(), &advertised);
+                .requesting(&super::fixed(&self.runner.agent, &tools));
 
             let heard = match self
                 .runner
@@ -480,13 +476,12 @@ impl<'a> AgentLoop<'a> {
             self.runner
                 .record(run.ancestry(), Message::ToolResults(results))
                 .await?;
-            events.post(Event::Carried {
-                left: self
-                    .runner
+            events.post(Event::carried(
+                self.runner
                     .state
                     .load
-                    .left(counting.window, counting.reserve),
-            });
+                    .breakdown(counting.window, counting.reserve),
+            ));
 
             match went {
                 Went::On => {}

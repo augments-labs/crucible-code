@@ -21,6 +21,19 @@ fn attaching(bytes: usize) -> Message {
     }
 }
 
+/// What a request carries before the transcript: `system`, nothing appended
+/// to it, and `tools`, every one built in.
+fn fixed<'a>(system: Option<&'a str>, tools: &[ToolSchema<'a>]) -> Fixed<'a> {
+    Fixed {
+        system,
+        appended: 0,
+        tools: tools
+            .iter()
+            .map(|tool| (ToolSourceKind::Builtin, *tool))
+            .collect(),
+    }
+}
+
 /// A tool result of `bytes` bytes, for filling a transcript.
 fn results(bytes: usize) -> Message {
     Message::ToolResults(vec![ToolResult {
@@ -49,7 +62,7 @@ fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
         schema: Box::leak("s".repeat(536).into_boxed_str()),
     }];
 
-    load.requesting(Some(&"i".repeat(60)), &tools);
+    load.requesting(&fixed(Some(&"i".repeat(60)), &tools));
 
     // 300 transcript bytes + 60 instructions + 4 name + 536 schema + the
     // conservative 64-byte provider wrapper, at three bytes per token.
@@ -61,14 +74,14 @@ fn an_unreported_request_includes_system_instructions_and_tool_schemas() {
 fn same_sized_new_request_overhead_is_shown_as_a_conservative_estimate() {
     let mut load = Load::default();
     load.recorded(&Message::said("request"));
-    load.requesting(Some("system one"), &[]);
+    load.requesting(&fixed(Some("system one"), &[]));
     load.responding(0);
     load.carried(Carried::new(100));
     // The ten fixed bytes are 59 tokens at this session's reported rate, and
     // they come out of the denominator: 100 of 141 transcript tokens left.
     assert_eq!(load.left(Some(200), 0), Some(70));
 
-    load.requesting(Some("system two"), &[]);
+    load.requesting(&fixed(Some("system two"), &[]));
 
     assert_eq!(load.left(Some(200), 0), Some(29));
     assert!(
@@ -85,7 +98,7 @@ fn a_provider_report_supersedes_system_and_tool_estimates_whole() {
         name: "read",
         schema: Box::leak("s".repeat(536).into_boxed_str()),
     }];
-    load.requesting(Some(&"i".repeat(60)), &tools);
+    load.requesting(&fixed(Some(&"i".repeat(60)), &tools));
     load.responding(0);
 
     load.carried(Carried::new(1_000));
@@ -281,7 +294,7 @@ fn output_after_an_exact_partial_spend_is_the_only_part_estimated_on_recording()
 fn an_equal_overhead_resume_measurement_stays_exact_and_persistable() {
     let mut load = Load::default();
     load.recorded(&results(300));
-    load.requesting(Some(&"i".repeat(500)), &[]);
+    load.requesting(&fixed(Some(&"i".repeat(500)), &[]));
     let reading = Calibration {
         carried: Carried::new(100),
         spent: Spend::new(10),
@@ -298,7 +311,7 @@ fn an_equal_overhead_resume_measurement_stays_exact_and_persistable() {
 fn a_fresh_report_cannot_make_an_uncompacted_resumed_window_gain_visible_room() {
     let mut load = Load::default();
     load.recorded(&results(2_550_000));
-    load.requesting(Some(&"i".repeat(15_000)), &[]);
+    load.requesting(&fixed(Some(&"i".repeat(15_000)), &[]));
     assert_eq!(load.left(Some(922_000), 36_000), Some(3));
 
     // The persisted reading is rejected because fixed content changed, then the
@@ -337,7 +350,7 @@ fn a_fresh_report_cannot_make_an_uncompacted_resumed_window_gain_visible_room() 
 fn a_resume_without_a_persisted_measurement_still_holds_its_starting_reading() {
     let mut load = Load::default();
     load.recorded(&results(2_550_000));
-    load.requesting(Some(&"i".repeat(15_000)), &[]);
+    load.requesting(&fixed(Some(&"i".repeat(15_000)), &[]));
     load.resumed();
     assert_eq!(load.left(Some(922_000), 36_000), Some(3));
 
@@ -351,7 +364,7 @@ fn a_resume_without_a_persisted_measurement_still_holds_its_starting_reading() {
 fn replacing_context_clears_the_resumed_display_floor() {
     let mut load = Load::default();
     load.recorded(&results(2_550_000));
-    load.requesting(Some(&"i".repeat(15_000)), &[]);
+    load.requesting(&fixed(Some(&"i".repeat(15_000)), &[]));
     load.measured(Calibration {
         carried: Carried::new(711_628),
         spent: Spend::new(452),
@@ -370,7 +383,7 @@ fn replacing_context_clears_the_resumed_display_floor() {
 fn a_resume_rejects_a_measurement_that_did_not_include_all_current_overhead() {
     let mut load = Load::default();
     load.recorded(&results(300));
-    load.requesting(Some(&"i".repeat(700)), &[]);
+    load.requesting(&fixed(Some(&"i".repeat(700)), &[]));
 
     load.measured(Calibration {
         carried: Carried::new(100),
@@ -467,7 +480,7 @@ fn a_session_that_has_said_nothing_reads_as_a_whole_window() {
         schema: Box::leak("s".repeat(30_000).into_boxed_str()),
     }];
 
-    load.requesting(Some(&"i".repeat(6_000)), &tools);
+    load.requesting(&fixed(Some(&"i".repeat(6_000)), &tools));
 
     assert_eq!(load.left(Some(200_000), 36_000), Some(100));
     assert!(!load.full(Some(200_000), 36_000));
@@ -709,4 +722,130 @@ fn a_rewrite_handed_weights_for_other_messages_is_refused() {
         &[results(30), results(30)],
         0,
     );
+}
+
+/// A request with a part in every category the load holds: 600 bytes of
+/// system field of which the last 200 were appended, one built-in tool and one
+/// a server supplied.
+fn every_part() -> Fixed<'static> {
+    Fixed {
+        system: Some(Box::leak("i".repeat(600).into_boxed_str())),
+        appended: 200,
+        tools: vec![
+            (
+                ToolSourceKind::Builtin,
+                ToolSchema {
+                    name: "read",
+                    schema: Box::leak("s".repeat(900).into_boxed_str()),
+                },
+            ),
+            (
+                ToolSourceKind::Mcp,
+                ToolSchema {
+                    name: "search",
+                    schema: Box::leak("m".repeat(1_500).into_boxed_str()),
+                },
+            ),
+        ],
+    }
+}
+
+/// The five categories a request carries, added up.
+fn carried_by(breakdown: &Breakdown) -> u64 {
+    [
+        Category::SystemPrompt,
+        Category::ProjectInstructions,
+        Category::ToolSchemas,
+        Category::McpToolSchemas,
+        Category::Messages,
+    ]
+    .into_iter()
+    .map(|category| breakdown.tokens(category))
+    .sum()
+}
+
+#[test]
+fn context_breakdown_sums_to_the_load_the_runner_counts() {
+    let mut load = Load::default();
+    load.recorded(&Message::said("x".repeat(3_000)));
+    load.requesting(&every_part());
+
+    let breakdown = load.breakdown(Some(200_000), 36_000);
+
+    assert_eq!(carried_by(&breakdown), load.tokens());
+    // At the uncalibrated three bytes a token: 400 own bytes, 200 appended,
+    // 4 + 900 + 64 and 6 + 1 500 + 64 of schema, and 3 000 of transcript.
+    assert_eq!(breakdown.tokens(Category::SystemPrompt), 134);
+    assert_eq!(breakdown.tokens(Category::ProjectInstructions), 66);
+    assert_eq!(breakdown.tokens(Category::ToolSchemas), 323);
+    assert_eq!(breakdown.tokens(Category::McpToolSchemas), 523);
+    assert_eq!(breakdown.tokens(Category::Messages), 1_000);
+    assert_eq!(breakdown.tokens(Category::Reserve), 36_000);
+    assert_eq!(
+        breakdown.tokens(Category::Free),
+        200_000 - 36_000 - load.tokens()
+    );
+    assert_eq!(breakdown.window(), Some(200_000));
+}
+
+#[test]
+fn context_breakdown_still_sums_once_a_report_has_calibrated_the_rate() {
+    let mut load = Load::default();
+    load.recorded(&Message::said("x".repeat(3_000)));
+    load.requesting(&every_part());
+    load.responding(0);
+    load.carried(Carried::new(2_000));
+    load.recorded(&results(4_000));
+
+    let breakdown = load.breakdown(Some(200_000), 36_000);
+
+    assert_eq!(carried_by(&breakdown), load.tokens());
+    assert!(
+        breakdown.tokens(Category::McpToolSchemas) > 0,
+        "a category that is sent was shown empty"
+    );
+}
+
+#[test]
+fn context_breakdown_free_percent_is_the_prompt_lines() {
+    let mut load = Load::default();
+    load.requesting(&every_part());
+    for bytes in [0, 30_000, 240_000, 480_000] {
+        load.recorded(&results(bytes));
+        for (window, reserve) in [(Some(200_000), 36_000), (Some(400_000), 0)] {
+            assert_eq!(
+                load.breakdown(window, reserve).left(),
+                load.left(window, reserve),
+                "{bytes} bytes against {window:?} less {reserve}"
+            );
+        }
+    }
+}
+
+#[test]
+fn context_breakdown_with_no_window_reported_has_no_free_room_or_reading() {
+    let mut load = Load::default();
+    load.recorded(&Message::said("x".repeat(3_000)));
+    load.requesting(&every_part());
+
+    let breakdown = load.breakdown(None, 0);
+
+    assert_eq!(breakdown.window(), None);
+    assert_eq!(breakdown.left(), None);
+    assert_eq!(breakdown.tokens(Category::Free), 0);
+    assert_eq!(carried_by(&breakdown), load.tokens());
+}
+
+#[test]
+fn context_breakdown_shows_an_empty_category_as_nothing() {
+    let mut load = Load::default();
+    load.recorded(&Message::said("x".repeat(3_000)));
+    load.requesting(&fixed(Some("i"), &[]));
+
+    let breakdown = load.breakdown(Some(200_000), 0);
+
+    assert_eq!(breakdown.tokens(Category::ProjectInstructions), 0);
+    assert_eq!(breakdown.tokens(Category::ToolSchemas), 0);
+    assert_eq!(breakdown.tokens(Category::McpToolSchemas), 0);
+    assert_eq!(carried_by(&breakdown), load.tokens());
 }

@@ -11,6 +11,8 @@
 use crucible_models::ProviderError;
 use crucible_tools::{Looking, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote};
 use crucible_types::Spend;
+
+use crate::Breakdown;
 use crucible_types::{
     Ancestry, Attachment, ContextError, RunId, StopReason, ToolCall, ToolId, TurnId,
 };
@@ -347,9 +349,14 @@ pub enum Event {
     /// percentage, so zero is the safe compaction boundary rather than the
     /// model's literal last token. `None` where no window is known: nothing draws
     /// a fraction of a number nobody stated.
+    ///
+    /// Posted through [`Event::carried`], so the percentage is always the one
+    /// its breakdown was counted with.
     Carried {
         /// The usable percentage still free, rounded down.
         left: Option<u8>,
+        /// The request this reading measured, by what holds the window.
+        breakdown: Breakdown,
     },
 
     /// Room is being made, and the turn has not ended.
@@ -448,6 +455,16 @@ pub enum Event {
 /// [`crucible_types::Message::User`] redacts the same words, while a delta's prose is
 /// deliberately shown — it is the model's own prose on its way to the screen.
 /// Everything else delegates, and what needs redacting redacts itself.
+impl Event {
+    /// The reading of the next request's load that `breakdown` divides.
+    pub(crate) const fn carried(breakdown: Breakdown) -> Self {
+        Self::Carried {
+            left: breakdown.left(),
+            breakdown,
+        }
+    }
+}
+
 impl std::fmt::Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -503,7 +520,11 @@ impl std::fmt::Debug for Event {
                 .field("reason", reason)
                 .field("resent", resent)
                 .finish(),
-            Self::Carried { left } => f.debug_struct("Carried").field("left", left).finish(),
+            Self::Carried { left, breakdown } => f
+                .debug_struct("Carried")
+                .field("left", left)
+                .field("breakdown", breakdown)
+                .finish(),
             Self::Compacting { why, part } => f
                 .debug_struct("Compacting")
                 .field("why", why)

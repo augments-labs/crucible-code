@@ -367,7 +367,10 @@ fn the_window_left_is_handed_to_the_prompt_and_takes_no_turn_row() {
     // The prompt border now owns the one place this reading stands. Turning
     // retains the latest event value for it, but lays out no duplicate row.
     let mut turning = Turning::started(None);
-    turning.saw(&Event::Carried { left: Some(72) });
+    turning.saw(&Event::Carried {
+        left: Some(72),
+        breakdown: crucible_runner::Breakdown::default(),
+    });
 
     let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
     let texts: Vec<String> = rows.iter().map(Row::text).collect();
@@ -403,7 +406,10 @@ fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
     });
     turning.interrupting();
 
-    turning.saw(&Event::Carried { left: Some(70) });
+    turning.saw(&Event::Carried {
+        left: Some(70),
+        breakdown: crucible_runner::Breakdown::default(),
+    });
     assert_eq!(turning.left(), Some(70));
 
     turning.saw(&Event::Compacted {
