@@ -726,6 +726,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         commands: converse::command::builtins(&settings.sandbox().enablement())?,
         providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
+        settled: RefCell::default(),
         cancel: cancel.clone(),
         // The runtime the conversation was assembled on, which its turns run
         // on too.

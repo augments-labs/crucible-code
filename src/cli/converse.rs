@@ -152,6 +152,10 @@ pub(crate) struct Terms {
     /// `/theme` took one. `None` is "nothing said", and the first fence settles
     /// on whatever this build draws code in unless somebody says otherwise.
     pub(crate) reading: RefCell<Option<String>>,
+    /// What `/settings` has written down this session, by key, one entry a
+    /// row: the settings above were read at the start and are not read again,
+    /// so a row reopened shows what was taken rather than what was there.
+    pub(crate) settled: RefCell<Vec<(&'static str, String)>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
     /// The application's runtime, which a turn runs on as a task and a
@@ -1302,6 +1306,12 @@ impl Turn<'_, '_> {
                 self.turning.limits().as_ref(),
             ),
             serving: self.serving,
+            mode: self.says.running_mode,
+            session: self
+                .held
+                .attachment_store
+                .as_ref()
+                .map(|(_, id)| id.clone()),
         };
         command::live(renderer, self.terms, command, &counted, &mut |renderer| {
             self.drain(renderer);

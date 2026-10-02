@@ -4228,3 +4228,88 @@ fn usage_stands_over_a_running_turn_with_the_figures_it_last_posted() {
     assert!(picture.contains("0 in · 4 out"), "{picture}");
     insta::assert_snapshot!("usage_mid_turn_80", timeless(&on_the_first_beat(&picture)));
 }
+
+// `/settings`: what is in force, the settings a menu can change, and the
+// session's usage, as three tabs of one panel.
+
+/// `picture` with every session id written as `#`s of the same length.
+///
+/// An id is minted from the clock and chance as the session opens, so the
+/// Status tab shows a different one every run; what the case is about is the
+/// row it stands in.
+fn sessionless(picture: &str) -> String {
+    const SHAPE: [usize; 5] = [8, 4, 4, 4, 12];
+    let length = SHAPE.iter().sum::<usize>() + SHAPE.len() - 1;
+    let an_id = |run: &[char]| {
+        let mut groups = run.split(|letter| *letter == '-');
+        SHAPE.iter().all(|wide| {
+            groups.next().is_some_and(|group| {
+                group.len() == *wide && group.iter().all(char::is_ascii_hexdigit)
+            })
+        }) && groups.next().is_none()
+    };
+    let mut said: Vec<char> = picture.chars().collect();
+    let mut at = 0;
+    while let Some(run) = said.get_mut(at..at + length) {
+        if an_id(run) {
+            for letter in run.iter_mut().filter(|letter| **letter != '-') {
+                *letter = '#';
+            }
+            at += length;
+        } else {
+            at += 1;
+        }
+    }
+    said.into_iter().collect()
+}
+
+#[test]
+fn settings_opens_on_config_and_shows_each_tab_and_a_search() {
+    for columns in [80, 40] {
+        let vendor = Vendor::answering("Hello.");
+        let case = format!("settings-tabs-{columns}");
+        let mut window = Watched::answering(&case, columns, 30, &vendor);
+
+        window.types_until("/settings\r", "esc to close");
+        let config = window.picture();
+        assert!(config.contains("Config"), "{config}");
+        assert!(config.contains("Scroll rail"), "{config}");
+        insta::assert_snapshot!(format!("settings_config_{columns}"), config);
+
+        window.types_until("/cache", "cache ");
+        let search = window.picture();
+        assert!(search.contains("Cache retention"), "{search}");
+        assert!(!search.contains("Scroll rail"), "{search}");
+        insta::assert_snapshot!(format!("settings_search_{columns}"), search);
+
+        // Escape clears the search; the left arrow is the tab before Config.
+        window.types_until("\x1b", "Scroll rail");
+        window.types_until("\x1b[D", "Permission mode");
+        let status = window.picture();
+        assert!(status.contains("Sandbox"), "{status}");
+        insta::assert_snapshot!(format!("settings_status_{columns}"), sessionless(&status));
+
+        window.types_until("\x1b[D", "Plan limits");
+        let usage = window.picture();
+        insta::assert_snapshot!(format!("settings_usage_{columns}"), timeless(&usage));
+
+        window.types_until("\x1b", "ask mode on");
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
+#[test]
+fn a_settings_toggle_folds_the_transcript_again_and_is_left_in_it() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("settings-toggle", 80, 30, &vendor);
+    window.types_until("say hello\r", "Hello.");
+
+    window.types_until("/settings\r", "esc to close");
+    // Down to the rail, five rows below the theme, and turn it off.
+    window.types_until("\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B", "› Scroll rail");
+    window.types_until("\r", "off");
+    window.types_until("\x1b", "Scroll rail set to off");
+    let picture = window.picture();
+    insta::assert_snapshot!("settings_toggle_80", picture);
+}

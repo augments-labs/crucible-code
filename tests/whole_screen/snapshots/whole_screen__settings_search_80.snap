@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: search
+---
+80x30 cursor 22,7 scrolled 0
+|│ /…/workspace                                                                ││|
+|│                                                                             ││|
+|│ Recent sessions                                                             │┃|
+|│                                                                             │┃|
+|│ No recent sessions                                                          │┃|
+|│                                                                             │┃|
+|│ ─────────────────────────────────────────────────────────────────────────── │┃|
+|│                                                                             │┃|
+|│ Tips                                                                        │┃|
+|│                                                                             │┃|
+|│ · /          opens the command list                                         │┃|
+|│ · \ enter    adds a line without sending                                    │┃|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› /settings                                                                    ┃|
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Settings     Status   ‹ Config ›   Usage                                        |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ cache                                                                        │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› Cache isolation                                                        session|
+|  Cache retention                                                providerDefault|
+|  Persistent cache                                                        forbid|
+|                                                                                |
+|type to filter · ↓ to the rows · esc to clear                                   |

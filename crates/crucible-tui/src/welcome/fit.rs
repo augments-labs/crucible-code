@@ -38,10 +38,10 @@ pub(super) fn elide(text: &str, columns: usize, glyphs: Glyphs) -> Cow<'_, str> 
 ///
 /// Those two ends are what answer *where*: a route through somebody's home
 /// directory is the part that grew, and it is the part they already know. A
-/// path with no room even for the two ends falls back to [`elide`], which keeps
-/// the root — by then the row is narrower than a directory name and no
-/// shortening rescues it.
-pub(super) fn shorten(path: &str, columns: usize, glyphs: Glyphs) -> Cow<'_, str> {
+/// path with no room even for the two ends is cut at its end with the mark,
+/// which keeps the root — by then the row is narrower than a directory name
+/// and no shortening rescues it.
+pub fn shorten(path: &str, columns: usize, glyphs: Glyphs) -> Cow<'_, str> {
     if fits(path, columns) {
         return Cow::Borrowed(path);
     }

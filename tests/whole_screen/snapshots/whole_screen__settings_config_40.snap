@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: config
+---
+40x30 cursor 29,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /settings                             |
+|────────────────────────────────────────|
+|                                        |
+|Settings   Status ‹ Config › Usage      |
+|                                        |
+|╭──────────────────────────────────────╮|
+|│ / to search                          │|
+|╰──────────────────────────────────────╯|
+|                                        |
+|› Theme                             auto|
+|  Syntax theme          Monokai Extended|
+|  Glyphs                         unicode|
+|  Colour                            auto|
+|  Tool detail                    compact|
+|  Scroll rail                         on|
+|  Mouse scroll speed               ‹ 6 ›|
+|  Send with                        enter|
+|  Tone                           concise|
+|  Compaction                        full|
+|  Check for updates                never|
+|  Prompt caching                  prefer|
+|  Cache isolation                session|
+|  Cache retention        providerDefault|
+|  Persistent cache                forbid|
+|                                        |
+|↑↓ walk · enter changes · / search      |
+|←→ tabs · esc to close                  |

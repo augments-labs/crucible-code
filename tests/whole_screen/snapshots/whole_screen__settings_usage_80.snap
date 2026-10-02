@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: timeless(&usage)
+---
+80x30 cursor 29,0 scrolled 0
+|│                                                                             ││|
+|│ Tips                                                                        ││|
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› /settings                                                                    ┃|
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Settings     Status     Config   ‹ Usage ›                                      |
+|                                                                                |
+|Usage · anthropic · API key                                                     |
+|                                                                                |
+|Session                                                                         |
+|  Total cost       nothing asked yet                                            |
+|  API time         Ns                                                           |
+|  Wall time        Ns                                                           |
+|  Lines changed    +0 −0                                                        |
+|  Tokens           0 in · 0 out · 0 cache read · 0 cache write                  |
+|                                                                                |
+|Context                                                                         |
+|  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0% used  |
+|                                                                                |
+|Plan limits                                                                     |
+|  limits not reported                                                           |
+|                                                                                |
+|←→ tabs · esc to close                                                          |

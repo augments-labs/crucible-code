@@ -80,6 +80,7 @@ pub(crate) fn plain() -> Terms {
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
+        settled: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         runtime: runtime(),
         ending: crate::cli::ending::Ending::deaf(),

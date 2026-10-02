@@ -27,6 +27,7 @@ fn in_force(sample: &Sample) -> Terms {
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
+        settled: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         runtime: crate::cli::fake::runtime(),
         ending: crate::cli::ending::Ending::deaf(),

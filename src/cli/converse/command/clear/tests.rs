@@ -60,6 +60,7 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         style: std::cell::Cell::new(Style::plain()),
         chosen: std::cell::Cell::new(None),
         reading: std::cell::RefCell::default(),
+        settled: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         runtime: crate::cli::fake::runtime(),
         ending: crate::cli::ending::Ending::deaf(),

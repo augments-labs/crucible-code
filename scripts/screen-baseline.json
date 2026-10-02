@@ -677,6 +677,87 @@
       "sha256": "adf8d92083feb19ef94646cfe48c8553141b8b10e50776a26b1b66990be6404c"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_40.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "7b87105803181a549529d65c7f6a568e0d2280097648b0723386ef5ac967dbed"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_80.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "a71e78c505b919ab3edb852722e6fa7f28b25d92fe3db3be0479c85e19f88401"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_40.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "5408a91cec3c0885d6276e8795c6cece1479cdca07453052a1ef81959a343ae0"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_80.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "223808aff476355db4a6254b0407e5240444534b1f11961b4e7de3bb2f6e882c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_status_40.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "848ac73becaacde34b0d634899dcc420fccddfdd4d1a4b0f1392f4e8c8d45390"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_status_80.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "ca817a0c9d6c5a3398f130400728cf41b8b959972667a789e91b05d2083e9e46"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_toggle_80.snap",
+      "case": "a_settings_toggle_folds_the_transcript_again_and_is_left_in_it",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"settings-toggle\", 80, 30, &vendor)"
+      ],
+      "sha256": "dac474116c06be3cd951406198eec6c1c225d11b6515e0c8081e26747b504651"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_usage_40.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "4069957a0f562a775f56a5b20bf94d22690fe72b66f406e9da954abeed2abd63"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_usage_80.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "9ee701e1f81a3e0ff4596d1c80e6f36e94bdfd9b7406a777bfe98ba99f842cc6"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill.snap",
       "case": "the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill",
       "opened": [

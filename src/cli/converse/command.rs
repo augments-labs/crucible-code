@@ -55,6 +55,7 @@ pub(crate) mod notes;
 mod notes_list;
 mod resume;
 mod sandbox;
+mod settings;
 mod theme;
 mod usage;
 
@@ -89,6 +90,8 @@ pub(super) enum Command {
     Sandbox,
     /// Which table of colours the terminal is drawn with.
     Theme,
+    /// What is in force, every setting a menu can change, and the usage.
+    Settings,
     /// The sessions recorded here, and picking one of them up.
     Resume,
     /// Make room in the model's window now, rather than when it fills.
@@ -106,7 +109,7 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 17] = [
+const EVERY: [Command; 18] = [
     Command::Help,
     Command::ReleaseNotes,
     Command::Context,
@@ -119,6 +122,7 @@ const EVERY: [Command; 17] = [
     Command::Mode,
     Command::Sandbox,
     Command::Theme,
+    Command::Settings,
     Command::Resume,
     Command::Cache,
     Command::Compact,
@@ -296,6 +300,7 @@ impl Command {
             Self::Mode => "/mode",
             Self::Sandbox => "/sandbox",
             Self::Theme => "/theme",
+            Self::Settings => "/settings",
             Self::Resume => "/resume",
             Self::Cache => "/cache",
             Self::Compact => "/compact",
@@ -325,6 +330,7 @@ impl Command {
             Self::Mode => mode::ring(glyphs),
             Self::Sandbox => "inspect or configure sandbox confinement",
             Self::Theme => "pick the colours crucible draws with",
+            Self::Settings => "settings, and what is in force",
             Self::Resume => "pick up an earlier session here",
             Self::Cache => "inspect or clean prompt-cache state",
             // What it does to the session rather than what it is for: somebody
@@ -357,7 +363,11 @@ impl Command {
     /// decides which of the three it is in the same place it names itself.
     const fn mid_turn(self) -> MidTurn {
         match self {
-            Self::Help | Self::Theme | Self::Context | Self::Usage => MidTurn::Live,
+            // `/settings` writes the user's own file and changes the screen,
+            // never the runner, so it opens over a turn as `/theme` does.
+            Self::Help | Self::Theme | Self::Settings | Self::Context | Self::Usage => {
+                MidTurn::Live
+            }
             Self::Sandbox => {
                 MidTurn::Refused("changes the policy for new commands; open it between turns")
             }
@@ -465,6 +475,7 @@ pub(super) fn live<T: Terminal>(
         Command::Theme => theme::live(renderer, terms, rest, while_waiting),
         Command::Context => context::live(renderer, terms, &counted.usage.context, while_waiting),
         Command::Usage => usage::live(renderer, terms, counted, while_waiting),
+        Command::Settings => settings::live(renderer, terms, counted, while_waiting),
         Command::Help => {
             let commands = terms.commands.snapshot();
             // No keys to read: the list is stood, and any key closes it.
@@ -498,6 +509,10 @@ pub(super) struct Counted {
     pub(super) usage: api::Usage,
     /// The provider the turn asks, by its name in the registry.
     pub(super) serving: Option<&'static str>,
+    /// The permission mode the turn runs under.
+    pub(super) mode: Mode,
+    /// The session being recorded into, where the run is being kept at all.
+    pub(super) session: Option<crucible_types::SessionId>,
 }
 
 /// The stateless marker a panel with nothing to hold is stood with.
@@ -876,6 +891,11 @@ fn answer<T: Terminal>(
             command: Command::Theme,
             rest,
         } => theme::run(rest, renderer, terms, held.answers.keys)?,
+
+        Wanted::Known {
+            command: Command::Settings,
+            ..
+        } => settings::run(renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Sandbox,

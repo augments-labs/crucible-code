@@ -97,6 +97,7 @@ pub use terminal::system::SystemTerminal;
 pub use terminal::{Picture, Recording, Size, Terminal, TerminalError};
 pub use timeline::{Brief, Timeline, Told};
 pub use title::{TITLE, Title, TitleError};
+pub use welcome::fit::shorten;
 pub use welcome::{Recent, Welcome};
 pub use width::{clip, columns, cut, fold};
 pub use working::Working;

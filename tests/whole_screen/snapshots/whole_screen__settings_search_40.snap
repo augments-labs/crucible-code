@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: search
+---
+40x30 cursor 22,7 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /settings                             |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Settings   Status ‹ Config › Usage      |
+|                                        |
+|╭──────────────────────────────────────╮|
+|│ cache                                │|
+|╰──────────────────────────────────────╯|
+|                                        |
+|› Cache isolation                session|
+|  Cache retention        providerDefault|
+|  Persistent cache                forbid|
+|                                        |
+|type to filter · ↓ rows · esc clears    |

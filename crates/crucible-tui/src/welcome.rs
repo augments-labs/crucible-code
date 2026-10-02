@@ -16,7 +16,7 @@ use crate::row::Row;
 use crate::width;
 
 mod card;
-mod fit;
+pub(crate) mod fit;
 mod parts;
 
 /// The narrowest terminal that gets a frame at all.
