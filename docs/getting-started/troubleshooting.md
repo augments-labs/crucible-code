@@ -43,7 +43,7 @@ The file parses, and the value at `<path>` is the wrong kind of thing for
 that key. `<kind>` says which kind: `a string`, `true or false`, `a whole
 number that is not negative`, `a positive whole number within the documented
 ceiling`, `one of a fixed set of strings`, `a bounded set of nonempty
-strings`, `a whole number written as a string`, `a list`, `an object` or `an
+strings`, `a whole number, or one written as a string`, `a list`, `an object` or `an
 object of the extension's own settings`. One mistake that produces it is
 quoting a value that is not text: `{"sandbox":{"enabled":"true"}}` gets
 `sandbox.enabled wants true or false`, because `"true"` with quotes is a

@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now takes 3 to 30, and its schema says so
+  with bounds.** `1` and `2`, a leading `+` and a leading zero are refused with
+  the range named; in a configuration file the value may now be a JSON integer
+  as well as a string. Set a value of 3 or more to keep the setting.
+
 ## [0.44.2] - 2026-10-01
 
 **Every model crucible knows now starts at its native context window, and a

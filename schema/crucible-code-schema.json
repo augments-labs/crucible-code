@@ -98,10 +98,19 @@
           "type": "string"
         },
         "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": {
+          "anyOf": [
+            {
+              "maximum": 30,
+              "minimum": 3,
+              "type": "integer"
+            },
+            {
+              "pattern": "^([3-9]|[12][0-9]|30)$",
+              "type": "string"
+            }
+          ],
           "default": "6",
-          "description": "How many rows or list entries one notch of the wheel moves, wherever the wheel scrolls",
-          "pattern": "^\\+?0*(?:1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30)$",
-          "type": "string"
+          "description": "How many rows or list entries one notch of the wheel moves, wherever the wheel scrolls"
         }
       },
       "propertyNames": {

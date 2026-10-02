@@ -140,7 +140,7 @@ queue](#the-queue).
 
 | Action | What it does |
 | --- | --- |
-| Wheel | Scrolls the transcript, six rows a notch unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise, from 1 to 30. Sending a prompt takes you back to the foot. |
+| Wheel | Scrolls the transcript, six rows a notch unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise, from 3 to 30. Sending a prompt takes you back to the foot. |
 | Pointer over a cut result | Lights it, every row of it. |
 | Click on a cut result | Stands that one result, in the view <kbd>Ctrl+O</kbd> stands them all in. |
 | Drag | Selects the rows you cover, anywhere in the window, and letting go copies them. At the top or the foot the transcript scrolls under the pointer, and the wheel scrolls it while the button is still down. Resizing lets go of the selection. |

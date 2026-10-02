@@ -1446,6 +1446,9 @@ fn tools(
     // `unsafe` in a process with threads. It reads the `CRUCIBLE_CODE_`
     // settings the block also holds as settings, and a variable of the same
     // name in the environment crucible was started in wins over the block.
+    // Collected because `env()` yields owned text for an integer, and
+    // `exporting` borrows.
+    let exported: Vec<_> = settings.env().collect();
     // And the other end of the row under the box. The clone shares one registry
     // rather than copying it, which is what lets the caller show what is running
     // and stop one — and what makes the caller's copy the thing that ends them all.
@@ -1453,7 +1456,7 @@ fn tools(
         Bash::new(workspace.clone(), sandbox)
             .under_policy(settings.sandbox().enforcing_policy(workspace)?)
             .following_enablement(settings.sandbox().enablement())
-            .exporting(settings.env())
+            .exporting(exported.iter().map(|(name, value)| (*name, value.as_ref())))
             .leaving(leaving.clone()),
     )?;
 

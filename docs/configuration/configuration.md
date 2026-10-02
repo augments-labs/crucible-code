@@ -646,7 +646,8 @@ still wins.
 ```
 
 Values are strings, because that is what an environment holds. A setting that
-reads as a number is written `"12"`.
+reads as a number is written `"12"`; `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` also
+takes the integer `12`.
 
 A command is **not** started with the environment crucible was started in. It
 gets a short list of what a program needs in order to run at all, and whatever
@@ -1108,8 +1109,10 @@ output, and the session picker's list and preview. The default is `6`; arrow
 keys still move one step at a time.
 
 ```json
-{ "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "12" } }
+{ "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": 12 } }
 ```
+
+The value may be a JSON integer, as above, or a string such as `"12"`.
 
 Written in `env` like any other variable, so it layers like one: a project can
 set it for everybody who clones the repository, your home directory can set it
@@ -1119,17 +1122,20 @@ for every project, and the environment you start crucible in beats both.
 $ CRUCIBLE_CODE_MOUSE_SCROLL_SPEED=3 crucible
 ```
 
-A whole number from `1` to `30`. Anything else is refused rather than rounded
-into range or ignored:
+A whole number from `3` to `30`, written as decimal digits only: no sign, no
+leading zero and no surrounding space, so `+6`, `06` and `" 6"` are refused as
+well as `1`, `2` and `31`. The shell variable is read the same way as a string in
+the file. Anything else is refused rather than rounded into range or ignored:
 
 ```
 crucible: .crucible/config.json: env CRUCIBLE_CODE_MOUSE_SCROLL_SPEED at line 3,
 column 5 is not set to an answer crucible takes — accepted here: a whole number
-of rows from 1 to 30
+of rows from 3 to 30
 ```
 
-The floor is `1` because a wheel set to move nothing is a setting that looks
-applied and does nothing. The ceiling is `30` because that is a screenful on
+The floor is `3`, and a value below it is refused rather than pulled up to it,
+because a setting pulled to another number looks applied and does something
+other than what was written. The ceiling is `30` because that is a screenful on
 most terminals, and past it the wheel stops being a scroll and becomes a jump.
 
 A run whose output is redirected has no wheel to answer, so the setting is read

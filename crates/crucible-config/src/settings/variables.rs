@@ -16,6 +16,10 @@
 //! the file it came from is still open, and a reader on [`Settings`] for the
 //! answer that survives every layer.
 
+use std::borrow::Cow;
+
+use serde_json::Value;
+
 use crate::error::{Accepted, ConfigError};
 use crate::shape::{MOUSE_SCROLL_SPEED, SCROLL_SPEED};
 
@@ -24,8 +28,8 @@ use super::Settings;
 /// The fewest rows a notch may move, and the most.
 ///
 /// Read from the declaration rather than restated, so the bounds an editor is
-/// told about and the bounds this refuses by are the same pair. The reasoning
-/// for each number sits beside it there.
+/// told about and the bounds this refuses by are the same pair. Why the
+/// ceiling is where it is sits beside it there.
 const LEAST: u16 = SCROLL_SPEED.least;
 const MOST: u16 = SCROLL_SPEED.most;
 
@@ -48,7 +52,21 @@ const USUAL: u16 = 6;
 /// per refusal could not be. The test below is what keeps it saying the numbers
 /// this actually refuses by.
 fn accepted() -> Accepted {
-    Accepted::new(vec!["a whole number of rows from 1 to 30"])
+    Accepted::new(vec!["a whole number of rows from 3 to 30"])
+}
+
+/// What a value in the `env` block says, as the text the readers below take.
+///
+/// A string is itself. A JSON integer is the digits it is written with, so that
+/// a number in the file and the same digits in a string or in the shell go
+/// through one reader. Anything else says nothing: the walk that ran before
+/// this has already refused it, and where it has not, there is no answer here.
+pub(crate) fn spelled(held: &Value) -> Option<Cow<'_, str>> {
+    match held {
+        Value::String(text) => Some(Cow::Borrowed(text)),
+        Value::Number(number) => number.as_u64().map(|whole| Cow::Owned(whole.to_string())),
+        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
+    }
 }
 
 /// Whether a name is one of crucible's own settings set to something it does
@@ -83,12 +101,20 @@ impl ScrollSpeed {
 
     /// Reads a whole number of rows inside the bounds above.
     ///
+    /// The one reader for the shell and for a string in the block, so it takes
+    /// the spelling the schema's pattern matches and no other: decimal digits,
+    /// no sign, no leading zero, no space.
+    ///
     /// `None` for anything else, including a number outside them. Clamping
     /// would be a setting that looks applied and does something else, and the
     /// two are equally worth refusing: somebody who wrote `600` meant something
     /// by it, and being told the range is how they find out what crucible
     /// meant.
     fn read(written: &str) -> Option<Self> {
+        if written.starts_with('0') || !written.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+
         written
             .parse::<u16>()
             .ok()
@@ -122,9 +148,11 @@ impl Settings {
         }
 
         Ok(self
-            .env()
-            .find(|(name, _)| *name == MOUSE_SCROLL_SPEED)
-            .and_then(|(_, written)| ScrollSpeed::read(written))
+            .value
+            .get("env")
+            .and_then(|block| block.get(MOUSE_SCROLL_SPEED))
+            .and_then(spelled)
+            .and_then(|written| ScrollSpeed::read(&written))
             .unwrap_or_default())
     }
 }
@@ -216,14 +244,53 @@ mod tests {
     }
 
     #[test]
-    fn a_count_is_a_count_and_not_a_thing_that_looks_like_one() {
-        for written in ["", " 6", "6 ", "six", "6.0", "-6", "0x6"] {
+    fn scroll_speed_is_decimal_digits_and_nothing_that_looks_like_them() {
+        // One function reads the shell and the file's string, so these are the
+        // spellings both refuse. A sign, a leading zero and a space are each a
+        // way to write a number the schema's pattern does not match, and a
+        // reader taking one would be a file the editor marks and crucible runs.
+        for written in [
+            "", " 6", "6 ", "six", "6.0", "-6", "+6", "06", "006", "0x6", "٦", "6\n",
+        ] {
             assert_eq!(ScrollSpeed::read(written), None, "{written:?}");
+            assert!(
+                refused(MOUSE_SCROLL_SPEED, written).is_some(),
+                "{written:?}"
+            );
         }
+    }
 
-        // A leading plus is a spelling of the same number, and refusing it
-        // would be pedantry aimed at somebody who wrote what they meant.
-        assert_eq!(ScrollSpeed::read("+6"), Some(ScrollSpeed(6)));
+    #[test]
+    fn scroll_speed_below_three_is_refused_naming_the_variable_and_the_range() {
+        let settings = Settings::resolve(Vec::new());
+
+        for written in ["0", "1", "2", "31"] {
+            assert_eq!(ScrollSpeed::read(written), None, "{written}");
+
+            let problem = settings
+                .scroll_speed(&shell(&[(MOUSE_SCROLL_SPEED, written)]))
+                .expect_err("outside the range");
+            let said = problem.to_string();
+            assert!(said.contains(MOUSE_SCROLL_SPEED), "{said}");
+            assert!(said.contains("3 to 30"), "{said}");
+        }
+    }
+
+    #[test]
+    fn scroll_speed_written_in_the_block_as_a_json_integer_is_read() {
+        let project = Document::sample(
+            r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": 12}}"#,
+            Origin::Project,
+        );
+        let settings = Settings::resolve(vec![project]);
+
+        assert_eq!(
+            settings
+                .scroll_speed(&nothing())
+                .expect("nothing was set in the shell")
+                .rows(),
+            12
+        );
     }
 
     #[test]
@@ -281,7 +348,7 @@ mod tests {
 
         let said = problem.to_string();
         assert!(said.contains(MOUSE_SCROLL_SPEED), "{said}");
-        assert!(said.contains("1 to 30"), "{said}");
+        assert!(said.contains("3 to 30"), "{said}");
     }
 
     #[test]
