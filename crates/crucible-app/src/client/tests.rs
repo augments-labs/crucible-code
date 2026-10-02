@@ -645,3 +645,77 @@ fn a_refusal_of_fast_is_retrying_only_where_the_request_went_again() {
     );
     assert_eq!(progress(Capabilities::every(), &refused(false)), None);
 }
+
+/// A turn ended on a used-up plan, the weekly window's reset `at` where known.
+fn used_up(
+    at: Option<std::time::SystemTime>,
+    stopped: crucible_runner::PlanLimitStop,
+) -> crucible_runner::TurnError {
+    crucible_runner::TurnError::PlanLimit {
+        window: at.map(|_| crucible_types::Window::Weekly),
+        resets_at: at,
+        stopped,
+    }
+}
+
+/// Monday 5 October 2026, 09:00 UTC.
+fn monday() -> std::time::SystemTime {
+    let seconds: u64 = 1_791_190_800;
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+}
+
+#[test]
+fn plan_limit_reaches_a_client_by_its_code_with_the_window_and_the_reset_in_utc() {
+    let failed = crucible_runner::Event::Failed {
+        error: used_up(
+            Some(monday()),
+            crucible_runner::PlanLimitStop::BeforeSending,
+        ),
+    };
+
+    assert_eq!(
+        progress(Capabilities::every(), &failed),
+        Some(Progress::Failed(crucible_client_api::Problem {
+            code: ErrorCode::PlanLimit,
+            message: crucible_client_api::Text::cut(
+                "the plan's usage limit is reached on the weekly window; it resets at \
+                 2026-10-05T09:00:00Z; the turn stopped before sending"
+            ),
+        }))
+    );
+}
+
+#[test]
+fn plan_limit_with_no_reset_says_so_in_crucibles_words_alone() {
+    let failed = crucible_runner::Event::Failed {
+        error: used_up(None, crucible_runner::PlanLimitStop::Refused),
+    };
+
+    assert_eq!(
+        progress(Capabilities::every(), &failed),
+        Some(Progress::Failed(crucible_client_api::Problem {
+            code: ErrorCode::PlanLimit,
+            message: crucible_client_api::Text::cut(
+                "the plan's usage limit is reached; the reset was not reported; \
+                 the vendor refused the request"
+            ),
+        }))
+    );
+}
+
+#[test]
+fn plan_limit_ends_the_turn_a_client_asked_for_under_the_same_code() {
+    let error = used_up(Some(monday()), crucible_runner::PlanLimitStop::Refused);
+
+    match super::Ended::Turn(Err(error)).outcome() {
+        crucible_client_api::Outcome::Turn(crucible_client_api::TurnOutcome::Failed(problem)) => {
+            assert_eq!(problem.code, ErrorCode::PlanLimit);
+            assert_eq!(
+                problem.message.as_str(),
+                "the plan's usage limit is reached on the weekly window; it resets at \
+                 2026-10-05T09:00:00Z; the vendor refused the request"
+            );
+        }
+        other => panic!("a used-up plan was told as {other:?}"),
+    }
+}

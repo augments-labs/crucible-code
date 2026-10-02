@@ -16,6 +16,8 @@ use crate::cli::Fatal;
 use crate::cli::style::Style;
 
 use crate::cli::converse::planning::Planning;
+use crate::cli::converse::queueing::Prompts;
+use crate::cli::converse::turning::Queued;
 
 use super::{Opened, Says, command};
 
@@ -25,7 +27,7 @@ use super::{Opened, Says, command};
 /// the editor and the style is a call nobody can read — which is what the
 /// argument ceiling is there to stop.
 #[derive(Clone, Copy)]
-pub(super) struct Around<'a> {
+pub(in crate::cli::converse) struct Around<'a> {
     /// The plan the agent is working to, above everything else.
     pub(super) planning: &'a Planning,
     /// The commands a leading slash is offering, between the plan and the box.
@@ -35,6 +37,9 @@ pub(super) struct Around<'a> {
     /// Where in the retained prompts the line came from, which the top border
     /// of the box says while an arrow is what put it there.
     pub(super) history: Recalled,
+    /// The lines waiting behind the box, which only a used-up plan leaves
+    /// there between turns.
+    pub(super) queued: &'a Prompts,
 }
 
 /// The four of them at one call.
@@ -42,17 +47,19 @@ pub(super) struct Around<'a> {
 /// A function rather than a literal at each place that draws: the names are
 /// worth writing once, and the call that draws the box is worth keeping on one
 /// line.
-pub(super) fn around<'a>(
+pub(in crate::cli::converse) fn around<'a>(
     planning: &'a Planning,
     open: &'a Opened,
     says: &'a Says,
     history: Recalled,
+    queued: &'a Prompts,
 ) -> Around<'a> {
     Around {
         planning,
         open,
         says,
         history,
+        queued,
     }
 }
 
@@ -61,25 +68,18 @@ pub(super) fn around<'a>(
 ///
 /// The box goes into the band that is held to a share of the window, because
 /// that share is a rule about how much of the screen a long prompt may take
-/// from what it is answering. Everything above it — the list and the plan —
-/// goes into the band above, which has no share: a list is what the reader is
-/// looking at while it is open, so the transcript is what gives way to it
-/// rather than the box being pushed off the screen. Both bands reach the
-/// renderer together so the prompt, status and map control come from one frame.
-///
-/// The list takes its share of the window before the plan is asked for any. It
-/// is the shorter of the two and it was opened by the character last typed,
-/// which is a stronger claim on the rows than a panel that was already there.
-/// Neither is counted against the opening: a list opened over it is what the
-/// reader is looking at, and shrinking it to keep a card that has already been
-/// read is the wrong way round.
-pub(super) fn draw<T: Terminal>(
+/// from what it is answering. Everything above it — the list, the plan, and
+/// the lines a used-up plan held — goes into the band above, which has no
+/// share: a list is what the reader is looking at while it is open, so the
+/// transcript is what gives way to it rather than the box being pushed off the
+/// screen. Both bands reach the renderer together so the prompt, status and map
+/// control come from one frame.
+pub(in crate::cli::converse) fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
     style: Style,
     around: Around<'_>,
 ) -> Result<(), Fatal> {
-    let columns = renderer.columns();
     let bordering = Bordering {
         left: around.says.left,
         history: around.history,
@@ -89,29 +89,58 @@ pub(super) fn draw<T: Terminal>(
     // What is left for a list once the box and the blank row that keeps it off
     // the box have taken theirs.
     let room = renderer.rows().saturating_sub(boxed.rows.len() + 1);
-
-    let mut listed = around.open.rows(columns, room, style.glyphs());
-
-    // The row that keeps the box off whatever was last committed. A list opens
-    // with its own, so this is only owed where there is no list -- and the box
-    // is owed one either way, because a border drawn against the last line of
-    // an answer reads as part of it.
-    if listed.is_empty() {
-        listed.push(Row::new());
-    }
-
-    let mut over = Vec::new();
-    over.append(&mut around.planning.rows(
-        columns,
-        room.saturating_sub(listed.len()),
-        style.glyphs(),
-    ));
-    over.append(&mut listed);
+    let over = over(around, renderer.columns(), room, style);
 
     let pointed = boxed.pointed.as_ref().map(|(at, row)| (*at, row));
     let prompt = replacement(&boxed.rows, boxed.caret, pointed)?;
     renderer.replace(prompt, &over, style.palette())?;
     Ok(())
+}
+
+/// What stands over the box between turns, given `room` rows less the one
+/// that keeps the box off the transcript.
+///
+/// The list takes its share of the window before the plan is asked for any. It
+/// is the shorter of the two and it was opened by the character last typed,
+/// which is a stronger claim on the rows than a panel that was already there.
+/// Neither is counted against the opening: a list opened over it is what the
+/// reader is looking at, and shrinking it to keep a card that has already been
+/// read is the wrong way round.
+///
+/// The lines a used-up plan held are measured last, in the box a running turn
+/// names them in, as they are measured there: what the window cannot fit of
+/// it gives way before the plan or the list does. Its frame stands directly
+/// over the box where nothing stands between them, as it does under a turn,
+/// since a frame needs no blank to part it from the border under it.
+pub(super) fn over(around: Around<'_>, columns: usize, room: usize, style: Style) -> Vec<Row> {
+    let mut listed = around.open.rows(columns, room, style.glyphs());
+    let opened = !listed.is_empty();
+
+    // The row that keeps the box off whatever was last committed. A list opens
+    // with its own, so this is only owed where there is no list -- and the box
+    // is owed one either way, because a border drawn against the last line of
+    // an answer reads as part of it.
+    if !opened {
+        listed.push(Row::new());
+    }
+
+    let mut planned =
+        around
+            .planning
+            .rows(columns, room.saturating_sub(listed.len()), style.glyphs());
+
+    let mut over = Queued::of(around.queued.waiting_all(), columns, style).rows(
+        room.saturating_sub(listed.len() + planned.len()),
+        columns,
+        style,
+    );
+    if over.len() > 1 && planned.is_empty() && !opened {
+        listed.clear();
+    }
+
+    over.append(&mut planned);
+    over.append(&mut listed);
+    over
 }
 
 /// Validates the prompt rows before they become one renderer replacement.

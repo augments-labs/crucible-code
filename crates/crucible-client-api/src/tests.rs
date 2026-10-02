@@ -1206,7 +1206,7 @@ fn framed(value: &Value) -> Vec<u8> {
 }
 
 fn asking(command: &Value) -> Value {
-    json!({"version": 1, "capabilities": [], "correlation": 41, "command": command})
+    json!({"version": 2, "capabilities": [], "correlation": 41, "command": command})
 }
 
 /// `frame` with `field` saying `value` instead.
@@ -1228,7 +1228,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 2, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 3, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1288,15 +1288,15 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"".to_vec(), None),
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
-        (b"{\"version\": 1".to_vec(), None),
-        (framed(&json!({"version": 1})), None),
+        (b"{\"version\": 2".to_vec(), None),
+        (framed(&json!({"version": 2})), None),
         (
-            framed(&json!({"version": 1, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 2, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
             framed(
-                &json!({"version": "1", "capabilities": [], "correlation": 41,
+                &json!({"version": "2", "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}}),
             ),
             Some(41),
@@ -1314,7 +1314,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 1, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 2, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -1553,10 +1553,10 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":1,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":1,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":1,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":1,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":2,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -1566,7 +1566,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":1,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -1729,7 +1729,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 2, 65_536, u64::MAX] {
+        for version in [0, 1, 3, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -1861,7 +1861,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 1_415_442_550_756_244_763),
+        (2, 1_415_442_550_756_244_763),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -1954,5 +1954,47 @@ fn an_unasked_outcome_naming_nothing_it_knows_is_malformed() {
     assert_eq!(
         Response::decode(&framed(&nothing)).unwrap_err().code(),
         ErrorCode::Malformed
+    );
+}
+
+#[test]
+fn plan_limit_crosses_as_a_word_of_its_own_with_a_fixed_sentence() {
+    assert!(ErrorCode::EVERY.contains(&ErrorCode::PlanLimit));
+    assert_eq!(ErrorCode::PlanLimit.as_str(), "plan_limit");
+    assert_eq!(ErrorCode::named("plan_limit"), Some(ErrorCode::PlanLimit));
+    assert_eq!(
+        Refusal::new(ErrorCode::PlanLimit).to_string(),
+        "the plan's usage limit is reached until one of its windows resets"
+    );
+}
+
+#[test]
+fn plan_limit_a_failed_turn_carrying_it_reads_back_as_it_was_written() {
+    let one = Progress::Failed(Problem {
+        code: ErrorCode::PlanLimit,
+        message: Text::cut("usage limit reached on the weekly window"),
+    });
+
+    let frame = one.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+
+    assert_eq!(
+        value.pointer("/problem/code"),
+        Some(&json!("plan_limit")),
+        "{value}"
+    );
+    assert_eq!(Progress::decode(&frame).unwrap(), one);
+}
+
+#[test]
+fn plan_limit_is_spoken_under_the_second_revision_and_not_the_first() {
+    assert_eq!(Version::CURRENT.number(), 2);
+    assert!(Version::CURRENT.spoken());
+    assert!(!Version::numbered(1).spoken());
+
+    let frame = with(asking(&json!({"kind": "help"})), "version", json!(1));
+    assert_eq!(
+        refused(&framed(&frame)),
+        (Some(41), ErrorCode::UnsupportedVersion)
     );
 }

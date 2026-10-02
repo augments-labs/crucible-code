@@ -50,7 +50,7 @@ use serde_json::Value;
 
 use crate::endpoint::Endpoint;
 use crate::json::Object;
-use crate::refusal::{Rules, refused_at};
+use crate::refusal::{Plan, PlanRule, Rules, refused_at};
 use crate::sse::SseEvent;
 use crate::stream::{Limited, Response};
 use crate::transport::{Named, Transport};
@@ -226,6 +226,15 @@ pub trait Dialect: Sized + Send + Sync + 'static {
 
     /// What tells a refusal of the fast tier on `route` from any other.
     fn fast_refused(route: Self::Route) -> Option<fn(u16, &str) -> bool> {
+        let _ = route;
+        None
+    }
+
+    /// What tells the vendor's refusal of a used-up plan on `route` from any
+    /// other: a refusal that answers yes is [`ProviderError::PlanLimit`],
+    /// which is never retried. None, by default, where the vendor has no
+    /// such refusal or its shape is not known.
+    fn plan_refused(route: Self::Route) -> Option<PlanRule> {
         let _ = route;
         None
     }
@@ -539,15 +548,30 @@ impl<D: Dialect> Provider for Responses<D> {
             let response =
                 response.map_err(|problem| problem.for_provider(D::NAME).redacted(&redactions))?;
 
+            // Read before the status is, because a vendor that reports its
+            // windows reports them on a refusal too, and a refusal of a
+            // used-up plan is when they matter most.
+            let arrived = SystemTime::now();
+            let limits = self
+                .vendor()
+                .filter(|route| !D::limit_headers(*route).is_empty())
+                .and_then(|_| D::limits(response.named(), arrived));
+
             if response.status() != 200 {
                 // A refusal of the tier is read for only where one is
                 // documented, and only for a request that asked for it.
                 let rule = self.vendor().filter(|_| fast).and_then(D::fast_refused);
+                let plan = self.vendor().and_then(D::plan_refused).map(|rule| Plan {
+                    rule,
+                    arrived,
+                    reading: limits,
+                });
                 let error = refused_at(
                     D::NAME,
                     Rules {
                         fast: rule,
                         overlong: D::OVERLONG,
+                        plan,
                     },
                     response,
                     &redactions,
@@ -562,10 +586,6 @@ impl<D: Dialect> Provider for Responses<D> {
                 });
             }
 
-            let limits = self
-                .vendor()
-                .filter(|route| !D::limit_headers(*route).is_empty())
-                .and_then(|_| D::limits(response.named(), SystemTime::now()));
             let response = Response::with_wire(
                 response.into_reader(),
                 cancel.clone(),

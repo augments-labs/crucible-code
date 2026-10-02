@@ -14,7 +14,7 @@ use crucible_tools::{Mode, Permission, Rules};
 use crucible_tui::{Aimed, Key, Recording};
 use crucible_types::{AgentId, ToolArgs};
 
-use super::drawing::writing;
+use super::drawing::{over, writing};
 use super::*;
 
 /// The built-in registry, as a session starts with it.
@@ -270,6 +270,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             clipboard: &mut None,
             left: &crucible_builtins::Background::new(),
             aside: &Aside::new(),
+            queued: &Prompts::default(),
             keys: false,
         },
     )
@@ -298,6 +299,7 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -318,7 +320,13 @@ fn the_window_reading_is_in_the_box_once_and_takes_no_row_of_its_own() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        around(&nothing(), &Opened::default(), &says, Recalled::default()),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &says,
+            Recalled::default(),
+            &Prompts::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -342,6 +350,7 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -368,6 +377,7 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -403,6 +413,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -615,6 +626,7 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
             &listing("/m"),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -658,7 +670,13 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
             &mut renderer,
             &typed("/m"),
             Style::plain(),
-            around(&nothing(), opened, &settled(Mode::Ask), Recalled::default()),
+            around(
+                &nothing(),
+                opened,
+                &settled(Mode::Ask),
+                Recalled::default(),
+                &Prompts::default(),
+            ),
         )
         .expect("the box to be drawn");
 
@@ -686,6 +704,7 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -712,6 +731,7 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
             &Opened::default(),
             &leaving(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1280,6 +1300,7 @@ fn the_plan_stands_above_the_box_between_turns() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1308,6 +1329,7 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1322,6 +1344,7 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
             &listing("/m"),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1376,6 +1399,7 @@ fn a_large_paste_is_shown_compactly_but_copied_expanded() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the compact paste to be drawn");
@@ -1408,7 +1432,13 @@ fn clicking_the_visible_command_count_reaches_the_background_command_door() {
         &mut renderer,
         &editor,
         Style::plain(),
-        around(&nothing(), &Opened::default(), &says, Recalled::default()),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &says,
+            Recalled::default(),
+            &Prompts::default(),
+        ),
     )
     .unwrap();
 
@@ -1769,6 +1799,51 @@ impl Colourless {
             terminal,
             color,
             set,
+        }
+    }
+}
+
+#[test]
+fn the_queue_held_over_the_idle_box_fits_every_width_and_every_room() {
+    // The panel a running turn stands over the box is swept at every width
+    // beside the turn; between turns it stands in the band over the box with
+    // the plan and the list, so the band is swept with all three in it. Nothing
+    // is wider than the window, and nothing is taller than the room the box
+    // left, the blank that keeps it off the transcript included.
+    let mut queued = Prompts::default();
+    for said in ["one", "two longer than the first", "three", "four", "five"] {
+        assert_eq!(queued.accept(&mut typed(said)), Retained::Accepted);
+    }
+
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let style = Style::drawn(glyphs);
+        for plan in [nothing(), planned(3)] {
+            for open in [Opened::default(), listing("/m")] {
+                for columns in 1..=120 {
+                    for room in [0, 1, 2, 3, 4, 5, 6, 8, 12, 24, 40] {
+                        let says = settled(Mode::Ask);
+                        let rows = over(
+                            around(&plan, &open, &says, Recalled::default(), &queued),
+                            columns,
+                            room,
+                            style,
+                        );
+
+                        assert!(
+                            rows.len() <= room + 1,
+                            "{columns}x{room} {glyphs:?}: {} rows",
+                            rows.len()
+                        );
+                        for row in &rows {
+                            let said = row.text();
+                            assert!(
+                                crucible_tui::columns(&said) <= columns,
+                                "{columns}x{room} {glyphs:?}: {said:?}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

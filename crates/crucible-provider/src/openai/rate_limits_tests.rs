@@ -224,3 +224,240 @@ fn rate_limit_headers_are_not_read_for_an_api_key_or_a_gateway() {
         None
     );
 }
+
+/// The plan backend's refusal of a used-up plan, as the Codex CLI reads it:
+/// `error.type` and the reset, as a second or as seconds still to wait. The
+/// message carries a marker no error may repeat.
+fn used_up(reset: &str) -> String {
+    format!(
+        r#"{{"error":{{"type":"usage_limit_reached","message":"PRIVATE-MARKER limit","plan_type":"plus"{reset}}}}}"#
+    )
+}
+
+/// What one refused request from `endpoint` for `model` fails with, and how
+/// many requests reached the transport.
+fn refused_at(
+    endpoint: Endpoint,
+    model: &'static str,
+    status: u16,
+    body: &str,
+    headers: &[(&'static str, &str)],
+) -> (ProviderError, Option<usize>) {
+    let replay = headers
+        .iter()
+        .fold(Replay::new(status, body), |replay, (name, value)| {
+            replay.answering(name, *value)
+        });
+    let replay = Arc::new(replay);
+    let credential = HeaderKey::new(ApiKey::new("synthetic-limits-key"), Header::bearer());
+    let provider = OpenAi::at(
+        endpoint,
+        Box::new(credential),
+        Box::new(Arc::clone(&replay)),
+    );
+    let cancel = Cancel::new();
+    let request = Request { model, ..asking() };
+    let Err(error) = crucible_runtime::answered!(provider.stream(request, &cancel)) else {
+        panic!("a refusal answered");
+    };
+    (error, replay.sent_count())
+}
+
+fn refused(body: &str) -> (ProviderError, Option<usize>) {
+    refused_at(SUBSCRIPTION, "gpt-5.5", 429, body, &[])
+}
+
+/// What a failure says of a plan: whether it is a used-up one, and its reset.
+#[derive(Debug, PartialEq, Eq)]
+enum Plan {
+    UsedUp(Option<SystemTime>),
+    Not,
+}
+
+fn plan_reset(error: &ProviderError) -> Plan {
+    match error {
+        ProviderError::PlanLimit { resets_at, .. } => Plan::UsedUp(*resets_at),
+        _ => Plan::Not,
+    }
+}
+
+/// The reset of a used-up plan, where it was given.
+fn reset_of(error: &ProviderError) -> Option<SystemTime> {
+    match plan_reset(error) {
+        Plan::UsedUp(reset) => reset,
+        Plan::Not => None,
+    }
+}
+
+#[test]
+fn plan_limit_a_used_up_plan_with_its_reset_is_refused_once_and_never_again() {
+    let (error, sent) = refused(&used_up(&format!(
+        r#","resets_at":{RESET},"resets_in_seconds":3600"#
+    )));
+
+    assert_eq!(
+        plan_reset(&error),
+        Plan::UsedUp(Some(at(RESET))),
+        "{error:?}"
+    );
+    assert!(!error.transient());
+    assert_eq!(sent, Some(1));
+    assert!(!error.to_string().contains("PRIVATE-MARKER"), "{error}");
+    assert!(
+        !format!("{error:?}").contains("PRIVATE-MARKER"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn plan_limit_with_only_seconds_to_wait_resets_that_long_after_it_arrived() {
+    let before = SystemTime::now();
+    let (error, sent) = refused(&used_up(r#","resets_in_seconds":3600"#));
+    let after = SystemTime::now();
+
+    let reset = reset_of(&error);
+    let hour = Duration::from_hours(1);
+    assert!(
+        reset.is_some_and(|reset| reset >= before + hour && reset <= after + hour),
+        "{error:?}"
+    );
+    assert!(!error.transient());
+    assert_eq!(sent, Some(1));
+}
+
+#[test]
+fn plan_limit_with_a_malformed_reset_is_still_a_used_up_plan_with_none() {
+    for reset in [
+        r#","resets_at":"soon""#,
+        r#","resets_at":-5"#,
+        r#","resets_at":1.5"#,
+        r#","resets_in_seconds":"an hour""#,
+        r#","resets_in_seconds":-60"#,
+        r#","resets_at":null,"resets_in_seconds":null"#,
+        r#","resets_at":18446744073709551615"#,
+    ] {
+        let (error, sent) = refused(&used_up(reset));
+        assert_eq!(plan_reset(&error), Plan::UsedUp(None), "{reset}: {error:?}");
+        assert!(!error.transient(), "{reset}");
+        assert_eq!(sent, Some(1), "{reset}");
+    }
+}
+
+#[test]
+fn plan_limit_with_no_reset_at_all_says_it_was_not_reported() {
+    let (error, sent) = refused(&used_up(""));
+
+    assert!(
+        matches!(
+            error,
+            ProviderError::PlanLimit {
+                window: None,
+                resets_at: None,
+                reading: None,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(sent, Some(1));
+}
+
+#[test]
+fn plan_limit_a_bad_reset_falls_back_to_the_seconds_still_to_wait() {
+    let before = SystemTime::now();
+    let (error, _) = refused(&used_up(r#","resets_at":"soon","resets_in_seconds":60"#));
+
+    let reset = reset_of(&error);
+    assert!(
+        reset.is_some_and(|reset| reset >= before + Duration::from_mins(1)),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn plan_limit_names_the_window_the_refusals_own_head_reports_used_up() {
+    let reset = RESET.to_string();
+    let (error, _) = refused_at(
+        SUBSCRIPTION,
+        "gpt-5.5",
+        429,
+        &used_up(&format!(r#","resets_at":{RESET}"#)),
+        &[
+            ("x-codex-primary-used-percent", "40"),
+            ("x-codex-primary-window-minutes", "300"),
+            ("x-codex-primary-reset-at", "1792990000"),
+            ("x-codex-secondary-used-percent", "100"),
+            ("x-codex-secondary-window-minutes", "10080"),
+            ("x-codex-secondary-reset-at", &reset),
+        ],
+    );
+
+    let ProviderError::PlanLimit {
+        window, reading, ..
+    } = error
+    else {
+        panic!("not a used-up plan: {error:?}");
+    };
+    assert_eq!(window, Some(Window::Weekly));
+    assert_eq!(
+        percents(reading.map(|reading| *reading)),
+        vec![(Window::FiveHour, 40), (Window::Weekly, 100)]
+    );
+}
+
+#[test]
+fn plan_limit_a_private_model_still_says_its_plan_is_used_up() {
+    let (error, sent) = refused_at(
+        SUBSCRIPTION,
+        ASTRA,
+        429,
+        &used_up(&format!(r#","resets_at":{RESET}"#)),
+        &[],
+    );
+
+    assert_eq!(
+        plan_reset(&error),
+        Plan::UsedUp(Some(at(RESET))),
+        "{error:?}"
+    );
+    assert_eq!(sent, Some(1));
+}
+
+#[test]
+fn plan_limit_a_rate_limit_or_an_overload_is_still_asked_again() {
+    for kind in ["rate_limit_reached_error", "engine_overloaded_error"] {
+        let body = format!(
+            r#"{{"error":{{"type":"{kind}","message":"slow down","resets_in_seconds":20}}}}"#
+        );
+        let (error, _) = refused(&body);
+        assert!(
+            matches!(error, ProviderError::Refused { status: 429, .. }),
+            "{kind}: {error:?}"
+        );
+        assert!(error.transient(), "{kind}");
+    }
+}
+
+#[test]
+fn plan_limit_is_not_read_from_a_refusal_that_is_not_the_plan_backends() {
+    let body = used_up(&format!(r#","resets_at":{RESET}"#));
+    for endpoint in [
+        VENDOR,
+        Endpoint::fixed("https://gateway.example/backend-api/codex/responses"),
+    ] {
+        let (error, _) = refused_at(endpoint, "gpt-5.5", 429, &body, &[]);
+        assert!(
+            matches!(error, ProviderError::Refused { status: 429, .. }),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn plan_limit_a_body_that_is_not_json_stays_the_refusal_it_was() {
+    let (error, _) = refused("usage_limit_reached");
+    assert!(
+        matches!(error, ProviderError::Refused { status: 429, .. }),
+        "{error:?}"
+    );
+}

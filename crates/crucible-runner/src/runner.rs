@@ -1733,6 +1733,17 @@ impl Runner {
                 pricing_date,
             };
             self.went_out(disposition, observation);
+            // A refusal of a used-up plan reports the windows its head
+            // carried, and they are kept like any response's: they are what
+            // `/usage` shows after the stop, and what holds the next turn.
+            if let Err(ProviderError::PlanLimit {
+                reading: Some(reading),
+                ..
+            }) = &streamed
+            {
+                let windows = **reading;
+                self.limited(Some(windows), listening.run.reporting());
+            }
             (streamed?, observation)
         };
 
@@ -2043,9 +2054,11 @@ fn request_disposition<T>(result: &Result<T, ProviderError>) -> PromptCacheReque
             | ProviderError::Held(_)
             | ProviderError::FastRefused { .. },
         ) => PromptCacheRequestDisposition::NotSent,
-        Err(ProviderError::Refused { .. } | ProviderError::WindowExceeded { .. }) => {
-            PromptCacheRequestDisposition::Rejected
-        }
+        Err(
+            ProviderError::Refused { .. }
+            | ProviderError::WindowExceeded { .. }
+            | ProviderError::PlanLimit { .. },
+        ) => PromptCacheRequestDisposition::Rejected,
         Err(
             ProviderError::Limit { .. }
             | ProviderError::Transport { .. }

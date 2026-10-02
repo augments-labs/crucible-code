@@ -71,6 +71,7 @@ use crucible_types::{
 
 use crate::endpoint::Endpoint;
 use crate::json::Object;
+use crate::refusal::PlanRule;
 use crate::responses::{Dialect, Hint, Priced, Replay, Responses};
 use crate::sse::SseEvent;
 use crate::transport::Named;
@@ -241,6 +242,12 @@ impl Dialect for Gpt {
 
     fn served(data: &str) -> Option<Served> {
         fast::served(data)
+    }
+
+    fn plan_refused(route: Serving) -> Option<PlanRule> {
+        // The published API says nothing of a plan; the plan backend refuses
+        // a used-up one in a shape of its own.
+        (route == Serving::Subscription).then_some(rate_limits::used_up as PlanRule)
     }
 
     fn limit_headers(route: Serving) -> &'static [&'static str] {

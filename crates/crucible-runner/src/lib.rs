@@ -47,7 +47,7 @@ pub use crucible_agents::{
     Agent, AgentBuilder, AgentContext, Availability, Decision, Declared, GuardrailError,
     InputGuardrail, Model, NameTaken, OutputGuardrail, Rejection, Unanswered, Undecided,
 };
-pub use events::{Event, EventEnvelope, Post, Reporter, TurnError};
+pub use events::{Event, EventEnvelope, PlanLimitStop, Post, Reporter, TurnError};
 pub use outcome::{RunResult, RunStatus, Turned};
 pub use policy::{Bounds, Compaction, MAXIMUM_TOOL_CONCURRENCY, Retry, RunPolicy, ToolScheduling};
 pub use runner::attachments;

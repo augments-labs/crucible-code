@@ -221,7 +221,7 @@ impl Ended {
                 })
             }
             Self::Turn(Err(problem)) => {
-                Outcome::Turn(TurnOutcome::Failed(Problem::failed(problem)))
+                Outcome::Turn(TurnOutcome::Failed(reading::failed(problem)))
             }
             Self::Room(Ok(Room::Made(compacted))) => Outcome::Room(RoomOutcome::Made {
                 replaced: reading::count(compacted.replaced),
@@ -229,7 +229,7 @@ impl Ended {
             Self::Room(Ok(Room::Nothing)) => Outcome::Room(RoomOutcome::Nothing),
             Self::Room(Ok(Room::Stopped)) => Outcome::Room(RoomOutcome::Stopped),
             Self::Room(Err(problem)) => {
-                Outcome::Room(RoomOutcome::Failed(Problem::failed(problem)))
+                Outcome::Room(RoomOutcome::Failed(reading::failed(problem)))
             }
             Self::Unrecorded(problem) => {
                 Outcome::Turn(TurnOutcome::Failed(Problem::failed(problem)))
