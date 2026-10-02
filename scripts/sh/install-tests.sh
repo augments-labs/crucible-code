@@ -6,8 +6,12 @@ cd "$(dirname "$0")/../.."
 readonly INSTALL=$PWD/scripts/sh/install.sh
 readonly UNINSTALL=$PWD/scripts/sh/uninstall.sh
 scratch=$(mktemp -d)
-readonly scratch
 trap 'rm -rf -- "$scratch"' EXIT
+# The installer prints the directory as it resolves it, and the temporary
+# directory can sit behind a symbolic link (/var is /private/var on macOS), so
+# every expected directory is spelled the same way.
+scratch=$(cd -P -- "$scratch" && pwd -P)
+readonly scratch
 
 case $(uname -s) in
 Linux) platform=linux ;;
@@ -282,10 +286,12 @@ for plain_env in NO_COLOR=1 TERM=dumb; do
 done
 
 echo '==> a terminal sees each step, and the line that puts the directory on PATH'
+# The default directory is under a home of the test's own, so the sentences
+# that name it fit 80 columns however long the temporary directory's name is.
 for glyphs in en_US.UTF-8 C; do
-    shown_bin=$scratch/shown-bin-$glyphs
+    shown_home=$scratch/home-$glyphs
     shown=$(in_terminal 80 env -u LC_ALL -u LC_CTYPE LANG=$glyphs TERM=xterm \
-        "$INSTALL" --version "$version" --dir "$shown_bin" \
+        HOME="$shown_home" "$INSTALL" --version "$version" \
         --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
     expect "a $glyphs terminal" "$shown" "crucible $version"
     expect "a $glyphs terminal" "$shown" "$ESC["
@@ -297,16 +303,23 @@ for glyphs in en_US.UTF-8 C; do
         fi
     done
     refuse "a $glyphs terminal" "$shown" 'install: '
-    expect "a $glyphs terminal" "$shown" "$shown_bin is not on your PATH. Add it with:"
-    expect "a $glyphs terminal" "$shown" "export PATH=\"$shown_bin:\$PATH\""
+    expect "a $glyphs terminal" "$shown" '~/.local/bin is not on your PATH. Add it with:'
+    expect "a $glyphs terminal" "$shown" 'export PATH="$HOME/.local/bin:$PATH"'
     expect "a $glyphs terminal" "$shown" 'Then run: crucible'
     expect "a $glyphs terminal" "$shown" 'status=0'
+    [[ -x $shown_home/.local/bin/crucible ]]
 done
-on_path=$scratch/on-path-bin
-shown=$(in_terminal 80 env TERM=xterm PATH="$on_path:$PATH" "$INSTALL" \
-    --version "$version" --dir "$on_path" \
+# A directory outside the home is exported as it was resolved, on one line.
+shown_bin=$scratch/shown-bin
+shown=$(in_terminal 80 env TERM=xterm "$INSTALL" --version "$version" \
+    --dir "$shown_bin" --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+expect 'a directory outside the home' "$shown" "export PATH=\"$shown_bin:\$PATH\""
+expect 'a directory outside the home' "$shown" 'status=0'
+on_path_home=$scratch/home-on-path
+shown=$(in_terminal 80 env TERM=xterm HOME="$on_path_home" \
+    PATH="$on_path_home/.local/bin:$PATH" "$INSTALL" --version "$version" \
     --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
-expect 'a directory on PATH' "$shown" "$on_path is on your PATH."
+expect 'a directory on PATH' "$shown" '~/.local/bin is on your PATH.'
 refuse 'a directory on PATH' "$shown" 'export PATH='
 
 echo '==> a checksum mismatch installs nothing and names the step'
