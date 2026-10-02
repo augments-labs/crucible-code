@@ -31,7 +31,7 @@ use crate::width::{clip, columns as wide, windowed};
 /// The three the search line's frame costs, the heading under it, its blank,
 /// the two the panes' frames cost, the row over the keys — blank unless there
 /// is a notice to stand on it — and the keys. A notice of more rows than one
-/// takes the rest from the panes; see [`spared`].
+/// takes the rest from the panes; see `spared`.
 const CHROME: usize = 9;
 
 /// The fewest body rows a picker stands in: one entry of the list.
@@ -262,10 +262,9 @@ impl Picker<'_> {
     ///
     /// The pane's own answer to how far back a caller may scroll it: the pane
     /// shows the end of what it is handed, so a slice shorter than this is a
-    /// pane standing half empty rather than one scrolled back.
+    /// pane standing half empty rather than one scrolled back. A notice of
+    /// `notice` rows takes rows from the pane, so the count is asked with it.
     #[must_use]
-    /// A notice of `notice` rows takes from the pane what [`spared`] says it
-    /// does, so the count is asked with it.
     pub const fn previews(room: usize, notice: usize) -> usize {
         if room < CHROME + FLOOR {
             return 0;
