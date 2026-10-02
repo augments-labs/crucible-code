@@ -26,8 +26,8 @@ use crucible_runtime::{BoxFuture, Cancel};
 use crate::speed::{FastForm, Served, Speed};
 use crucible_types::{
     Carried, Continuation, Modalities, Modality, PlanWindows, PricingDate, PricingError,
-    PromptCacheEncoding,
-    PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId, ToolSchema, Transcript,
+    PromptCacheEncoding, PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId,
+    ToolSchema, Transcript,
 };
 
 /// Why a provider could not produce a response.
