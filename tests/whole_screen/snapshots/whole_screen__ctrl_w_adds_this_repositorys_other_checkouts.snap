@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 1902
 expression: window.picture()
 ---
 80x24 cursor 1,10 scrolled 0
@@ -26,5 +25,5 @@ expression: window.picture()
 |│                              │ │ Enter to resume · Esc to cancel             │|
 |╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
 |                                                                                |
-| ↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc                           |
+| ctrl+a all projects · ctrl+b this branch · ctrl+w hide worktrees · esc         |
 |                                                                                |

@@ -35,10 +35,11 @@ const FIVE: [Kept<'static>; 5] = [
     },
 ];
 
-const KEYS: (&str, &str) = (
+const KEYS: &[&str] = &[
     "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel",
+    "ctrl+r rename · type to search · esc",
     "↑↓ · ctrl+r · esc",
-);
+];
 
 /// The tail the preview pane is handed, already drawn.
 fn tail() -> Vec<Row> {
@@ -202,6 +203,28 @@ fn the_keys_are_the_last_row_and_the_heading_sits_under_the_search_line() {
         "{:?}",
         said(&rows, 3)
     );
+}
+
+#[test]
+fn the_keys_row_takes_the_longest_form_the_window_has_room_for() {
+    // Longest first, and a form is drawn only where all of it fits: two
+    // columns go to the row's margin and its last column.
+    let preview = tail();
+    let picker = picker(&FIVE, &preview);
+    let last = |columns: usize| {
+        let rows = picker.within(columns, 30, Glyphs::Unicode);
+        said(&rows, 30 - 1).trim().to_owned()
+    };
+    let long = "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel";
+
+    let middle = "ctrl+r rename · type to search · esc";
+    let wide = crate::width::columns;
+
+    assert_eq!(last(100), long);
+    assert_eq!(last(wide(long) + 2), long);
+    assert_eq!(last(wide(long) + 1), middle);
+    assert_eq!(last(wide(middle) + 2), middle);
+    assert_eq!(last(wide(middle) + 1), "↑↓ · ctrl+r · esc");
 }
 
 #[test]

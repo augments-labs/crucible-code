@@ -25,5 +25,5 @@ expression: picture
 |│                              │ │ Enter to resume · Esc to cancel             │|
 |╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
 |                                                                                |
-| ↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc                           |
+| ctrl+a all projects · ctrl+b all branches · ctrl+w worktrees · esc             |
 |                                                                                |

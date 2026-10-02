@@ -656,7 +656,7 @@ fn stood<T: Terminal>(
             let heading = heading(stood.standing.found.len(), total, stood.scope, here, glyphs);
             let branch = here.branch.as_deref().filter(|_| stood.scope.branch);
             let empty = nothing(stood.standing.query.text(), branch);
-            let (long, short) = if stood.standing.renaming.is_some() {
+            let forms = if stood.standing.renaming.is_some() {
                 renaming(glyphs)
             } else {
                 keys(
@@ -694,7 +694,7 @@ fn stood<T: Terminal>(
                 },
                 nothing: &empty,
                 noview: NOVIEW,
-                keys: (&long, &short),
+                keys: &forms.iter().map(String::as_str).collect::<Vec<_>>(),
                 notice: notice.as_deref(),
                 pointer: stood.standing.pointer,
             };
@@ -1005,13 +1005,17 @@ fn nothing(query: &str, branch: Option<&str>) -> String {
     }
 }
 
-/// The keys row, long and short, for a list with something on it or without.
+/// Every form of the keys row, longest first, for a list with something on it
+/// or without: the picker draws the first the window has room for.
 ///
 /// Built rather than written down, because the arrows in it are the setting's:
 /// a terminal without them draws hollow squares on the one row that exists to
-/// be read by somebody who does not yet know. The short form is what a window
-/// with no room for the long one gets — the same keys, without the words
-/// saying what each of them moves.
+/// be read by somebody who does not yet know. Between the long form and the
+/// short come the middle ones, which an eighty-column window gets: each toggle
+/// named by what it does next in a word or two, with the keys that explain
+/// themselves — the arrows, Enter, typing — dropped first and Ctrl+R next. The
+/// short form is what a window with no room for those gets — the same keys,
+/// without the words saying what each of them moves.
 ///
 /// A list the query left empty is offered neither, because there is nothing to
 /// walk to and nothing to rename: what is left to do is narrow the query, change
@@ -1021,27 +1025,28 @@ fn nothing(query: &str, branch: Option<&str>) -> String {
 /// Each of the three keys that change what is shown is named by what pressing
 /// it does next, since that is the question a reader brings to it. Ctrl+B is
 /// left out where no branch is checked out here, because it then does nothing.
-fn keys(glyphs: Glyphs, listed: bool, scope: Scope, branched: bool) -> (String, String) {
+fn keys(glyphs: Glyphs, listed: bool, scope: Scope, branched: bool) -> Vec<String> {
     let (up, down) = glyphs.walking();
     let dot = glyphs.dot();
 
-    let all = if scope.all {
-        "ctrl+a to show this project"
+    let (all, all_next) = if scope.all {
+        ("ctrl+a to show this project", "ctrl+a this project")
     } else {
-        "ctrl+a to show all projects"
+        ("ctrl+a to show all projects", "ctrl+a all projects")
     };
-    let branch = if scope.branch {
-        "ctrl+b to show all branches"
+    let (branch, branch_next) = if scope.branch {
+        ("ctrl+b to show all branches", "ctrl+b all branches")
     } else {
-        "ctrl+b to only show this branch"
+        ("ctrl+b to only show this branch", "ctrl+b this branch")
     };
-    let worktrees = if scope.worktrees {
-        "ctrl+w to hide other worktrees"
+    let (worktrees, worktrees_next) = if scope.worktrees {
+        ("ctrl+w to hide other worktrees", "ctrl+w hide worktrees")
     } else {
-        "ctrl+w to show all worktrees"
+        ("ctrl+w to show all worktrees", "ctrl+w worktrees")
     };
 
     let mut long: Vec<String> = Vec::new();
+    let mut toggles: Vec<&str> = Vec::new();
     let mut short: Vec<String> = Vec::new();
     if listed {
         long.extend([format!("{up}{down} to walk"), "ctrl+r to rename".to_owned()]);
@@ -1056,22 +1061,32 @@ fn keys(glyphs: Glyphs, listed: bool, scope: Scope, branched: bool) -> (String, 
     }
 
     long.push(all.to_owned());
+    toggles.push(all_next);
     short.push("ctrl+a".to_owned());
     if branched {
         long.push(branch.to_owned());
+        toggles.push(branch_next);
         short.push("ctrl+b".to_owned());
     }
     long.push(worktrees.to_owned());
+    toggles.push(worktrees_next);
     short.push("ctrl+w".to_owned());
 
     if listed {
         long.push("type to search".to_owned());
     }
     long.push("esc to cancel".to_owned());
+    toggles.push("esc");
     short.push("esc".to_owned());
 
     let joint = format!(" {dot} ");
-    (long.join(&joint), short.join(&joint))
+    let mut forms = vec![long.join(&joint)];
+    if listed {
+        forms.push(format!("ctrl+r rename{joint}{}", toggles.join(&joint)));
+    }
+    forms.push(toggles.join(&joint));
+    forms.push(short.join(&joint));
+    forms
 }
 
 /// The keys row while a title is being renamed.
@@ -1080,13 +1095,13 @@ fn keys(glyphs: Glyphs, listed: bool, scope: Scope, branched: bool) -> (String, 
 /// open none of walking, renaming or searching is what a key does, and the row
 /// that says what the keys do is the one place a reader finds out which mode
 /// they are in.
-fn renaming(glyphs: Glyphs) -> (String, String) {
+fn renaming(glyphs: Glyphs) -> Vec<String> {
     let dot = glyphs.dot();
 
-    (
+    vec![
         format!("enter to save {dot} esc to cancel"),
         format!("enter {dot} esc"),
-    )
+    ]
 }
 
 #[cfg(test)]

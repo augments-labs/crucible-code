@@ -720,9 +720,10 @@ fn a_rename_says_what_its_own_keys_do_and_not_the_list_s() {
     // is the picker disagreeing with itself about the mode the reader is in.
     let glyphs = Glyphs::Unicode;
 
-    let (saving, short) = renaming(glyphs);
-    assert_eq!(saving, "enter to save · esc to cancel");
-    assert_eq!(short, "enter · esc");
+    assert_eq!(
+        renaming(glyphs),
+        ["enter to save · esc to cancel", "enter · esc"]
+    );
 }
 
 #[test]
@@ -1136,6 +1137,9 @@ fn the_heading_names_what_the_keys_show() {
 
 #[test]
 fn the_keys_row_names_what_each_key_does_next() {
+    // Longest first: every key in words, then each toggle by its next effect
+    // with the keys that explain themselves dropped, then the same again
+    // without Ctrl+R, then the bare keys a narrow window is left with.
     let glyphs = Glyphs::Unicode;
     let all = Scope {
         all: true,
@@ -1145,30 +1149,39 @@ fn the_keys_row_names_what_each_key_does_next() {
 
     assert_eq!(
         keys(glyphs, true, Scope::default(), true),
-        (
+        [
             "↑↓ to walk · ctrl+r to rename · ctrl+a to show all projects · \
              ctrl+b to only show this branch · ctrl+w to show all worktrees · \
-             type to search · esc to cancel"
-                .to_owned(),
-            "↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc".to_owned()
-        )
+             type to search · esc to cancel",
+            "ctrl+r rename · ctrl+a all projects · ctrl+b this branch · \
+             ctrl+w worktrees · esc",
+            "ctrl+a all projects · ctrl+b this branch · ctrl+w worktrees · esc",
+            "↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc",
+        ]
     );
     assert_eq!(
-        keys(glyphs, true, all, true).0,
-        "↑↓ to walk · ctrl+r to rename · ctrl+a to show this project · \
-         ctrl+b to show all branches · ctrl+w to hide other worktrees · \
-         type to search · esc to cancel"
+        keys(glyphs, true, all, true),
+        [
+            "↑↓ to walk · ctrl+r to rename · ctrl+a to show this project · \
+             ctrl+b to show all branches · ctrl+w to hide other worktrees · \
+             type to search · esc to cancel",
+            "ctrl+r rename · ctrl+a this project · ctrl+b all branches · \
+             ctrl+w hide worktrees · esc",
+            "ctrl+a this project · ctrl+b all branches · ctrl+w hide worktrees · esc",
+            "↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc",
+        ]
     );
 
     // No branch checked out: Ctrl+B would do nothing, so it is not offered.
     assert_eq!(
         keys(glyphs, true, Scope::default(), false),
-        (
+        [
             "↑↓ to walk · ctrl+r to rename · ctrl+a to show all projects · \
-             ctrl+w to show all worktrees · type to search · esc to cancel"
-                .to_owned(),
-            "↑↓ · enter · ctrl+r · ctrl+a · ctrl+w · esc".to_owned()
-        )
+             ctrl+w to show all worktrees · type to search · esc to cancel",
+            "ctrl+r rename · ctrl+a all projects · ctrl+w worktrees · esc",
+            "ctrl+a all projects · ctrl+w worktrees · esc",
+            "↑↓ · enter · ctrl+r · ctrl+a · ctrl+w · esc",
+        ]
     );
 
     // With nothing on the list there is nothing to walk to and nothing to
@@ -1176,12 +1189,92 @@ fn the_keys_row_names_what_each_key_does_next() {
     // show, or leave.
     assert_eq!(
         keys(glyphs, false, Scope::default(), false),
-        (
+        [
             "type to narrow · ctrl+a to show all projects · \
-             ctrl+w to show all worktrees · esc to cancel"
-                .to_owned(),
-            "type to narrow · ctrl+a · ctrl+w · esc".to_owned()
-        )
+             ctrl+w to show all worktrees · esc to cancel",
+            "ctrl+a all projects · ctrl+w worktrees · esc",
+            "type to narrow · ctrl+a · ctrl+w · esc",
+        ]
+    );
+}
+
+/// The keys row a picker handed `forms` draws across `columns`.
+fn drawn_keys(forms: &[String], columns: usize) -> String {
+    let forms: Vec<&str> = forms.iter().map(String::as_str).collect();
+    let picker = crucible_tui::Picker {
+        heading: "Resume a session",
+        query: "",
+        typed: 0,
+        hint: HINT,
+        sessions: &[],
+        marked: 0,
+        renaming: None,
+        refused: None,
+        preview: &[],
+        preview_meta: "",
+        takes: TAKES,
+        nothing: NEVER,
+        noview: NOVIEW,
+        keys: &forms,
+        notice: None,
+        pointer: None,
+    };
+    let rows = picker.within(columns, 30, Glyphs::Unicode);
+    rows.last()
+        .map(Row::text)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+#[test]
+fn at_eighty_columns_each_toggle_is_named_by_what_it_does_next() {
+    // Eighty columns is the window most people open, and a keys row there that
+    // names only keys leaves the reader to press each one to find out. With a
+    // branch checked out the row is at its longest, and in every scope each
+    // toggle still says what it does next.
+    for all in [false, true] {
+        for worktrees in [false, true] {
+            for branch in [false, true] {
+                let scope = Scope {
+                    all,
+                    worktrees,
+                    branch,
+                };
+                let a = if all {
+                    "ctrl+a this project"
+                } else {
+                    "ctrl+a all projects"
+                };
+                let b = if branch {
+                    "ctrl+b all branches"
+                } else {
+                    "ctrl+b this branch"
+                };
+                let w = if worktrees {
+                    "ctrl+w hide worktrees"
+                } else {
+                    "ctrl+w worktrees"
+                };
+                assert_eq!(
+                    drawn_keys(&keys(Glyphs::Unicode, true, scope, true), 80),
+                    format!("{a} · {b} · {w} · esc"),
+                    "{scope:?}"
+                );
+            }
+        }
+    }
+
+    // Without a branch there is room for Ctrl+R as well.
+    assert_eq!(
+        drawn_keys(&keys(Glyphs::Unicode, true, Scope::default(), false), 80),
+        "ctrl+r rename · ctrl+a all projects · ctrl+w worktrees · esc"
+    );
+
+    // A narrower window still gets every key, by name alone.
+    assert_eq!(
+        drawn_keys(&keys(Glyphs::Unicode, true, Scope::default(), true), 60),
+        "↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc"
     );
 }
 

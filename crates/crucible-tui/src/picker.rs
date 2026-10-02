@@ -150,8 +150,9 @@ pub struct Picker<'a> {
     pub nothing: &'a str,
     /// What the preview says where `sessions` is empty and a query did it.
     pub noview: &'a str,
-    /// The keys row, and the short form for a narrow window.
-    pub keys: (&'a str, &'a str),
+    /// Every form of the keys row, longest first: the first the window has
+    /// room for is drawn, and the last, cut, where none fits.
+    pub keys: &'a [&'a str],
     /// What the picker has to tell the reader about the last key they pressed,
     /// said on the row between the panes and the keys. `None` leaves that row
     /// blank.
@@ -501,11 +502,13 @@ impl Picker<'_> {
     /// What the keys do, in the longest form the window has room for.
     fn keyed(&self, columns: usize) -> Row {
         let room = columns - 2;
-        let said = if wide(self.keys.0) <= room {
-            self.keys.0
-        } else {
-            self.keys.1
-        };
+        let said = self
+            .keys
+            .iter()
+            .find(|form| wide(form) <= room)
+            .or(self.keys.last())
+            .copied()
+            .unwrap_or_default();
 
         let mut row = Row::new();
         row.push(Slot::Plain, " ");

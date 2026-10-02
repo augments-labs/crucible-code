@@ -1813,10 +1813,10 @@ fn the_session_picker_stands_over_the_whole_window() {
     for said in [
         "Resume a session · 1 of 1 ·",
         "Enter to resume · Esc to cancel",
-        // The long form of the keys row is wider than eighty columns once it
-        // names what Ctrl+A and Ctrl+W show, so this is the short one; no
+        // The long form of the keys row is wider than eighty columns, so this
+        // is the middle one, each toggle named by what it does next; no
         // branch is checked out here, so Ctrl+B is not offered.
-        "↑↓ · enter · ctrl+r · ctrl+a · ctrl+w · esc",
+        "ctrl+r rename · ctrl+a all projects · ctrl+w worktrees · esc",
     ] {
         assert!(rows.iter().any(|row| row.contains(said)), "{picture}");
     }
@@ -1826,7 +1826,7 @@ fn the_session_picker_stands_over_the_whole_window() {
     // loses exactly this row, and loses it silently.
     let keys = rows
         .iter()
-        .rposition(|row| row.contains("↑↓ · enter"))
+        .rposition(|row| row.contains("ctrl+r rename"))
         .expect("the keys row");
     let framed = rows
         .iter()

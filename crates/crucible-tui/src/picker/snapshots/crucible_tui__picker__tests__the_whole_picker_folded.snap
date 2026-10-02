@@ -25,4 +25,4 @@ expression: "picture(&picker(&FIVE, &preview).within(58, 24, Glyphs::Unicode), 5
 <Quiet>│</>                                                        <Quiet>│</>
 <Quiet>╰</><Quiet>────────────────────────────────────────────────────────</><Quiet>╯</>
 
- <Quiet>↑↓ · ctrl+r · esc</>
+ <Quiet>ctrl+r rename · type to search · esc</>
