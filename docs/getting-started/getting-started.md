@@ -80,8 +80,8 @@ It detects the architecture, verifies the Windows archive against the release's
 `%LOCALAPPDATA%\Programs\crucible\bin`, without asking for elevation. It
 points out that directory, or one above it, when other users can change it,
 since they could then replace what it installed. It says
-whether that directory is on your `PATH` and prints the command that adds it,
-but changes `PATH` only when asked to. To pass options, such as `-AddToPath`,
+whether that directory is on your `PATH` and how to add it, but changes `PATH`
+only when asked to. To pass options, such as `-AddToPath`,
 `-Version`, `-Dir` or `-DryRun`, run it as a script block:
 
 ```powershell
