@@ -1295,9 +1295,12 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # what the session may reach or whom it acts as. Asking how the window is spent,
 # the twenty-first, reads a count and changes nothing, and asking what the
 # session has used, the twenty-second, reads figures the conversation already
-# holds and changes nothing either. One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 22)); then
-    printf '    FAIL the client contract no longer has the 22 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 22 in this check\n'
+# holds and changes nothing either. Changing a setting, the twenty-third, writes
+# one row of the settings menu to the user's file, and no row is a permission,
+# the sandbox or an account: the menu's own test refuses a row over a key that
+# loosens what crucible does unasked. One more is one nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 23)); then
+    printf '    FAIL the client contract no longer has the 23 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 23 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
