@@ -2037,17 +2037,16 @@ mod fast;
 
 mod recommended;
 
-#[test]
-fn the_transcript_follows_the_colour_rule() {
-    // A turn with every kind of row a transcript holds: model prose with code
-    // and a link in it, a call whose result was cut, a call that changed a
-    // file, and a run of calls folded to one line. Each row lands the eye on
-    // one accent at most, and says the same words in every theme.
-    let style = Style::coloured();
+/// A turn with every kind of row a transcript holds, drawn in `style`: the
+/// prompt that asked for it, model prose with code and a link in it, a call
+/// whose result was cut, a call that changed a file, and a run of calls folded
+/// to one line.
+fn ruled_turn(style: Style) -> Vec<Row> {
     let mut renderer = Renderer::new(Recording::new(80, 60));
     renderer.wears(style.palette());
     let mut kept = Kept::default();
 
+    queued(&mut renderer, "fix the flaky resume test", style).expect("the prompt to draw");
     let mut turn = vec![
         beat(Event::TurnStarted {
             turn: TurnId::FIRST,
@@ -2086,14 +2085,37 @@ fn the_transcript_follows_the_colour_rule() {
     )
     .expect("the run to draw");
 
-    let rows = renderer.tail(60);
+    renderer.tail(60)
+}
+
+/// Every word and mark `rows` show, picked out the way a reader would: runs of
+/// anything but whitespace and the ASCII punctuation markdown writes its
+/// markers in.
+fn words_and_marks(rows: &[Row]) -> std::collections::BTreeSet<String> {
+    rows.iter()
+        .map(Row::text)
+        .flat_map(|said| {
+            said.split(|one: char| one.is_whitespace() || one.is_ascii_punctuation())
+                .filter(|word| !word.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+#[test]
+fn the_transcript_follows_the_colour_rule() {
+    // Each row lands the eye on one accent at most, and says the same words in
+    // every theme.
+    let rows = ruled_turn(Style::coloured());
     let said: Vec<String> = rows.iter().map(Row::text).collect();
     for drawn in [
-        "● Read",
+        "\u{203a} fix the flaky resume test",
+        "\u{25cf} Read",
         "ctrl+o",
         "wait_for_index",
         "+  # what stops",
-        "● Read 3",
+        "\u{25cf} Read 3",
     ] {
         assert!(
             said.iter().any(|row| row.contains(drawn)),
@@ -2101,5 +2123,51 @@ fn the_transcript_follows_the_colour_rule() {
         );
     }
 
+    // One span of each level, in the slot the rule gives it: a call's mark is
+    // the accent, an added line carries its meaning, the path in passing is
+    // quiet and what the model says is plain.
+    let slot_of = |text: &str| {
+        rows.iter()
+            .flat_map(Row::spans)
+            .find(|(_, said)| said.contains(text))
+            .map(|(slot, _)| slot)
+    };
+    assert_eq!(slot_of("\u{25cf}"), Some(Slot::Accent), "a call's mark");
+    assert_eq!(slot_of("# what stops"), Some(Slot::Added), "an added line");
+    assert_eq!(
+        slot_of("(src/cli/converse/resume.rs)"),
+        Some(Slot::Quiet),
+        "a path in passing"
+    );
+    assert_eq!(slot_of("The test waits"), Some(Slot::Plain), "model prose");
+
     crate::cli::colour_rule::holds("transcript", &rows, |_| false);
+}
+
+#[test]
+fn the_transcript_with_colour_off_shows_every_word_and_mark_colour_does() {
+    // With no colour there is no slot to put a marker's meaning in, so the
+    // model's markdown arrives as it was written, markers and all: more than
+    // the coloured transcript shows, never less.
+    let coloured = ruled_turn(Style::coloured());
+    let plain = ruled_turn(Style::plain());
+
+    let shown = words_and_marks(&plain);
+    let lost: Vec<String> = words_and_marks(&coloured)
+        .difference(&shown)
+        .cloned()
+        .collect();
+    assert!(
+        lost.is_empty(),
+        "colour off loses {lost:?}: {:#?}",
+        plain.iter().map(Row::text).collect::<Vec<_>>()
+    );
+    assert!(
+        plain
+            .iter()
+            .any(|row| row.text().contains("`wait_for_index`")),
+        "the markers are kept"
+    );
+
+    crate::cli::colour_rule::holds("transcript, colour off", &plain, |_| false);
 }
