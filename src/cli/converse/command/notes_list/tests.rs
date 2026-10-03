@@ -336,3 +336,28 @@ fn release_notes_list_of_one_or_two_releases_stands_closed_and_cannot_be_opened(
         );
     }
 }
+
+#[test]
+fn release_notes_list_follows_the_colour_rule() {
+    // Closed, and with the reveal row opened: the mark's row may be lit, and
+    // no other row takes more than one accent.
+    let text = changelog();
+    for (columns, glyphs) in [(80, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+        let mut listing = listing(&text);
+        let closed = listing.rows(columns, 24, glyphs);
+        crate::cli::colour_rule::holds(
+            &format!("release notes at {columns}"),
+            &closed,
+            crate::cli::colour_rule::marked,
+        );
+
+        pressed(&mut listing, down(8));
+        listing.against(enter());
+        let opened = listing.rows(columns, 24, glyphs);
+        crate::cli::colour_rule::holds(
+            &format!("release notes opened at {columns}"),
+            &opened,
+            crate::cli::colour_rule::marked,
+        );
+    }
+}

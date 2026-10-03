@@ -575,6 +575,34 @@ fn a_windows_machine_reads_its_zone_from_the_database_built_in() {
 }
 
 #[test]
+fn usage_follows_the_colour_rule() {
+    // A bar's used part is the one accent on its row, whatever the provider
+    // reported, while it is being asked, and however narrow the window.
+    for (name, usage, asking) in [
+        ("weekly", weekly(), None),
+        ("every window", every_window(), None),
+        ("keyed", keyed(), None),
+        ("stopped", stopped(), None),
+        ("a model's group", with_a_group(), None),
+        ("counted", counted_only(), None),
+        ("asking", weekly(), Some("openai")),
+    ] {
+        for (columns, glyphs) in [(80, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+            let rows = panel(
+                "openai · ChatGPT sign-in",
+                &usage,
+                asking,
+                columns,
+                glyphs,
+                &clock(),
+            );
+
+            crate::cli::colour_rule::holds(&format!("usage {name} at {columns}"), &rows, |_| false);
+        }
+    }
+}
+
+#[test]
 fn usage_draws_a_model_group_under_the_plan_wide_windows_as_the_mockup_does() {
     let rows = body("", &with_a_group(), None, 80, Glyphs::Unicode, &clock());
 
