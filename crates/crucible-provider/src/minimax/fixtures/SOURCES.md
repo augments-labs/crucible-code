@@ -37,3 +37,10 @@ absent there, as they are in that fixture; the tests that read them set them
 on a copy. The site's own page,
 https://platform.minimax.io/docs/token-plan/faq, prints the request but no
 answer.
+
+The refused-key code the plan reader closes on, `1004`, is the vendor's
+documented code for "not authorized / token not match group / cookie is
+missing", from its error-code table,
+https://platform.minimax.io/docs/api-reference/errorcode. The vendor gives it
+under `base_resp` in an answer whose HTTP status is 200. It has not been seen
+in a live answer; the body the tests use for it is constructed.

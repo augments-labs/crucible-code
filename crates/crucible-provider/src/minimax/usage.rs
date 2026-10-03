@@ -30,7 +30,7 @@ const CN: &str = "https://api.minimax.cn/v1/token_plan/remains";
 const UNLIMITED: u64 = 3;
 
 /// The status an answer carries for a key the vendor does not accept, which it
-/// answers with a 200 rather than a 401.
+/// answers with a 200 rather than a 401: see `fixtures/SOURCES.md`.
 const KEY_REFUSED: i64 = 1004;
 
 /// The furthest after an answer arrived that a window's reset is read: a year,
