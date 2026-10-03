@@ -75,6 +75,15 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - if: ${{ runner.os != 'Windows' && !cancelled() }}
         run: scripts/sh/install-tests.sh
+      # Both shells the Windows installer promises to run under.
+      - if: ${{ runner.os == 'Windows' && !cancelled() }}
+        name: Installer tests under Windows PowerShell 5.1 and PowerShell 7
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ps1/install-tests.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/ps1/install-tests.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - if: ${{ runner.os == 'Windows' && always() }}
         name: Remove the native Windows sandbox setup
         shell: pwsh

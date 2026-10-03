@@ -3,9 +3,7 @@ source: tests/whole_screen/main.rs
 assertion_line: 1398
 expression: plans
 ---
-40x30 cursor 28,0 scrolled 0
-|                                        |
-|› /login                                |
+40x30 cursor 29,0 scrolled 0
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
@@ -30,7 +28,9 @@ expression: plans
 |                                        |
 |  Qwen Coding Plan · aliyun.com         |
 |  uses what is sent · Qwen Coding Plan …|
-|  · 2 more                              |
+|                                        |
+|  Qwen Token Plan · alibabacloud.com    |
+|  Qwen Token Plan usage, the internatio…|
+|  · 1 more                              |
 |                                        |
 |esc to go back                          |
-|                                        |

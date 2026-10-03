@@ -1,4 +1,6 @@
-//! Full-screen rendering: crucible owns the window and every row in it.
+//! Rendering, full screen by default: crucible owns the window and every row
+//! in it. Native mode, the other [`ScreenMode`], is the exception to most of
+//! what follows and says so in its own module.
 //!
 //! This process takes the alternate screen, so the terminal's scroll buffer is
 //! not where the session lives. What replaces it is [`Record`] — a bounded
@@ -13,7 +15,10 @@
 //! names the row it writes and never counts how far to move or how much to
 //! erase. There is no rewind, no live region, and no arithmetic about how tall
 //! the last frame turned out to be — the class of defect this crate has spent
-//! the most on cannot be expressed here.
+//! the most on cannot be expressed here. Native mode has all three, because
+//! the reader's own buffer is a screen nobody owns; they are confined to
+//! [`native`], whose frame is the one place a row is counted rather than
+//! named.
 //!
 //! What a frame costs is bounded by the window and not by the delta: the rows
 //! whose painted bytes are the same as last time are not written at all, which
@@ -36,17 +41,19 @@ use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
 use crate::record::Record;
 use crate::row::Row;
+use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::{Size, Terminal, TerminalError};
-use crate::transcript_map::{self, TranscriptMap};
 
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
 mod frame;
+mod native;
 mod painted;
 
+use native::Native;
 use painted::Painted;
 
 /// How far one notch of the wheel moves the transcript, until told otherwise.
@@ -184,31 +191,43 @@ enum Arriving {
     Answer,
 }
 
-/// Draws the session onto a screen this process owns.
+/// Where a renderer draws.
+///
+/// Settled once, when the renderer is made, because the two are different
+/// promises about the terminal rather than two looks of one: one takes a screen
+/// of its own and keeps the session there, the other writes into the buffer the
+/// reader's shell was using and leaves what is finished to the terminal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScreenMode {
+    /// A screen of crucible's own: its own scrollback, rail and selection.
+    #[default]
+    Fullscreen,
+    /// The terminal's own buffer: what is finished is written once into its
+    /// scrollback, and only a live region at the bottom is drawn again.
+    Native,
+}
+
+/// Draws the session: onto a screen this process owns, or at the foot of the
+/// terminal's own buffer.
 #[derive(Debug)]
 pub struct Renderer<T: Terminal> {
     terminal: T,
+    /// Where finished rows go and what a frame may redraw, in native mode.
+    ///
+    /// `None` is the full screen. Held as the state native mode needs rather
+    /// than as a flag beside it, so the mode and what it keeps cannot disagree.
+    native: Option<Native>,
     /// Everything that has been said, and where in it the reader is looking.
     record: Record,
     /// The rows at the foot of the window that are not the transcript.
     standing: Standing,
-    /// Whether a session has named itself, which is what the fixed foot — the
-    /// transcript-map door — belongs to. Before one has, there is no transcript
-    /// to travel and no door to offer.
-    footed: bool,
-    /// Whether the pointer is over the transcript-map door in the fixed foot.
-    ///
-    /// One bit rather than its column, because every motion on the same side of
-    /// either edge should cost no layout and no frame.
-    map_pointed: bool,
     /// The row of the prompt that offers an action while the box is standing.
     ///
     /// Relative to the prompt band. The renderer owns the absolute placement,
     /// so this is enough for it to decide whether a motion crossed the offer
     /// without teaching it what the row means.
     prompt_target: Option<usize>,
-    /// Whether a pointer transition is waiting for the prompt and fixed foot
-    /// to be replaced together.
+    /// Whether a pointer transition is waiting for the prompt to be replaced.
     pointed_changed: bool,
     /// The size the record is folded for and the bands are shared out over.
     ///
@@ -264,8 +283,19 @@ pub struct Renderer<T: Terminal> {
     /// about the terminal rather than about the answer. Unicode until
     /// [`Renderer::draws`] says otherwise.
     glyphs: Glyphs,
-    /// Absolute travel over the retained transcript in the fixed bottom row.
-    map: TranscriptMap,
+    /// Whether the transcript gives up its rightmost column to the scroll
+    /// rail, where the window can spare one.
+    ///
+    /// Off until [`Renderer::rails`] says otherwise, so a renderer nobody
+    /// configured — a preview, a test — folds at the window's own width.
+    rails: bool,
+    /// Where on the thumb a press on the rail took hold of it, in rail rows
+    /// from the thumb's first, from the press to the release.
+    ///
+    /// What a drag keeps under the pointer: the thumb follows the pointer by
+    /// the row it was taken by, so a drag that starts on its middle does not
+    /// jump to put its top there.
+    grip: Option<usize>,
     /// How many rows of the transcript one notch of the wheel moves.
     ///
     /// Held here for the reason the palette and the glyphs are: it is settled
@@ -313,14 +343,26 @@ impl<T: Terminal> Renderer<T> {
     /// trade for a pipe.
     #[must_use]
     pub fn new(terminal: T) -> Self {
+        Self::drawing(terminal, ScreenMode::Fullscreen)
+    }
+
+    /// A renderer drawing on `terminal` in `mode`.
+    ///
+    /// [`Renderer::new`] is the full screen. What decides which a session gets
+    /// is configuration, read once at launch: changing it under a session
+    /// would leave half of it in a scrollback the other mode does not keep.
+    #[must_use]
+    pub fn drawing(terminal: T, mode: ScreenMode) -> Self {
         let size = terminal.size().unwrap_or(Size::FALLBACK);
 
         Self {
             record: Record::new(size.columns),
             terminal,
+            native: match mode {
+                ScreenMode::Fullscreen => None,
+                ScreenMode::Native => Some(Native::default()),
+            },
             standing: Standing::default(),
-            footed: false,
-            map_pointed: false,
             prompt_target: None,
             pointed_changed: false,
             size,
@@ -332,7 +374,8 @@ impl<T: Terminal> Renderer<T> {
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
-            map: TranscriptMap::default(),
+            rails: false,
+            grip: None,
             notch: NOTCH,
             taken: None,
             held: None,
@@ -341,16 +384,18 @@ impl<T: Terminal> Renderer<T> {
         }
     }
 
-    /// Waits for one press, while still restoring an idle transcript map.
+    /// Waits for one press, carrying a drag resting at an edge of the
+    /// transcript along while it waits.
     ///
-    /// `None` where the map or selection consumed the press. A map deadline
-    /// wakes this wait, redraws the identity row, and waits again; it never
-    /// becomes a key the caller could mistake for input.
+    /// `None` where the scroll rail or the selection consumed the press. A
+    /// drag's next step wakes this wait, moves the transcript, and waits again;
+    /// it never becomes a key the caller could mistake for input.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be read or written.
     pub fn pressed(&mut self) -> Result<Option<Pressed>, TerminalError> {
+        self.seal()?;
         loop {
             if let Some(patience) = self.rests_in()
                 && !waiting(patience)?
@@ -362,19 +407,20 @@ impl<T: Terminal> Renderer<T> {
         }
     }
 
-    /// Whether a press is ready within `patience`, shortening that wait to an
-    /// open map's idle deadline when necessary.
+    /// Whether a press is ready within `patience`, shortening that wait to a
+    /// resting drag's next step when necessary.
     ///
     /// The caller already has something else to watch — a running turn or a
-    /// login attempt — so a map that returned to rest answers `false` and lets
-    /// that caller make its ordinary pass before polling again.
+    /// login attempt — so a step taken answers `false` and lets that caller
+    /// make its ordinary pass before polling again.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be read or written.
     pub fn waiting(&mut self, patience: Duration) -> Result<bool, TerminalError> {
+        self.seal()?;
         self.repose()?;
-        let patience = self.rests_in().map_or(patience, |map| map.min(patience));
+        let patience = self.rests_in().map_or(patience, |due| due.min(patience));
         let ready = waiting(patience)?;
         if !ready {
             self.repose()?;
@@ -382,7 +428,7 @@ impl<T: Terminal> Renderer<T> {
         Ok(ready)
     }
 
-    /// What a press means once the selection has had it.
+    /// What a press means once the scroll rail and the selection have had it.
     ///
     /// The one seam every input loop wraps its reads in, so that a drag works
     /// the same wherever the reader started it: the loop hands over what
@@ -392,7 +438,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// A click is handed back rather than swallowed. It anchors a drag that may
     /// never happen, and until it does it still means whatever it meant to the
-    /// loop underneath — a caret placed in the box, a cut result opened.
+    /// loop underneath — a caret placed in the box, a cut result opened. A
+    /// press on the rail is the exception: it moves the transcript, where there
+    /// is anywhere to move it, and nothing else, so it goes no further, and
+    /// neither does the drag it starts.
     ///
     /// # Errors
     ///
@@ -402,65 +451,31 @@ impl<T: Terminal> Renderer<T> {
             return Ok(Some(arrived));
         }
 
+        // The terminal's own buffer has its own selection and its own wheel,
+        // and this process asked for no presses of the pointer. One that
+        // arrives anyway is answered by nothing: there is no rail to steer, no
+        // selection to make and no band to scroll.
+        if self.native.is_some()
+            && matches!(
+                arrived,
+                Pressed::Hovered { .. }
+                    | Pressed::Clicked { .. }
+                    | Pressed::Dragged { .. }
+                    | Pressed::Released { .. }
+                    | Pressed::Scrolled { .. }
+            )
+        {
+            return Ok(None);
+        }
+
         let bands = self.bands();
-        let on_map = |row| bands.foot.end.checked_sub(1) == Some(row);
         if let Pressed::Hovered { row, column } = arrived {
-            let lit = self.pointed();
-            let prompt_pointed = self.prompt_pointed();
-            let over = !self.map.open()
-                && on_map(row)
-                && transcript_map::door(self.size.columns)
-                    .is_some_and(|door| door.contains(&column));
-            let crossed = over != self.map_pointed;
-            self.pointing = Some((row, column));
-            self.map_pointed = over;
-            let changed =
-                lit != self.pointed() || prompt_pointed != self.prompt_pointed() || crossed;
-            if changed && self.prompt_target.is_some() {
-                // The caller has the pointable row in both of its palette
-                // states. It replaces that row, the rest of the prompt, and
-                // the map in one candidate rather than letting this write an
-                // intermediate frame.
-                self.pointed_changed = true;
-            } else if changed {
-                // One frame for both answers: main's cut-result offer is a fact
-                // about the row, while the map chip is a fact about crossing
-                // either horizontal edge inside its row.
+            if self.points(row, column, &bands) {
                 self.draw()?;
             }
             return Ok(None);
         }
-        if self.map.open() {
-            match arrived {
-                Pressed::Clicked { row, column }
-                    if on_map(row)
-                        && transcript_map::track(self.size.columns)
-                            .is_some_and(|track| track.contains(&column)) =>
-                {
-                    self.map.press(column);
-                    return Ok(None);
-                }
-                Pressed::Dragged { column, .. } if self.map.drag() => {
-                    self.seek_map(column, false)?;
-                    return Ok(None);
-                }
-                Pressed::Released { column, .. } => {
-                    if let Some((column, dragged)) = self.map.release(column, Instant::now()) {
-                        self.seek_map(column, !dragged)?;
-                        return Ok(None);
-                    }
-                }
-                Pressed::Scrolled { back } => {
-                    self.notched(back)?;
-                    return Ok(None);
-                }
-                _ => {}
-            }
-        } else if let Pressed::Clicked { row, column } = arrived
-            && on_map(row)
-            && transcript_map::door(self.size.columns).is_some_and(|door| door.contains(&column))
-        {
-            self.open_map()?;
+        if self.steered(&arrived, &bands)? {
             return Ok(None);
         }
 
@@ -516,6 +531,164 @@ impl<T: Terminal> Renderer<T> {
             }
             _ => Ok(Some(arrived)),
         }
+    }
+
+    /// Answers a press that belongs to the scroll rail, and says whether it
+    /// did.
+    ///
+    /// A press on the thumb takes hold of it where it was pressed and moves
+    /// nothing, a mark the thumb covers included. A press on a mark off the
+    /// thumb lands on the prompt the mark stands for, which is then the rail's
+    /// current prompt for as long as it starts in the band and no prompt is
+    /// sent after it, and anywhere else on the rail puts the thumb's middle
+    /// there, as near as the rail's ends allow; either way the thumb is then
+    /// held where the pointer is. A drag moves the held thumb, and the
+    /// transcript with it, and the release lets go. A rail with no thumb — a
+    /// record that fits — has nowhere to go, so a press on it moves nothing; it
+    /// is still the rail's, so it names no line beside it, just as a pointer
+    /// resting there lights none.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the frame could not be written.
+    fn steered(&mut self, arrived: &Pressed, bands: &Bands) -> Result<bool, TerminalError> {
+        let rows = bands.transcript.len();
+        match *arrived {
+            Pressed::Clicked { row, column } => {
+                // A press is a new hold, whatever the last one was: a thumb
+                // whose release never arrived is let go here, or the drag
+                // this press starts would move it.
+                self.grip = None;
+                if Some(column) != self.rail_column() || !bands.transcript.contains(&row) {
+                    return Ok(false);
+                }
+                let Some((rail, thumb)) = self
+                    .rail(bands)
+                    .and_then(|rail| rail.thumb().map(|thumb| (rail, thumb)))
+                else {
+                    self.held = None;
+                    self.creeps = None;
+                    self.unselects();
+                    self.draw()?;
+                    return Ok(true);
+                };
+                let at = row - bands.transcript.start;
+                if !thumb.contains(&at) {
+                    let top = if let Some(prompt) = rail.prompt_at(at, self.record.prompts()) {
+                        self.record.lands(prompt);
+                        prompt
+                    } else {
+                        rail.top_for(at.saturating_sub(thumb.len() / 2))
+                    };
+                    self.record.seek(top, rows);
+                }
+                let thumb = self
+                    .rail(bands)
+                    .and_then(|rail| rail.thumb())
+                    .unwrap_or(thumb);
+                self.grip = Some(
+                    at.saturating_sub(thumb.start)
+                        .min(thumb.len().saturating_sub(1)),
+                );
+                self.held = None;
+                self.creeps = None;
+                self.unselects();
+                self.draw()?;
+                Ok(true)
+            }
+            Pressed::Dragged { row, column } => {
+                let Some(grip) = self.grip else {
+                    return Ok(false);
+                };
+                // A drag reports where the pointer is as motion does, so the
+                // mark grown under it is the one under it now, not the one
+                // the press was on.
+                let mut owed = self.points(row, column, bands);
+                if let Some(rail) = self.rail(bands)
+                    && let Some(thumb) = rail.thumb()
+                {
+                    let at = row
+                        .saturating_sub(bands.transcript.start)
+                        .min(rows.saturating_sub(1));
+                    let start = at
+                        .saturating_sub(grip)
+                        .min(rows.saturating_sub(thumb.len()));
+                    owed |= self.record.seek(rail.top_for(start), rows);
+                }
+                if owed {
+                    self.draw()?;
+                }
+                Ok(true)
+            }
+            Pressed::Released { .. } => Ok(self.grip.take().is_some()),
+            _ => Ok(false),
+        }
+    }
+
+    /// Moves the pointer to `row` and `column`, and says whether this renderer
+    /// owes a frame for it: when what the pointer lights, the prompt row it is
+    /// on or the rail row it is on changed.
+    ///
+    /// Motion within the same targets owes nothing, so all-motion reporting
+    /// does not turn into one frame per cell.
+    fn points(&mut self, row: usize, column: usize, bands: &Bands) -> bool {
+        let lit = self.pointed();
+        let prompt_pointed = self.prompt_pointed();
+        let railed = self.rail_pointed(bands);
+        self.pointing = Some((row, column));
+        let changed = lit != self.pointed()
+            || prompt_pointed != self.prompt_pointed()
+            || railed != self.rail_pointed(bands);
+        if changed && self.prompt_target.is_some() {
+            // The caller has the pointable row in both of its palette
+            // states. It replaces that row and the rest of the prompt in
+            // one candidate rather than letting this write an
+            // intermediate frame. A change of rail row rides the same flag:
+            // that replacement redraws the whole frame, rail and all.
+            self.pointed_changed = true;
+            return false;
+        }
+        changed
+    }
+
+    /// The width the transcript is folded at: the window's, less the rail's
+    /// column where there is one.
+    fn folds(&self) -> usize {
+        if self.rails && self.terminal.is_terminal() && scroll_rail::spared(self.size.columns) {
+            self.size.columns - 1
+        } else {
+            self.size.columns
+        }
+    }
+
+    /// The window column the rail stands in, where it stands in one.
+    fn rail_column(&self) -> Option<usize> {
+        let folds = self.folds();
+        (folds < self.size.columns).then_some(folds)
+    }
+
+    /// The rail as the transcript band stands now, where one is drawn.
+    fn rail(&self, bands: &Bands) -> Option<ScrollRail> {
+        self.rail_column()?;
+        let place = self.record.place(bands.transcript.len());
+        Some(ScrollRail::new(
+            place,
+            self.record.prompts(),
+            self.record.landed(),
+        ))
+    }
+
+    /// The rail row the pointer is on, where it is on a rail with a thumb.
+    ///
+    /// `None` off the rail's column, outside the band, and on a rail over a
+    /// record that fits, which is blank and answers no pointer.
+    fn rail_pointed(&self, bands: &Bands) -> Option<usize> {
+        let (row, column) = self.pointing?;
+        if Some(column) != self.rail_column() || !bands.transcript.contains(&row) {
+            return None;
+        }
+        self.rail(bands)?.thumb()?;
+        Some(row - bands.transcript.start)
     }
 
     /// The transcript band as it stands, for placing a drag's ends.
@@ -574,7 +747,6 @@ impl<T: Terminal> Renderer<T> {
             return Ok(false);
         }
         self.creeps = now.checked_add(CREEP);
-        self.refresh_map();
         self.reached();
         self.draw()?;
         Ok(true)
@@ -624,7 +796,7 @@ impl<T: Terminal> Renderer<T> {
         self.pointing
     }
 
-    /// Whether a pointer transition is waiting for a pointable prompt redraw.
+    /// Whether a pointer transition is waiting for a redraw.
     ///
     /// Taken once. Motion within the same effective target sets no new
     /// transition, so all-motion reporting does not turn into one frame per
@@ -654,6 +826,12 @@ impl<T: Terminal> Renderer<T> {
         };
 
         if !bands.transcript.contains(&row) {
+            return nothing;
+        }
+
+        // The rail is the band's furniture, not a line of it: a pointer
+        // resting there is over no result.
+        if self.pointing.map(|(_, column)| column) == self.rail_column() {
             return nothing;
         }
 
@@ -723,13 +901,16 @@ impl<T: Terminal> Renderer<T> {
 
     /// Tells this renderer which characters it may draw with.
     ///
-    /// Said once, at startup, because which set a font has is settled before
-    /// the first frame and no command changes it. It reaches the transcript
-    /// through the markdown reader, which is the one thing here that puts a
-    /// character of its own in place of one the model wrote.
+    /// Said at startup, and again whenever the reader changes the setting. It
+    /// reaches the transcript through the markdown reader, which is the one
+    /// thing here that puts a character of its own in place of one the model
+    /// wrote. The reader is told rather than replaced, since a change can
+    /// arrive between two deltas of one answer and the scan has to go on where
+    /// it was; rows already written keep the characters they were drawn with.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
-        self.markdown = self.reader();
+        self.markdown.draws(glyphs);
+        self.painted.forget();
     }
 
     /// Tells this renderer which repository the answer's bare numbers count
@@ -753,46 +934,35 @@ impl<T: Terminal> Renderer<T> {
     /// Marks the next record line as the start of a prompt.
     ///
     /// Called after the blank parting it from the previous block and before the
-    /// prompt rows themselves, so a map landmark lands on the words it names.
+    /// prompt rows themselves, so the rail's mark for it stands for the words it
+    /// names.
     pub fn landmark(&mut self) {
         self.record.landmark();
     }
 
-    /// How long an input wait may sleep before something here is due: the map
-    /// restoring the identity row, or a drag resting at an edge of the
-    /// transcript carrying it another row. `None` where neither is pending.
+    /// How long an input wait may sleep before a drag resting at an edge of
+    /// the transcript carries it another row. `None` where none is pending.
     #[must_use]
     fn rests_in(&self) -> Option<Duration> {
         let now = Instant::now();
-        let map = self.map.remaining(now);
-        let creep = self.creeps.map(|due| due.saturating_duration_since(now));
-        match (map, creep) {
-            (Some(map), Some(creep)) => Some(map.min(creep)),
-            (map, creep) => map.or(creep),
-        }
+        self.creeps.map(|due| due.saturating_duration_since(now))
     }
 
-    /// Does whatever fell due while an input wait slept: restores the map's
-    /// bottom-row control once it has been idle long enough, and carries the
+    /// Does whatever fell due while an input wait slept: carries the
     /// transcript a row towards a drag resting at its edge.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the frame could not be drawn.
     fn repose(&mut self) -> Result<bool, TerminalError> {
-        let crept = self.crept()?;
-        if !self.map.repose(Instant::now()) {
-            return Ok(crept);
-        }
-        self.draw()?;
-        Ok(true)
+        self.crept()
     }
 
     /// Tells this renderer how far one notch of the wheel moves the transcript.
     ///
-    /// Said once, at startup. The wheel arrives as a count of notches and
-    /// nothing more — how far one is worth is the reader's, and this is where
-    /// their answer lands.
+    /// Said at startup, and again whenever the reader changes the setting. The
+    /// wheel arrives as a count of notches and nothing more — how far one is
+    /// worth is the reader's, and this is where their answer lands.
     pub fn rolls(&mut self, rows: i32) {
         self.notch = rows;
     }
@@ -803,26 +973,23 @@ impl<T: Terminal> Renderer<T> {
         usize::try_from(self.notch).unwrap_or(1).max(1)
     }
 
-    /// Tells this renderer a session is on screen, which puts the fixed foot —
-    /// the transcript-map door — on the bottom row and keeps it there.
+    /// Tells this renderer whether the transcript has a scroll rail.
     ///
-    /// Said at each prompt because that is where a resize is first known.
-    /// Where the session is bound is not said here: the welcome card carries
-    /// the directory, as a line of the record like any other.
-    ///
-    /// Nothing at all happens where output is redirected, for the reason
-    /// [`Renderer::live`] draws nothing there.
-    ///
-    /// # Errors
-    ///
-    /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn foots(&mut self) -> Result<(), TerminalError> {
-        if !self.terminal.is_terminal() {
-            return Ok(());
-        }
-
-        self.footed = true;
-        self.draw()
+    /// Said at startup from the setting, and again whenever the reader changes
+    /// it, when the record is folded again to the width it leaves. With it on,
+    /// the rightmost column of the transcript band is the rail wherever the
+    /// window can spare one, and the transcript folds a column narrower to
+    /// leave it; with it off, nothing is drawn there and the transcript has
+    /// the whole width. Nothing changes where output is redirected: a file has
+    /// no right edge.
+    pub fn rails(&mut self, on: bool) {
+        // Native mode has no band to put one beside: the terminal's own
+        // scrollbar is the rail.
+        self.rails = on && self.native.is_none();
+        self.grip = None;
+        self.record.resized(self.folds());
+        self.unselects();
+        self.painted.forget();
     }
 
     /// Appends streamed output and puts a frame on screen.
@@ -854,7 +1021,7 @@ impl<T: Terminal> Renderer<T> {
             return self.draw();
         }
 
-        let columns = self.size.columns;
+        let columns = self.folds();
         let redirected = !self.terminal.is_terminal();
         let Self {
             markdown,
@@ -915,7 +1082,10 @@ impl<T: Terminal> Renderer<T> {
     /// a theme chosen later repaints it along with everything else.
     ///
     /// Not folded either, and it does not need to be: a component is given the
-    /// width and returns rows that fit it. A window that narrows clips them
+    /// width and returns rows that fit it. That width is
+    /// [`Self::transcript_columns`], not the window's: with the rail on, a row
+    /// laid at the window's width loses its last column to it. A window that
+    /// narrows clips them
     /// rather than folding them, because rows a component laid out against each
     /// other are not prose and re-flowing one of them would break the column
     /// the others are aligned in.
@@ -953,7 +1123,8 @@ impl<T: Terminal> Renderer<T> {
     /// prompts and file changes. The closure is retained by the bounded record
     /// and called only when the terminal width changes; ordinary frames read the
     /// rows built for the current width. `retained` is the source bytes it closes
-    /// over, charged against that record's ceiling.
+    /// over, charged against that record's ceiling. Each width it is handed is
+    /// [`Self::transcript_columns`], as for [`Self::present`].
     ///
     /// # Errors
     ///
@@ -965,7 +1136,7 @@ impl<T: Terminal> Renderer<T> {
         lay: Box<dyn Fn(usize) -> Vec<Row>>,
     ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
-            return self.present(&lay(self.columns()));
+            return self.present(&lay(self.transcript_columns()));
         }
 
         self.record.responsive(retained, lay);
@@ -980,7 +1151,8 @@ impl<T: Terminal> Renderer<T> {
     /// drawn again from facts read once at launch and held for the whole
     /// session, so what laid it is still here to lay it again — and it is what
     /// a reader is looking at when they take the corner of a fresh window and
-    /// pull.
+    /// pull. Each width it is handed is [`Self::transcript_columns`], as for
+    /// [`Self::present`].
     ///
     /// # Errors
     ///
@@ -989,7 +1161,7 @@ impl<T: Terminal> Renderer<T> {
         if !self.terminal.is_terminal() {
             // Nothing will resize a file, so holding what could draw it again
             // would be holding it for an event that cannot arrive.
-            return self.present(&lay(self.columns()));
+            return self.present(&lay(self.transcript_columns()));
         }
 
         self.record.opens(lay);
@@ -1008,8 +1180,8 @@ impl<T: Terminal> Renderer<T> {
     /// The box alone. Anything a line has opened over it — a list or a plan —
     /// is [`Renderer::under`]'s, because the band this fills is held to a share
     /// of the window and that share is a rule about a long prompt rather than
-    /// about what is standing above one. A caller that must replace prompt,
-    /// standing foot, and transcript map together uses [`Renderer::replace`].
+    /// about what is standing above one. A caller that must replace the prompt
+    /// and what stands over it together uses [`Renderer::replace`].
     ///
     /// An empty slice takes the box off, and the caret goes unread — which is
     /// what a component standing where the box was does on its way in, so that
@@ -1099,7 +1271,7 @@ impl<T: Terminal> Renderer<T> {
     /// underneath it, so they stay on screen through a turn instead of being
     /// the first thing it scrolls away. An empty slice takes them back.
     ///
-    /// This band gives up its rows before the head and the foot and after the
+    /// This band gives up its rows before the prompt and after the
     /// transcript, so a list opened over a session takes the room it asks for
     /// and the transcript is what gives way — which is the right way round, a
     /// list being the thing the reader is looking at while it is open.
@@ -1139,16 +1311,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn settle(&mut self) -> Result<(), TerminalError> {
-        // Whatever covered the bottom row comes down with the panel being
-        // torn down: the map was only unpainted for the panel's length, never
-        // closed, so it returns as it was. A no-op where nothing was covered —
-        // the row is already what it is painted as.
-        self.map.cover(false);
-
         // Text held back for a shape that never arrived is text, and this is
         // the last moment it can be written: the reader below is about to be
         // dropped, and with it anything it was still holding.
-        let columns = self.size.columns;
+        let columns = self.folds();
         let redirected = !self.terminal.is_terminal();
         let Self {
             markdown,
@@ -1206,6 +1372,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn parting(&mut self, rows: &[Row]) -> Result<(), TerminalError> {
+        self.leave()?;
         for row in rows {
             self.terminal.write(&row.paint(&self.palette))?;
 
@@ -1269,14 +1436,14 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
+        self.native_resize(size);
         self.size = size;
-        self.record.resized(size.columns);
+        self.record.resized(self.folds());
         self.standing.clear();
         self.prompt_target = None;
         self.pointed_changed = false;
         self.unselects();
-        self.map.close();
-        self.map_pointed = false;
+        self.grip = None;
 
         // Every row of the window is now showing something drawn for a size it
         // no longer has, so the next frame may not skip any of them.
@@ -1300,6 +1467,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn empties(&mut self) -> Result<(), TerminalError> {
+        self.native_empties()?;
         self.record.empties();
         self.standing.clear();
         self.prompt_target = None;
@@ -1380,9 +1548,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn notched(&mut self, back: bool) -> Result<bool, TerminalError> {
-        let moved = self.scrolled(if back { -self.notch } else { self.notch })?;
-        self.map.touch(Instant::now());
-        Ok(moved)
+        self.scrolled(if back { -self.notch } else { self.notch })
     }
 
     /// Moves the transcript's viewport by `by` display rows, and says whether
@@ -1396,7 +1562,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn scrolled(&mut self, by: i32) -> Result<bool, TerminalError> {
-        if !self.terminal.is_terminal() {
+        if !self.terminal.is_terminal() || self.native.is_some() {
             return Ok(false);
         }
 
@@ -1405,7 +1571,6 @@ impl<T: Terminal> Renderer<T> {
             return Ok(false);
         }
 
-        self.refresh_map();
         self.draw()?;
         Ok(true)
     }
@@ -1423,8 +1588,16 @@ impl<T: Terminal> Renderer<T> {
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn follows(&mut self) -> Result<(), TerminalError> {
         self.record.follow();
-        self.refresh_map();
         self.draw()
+    }
+
+    /// Where this renderer draws.
+    #[must_use]
+    pub fn screen(&self) -> ScreenMode {
+        match self.native {
+            Some(_) => ScreenMode::Native,
+            None => ScreenMode::Fullscreen,
+        }
     }
 
     /// Whether output is going to a terminal rather than a pipe or a file.
@@ -1453,6 +1626,18 @@ impl<T: Terminal> Renderer<T> {
         self.size.columns
     }
 
+    /// How wide a row of the transcript may be.
+    ///
+    /// The window's width, less the scroll rail's column where it stands in
+    /// one. What a caller lays rows out at before handing them to
+    /// [`Renderer::present`]; what stands at the foot — the box and the turn —
+    /// is laid out at [`Renderer::columns`], because the rail stops where the
+    /// transcript does.
+    #[must_use]
+    pub fn transcript_columns(&self) -> usize {
+        self.folds()
+    }
+
     /// How tall it was when this last looked.
     ///
     /// Read by a component that can grow, which asks how much room there is
@@ -1463,15 +1648,11 @@ impl<T: Terminal> Renderer<T> {
         self.size.rows
     }
 
-    /// How many rows a panel standing over the box gets.
-    ///
-    /// Fewer than the window has, once a session has named itself: the row the
-    /// transcript-map door sits on belongs to the session for the whole of its
-    /// run, and a panel that laid itself out into the window's own height
-    /// would have its last row fall off the bottom against it.
+    /// How many rows a panel standing over the box gets: the whole window,
+    /// since nothing else holds a row of it for the length of a session.
     #[must_use]
     pub fn room(&self) -> usize {
-        self.size.rows - usize::from(self.footed)
+        self.size.rows
     }
 
     /// How many lines the transcript has taken this session.
@@ -1564,6 +1745,12 @@ impl<T: Terminal> Renderer<T> {
     /// sentence.
     #[must_use]
     pub fn aimed(&self, at: usize) -> Option<Aimed> {
+        // A window row names nothing here: the region moves with the
+        // reader's own scrollback, and no press of the pointer arrives.
+        if self.native.is_some() {
+            return None;
+        }
+
         let bands = self.bands();
 
         if bands.transcript.contains(&at) {
@@ -1585,51 +1772,6 @@ impl<T: Terminal> Renderer<T> {
         None
     }
 
-    /// Opens the map over the retained range the transcript band can reach.
-    fn open_map(&mut self) -> Result<bool, TerminalError> {
-        let rows = self.bands().transcript.len();
-        let Some(span) = self.record.map_span(rows) else {
-            return Ok(false);
-        };
-        let row = transcript_map::row(&self.record, span, self.size.columns, self.glyphs);
-        self.unselects();
-        self.map_pointed = false;
-        self.map.show(span, row, Instant::now());
-        self.draw()?;
-        Ok(true)
-    }
-
-    /// Moves the map to `column`, snapping to a prompt landmark for a click and
-    /// travelling exactly for a drag.
-    fn seek_map(&mut self, column: usize, landmark: bool) -> Result<bool, TerminalError> {
-        let Some(span) = self.map.span() else {
-            return Ok(false);
-        };
-        let Some(track) = transcript_map::track(self.size.columns) else {
-            return Ok(false);
-        };
-        let at = column.clamp(track.start, track.end.saturating_sub(1)) - track.start;
-        let rows = self.bands().transcript.len();
-        let moved = if landmark {
-            self.record.map_seek_landmark(span, at, track.len(), rows)
-        } else {
-            self.record.map_seek(span, at, track.len(), rows)
-        };
-        self.unselects();
-        self.refresh_map();
-        self.draw()?;
-        Ok(moved)
-    }
-
-    /// Lays the open map out again after its mark or the window moved.
-    fn refresh_map(&mut self) {
-        let Some(span) = self.map.span() else {
-            return;
-        };
-        let row = transcript_map::row(&self.record, span, self.size.columns, self.glyphs);
-        self.map.replace(row);
-    }
-
     /// How the window is shared out, given what is standing in it.
     fn bands(&self) -> Bands {
         Bands::share(
@@ -1637,9 +1779,6 @@ impl<T: Terminal> Renderer<T> {
             Wants {
                 turn: self.standing.turn.len(),
                 prompt: self.standing.prompt.len(),
-                // The bottom control belongs to a session. Before one has
-                // named itself there is no transcript-map door to offer.
-                foot: usize::from(self.footed),
             },
         )
     }
@@ -1672,6 +1811,10 @@ impl<T: Terminal> Renderer<T> {
             return self.terminal.flush();
         }
 
+        if self.native.is_some() {
+            return self.draw_native();
+        }
+
         let bands = self.bands();
         // Worked out once for the whole frame, and it names rows rather than
         // setting a mode: the result under the pointer is painted from the lit
@@ -1683,11 +1826,33 @@ impl<T: Terminal> Renderer<T> {
         self.painted.selects(self.taken, view);
         self.painted.open(self.size.rows, self.size.columns);
 
-        let showing = self.record.view(bands.transcript.len());
+        // The rail's cells, one a band row, set after the row beside them has
+        // been made the transcript's width — clipped where a component's row
+        // is wider, padded where it is shorter — so every cell lands in the
+        // same column. Empty where there is no rail.
+        let folds = self.folds();
+        let railed = self.rail_pointed(&bands);
+        let rail = self
+            .rail(&bands)
+            .map(|rail| rail.rows(self.size.columns, self.glyphs, railed))
+            .unwrap_or_default();
+        let mut rail = rail.into_iter();
+        let mut showing = self.record.view(bands.transcript.len()).into_iter();
         for at in bands.transcript.start..bands.transcript.end {
-            match showing.get(at - bands.transcript.start) {
-                Some(row) if lit.contains(&at) => self.painted.paint(at, row, &pointed),
-                Some(row) => self.painted.paint(at, row, &palette),
+            let row = match (showing.next(), rail.next()) {
+                (row, Some(cell)) => {
+                    let mut row = row.unwrap_or_default();
+                    if row.columns() > folds {
+                        row = row.clipped(folds);
+                    }
+                    row.pad(folds);
+                    Some(row.join(cell))
+                }
+                (row, None) => row,
+            };
+            match row {
+                Some(row) if lit.contains(&at) => self.painted.paint(at, &row, &pointed),
+                Some(row) => self.painted.paint(at, &row, &palette),
                 // Below what there is to show. A session that has just started
                 // reads from the top of the window down, as a terminal's own
                 // scrollback would.
@@ -1709,21 +1874,6 @@ impl<T: Terminal> Renderer<T> {
         }
         self.standing.prompt = prompt;
 
-        // A panel stood over the prompt takes the row beside it too: the box
-        // is covered, and a door that reports on the screen the panel owns
-        // would read as belonging to a screen that is not the one standing. The
-        // map is only unpainted, not closed, and returns as it was.
-        if let Some(at) = (!bands.foot.is_empty()).then(|| bands.foot.end - 1) {
-            if self.map.covered() {
-                self.painted.blank(at);
-            } else {
-                let map = self.map.row().cloned().unwrap_or_else(|| {
-                    transcript_map::resting(self.size.columns, self.glyphs, self.map_pointed)
-                });
-                self.painted.paint(at, &map, &self.palette);
-            }
-        }
-
         let (row, column) = self.parked(&bands);
         self.painted.park(row, column);
 
@@ -1736,32 +1886,6 @@ impl<T: Terminal> Renderer<T> {
 
         self.terminal.write(self.painted.sealed())?;
         self.terminal.flush()
-    }
-
-    /// Takes the bottom row for a standing panel, painting it blank.
-    ///
-    /// Called as a panel goes up and its reverse as it comes down, so the
-    /// `transcript map` door never shares the band with a panel that owns the
-    /// rest of the bottom. The map is not closed, only unpainted for the
-    /// panel's length.
-    ///
-    /// # Errors
-    ///
-    /// [`TerminalError`] if the frame could not be written.
-    pub fn cover_map(&mut self) -> Result<(), TerminalError> {
-        self.map.cover(true);
-        self.map_pointed = false;
-        self.draw()
-    }
-
-    /// Returns the bottom row, with the panel it was covered for gone.
-    ///
-    /// # Errors
-    ///
-    /// [`TerminalError`] if the frame could not be written.
-    pub fn uncover_map(&mut self) -> Result<(), TerminalError> {
-        self.map.cover(false);
-        self.draw()
     }
 
     /// Where the cursor goes, in window rows and columns.

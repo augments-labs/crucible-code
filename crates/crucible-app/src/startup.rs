@@ -426,13 +426,32 @@ pub fn protected(home: &Home) -> Result<(), AppError> {
 /// the provider's system field and prevents a model or tool change from
 /// rewriting it.
 pub fn under(settings: &Settings) -> String {
+    prompt(settings).instructions_text()
+}
+
+/// How many of the last bytes of [`under`] are `systemPrompt.append`: what the
+/// user or the checkout added after crucible's own part, or after the text
+/// `systemPrompt.custom` replaced it with. `/context` shows them apart.
+fn appended(settings: &Settings) -> usize {
+    let whole = prompt(settings);
+    let own = SystemPrompt {
+        append: None,
+        ..prompt(settings)
+    };
+    whole
+        .instructions_text()
+        .len()
+        .saturating_sub(own.instructions_text().len())
+}
+
+/// The system field the settings describe.
+fn prompt(settings: &Settings) -> SystemPrompt {
     SystemPrompt {
         tone: settings.tone(),
         custom: settings.custom_prompt().map(str::to_owned),
         append: settings.appended_prompt().map(str::to_owned),
         ..SystemPrompt::default()
     }
-    .instructions_text()
 }
 
 /// The session `--resume` named, and everything it already holds.
@@ -750,18 +769,31 @@ pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// `MiniMax`'s Chat Completions, with a key or a plan's key, sent to the
 /// site of the row it was given on.
 ///
+/// A key stored on a Token Plan row is told to the provider as one, so it asks
+/// after the plan's limits; nothing in the key says which it is. The variable
+/// answers before the store, and is a pay-as-you-go row's.
+///
 /// # Errors
 ///
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let http = wiring.http;
+    let auth = wiring.auth;
+    // The store is looked at first, so the variable is read here only where a
+    // plan's key is stored, and a provider with none reads it once.
+    let on_plan = auth.stored.held(wiring.named).is_some_and(|held| {
+        crate::providers::Rows::production()
+            .of(held.kind, &held.name)
+            .is_some_and(|row| row.list == crate::providers::List::Subscription)
+    }) && ApiKey::from_lookup(wiring.variable, auth.from).is_err();
     let (endpoint, credential) = keyed(wiring, MiniMax::IO)?;
-    Ok(Box::new(MiniMax::at(
-        endpoint,
-        credential,
-        Box::new(http.clone()),
-    )))
+    let transport = Box::new(http.clone());
+    Ok(Box::new(if on_plan {
+        MiniMax::on_plan(endpoint, credential, transport)
+    } else {
+        MiniMax::at(endpoint, credential, transport)
+    }))
 }
 
 /// Qwen's Chat Completions, with a key or a plan's key, sent to the address
@@ -1446,6 +1478,9 @@ fn tools(
     // `unsafe` in a process with threads. It reads the `CRUCIBLE_CODE_`
     // settings the block also holds as settings, and a variable of the same
     // name in the environment crucible was started in wins over the block.
+    // Collected because `env()` yields owned text for an integer, and
+    // `exporting` borrows.
+    let exported: Vec<_> = settings.env().collect();
     // And the other end of the row under the box. The clone shares one registry
     // rather than copying it, which is what lets the caller show what is running
     // and stop one — and what makes the caller's copy the thing that ends them all.
@@ -1453,7 +1488,7 @@ fn tools(
         Bash::new(workspace.clone(), sandbox)
             .under_policy(settings.sandbox().enforcing_policy(workspace)?)
             .following_enablement(settings.sandbox().enablement())
-            .exporting(settings.env())
+            .exporting(exported.iter().map(|(name, value)| (*name, value.as_ref())))
             .leaving(leaving.clone()),
     )?;
 
@@ -1580,6 +1615,7 @@ fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> Age
     .named("Coding")
     .describing("Reads, changes and checks the code in this workspace.")
     .telling(asked)
+    .appending(appended(startup.settings))
     .build()
 }
 

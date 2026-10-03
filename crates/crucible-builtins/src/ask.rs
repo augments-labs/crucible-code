@@ -57,6 +57,7 @@ const ANSWERS: &str = "answers";
 const ANSWER: &str = "answer";
 const SAYS: &str = "says";
 const SHOWS: &str = "shows";
+const RECOMMENDED: &str = "recommended";
 
 /// How many questions one call may put.
 ///
@@ -107,20 +108,16 @@ const LONG: usize = 500;
 /// so the sentence the model reads cannot drift from the refusal it meets.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Asks the person at the keyboard to choose, and waits for their answer. Worth \
-                using when the work forks on something only they can settle — which of several \
-                shapes to build, which of several directions to take — and guessing would put \
-                the whole turn's output on the wrong side of the fork. Not worth using for \
-                anything you could find out by reading the workspace, and not worth using to \
-                confirm what they already told you. Ask once, with every question the fork \
-                needs, rather than a question at a time."
+        about: "Asks the person at the keyboard to choose, and waits. Use it when the work forks \
+                on what only they can settle and a wrong guess would waste the turn; not for what \
+                reading the workspace would show or to confirm what they said. Ask once, with \
+                every question the fork needs."
             .into(),
         fields: vec![Field {
             name: QUESTIONS,
             about: format!(
-                "The questions to put, in the order they should be answered. At most \
-                 {MOST_QUESTIONS}, and no two the same: past that this is a form rather than a \
-                 question, and belongs in your reply instead."
+                "In answering order, no two the same; more than {MOST_QUESTIONS} is a form for \
+                 your reply."
             ),
             needed: true,
             shape: Shape::List {
@@ -128,10 +125,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: HEADING,
                         about: format!(
-                            "Two or three words naming this question, shown in a row of all of \
-                             them so the reader can see where they are. At most {HEADING_SHORT} \
-                             bytes: the row holds every heading at once, and a longer one costs \
-                             the whole row."
+                            "Two or three words naming the question, in one row with the others. \
+                             At most {HEADING_SHORT} bytes."
                         ),
                         needed: true,
                         shape: Shape::Text,
@@ -139,16 +134,14 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: QUESTION,
                         about: format!(
-                            "The question itself, written to be answered rather than read. At \
-                             most {LONG} bytes."
+                            "The question, written to be answered. At most {LONG} bytes."
                         ),
                         needed: true,
                         shape: Shape::Text,
                     },
                     Field {
                         name: SEVERAL,
-                        about: "Whether more than one answer may be chosen. Leave it out for a \
-                                question with one answer."
+                        about: "Whether several answers may be chosen; leave it out for one."
                             .into(),
                         needed: false,
                         shape: Shape::Flag,
@@ -156,12 +149,9 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: ANSWERS,
                         about: format!(
-                            "The answers to offer, best first. At least {FEWEST_ANSWERS} and at \
-                             most {MOST_ANSWERS}, and no two the same. One answer is a statement \
-                             rather than a question — say that in your reply instead. Two more \
-                             are always added for you — one to write an answer you did not \
-                             offer, and one to leave the whole thing and reply in the prompt — \
-                             so do not offer either yourself."
+                            "Best first, {FEWEST_ANSWERS} to {MOST_ANSWERS}, no two the same; one \
+                             answer is a statement for your reply. A written-in answer and a way \
+                             back to the prompt are added, so offer neither."
                         ),
                         needed: true,
                         shape: Shape::List {
@@ -169,30 +159,34 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                                 Field {
                                     name: ANSWER,
                                     about: format!(
-                                        "What this answer is called, in a few words. At most \
-                                         {SHORT} bytes."
+                                        "The answer's name, in a few words. At most {SHORT} \
+                                         bytes."
                                     ),
                                     needed: true,
                                     shape: Shape::Text,
                                 },
                                 Field {
                                     name: SAYS,
-                                    about: "One line saying what choosing it means, for an \
-                                            answer whose name does not say it. Leave it out \
-                                            where the name is enough."
+                                    about: "One line on what choosing it means, where the name \
+                                            does not say it."
                                         .into(),
                                     needed: false,
                                     shape: Shape::Text,
                                 },
                                 Field {
+                                    name: RECOMMENDED,
+                                    about: "The one answer you would pick; at most one per \
+                                            question, and listed first."
+                                        .into(),
+                                    needed: false,
+                                    shape: Shape::Flag,
+                                },
+                                Field {
                                     name: SHOWS,
                                     about: format!(
-                                        "What this answer would look like, row by row, for a \
-                                         question whose answer is a shape rather than a word — \
-                                         a layout, a format, a line of output. Drawn as given, \
-                                         under the answer, so write the rows as the reader \
-                                         would meet them. At most {MOST_SHOWS} rows of at most \
-                                         {SHORT} bytes."
+                                        "For an answer that is a shape, such as a layout, a \
+                                         format or a line of output: its rows, drawn as given \
+                                         under it. At most {MOST_SHOWS} rows of {SHORT} bytes."
                                     ),
                                     needed: false,
                                     shape: Shape::List {
@@ -268,7 +262,7 @@ impl Tool for AskUser {
             return Summary::new("");
         };
         let Ok(Some(questions)) = parsed.list(QUESTIONS) else {
-            return summary::field(NAME, args, QUESTION);
+            return summary::field(NAME, args, QUESTION, crucible_tools::Argument::Other);
         };
 
         match questions.len() {
@@ -364,6 +358,23 @@ fn question(args: &Args) -> Result<Question, ToolError> {
         return Err(args.wrong(format!("{twice} is offered twice")));
     }
 
+    // The one the model would pick is the one the reader is shown first, so a
+    // call that marks two, or marks one that is not at the top, is asking for a
+    // list that says something its order does not.
+    let marked = answers.iter().filter(|one| one.is_recommended()).count();
+    if marked > 1 {
+        return Err(args.wrong(format!(
+            "more than one {RECOMMENDED} answer, {marked} in all; \
+             mark only the one you would pick"
+        )));
+    }
+    if answers.iter().skip(1).any(Answer::is_recommended) {
+        return Err(args.wrong(format!(
+            "the {RECOMMENDED} answer must be listed first, and it is not; \
+             move it to the top of {ANSWERS}"
+        )));
+    }
+
     let question = Question::new(heading, asked, answers);
     Ok(if args.flag(SEVERAL, false)? {
         question.several()
@@ -374,13 +385,17 @@ fn question(args: &Args) -> Result<Question, ToolError> {
 
 /// One answer, with what it means and what it would look like.
 fn answer(args: &Args) -> Result<Answer, ToolError> {
-    args.only(&[ANSWER, SAYS, SHOWS])?;
+    args.only(&[ANSWER, SAYS, SHOWS, RECOMMENDED])?;
 
     let name = bounded(args, ANSWER, args.text(ANSWER)?, SHORT)?;
     let mut answer = Answer::new(name);
 
     if let Some(says) = args.optional_text(SAYS)? {
         answer = answer.saying(bounded(args, SAYS, says, SHORT)?);
+    }
+
+    if args.flag(RECOMMENDED, false)? {
+        answer = answer.recommending();
     }
 
     if args.holds(SHOWS) {

@@ -1,0 +1,44 @@
+{
+  "base_resp": { "status_code": 0, "status_msg": "success" },
+  "model_remains": [
+    {
+      "model_name": "MiniMax-M*",
+      "start_time": 1776355200000,
+      "end_time": 1776373200000,
+      "remains_time": 7151954,
+      "current_interval_total_count": 1500,
+      "current_interval_usage_count": 228,
+      "current_weekly_total_count": 0,
+      "current_weekly_usage_count": 0,
+      "weekly_start_time": 1776009600000,
+      "weekly_end_time": 1776614400000,
+      "weekly_remains_time": 248351954
+    },
+    {
+      "model_name": "speech-hd",
+      "start_time": 1776355200000,
+      "end_time": 1776373200000,
+      "remains_time": 7151954,
+      "current_interval_total_count": 9000,
+      "current_interval_usage_count": 9000,
+      "current_weekly_total_count": 63000,
+      "current_weekly_usage_count": 63000,
+      "weekly_start_time": 1776009600000,
+      "weekly_end_time": 1776614400000,
+      "weekly_remains_time": 248351954
+    },
+    {
+      "model_name": "image-01",
+      "start_time": 1776355200000,
+      "end_time": 1776373200000,
+      "remains_time": 7151954,
+      "current_interval_total_count": 100,
+      "current_interval_usage_count": 100,
+      "current_weekly_total_count": 700,
+      "current_weekly_usage_count": 700,
+      "weekly_start_time": 1776009600000,
+      "weekly_end_time": 1776614400000,
+      "weekly_remains_time": 248351954
+    }
+  ]
+}

@@ -39,7 +39,7 @@ use std::fmt;
 use crucible_credentials::Redactions;
 use crucible_models::{Delta, DeltaStream, ProviderError, Served};
 use crucible_runtime::{BoxFuture, Cancel};
-use crucible_types::StopReason;
+use crucible_types::{PlanWindows, StopReason};
 use tokio::io::{AsyncRead, BufReader};
 
 use crate::sse::{Events, Framed, SseEvent};
@@ -211,6 +211,36 @@ impl<W: Wire> fmt::Debug for Response<W> {
             .field("stopped", &self.stopped)
             .field("finished", &self.finished)
             .finish_non_exhaustive()
+    }
+}
+
+/// A response whose head reported the subscription's usage windows.
+///
+/// Kept apart from [`Response`] so that a response which reports none, which
+/// is every response of every provider but one sign-in's, is no larger for it.
+pub(crate) struct Limited<S> {
+    stream: S,
+    limits: PlanWindows,
+}
+
+impl<S: DeltaStream> Limited<S> {
+    /// `stream`, its head having said `limits`.
+    pub(crate) const fn new(stream: S, limits: PlanWindows) -> Self {
+        Self { stream, limits }
+    }
+}
+
+impl<S: DeltaStream> DeltaStream for Limited<S> {
+    fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
+        self.stream.next()
+    }
+
+    fn served(&self) -> Served {
+        self.stream.served()
+    }
+
+    fn limits(&self) -> Option<PlanWindows> {
+        Some(self.limits.clone())
     }
 }
 

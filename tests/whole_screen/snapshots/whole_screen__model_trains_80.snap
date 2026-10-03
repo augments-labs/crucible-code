@@ -2,8 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-80x24 cursor 4,14 scrolled 0
-|› /model                                                                        |
+80x24 cursor 3,14 scrolled 0
 |Model                                                     now  nothing asked yet|
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
@@ -21,9 +20,10 @@ expression: picture
 |│   MiMo            · │                                                        │|
 |│   MiniMax         · │                                                        │|
 |│   MoonshotAI      · │                                                        │|
+|│   OpenAI          · │                                                        │|
+|│   Qwen            · │                                                        │|
 |╰─────────────────────┴────────────────────────────────────────────────────────╯|
 |                                                                                |
 |  Effort   ‹ low ›  medium   high   xhigh                                       |
 |                                                                                |
 |  tab pane · ↑↓ model · ←→ effort · enter takes both · esc to cancel            |
-|                                                                                |

@@ -502,24 +502,21 @@ fn command(program: &str, arguments: &str, requested: &str) -> String {
 /// sentence the model reads cannot drift from the bound the call meets.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Reads a text file from the workspace and returns it with line numbers. A picture \
-                comes back attached, to be looked at rather than read. A Word document, \
-                spreadsheet, slide deck, e-book, PDF or video must be turned into text or \
-                pictures by a command first, and the answer says which one where the file's name \
-                gives it away."
+        about: "Reads a workspace text file with line numbers; a picture comes back attached. A \
+                Word document, spreadsheet, slide deck, e-book, PDF or video must first become \
+                text or pictures through a command, which the answer names where the file name \
+                shows it."
             .into(),
         fields: vec![
             Field {
                 name: PATH,
-                about: "The file to read, relative to the workspace root.".into(),
+                about: "The file, relative to the workspace root.".into(),
                 needed: true,
                 shape: Shape::Text,
             },
             Field {
                 name: OFFSET,
-                about: "The first line to return, counting from 1. Defaults to the start of the \
-                        file."
-                    .into(),
+                about: "The first line to return, from 1. Defaults to the start.".into(),
                 needed: false,
                 shape: Shape::Count(Whole {
                     least: 1,
@@ -529,9 +526,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
             Field {
                 name: LIMIT,
                 about: format!(
-                    "How many lines to return. Defaults to {LINES}, and never more than {CEILING} \
-                     however large a number is sent. The answer is also cut at {OUTPUT} bytes, \
-                     whichever comes first."
+                    "Most lines to return. Defaults to {LINES}, at most {CEILING}. The answer is \
+                     also cut at {OUTPUT} bytes."
                 ),
                 needed: false,
                 shape: Shape::Count(Whole {
@@ -754,7 +750,7 @@ impl Tool for Read {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, PATH)
+        summary::field(NAME, args, PATH, crucible_tools::Argument::Path)
     }
 
     fn looking(&self, _args: &ToolArgs) -> Option<Looking> {

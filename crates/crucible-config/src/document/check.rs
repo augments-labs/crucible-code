@@ -79,13 +79,13 @@ impl Reader<'_> {
         spot: Spot<'_>,
     ) -> Result<(), ConfigError> {
         match shape {
-            // A whole number is a string here, and the bounds beside it are not
-            // read: what is out of range is refused by `settings::variables`,
-            // which is the one refusal that can name the variable without
-            // quoting what was written next to it. So the two are one arm — a
-            // second arm doing the same thing would be a claim that this layer
-            // tells them apart.
-            Shape::Text | Shape::Whole(_) | Shape::Pattern(_) => self.text_at(value, shape, spot),
+            // The bounds of a whole number are not read here: what is out of
+            // range is refused by `settings::variables`, which is the one
+            // refusal that can name the variable without quoting what was
+            // written next to it. This layer only says it is a string or a
+            // whole number.
+            Shape::Text | Shape::Pattern(_) => self.text_at(value, shape, spot),
+            Shape::Whole(_) => self.whole_at(value, shape, spot),
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Count => self.count(value, shape, spot),
             Shape::Limit(maximum) => {
@@ -126,6 +126,17 @@ impl Reader<'_> {
     /// mistake worth stopping for rather than coercing.
     fn text_at(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
         if value.is_string() {
+            return Ok(());
+        }
+        Err(self.wrong_type(shape, spot))
+    }
+
+    /// A string, or a whole number that is not negative.
+    ///
+    /// Either may still be out of range, which is not this layer's to say. A
+    /// fraction, a negative and a boolean are not whole numbers at all.
+    fn whole_at(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
+        if value.is_string() || value.as_u64().is_some() {
             return Ok(());
         }
         Err(self.wrong_type(shape, spot))
@@ -401,11 +412,11 @@ impl Reader<'_> {
                 });
             }
 
-            // Only a string has an answer to read. Anything else was already
-            // refused by the walk above, which ran first and says what shape an
-            // entry here has to be.
-            if let Some(written) = held.as_str()
-                && let Some(accepted) = settings::refused(name, written)
+            // Only a string or a whole number has an answer to read. Anything
+            // else was already refused by the walk above, which ran first and
+            // says what shape an entry here has to be.
+            if let Some(written) = settings::spelled(held)
+                && let Some(accepted) = settings::refused(name, &written)
             {
                 return Err(ConfigError::Answer {
                     file: self.file.into(),

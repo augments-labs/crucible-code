@@ -21,6 +21,9 @@ crucible-credentials.workspace = true
 # model turns and web posts.
 crucible-http.workspace = true
 crucible-models.workspace = true
+# Reads the instant a plan says one of its windows starts again where the
+# vendor writes it as RFC 3339 text, which `std` has no parser for.
+jiff.workspace = true
 crucible-runtime.workspace = true
 crucible-types.workspace = true
 # The HTTP method and typed response-head error inspection used at the

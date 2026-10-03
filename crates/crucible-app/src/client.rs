@@ -15,7 +15,10 @@
 //! [`Pending`](crucible_client_api::Pending) action until a [`Front`] answers
 //! it. [`interrupt`] and [`keep`] need no conversation at all, which is the
 //! point of them: a turn is stopped, and a look is written down, while the
-//! conversation is away.
+//! conversation is away. [`asking`](fn@asking) and [`asked`] are one command
+//! split around the question it puts to a vendor's plan, so the conversation is
+//! not held while the question is out; [`perform`] answers the same command
+//! whole.
 //!
 //! What comes back is the application's own value — [`Performed`], [`Ended`] —
 //! and not yet the contract's. A terminal draws from the first, because a
@@ -30,6 +33,7 @@
 //! permission engine acts on is made here from the engine's own type — see
 //! [`deciding`].
 
+pub(crate) mod asking;
 pub mod deciding;
 mod performing;
 mod reading;
@@ -37,7 +41,8 @@ mod reading;
 mod tests;
 mod turning;
 
+pub use asking::{Answered, Asking, FLOOR, KEPT, asked, asking};
 pub use deciding::{Deciding, Front, Shown, TRIES, questions, warned};
-pub use performing::{Cleared, Desk, Performed, Resumed, keep, perform};
-pub use reading::{mode_out as mode, pace, progress, rung, snapshot};
+pub use performing::{Cleared, Desk, Performed, Resumed, Setting, keep, perform};
+pub use reading::{context, mode_out as mode, pace, progress, rung, snapshot, usage};
 pub use turning::{Ended, interrupt, turn};

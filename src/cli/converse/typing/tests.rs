@@ -7,14 +7,14 @@
 
 use std::sync::Arc;
 
-use crucible_runner::{Agent, Model, Tools};
+use crucible_runner::{Agent, Breakdown, Model, Tools};
 use crucible_runtime::Aside;
 use crucible_session::Session;
 use crucible_tools::{Mode, Permission, Rules};
 use crucible_tui::{Aimed, Key, Recording};
 use crucible_types::{AgentId, ToolArgs};
 
-use super::drawing::writing;
+use super::drawing::{over, writing};
 use super::*;
 
 /// The built-in registry, as a session starts with it.
@@ -270,6 +270,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             clipboard: &mut None,
             left: &crucible_builtins::Background::new(),
             aside: &Aside::new(),
+            queued: &Prompts::default(),
             keys: false,
         },
     )
@@ -298,6 +299,7 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -318,7 +320,13 @@ fn the_window_reading_is_in_the_box_once_and_takes_no_row_of_its_own() {
         &mut renderer,
         &typed("hi"),
         Style::plain(),
-        around(&nothing(), &Opened::default(), &says, Recalled::default()),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &says,
+            Recalled::default(),
+            &Prompts::default(),
+        ),
     )
     .expect("the box to be drawn");
 
@@ -342,6 +350,7 @@ fn a_window_with_room_for_one_of_them_keeps_the_mode_and_drops_the_keys() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -368,6 +377,7 @@ fn the_cursor_ends_up_where_the_line_was_typed_to() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -403,6 +413,7 @@ fn a_finished_line_is_left_in_the_record_and_the_box_is_taken_off() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -615,6 +626,7 @@ fn a_line_beginning_with_a_slash_opens_the_list_above_the_box() {
             &listing("/m"),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -658,7 +670,13 @@ fn the_box_stays_where_it_was_while_the_list_is_open() {
             &mut renderer,
             &typed("/m"),
             Style::plain(),
-            around(&nothing(), opened, &settled(Mode::Ask), Recalled::default()),
+            around(
+                &nothing(),
+                opened,
+                &settled(Mode::Ask),
+                Recalled::default(),
+                &Prompts::default(),
+            ),
         )
         .expect("the box to be drawn");
 
@@ -686,6 +704,7 @@ fn a_prompt_is_drawn_in_the_rows_the_box_has_always_been() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -712,6 +731,7 @@ fn the_offer_to_leave_is_drawn_under_the_mode_and_not_over_it() {
             &Opened::default(),
             &leaving(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -747,20 +767,180 @@ fn a_second_interrupt_leaves_only_while_the_first_is_still_recent() {
     assert!(!together(Some(first), first + TOGETHER * 30));
 }
 
-#[test]
-fn a_list_with_no_room_left_for_it_is_not_opened_at_all() {
-    // Cut off at the top it would read as the whole list, which is a worse
-    // answer than no list at all: nothing is what a reader can tell is nothing.
-    let every = command::filtering(&commands(), "/", Glyphs::Unicode).len();
+/// The text of each row `open` draws with room for `room`, the blank row that
+/// keeps it off the box left out.
+fn drawn_list(open: &Opened, room: usize, glyphs: Glyphs) -> Vec<String> {
+    let mut rows: Vec<String> = open.rows(60, room, glyphs).iter().map(Row::text).collect();
+    assert_eq!(
+        rows.pop().as_deref(),
+        Some(""),
+        "a list ends on a blank row"
+    );
+    rows
+}
 
-    for room in 0..every {
+#[test]
+fn a_list_with_too_little_room_shows_what_fits_and_counts_the_rest() {
+    // Cut off with nothing to say so it would read as the whole list. The last
+    // row says how many more there are, so a reader can tell a cut list from a
+    // short one, and every row stays inside the room it was given.
+    let commands = command::filtering(&commands(), "/", Glyphs::Unicode);
+    let every = commands.len();
+    let open = listing("/");
+
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    let first: Vec<&str> = commands.iter().take(7).map(|one| one.name).collect();
+    assert_eq!(rows.len(), 8, "{rows:#?}");
+    for (row, name) in rows.iter().zip(&first) {
+        assert!(row.contains(name), "{row:?} is not {name}: {rows:#?}");
+    }
+    let more = format!("  ↓ {} more", every - 7);
+    assert_eq!(rows.last(), Some(&more), "{rows:#?}");
+    let painted = open.rows(60, 8, Glyphs::Unicode);
+    let count = painted.get(7).and_then(|row| row.spans().next());
+    assert!(
+        count.is_some_and(|(slot, _)| slot == Slot::Quiet),
+        "the count is quiet: {count:?}"
+    );
+
+    // Every room too small for the whole list, and too big to be nothing.
+    for room in 3..every {
+        let rows = drawn_list(&open, room, Glyphs::Unicode);
+        assert_eq!(rows.len(), room, "room {room}: {rows:#?}");
         assert!(
-            listing("/").rows(60, room, Glyphs::Unicode).is_empty(),
-            "a list of {every} opened with room for {room}"
+            rows.iter().any(|row| row.starts_with('›')),
+            "room {room}: {rows:#?}"
         );
     }
+    // Under three rows there is no room for a row and what says where it is.
+    for room in 0..3 {
+        assert!(
+            open.rows(60, room, Glyphs::Unicode).is_empty(),
+            "room {room}"
+        );
+    }
+    // With room for the whole list, the whole list and no count.
+    let whole = drawn_list(&open, every, Glyphs::Unicode);
+    assert_eq!(whole.len(), every);
+    assert!(!whole.iter().any(|row| row.contains("more")), "{whole:#?}");
 
-    assert!(!listing("/").rows(60, every, Glyphs::Unicode).is_empty());
+    // The count in a font with no arrows.
+    let ascii = drawn_list(&listing("/"), 8, Glyphs::Ascii);
+    assert_eq!(ascii.last(), Some(&format!("  v {} more", every - 7)));
+}
+
+#[test]
+fn a_cut_list_fits_every_width_and_every_room_with_the_mark_anywhere() {
+    // One list per mark, drawn as the room shrinks and then grows again, so
+    // the row in view carried from one draw to the next is swept as well as
+    // the room and the width.
+    let every = command::filtering(&commands(), "/", Glyphs::Unicode).len();
+    let rooms: Vec<usize> = (0..24).rev().chain(0..24).collect();
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for mark in 0..every {
+            let mut open = Opened::filtered(&commands(), "/", glyphs);
+            while open.up() {}
+            for _ in 0..mark {
+                open.down();
+            }
+            let chosen = open.chosen().expect("a marked row");
+            for &room in &rooms {
+                // The first draw at a new room, which is the one a reader sees
+                // when the room changes: the marked row is one of those drawn.
+                let rows: Vec<String> = open.rows(60, room, glyphs).iter().map(Row::text).collect();
+                if !rows.is_empty() {
+                    let marked: Vec<&String> = rows
+                        .iter()
+                        .filter(|row| row.starts_with(glyphs.caret()))
+                        .collect();
+                    assert!(
+                        matches!(marked.as_slice(), [one] if one.split_whitespace().any(|word| word == chosen)),
+                        "{chosen} at mark {mark} is not drawn in room {room}: {rows:#?}"
+                    );
+                }
+                for columns in 1..=80 {
+                    let rows = open.rows(columns, room, glyphs);
+                    assert!(
+                        rows.len() <= room + 1,
+                        "{} rows in room {room}, mark {mark}",
+                        rows.len()
+                    );
+                    for row in &rows {
+                        assert!(
+                            row.columns() <= columns,
+                            "{:?} is wider than {columns} columns",
+                            row.text()
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn moving_the_mark_past_the_last_row_shown_brings_its_row_into_view() {
+    // The mark is never moved somewhere the reader cannot see it. Walked past
+    // the last row shown, the list moves with it and says what is now above.
+    let commands = command::filtering(&commands(), "/", Glyphs::Unicode);
+    let every = commands.len();
+    let mut open = listing("/");
+    // Seven commands and the count below them.
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    assert!(!rows.iter().any(|row| row.contains('↑')), "{rows:#?}");
+
+    for _ in 0..7 {
+        assert!(open.down());
+    }
+    let chosen = open.chosen().expect("a marked row");
+    assert_eq!(Some(chosen), commands.get(7).map(|one| one.name));
+
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    assert_eq!(rows.len(), 8, "{rows:#?}");
+    assert_eq!(
+        rows.first().map(String::as_str),
+        Some("  ↑ 2 more"),
+        "{rows:#?}"
+    );
+    let marked = rows
+        .iter()
+        .find(|row| row.starts_with('›'))
+        .expect("the mark in view");
+    assert!(marked.contains(chosen), "{marked:?}: {rows:#?}");
+    assert_eq!(
+        rows.last(),
+        Some(&format!("  ↓ {} more", every - 8)),
+        "{rows:#?}"
+    );
+
+    // Back up a row: the mark is still in view, so the list stays where it is.
+    assert!(open.up());
+    assert_eq!(
+        drawn_list(&open, 8, Glyphs::Unicode)
+            .first()
+            .map(String::as_str),
+        Some("  ↑ 2 more")
+    );
+
+    // Back to the top: nothing above it any more.
+    while open.up() {}
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    assert!(
+        rows.first().is_some_and(|row| row.starts_with('›')),
+        "{rows:#?}"
+    );
+
+    // To the end: nothing below.
+    while open.down() {}
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    assert!(
+        rows.last().is_some_and(|row| row.starts_with('›')),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.first().is_some_and(|row| row.contains('↑')),
+        "{rows:#?}"
+    );
 }
 
 #[test]
@@ -978,11 +1158,14 @@ fn the_row_under_a_running_turn_keeps_the_mode_cycle_hint() {
 fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     let renderer = roomy();
     let editor = typed("next");
-    let mut turning = Turning::started(None);
-    turning.saw(&crucible_runner::Event::Carried { left: Some(61) });
+    let carried = crate::cli::converse::tests::measured();
+    let mut turning = Turning::started(Breakdown::default());
+    turning.saw(&crucible_runner::Event::Carried { breakdown: carried });
     let planning = nothing();
     let mut says = settled(Mode::Ask);
-    says.left = Some(88);
+    says.left = Some(1);
+    assert_ne!(says.left, carried.left());
+    let shown = format!("{}% window left", carried.left().unwrap_or_default());
 
     let footed = working(
         &renderer,
@@ -999,10 +1182,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     );
 
     assert!(
-        footed
-            .boxed
-            .iter()
-            .any(|row| row.text().contains("61% window left")),
+        footed.boxed.iter().any(|row| row.text().contains(&shown)),
         "{:?}",
         footed.boxed
     );
@@ -1021,9 +1201,11 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
     let renderer = roomy();
     let editor = typed("next");
     let planning = nothing();
+    let started = crate::cli::converse::tests::measured();
     let mut says = settled(Mode::Ask);
-    says.left = Some(88);
-    let turning = Turning::started(says.left);
+    says.left = started.left();
+    let turning = Turning::started(started);
+    let shown = format!("{}% window left", started.left().unwrap_or_default());
 
     let footed = working(
         &renderer,
@@ -1040,12 +1222,49 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
     );
 
     assert!(
-        footed
-            .boxed
-            .iter()
-            .any(|row| row.text().contains("88% window left")),
+        footed.boxed.iter().any(|row| row.text().contains(&shown)),
         "{:?}",
         footed.boxed
+    );
+}
+
+#[test]
+fn context_mid_turn_reads_the_request_the_turn_started_from_then_the_last_it_carried() {
+    // `/context` stands over a running turn with the runner away on the
+    // worker, so what it shows is what the turn was handed when it started
+    // and then whatever its requests have since carried.
+    let runner = Runner::new(
+        Box::new(Script::new(vec![])),
+        Tools::new(),
+        Agent::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: Some(200_000),
+                accepts: None,
+                effort: None,
+            },
+        ),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        Arc::new(Session::nowhere()),
+    );
+    let started = runner.breakdown();
+    let mut turning = Turning::started(started);
+
+    let shown = crucible_app::client::context("script", &turning.breakdown());
+    assert_eq!(shown.window, Some(200_000));
+    assert_eq!(
+        shown.left.map(crucible_client_api::Percent::get),
+        runner.left()
+    );
+
+    let carried = crucible_runner::Breakdown::default();
+    turning.saw(&crucible_runner::Event::Carried { breakdown: carried });
+    assert_eq!(turning.breakdown(), carried);
+    assert_eq!(
+        crucible_app::client::context("script", &turning.breakdown()).window,
+        None
     );
 }
 
@@ -1081,6 +1300,7 @@ fn the_plan_stands_above_the_box_between_turns() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1109,6 +1329,7 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1123,6 +1344,7 @@ fn the_list_a_slash_opened_takes_its_rows_before_the_plan_does() {
             &listing("/m"),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the box to be drawn");
@@ -1177,6 +1399,7 @@ fn a_large_paste_is_shown_compactly_but_copied_expanded() {
             &Opened::default(),
             &settled(Mode::Ask),
             Recalled::default(),
+            &Prompts::default(),
         ),
     )
     .expect("the compact paste to be drawn");
@@ -1209,7 +1432,13 @@ fn clicking_the_visible_command_count_reaches_the_background_command_door() {
         &mut renderer,
         &editor,
         Style::plain(),
-        around(&nothing(), &Opened::default(), &says, Recalled::default()),
+        around(
+            &nothing(),
+            &Opened::default(),
+            &says,
+            Recalled::default(),
+            &Prompts::default(),
+        ),
     )
     .unwrap();
 
@@ -1447,7 +1676,7 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
         lines,
     };
     let steer = crucible_runtime::Steer::new();
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
 
     let mut editor = Editor::new();
     for typed in "once more".chars() {
@@ -1570,6 +1799,51 @@ impl Colourless {
             terminal,
             color,
             set,
+        }
+    }
+}
+
+#[test]
+fn the_queue_held_over_the_idle_box_fits_every_width_and_every_room() {
+    // The panel a running turn stands over the box is swept at every width
+    // beside the turn; between turns it stands in the band over the box with
+    // the plan and the list, so the band is swept with all three in it. Nothing
+    // is wider than the window, and nothing is taller than the room the box
+    // left, the blank that keeps it off the transcript included.
+    let mut queued = Prompts::default();
+    for said in ["one", "two longer than the first", "three", "four", "five"] {
+        assert_eq!(queued.accept(&mut typed(said)), Retained::Accepted);
+    }
+
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let style = Style::drawn(glyphs);
+        for plan in [nothing(), planned(3)] {
+            for open in [Opened::default(), listing("/m")] {
+                for columns in 1..=120 {
+                    for room in [0, 1, 2, 3, 4, 5, 6, 8, 12, 24, 40] {
+                        let says = settled(Mode::Ask);
+                        let rows = over(
+                            around(&plan, &open, &says, Recalled::default(), &queued),
+                            columns,
+                            room,
+                            style,
+                        );
+
+                        assert!(
+                            rows.len() <= room + 1,
+                            "{columns}x{room} {glyphs:?}: {} rows",
+                            rows.len()
+                        );
+                        for row in &rows {
+                            let said = row.text();
+                            assert!(
+                                crucible_tui::columns(&said) <= columns,
+                                "{columns}x{room} {glyphs:?}: {said:?}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -110,7 +110,7 @@ pub(super) fn run<T: Terminal>(
         renderer.commit(&format!("! no credential for {said} is stored by Crucible"))?;
     }
 
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let rows: Vec<Row> = held
         .into_iter()
         .map(|one| {
@@ -215,7 +215,7 @@ fn forgetting<T: Terminal>(
     };
     super::cache::retained(renderer, retained)?;
 
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let said = format!("removed the stored credential for {}", named.name);
     let rows = [
         Row::new().then(Slot::Plain, clip(&said, columns)),

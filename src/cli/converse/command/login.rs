@@ -805,7 +805,7 @@ fn typed<T: Terminal>(
 ) -> Result<(), Fatal> {
     let providers = terms.providers.snapshot();
     let glyphs = terms.style().glyphs();
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     // Folded rather than cut: a line to type with its last word cut off is a
     // line that reaches some other row, or none.
     let lines: Vec<Row> = ways

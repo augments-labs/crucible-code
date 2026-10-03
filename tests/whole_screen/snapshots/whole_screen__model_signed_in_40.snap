@@ -2,8 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-40x24 cursor 4,10 scrolled 0
-|› /model                                |
+40x24 cursor 3,10 scrolled 0
 |Model            now  openai · gpt-6-sol|
 |                                        |
 |╭──────────────────────────────────────╮|
@@ -21,9 +20,10 @@ expression: picture
 |│   gpt-5.6-terra        872k  fast    │|
 |│   gpt-5.6-luna         872k  fast    │|
 |│   1 more with an API key · /login    │|
+|│                                      │|
+|│                                      │|
 |╰──────────────────────────────────────╯|
 |                                        |
 |  Effort   ‹ low ›  medium   high   xhig|
 |                                        |
 |  tab · ↑↓ · ←→ · enter · esc           |
-|                                        |

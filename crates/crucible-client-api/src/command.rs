@@ -80,6 +80,18 @@ pub enum Command {
     },
     /// Remember how this machine's sessions are drawn.
     Theme(Theme),
+    /// Write one setting into the user's own configuration.
+    ///
+    /// The setting is named by its key as a configuration document nests it,
+    /// `output.scrollRail`, and its value by the word a document spells it
+    /// with: `false`, `dark`, `12`. Only a setting the menu lists is taken,
+    /// and none that loosens what runs unasked is one of those.
+    Setting {
+        /// The key, dotted.
+        name: Name,
+        /// The value, as a word.
+        value: Name,
+    },
     /// Name the commands that ship.
     Help,
     /// Every release, or the one of this number.
@@ -87,13 +99,27 @@ pub enum Command {
         /// The release asked for, as it was written, or every release.
         version: Option<Name>,
     },
+    /// Show how the window of the next request is spent. Changes nothing.
+    Context,
+    /// Show what the session has used, and the plan limits a vendor
+    /// reported. Changes nothing, and asks no vendor anything.
+    Usage,
+    /// Ask the plan of the provider being asked how much of each of its
+    /// limits is used, and show what the session has used with the answer.
+    ///
+    /// Only a sign-in whose vendor keeps a source of those figures is asked,
+    /// at most once a minute, and only once the use of what is sent there has
+    /// been agreed to; a credential the source refuses is not asked again in
+    /// the session. Otherwise nothing is sent, and the answer is what
+    /// [`Command::Usage`] would have been.
+    AskLimits,
     /// Leave the conversation.
     Exit,
 }
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 20] = [
+    pub const KINDS: [&'static str; 24] = [
         "prompt",
         "compact",
         "cancel",
@@ -111,8 +137,12 @@ impl Command {
         "clean_cache",
         "sandbox",
         "theme",
+        "setting",
         "help",
         "release_notes",
+        "context",
+        "usage",
+        "ask_limits",
         "exit",
     ];
 
@@ -137,8 +167,12 @@ impl Command {
             Self::CleanCache => "clean_cache",
             Self::Sandbox { .. } => "sandbox",
             Self::Theme(_) => "theme",
+            Self::Setting { .. } => "setting",
             Self::Help => "help",
             Self::ReleaseNotes { .. } => "release_notes",
+            Self::Context => "context",
+            Self::Usage => "usage",
+            Self::AskLimits => "ask_limits",
             Self::Exit => "exit",
         }
     }
@@ -165,6 +199,9 @@ impl Command {
             }
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
+            Self::Setting { name, value } => object
+                .with("name", name.as_str())
+                .with("value", value.as_str()),
             Self::ReleaseNotes { version } => {
                 object.maybe("version", version.as_ref().map(Name::as_str))
             }
@@ -175,6 +212,9 @@ impl Command {
             | Self::InspectCache
             | Self::CleanCache
             | Self::Help
+            | Self::Context
+            | Self::Usage
+            | Self::AskLimits
             | Self::Exit => object,
         }
         .finish()
@@ -214,6 +254,10 @@ impl Command {
                 let part = fields.string("part")?;
                 Self::Theme(Theme::read(&part, &fields.string("name")?)?)
             }
+            "setting" => Self::Setting {
+                name: fields.name("name")?,
+                value: fields.name("value")?,
+            },
             "help" => Self::Help,
             "release_notes" => Self::ReleaseNotes {
                 version: fields
@@ -221,6 +265,9 @@ impl Command {
                     .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
                     .transpose()?,
             },
+            "context" => Self::Context,
+            "usage" => Self::Usage,
+            "ask_limits" => Self::AskLimits,
             "exit" => Self::Exit,
             _ => return Err(ErrorCode::UnknownCommand.into()),
         };

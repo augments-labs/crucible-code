@@ -40,13 +40,26 @@ of the shell that launched it.
 The command line is a fourth layer and is nearer than all three: `--model
 openai/gpt-5.6-terra` wins over anything a file says.
 
-When `/model`, `/effort`, `/fast`, `/login`, `/theme`, `/sandbox enable` or
-`disable`, answering **Use it anyway**, removing a credential, or telling
+When `/model`, `/effort`, `/fast`, `/login`, `/theme`, `/settings`, `/sandbox
+enable` or `disable`, answering **Use it anyway**, removing a credential, or telling
 `/resume` to stop asking about a large session changes the user file, crucible
 prepares an owner-only sibling and replaces the complete document atomically. A failed
 write before that commit leaves the previous file whole. An owner-only lock
 spans the bounded reread through the commit, so simultaneous crucible processes
 cannot silently lose one another's settings.
+
+`/settings` lists, on its Config tab, every setting that is a switch, a short
+list of choices or the mouse scroll speed, and changes one in the user file.
+The theme, syntax theme, transcript colours, glyphs, tool detail, scroll rail,
+scroll speed and the key that sends change at once. Colour, tone, compaction and the four prompt
+caching rows say `applies at next start`, and the update check is read at the
+next start anyway, so it says nothing. A row a project file or the environment
+sets is shown with who set it and cannot be changed there, since the user file
+would not win. A project file that says anything about `promptCaching` sets
+all four of its rows, because that block is checked as a whole. Providers,
+credentials, MCP servers, extensions, the system prompt, permission rules and
+the sandbox's policy are not rows; the sandbox and the permission mode are
+shown on the Status tab and changed with `/sandbox` and `/mode`.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so. Silently skipping it would turn a permissions mistake
@@ -520,8 +533,11 @@ you with no way to send at all.
 | `color` | `auto`, `always`, `never` | Whether to write colour; `auto` by default. `auto` follows the terminal and `NO_COLOR`; `always` writes colour on a terminal even when `NO_COLOR` is set, and `never` writes none. Output that is not a terminal gets no colour whatever this says, and the model's markdown is kept as written. A `TERM` of `dumb`, or no `TERM` at all, still gets no colour, even under `always`, unless `COLORTERM` says `truecolor` or `24bit`. |
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with; `unicode` by default. `ascii` if box drawing shows as hollow squares. |
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with; `auto` by default. |
+| `transcriptColours` | `calm`, `balanced`, `rich` | How many of the theme's colours a reply and its tool calls spend; `calm` by default. Below the table. |
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in; `Monokai Extended` by default. |
 | `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window; `compact` by default. Clipped details remain expandable: recent ones from memory, older ones read back from the session log when the view reaches them, where the session has a log. |
+| `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt; a click off the thumb scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. The prompt you are reading under has a larger mark, and a pointer on the rail lights the track and marks and enlarges the mark under it. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
+| `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. `/clear` and `/resume` leave the earlier transcript in the terminal's scrollback. A line already written there is never changed afterwards, so a mark a finished reply gains later, or an offer to expand a clipped detail that is later withdrawn, stays as it was first written. On a terminal that does not rewrap its lines when the window narrows, narrowing it can take a few finished lines off the visible screen; the session file still has them. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light
@@ -531,6 +547,42 @@ The two `colourblind` tables move the diff off the red-green axis (a line put
 in goes blue and a line taken out goes amber), and `ansi` spends nothing but the
 sixteen colours your terminal already has, so your own terminal theme decides
 every hue.
+
+Every table spends colour the same way. A line has at most one thing in the
+accent, the one your eye should land on: the selected row, a key that opens
+something, the rule that opens a panel. A frame in the accent, such as the one
+around a question, is not counted against the lines inside it: its edges are
+the frame, and each line between them still has one accent at most. In what a
+model says and in its tool calls, which colours go where is
+`transcriptColours`, below; panels, notes, `/help` names, `/release-notes`
+versions and the startup banner keep the theme's colour whatever it says. Bold,
+a table's header, a tool's name and the figures of a count are bold in your
+own foreground, a tool call's mark is your own foreground, and the row your
+prompt is left on carries no colour beyond its background. Colour that means
+something (a line added or taken out, success, trouble, a mode that lets
+crucible act without asking) means it in every table, and everything else is
+your own foreground or a quieter grey. Nothing is said by colour alone: every
+accent is also a mark or a place on the line, and every meaning also has a sign
+or a word, so a `colourblind` table, or `color` set to `never`, loses nothing.
+With no colour, an answer keeps the markdown markers it was written with.
+
+`transcriptColours` decides how much of a reply and its tool calls is in
+colour, and no colour it spends is the line's one accent. `calm` puts inline
+code and paths in the theme's colour and links, bare addresses and `#123` in a
+second colour, underlined; headings are bold, and everything else is your own
+foreground or the quieter grey. `balanced` adds a third colour on paths in a
+reply and on a path a tool call names, the second on an address a call names,
+and a fourth on versions and commit hashes in prose. `rich` adds the theme's
+colour on headings, bullets, list numbers and a call's command or pattern, the
+fourth on every figure in prose, and the third, slanted, on quotes. The tool
+says what its call names: a `grep` or `glob` pattern is a command, and a
+question, a `web_search` query, a `tool_search` query, a task count and `#N`
+stay grey in every design. A commit hash is 7 to 40 hex digits in one case,
+with at least one digit and one letter, so `defaced` and `aBc1234` stay prose
+and `1234567` is a figure. `ansi` has no fourth colour to spare, and at 16
+colours no theme has one, so what would wear it there stays in your own
+foreground. Only the colour changes: the words are the same in all three, and
+with no colour all three are the same text.
 
 `/theme` picks one at the prompt and writes it here. It draws a diff and a
 prompt row under the list in whatever your mark is standing on, because a theme
@@ -594,6 +646,10 @@ Every terminal keeps Shift as the way past a program holding the pointer, which
 is the answer for a reader who wanted their emulator's selection rather than
 this one.
 
+With `output.screen` set to `native`, crucible does not hold the mouse at all:
+the wheel, a drag and a click are your terminal's, and every key works as it
+does on a screen of crucible's own.
+
 ### `updates`
 
 | Key | Means |
@@ -646,7 +702,8 @@ still wins.
 ```
 
 Values are strings, because that is what an environment holds. A setting that
-reads as a number is written `"12"`.
+reads as a number is written `"12"`; `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` also
+takes the integer `12`.
 
 A command is **not** started with the environment crucible was started in. It
 gets a short list of what a program needs in order to run at all, and whatever
@@ -1108,8 +1165,10 @@ output, and the session picker's list and preview. The default is `6`; arrow
 keys still move one step at a time.
 
 ```json
-{ "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "12" } }
+{ "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": 12 } }
 ```
+
+The value may be a JSON integer, as above, or a string such as `"12"`.
 
 Written in `env` like any other variable, so it layers like one: a project can
 set it for everybody who clones the repository, your home directory can set it
@@ -1119,17 +1178,20 @@ for every project, and the environment you start crucible in beats both.
 $ CRUCIBLE_CODE_MOUSE_SCROLL_SPEED=3 crucible
 ```
 
-A whole number from `1` to `30`. Anything else is refused rather than rounded
-into range or ignored:
+A whole number from `3` to `30`, written as decimal digits only: no sign, no
+leading zero and no surrounding space, so `+6`, `06` and `" 6"` are refused as
+well as `1`, `2` and `31`. The shell variable is read the same way as a string in
+the file. Anything else is refused rather than rounded into range or ignored:
 
 ```
 crucible: .crucible/config.json: env CRUCIBLE_CODE_MOUSE_SCROLL_SPEED at line 3,
 column 5 is not set to an answer crucible takes — accepted here: a whole number
-of rows from 1 to 30
+of rows from 3 to 30
 ```
 
-The floor is `1` because a wheel set to move nothing is a setting that looks
-applied and does nothing. The ceiling is `30` because that is a screenful on
+The floor is `3`, and a value below it is refused rather than pulled up to it,
+because a setting pulled to another number looks applied and does something
+other than what was written. The ceiling is `30` because that is a screenful on
 most terminals, and past it the wheel stops being a scroll and becomes a jump.
 
 A run whose output is redirected has no wheel to answer, so the setting is read
@@ -1228,8 +1290,8 @@ is, and what was accepted instead:
 
 ```
 crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
-crucible has at line 3, column 5 — accepted here: color, theme, syntaxTheme,
-glyphs, toolDetail
+crucible has at line 3, column 5 — accepted here: color, theme,
+transcriptColours, syntaxTheme, glyphs, toolDetail, scrollRail, screen
 
 crucible: /home/you/api/.crucible/config.json: output.color does not accept
 beige at line 3, column 5 — accepted here: auto, always, never

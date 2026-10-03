@@ -2,13 +2,14 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x16 cursor 13,34 scrolled 0
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|                                                                                |
-|Warning: No models available. Use /login or set an API key environment variable.|
-|Then use /model to select a model.                                              |
-|                                                                                |
+80x16 cursor 14,34 scrolled 0
+|│ · ctrl+c     clears the line typed so far                                   ││|
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                               │|
+|                                                                               │|
+|Warning: No models available. Use /login or set an API key environment         ┃|
+|variable. Then use /model to select a model.                                   ┃|
+|                                                                               ┃|
 |                                                                                |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
@@ -18,4 +19,3 @@ expression: window.picture()
 |│   the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown │|
 |│    fox jumps over the lazy dog.                                              │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                               transcript map → |

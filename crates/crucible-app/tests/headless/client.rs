@@ -9,17 +9,20 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_app::switching::{LoggedIn, LoggedOut};
 use crucible_client_api::{
-    Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Missing, Mode,
-    ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending, PendingId, Progress, Prompt,
-    Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, Theme, TurnOutcome,
+    Capabilities, ClearOutcome, Command, Correlation, Cost, Decision, ErrorCode, Forced, Lasting,
+    Limit, LimitGroup, Limits, Missing, Mode, ModelOutcome, Name, NotesOutcome, Outcome, Palette,
+    Pending, PendingId, Percent, Progress, Prompt, Reading, Refusal, Request, Response,
+    ResumeOutcome, Ruling, SettingOutcome, Snapshot, Stop, Theme, TurnOutcome,
+    Window as LimitWindow,
 };
-use crucible_models::Delta;
+use crucible_models::{Asked, Delta, ProviderError};
 use crucible_runner::{EventEnvelope, Runner, Tools};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_session::Session;
@@ -27,9 +30,12 @@ use crucible_tools::{
     Approved, DescribeTool, Permission, Rules, Sensitivity, Summary, Target, Tool, ToolContext,
     ToolError, ToolOutput,
 };
-use crucible_types::{AgentId, StopReason, ToolArgs, ToolId};
+use crucible_types::{
+    AgentId, GroupName, InputTokenUsage, ModelGroup, ModelKey, PlanWindows, ProviderUsage, Scope,
+    StopReason, ToolArgs, ToolId, Window, WindowReading,
+};
 
-use super::{Desk as Standing, Failed, Script, Tree, saying};
+use super::{Desk as Standing, Failed, Script, Tree, saying, unset};
 
 /// The name the counting tool is offered and called by.
 const WRITE: &str = "write";
@@ -99,6 +105,16 @@ fn asking_on(
     script: Script,
     serving: Option<&'static str>,
 ) -> Result<(Conversation, Arc<AtomicUsize>), Failed> {
+    asking_under(tree, script, serving, None)
+}
+
+/// [`asking_on`], of a model whose window holds `window` tokens, where it said.
+fn asking_under(
+    tree: &Tree,
+    script: Script,
+    serving: Option<&'static str>,
+    window: Option<u32>,
+) -> Result<(Conversation, Arc<AtomicUsize>), Failed> {
     let ran = Arc::new(AtomicUsize::new(0));
     let mut tools = Tools::new();
     tools.add_builtin(Counting(Arc::clone(&ran)))?;
@@ -108,7 +124,7 @@ fn asking_on(
         Model {
             name: "script".into(),
             max_tokens: 64,
-            window: None,
+            window,
             accepts: None,
             effort: None,
         },
@@ -275,8 +291,10 @@ fn turned(
     drop(events);
 
     let mut streamed = Vec::new();
+    let serving = conversation.serving();
     for envelope in reported.try_iter() {
-        if let Some(progress) = client::progress(request.capabilities(), &envelope.into_event()) {
+        let event = envelope.into_event();
+        if let Some(progress) = client::progress(request.capabilities(), &event, serving) {
             streamed.push(Progress::decode(&progress.encode()?)?);
         }
     }
@@ -454,6 +472,7 @@ fn a_decision_sent_outside_a_turn_settles_nothing() -> Result<(), Failed> {
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let request = Wire::default().sent(Command::Decide(Decision::Ruled {
@@ -484,6 +503,7 @@ fn a_decision_on_its_own_is_answered_the_same_at_every_door() -> Result<(), Fail
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let request = Wire::default().sent(Command::Decide(Decision::Ruled {
@@ -526,6 +546,7 @@ fn a_syntax_theme_this_host_does_not_read_is_refused_and_not_written_down() -> R
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let mut wire = Wire::default();
@@ -552,6 +573,145 @@ fn a_syntax_theme_this_host_does_not_read_is_refused_and_not_written_down() -> R
     Ok(())
 }
 
+/// A setting, as a client names it.
+fn setting(name: &str, value: &str) -> Result<Command, Failed> {
+    Ok(Command::Setting {
+        name: Name::new(name)?,
+        value: Name::new(value)?,
+    })
+}
+
+/// A host started with the mouse's scroll speed in its environment.
+fn scrolling(name: &str) -> Option<String> {
+    (name == "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED").then(|| "12".to_owned())
+}
+
+#[test]
+fn a_settings_row_is_written_through_either_door_and_read_back() -> Result<(), Failed> {
+    let tree = Tree::new("client-settings-written")?;
+    let mut conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let mut wire = Wire::default();
+    let remembered = Outcome::Setting(SettingOutcome::Remembered);
+
+    // While a turn has the conversation, as `/theme` is.
+    let request = wire.sent(setting("output.scrollRail", "false")?)?;
+    let kept = client::keep(&request, &desk);
+    assert_eq!(received(&kept.response(&request))?.outcome, remembered);
+    assert!(!super::written(&tree)?.scroll_rail());
+
+    // And with the conversation in hand.
+    let request = wire.sent(setting("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "12")?)?;
+    let performed = super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
+    assert_eq!(received(&performed.response(&request))?.outcome, remembered);
+    let read = super::written(&tree)?;
+    assert_eq!(read.scroll_speed(&unset)?.rows(), 12);
+    assert!(
+        !read.scroll_rail(),
+        "the first answer stays beside the second"
+    );
+
+    let request = wire.sent(setting("output.syntaxTheme", READ)?)?;
+    let kept = client::keep(&request, &desk);
+    assert_eq!(received(&kept.response(&request))?.outcome, remembered);
+    assert_eq!(super::written(&tree)?.syntax_theme(), Some(READ));
+    Ok(())
+}
+
+#[test]
+fn a_settings_row_the_shell_or_a_project_decides_is_forced_and_not_written() -> Result<(), Failed> {
+    let tree = Tree::new("client-settings-forced")?;
+    let mut standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let project = workspace.root().join(".crucible");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(
+        project.join("config.json"),
+        r#"{"output": {"theme": "dark"}}"#,
+    )?;
+    standing.settings = crucible_config::Settings::read(&tree.home()?, workspace.root())?;
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: scrolling,
+        notes,
+    };
+    let mut wire = Wire::default();
+
+    let request = wire.sent(setting("output.theme", "light")?)?;
+    assert_eq!(
+        received(&client::keep(&request, &desk).response(&request))?.outcome,
+        Outcome::Setting(SettingOutcome::Forced(Forced::Project))
+    );
+    let request = wire.sent(setting("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "9")?)?;
+    assert_eq!(
+        received(&client::keep(&request, &desk).response(&request))?.outcome,
+        Outcome::Setting(SettingOutcome::Forced(Forced::Environment))
+    );
+    assert!(
+        !crucible_config::user(&tree.home()?).exists(),
+        "a forced setting wrote the user's file"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_settings_value_or_key_the_menu_does_not_offer_is_refused_and_not_written() -> Result<(), Failed>
+{
+    let tree = Tree::new("client-settings-refused")?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let mut wire = Wire::default();
+    let invalid = Outcome::Refused(ErrorCode::InvalidArgument.into());
+
+    for (name, value) in [
+        // Not a row: it loosens what runs unasked.
+        ("permissions.mode", "fullAccess"),
+        ("sandbox.enabled", "false"),
+        ("provider", "openai"),
+        ("output", "dark"),
+        ("output.theme", "plaid"),
+        ("output.scrollRail", "1"),
+        ("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "31"),
+        ("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "06"),
+        ("output.syntaxTheme", "no theme by this name"),
+    ] {
+        let request = wire.sent(setting(name, value)?)?;
+        assert_eq!(
+            received(&client::keep(&request, &desk).response(&request))?.outcome,
+            invalid,
+            "{name} = {value}"
+        );
+    }
+    assert!(
+        !crucible_config::user(&tree.home()?).exists(),
+        "a refused setting wrote the user's file"
+    );
+    Ok(())
+}
+
 #[test]
 fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Result<(), Failed> {
     let tree = Tree::new("client-commands")?;
@@ -564,6 +724,7 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let mut wire = Wire::default();
@@ -669,6 +830,7 @@ fn a_cache_that_cannot_be_retired_holds_the_model_where_it_was() -> Result<(), F
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
 
@@ -707,6 +869,7 @@ fn a_choice_that_could_not_be_written_down_is_still_taken_and_says_so() -> Resul
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
 
@@ -746,6 +909,7 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let before = client::snapshot(&conversation);
@@ -809,6 +973,7 @@ fn the_release_notes_are_what_the_host_answers_and_wait_for_the_turn() -> Result
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let mut wire = Wire::default();
@@ -851,6 +1016,7 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let mut wire = Wire::default();
@@ -1292,5 +1458,599 @@ fn a_prompt_a_model_can_answer_still_takes_the_turn_and_is_recorded() -> Result<
         2,
         "the prompt and its answer"
     );
+    Ok(())
+}
+
+/// What `/context` is answered with, asked for over the wire.
+fn context(conversation: &mut Conversation, tree: &Tree) -> Result<Outcome, Failed> {
+    let standing = Standing::new(tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let request = Wire::default().sent(Command::Context)?;
+    let performed = super::runtime()?.block_on(client::perform(conversation, &request, &desk));
+    assert!(standing.reached().is_empty());
+
+    Ok(received(&performed.response(&request))?.outcome)
+}
+
+#[test]
+fn context_is_the_load_the_runner_counts_and_leaves_what_the_prompt_line_reads()
+-> Result<(), Failed> {
+    let tree = Tree::new("client-context")?;
+    let script = Script::new(vec![saying("hello")]);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
+    let request = Wire(500).sent(prompt("hi")?)?;
+    turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    let before = client::snapshot(&conversation);
+
+    let Outcome::Context(context) = context(&mut conversation, &tree)? else {
+        return Err("/context was not answered with a context".into());
+    };
+
+    let runner = conversation.runner();
+    assert_eq!(context.model, before.model);
+    assert!(context.model.is_some(), "{context:?}");
+    assert_eq!(context.window, Some(200_000));
+    let held =
+        context.system + context.instructions + context.tools + context.mcp + context.messages;
+    assert_eq!(held, runner.carrying(), "{context:?}");
+    assert!(context.tools > 0 && context.messages > 0, "{context:?}");
+    assert_eq!(
+        held + context.reserve + context.free,
+        200_000,
+        "{context:?}"
+    );
+    assert_eq!(context.left, before.left, "{context:?}");
+    assert!(context.left.is_some(), "{context:?}");
+    assert_eq!(client::snapshot(&conversation), before);
+    Ok(())
+}
+
+#[test]
+fn context_of_a_model_with_no_reported_window_leaves_the_window_and_free_room_out()
+-> Result<(), Failed> {
+    let tree = Tree::new("client-context-unknown")?;
+    let (mut conversation, _) = asking(&tree, Script::new(Vec::new()))?;
+
+    let Outcome::Context(context) = context(&mut conversation, &tree)? else {
+        return Err("/context was not answered with a context".into());
+    };
+
+    assert_eq!(context.window, None, "{context:?}");
+    assert_eq!(context.left, None, "{context:?}");
+    assert_eq!(context.free, 0, "{context:?}");
+    let held =
+        context.system + context.instructions + context.tools + context.mcp + context.messages;
+    assert_eq!(held, conversation.runner().carrying(), "{context:?}");
+    Ok(())
+}
+
+/// A client with no terminal reads `/context` mid-turn as the terminal draws
+/// it: from the figures each reading of the running turn carried, streamed to
+/// it as progress. Asked for at a door the turn leaves open, it is refused as
+/// busy.
+#[test]
+fn context_mid_turn_is_streamed_by_the_turn_and_refused_as_busy_at_every_door_it_leaves_open()
+-> Result<(), Failed> {
+    let tree = Tree::new("client-context-busy")?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let request = Wire::default().sent(Command::Context)?;
+    let busy = Outcome::Refused(ErrorCode::Busy.into());
+
+    assert_eq!(client::keep(&request, &desk).outcome(), busy);
+    assert_eq!(client::interrupt(&request, &Cancel::new()), busy);
+    // A tool's results are a reading the turn carries before its next request.
+    let script = Script::new(vec![calling(), saying("after")]);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    assert_eq!(response.outcome, busy);
+
+    let asked = Wire::default().sent(prompt("change it")?)?;
+    let mut remote = Remote::new(vec![Saying::Fitting(Ruling::Allow)]);
+    let (_, streamed) = turned(&mut conversation, &asked, &mut remote)?;
+    let carried: Vec<_> = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Context(context) => Some(context),
+            _ => None,
+        })
+        .collect();
+    assert!(!carried.is_empty(), "{streamed:?}");
+    for context in carried {
+        assert_eq!(context.model, None, "{context:?}");
+        assert_eq!(context.window, Some(200_000), "{context:?}");
+        assert!(context.left.is_some(), "{context:?}");
+        assert!(context.tools > 0 && context.messages > 0, "{context:?}");
+        let held =
+            context.system + context.instructions + context.tools + context.mcp + context.messages;
+        assert_eq!(
+            held + context.reserve + context.free,
+            200_000,
+            "{context:?}"
+        );
+    }
+    Ok(())
+}
+
+/// What `/usage` is answered with, asked for over the wire, and that asking
+/// reached no provider the host lent.
+fn usage(conversation: &mut Conversation, tree: &Tree) -> Result<Outcome, Failed> {
+    performed(conversation, tree, Command::Usage)
+}
+
+/// The plan limits the responses in these tests report: 42% of the week used.
+fn weekly_at_42() -> Result<Limits, Failed> {
+    Ok(Limits {
+        groups: vec![LimitGroup {
+            model: None,
+            limits: vec![Limit {
+                window: LimitWindow::Weekly,
+                reading: Reading::Percent(Percent::new(42).ok_or("a percent")?),
+                resets_at: Some(1_700_600_000),
+            }],
+        }],
+        more: false,
+    })
+}
+
+/// What `command` is answered with by [`client::perform`], asked for over the
+/// wire, and that asking reached no provider the host lent.
+fn performed(
+    conversation: &mut Conversation,
+    tree: &Tree,
+    command: Command,
+) -> Result<Outcome, Failed> {
+    let standing = Standing::new(tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let request = Wire::default().sent(command)?;
+    let performed = super::runtime()?.block_on(client::perform(conversation, &request, &desk));
+    assert!(standing.reached().is_empty());
+
+    Ok(received(&performed.response(&request))?.outcome)
+}
+
+/// One response reporting 100 input tokens, 20 of them read from a cache,
+/// and 10 output.
+fn reporting() -> Result<Vec<Delta>, Failed> {
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(100), Some(20))?,
+        Some(10),
+        None,
+        None,
+        &[],
+    )?;
+    Ok(vec![
+        Delta::Text("hello".into()),
+        Delta::Usage(usage),
+        Delta::Stopped(StopReason::Yielded),
+    ])
+}
+
+#[test]
+fn usage_is_read_off_the_runner_and_asks_no_vendor_anything() -> Result<(), Failed> {
+    let tree = Tree::new("client-usage")?;
+    let resets = UNIX_EPOCH + Duration::from_secs(1_700_600_000);
+    let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .with(Window::Weekly, WindowReading::new(42, Some(resets)));
+    let script = Script::new(vec![reporting()?, reporting()?]).limiting(windows);
+    let asked = Arc::clone(&script.asked);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
+    for words in ["one", "two"] {
+        let request = Wire(500).sent(prompt(words)?)?;
+        turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    }
+    assert_eq!(asked.load(Ordering::Relaxed), 2);
+    let before = client::snapshot(&conversation);
+
+    let Outcome::Usage(usage) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+
+    assert_eq!(asked.load(Ordering::Relaxed), 2, "no request was sent");
+    assert_eq!(
+        (usage.used.input, usage.used.output),
+        (200, 20),
+        "{usage:?}"
+    );
+    assert_eq!(
+        (usage.used.cache_read, usage.used.cache_write),
+        (40, 0),
+        "{usage:?}"
+    );
+    // The script's model has no price: the cost is not known, not zero.
+    assert_eq!(usage.used.cost, Cost::NotPriced, "{usage:?}");
+    assert!(usage.used.api_ms <= usage.used.wall_ms, "{usage:?}");
+    assert_eq!(usage.context.model, before.model);
+    assert_eq!(usage.context.left, before.left);
+    assert_eq!(usage.limits, weekly_at_42()?);
+    assert_eq!(client::snapshot(&conversation), before);
+    Ok(())
+}
+
+#[test]
+fn usage_before_anything_is_asked_is_unspent_with_no_limits_reported() -> Result<(), Failed> {
+    let tree = Tree::new("client-usage-unspent")?;
+    let script = Script::new(Vec::new());
+    let asked = Arc::clone(&script.asked);
+    let (mut conversation, _) = asking(&tree, script)?;
+
+    let Outcome::Usage(usage) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+
+    assert_eq!(asked.load(Ordering::Relaxed), 0, "no request was sent");
+    assert_eq!(usage.used.cost, Cost::Unspent, "{usage:?}");
+    assert_eq!(
+        (usage.used.input, usage.used.output, usage.used.api_ms),
+        (0, 0, 0)
+    );
+    assert!(usage.limits.is_empty(), "{usage:?}");
+    Ok(())
+}
+
+/// A client with no terminal reads `/usage` mid-turn as the terminal draws it:
+/// from the totals and plan windows the running turn last reported, streamed
+/// to it as progress, as `/context` is. Asked for at a door the turn leaves
+/// open, it is refused as busy; the turn is what holds the figures.
+#[test]
+fn usage_mid_turn_is_streamed_with_the_figures_the_turn_last_reported() -> Result<(), Failed> {
+    let tree = Tree::new("client-usage-busy")?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let request = Wire::default().sent(Command::Usage)?;
+    let busy = Outcome::Refused(ErrorCode::Busy.into());
+
+    assert_eq!(client::keep(&request, &desk).outcome(), busy);
+    assert_eq!(client::interrupt(&request, &Cancel::new()), busy);
+    let resets = UNIX_EPOCH + Duration::from_secs(1_700_600_000);
+    let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .with(Window::Weekly, WindowReading::new(42, Some(resets)));
+    let script = Script::new(vec![reporting()?]).limiting(windows);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    assert_eq!(response.outcome, busy);
+
+    let asked = Wire::default().sent(prompt("one")?)?;
+    let (_, streamed) = turned(&mut conversation, &asked, &mut Remote::new(Vec::new()))?;
+    let used = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Used(used) => Some(used),
+            _ => None,
+        })
+        .next_back()
+        .ok_or_else(|| format!("no figures were streamed: {streamed:?}"))?;
+    assert_eq!((used.input, used.output), (100, 10), "{used:?}");
+    assert_eq!((used.cache_read, used.cache_write), (20, 0), "{used:?}");
+    assert_eq!(used.cost, Cost::NotPriced, "{used:?}");
+    assert!(used.api_ms <= used.wall_ms, "{used:?}");
+    let limits = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Limits(limits) => Some(limits),
+            _ => None,
+        })
+        .next_back()
+        .ok_or_else(|| format!("no plan windows were streamed: {streamed:?}"))?;
+    assert_eq!(limits, &weekly_at_42()?);
+
+    // What was streamed is what the turn left: asked once it ended, the
+    // answer agrees.
+    let Outcome::Usage(usage) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+    assert_eq!(
+        (usage.used.input, usage.used.output, usage.used.cache_read),
+        (used.input, used.output, used.cache_read)
+    );
+    assert_eq!(&usage.limits, limits);
+    Ok(())
+}
+
+/// What the plan the conversation asks through answers when asked as of `now`
+/// at the doors a client that keeps going while it waits uses, `None` where
+/// nothing was sent.
+fn asked_limits(conversation: &mut Conversation, now: Instant) -> Result<Option<Limits>, Failed> {
+    let request = Wire::default().sent(Command::AskLimits)?;
+    let Some(question) = client::asking(conversation, &request, now)? else {
+        return Ok(None);
+    };
+    let answered = super::runtime()?.block_on(question.answered());
+    match client::asked(conversation, answered).outcome() {
+        Outcome::Usage(usage) => Ok(Some(usage.limits)),
+        other => Err(format!("an answer was not read as usage: {other:?}").into()),
+    }
+}
+
+/// A plan's answer: 10% of five hours, and a model's group of its own.
+fn plan_answer() -> Asked {
+    let at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let slug = "gpt-5.3-codex-spark";
+    let spark = GroupName::new(slug).map_or(Scope::Plan, |name| {
+        Scope::Model(ModelGroup::new(name, ModelKey::exact(slug)))
+    });
+    Asked::Answered(
+        PlanWindows::new(at)
+            .with(Window::FiveHour, WindowReading::new(10, None))
+            .within(spark, Window::Weekly, WindowReading::new(3, None)),
+    )
+}
+
+fn plan_answered_as_crossed() -> Result<Limits, Failed> {
+    Ok(Limits {
+        groups: vec![
+            LimitGroup {
+                model: None,
+                limits: vec![Limit {
+                    window: LimitWindow::FiveHour,
+                    reading: Reading::Percent(Percent::new(10).ok_or("a percent")?),
+                    resets_at: None,
+                }],
+            },
+            LimitGroup {
+                model: Some(Name::new("gpt-5.3-codex-spark")?),
+                limits: vec![Limit {
+                    window: LimitWindow::Weekly,
+                    reading: Reading::Percent(Percent::new(3).ok_or("a percent")?),
+                    resets_at: None,
+                }],
+            },
+        ],
+        more: false,
+    })
+}
+
+/// Asked whole over the wire, as a client with nothing else to do sends it,
+/// the plan's answer replaces what the responses reported, and the next
+/// `/usage` reads it with nothing more sent.
+#[test]
+fn limit_an_answer_replaces_what_the_responses_reported() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-answer")?;
+    let resets = UNIX_EPOCH + Duration::from_secs(1_700_600_000);
+    let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .with(Window::Weekly, WindowReading::new(42, Some(resets)));
+    let script = Script::new(vec![reporting()?])
+        .limiting(windows)
+        .answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let request = Wire(500).sent(prompt("one")?)?;
+    turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    let Outcome::Usage(before) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+    assert_eq!(before.limits, weekly_at_42()?);
+
+    let Outcome::Usage(asked) = performed(&mut conversation, &tree, Command::AskLimits)? else {
+        return Err("asking was not answered with what the session used".into());
+    };
+
+    assert_eq!(sent.load(Ordering::Relaxed), 1);
+    assert_eq!(asked.limits, plan_answered_as_crossed()?);
+    let Outcome::Usage(after) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+    assert_eq!(after.limits, asked.limits);
+    assert_eq!(sent.load(Ordering::Relaxed), 1, "reading asks nobody");
+    Ok(())
+}
+
+#[test]
+fn limit_a_second_ask_within_a_minute_is_not_sent() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-floor")?;
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let first = Instant::now();
+
+    assert!(asked_limits(&mut conversation, first)?.is_some());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(59))?.is_none());
+    assert_eq!(sent.load(Ordering::Relaxed), 1);
+    assert!(asked_limits(&mut conversation, first + Duration::from_mins(1))?.is_some());
+    assert_eq!(sent.load(Ordering::Relaxed), 2);
+    Ok(())
+}
+
+/// A question given up on before the plan answered it still counts toward
+/// the minute: crucible cannot tell whether it had left, so every question
+/// started counts. The next opening within the minute asks nothing; one a
+/// minute later asks.
+#[test]
+fn limit_an_ask_given_up_unanswered_still_holds_the_minute() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-given-up")?;
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let first = Instant::now();
+    let request = Wire::default().sent(Command::AskLimits)?;
+
+    let question = client::asking(&mut conversation, &request, first)?;
+    assert!(question.is_some(), "the plan was not asked");
+    drop(question);
+
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(1))?.is_none());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(59))?.is_none());
+    assert!(asked_limits(&mut conversation, first + Duration::from_mins(1))?.is_some());
+    assert_eq!(
+        sent.load(Ordering::Relaxed),
+        1,
+        "only the one a minute later"
+    );
+    Ok(())
+}
+
+/// An ask the content-use hold refused never left, so it leaves the next
+/// opening free to ask, whether the conversation held it back or the client
+/// that would have sent it did.
+#[test]
+fn limit_an_ask_the_hold_refused_leaves_the_next_free_to_ask() -> Result<(), Failed> {
+    fn held() -> Asked {
+        Asked::Failed(ProviderError::Held("subscription:openai".into()))
+    }
+    let tree = Tree::new("client-limit-held-sent")?;
+    let script = Script::new(Vec::new()).answering(held);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let first = Instant::now();
+
+    assert!(asked_limits(&mut conversation, first)?.is_some());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(1))?.is_some());
+    assert_eq!(sent.load(Ordering::Relaxed), 2);
+    Ok(())
+}
+
+/// A credential the source refused (a 401, 403 or 404) is not asked again
+/// this session; any other failure is asked again once the minute is out,
+/// and leaves what was known standing.
+#[test]
+fn limit_a_refused_credential_is_not_asked_again_and_a_failed_ask_is() -> Result<(), Failed> {
+    fn refused() -> Asked {
+        Asked::Closed
+    }
+    fn failed() -> Asked {
+        Asked::Failed(ProviderError::Refused {
+            provider: "script",
+            status: 500,
+            message: "the plan's usage was not given".into(),
+        })
+    }
+    let later = Duration::from_mins(2);
+    for (answer, sends) in [(refused as fn() -> Asked, 1), (failed, 2)] {
+        let tree = Tree::new("client-limit-refused")?;
+        let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000)).with(
+            Window::Weekly,
+            WindowReading::new(42, Some(UNIX_EPOCH + Duration::from_secs(1_700_600_000))),
+        );
+        let script = Script::new(vec![reporting()?])
+            .limiting(windows)
+            .answering(answer);
+        let sent = Arc::clone(&script.limits_asked);
+        let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+        let request = Wire(500).sent(prompt("one")?)?;
+        turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+        let first = Instant::now();
+
+        let known = asked_limits(&mut conversation, first)?;
+        assert_eq!(known, Some(weekly_at_42()?), "what was known stands");
+        asked_limits(&mut conversation, first + later)?;
+
+        assert_eq!(sent.load(Ordering::Relaxed), sends, "{:?}", answer());
+    }
+    Ok(())
+}
+
+/// The plan's source is on a vendor's host like any other: while the use of
+/// what is sent there waits on the user's yes, nothing is asked of it.
+#[test]
+fn limit_nothing_is_asked_before_the_hold_allows_it() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    let tree = Tree::new("client-limit-held")?;
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let consent = Consent::new(Routes::production());
+    let mut conversation = conversation.consenting(consent.clone());
+    consent.served(
+        "openai",
+        Some(Serving {
+            route: Some("subscription:openai".to_owned()),
+            at: None,
+        }),
+    );
+    let first = Instant::now();
+
+    assert!(asked_limits(&mut conversation, first)?.is_none());
+    assert_eq!(sent.load(Ordering::Relaxed), 0);
+
+    consent.give("subscription:openai");
+    assert!(asked_limits(&mut conversation, first)?.is_some());
+    assert_eq!(sent.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+/// A provider with no source, and a conversation asking no provider, send
+/// nothing; asking is answered with what is known, as `/usage` is.
+#[test]
+fn limit_with_no_source_nothing_is_sent_and_what_is_known_is_answered() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-sourceless")?;
+    let script = Script::new(Vec::new());
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    assert!(asked_limits(&mut conversation, Instant::now())?.is_none());
+    let Outcome::Usage(usage) = performed(&mut conversation, &tree, Command::AskLimits)? else {
+        return Err("asking was not answered with what the session used".into());
+    };
+    assert!(usage.limits.is_empty(), "{usage:?}");
+
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, None)?;
+    assert!(asked_limits(&mut conversation, Instant::now())?.is_none());
+    assert_eq!(sent.load(Ordering::Relaxed), 0);
+    Ok(())
+}
+
+/// An answer is about the credential it was asked through: handed to a
+/// conversation asking through another, it is set aside.
+#[test]
+fn limit_an_answer_about_another_credential_is_set_aside() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-elsewhere")?;
+    let (mut here, _) = asking_on(
+        &tree,
+        Script::new(Vec::new()).answering(plan_answer),
+        Some("openai"),
+    )?;
+    let (mut there, _) = asking_on(
+        &tree,
+        Script::new(Vec::new()).answering(plan_answer),
+        Some("openai"),
+    )?;
+    let request = Wire::default().sent(Command::AskLimits)?;
+    let question =
+        client::asking(&mut here, &request, Instant::now())?.ok_or("the plan was not asked")?;
+    assert_eq!(question.provider(), "openai");
+    let answered = super::runtime()?.block_on(question.answered());
+
+    let Outcome::Usage(usage) = client::asked(&mut there, answered).outcome() else {
+        return Err("an answer was not read as usage".into());
+    };
+
+    assert!(usage.limits.is_empty(), "{usage:?}");
     Ok(())
 }

@@ -153,7 +153,7 @@ fn standing_in(session: &Arc<Session>, model: &str) -> Conversation {
 }
 
 /// The prompts `session` recorded, read back off the disk once it is closed.
-fn recorded(sample: &Sample, session: Arc<Session>) -> Vec<Message> {
+pub(super) fn recorded(sample: &Sample, session: Arc<Session>) -> Vec<Message> {
     assert_eq!(session.finish(), None);
     drop(session);
     let (_, transcript) =
@@ -485,7 +485,7 @@ fn a_resumed_compaction_with_no_model_sends_nothing_and_says_what_is_missing() {
     let mut input = Cursor::new(Vec::new());
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers {
             input: &mut input,
             keys: false,

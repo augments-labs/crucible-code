@@ -8,6 +8,7 @@
 //! afterwards — how hard to think — becomes a type this crate does not own, so
 //! there is no meaning here for a module to hold.
 
+use std::borrow::Cow;
 use std::fmt;
 
 use crucible_models::{Effort, Speed};
@@ -23,6 +24,7 @@ mod compaction;
 mod input;
 pub(crate) mod layers;
 pub(crate) mod mcp;
+mod menu;
 mod output;
 mod permissions;
 mod prompt;
@@ -35,12 +37,13 @@ pub use compaction::{Compaction, When};
 pub use input::Sending;
 pub use layers::{local, user};
 pub use mcp::McpServer;
-pub use output::{Color, Glyphs, ThemeChoice, ToolDetail};
+pub use menu::Forced;
+pub use output::{Color, Glyphs, ScreenMode, ThemeChoice, ToolDetail, TranscriptColours};
 pub use sandbox::SandboxSettings;
 pub use updates::Updates;
 pub use variables::ScrollSpeed;
 
-pub(crate) use variables::refused;
+pub(crate) use variables::{refused, spelled};
 
 /// What every layer together says a setting is.
 ///
@@ -62,6 +65,9 @@ pub struct Settings {
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
     rules: Rules,
+    /// The keys of the menu rows a workspace layer states, which the user's
+    /// own file cannot change. Bounded by the rows there are.
+    pinned: Vec<&'static str>,
 }
 
 impl fmt::Debug for Settings {
@@ -75,6 +81,7 @@ impl fmt::Debug for Settings {
             .field("rules", &self.rules)
             .field("prompt_cache", &self.prompt_cache)
             .field("sandbox", &self.sandbox)
+            .field("pinned", &self.pinned)
             .finish()
     }
 }
@@ -102,6 +109,7 @@ impl Settings {
 
         let prompt_cache = prompt_cache::resolve(&documents)?;
         let sandbox = sandbox::resolve(&documents)?;
+        let pinned = menu::pinned(&documents);
 
         let mut value = Value::Object(Map::new());
         for document in &documents {
@@ -121,6 +129,7 @@ impl Settings {
             prompt_cache,
             sandbox,
             rules,
+            pinned,
         })
     }
 
@@ -225,14 +234,18 @@ impl Settings {
     /// in, as [`Self::scroll_speed`] does. The one variable it reads before
     /// opening a file is refused here outright rather than left to look
     /// applied.
-    pub fn env(&self) -> impl Iterator<Item = (&str, &str)> {
+    ///
+    /// Each value is the text a command is handed: a string as written, and a
+    /// whole number as its digits, so a setting reaches a command the same
+    /// whichever way the file spelled it.
+    pub fn env(&self) -> impl Iterator<Item = (&str, Cow<'_, str>)> {
         self.value
             .get("env")
             .and_then(Value::as_object)
             .into_iter()
             .flat_map(|vars| {
                 vars.iter()
-                    .filter_map(|(name, value)| Some((name.as_str(), value.as_str()?)))
+                    .filter_map(|(name, value)| Some((name.as_str(), variables::spelled(value)?)))
             })
     }
 
@@ -527,7 +540,35 @@ mod tests {
         // not turn off the rest of what the user set at home.
         assert_eq!(
             found,
-            vec![("CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "30"), ("PAGER", "cat")]
+            vec![
+                ("CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", Cow::Borrowed("30")),
+                ("PAGER", Cow::Borrowed("cat"))
+            ]
+        );
+    }
+
+    #[test]
+    fn scroll_speed_written_as_an_integer_is_exported_as_its_digits() {
+        // A setting must reach a command the same whichever way the file spelled
+        // it: `12` and `"12"` are one answer, so a command sees one variable.
+        let exported = |text: &str| {
+            Settings::resolve(vec![Document::sample(text, Origin::User)])
+                .env()
+                .map(|(name, value)| (name.to_owned(), value.to_string()))
+                .collect::<Vec<_>>()
+        };
+        let digits = vec![(
+            "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED".to_owned(),
+            "12".to_owned(),
+        )];
+
+        assert_eq!(
+            exported(r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": 12}}"#),
+            digits
+        );
+        assert_eq!(
+            exported(r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "12"}}"#),
+            digits
         );
     }
 
@@ -548,7 +589,7 @@ mod tests {
         // And the value is still there for the commands that need it.
         assert_eq!(
             settings.env().collect::<Vec<_>>(),
-            vec![("TOKEN", "hunter2")]
+            vec![("TOKEN", Cow::Borrowed("hunter2"))]
         );
     }
 

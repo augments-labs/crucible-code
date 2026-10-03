@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: "reaching::unnamed(&picture, &planted.website)"
+---
+80x24 cursor 1,17 scrolled 0
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ Search  website                                                              │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+| Resume a session · 1 of 4 · all projects                                       |
+|                                                                                |
+|╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮|
+|│ › tidy the stylesheet        │ │ › tidy the stylesheet                       │|
+|│   just now · main · …website │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │ ────────────────────────────────────────────│|
+|│                              │ │ just now · 1 message · main                 │|
+|│                              │ │ Enter to see how to resume · Esc to cancel  │|
+|╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
+| cd ~/projects/website &&                                                       |
+| crucible --resume <id>                                                         |
+| ctrl+a this project · ctrl+b this branch · ctrl+w worktrees · esc              |

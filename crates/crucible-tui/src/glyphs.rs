@@ -331,12 +331,47 @@ impl Glyphs {
         }
     }
 
+    /// The mark on a turn that stopped because the plan behind it is used up.
+    ///
+    /// Neither [`Glyphs::done`] nor [`Glyphs::failed`]: nothing went wrong,
+    /// and nothing was finished either. The same square as [`Glyphs::filled`]
+    /// where the font has one; where it does not, a `#` rather than the `*`
+    /// that opens a call, since a stop is not a call.
+    #[must_use]
+    pub fn stopped(self) -> &'static str {
+        match self {
+            Self::Unicode => "■",
+            Self::Ascii => "#",
+        }
+    }
+
     /// And the same mark with its middle out.
     #[must_use]
     pub fn hollow(self) -> &'static str {
         match self {
             Self::Unicode => "□",
             Self::Ascii => "-",
+        }
+    }
+
+    /// A cell inked whole, for the spent part of a bar that runs unbroken.
+    ///
+    /// Not [`Glyphs::filled`]: its square has a gap on each side, so a row of
+    /// them reads as separate marks rather than as one length.
+    #[must_use]
+    pub(crate) fn solid(self) -> &'static str {
+        match self {
+            Self::Unicode => "█",
+            Self::Ascii => "#",
+        }
+    }
+
+    /// A shaded cell, for the free part of the same bar.
+    #[must_use]
+    pub(crate) fn shaded(self) -> &'static str {
+        match self {
+            Self::Unicode => "░",
+            Self::Ascii => ".",
         }
     }
 
@@ -362,15 +397,34 @@ impl Glyphs {
         }
     }
 
-    /// A semantic place on the transcript map.
+    /// The part of the scroll rail that stands for what is on screen.
     ///
-    /// Hollow so the filled mark showing the current place remains distinct,
-    /// and unlike the horizontal rail in both sets. One column because it
-    /// replaces one cell of that rail rather than widening it.
-    pub(crate) fn landmark(self) -> &'static str {
+    /// Heavier than [`Glyphs::vertical`], which is the track it runs along, so
+    /// the two read apart by weight where colour says nothing; and neither
+    /// [`Glyphs::bullet`] nor [`Glyphs::grown`], which mark a prompt on the
+    /// same track. One column in both sets, because the rail is one column.
+    #[must_use]
+    pub(crate) fn thumb(self) -> &'static str {
         match self {
-            Self::Unicode => "○",
-            Self::Ascii => "o",
+            Self::Unicode => "┃",
+            Self::Ascii => "#",
+        }
+    }
+
+    /// A prompt's mark on the scroll rail grown: the one under the pointer,
+    /// and the current prompt's.
+    ///
+    /// [`Glyphs::bullet`] is the small filled circle and this is the large
+    /// one, so a grown mark reads as the same mark made larger rather than as
+    /// a new kind of thing on the track. It is neither [`Glyphs::thumb`] nor
+    /// [`Glyphs::vertical`], since it may stand on either. In ASCII it is `*`,
+    /// since there is no larger `-`. One column in both sets, because the rail
+    /// is one column.
+    #[must_use]
+    pub(crate) fn grown(self) -> &'static str {
+        match self {
+            Self::Unicode => "●",
+            Self::Ascii => "*",
         }
     }
 
@@ -480,6 +534,27 @@ mod tests {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
             assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
+        }
+    }
+
+    #[test]
+    fn the_rail_s_cells_are_one_column_and_four_different_marks_in_both_sets() {
+        // The rail is one column, and a reader tells its parts apart by shape
+        // alone where colour says nothing.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let cells = [
+                glyphs.vertical(),
+                glyphs.thumb(),
+                glyphs.bullet(),
+                glyphs.grown(),
+            ];
+            for (at, cell) in cells.iter().enumerate() {
+                assert_eq!(columns(cell), 1, "{glyphs:?}: {cell}");
+                assert!(
+                    !cells.iter().take(at).any(|before| before == cell),
+                    "{glyphs:?}: {cell}"
+                );
+            }
         }
     }
 

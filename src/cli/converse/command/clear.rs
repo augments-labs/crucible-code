@@ -39,7 +39,7 @@ pub(super) fn run<T: Terminal>(
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     let unclosed = match terms.perform(conversation, Command::Clear) {
         // A session that has said nothing is already the empty one this would

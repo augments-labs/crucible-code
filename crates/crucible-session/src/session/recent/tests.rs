@@ -21,10 +21,24 @@ fn nth(nth: u64) -> String {
     format!("{:013}-0000{nth:02x}", 1_700_000_000_000_u64 + nth)
 }
 
+/// What the first frame's scan offers for `workspace`.
+fn here(
+    sample: &Sample,
+    workspace: &crucible_workspace::Workspace,
+    wanted: usize,
+) -> Vec<Recorded> {
+    recent(
+        &sample.logs(),
+        Roots::These(&[workspace.root()]),
+        Reach::FirstFrame,
+        wanted,
+    )
+}
+
 /// What the scan offers for this sample's workspace.
 fn offered(sample: &Sample, wanted: usize) -> Vec<Recorded> {
     super::index::ensure(&sample.logs()).expect("the legacy sessions to be indexed");
-    recent(&sample.logs(), &sample.workspace(), wanted)
+    here(sample, &sample.workspace(), wanted)
 }
 
 /// What the newest of them was asked.
@@ -37,11 +51,11 @@ fn first_frame_does_not_enumerate_an_unindexed_legacy_directory() {
     let sample = Sample::new("recent-unindexed");
     planted(&sample, &nth(1), &["visible after migration"]);
 
-    assert!(recent(&sample.logs(), &sample.workspace(), 4).is_empty());
+    assert!(here(&sample, &sample.workspace(), 4).is_empty());
 
     super::index::ensure(&sample.logs()).expect("migration after the first frame");
     assert_eq!(
-        first(&recent(&sample.logs(), &sample.workspace(), 4)),
+        first(&here(&sample, &sample.workspace(), 4)),
         "visible after migration"
     );
 }
@@ -61,7 +75,15 @@ fn a_sessions_directory_that_is_not_there_is_not_a_reason_not_to_start() {
     let sample = Sample::new("recent-missing");
     let nowhere = sample.logs().join("never-made");
 
-    assert!(recent(&nowhere, &sample.workspace(), 4).is_empty());
+    assert!(
+        recent(
+            &nowhere,
+            Roots::These(&[sample.workspace().root()]),
+            Reach::FirstFrame,
+            4,
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -309,7 +331,7 @@ fn the_workspace_a_scan_is_for_is_the_one_it_answers_about() {
     planted(&sample, &nth(1), &["work done here"]);
 
     assert_eq!(offered(&sample, 4).len(), 1);
-    assert!(recent(&sample.logs(), &sample.elsewhere(), 4).is_empty());
+    assert!(here(&sample, &sample.elsewhere(), 4).is_empty());
 }
 
 #[test]
@@ -396,4 +418,125 @@ fn a_session_that_opened_with_a_file_still_says_what_was_asked() {
     );
 
     assert_eq!(first(&offered(&sample, 4)), "what is in this screenshot");
+}
+
+/// A log recorded in `workspace`, holding `prompts` as its messages.
+fn planted_in(
+    sample: &Sample,
+    workspace: &crucible_workspace::Workspace,
+    id: &str,
+    prompts: &[&str],
+) -> String {
+    let mut lines = vec![
+        serde_json::json!({
+            "format": wire::FORMAT,
+            "session": id,
+            "workspace": workspace.root().display().to_string(),
+        })
+        .to_string(),
+    ];
+    lines.extend(
+        prompts
+            .iter()
+            .map(|said| serde_json::json!({ "user": said }).to_string()),
+    );
+
+    sample.plant(id, &lines);
+    id.to_owned()
+}
+
+#[test]
+fn the_whole_index_reaches_past_what_the_first_frame_opens() {
+    // The same directory as the bound test above, asked for by a listing
+    // somebody opened after the first frame: it can afford every header the
+    // index names, so the two sessions under the others are found.
+    let sample = Sample::new("recent-indexed");
+    planted(&sample, &nth(0), &["under the others"]);
+    planted(&sample, &nth(1), &["under the others"]);
+    for count in 2..u64::try_from(EXAMINED + 2).unwrap_or(u64::MAX) {
+        planted_in(
+            &sample,
+            &sample.elsewhere(),
+            &nth(count),
+            &["somewhere else"],
+        );
+    }
+    super::index::ensure(&sample.logs()).expect("the sessions indexed");
+
+    let reached = recent(
+        &sample.logs(),
+        Roots::These(&[sample.workspace().root()]),
+        Reach::Indexed,
+        usize::MAX,
+    );
+
+    assert_eq!(reached.len(), 2);
+    assert!(
+        offered(&sample, 4).is_empty(),
+        "the first frame still gives up"
+    );
+}
+
+#[test]
+fn any_directory_lists_another_directorys_session_and_says_where_it_was() {
+    let sample = Sample::new("recent-any");
+    planted(&sample, &nth(1), &["work done here"]);
+    planted_in(
+        &sample,
+        &sample.elsewhere(),
+        &nth(2),
+        &["work done elsewhere"],
+    );
+    super::index::ensure(&sample.logs()).expect("the sessions indexed");
+
+    let listed = recent(&sample.logs(), Roots::Any, Reach::Indexed, usize::MAX);
+
+    let said: Vec<(&str, &Path)> = listed
+        .iter()
+        .map(|session| (session.asked(), session.workspace()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            ("work done elsewhere", sample.elsewhere().root()),
+            ("work done here", sample.workspace().root()),
+        ]
+    );
+}
+
+#[test]
+fn every_root_named_is_admitted_and_no_other() {
+    // A repository's worktrees are several directories, and each of them is a
+    // whole match like the one directory is.
+    let sample = Sample::new("recent-roots");
+    std::fs::create_dir_all(sample.home()).expect("a third directory");
+    let third = crucible_workspace::Workspace::open(sample.home()).expect("the third exists");
+    planted(&sample, &nth(1), &["here"]);
+    planted_in(&sample, &sample.elsewhere(), &nth(2), &["a worktree"]);
+    planted_in(&sample, &third, &nth(3), &["another project"]);
+    super::index::ensure(&sample.logs()).expect("the sessions indexed");
+
+    let listed = recent(
+        &sample.logs(),
+        Roots::These(&[sample.workspace().root(), sample.elsewhere().root()]),
+        Reach::Indexed,
+        usize::MAX,
+    );
+
+    let asked: Vec<&str> = listed.iter().map(Recorded::asked).collect();
+    assert_eq!(asked, ["a worktree", "here"]);
+}
+
+#[test]
+fn a_session_never_asked_anything_is_no_row_whichever_directories_are_admitted() {
+    let sample = Sample::new("recent-any-headers");
+    planted(&sample, &nth(1), &[]);
+    planted_in(&sample, &sample.elsewhere(), &nth(2), &[]);
+    planted_in(&sample, &sample.elsewhere(), &nth(3), &["a real one"]);
+    super::index::ensure(&sample.logs()).expect("the sessions indexed");
+
+    let listed = recent(&sample.logs(), Roots::Any, Reach::Indexed, usize::MAX);
+
+    let asked: Vec<&str> = listed.iter().map(Recorded::asked).collect();
+    assert_eq!(asked, ["a real one"]);
 }

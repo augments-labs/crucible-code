@@ -66,27 +66,31 @@
 
 pub mod bounds;
 pub mod command;
+pub mod context;
 pub mod error;
 pub mod outcome;
 pub mod pending;
 pub mod progress;
 pub mod request;
 pub mod snapshot;
+pub mod usage;
 mod wire;
 
 pub use bounds::{Name, Said, Text};
 pub use command::{Command, Mode, Pace, Palette, Prompt, Rung, Theme};
+pub use context::{Category, Context};
 pub use error::{ErrorCode, Refusal};
 pub use outcome::{
-    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Group, LoginOutcome, LogoutOutcome,
-    Missing, ModelOutcome, NotesOutcome, Outcome, Problem, Release, Resource, Response,
-    ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SpeedOutcome, Standing, Stop,
-    ThemeOutcome, TurnOutcome,
+    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced, Group, LoginOutcome,
+    LogoutOutcome, Missing, ModelOutcome, NotesOutcome, Outcome, Problem, Release, Resource,
+    Response, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome,
+    Standing, Stop, ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
 pub use progress::Progress;
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
 pub use snapshot::{Model, Percent, Snapshot};
+pub use usage::{Cost, Limit, LimitGroup, Limits, Reading, Usage, Used, Window};
 
 #[cfg(test)]
 mod tests;

@@ -1,8 +1,8 @@
 ---
 source: tests/whole_screen/main.rs
-expression: window.picture()
+expression: picture
 ---
-80x16 cursor 12,4 scrolled 0
+80x30 cursor 27,4 scrolled 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -12,10 +12,24 @@ expression: window.picture()
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› say hello                                                                     |
+|                                                                                |
+|Hello.                                                                          |
+|                                                                                |
+|› /settings                                                                     |
+|Scroll rail set to off                                                          |
+|                                                                                |
+|                                                                                |
+|                                                                                |
 |                                                                                |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|first ■────────────────────────────────○──────────────────────────────────── now|

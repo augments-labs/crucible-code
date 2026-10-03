@@ -67,7 +67,7 @@ fn one_of_crucibles_own_settings_is_refused_where_it_was_written() {
             "got {said}"
         );
         assert!(said.contains("line 1"), "got {said}");
-        assert!(said.contains("1 to 30"), "got {said}");
+        assert!(said.contains("3 to 30"), "got {said}");
 
         // The name and where it is, never what was set beside it. This block is
         // the environment, so the next value to go wrong could be a token.
@@ -83,6 +83,66 @@ fn an_answer_crucible_takes_passes_in_every_layer() {
         shared,
     ] {
         read(r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "6"}}"#).unwrap();
+    }
+}
+
+#[test]
+fn scroll_speed_may_be_written_as_a_json_integer_in_every_layer() {
+    for read in [
+        mine as fn(&str) -> Result<Document, ConfigError>,
+        local,
+        shared,
+    ] {
+        read(r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": 3}}"#).unwrap();
+        read(r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": 30}}"#).unwrap();
+    }
+}
+
+#[test]
+fn scroll_speed_outside_three_to_thirty_is_refused_whichever_way_it_is_written() {
+    for written in [
+        r#""1""#, r#""2""#, r#""31""#, r#""+6""#, r#""06""#, r#"" 6""#, "1", "2", "31", "0",
+    ] {
+        let err = shared(&format!(
+            r#"{{"env": {{"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": {written}}}}}"#
+        ))
+        .unwrap_err();
+
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Answer { .. }),
+            "{written}: {err:?}"
+        );
+        assert!(said.contains("CRUCIBLE_CODE_MOUSE_SCROLL_SPEED"), "{said}");
+        assert!(said.contains("3 to 30"), "{said}");
+    }
+}
+
+#[test]
+fn only_the_declared_whole_number_variable_may_be_a_number() {
+    // `Settings::env()` hands a command the text of every number it finds, so
+    // this is what keeps a number under any other name from reaching one.
+    for read in [
+        mine as fn(&str) -> Result<Document, ConfigError>,
+        local,
+        shared,
+    ] {
+        let err = read(r#"{"env": {"PAGER": 1}}"#).unwrap_err();
+        assert!(matches!(err, ConfigError::WrongType { .. }), "got {err:?}");
+    }
+}
+
+#[test]
+fn scroll_speed_that_is_not_a_whole_number_is_the_wrong_type() {
+    for written in ["-3", "6.5", "true", "[6]"] {
+        let err = shared(&format!(
+            r#"{{"env": {{"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": {written}}}}}"#
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::WrongType { .. }),
+            "{written}: {err:?}"
+        );
     }
 }
 

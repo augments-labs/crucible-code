@@ -172,18 +172,28 @@ fn every_default_the_schema_publishes_is_the_kind_of_value_its_key_takes() {
         let stated = at
             .get("default")
             .unwrap_or_else(|| panic!("{path:?} publishes what it falls back to"));
-        let kind = at
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("{path:?} says what it takes"));
+        // A key that takes more than one kind says each in `anyOf`, and its
+        // default has to be one of them.
+        let kinds: Vec<&str> = match at.get("type").and_then(Value::as_str) {
+            Some(kind) => vec![kind],
+            None => at
+                .get("anyOf")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|branch| branch.get("type").and_then(Value::as_str))
+                .collect(),
+        };
+        assert!(!kinds.is_empty(), "{path:?} says what it takes");
+        let kind = kinds.join(" or ");
 
-        let agrees = match kind {
+        let agrees = kinds.iter().any(|kind| match *kind {
             "string" => stated.is_string(),
             "boolean" => stated.is_boolean(),
             "array" => stated.is_array(),
             "integer" => stated.is_u64(),
             other => panic!("{path:?} takes {other}, which this test has not been taught"),
-        };
+        });
         assert!(agrees, "{path:?} takes {kind} and falls back to {stated}");
     }
 }

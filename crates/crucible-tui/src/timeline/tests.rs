@@ -279,7 +279,7 @@ fn a_mark_the_rail_and_a_bold_lead_each_wear_their_slot() {
     assert!(
         spans(lead)
             .iter()
-            .any(|(slot, text)| *slot == Slot::Strong && text.contains("A first command.")),
+            .any(|(slot, text)| *slot == Slot::Bold && text.contains("A first command.")),
         "{:?}",
         spans(lead)
     );
@@ -529,4 +529,26 @@ fn the_whole_list_at_eighty_columns_in_ascii() {
 #[test]
 fn the_whole_list_at_forty_columns_in_ascii() {
     insta::assert_snapshot!(pictured(40, Glyphs::Ascii));
+}
+
+#[test]
+fn the_release_notes_follow_the_colour_rule() {
+    // Every heading's mark is the one thing on its row in the accent; the
+    // version beside it is strong and the date quiet, at every width.
+    let told = told();
+    for (columns, glyphs) in [(80, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+        let rows = whole(&told, &forge(), columns, glyphs, 20_000);
+
+        crate::colour_rule::holds("release notes", &rows, |_| false);
+
+        let heading = rows
+            .iter()
+            .find(|row| row.text().contains("0.36.0"))
+            .map(|row| row.spans().map(|(slot, _)| slot).collect::<Vec<_>>());
+        assert_eq!(
+            heading,
+            Some(vec![Slot::Accent, Slot::Strong, Slot::Quiet]),
+            "a release heading at {columns}: its mark, its version, its date"
+        );
+    }
 }

@@ -104,6 +104,12 @@ curl --proto '=https' --tlsv1.2 -fsSLO \
 bash install.sh
 ```
 
+Windows can use the PowerShell installer:
+
+```powershell
+irm https://github.com/augments-labs/crucible-code/releases/latest/download/install.ps1 | iex
+```
+
 Windows executables and manual archives for all supported targets are on the
 [releases page](https://github.com/augments-labs/crucible-code/releases). Every
 release includes `SHA256SUMS`.
@@ -148,6 +154,7 @@ Useful commands:
 /fast        ask the model for its vendor's fast form, at its price
 /login       add an account or API-key credential
 /mode        inspect or change the permission mode
+/settings    change a setting, and see what is in force
 /resume      continue an earlier session in this workspace
 /help        show every command
 ```

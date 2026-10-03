@@ -38,6 +38,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::io::BufRead;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
@@ -55,11 +56,12 @@ use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_client_api::{Command, ErrorCode, Prompt, Refusal};
 use crucible_context::Room;
-use crucible_runner::{Event, Runner, Turned};
+use crucible_runner::{Event, Runner, TurnError, Turned};
 use crucible_runtime::Cancel;
 use crucible_session::Session;
 use crucible_tui::{
-    Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal, TerminalError,
+    Editor, Pasting, Raw, Renderer, Reporting, Screen, ScreenMode, Sending, Spelling, Terminal,
+    TerminalError,
 };
 use crucible_types::{Attachment, Compacting, SessionId, Spend};
 
@@ -136,11 +138,12 @@ const QUEUED_BYTES: usize = Editor::MAX_BYTES;
 /// changes after it has started, so it is read from the engine that holds it
 /// every time it is drawn rather than copied here and kept in step.
 pub(crate) struct Terms {
-    /// Whether to write colour, how much of a tool call to show, and which
-    /// table of colours to draw with.
+    /// Whether to write colour, which characters to draw with, how much of a
+    /// tool call to show, and which table of colours to draw with.
     ///
-    /// In a cell because one command changes it: `/theme` picks a different
-    /// table, and everything drawn after it is drawn in that one. Settled once
+    /// In a cell because two commands change it: `/theme` picks a different
+    /// table, and `/settings` a different table, glyph set or tool detail, and
+    /// everything drawn after either is drawn with what it chose. Settled once
     /// at startup and again only when somebody says so — never per event, which
     /// is the thing `Style`'s own module doc is about.
     pub(crate) style: Cell<Style>,
@@ -152,6 +155,10 @@ pub(crate) struct Terms {
     /// `/theme` took one. `None` is "nothing said", and the first fence settles
     /// on whatever this build draws code in unless somebody says otherwise.
     pub(crate) reading: RefCell<Option<String>>,
+    /// What `/settings` has written down this session, by key, one entry a
+    /// row: the settings above were read at the start and are not read again,
+    /// so a row reopened shows what was taken rather than what was there.
+    pub(crate) settled: RefCell<Vec<(&'static str, String)>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
     /// The application's runtime, which a turn runs on as a task and a
@@ -274,11 +281,12 @@ pub(crate) struct Terms {
     pub(crate) workspace: crucible_workspace::Workspace,
     /// Which press finishes a prompt, and which one opens a line under it.
     ///
-    /// Read once at startup and never again: it is a fact about the keyboard in
-    /// front of somebody, and no command changes it. Not a `Cell` for that
-    /// reason, and not part of the style either — it is about what arrives from
-    /// the terminal rather than about what is drawn to it.
-    pub(crate) sending: Sending,
+    /// Read at startup and again when `/settings` changes it, which is why it
+    /// is a `Cell`: the panel is handed these terms and not the editor, so
+    /// the loop hands the editor this answer whenever a command returns. Not
+    /// part of the style — it is about what arrives from the terminal rather
+    /// than about what is drawn to it.
+    pub(crate) sending: Cell<Sending>,
     /// The commands a `/` line is read against.
     ///
     /// A registry rather than the list itself, because what is in it is a
@@ -392,6 +400,62 @@ impl Parting {
     }
 }
 
+/// Which of the terminal's modes a session takes, given where it draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Holds {
+    /// The alternate screen.
+    screen: bool,
+    /// Reports of the pointer's buttons, motion and wheel.
+    pointer: bool,
+}
+
+/// What a session drawing in `mode` takes from the terminal.
+///
+/// Native mode takes neither: its point is the reader's own buffer, whose
+/// scrollback the alternate screen would hide and whose selection and wheel
+/// taking the pointer would take.
+fn holds(mode: ScreenMode) -> Holds {
+    match mode {
+        ScreenMode::Fullscreen => Holds {
+            screen: true,
+            pointer: true,
+        },
+        ScreenMode::Native => Holds {
+            screen: false,
+            pointer: false,
+        },
+    }
+}
+
+/// Closes a renderer's live region when dropped.
+///
+/// A region left open would be closed by the renderer's own drop, after the
+/// session has given the terminal back — rewinding over whatever was written
+/// below it by then.
+struct Closing<'a, T: Terminal>(&'a mut Renderer<T>);
+
+impl<T: Terminal> Deref for Closing<'_, T> {
+    type Target = Renderer<T>;
+
+    fn deref(&self) -> &Renderer<T> {
+        self.0
+    }
+}
+
+impl<T: Terminal> DerefMut for Closing<'_, T> {
+    fn deref_mut(&mut self) -> &mut Renderer<T> {
+        self.0
+    }
+}
+
+impl<T: Terminal> Drop for Closing<'_, T> {
+    fn drop(&mut self) {
+        // Nowhere to report it: the terminal that refused is the one a report
+        // would be written to.
+        let _ = self.0.closes();
+    }
+}
+
 /// Reads prompts and takes turns until input ends.
 ///
 /// `input` is standard input in a real run. It is a parameter so that a test
@@ -425,7 +489,8 @@ pub(crate) fn converse<T: Terminal>(
     // configuration, a provider nobody named, a home directory that would not
     // be made private — and a refusal written to a screen that is handed back
     // in the same breath is one nobody reads.
-    let screen = Screen::take()?;
+    let holds = holds(renderer.screen());
+    let screen = if holds.screen { Screen::take()? } else { None };
 
     // Whether the transcript is about to be taken away with the screen it was
     // drawn on, which is the whole of what decides if there is anything to say
@@ -469,8 +534,21 @@ pub(crate) fn converse<T: Terminal>(
     // forwarding buttons is not using them itself, so a selection has to be
     // this program's or nobody's. Shift is still the way past a program
     // holding the pointer, and stays the answer for a reader who wanted their
-    // emulator's own selection instead of this one.
-    let _pointer = Reporting::on()?;
+    // emulator's own selection instead of this one — or native mode, which
+    // leaves the pointer to the terminal altogether.
+    let _pointer = if holds.pointer {
+        Reporting::on()?
+    } else {
+        None
+    };
+
+    // Last of the guards, so that it is the first given back: in the
+    // terminal's own buffer the live region is closed however this returns —
+    // by a quit, by an error, or unwinding — while the modes are still held,
+    // and before anything kept for the way out is written below it. Nothing
+    // on a screen of crucible's own.
+    let mut closing = Closing(renderer);
+    let renderer = &mut *closing;
 
     // Everything the session keeps between turns and hands to each of them:
     // the line being typed, the lines finished behind it, what a result had no
@@ -478,7 +556,7 @@ pub(crate) fn converse<T: Terminal>(
     // Held in one value for the reason its own prose gives.
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers { input, keys },
         first.card,
     );
@@ -553,11 +631,6 @@ pub(crate) fn converse<T: Terminal>(
             }
         }
 
-        // The fixed foot — the transcript-map door. Said here rather than
-        // once at startup because a session that reopens the screen — a view,
-        // a resize — is one that has to be told again.
-        renderer.foots()?;
-
         // A view opened during the last turn is still open, and it was standing
         // in the rows the box is about to take. So it moves into the region
         // here and reads keys of its own until it is closed, and what comes
@@ -605,7 +678,8 @@ pub(crate) fn converse<T: Terminal>(
         }
 
         // The lines queued during the last turn are the next turn, before the
-        // box is asked for another.
+        // box is asked for another — unless that turn stopped on a used-up
+        // plan, when they wait for the reader instead.
         let (back, taken) = queueing::taken(conversation, renderer, terms, &mut held, style)?;
         conversation = back;
 
@@ -634,6 +708,7 @@ pub(crate) fn converse<T: Terminal>(
             clipboard: &mut held.clipboard,
             left,
             aside: &terms.aside,
+            queued: &held.queued,
             keys,
         };
         let asked = typing::ask(renderer, style, between)?;
@@ -641,7 +716,9 @@ pub(crate) fn converse<T: Terminal>(
         // Answered by the state that holds what it stands over, because the loop
         // that read the key holds neither. The box comes back either way, with the
         // line still in it.
-        if held.opened.asked(&asked, &held.kept) {
+        if held.opened.asked(&asked, &held.kept)
+            || held.viewing.asked(&asked, &held.queued, &terms.steer)
+        {
             continue;
         }
 
@@ -654,7 +731,7 @@ pub(crate) fn converse<T: Terminal>(
             Asked::Ended => break,
 
             // Taken above, by the state that holds what it stands over.
-            Asked::Expand | Asked::Clicked(_) => continue,
+            Asked::Expand | Asked::Clicked(_) | Asked::Queue => continue,
 
             Asked::Untyped => {
                 match unboxed(renderer, conversation.runner(), style, held.answers.input)? {
@@ -670,6 +747,8 @@ pub(crate) fn converse<T: Terminal>(
         // what was said to it, and `/help` was not.
         if local && let Some(wanted) = command::wanted(&terms.commands.snapshot(), &prompt) {
             let ran = command::run(wanted, renderer, &mut conversation, &mut held, terms)?;
+            // `/settings` may have changed which press sends.
+            held.editor.send_with(terms.sending.get());
             attaching::refresh_store(&mut held, importing(conversation.session()));
             match ran {
                 Ran::Again => continue,
@@ -744,6 +823,13 @@ pub(crate) fn converse<T: Terminal>(
     }
 
     renderer.settle()?;
+
+    // In the terminal's own buffer the live region is closed while the modes
+    // are still held, so what they and any held-back panic write on the way
+    // out lands below it. Nothing on a screen of crucible's own. Closed here
+    // so a terminal that refuses is reported; `closing` covers every other
+    // way out, and does nothing once this has run.
+    renderer.closes()?;
 
     // Whatever was said about the log while the screen was still up went with
     // it, which is why the failure reaches here at all: pointing a reader at a
@@ -897,7 +983,7 @@ fn ran<T: Terminal>(
     // request was made posted no event at all, so without this the reader is
     // handed a fresh prompt and no word on why nothing answered.
     match &took.did {
-        Did::Reported => {}
+        Did::Reported | Did::UsedUp => {}
         Did::Refused(turned) => draw::refused(renderer, turned)?,
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
@@ -910,9 +996,13 @@ fn ran<T: Terminal>(
     // posts the ruled record instead, which is true of the session rather than
     // of the line that asked for it — a rule is drawn from the first column,
     // and a mark shoved in front of one reads as a result that lost its start.
-    if let Some(from) = command.filter(|_| !matches!(took.did, Did::Reported)) {
+    if let Some(from) = command.filter(|_| !matches!(took.did, Did::Reported | Did::UsedUp)) {
         renderer.subordinate(from, style.glyphs())?;
     }
+
+    // Asked of every piece of work that ran, so the first one to end any other
+    // way lets the queue go again.
+    held.used_up = matches!(took.did, Did::UsedUp);
 
     let leaving = matches!(took.meanwhile, typing::Meanwhile::Leaving);
     let mut conversation = took.conversation;
@@ -1299,10 +1389,29 @@ impl Turn<'_, '_> {
         // once a pass. The keyboard is not the turn's here, which is why this
         // is `drain` rather than `step` — and why the hook is handed the
         // renderer rather than closing over it.
-        command::live(renderer, self.terms, command, &mut |renderer| {
+        let counted = command::Counted {
+            usage: crucible_app::client::usage(
+                &self.says.model,
+                &self.turning.breakdown(),
+                &self.turning.totals(),
+                self.turning.limits().as_ref(),
+                self.serving,
+            ),
+            serving: self.serving,
+            mode: self.says.running_mode,
+            session: self
+                .held
+                .attachment_store
+                .as_ref()
+                .map(|(_, id)| id.clone()),
+        };
+        let ran = command::live(renderer, self.terms, command, &counted, &mut |renderer| {
             self.drain(renderer);
             Ok(())
-        })
+        });
+        // `/settings` may have changed which press sends.
+        self.held.editor.send_with(self.terms.sending.get());
+        ran
     }
 
     /// Runs a command whose pick is held for the turn started next.
@@ -1415,7 +1524,9 @@ fn take<T: Terminal>(
     // Started before the worker rather than on the first thing it reports, so
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
-    let mut turning = Turning::started(says.left);
+    let runner = conversation.runner();
+    let mut turning =
+        Turning::started(runner.breakdown()).using(runner.totals(), runner.plan_limits());
 
     // A turn can start with prompts already behind it: room is made before the
     // queue is read, so a line typed during the last turn is still waiting when
@@ -1583,8 +1694,9 @@ fn sent(
             Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
             Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
             Ended::Turn(Err(problem)) | Ended::Room(Err(problem)) => {
+                let used_up = matches!(problem, TurnError::PlanLimit { .. });
                 reporting.post(Event::Failed { error: problem });
-                Did::Reported
+                if used_up { Did::UsedUp } else { Did::Reported }
             }
             Ended::Refused(refusal) => Did::Unsent(refusal),
             // Not reached from here: a prompt or `/compact` with no model to
@@ -1618,6 +1730,11 @@ enum Work {
 enum Did {
     /// It happened, and everything about it was reported as it happened.
     Reported,
+    /// It was reported as [`Self::Reported`] is, and it stopped on a used-up
+    /// plan. Told apart because the queue waits for the reader after it: the
+    /// lines in it, run as the next turn, would stop again or go to a vendor
+    /// that has said the plan is spent.
+    UsedUp,
     /// A guardrail turned the turn away, or could not decide about it. Carried
     /// back whole because the refusal may be the only thing the turn produced:
     /// a prompt refused before any request was made posts no event.
@@ -1691,6 +1808,10 @@ struct Held<'a> {
     /// were typed: the whole of the queue goes to one turn rather than a turn
     /// each, which is what [`queueing::batched`] does with it.
     queued: Prompts,
+    /// Whether the last work stopped on a used-up plan, which holds the queue
+    /// until the reader sends something: [`queueing::taken`] runs nothing
+    /// while it is set.
+    used_up: bool,
     /// What the transcript had no room to say, waiting for Ctrl+O. Held for the
     /// whole session rather than for a turn: the row offering the key is read
     /// after the turn that drew it has ended, which is when there is time to
@@ -1776,6 +1897,7 @@ impl<'a> Held<'a> {
             // also the one that has a second press to give away.
             editor: Editor::new().multiline().sends(sending),
             queued: Prompts::default(),
+            used_up: false,
             kept: Kept::default(),
             gathering: Gathering::default(),
             opened: Standing::default(),
@@ -1822,6 +1944,8 @@ fn breaks(one: &Seen) -> bool {
             | Event::Spent { .. }
             | Event::PromptCache { .. }
             | Event::Sandbox { .. }
+            | Event::Used { .. }
+            | Event::PlanLimits { .. }
             | Event::Retrying => false,
 
             // Everything else is a row, or is about to be one. The model

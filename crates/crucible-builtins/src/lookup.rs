@@ -55,16 +55,14 @@ const MOST: usize = 3;
 /// The root `description` is the tool's own; the one argument is the query.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Finds tools that are not in your current tool list and makes them available. \
-                Some tools are held back until asked for, so this list is not everything that \
-                exists. Search when a task needs something you cannot see — reaching the web, \
-                for instance. What you find is callable from your next message onward."
+        about: "Finds tools held back from your list and makes them available, callable from your \
+                next message on. Search when a task needs something you cannot see, such as the \
+                web."
             .into(),
         fields: vec![Field {
             name: QUERY,
-            about: "What you want to do, in a word or two, for example web search or plan. A \
-                    tool's exact name always matches itself. The closest few are offered, so ask \
-                    for one job at a time rather than everything at once."
+            about: "A job in a word or two, such as web search or plan, or a tool's exact name. \
+                    Ask for one job at a time: the closest few are offered."
                 .into(),
             needed: true,
             shape: Shape::Text,
@@ -140,7 +138,7 @@ impl Tool for ToolSearch {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, QUERY)
+        summary::field(NAME, args, QUERY, crucible_tools::Argument::Other)
     }
 
     fn run<'a>(

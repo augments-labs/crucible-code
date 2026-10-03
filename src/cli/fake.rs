@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crucible_models::{
     Delta, DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
@@ -18,7 +18,7 @@ use crucible_tools::{
     ToolOutput,
 };
 use crucible_types::{
-    CredentialScopeId, Message, Modalities, Modality, PromptCacheEncoding, ToolArgs,
+    CredentialScopeId, Message, Modalities, Modality, PlanWindows, PromptCacheEncoding, ToolArgs,
 };
 
 /// Drives a future to its answer on a current-thread runtime of its own, the
@@ -77,6 +77,21 @@ pub(crate) struct Script {
     /// Refuses every request, for the path where the provider itself fails
     /// rather than the transcript going wrong inside a response.
     refusing: bool,
+    /// The refusal of a used-up plan every request meets, where one does.
+    used_up: Option<UsedUp>,
+    /// What the plan answers when it is asked, where it keeps a source.
+    answering: Option<PlanWindows>,
+    /// How many times the plan was asked.
+    limits_asked: Asked,
+    /// Whether the plan, asked, never answers.
+    stalling: bool,
+}
+
+/// A vendor's refusal of a used-up plan, and the windows its head reported,
+/// where it reported any.
+#[derive(Debug, Clone)]
+struct UsedUp {
+    reading: Option<PlanWindows>,
 }
 
 impl Script {
@@ -88,13 +103,51 @@ impl Script {
             under: Under::default(),
             sent: Sent::default(),
             refusing: false,
+            used_up: None,
+            answering: None,
+            limits_asked: Asked::default(),
+            stalling: false,
         }
+    }
+
+    /// A provider whose plan keeps a source of its limits, and answers
+    /// `windows` each time it is asked.
+    pub(crate) fn answering(self, windows: PlanWindows) -> Self {
+        Self {
+            answering: Some(windows),
+            ..self
+        }
+    }
+
+    /// A provider whose plan keeps a source of its limits and, asked, never
+    /// answers.
+    pub(crate) fn stalling(self) -> Self {
+        Self {
+            answering: Some(PlanWindows::new(std::time::SystemTime::now())),
+            stalling: true,
+            ..self
+        }
+    }
+
+    /// A handle on how many times the plan was asked, taken the same way as
+    /// [`Self::asked`].
+    pub(crate) fn limits_asked(&self) -> Asked {
+        Arc::clone(&self.limits_asked)
     }
 
     /// A provider that will not answer at all.
     pub(crate) fn refusing() -> Self {
         Self {
             refusing: true,
+            ..Self::new(Vec::new())
+        }
+    }
+
+    /// A provider whose vendor refuses every request because the plan is used
+    /// up until tomorrow, reporting `reading` on the refusal's head.
+    pub(crate) fn used_up(reading: Option<PlanWindows>) -> Self {
+        Self {
+            used_up: Some(UsedUp { reading }),
             ..Self::new(Vec::new())
         }
     }
@@ -152,6 +205,19 @@ impl Provider for Script {
         PromptCacheEncoding::NoControlIntended
     }
 
+    fn ask_limits(&self) -> Option<BoxFuture<'static, crucible_models::Asked>> {
+        let windows = self.answering.clone()?;
+        let asked = Arc::clone(&self.limits_asked);
+        let stalling = self.stalling;
+        Some(Box::pin(async move {
+            asked.fetch_add(1, Ordering::Relaxed);
+            if stalling {
+                std::future::pending::<()>().await;
+            }
+            crucible_models::Asked::Answered(windows)
+        }))
+    }
+
     fn stream<'a>(
         &'a self,
         request: Request<'a>,
@@ -202,6 +268,18 @@ impl Provider for Script {
                     provider: "script",
                     status: 401,
                     message: "no".into(),
+                });
+            }
+
+            if let Some(UsedUp { reading }) = self.used_up.clone() {
+                return Err(ProviderError::PlanLimit {
+                    provider: "script",
+                    window: reading
+                        .as_ref()
+                        .and_then(|reading| reading.exhausted(request.model, SystemTime::now()))
+                        .map(|(window, _)| window),
+                    resets_at: Some(SystemTime::now() + Duration::from_hours(24)),
+                    reading: reading.map(Box::new),
                 });
             }
 

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crucible_models::ProviderError;
 use crucible_runner::TurnError;
-use crucible_tools::{Command, Summary, Target};
+use crucible_tools::{Argument, Command, Summary, Target};
 use crucible_tui::{Picture, Recording, Size};
 use crucible_types::{
     Attachment, Change, Diff, Line, Modality, Question, ToolArgs, ToolId, TurnId,
@@ -182,6 +182,20 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
     renderer.terminal().written().to_string()
 }
 
+/// A call's line with the kind its tool would have said, standing in for the
+/// tools these tests do not build: a file tool's argument is a path, a shell
+/// or a search's a command or a pattern, a fetch's an address.
+fn line(said: &str) -> Called {
+    let name = said.split_once('(').map_or(said, |(name, _)| name);
+    let argument = match name {
+        "Read" | "Write" | "Edit" | "Update" => Argument::Path,
+        "Bash" | "Grep" | "Glob" => Argument::Command,
+        "WebFetch" => Argument::Address,
+        _ => Argument::Other,
+    };
+    Called::new(said, argument)
+}
+
 /// What the terminal ends up with once the call whose line reads `said` has
 /// answered and its line has stopped being live.
 fn committed(said: &str, window: usize, style: Style) -> String {
@@ -191,7 +205,7 @@ fn committed(said: &str, window: usize, style: Style) -> String {
     // frame is drawn, so one nobody told would draw every row plain.
     renderer.wears(style.palette());
 
-    returned(&mut renderer, said, style).expect("the call to commit");
+    returned(&mut renderer, &line(said), style).expect("the call to commit");
 
     renderer.terminal().written().to_string()
 }
@@ -203,7 +217,7 @@ fn pictured(said: &str, window: usize, style: Style) -> Vec<String> {
     let mut renderer = Renderer::new(Recording::new(window, 24));
     renderer.wears(style.palette());
 
-    returned(&mut renderer, said, style).expect("the call to commit");
+    returned(&mut renderer, &line(said), style).expect("the call to commit");
 
     renderer.terminal().picture().said()
 }
@@ -214,7 +228,8 @@ fn a_requested_call_reads_as_the_tool_and_what_the_call_is_about() {
         called(
             &call("read", r#"{"path":"src/main.rs"}"#),
             &Summary::new("src/main.rs")
-        ),
+        )
+        .text(),
         "Read(src/main.rs)"
     );
 }
@@ -242,9 +257,11 @@ fn a_call_that_answered_commits_the_words_it_was_drawn_with() {
 
 #[test]
 fn a_call_that_answered_keeps_the_colours_it_was_drawn_in() {
-    // The mark in the accent, the tool's name in the accent emphasised, what the
-    // call was about in the quieter one -- and all three still there once the
-    // line has stopped moving. A line that gave its colour up at the moment it
+    // The mark in the reader's own foreground, the tool's name in it bold, what
+    // the call was about between quiet brackets in the ink its kind takes,
+    // which is the quieter one where nobody chose otherwise -- and all of it
+    // still there once
+    // the line has stopped moving. A line that gave its colour up at the moment it
     // was written out would leave one coloured row above the box and a colourless
     // copy of it in the transcript, with the join wherever the turn is now.
     let style = Style::coloured();
@@ -252,9 +269,10 @@ fn a_call_that_answered_keeps_the_colours_it_was_drawn_in() {
     let written = committed("Read(src/main.rs)", WIDE, style);
 
     for (slot, text) in [
-        (Slot::Accent, style.glyphs().called()),
-        (Slot::Strong, "Read"),
-        (Slot::Quiet, "(src/main.rs)"),
+        (Slot::Bold, "Read"),
+        (Slot::Quiet, "("),
+        (Slot::ArgumentPath, "src/main.rs"),
+        (Slot::Quiet, ")"),
     ] {
         let painted = format!("{}{text}{}", palette.open(slot), palette.close());
 
@@ -262,6 +280,16 @@ fn a_call_that_answered_keeps_the_colours_it_was_drawn_in() {
             written.contains(&painted),
             "{written:?} is missing {painted:?}"
         );
+    }
+    assert_eq!(
+        palette.open(Slot::ArgumentPath).as_str(),
+        palette.open(Slot::Quiet).as_str()
+    );
+    let mark = style.glyphs().called();
+    assert!(written.contains(mark), "{written:?}");
+    for slot in [Slot::Accent, Slot::Strong, Slot::Bold] {
+        let painted = format!("{}{mark}", palette.open(slot));
+        assert!(!written.contains(&painted), "{written:?} has {painted:?}");
     }
 }
 
@@ -316,7 +344,9 @@ fn a_call_nobody_could_read_is_drawn_as_the_bare_name() {
     // Empty brackets would say the call was about nothing, when what happened
     // is that its arguments could not be read at all. The tool refuses it a
     // moment later and says so properly.
-    let said = called(&call("bash", "not json"), &Summary::new(""));
+    let said = called(&call("bash", "not json"), &Summary::new(""))
+        .text()
+        .to_owned();
 
     assert_eq!(said, "Bash");
     assert!(!said.contains("()"), "{said}");
@@ -332,10 +362,10 @@ fn a_tool_the_model_names_with_underscores_is_written_as_one_word() {
 fn a_long_summary_is_cut_on_the_footing_which_is_redrawn_every_frame() {
     let long = "x".repeat(200);
 
-    let line = words(&long, WIDE, Style::plain()).text();
+    let said = words(&line(&long), WIDE, Style::plain()).text();
 
-    assert!(line.ends_with('…'), "{line}");
-    assert!(line.chars().count() <= args(), "{line}");
+    assert!(said.ends_with('…'), "{said}");
+    assert!(said.chars().count() <= args(), "{said}");
 }
 
 #[test]
@@ -354,7 +384,7 @@ fn compact_headings_keep_their_parentheses_in_both_glyph_sets() {
         for name in ["Bash", "WebFetch", "WebSearch", "Read"] {
             let long = format!("{name}({})", "界argument ".repeat(100));
             for width in 1..100 {
-                let row = words(&long, width, Style::drawn(glyphs));
+                let row = words(&line(&long), width, Style::drawn(glyphs));
                 let text = row.text();
                 assert!(row.columns() <= width, "{width}: {text}");
                 if text.contains('(') {
@@ -400,7 +430,7 @@ fn a_long_command_with_no_output_keeps_its_full_heading_for_expansion() {
     let call = call("bash", "{}");
     let heading = format!("Bash(python3 -c '{}')", "pass; ".repeat(200));
     kept.calling(call.id.clone(), heading.clone());
-    returned(&mut renderer, &heading, Style::plain()).unwrap();
+    returned(&mut renderer, &line(&heading), Style::plain()).unwrap();
     returning(&mut renderer, &mut kept, "");
     let picture = renderer.terminal().picture().said().join("\n");
     assert!(picture.contains("ctrl+o to expand"), "{picture}");
@@ -499,7 +529,7 @@ fn a_cut_result_says_it_is_one_by_the_slot_its_words_are_in() {
             Slot::Quiet,
             Slot::Cut,
             Slot::Quiet,
-            Slot::Accent,
+            Slot::Quiet,
             Slot::Quiet
         ]
     );
@@ -801,6 +831,47 @@ fn a_failure_cannot_choose_where_its_rows_break() {
 }
 
 #[test]
+fn plan_limit_failure_draws_the_notice_in_place_of_the_error_sentence() {
+    // The stop is not a failure to be read as one: no Trouble colour, no
+    // sentence of the error's, and the notice's own words in their place.
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    renderer.wears(Style::coloured().palette());
+
+    event(
+        &mut renderer,
+        Event::Failed {
+            error: TurnError::PlanLimit {
+                window: None,
+                resets_at: None,
+                stopped: crucible_runner::PlanLimitStop::Refused,
+            },
+        },
+        &here(),
+        Style::plain(),
+        &mut Kept::default(),
+    )
+    .expect("the notice to draw");
+
+    let shown = renderer.terminal().picture().said();
+    assert_eq!(
+        shown,
+        [
+            "  ■ Usage limit reached · resets: not reported",
+            "    The vendor refused the request. Nothing was lost; send a prompt later to",
+            "    continue.",
+        ]
+    );
+    assert!(
+        !renderer
+            .terminal()
+            .written()
+            .contains("usage limit reached;"),
+        "{:?}",
+        renderer.terminal().written()
+    );
+}
+
+#[test]
 fn a_question_about_a_file_names_the_file() {
     // The path the workspace resolved, not the JSON the model sent: that is
     // what the user is being asked to consent to.
@@ -1023,7 +1094,7 @@ fn transcript(turn: Vec<Beat>) -> String {
     for beat in turn {
         match beat {
             Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
-            Beat::Answered(said) => returned(&mut renderer, said, style),
+            Beat::Answered(said) => returned(&mut renderer, &line(said), style),
         }
         .expect("the turn to draw");
     }
@@ -1951,6 +2022,31 @@ fn a_row_that_stops_offering_keeps_its_count_and_loses_the_key() {
 }
 
 #[test]
+fn a_result_that_says_the_keys_name_is_not_taken_for_the_offer() {
+    // The key is as quiet as the words around it, so what finds the offer is
+    // where it stands -- between its opening bracket and its closing one --
+    // and not the slot. A result whose own words are the key's name keeps them.
+    let mut rows = vec![
+        one(&ToolOutput::ok(EXPAND), WIDE, Style::plain()),
+        one(
+            &ToolOutput::ok(format!("{EXPAND}\nmore")),
+            WIDE,
+            Style::plain(),
+        ),
+    ];
+    unoffered(&mut rows);
+
+    let said: Vec<String> = rows.iter().map(Row::text).collect();
+    assert_eq!(
+        said,
+        [
+            format!("  \u{23bf} {EXPAND}"),
+            format!("  \u{23bf} {EXPAND} (+1 lines)"),
+        ]
+    );
+}
+
+#[test]
 fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
     let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
         1,
@@ -1993,3 +2089,453 @@ fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
 mod row_position;
 
 mod fast;
+
+mod recommended;
+
+/// A turn with every kind of row a transcript holds, drawn in `style`: the
+/// prompt that asked for it, model prose with code and a link in it, a call
+/// whose result was cut, a call that changed a file, and a run of calls folded
+/// to one line.
+fn ruled_turn(style: Style) -> Vec<Row> {
+    let mut renderer = Renderer::new(Recording::new(80, 60));
+    renderer.wears(style.palette());
+    let mut kept = Kept::default();
+
+    queued(&mut renderer, "fix the flaky resume test", style).expect("the prompt to draw");
+    let mut turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta(
+            "The test waits on a file the picker writes after it returns. I moved \
+             the wait into `wait_for_index`, as [the issue](https://example.com/1) asks.\n",
+        ),
+    ];
+    turn.extend(answered(
+        "Read(src/cli/converse/resume.rs)",
+        "one\ntwo\nthree",
+    ));
+    turn.push(Beat::Answered("Update(src/cli/converse/resume.rs)"));
+    turn.push(beat(Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::ok("changed resume.rs").showing(changed()),
+        receipt: None,
+    }));
+    turn.push(beat(Event::TurnFinished {
+        turn: TurnId::FIRST,
+        stop: StopReason::Yielded,
+    }));
+
+    for beat in turn {
+        match beat {
+            Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
+            Beat::Answered(said) => returned(&mut renderer, &line(said), style),
+        }
+        .expect("the turn to draw");
+    }
+    gathered(
+        &mut renderer,
+        "Read 3 files, searched for 2 patterns",
+        style,
+    )
+    .expect("the run to draw");
+
+    renderer.tail(60)
+}
+
+/// Every word and mark `rows` show, in the order they show them, picked out
+/// the way a reader would: runs of anything but whitespace and the ASCII
+/// punctuation markdown writes its markers in.
+fn words_and_marks(rows: &[Row]) -> Vec<String> {
+    rows.iter()
+        .map(Row::text)
+        .flat_map(|said| {
+            said.split(|one: char| one.is_whitespace() || one.is_ascii_punctuation())
+                .filter(|word| !word.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The words of `wanted` that `shown` does not say in the same order, each
+/// time it is said: a word said twice and shown once is one of them.
+fn unsaid(wanted: &[String], shown: &[String]) -> Vec<String> {
+    let mut rest = shown.iter();
+    wanted
+        .iter()
+        .filter(|word| {
+            let mut ahead = rest.clone();
+            let found = ahead.any(|one| one == *word);
+            if found {
+                rest = ahead;
+            }
+            !found
+        })
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn the_transcript_follows_the_colour_rule() {
+    // Each row lands the eye on one accent at most, and says the same words in
+    // every theme.
+    let rows = ruled_turn(Style::coloured());
+    let said: Vec<String> = rows.iter().map(Row::text).collect();
+    for drawn in [
+        "\u{203a} fix the flaky resume test",
+        "\u{25cf} Read",
+        "ctrl+o",
+        "wait_for_index",
+        "+  # what stops",
+        "\u{25cf} Read 3",
+    ] {
+        assert!(
+            said.iter().any(|row| row.contains(drawn)),
+            "{drawn:?} is not in {said:#?}"
+        );
+    }
+
+    // One span of each level, in the slot the rule gives it: a call's mark is
+    // the reader's own foreground, an added line carries its meaning, the path
+    // in passing is the call's path, quiet unless a design says otherwise,
+    // and what the model says is plain.
+    let slot_of = |text: &str| {
+        rows.iter()
+            .flat_map(Row::spans)
+            .find(|(_, said)| said.contains(text))
+            .map(|(slot, _)| slot)
+    };
+    assert_eq!(slot_of("\u{25cf}"), Some(Slot::Plain), "a call's mark");
+    assert_eq!(slot_of("# what stops"), Some(Slot::Added), "an added line");
+    assert_eq!(
+        slot_of("src/cli/converse/resume.rs"),
+        Some(Slot::ArgumentPath),
+        "a path in passing"
+    );
+    assert_eq!(
+        Style::coloured()
+            .palette()
+            .open(Slot::ArgumentPath)
+            .as_str(),
+        Style::coloured().palette().open(Slot::Quiet).as_str(),
+        "a path in passing, where nobody chose a design"
+    );
+    assert_eq!(slot_of("The test waits"), Some(Slot::Plain), "model prose");
+
+    crate::cli::colour_rule::holds("transcript", &rows, |_| false);
+}
+
+/// The slot of every span of [`ruled_turn`] in colour whose text, trimmed, is
+/// `wanted`, in the order they are drawn.
+fn ruled_slots(wanted: &str) -> Vec<Slot> {
+    ruled_turn(Style::coloured())
+        .iter()
+        .flat_map(Row::spans)
+        .filter(|(_, text)| text.trim() == wanted)
+        .map(|(slot, _)| slot)
+        .collect()
+}
+
+#[test]
+fn a_calls_mark_is_the_readers_own_colour_on_every_row_it_leads() {
+    // Two calls that answered and the run they were folded into.
+    assert_eq!(
+        ruled_slots("\u{25cf}"),
+        [Slot::Plain, Slot::Plain, Slot::Plain]
+    );
+}
+
+#[test]
+fn a_tools_name_is_weight_rather_than_the_theme_colour() {
+    assert_eq!(ruled_slots("Read"), [Slot::Bold]);
+    assert_eq!(ruled_slots("Update"), [Slot::Bold]);
+}
+
+#[test]
+fn the_figures_of_a_count_are_weight_rather_than_the_theme_colour() {
+    // "Added 3 lines, removed 3 lines".
+    assert_eq!(ruled_slots("3"), [Slot::Bold, Slot::Bold]);
+}
+
+#[test]
+fn the_key_a_cut_result_names_is_as_quiet_as_the_hint_it_is_in() {
+    assert_eq!(ruled_slots(EXPAND), [Slot::Quiet]);
+}
+
+#[test]
+fn the_transcript_spends_the_theme_colour_on_code_and_links_alone() {
+    // What keeps the theme's colour is what the reader copies or follows.
+    assert_eq!(ruled_slots("wait_for_index"), [Slot::Code]);
+    assert_eq!(ruled_slots("the issue"), [Slot::Link]);
+
+    let rows = ruled_turn(Style::coloured());
+    let spent: Vec<(Slot, &str)> = rows
+        .iter()
+        .flat_map(Row::spans)
+        .filter(|(slot, _)| matches!(slot, Slot::Accent | Slot::Strong))
+        .collect();
+    assert!(spent.is_empty(), "the accent in the transcript: {spent:?}");
+}
+
+/// A reply with each thing the transcript draws in weight -- a heading, a
+/// raised phrase, a table's header -- and a call whose result counts what it
+/// changed, drawn in `style`.
+fn weighted_turn(style: Style) -> Vec<Row> {
+    let mut renderer = Renderer::new(Recording::new(80, 60));
+    renderer.wears(style.palette());
+    let mut kept = Kept::default();
+
+    let mut turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta(
+            "## What changed\n\nThe wait is **moved**, not removed.\n\n\
+             | File | Lines |\n| --- | --- |\n| resume.rs | 3 |\n",
+        ),
+    ];
+    turn.push(Beat::Answered("Update(src/cli/converse/resume.rs)"));
+    turn.push(beat(Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::ok("changed resume.rs").showing(changed()),
+        receipt: None,
+    }));
+    turn.push(beat(Event::TurnFinished {
+        turn: TurnId::FIRST,
+        stop: StopReason::Yielded,
+    }));
+
+    for beat in turn {
+        match beat {
+            Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
+            Beat::Answered(said) => returned(&mut renderer, &line(said), style),
+        }
+        .expect("the turn to draw");
+    }
+
+    renderer.tail(60)
+}
+
+#[test]
+fn with_colour_off_what_colour_draws_in_weight_reads_as_it_was_written() {
+    // Weight is a slot, and colour off has no slots to put it in: the heading,
+    // the raised phrase and the table keep the markdown they arrived in, and
+    // the call and its count say the same words they do in colour.
+    let text = |style: Style| -> Vec<String> {
+        weighted_turn(style)
+            .iter()
+            .map(|row| row.text().trim_end().to_owned())
+            .collect()
+    };
+    let plain = text(Style::plain());
+
+    assert_eq!(
+        plain.get(..10),
+        Some(
+            &[
+                "## What changed",
+                "",
+                "The wait is **moved**, not removed.",
+                "",
+                "| File | Lines |",
+                "| --- | --- |",
+                "| resume.rs | 3 |",
+                "",
+                "\u{25cf} Update(src/cli/converse/resume.rs)",
+                "  \u{23bf} Added 3 lines, removed 3 lines",
+            ]
+            .map(String::from)[..]
+        ),
+        "{plain:#?}"
+    );
+
+    // The call and its count are the same words whether or not colour draws
+    // them: only the slot they are in moved.
+    let coloured = text(Style::coloured());
+    let call = |rows: &[String]| -> Vec<String> {
+        rows.iter()
+            .skip_while(|row| !row.starts_with('\u{25cf}'))
+            .take(2)
+            .cloned()
+            .collect()
+    };
+    assert_eq!(call(&coloured), call(&plain));
+}
+
+#[test]
+fn the_transcript_with_colour_off_shows_every_word_and_mark_colour_does() {
+    // With no colour there is no slot to put a marker's meaning in, so the
+    // model's markdown arrives as it was written, markers and all: more than
+    // the coloured transcript shows, never less.
+    let coloured = ruled_turn(Style::coloured());
+    let plain = ruled_turn(Style::plain());
+
+    let lost = unsaid(&words_and_marks(&coloured), &words_and_marks(&plain));
+    assert!(
+        lost.is_empty(),
+        "colour off loses {lost:?}: {:#?}",
+        plain.iter().map(Row::text).collect::<Vec<_>>()
+    );
+    assert!(
+        plain
+            .iter()
+            .any(|row| row.text().contains("`wait_for_index`")),
+        "the markers are kept"
+    );
+
+    crate::cli::colour_rule::holds("transcript, colour off", &plain, |_| false);
+}
+
+/// The slots a call row's words were built in, with their text, at `window`.
+fn argued(said: &Called, window: usize) -> Vec<(Slot, String)> {
+    words(said, window, Style::plain())
+        .spans()
+        .map(|(slot, text)| (slot, text.to_owned()))
+        .collect()
+}
+
+/// The line a call is drawn on, through the tool's own summary of it.
+fn summarised(name: &str, argument: Argument, about: &str) -> Called {
+    called(&call(name, "{}"), &Summary::of(argument, about))
+}
+
+#[test]
+fn a_call_rows_argument_takes_the_slot_for_the_kind_its_tool_said() {
+    // The tool that parsed the argument says what it is, and the row only
+    // picks the slot for it: a command with a slash in it is still a command,
+    // a file with no extension is still a path, and the brackets stay quiet.
+    for (said, slot, name, argument) in [
+        (
+            summarised("read", Argument::Path, "Makefile"),
+            Slot::ArgumentPath,
+            "Read",
+            "Makefile",
+        ),
+        (
+            summarised("bash", Argument::Command, "scripts/sh/check.sh"),
+            Slot::ArgumentCommand,
+            "Bash",
+            "scripts/sh/check.sh",
+        ),
+        (
+            summarised("grep", Argument::Command, "src/cli"),
+            Slot::ArgumentCommand,
+            "Grep",
+            "src/cli",
+        ),
+        (
+            summarised(
+                "web_fetch",
+                Argument::Address,
+                "https://example.test/pull/1",
+            ),
+            Slot::ArgumentAddress,
+            "WebFetch",
+            "https://example.test/pull/1",
+        ),
+        (
+            summarised("ask_user", Argument::Other, "Which language?"),
+            Slot::Quiet,
+            "AskUser",
+            "Which language?",
+        ),
+    ] {
+        assert_eq!(
+            argued(&said, WIDE),
+            [
+                (Slot::Bold, name.to_owned()),
+                (Slot::Quiet, "(".to_owned()),
+                (slot, argument.to_owned()),
+                (Slot::Quiet, ")".to_owned()),
+            ],
+            "{}",
+            said.text()
+        );
+    }
+}
+
+#[test]
+fn a_narrow_window_cuts_an_arguments_words_and_keeps_its_kind() {
+    // Decided from the whole argument before the row was cut, so a resize
+    // that leaves `Cargo.t…` still draws a path.
+    let said = summarised("read", Argument::Path, "Cargo.toml");
+    let whole = argued(&said, WIDE);
+    let narrow = argued(&said, 14);
+
+    assert_eq!(
+        whole.get(2),
+        Some(&(Slot::ArgumentPath, "Cargo.toml".to_owned()))
+    );
+    let (slot, cut) = narrow.get(2).expect("the argument, cut");
+    assert_eq!(*slot, Slot::ArgumentPath, "{narrow:?}");
+    assert_ne!(cut, "Cargo.toml", "{narrow:?}");
+}
+
+#[test]
+fn each_design_draws_a_call_rows_argument_in_its_own_ink() {
+    let quiet = "\x1b[90m";
+    let accent = "\x1b[38;2;18;137;127m";
+    let second = "\x1b[38;2;97;145;230m";
+    let third = "\x1b[38;2;165;130;235m";
+
+    for (design, path, address, command) in [
+        (crucible_tui::Design::Calm, quiet, quiet, quiet),
+        (crucible_tui::Design::Balanced, third, second, quiet),
+        (crucible_tui::Design::Rich, third, second, accent),
+    ] {
+        let palette = Style::coloured().designing(design).palette();
+
+        for (said, ink) in [
+            (summarised("read", Argument::Path, "Cargo.toml"), path),
+            (
+                summarised("web_fetch", Argument::Address, "https://example.test"),
+                address,
+            ),
+            (
+                summarised("grep", Argument::Command, "wait_for_index"),
+                command,
+            ),
+            // Words that are none of those wear what calm gives every
+            // argument, in every design: a question is not a command.
+            (
+                summarised("ask_user", Argument::Other, "Which language?"),
+                quiet,
+            ),
+            (summarised("todo_write", Argument::Other, "3 tasks"), quiet),
+        ] {
+            for window in [WIDE, 16] {
+                let row = words(&said, window, Style::plain());
+                let worn = row
+                    .spans()
+                    .nth(2)
+                    .map(|(slot, _)| palette.open(slot).as_str().to_owned());
+
+                assert_eq!(
+                    worn.as_deref(),
+                    Some(ink),
+                    "{design:?} at {window}: {}",
+                    said.text()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_design_changes_which_ink_a_kind_wears_and_never_a_word() {
+    // With colour off every design is the same text, byte for byte; with it
+    // on, the same words, whichever inks they wear.
+    let texts = |style: Style| -> Vec<String> { ruled_turn(style).iter().map(Row::text).collect() };
+    let off = texts(Style::plain());
+    let on = texts(Style::coloured());
+
+    for design in [
+        crucible_tui::Design::Calm,
+        crucible_tui::Design::Balanced,
+        crucible_tui::Design::Rich,
+    ] {
+        assert_eq!(texts(Style::plain().designing(design)), off, "{design:?}");
+        assert_eq!(texts(Style::coloured().designing(design)), on, "{design:?}");
+    }
+}

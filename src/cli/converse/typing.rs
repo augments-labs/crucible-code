@@ -30,6 +30,8 @@
 //! handed and steps nothing.
 
 use std::borrow::Cow;
+use std::cell::Cell;
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use crucible_app::Conversation;
@@ -62,7 +64,8 @@ use super::{Prompts, Retained, Terms};
 
 mod drawing;
 
-use drawing::{Bordering, Landed, Pointed, around, boxing, draw, landed, replacement};
+use drawing::{Bordering, Landed, Pointed, boxing, landed, replacement};
+pub(super) use drawing::{around, draw};
 
 /// What the row under the box says after the mode, when pressing the key again
 /// is all there is to do with it.
@@ -151,6 +154,13 @@ pub(super) enum Asked {
     /// Nothing comes out of the box for it. Nobody typed this, so the half-
     /// written line somebody left there is still there afterwards.
     Woke(String),
+    /// Ctrl+Q over the lines a used-up plan left queued: the queue is to be
+    /// stood open, and the box asked for again once it has been closed.
+    ///
+    /// Reported rather than stood here for the reason [`Asked::Expand`] is: the
+    /// view is the one a running turn opens with the same key, and the loop
+    /// above stands it in the one place both presses reach.
+    Queue,
 }
 
 /// A finished line and the local-command provenance established while typing.
@@ -348,6 +358,10 @@ pub(crate) struct Between<'a> {
     /// nobody took is a turn the model still owes, and this loop is what stands
     /// between the two.
     pub(crate) aside: &'a Aside,
+    /// The lines a used-up plan left waiting behind the turn it stopped, which
+    /// the box stands under and Ctrl+Q opens. Empty at every other prompt: the
+    /// loop above runs the queue as the next turn before it asks for a line.
+    pub(crate) queued: &'a Prompts,
     /// Whether there is a keyboard to read. A session with a terminal at only
     /// one end reads whole lines instead, and the caller is what does that.
     pub(crate) keys: bool,
@@ -466,6 +480,7 @@ pub(crate) fn ask<T: Terminal>(
         clipboard: board,
         left,
         aside,
+        queued,
         keys,
     } = between;
 
@@ -511,7 +526,7 @@ pub(crate) fn ask<T: Terminal>(
         renderer,
         editor,
         style,
-        around(planning, &open, &says, recalling.place()),
+        around(planning, &open, &says, recalling.place(), queued),
     )?;
 
     let mut following = None;
@@ -538,7 +553,7 @@ pub(crate) fn ask<T: Terminal>(
                     renderer,
                     editor,
                     style,
-                    around(planning, &open, &says, recalling.place()),
+                    around(planning, &open, &says, recalling.place(), queued),
                 )?;
                 continue;
             };
@@ -605,11 +620,17 @@ pub(crate) fn ask<T: Terminal>(
             // the box's own footing rather than something committed above it.
             Pressed::Plan => planning.expand(),
 
+            // The lines a used-up plan held are named over the box with this
+            // key on the frame, so it opens them here as it does under a turn.
+            // Handed back for the reason Ctrl+O is: the view is the loop's.
+            // Over an empty queue there is no frame and so no offer, and the
+            // key is one of the rest below.
+            Pressed::Queue if queued.waiting_count() > 0 => return Ok(Asked::Queue),
+
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
-            // and has just been taken back. Ctrl+Q among them: between turns
-            // nothing is queued, so the queue view has nothing to show — the key
-            // is the panel's while a turn runs, and the panel is the turn's.
+            // and has just been taken back. Ctrl+Q among them, where nothing is
+            // queued.
             // The pointer moving under a held button and the button coming up
             // again among them: both belong to the selection, which was
             // offered every press before this one saw it, so neither reaches
@@ -622,6 +643,7 @@ pub(crate) fn ask<T: Terminal>(
             | Pressed::Queue
             | Pressed::Tab
             | Pressed::Rename
+            | Pressed::All
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }
             | Pressed::Released { .. }
@@ -740,7 +762,7 @@ pub(crate) fn ask<T: Terminal>(
                 renderer,
                 editor,
                 style,
-                around(planning, &open, &says, recalling.place()),
+                around(planning, &open, &says, recalling.place(), queued),
             )?;
         }
     }
@@ -1302,10 +1324,9 @@ pub(super) fn during<T: Terminal>(
     // also what redraws a row nobody touched: the clock counts and the mark
     // turns whether anything is typed or not.
     //
-    // Asked while the view stands as well, though the row it moves is not on
-    // screen then. It is what puts the view back after a question was answered
-    // over the top of it, and the picture it redraws is the same one, since
-    // what the view stands over does not change while it stands.
+    // Asked while the view stands as well: the view keeps the working row over
+    // its rule, so the clock this moves counts there. It is also what puts the
+    // view back after a question was answered over the top of it.
     moved |= turning.moved();
 
     // And the plan beside it, for the half of the same reason that is not the
@@ -1328,7 +1349,7 @@ pub(super) fn during<T: Terminal>(
 
     if moved
         && !expanding::under(renderer, style, kept, opened)?
-        && !queueing::under(renderer, style, queued, viewing, steer)?
+        && !queueing::under(renderer, style, queued, viewing, steer, turning)?
     {
         // A view takes the rows the box has, so a frame draws one of the three.
         // A window with no room for either view has closed it above, and the
@@ -1619,6 +1640,7 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Explain
         | Pressed::Tab
         | Pressed::Rename
+        | Pressed::All
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
@@ -1771,6 +1793,10 @@ pub(super) fn saying(runner: &Runner) -> Says {
     }
 }
 
+/// The columns a command list keeps in front of its names for the mark: the
+/// mark and the space after it, as [`Menu`] keeps them.
+const MARKED: usize = 2;
+
 /// The command list a line has open above the box, and the row of it that
 /// pressing return would run.
 ///
@@ -1787,6 +1813,14 @@ pub(super) struct Opened {
     shown: Vec<Listed<'static>>,
     /// Which row of it return runs.
     at: usize,
+    /// The first row in view, where there was too little room to show them
+    /// all when it was last drawn.
+    ///
+    /// Kept between draws so a mark moving inside the rows in view moves the
+    /// mark and not the list; only a mark walked past an end moves the list.
+    /// Asked for while drawing, because how many rows are in view is the room
+    /// the draw is given, and that is known nowhere else.
+    top: Cell<usize>,
 }
 
 impl Opened {
@@ -1804,15 +1838,19 @@ impl Opened {
             .position(|one| one.name == said)
             .unwrap_or_default();
 
-        Self { shown, at }
+        Self {
+            shown,
+            at,
+            top: Cell::new(0),
+        }
     }
 
     /// Moves the mark back a row, and says whether it moved.
     ///
     /// Stopping at the end rather than running round to the other one, the same
-    /// as the arrows that move along the line. A list is short enough to read
-    /// whole, so wrapping would buy a keystroke at the price of somebody
-    /// looking away and back to find where the mark went.
+    /// as the arrows that move along the line. Wrapping would buy a keystroke
+    /// at the price of somebody looking away and back to find where the mark
+    /// went.
     pub(super) fn up(&mut self) -> bool {
         let moved = self.at > 0;
         self.at = self.at.saturating_sub(1);
@@ -1846,23 +1884,102 @@ impl Opened {
     /// The rows to open above the box, and the blank row that keeps them off
     /// it.
     ///
-    /// A list with no room for it is not opened, and not cut down to what there
-    /// is room for either: a list cut off at the top reads as the whole list,
-    /// which is worse than drawing nothing at all. Nothing is what a reader can
-    /// tell is nothing.
+    /// A list with room for every row is drawn whole. One without is drawn as
+    /// many rows as fit, with the marked row always among them, and with a
+    /// quiet row at each cut end saying how many more there are past it:
+    /// `↓ 12 more` under the last row shown, and `↑ 3 more` over the first once
+    /// the mark has walked the list down. A list cut with nothing to say so
+    /// would read as the whole list; the count is what tells a cut list from a
+    /// short one. Typing still narrows it, and return still runs the marked
+    /// row.
+    ///
+    /// Under three rows there is no room for a row and the counts either side
+    /// of it, and nothing is opened: nothing is what a reader can tell is
+    /// nothing.
     pub(super) fn rows(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
-        if self.shown.is_empty() || self.shown.len() > room {
+        let total = self.shown.len();
+        let Some(view) = self.view(room) else {
             return Vec::new();
-        }
+        };
+        let above = view.start;
+        let below = total.saturating_sub(view.end);
+        let at = self.at.saturating_sub(above);
+        let Some(shown) = self.shown.get(view) else {
+            return Vec::new();
+        };
 
-        let mut rows = Menu {
-            shown: &self.shown,
-            chosen: Some(self.at),
+        let (up, down) = glyphs.walking();
+        // Stood in the names' column, past the room the mark is kept, where
+        // there is width for that room at all.
+        let front = if columns > MARKED { MARKED } else { 0 };
+        let more = |arrow: &str, count: usize| {
+            let said = format!("{arrow} {count} more");
+            Row::new().then(Slot::Quiet, " ".repeat(front)).then(
+                Slot::Quiet,
+                crate::cli::draw::clipped(said, columns - front, glyphs),
+            )
+        };
+
+        let mut rows = Vec::with_capacity(room + 1);
+        if above > 0 {
+            rows.push(more(up, above));
         }
-        .rows(columns, glyphs);
+        rows.extend(
+            Menu {
+                shown,
+                chosen: Some(at),
+            }
+            .rows(columns, glyphs),
+        );
+        if below > 0 {
+            rows.push(more(down, below));
+        }
 
         rows.push(Row::new());
         rows
+    }
+
+    /// Which rows are in view with room for `room`, or `None` where there is
+    /// no list or no room to show one.
+    ///
+    /// The first row in view is the one shown last time where the mark is
+    /// still in view from it, and moves only as far as the mark needs. A view
+    /// that ends at the last row is moved back up as far as it can go, so a
+    /// list given more room shows more rather than leaving the room empty.
+    fn view(&self, room: usize) -> Option<Range<usize>> {
+        let total = self.shown.len();
+        if total == 0 {
+            return None;
+        }
+        if total <= room {
+            self.top.set(0);
+            return Some(0..total);
+        }
+        if room < 3 {
+            return None;
+        }
+
+        // Where the rows in view end when they start at `top`: what the room
+        // holds once a count has taken a row at each end that has one.
+        let end = |top: usize| {
+            let rest = room - usize::from(top > 0);
+            if top + rest >= total {
+                total
+            } else {
+                top + rest - 1
+            }
+        };
+
+        let mut top = self.top.get().min(self.at);
+        while self.at >= end(top) {
+            top += 1;
+        }
+        while top > 0 && end(top - 1) == total {
+            top -= 1;
+        }
+
+        self.top.set(top);
+        Some(top..end(top))
     }
 }
 

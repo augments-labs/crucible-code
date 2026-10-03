@@ -30,6 +30,7 @@ use std::time::Duration;
 
 use crate::asked::{Asked, Choice, Given, Stop, Writing};
 use crate::asking::Question;
+use crate::bar::{Bar, Fill, Part};
 use crate::color::Slot;
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
@@ -44,7 +45,9 @@ use crate::prompt::Prompt;
 use crate::row::Row;
 use crate::running::{Command, Running};
 use crate::sandbox_panel::{SandboxPanel, SandboxTab};
+use crate::scroll_rail::{Place, ScrollRail};
 use crate::shelf::{Pane, Serving, Shelf, Stocked};
+use crate::tab_row::TabRow;
 use crate::timeline::{Brief, Timeline, Told};
 use crate::welcome::{Recent, Welcome};
 use crate::working::Working;
@@ -638,24 +641,28 @@ fn a_shelf_fits_the_window_it_stands_in() {
 fn a_picker_fits_the_window_it_stands_in() {
     // The other component that fills its room, so the height half of the sweep
     // is the one doing the work again. The fixtures are the states its
-    // arithmetic is least safe in — a title and a branch far too long for the
-    // list's share of the split, a preview row that will not break, a rename in
-    // flight, and then nothing at all with a query still standing.
+    // arithmetic is least safe in — a title, a branch and a directory far too
+    // long for the list's share of the split, a preview row that will not
+    // break, a rename in flight, a notice wider than the window, and then
+    // nothing at all with a query still standing.
     const SESSIONS: [Kept<'static>; 3] = [
         Kept {
             title: LONG,
             when: PROSE,
             branch: LONG,
+            place: LONG,
         },
         Kept {
             title: PROSE,
             when: LONG,
             branch: "",
+            place: PROSE,
         },
         Kept {
             title: "a",
             when: "now",
             branch: LONG,
+            place: "",
         },
     ];
     let preview: Vec<Row> = [LONG, PROSE, "", LONG]
@@ -677,7 +684,8 @@ fn a_picker_fits_the_window_it_stands_in() {
         takes: LONG,
         nothing: PROSE,
         noview: LONG,
-        keys: (PROSE, LONG),
+        keys: &[LONG, PROSE, LONG],
+        notice: &[LONG, LONG],
         pointer: Some((6, 3)),
     };
     down("a picker", |columns, room, glyphs| {
@@ -744,4 +752,106 @@ fn the_release_timeline_fits_the_window_it_is_printed_into() {
     across("the release timeline", |columns, glyphs| {
         timeline.rows(columns, glyphs)
     });
+}
+
+#[test]
+fn the_scroll_rail_fits_the_band_it_stands_beside() {
+    // A rail is as tall as the transcript band it stands for, and one column
+    // wide where the window can spare one. Three places in a record far longer
+    // than any band, and one that fits, at every height the band can be, at
+    // rest and with the pointer on its first row, its middle and its last,
+    // and with the current prompt the latest above the band's foot, one
+    // landed on in the band, and one landed on that has left it.
+    down("the scroll rail", |columns, room, glyphs| {
+        let mut rows = Vec::new();
+        for (total, top) in [(0, 0), (100_000, 0), (100_000, 50_000), (100_000, 99_999)] {
+            let place = Place {
+                total,
+                top,
+                height: room,
+            };
+            for landed in [None, Some(0), Some(49_999)] {
+                let rail = ScrollRail::new(place, [0, 7, 49_999, 99_999], landed);
+                for pointer in [None, Some(0), Some(room / 2), room.checked_sub(1)] {
+                    let laid = rail.rows(columns, glyphs, pointer);
+                    assert!(laid.is_empty() || laid.len() == room, "{columns}x{room}");
+                    rows = laid;
+                }
+            }
+        }
+        rows
+    });
+}
+
+#[test]
+fn a_bar_fits_the_width_it_is_drawn_across() {
+    // As wide as the panel it stands in and no wider, whatever it is split
+    // between: more parts with a size than there are columns, a part too small
+    // to round to a cell, and sizes large enough to overflow a product.
+    let parts = [
+        Part {
+            slot: Slot::Plain,
+            fill: Fill::Solid,
+            size: 1,
+        },
+        Part {
+            slot: Slot::DoneMark,
+            fill: Fill::Solid,
+            size: 0,
+        },
+        Part {
+            slot: Slot::DoingMark,
+            fill: Fill::Solid,
+            size: 3,
+        },
+        Part {
+            slot: Slot::Trouble,
+            fill: Fill::Solid,
+            size: u64::MAX / 4,
+        },
+        Part {
+            slot: Slot::Accent,
+            fill: Fill::Solid,
+            size: 7,
+        },
+        Part {
+            slot: Slot::Quiet,
+            fill: Fill::Solid,
+            size: u64::MAX / 4,
+        },
+        Part {
+            slot: Slot::Quiet,
+            fill: Fill::Shaded,
+            size: u64::MAX / 4,
+        },
+    ];
+    across("a bar", |columns, glyphs| {
+        let row = Bar { parts: &parts }.row(columns, glyphs);
+        assert_eq!(row.columns(), columns, "{columns} with {glyphs:?}");
+        vec![row]
+    });
+}
+
+#[test]
+fn a_tab_row_fits_the_width_it_is_drawn_across() {
+    let names = [LONG, PROSE, "Usage"];
+    for heading in [None, Some(LONG)] {
+        for open in 0..=names.len() {
+            across("a tab row", |columns, glyphs| {
+                let marks = [None, Some(glyphs.bracketing())];
+                marks
+                    .into_iter()
+                    .map(|marks| {
+                        TabRow {
+                            heading,
+                            names: &names,
+                            open,
+                            marks,
+                        }
+                        .row(columns)
+                    })
+                    .collect()
+            });
+        }
+    }
 }

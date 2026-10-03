@@ -21,9 +21,11 @@
 use serde_json::Value;
 
 use crate::bounds::Text;
+use crate::context::Context;
 use crate::error::{ErrorCode, Refusal};
 use crate::outcome::{Problem, Stop};
 use crate::request::Version;
+use crate::usage::{Limits, Used};
 use crate::wire::{Fields, Writing, frame, parsed};
 
 /// One thing a running turn reported.
@@ -72,6 +74,21 @@ pub enum Progress {
         /// How many.
         tokens: u64,
     },
+    /// How the window is spent, as `/context` reads it while a turn runs: the
+    /// figures the turn last reported, which include anything it has recorded
+    /// since its last request.
+    ///
+    /// The model is left out, and a frame naming one is refused: a turn does
+    /// not change it, and it is the snapshot's to say.
+    Context(Context),
+    /// What the session has used, as `/usage` reads it while a turn runs: the
+    /// totals as of the last response that ended or edit that changed lines.
+    /// It is sent at those two points only, not as a response's tokens arrive.
+    Used(Used),
+    /// The plan's limits as they stand once a response of the running turn
+    /// reported some, as `/usage` reads them while it runs. Only a vendor that
+    /// reports them sends this.
+    Limits(Limits),
     /// A turn reported that it finished.
     Finished {
         /// Its ordinal in the session.
@@ -85,7 +102,7 @@ pub enum Progress {
 
 impl Progress {
     /// Every kind of progress, by the word it crosses as.
-    pub const KINDS: [&'static str; 10] = [
+    pub const KINDS: [&'static str; 13] = [
         "started",
         "delta",
         "tool_requested",
@@ -94,6 +111,9 @@ impl Progress {
         "compacting",
         "compacted",
         "spent",
+        "context",
+        "used",
+        "limits",
         "finished",
         "failed",
     ];
@@ -110,6 +130,9 @@ impl Progress {
             Self::Compacting { .. } => "compacting",
             Self::Compacted { .. } => "compacted",
             Self::Spent { .. } => "spent",
+            Self::Context(_) => "context",
+            Self::Used(_) => "used",
+            Self::Limits(_) => "limits",
             Self::Finished { .. } => "finished",
             Self::Failed(_) => "failed",
         }
@@ -139,6 +162,9 @@ impl Progress {
             Self::Compacting { part } => object.with("part", *part),
             Self::Compacted { replaced } => object.with("replaced", *replaced),
             Self::Spent { tokens } => object.with("tokens", *tokens),
+            Self::Context(context) => object.with("context", context.written()),
+            Self::Used(used) => object.with("used", used.written()),
+            Self::Limits(limits) => limits.written_into(object),
             Self::Finished { turn, stop } => object.with("turn", *turn).with("stop", stop.as_str()),
             Self::Failed(problem) => object.with("problem", problem.written()),
         }
@@ -194,6 +220,12 @@ impl Progress {
             "spent" => Self::Spent {
                 tokens: fields.number("tokens")?,
             },
+            "context" => match Context::read(fields.take("context")?)? {
+                Context { model: Some(_), .. } => return Err(ErrorCode::Malformed.into()),
+                context => Self::Context(context),
+            },
+            "used" => Self::Used(Used::read(fields.take("used")?)?),
+            "limits" => Self::Limits(Limits::taken(&mut fields)?),
             "finished" => Self::Finished {
                 turn: fields.number("turn")?,
                 stop: Stop::named(&fields.string("stop")?)?,

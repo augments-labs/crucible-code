@@ -33,6 +33,7 @@
 
 mod fast;
 mod providers;
+mod reaching;
 mod screen;
 mod vendor;
 mod warning;
@@ -212,7 +213,12 @@ fn under(picture: &str, command: &str) -> String {
     let Some(row) = rows.get(at + 1) else {
         panic!("nothing under › {command}: {picture}")
     };
-    row.trim_matches('|').trim_end().to_owned()
+    // Less the scroll rail's cell, which stands at the end of a transcript row
+    // that is not the row's words.
+    row.trim_matches('|')
+        .trim_end_matches(['\u{2502}', '\u{2503}', '\u{2022}'])
+        .trim_end()
+        .to_owned()
 }
 
 #[test]
@@ -555,11 +561,11 @@ fn a_bare_slash_is_the_list_opener_not_a_command() {
     let mut window = Watched::allowing("bare-slash", 80, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/", "/clear");
+    window.types_and_catches("/", "/help");
 
     // Enter on the bare slash: the list is still open and the box still holds
     // the slash — nothing was submitted.
-    window.types_and_catches("\r", "/clear");
+    window.types_and_catches("\r", "/help");
     let still = window.picture();
     assert!(!still.contains("names no command"), "no refusal:\n{still}");
 }
@@ -574,8 +580,8 @@ fn a_bare_slash_mid_turn_is_neither_refused_nor_queued() {
     let mut window = Watched::allowing("bare-slash-kept", 80, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/", "/clear");
-    window.types_and_catches("\r", "/clear");
+    window.types_and_catches("/", "/help");
+    window.types_and_catches("\r", "/help");
     window.types_and_catches("h", "› /h ");
 
     let still = window.picture();
@@ -643,6 +649,125 @@ fn a_mistyped_command_with_words_after_it_mid_turn_is_queued_as_a_prompt() {
     let queued = window.picture();
     assert!(!queued.contains("no such command"), "{queued}");
     assert!(!queued.contains("esc to close"), "{queued}");
+}
+
+/// A turn held open with one prompt waiting behind it, in a window `columns`
+/// wide, and the vendor that holds it open for the caller to keep.
+fn with_a_prompt_waiting(case: &str, columns: u16, vendor: &Vendor) -> Watched {
+    let mut window = Watched::allowing(case, columns, 24, vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("and add a test for the windows path\r", "1 queued");
+    window
+}
+
+/// The picture from the top edge of the queue box down.
+///
+/// Not the whole screen: the working row above it counts seconds, and a picture
+/// that held the count would be one a loaded machine draws a second later.
+fn from_the_queue_box(picture: &str) -> String {
+    picture
+        .lines()
+        .skip_while(|row| !row.contains("╭─ 1 queued"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn a_single_waiting_prompt_is_told_the_key_that_opens_the_queue() {
+    // The key used to appear only once the box overflowed, so a reader with one
+    // prompt waiting had nothing on screen saying it could be taken back. It
+    // is drawn into the box's bottom edge, which costs the screen no row.
+    let vendor = a_turn_still_running();
+    let window = with_a_prompt_waiting("queue-hint", 80, &vendor);
+
+    let picture = window.picture();
+    assert!(
+        picture.contains("\u{2500} ctrl+q edit \u{2500}\u{256f}"),
+        "{picture}"
+    );
+    insta::assert_snapshot!(from_the_queue_box(&picture));
+}
+
+#[test]
+fn a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window() {
+    let vendor = a_turn_still_running();
+    let window = with_a_prompt_waiting("queue-hint-narrow", 40, &vendor);
+
+    let picture = window.picture();
+    assert!(
+        picture.contains("\u{2500} ctrl+q edit \u{2500}\u{256f}"),
+        "{picture}"
+    );
+    insta::assert_snapshot!(from_the_queue_box(&picture));
+}
+
+#[test]
+fn the_open_queue_names_the_keys_that_work_on_a_waiting_prompt() {
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    let picture = window.picture();
+    assert!(picture.contains("e edit"), "{picture}");
+    insta::assert_snapshot!(on_the_first_beat(&picture));
+}
+
+#[test]
+fn the_open_queue_keeps_the_working_row_directly_above_its_rule() {
+    // The view replaces the box and what stood over it, and the row that says a
+    // turn is running stood over it: dropped, the reader looking at their queue
+    // could not tell the turn behind it was still going. It is the row the
+    // view's rule sits directly under, and it is the live one, so its clock
+    // goes on counting while the view stands.
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open-working", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    let picture = window.picture();
+
+    let rows: Vec<&str> = picture.lines().collect();
+    let title = rows
+        .iter()
+        .position(|row| row.contains("1 queued"))
+        .unwrap_or_else(|| panic!("no title in {picture}"));
+    let rule = title.saturating_sub(2);
+    assert!(
+        rows.get(rule)
+            .is_some_and(|row| row.contains("\u{2500}\u{2500}\u{2500}")),
+        "{picture}"
+    );
+    assert!(
+        rows.get(rule.saturating_sub(1))
+            .is_some_and(|row| row.contains("esc to interrupt")),
+        "{picture}"
+    );
+}
+
+#[test]
+fn the_open_queue_wraps_its_keys_in_a_narrow_window() {
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open-narrow", 40, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    insta::assert_snapshot!(on_the_first_beat(&window.picture()));
+}
+
+#[test]
+fn deleting_the_only_waiting_prompt_closes_the_queue_and_leaves_the_box_empty() {
+    // Taking it back would put its words in the box; deleting must not.
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-delete", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    window.types("d");
+
+    // What is typed next lands in a box holding nothing else: a prompt taken
+    // back would be in it already, and the line would read as the two joined.
+    window.types_and_catches("hi", "│ › hi");
+    let picture = window.picture();
+    assert!(!picture.contains("queued"), "{picture}");
+    assert!(!picture.contains("windows path"), "{picture}");
 }
 
 #[test]
@@ -714,8 +839,10 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
 
-    // `/` typed into the box opens the list above it.
-    window.types_and_catches("/", "/clear");
+    // `/` typed into the box opens the list above it. At twenty-four rows the
+    // running turn's footing leaves too little room for every command, so the
+    // list shows what fits and counts the rest on its last row.
+    window.types_and_catches("/", "more");
 
     insta::assert_snapshot!(on_the_first_beat(&window.picture()));
 }
@@ -749,19 +876,137 @@ fn a_model_picked_mid_turn_is_confirmed_then_held() {
     insta::assert_snapshot!(window.picture());
 }
 
+/// The last word of the second answer [`two_long_turns`] is given.
+const AGAIN_END: &str = "again.";
+
+/// Two long answers, one after the other, each under the prompt that asked.
+///
+/// Two prompts, so the scroll rail has more than one mark to draw and a
+/// transcript several windows tall to stand in. Each answer ends on a word only
+/// it has, so the second is waited for rather than mistaken for the first.
+fn two_long_turns(case: &str, columns: u16, rows: u16) -> Watched {
+    let again = format!("{}{AGAIN_END}", taller_than_the_window());
+    let vendor = Vendor::answering_each(&[&a_long_answer(), &again]);
+    let mut window = Watched::answering(case, columns, rows, &vendor);
+    window.types_until("say something long\r", ANSWER_END);
+    window.types_until("say it again\r", AGAIN_END);
+    window
+}
+
+/// The zero-based rows of `picture` whose last cell is `cell`.
+fn rail_rows(picture: &str, cell: char) -> Vec<usize> {
+    picture
+        .lines()
+        .skip(1)
+        .enumerate()
+        .filter(|(_, line)| line.trim_end_matches('|').ends_with(cell))
+        .map(|(row, _)| row)
+        .collect()
+}
+
 #[test]
-fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
-    // A real SGR mouse click opens the control at the bottom right, then a
-    // second gesture drags its current place to the first cell. The
-    // transcript jumps from the answer's foot to the opening while the box
-    // stays on the same rows underneath it.
+fn the_scroll_rail_drags_a_long_answer_back_to_its_first_retained_row() {
+    // A real SGR mouse press on the thumb at the foot of the rail, dragged to
+    // the rail's first row. The transcript jumps from the answer's foot to the
+    // opening while the box stays on the same rows underneath it.
     let vendor = Vendor::answering(&a_long_answer());
-    let mut window = Watched::answering("transcript-map", 80, 16, &vendor);
+    let mut window = Watched::answering("scroll-rail", 80, 16, &vendor);
     window.types_until("say something long\r", ANSWER_END);
 
-    // The padded control begins at column 62; the open map track begins at 6.
-    window.clicks(15, 62);
-    window.drags((15, 69), (15, 6));
+    let thumb = rail_rows(&window.picture(), '\u{2503}');
+    let foot = *thumb.last().expect("a thumb on the rail");
+    window.drags((foot, 79), (0, 79));
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_scroll_rail_left_off_gives_the_transcript_its_last_column() {
+    let vendor = Vendor::answering(&a_long_answer());
+    let document = format!(
+        "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+         \"output\": {{\"scrollRail\": false}},\n  \
+         \"providers\": {{\n    \"anthropic\": {{\n      \
+         \"model\": \"claude-test-1\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+        vendor.address()
+    );
+    let mut window = Watched::configured("scroll-rail-off", 80, 16, &document, true);
+    window.types_until("say something long\r", ANSWER_END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks() {
+    let mut window = two_long_turns("scroll-rail-mark", 80, 16);
+
+    // The second prompt's mark is the current prompt's, grown, above the
+    // thumb. Landed on, it is still grown, on the thumb.
+    let marks = rail_rows(&window.picture(), '\u{25cf}');
+    let mark = *marks.last().expect("a mark on the rail");
+    window.clicks_catching(mark, 79, "\u{203a} say it again");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn the_scroll_rail_at_rest_grows_the_current_prompt_s_mark() {
+    // At the foot of the second answer its prompt is above the band, and its
+    // mark is the grown one; the first prompt's is a plain mark.
+    for columns in [80, 40] {
+        let window = two_long_turns(&format!("scroll-rail-rest-{columns}"), columns, 16);
+
+        insta::assert_snapshot!(
+            format!("scroll_rail_at_rest_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn a_pointer_on_the_scroll_rail_grows_the_mark_under_it() {
+    // A real SGR motion report with no button held, onto the first prompt's
+    // mark: it grows beside the current prompt's.
+    for columns in [80, 40] {
+        let mut window = two_long_turns(&format!("scroll-rail-hover-{columns}"), columns, 16);
+        let rail = usize::from(columns) - 1;
+        let marks = rail_rows(&window.picture(), '\u{2022}');
+        let mark = *marks.first().expect("a mark on the rail");
+        window.hovers(mark, rail);
+
+        insta::assert_snapshot!(
+            format!("scroll_rail_hovered_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window() {
+    // Landed on by a click on its mark, the second prompt is in the band and
+    // its grown mark stands on the thumb rather than under it. This is the
+    // 40-column case; the 80-column one is
+    // `a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks`.
+    let mut window = two_long_turns("scroll-rail-current-40", 40, 16);
+    let marks = rail_rows(&window.picture(), '\u{25cf}');
+    let mark = *marks.last().expect("the current prompt's mark");
+    window.clicks_catching(mark, 39, "\u{203a} say it again");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it() {
+    let mut window = two_long_turns("scroll-rail-narrow", 40, 16);
+
+    // A row of bare track in the transcript's band, the middle one of them, so
+    // the click seeks rather than landing on a prompt or taking the thumb.
+    let track: Vec<usize> = rail_rows(&window.picture(), '\u{2502}')
+        .into_iter()
+        .filter(|row| *row < 10)
+        .collect();
+    let row = *track.get(track.len() / 2).expect("track on the rail");
+    window.clicks(row, 39);
 
     insta::assert_snapshot!(window.picture());
 }
@@ -1812,7 +2057,10 @@ fn the_session_picker_stands_over_the_whole_window() {
     for said in [
         "Resume a session · 1 of 1 ·",
         "Enter to resume · Esc to cancel",
-        "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel",
+        // The long form of the keys row is wider than eighty columns, so this
+        // is the middle one, each toggle named by what it does next; no
+        // branch is checked out here, so Ctrl+B is not offered.
+        "ctrl+r rename · ctrl+a all projects · ctrl+w worktrees · esc",
     ] {
         assert!(rows.iter().any(|row| row.contains(said)), "{picture}");
     }
@@ -1822,13 +2070,219 @@ fn the_session_picker_stands_over_the_whole_window() {
     // loses exactly this row, and loses it silently.
     let keys = rows
         .iter()
-        .rposition(|row| row.contains("↑↓ to walk"))
+        .rposition(|row| row.contains("ctrl+r rename"))
         .expect("the keys row");
     let framed = rows
         .iter()
         .rposition(|row| row.contains('╯'))
         .expect("the foot of the panes");
     assert!(keys > framed, "the keys stand above the panes: {picture}");
+}
+
+// How far `/resume` looks, on a real screen at a real size. Each case starts in
+// the home `reaching::planted` leaves, and each picture is the picker after the
+// keys the case is about, at eighty columns: the width the keys row has to give
+// up its long form in.
+
+#[test]
+fn the_resume_picker_opens_on_this_directory() {
+    let planted = reaching::planted("reach-here");
+    let mut window = Watched::launched(
+        "reach-here",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_a_shows_every_project_and_says_where_each_session_is() {
+    let planted = reaching::planted("reach-all");
+    let mut window = Watched::launched(
+        "reach-all",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x01", "all projects");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_w_adds_this_repositorys_other_checkouts() {
+    let planted = reaching::planted("reach-worktrees");
+    let mut window = Watched::launched(
+        "reach-worktrees",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x17", "this repository's worktrees");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_b_keeps_the_branch_checked_out_here() {
+    let planted = reaching::planted("reach-branch");
+    let mut window = Watched::launched(
+        "reach-branch",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x02", "1 of 1");
+
+    // The branch is before the directory, so a long directory is what is cut.
+    let picture = window.picture();
+    assert!(
+        picture.contains("Resume a session · 1 of 1 · main · ~"),
+        "{picture}"
+    );
+
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
+fn enter_on_another_projects_session_says_how_to_resume_it_there() {
+    let planted = reaching::planted("reach-elsewhere");
+    let mut window = Watched::launched(
+        "reach-elsewhere",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    // Found by the directory its row shows, which nothing in what it asked
+    // says.
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x01", "all projects");
+    window.types_until("website", "1 of 4");
+    window.types_until("\r", "crucible --resume");
+
+    // The picker is still standing, with the session's own tail beside it:
+    // a row the keys put on the list is a row the pane can show.
+    let picture = window.picture();
+    assert!(picture.contains("Resume a session"), "{picture}");
+    assert!(
+        picture
+            .lines()
+            .any(|row| row.contains("│ │ › tidy the stylesheet")),
+        "{picture}"
+    );
+    // Its foot says what Enter does to it, which is not resuming it here.
+    assert!(
+        picture.contains("│ Enter to see how to resume · Esc to cancel"),
+        "{picture}"
+    );
+
+    // The command is wider than the window, so it breaks after its `&&` and
+    // the id stands whole on a row of its own: copied, both rows run.
+    let rows: Vec<&str> = picture.lines().map(str::trim_end).collect();
+    let resume = format!("| crucible --resume {}", planted.website.as_str());
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with(&resume))
+        .unwrap_or_else(|| panic!("the whole id on a row: {picture}"));
+    assert!(
+        at.checked_sub(1)
+            .and_then(|before| rows.get(before))
+            .is_some_and(|row| row.starts_with("| cd ~/projects/website &&")),
+        "{picture}"
+    );
+
+    // The id is this run's own, so the capture writes it as a mask.
+    insta::assert_snapshot!(reaching::unnamed(&picture, &planted.website));
+}
+
+#[test]
+fn a_directory_with_no_session_of_its_own_still_reaches_the_others() {
+    // Nothing was recorded here, but something was elsewhere: the picker
+    // opens on this directory's empty list and says so, and Ctrl+A is one key
+    // away rather than behind a line that ends the command.
+    let earlier = reaching::away("reach-none-here", true);
+    let mut window = Watched::launched(
+        "reach-none-here",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "no earlier session for this workspace");
+    let picture = window.picture();
+    assert!(
+        picture.contains("Resume a session · 0 of 0 · "),
+        "{picture}"
+    );
+    assert!(picture.contains("ctrl+a all projects"), "{picture}");
+    assert!(picture.contains("ctrl+w worktrees"), "{picture}");
+
+    window.types_until("\x01", "1 of 1 · all projects");
+    let picture = window.picture();
+    assert!(picture.contains("tidy the stylesheet"), "{picture}");
+}
+
+#[test]
+fn a_session_that_never_got_past_its_header_is_still_nothing_to_resume() {
+    // A log another directory left with nothing in it is no session, so the
+    // one line saying there is none stands where the picker would.
+    let earlier = reaching::away("reach-header-only", false);
+    let mut window = Watched::launched(
+        "reach-header-only",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "no earlier session for this workspace");
+    let picture = window.picture();
+    assert!(!picture.contains("Resume a session"), "{picture}");
 }
 
 #[test]
@@ -2367,7 +2821,7 @@ fn the_whole_list_ends_on_the_running_version_and_the_closing_row() {
     for columns in [40, 80] {
         let rows = holding_the_newest(columns);
         let mut window = Watched::open(&format!("release-notes-whole-{columns}"), columns, rows);
-        window.types_until("/release-notes\r", "newest in full");
+        window.types_until("/release-notes all\r", "newest in full");
         let picture = window.picture();
         // A row of the picture without the edges it is drawn between.
         let lines: Vec<&str> = picture
@@ -2422,13 +2876,306 @@ fn the_whole_list_ends_on_the_running_version_and_the_closing_row() {
     }
 }
 
+/// Every release the changelog built in holds, newest first, as the headings
+/// number them.
+fn releases_newest_first() -> Vec<&'static str> {
+    include_str!("../../CHANGELOG.md")
+        .lines()
+        .filter_map(|line| line.strip_prefix("## ["))
+        .filter_map(|rest| rest.split_once(']').map(|(version, _)| version))
+        .filter(|version| *version != "Unreleased")
+        .collect()
+}
+
+/// The rows of `picture` without the edges they are drawn between or the
+/// spaces that pad them.
+fn trimmed(picture: &str) -> Vec<String> {
+    picture
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let line = line.strip_prefix('|').unwrap_or(line);
+            let line = line.strip_suffix('|').unwrap_or(line);
+            line.trim_end().to_owned()
+        })
+        .collect()
+}
+
+/// `picture` with the numbers a release moves taken out, so that what is
+/// accepted beside it is the list's shape and not the changelog it was drawn
+/// from: every digit is a `#`, the count of entries is always two of them over
+/// the plural, and the number in `6 newer`, `88 older` and `all 101 releases`
+/// is one, with the spaces it leaves put back so every row is as wide as it
+/// was drawn. The line giving the window's size is left as it is.
+fn shape(picture: &str) -> String {
+    let mut shaped = String::new();
+    for (index, line) in picture.lines().enumerate() {
+        if index == 0 {
+            shaped.push_str(line);
+            shaped.push('\n');
+            continue;
+        }
+        let line = line.replacen(" entry  ", " entries", 1);
+        let line = match line.find(" entries") {
+            Some(at) if at >= 2 && line.is_char_boundary(at - 2) => {
+                format!(
+                    "{}##{}",
+                    line.get(..at - 2).unwrap_or(""),
+                    line.get(at..).unwrap_or("")
+                )
+            }
+            _ => line,
+        };
+        let drawn = line.chars().count();
+        let mut row = String::new();
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if !c.is_ascii_digit() {
+                row.push(c);
+                continue;
+            }
+            let mut digits = 1;
+            while chars.next_if(char::is_ascii_digit).is_some() {
+                digits += 1;
+            }
+            let rest: String = chars.clone().collect();
+            let counted = [" newer", " older", " releases"]
+                .iter()
+                .any(|word| rest.starts_with(word));
+            row.push_str(&"#".repeat(if counted { 1 } else { digits }));
+        }
+        // Whatever a counted number lost goes back before the row's edge.
+        let lost = drawn - row.chars().count();
+        if lost > 0 {
+            let edge = row.pop();
+            row.push_str(&" ".repeat(lost));
+            row.extend(edge);
+        }
+        shaped.push_str(&row);
+        shaped.push('\n');
+    }
+    shaped
+}
+
+/// `count` presses of the down arrow, as one string.
+fn downs(count: usize) -> String {
+    "\x1b[B".repeat(count)
+}
+
+#[test]
+fn release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest() {
+    // Read rather than pictured, like the whole list above: its rows are the
+    // changelog's newest, which every release moves.
+    let every = releases_newest_first();
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("release-notes-list-{columns}"), columns, 24);
+        window.types_until("/release-notes\r", "enter opens it");
+        let picture = window.picture();
+        insta::assert_snapshot!(format!("release_notes_list_at_{columns}"), shape(&picture));
+        let lines = trimmed(&picture);
+        let at = format!("{columns} columns:\n{picture}");
+
+        let title = lines
+            .iter()
+            .position(|line| line == "Release notes")
+            .unwrap_or_else(|| panic!("no title at {at}"));
+        let listed = lines.get(title + 2..title + 11).unwrap_or_default();
+
+        // The mark is on the newest, which is the running version: masked.
+        let first = listed.first().map_or("", String::as_str);
+        assert!(first.starts_with("\u{203a} ######"), "{first:?} at {at}");
+        assert!(first.ends_with("this version"), "{first:?} at {at}");
+        for (line, version) in listed.iter().skip(1).zip(every.iter().skip(1)).take(7) {
+            assert!(
+                line.starts_with(&format!("  {version} ")),
+                "{line:?} should be {version} at {at}"
+            );
+        }
+        for line in listed.iter().take(8) {
+            assert!(line.contains("entr"), "{line:?} has no count at {at}");
+            // The date goes first: a date is the one thing here with a dash.
+            assert_eq!(line.contains('-'), columns >= 80, "{line:?} at {at}");
+        }
+        assert_eq!(
+            listed.get(8).map(String::as_str),
+            Some(format!("  all {} releases \u{2193}", every.len()).as_str()),
+            "{at}"
+        );
+
+        let foot: Vec<&str> = lines
+            .iter()
+            .skip(title + 12)
+            .map(String::as_str)
+            .filter(|line| !line.is_empty())
+            .take(2)
+            .collect();
+        if columns >= 80 {
+            assert_eq!(
+                foot.first(),
+                Some(&"\u{2191}\u{2193} to walk \u{b7} enter opens it \u{b7} esc to close"),
+                "{at}"
+            );
+        } else {
+            assert_eq!(
+                foot,
+                [
+                    "\u{2191}\u{2193} to walk \u{b7} enter opens it \u{b7} esc to",
+                    "close"
+                ],
+                "{at}"
+            );
+        }
+    }
+}
+
+#[test]
+fn release_notes_list_reveals_every_release_in_place_on_the_row_that_was_ninth() {
+    let every = releases_newest_first();
+    let mut window = Watched::open("release-notes-list-reveal", 80, 24);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.types_until(&format!("{}\r", downs(8)), "newer");
+    let picture = window.picture();
+    insta::assert_snapshot!("release_notes_list_reveal_at_80", shape(&picture));
+    let lines = trimmed(&picture);
+
+    let title = lines
+        .iter()
+        .position(|line| line == "Release notes")
+        .unwrap_or_else(|| panic!("no title at\n{picture}"));
+    let listed = lines.get(title + 2..title + 11).unwrap_or_default();
+    let marked: Vec<&String> = listed
+        .iter()
+        .filter(|line| line.starts_with('\u{203a}'))
+        .collect();
+    let ninth = every.get(8).copied().unwrap_or_default();
+
+    assert_eq!(marked.len(), 1, "{picture}");
+    assert!(
+        marked
+            .first()
+            .is_some_and(|line| line.starts_with(&format!("\u{203a} {ninth} "))),
+        "{picture}"
+    );
+    // The window shows seven releases between its counts, opened with two
+    // rows of those before the ninth, so six are above it and the rest below.
+    assert_eq!(
+        listed.first().map(String::as_str),
+        Some("  \u{2191} 6 newer"),
+        "{picture}"
+    );
+    assert_eq!(
+        listed.last().map(String::as_str),
+        Some(format!("  \u{2193} {} older", every.len() - 13).as_str()),
+        "{picture}"
+    );
+    assert!(
+        !picture.contains("releases \u{2193}"),
+        "the reveal row stayed: {picture}"
+    );
+}
+
+#[test]
+fn release_notes_list_down_then_enter_puts_the_second_version_alone_in_the_transcript() {
+    let every = releases_newest_first();
+    let second = every.get(1).copied().expect("two releases");
+    let mut window = Watched::open("release-notes-list-second", 80, 120);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.types_until("\x1b[B\r", &format!("\u{25c6} {second}"));
+    let picture = window.picture();
+
+    assert!(
+        !picture.contains("this version"),
+        "the newest came too: {picture}"
+    );
+    assert!(
+        !picture.contains('\u{25c7}'),
+        "an older release came too: {picture}"
+    );
+    assert!(
+        !picture.contains("enter opens it"),
+        "the list stayed: {picture}"
+    );
+    assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+}
+
+#[test]
+fn release_notes_list_opens_one_version_from_the_revealed_rows() {
+    let every = releases_newest_first();
+    let at = every
+        .iter()
+        .position(|version| *version == "0.41.1")
+        .expect("0.41.1 is a release");
+    assert!(at >= 8, "0.41.1 is past the rows the list opens with");
+
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("release-notes-list-open-{columns}"), columns, 24);
+        window.types_until("/release-notes\r", "enter opens it");
+        window.types_until(&format!("{}\r", downs(8)), "newer");
+        window.types_until(&format!("{}\r", downs(at - 8)), RELEASE_ENDS);
+
+        insta::assert_snapshot!(
+            format!("release_notes_one_from_the_list_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn release_notes_list_escape_leaves_the_transcript_as_it_was() {
+    let mut window = Watched::open("release-notes-list-escape", 80, 24);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.types(&downs(2));
+    window.types("\x1b");
+    let picture = window.picture();
+
+    assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+    for gone in [
+        "Release notes",
+        "enter opens it",
+        "\u{25c6}",
+        "\u{25c7}",
+        "this version",
+    ] {
+        assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
+    }
+    // The command's own row is the one thing written, so the rows under it
+    // are the box and nothing else.
+    let lines = trimmed(&picture);
+    let echo = lines
+        .iter()
+        .position(|line| line.starts_with("\u{203a} /release-notes"))
+        .unwrap_or_else(|| panic!("no echo at\n{picture}"));
+    let under = lines.get(echo + 1..).unwrap_or_default();
+    assert!(
+        under.iter().take_while(|line| line.is_empty()).count() + 3
+            >= under.len().saturating_sub(2),
+        "{picture}"
+    );
+}
+
+#[test]
+fn release_notes_list_a_resize_that_leaves_no_room_closes_it_and_prints_nothing() {
+    let mut window = Watched::open("release-notes-list-cramped", 80, 24);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.resize(80, 6);
+    window.resize(80, 24);
+    let picture = window.picture();
+
+    // Walked and abandoned, as escape does: neither the list nor the
+    // `all` output, which is what a window that never had room is given.
+    for gone in ["enter opens it", "newest in full", "\u{25c6}", "\u{25c7}"] {
+        assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
+    }
+    assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+}
+
 #[test]
 fn release_notes_mid_turn_are_refused_on_the_panel() {
     let vendor = a_turn_still_running();
     let mut window = Watched::allowing("release-notes-mid-turn", 60, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/release-notes\r", "thousand rows");
+    window.types_and_catches("/release-notes\r", "stands over, the answer");
 
     let refused = window.picture();
     assert!(refused.contains("esc to close"), "{refused}");
@@ -3290,7 +4037,7 @@ fn the_fast_panel_stands_over_a_model_with_a_fast_form() {
 
 #[test]
 fn a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type() {
-    // Nine rows hold the two lines and not the panel.
+    // Eight rows hold the two lines and not the panel.
     let document = fast::document("google", "gemini-3.8-flash", false);
     let mut window = Watched::launched(
         "fast-short",
@@ -3303,7 +4050,7 @@ fn a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type() {
             home: None,
         },
     );
-    window.resize(80, 9);
+    window.resize(80, 8);
     window.types_until("/fast\r", "/fast off");
 
     let picture = window.picture();
@@ -3389,4 +4136,291 @@ fn a_contributor_model_says_trains_where_its_standard_twin_says_nothing() {
         "{picture}"
     );
     insta::assert_snapshot!("model_trains_80", picture);
+}
+
+// `/context`: how the window of the next request is spent.
+
+/// The percentage the prompt line says is left of the window.
+fn window_left(picture: &str) -> Option<String> {
+    let (before, _) = picture.split_once("% window left")?;
+    let figure = before.rsplit(|cell: char| !cell.is_ascii_digit()).next()?;
+    Some(format!("{figure}%"))
+}
+
+/// The share `/context` prints on its free row.
+fn free_share(picture: &str) -> Option<String> {
+    let row = picture.lines().find(|line| line.contains(" free "))?;
+    row.trim_end_matches('|')
+        .split_whitespace()
+        .last()
+        .map(str::to_owned)
+}
+
+#[test]
+fn context_stands_over_a_fresh_session_and_closes_on_escape() {
+    for columns in [80, 40] {
+        let vendor = Vendor::answering("Hello.");
+        let mut window =
+            Watched::answering(&format!("context-fresh-{columns}"), columns, 24, &vendor);
+        let before = window.picture();
+        window.types_until("/context\r", "esc to close");
+
+        let picture = window.picture();
+        assert!(picture.contains("Context"), "{picture}");
+        assert!(picture.contains("system prompt"), "{picture}");
+        assert_eq!(free_share(&picture), window_left(&before), "{picture}");
+        insta::assert_snapshot!(format!("context_fresh_{columns}"), picture);
+
+        window.types_until("\x1b", "ask mode on");
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
+#[test]
+fn context_stands_over_a_long_session_with_what_the_prompt_line_says_is_left() {
+    let mut window = two_long_turns("context-long", 80, 24);
+    let before = window.picture();
+    window.types_until("/context\r", "esc to close");
+
+    let picture = window.picture();
+    assert!(window_left(&before).is_some(), "{before}");
+    assert_eq!(free_share(&picture), window_left(&before), "{picture}");
+    insta::assert_snapshot!("context_long_80", picture);
+}
+
+#[test]
+fn context_stands_over_a_running_turn_with_the_figures_it_last_carried() {
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("context-mid-turn", 80, 24, &vendor, "bash(*)");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    let before = window.picture();
+
+    window.types_and_catches("/context\r", "esc to close");
+    let picture = window.picture();
+    assert!(window_left(&before).is_some(), "{before}");
+    assert_eq!(free_share(&picture), window_left(&before), "{picture}");
+    insta::assert_snapshot!("context_mid_turn_80", on_the_first_beat(&picture));
+}
+
+// `/usage`: what the session has used, and the plan windows its vendor reported.
+
+/// `picture` with the two figures `/usage` reads off the wall clock written as
+/// `Ns`, the rest of each row as it was.
+///
+/// How long a case's requests took, and how long since its session started,
+/// are this machine's seconds today; what the case is about is the rows
+/// around them.
+fn timeless(picture: &str) -> String {
+    picture
+        .split('\n')
+        .map(|line| {
+            let Some(inner) = line.strip_prefix('|').and_then(|it| it.strip_suffix('|')) else {
+                return line.to_owned();
+            };
+            let Some(label) = ["API time", "Wall time"]
+                .into_iter()
+                .find(|label| inner.trim_start().starts_with(label))
+            else {
+                return line.to_owned();
+            };
+            let Some(at) = inner.find(label) else {
+                return line.to_owned();
+            };
+            let after = inner.get(at + label.len()..).unwrap_or_default();
+            let gap = after.len() - after.trim_start().len();
+            let kept = inner.get(..at + label.len() + gap).unwrap_or_default();
+            let width = inner.chars().count();
+            format!("|{:<width$}|", format!("{kept}Ns"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape() {
+    for columns in [80, 40] {
+        let vendor = Vendor::answering("Hello.");
+        let mut window = Watched::answering(&format!("usage-key-{columns}"), columns, 30, &vendor);
+        window.types_until("say hello\r", "Hello.");
+        window.types_until("/usage\r", "esc to close");
+
+        let picture = window.picture();
+        // A key is named for what it is, not for where it was read from.
+        assert!(picture.contains("Usage · anthropic · API key"), "{picture}");
+        assert!(!picture.contains("ANTHROPIC_API_KEY"), "{picture}");
+        assert!(picture.contains("Plan limits"), "{picture}");
+        assert!(picture.contains("limits not reported"), "{picture}");
+        assert!(!picture.contains("$0.00"), "{picture}");
+        insta::assert_snapshot!(format!("usage_key_{columns}"), timeless(&picture));
+
+        window.types_until("\x1b", "ask mode on");
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
+#[test]
+fn usage_stands_over_a_running_turn_with_the_figures_it_last_posted() {
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("usage-mid-turn", 80, 30, &vendor, "bash(*)");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+
+    window.types_and_catches("/usage\r", "esc to close");
+    let picture = window.picture();
+    assert!(picture.contains("Plan limits"), "{picture}");
+    assert!(!picture.contains("can't"), "{picture}");
+    // Counted while the turn runs, from what it posts: the session had asked
+    // nothing before it.
+    assert!(picture.contains("0 in · 4 out"), "{picture}");
+    insta::assert_snapshot!("usage_mid_turn_80", timeless(&on_the_first_beat(&picture)));
+}
+
+// `/settings`: what is in force, the settings a menu can change, and the
+// session's usage, as three tabs of one panel.
+
+/// `picture` with the session on the Status tab written as `#`s.
+///
+/// An id is minted from the clock and chance as the session opens, so the
+/// Status tab shows a different one every run; what the case is about is the
+/// row it stands in. The tab shows the id's first eight, which is the run of
+/// eight hex digits after the label.
+fn sessionless(picture: &str) -> String {
+    const LABEL: &str = "Session";
+    const SHOWN: usize = 8;
+    picture
+        .lines()
+        .map(|row| {
+            let Some((before, after)) = row.split_once(LABEL) else {
+                return row.to_owned();
+            };
+            let gap = after.len() - after.trim_start().len();
+            let (spaces, rest) = after.split_at(gap);
+            match rest.get(..SHOWN) {
+                Some(id) if gap > 0 && id.chars().all(|letter| letter.is_ascii_hexdigit()) => {
+                    format!(
+                        "{before}{LABEL}{spaces}{}{}",
+                        "#".repeat(SHOWN),
+                        rest.get(SHOWN..).unwrap_or_default()
+                    )
+                }
+                _ => row.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn settings_opens_on_config_and_shows_each_tab_and_a_search() {
+    for columns in [80, 40] {
+        let vendor = Vendor::answering("Hello.");
+        let case = format!("settings-tabs-{columns}");
+        let mut window = Watched::answering(&case, columns, 30, &vendor);
+
+        window.types_until("/settings\r", "esc to close");
+        let config = window.picture();
+        assert!(config.contains("Config"), "{config}");
+        assert!(config.contains("Scroll rail"), "{config}");
+        insta::assert_snapshot!(format!("settings_config_{columns}"), config);
+
+        window.types_until("/cache", "cache ");
+        let search = window.picture();
+        assert!(search.contains("Cache retention"), "{search}");
+        assert!(!search.contains("Scroll rail"), "{search}");
+        insta::assert_snapshot!(format!("settings_search_{columns}"), search);
+
+        // Escape clears the search; the left arrow is the tab before Config.
+        window.types_until("\x1b", "Scroll rail");
+        window.types_until("\x1b[D", "Permission mode");
+        let status = window.picture();
+        assert!(status.contains("Sandbox"), "{status}");
+        insta::assert_snapshot!(format!("settings_status_{columns}"), sessionless(&status));
+
+        window.types_until("\x1b[D", "Plan limits");
+        let usage = window.picture();
+        insta::assert_snapshot!(format!("settings_usage_{columns}"), timeless(&usage));
+
+        window.types_until("\x1b", "ask mode on");
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
+#[test]
+fn a_settings_toggle_folds_the_transcript_again_and_is_left_in_it() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("settings-toggle", 80, 30, &vendor);
+    window.types_until("say hello\r", "Hello.");
+
+    window.types_until("/settings\r", "esc to close");
+    // Down to the rail, six rows below the theme, and turn it off.
+    window.types_until("\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B", "› Scroll rail");
+    window.types_until("\r", "off");
+    window.types_until("\x1b", "Scroll rail set to off");
+    let picture = window.picture();
+    insta::assert_snapshot!("settings_toggle_80", picture);
+}
+
+/// Turns the Send with row to `altEnter` through `/settings` and closes the
+/// panel, between turns or over a running one.
+fn sends_with_alt_enter(window: &mut Watched) {
+    window.types_until("/settings\r", "esc to close");
+    // Enter ends the search on the one row left; the second changes it.
+    window.types_until("/send", "Send with");
+    window.types_until("\r\r", "altEnter");
+    window.types_until("\x1b", "› Theme");
+    window.types_until("\x1b", "Send with set to altEnter");
+}
+
+/// Whether the prompt box holds `first` on one row and `second` on the next.
+fn boxed_on_two_rows(picture: &str, first: &str, second: &str) -> bool {
+    let rows: Vec<&str> = picture.lines().collect();
+    rows.windows(2).any(|pair| {
+        pair.first()
+            .is_some_and(|row| row.contains(&format!("│ › {first} ")))
+            && pair
+                .get(1)
+                .is_some_and(|row| row.contains(&format!("│   {second} ")))
+    })
+}
+
+#[test]
+fn a_send_key_changed_in_settings_is_the_one_return_obeys_next() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("settings-send", 80, 30, &vendor);
+    sends_with_alt_enter(&mut window);
+
+    // Return now opens a line, so nothing is sent and no turn starts.
+    window.types_until("say hello\rthere", "there");
+    let held = window.picture();
+    assert!(boxed_on_two_rows(&held, "say hello", "there"), "{held}");
+    assert!(
+        !held.lines().any(|row| row.starts_with("|› say hello")),
+        "{held}"
+    );
+    assert!(!held.contains("Hello."), "{held}");
+    insta::assert_snapshot!("settings_send_with_alt_enter_80", held);
+
+    // And Alt+Return is the press that sends the two lines.
+    window.types_until("\x1b\r", "Hello.");
+    let sent = window.picture();
+    assert!(sent.contains("› say hello"), "{sent}");
+    assert!(sent.contains("  there"), "{sent}");
+}
+
+#[test]
+fn a_send_key_changed_in_settings_over_a_running_turn_is_obeyed_once_it_closes() {
+    let vendor = Vendor::holding("Still going.");
+    let mut window = Watched::answering("settings-send-live", 80, 30, &vendor);
+    window.types_and_catches("say it\r", "going.");
+    sends_with_alt_enter(&mut window);
+
+    window.types_until("one\rtwo", "two");
+    let typed = window.picture();
+    assert!(boxed_on_two_rows(&typed, "one", "two"), "{typed}");
+    assert!(
+        !typed.lines().any(|row| row.starts_with("|› one")),
+        "{typed}"
+    );
 }

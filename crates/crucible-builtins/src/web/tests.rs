@@ -261,6 +261,18 @@ fn fetching(url: &str, title: Option<&str>, text: &str) -> WebFetch {
 }
 
 #[test]
+fn a_fetch_is_about_an_address_and_a_search_about_words() {
+    let fetched = fetching("https://example.test", None, "")
+        .summary(&ToolArgs::new(r#"{"url":"https://example.test/a"}"#));
+    let searched = searching(Vec::new()).summary(&ToolArgs::new(r#"{"query":"serde derive"}"#));
+
+    assert_eq!(fetched.as_str(), "https://example.test/a");
+    assert_eq!(fetched.argument(), crucible_tools::Argument::Address);
+    assert_eq!(searched.as_str(), "serde derive");
+    assert_eq!(searched.argument(), crucible_tools::Argument::Other);
+}
+
+#[test]
 fn a_result_carries_its_title_its_address_and_its_extract() {
     let tool = searching(vec![result("Serde", "https://serde.rs", "A framework.")]);
     let output = crucible_runtime::answered!(tool.run(

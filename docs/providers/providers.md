@@ -238,6 +238,11 @@ as a text model, which this build does not offer. Whether an M Plan key is
 served `MiniMax-M3` and `MiniMax-M2.7` is not settled by any page; the vendor
 answers.
 
+A MiniMax key given on a Token Plan row has a plan with limits, which `/usage`
+asks MiniMax for at that row's site; the plan limits are asked for on the
+Token Plan sign-in row only. A key given on a pay-as-you-go row, or read from
+`MINIMAX_API_KEY`, is never asked, and neither is an address in `baseUrl`.
+
 #### Qwen's shared addresses
 
 Alibaba Cloud put the shared `dashscope.aliyuncs.com` domain into maintenance
@@ -714,6 +719,14 @@ A refusal about the request rather than the moment is reported the first time: a
 key without access, a model name nobody serves, a response that did not parse.
 Asking again would spend your time to reach the same sentence.
 
+A refusal saying the plan is used up is about a later time rather than this
+moment, so it is not asked again either. On the ChatGPT sign-in the turn ends on a notice
+naming the window and its reset, where the vendor gave them; where its last
+response already put a window at 100% with the reset still ahead, the next
+turn ends the same way before anything is sent. Changing the model or the
+provider lets that reading go, and the next turn is sent. The notice is under
+[Troubleshooting](../getting-started/troubleshooting.md).
+
 ## MoonshotAI issues a key against one console or the other
 
 Here a working key can still be refused, and the refusal does not say why.
@@ -746,6 +759,10 @@ the coding console's spelling, that being the one crucible asks: `k3`,
 `k3-256k`, `kimi-for-coding` and `kimi-for-coding-highspeed`. The open platform
 serves `kimi-k3`, `kimi-k2.7-code` and `kimi-k2.7-code-highspeed`, and does not
 serve a 256k K3 at all, so a key from there is a `baseUrl` and a typed name.
+
+A Kimi Code key or sign-in has a plan with limits, which `/usage` asks Kimi for
+at the coding console of its own site. A key from the open platform has no such
+plan, so it is never asked, and neither is an address of your own in `baseUrl`.
 
 Requests to this provider identify crucible by name in the `user-agent` header.
 MoonshotAI's terms require a client to say truthfully what it is, and treat a

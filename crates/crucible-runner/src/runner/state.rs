@@ -21,9 +21,10 @@ use std::fmt;
 use crucible_agents::Rejection;
 use crucible_models::PromptCacheAttempt;
 use crucible_tools::ToolSnapshot;
-use crucible_types::{PromptCacheScopeDigest, Transcript, TurnId};
+use crucible_types::{PlanWindows, PromptCacheScopeDigest, Transcript, TurnId};
 
 use super::load::Load;
+use super::totals::Totals;
 
 /// Everything one run has accumulated so far.
 ///
@@ -72,6 +73,22 @@ pub struct RunState {
     /// The lines clearings made between turns still owe a session, oldest
     /// first, until [`super::Runner::record_clearings`] writes them.
     pub(super) owed: Vec<super::clearing::Owed>,
+
+    /// What the session has used so far.
+    pub(super) totals: Totals,
+
+    /// The plan windows the credential in force was last said to have used,
+    /// where it was said.
+    ///
+    /// One reading, replaced by an answer to asking the plan and updated by
+    /// each response since, limit by limit, as far as it names them. The
+    /// runner serves one credential at a time, so the reading is that
+    /// credential's; it is dropped when the provider or the model changes,
+    /// because a window another credential or another model's family counted
+    /// is not this one's. Never written to the session: it is the vendor's
+    /// figure as of the response that carried it, and a session picked up
+    /// later is not owed a figure from then.
+    pub(super) limits: Option<PlanWindows>,
 }
 
 impl RunState {
@@ -88,6 +105,8 @@ impl RunState {
             prompt_cache_attempt: None,
             prompt_cache_owner_scope: None,
             owed: Vec::new(),
+            totals: Totals::new(),
+            limits: None,
         }
     }
 

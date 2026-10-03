@@ -39,7 +39,7 @@
 
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_context::{ContextSection, PermissionsSection, Room};
 use crucible_models::{
@@ -54,7 +54,7 @@ use crucible_tools::{
     Toolset, ToolsetContext,
 };
 use crucible_types::{
-    Attachment, Compacting, Message, Modalities, PromptCacheEncoding, PromptCacheFact,
+    Attachment, Compacting, Message, Modalities, PlanWindows, PromptCacheEncoding, PromptCacheFact,
     PromptCacheOutcome, PromptCacheRequestDisposition, PromptCacheRequestFact,
     PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
     PromptCacheUsageFact, PromptCacheUsageReporting, ProviderUsage, Spend, StopReason, ToolCall,
@@ -83,14 +83,17 @@ mod load;
 mod passes;
 mod record;
 mod state;
+mod totals;
 mod work;
 
 use answer::Answer;
 pub use cleanup::PromptCacheCleanup;
-use load::{Counting, Load};
+pub use load::{Breakdown, Category};
+use load::{Counting, Fixed, Load};
 use passes::AgentLoop;
 use state::Judged;
 pub use state::RunState;
+pub use totals::{SessionCost, Totals};
 pub use work::TOOL_RUNS;
 use work::{Went, Work};
 
@@ -196,25 +199,6 @@ pub struct Runner {
     pace: fast::Pace,
 }
 
-/// What `agent` would be advertised out of `tools`, between turns.
-///
-/// A pass narrows the roster it admits and leaves it behind narrowed, so after
-/// the first one this hands the roster straight back. Before it, the run is
-/// still holding everything it was wired with, and both things read here
-/// between turns — the names under the box and the size of the request the
-/// next turn would send — are about what the definition declares rather than
-/// about what the wiring installed.
-///
-/// A function over the two fields rather than a method, so a caller can hold
-/// the load it is about to write while it asks.
-fn advertising<'a>(agent: &Agent, tools: &'a ToolSnapshot) -> Vec<ToolSchema<'a>> {
-    tools
-        .advertised()
-        .into_iter()
-        .filter(|schema| agent.availability().offers(schema.name))
-        .collect()
-}
-
 struct Tooling {
     source: Arc<dyn Toolset>,
     snapshot: ToolSnapshot,
@@ -299,10 +283,10 @@ impl Runner {
             worker: None,
             pace: fast::Pace::default(),
         };
-        runner.state.load.requesting(
-            runner.agent.instructions(),
-            &advertising(&runner.agent, &runner.state.tools),
-        );
+        runner
+            .state
+            .load
+            .requesting(&Fixed::of(&runner.agent, &runner.state.tools));
         runner
     }
 
@@ -448,10 +432,9 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&Fixed::of(&self.agent, &self.state.tools));
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
@@ -483,11 +466,17 @@ impl Runner {
     /// of that kind — it is where this process is being run, it is on screen at
     /// all times, and a session that quietly moved it would be the one place
     /// the row under the box could be wrong.
+    ///
+    /// What the session has used starts again from nothing: [`Runner::totals`]
+    /// is this process's count of the session it is on, and the one picked up
+    /// kept no count of its own. The plan windows stay, since they belong to
+    /// the credential, which has not changed.
     pub fn pick_up(&mut self, store: Arc<dyn JournalStore>, transcript: Transcript) {
         self.permission.forget();
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
         self.state.transcript = transcript;
+        self.state.totals = Totals::new();
 
         // Before the recount rather than after it: what the session picked up
         // remembers about its own load is part of what is being recounted.
@@ -587,7 +576,56 @@ impl Runner {
     /// back less of the window than its session does came to be told the
     /// window was full.
     fn left_under(&self, compaction: Compaction) -> Option<u8> {
-        self.state.load.left(
+        self.breakdown_under(compaction).left()
+    }
+
+    /// What the next request would carry, divided by what holds the window.
+    ///
+    /// The between-turn read `/context` draws, counted with the reserve and
+    /// the arithmetic [`Runner::left`] uses: the categories a request carries
+    /// add up to [`Runner::carrying`], and what is left is [`Runner::left`].
+    #[must_use]
+    pub fn breakdown(&self) -> Breakdown {
+        self.breakdown_under(self.policy.compaction)
+    }
+
+    /// What the session has used so far: tokens, cost, time waiting on
+    /// requests, and lines edits changed.
+    ///
+    /// The between-turn read `/usage` draws. A turn reports the same value as
+    /// [`Event::Used`] while it runs.
+    #[must_use]
+    pub const fn totals(&self) -> Totals {
+        self.state.totals
+    }
+
+    /// The plan windows the credential in force was last said to have used,
+    /// plan-wide and per model, where its vendor says.
+    ///
+    /// The last answer to asking the plan, brought up to date by each response
+    /// since whose headers named a limit: a response updates the limits it
+    /// names and leaves the rest. `None` until either arrives, for a vendor or
+    /// a credential that reports none, and again once the model or the
+    /// provider changes.
+    #[must_use]
+    pub fn plan_limits(&self) -> Option<PlanWindows> {
+        self.state.limits.clone()
+    }
+
+    /// Keeps what the vendor answered when the plan behind the credential in
+    /// force was asked, in place of the reading before it.
+    ///
+    /// The answer is the plan's whole account, so a limit it leaves out is
+    /// one it no longer reports. The caller hands over only an answer for the
+    /// credential still in force.
+    pub fn answered_limits(&mut self, windows: PlanWindows) {
+        self.state.limits = Some(windows);
+    }
+
+    /// The same, against the compaction answer given; the one reader both the
+    /// breakdown and the bare percentage come from.
+    fn breakdown_under(&self, compaction: Compaction) -> Breakdown {
+        self.state.load.breakdown(
             self.state.window,
             self.reserve(compaction, self.state.window),
         )
@@ -686,9 +724,10 @@ impl Runner {
     /// that. What the reader is shown is the same either way.
     #[must_use]
     pub fn offering(&self) -> Vec<String> {
-        advertising(&self.agent, &self.state.tools)
+        Fixed::of(&self.agent, &self.state.tools)
+            .tools
             .into_iter()
-            .map(|schema| schema.name.to_owned())
+            .map(|(_, schema)| schema.name.to_owned())
             .collect()
     }
 
@@ -773,6 +812,12 @@ impl Runner {
             accepts,
             effort: self.agent.model().effort,
         };
+        // A window is counted for a credential's use of a family of models,
+        // and which family another model is counted under is the vendor's to
+        // say and not reported. A reading from before is no reading for this.
+        if self.agent.model().name != aimed.name {
+            self.state.limits = None;
+        }
         self.agent = Arc::new(self.agent.aimed(aimed));
         self.state.window = window;
         self.state.load.reestimated();
@@ -794,10 +839,9 @@ impl Runner {
     /// written empty already gets in the documents this text is built from.
     pub fn telling(&mut self, system: &str) {
         self.agent = Arc::new(self.agent.telling(system));
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&Fixed::of(&self.agent, &self.state.tools));
     }
 
     /// Writes to a different vendor from the next turn on.
@@ -825,6 +869,9 @@ impl Runner {
         let clearing = self.untransferable(0, provider.as_ref(), Some(self.provider.as_ref()));
 
         self.provider = provider;
+        // The windows read were the last credential's. This one's are
+        // unknown until a response of its own reports them.
+        self.state.limits = None;
         // As though a report had measured every message: the estimate is taken
         // again from the byte total below, and that total follows every message.
         self.clear_untransferable(&clearing, self.state.transcript.messages().len());
@@ -1406,7 +1453,14 @@ impl Runner {
                 listening.run.policy().bounds.response_bytes,
             );
 
-            let problem = match self.hearing(&mut answer, &mut listening).await {
+            let asked = Instant::now();
+            let heard = self.hearing(&mut answer, &mut listening).await;
+            self.answered(
+                asked,
+                listening.run.reporting(),
+                matches!(heard, Ok(stop) if stop != StopReason::Cancelled),
+            );
+            let problem = match heard {
                 Ok(said) => return Ok((answer, said)),
                 Err(problem) => problem,
             };
@@ -1677,23 +1731,34 @@ impl Runner {
                 }),
             )
             .await;
-            (
-                streamed?,
-                CacheObservation {
-                    attempt: cache.attempt,
-                    reporting: cache.capabilities.usage(),
-                    model_revision: cache.capabilities.model_revision(),
-                    retention: cache
-                        .selection
-                        .selected()
-                        .map_or(cache.policy.retention().class(), |selected| {
-                            selected.retention()
-                        }),
-                    pricing_date,
-                },
-            )
+            let observation = CacheObservation {
+                attempt: cache.attempt,
+                reporting: cache.capabilities.usage(),
+                model_revision: cache.capabilities.model_revision(),
+                retention: cache
+                    .selection
+                    .selected()
+                    .map_or(cache.policy.retention().class(), |selected| {
+                        selected.retention()
+                    }),
+                pricing_date,
+            };
+            self.went_out(disposition, observation);
+            // A refusal of a used-up plan reports the windows its head
+            // carried, and they are kept like any response's: they are what
+            // `/usage` shows after the stop, and what holds the next turn.
+            if let Err(ProviderError::PlanLimit {
+                reading: Some(reading),
+                ..
+            }) = &streamed
+            {
+                let windows = (**reading).clone();
+                self.limited(Some(windows), listening.run.reporting());
+            }
+            (streamed?, observation)
         };
 
+        self.limited(stream.limits(), listening.run.reporting());
         self.hear(stream.as_mut(), answer, listening, cache_observation)
             .await?;
         self.pace.served = stream.served();
@@ -1704,6 +1769,93 @@ impl Runner {
             return Ok(StopReason::Cancelled);
         }
         answer.finalize().map_err(TurnError::from)
+    }
+
+    /// Notes, for the session's cost, whether the model a request that may
+    /// have reached it has a price.
+    ///
+    /// Asked of the smallest band: whether a model is priced, and in which
+    /// currency, does not depend on how much is sent. A request that never
+    /// went out, or that the provider turned away, is no response and is
+    /// left out.
+    fn went_out(
+        &mut self,
+        disposition: PromptCacheRequestDisposition,
+        observation: CacheObservation,
+    ) {
+        match disposition {
+            PromptCacheRequestDisposition::Accepted | PromptCacheRequestDisposition::Unknown => {
+                let record = self
+                    .provider
+                    .prompt_cache_pricing(
+                        &self.agent.model().name,
+                        observation.model_revision,
+                        Some(0),
+                        observation.retention,
+                        observation.pricing_date,
+                    )
+                    .ok()
+                    .flatten();
+                self.state.totals.asked(totals::Listed::of(record.as_ref()));
+            }
+            PromptCacheRequestDisposition::NotSent | PromptCacheRequestDisposition::Rejected => {}
+        }
+    }
+
+    /// What one usage report costs, as a pair: the first is the itemized
+    /// cost recorded on the prompt-cache attempt, and the second is the price
+    /// [`Totals`] adds into the session's cost.
+    fn priced(
+        &self,
+        usage: &ProviderUsage,
+        observation: CacheObservation,
+    ) -> (UsageCost, totals::Price) {
+        let record = self
+            .provider
+            .prompt_cache_pricing(
+                &self.agent.model().name,
+                observation.model_revision,
+                usage.input.total,
+                observation.retention,
+                observation.pricing_date,
+            )
+            .ok()
+            .flatten();
+        let cost = record
+            .and_then(|pricing| pricing.cost(usage).ok())
+            .unwrap_or(UsageCost::UNKNOWN);
+        (cost, totals::Price::of(record.as_ref(), usage))
+    }
+
+    /// Counts a response that has ended, however it ended, and says what the
+    /// session has used now. `completed` where the provider said it was done.
+    ///
+    /// A response that failed part way was still spent: what it reported
+    /// before it broke is counted with the rest.
+    fn answered(&mut self, asked: Instant, events: Reporter<'_>, completed: bool) {
+        self.state.totals.answered(asked.elapsed(), completed);
+        events.post(Event::Used {
+            totals: self.state.totals,
+        });
+    }
+
+    /// Brings the reading up to date with the plan windows a response's
+    /// headers reported, and says what it now is.
+    ///
+    /// Read as the response opens, since headers arrive before any of the
+    /// body: a turn the user stops still leaves the reading its response
+    /// carried. A response names only the limits it is about, so a limit it
+    /// does not name keeps its last reading, and a response that reported
+    /// none leaves the whole reading standing.
+    fn limited(&mut self, windows: Option<PlanWindows>, events: Reporter<'_>) {
+        if let Some(windows) = windows {
+            let windows = match self.state.limits.take() {
+                Some(known) => known.merge(windows),
+                None => windows,
+            };
+            self.state.limits = Some(windows.clone());
+            events.post(Event::PlanLimits { windows });
+        }
     }
 
     /// Whether this failure, on this much of an answer, is worth asking again.
@@ -1806,19 +1958,8 @@ impl Runner {
                             counting.window = None;
                         }
                     }
-                    let cost = self
-                        .provider
-                        .prompt_cache_pricing(
-                            &self.agent.model().name,
-                            cache_observation.model_revision,
-                            usage.input.total,
-                            cache_observation.retention,
-                            cache_observation.pricing_date,
-                        )
-                        .ok()
-                        .flatten()
-                        .and_then(|pricing| pricing.cost(&usage).ok())
-                        .unwrap_or(UsageCost::UNKNOWN);
+                    let (cost, price) = self.priced(&usage, cache_observation);
+                    self.state.totals.used(&usage, price);
                     let outcome = usage.input.outcome(cache_observation.reporting);
                     if let Some(cache) = self
                         .state
@@ -1841,12 +1982,13 @@ impl Runner {
                     )
                     .await;
                     events.post(Event::Carried {
-                        left: counting.left(),
+                        breakdown: counting.breakdown(),
                     });
                 }
                 Delta::Spent(said) => {
                     counting.spent = before.and(said);
                     counting.load.spent(said);
+                    self.state.totals.spent(said.tokens());
                     events.post(Event::Spent {
                         spend: counting.spent,
                     });
@@ -1854,7 +1996,7 @@ impl Runner {
                     // the percentage again as it grows rather than leaving the
                     // opening input count on screen for the whole response.
                     events.post(Event::Carried {
-                        left: counting.left(),
+                        breakdown: counting.breakdown(),
                     });
                 }
                 // Not added to the spend beside it, and not accumulated at
@@ -1864,6 +2006,7 @@ impl Runner {
                 // running sum of them would describe a session nobody had.
                 Delta::Carried(carried) => {
                     counting.load.carried(carried);
+                    self.state.totals.carried(carried.tokens());
 
                     // A request that carried more than this model was believed
                     // to accept is that belief disproved by the only authority
@@ -1887,7 +2030,7 @@ impl Runner {
                     }
 
                     events.post(Event::Carried {
-                        left: counting.left(),
+                        breakdown: counting.breakdown(),
                     });
                 }
                 Delta::Stopped(stop) => answer.stopped(stop)?,
@@ -1901,9 +2044,9 @@ impl Runner {
     fn output_grew(events: &Reporter<'_>, counting: &mut Counting, bytes: usize) {
         let before = counting.left();
         counting.load.produced(bytes);
-        let left = counting.left();
-        if left != before {
-            events.post(Event::Carried { left });
+        let breakdown = counting.breakdown();
+        if breakdown.left() != before {
+            events.post(Event::Carried { breakdown });
         }
     }
 
@@ -1928,9 +2071,11 @@ fn request_disposition<T>(result: &Result<T, ProviderError>) -> PromptCacheReque
             | ProviderError::Held(_)
             | ProviderError::FastRefused { .. },
         ) => PromptCacheRequestDisposition::NotSent,
-        Err(ProviderError::Refused { .. } | ProviderError::WindowExceeded { .. }) => {
-            PromptCacheRequestDisposition::Rejected
-        }
+        Err(
+            ProviderError::Refused { .. }
+            | ProviderError::WindowExceeded { .. }
+            | ProviderError::PlanLimit { .. },
+        ) => PromptCacheRequestDisposition::Rejected,
         Err(
             ProviderError::Limit { .. }
             | ProviderError::Transport { .. }

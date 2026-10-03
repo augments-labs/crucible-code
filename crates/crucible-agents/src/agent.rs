@@ -107,6 +107,13 @@ impl Agent {
         self.instructions.text()
     }
 
+    /// How many of the last bytes of [`Agent::instructions`] the user or the
+    /// checkout appended to crucible's own.
+    #[must_use]
+    pub const fn appended(&self) -> usize {
+        self.instructions.appended()
+    }
+
     /// The name a reader sees, which is the id where nobody chose another.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -249,6 +256,17 @@ impl AgentBuilder {
     #[must_use]
     pub fn telling(mut self, said: &str) -> Self {
         self.agent.instructions = Instructions::said(said);
+        self
+    }
+
+    /// Marks the last `bytes` of what this agent is told as appended by the
+    /// user or the checkout rather than crucible's own.
+    ///
+    /// Call it after `telling`: a later `telling` forgets the mark, and a
+    /// count past the text's end is held to the text.
+    #[must_use]
+    pub fn appending(mut self, bytes: usize) -> Self {
+        self.agent.instructions = self.agent.instructions.ending_with(bytes);
         self
     }
 
@@ -415,6 +433,17 @@ mod tests {
             &*before.model().name,
             "being told something else changed which model answers"
         );
+    }
+
+    #[test]
+    fn what_was_appended_to_a_definition_is_forgotten_when_it_is_told_something_else() {
+        let appended = AgentBuilder::new(AgentId::new("coding"), described().model().clone())
+            .telling("crucible's own\nproject rules")
+            .appending(13)
+            .build();
+
+        assert_eq!(appended.appended(), 13);
+        assert_eq!(appended.telling("Answer only in French.").appended(), 0);
     }
 
     /// A check that allows everything, under whatever name it is given.

@@ -24,6 +24,8 @@ this page is the list. Slash commands are not keys: they are listed under
 - The mouse is reported to crucible for the whole session. Hold
   <kbd>Shift</kbd> while you drag to hand the pointer back to your terminal's
   own selection.
+- With `output.screen` set to `native` the mouse is not reported at all, and
+  the wheel, a drag and a click are your terminal's.
 - A click outside the rows of whatever is standing over the box is ignored.
   The wheel over a panel that is not a window over more text than it shows
   scrolls the transcript underneath it; over one that is, it walks the panel,
@@ -95,10 +97,12 @@ it](../getting-started/getting-started.md#run-it) tells the longer story.
 While the box holds one word starting with `/`, the commands whose names begin
 with it stand in a list above the box, and a bare `/` shows all of them.
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list and <kbd>Enter</kbd> runs the
-marked command. The list is not drawn where there is no room for the whole
-of it, but it is still there: <kbd>↑</kbd> and <kbd>↓</kbd> still move its
-unseen mark, and <kbd>Enter</kbd> runs the marked command rather than the
-word as typed. The commands themselves are under
+marked command rather than the word as typed. Where there is no room for the
+whole of it, it shows as many commands as fit and ends on a row saying how
+many more there are, `↓ 2 more`; once <kbd>↓</kbd> walks the mark past the
+last one shown, the list moves with it and a `↑ N more` row stands over it.
+Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
+<kbd>↓</kbd> still move its unseen mark. The commands themselves are under
 [Commands](../getting-started/getting-started.md#commands).
 
 ### Other keys at the prompt
@@ -109,7 +113,8 @@ word as typed. The commands themselves are under
 | <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. |
 | <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
-| <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+Q</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
+| <kbd>Ctrl+Q</kbd> | Stands the prompts left queued behind a turn that stopped on a used-up plan. See [The queue](#the-queue). Nothing while none are waiting. |
+| <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
 
 ## While a turn runs
@@ -140,14 +145,16 @@ queue](#the-queue).
 
 | Action | What it does |
 | --- | --- |
-| Wheel | Scrolls the transcript, six rows a notch unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise, from 1 to 30. Sending a prompt takes you back to the foot. |
+| Wheel | Scrolls the transcript, six rows a notch unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise, from 3 to 30. Sending a prompt takes you back to the foot. |
 | Pointer over a cut result | Lights it, every row of it. |
+| Pointer over the scroll rail | Lights the track and its marks, and draws the mark under the pointer larger. |
 | Click on a cut result | Stands that one result, in the view <kbd>Ctrl+O</kbd> stands them all in. |
 | Drag | Selects the rows you cover, anywhere in the window, and letting go copies them. At the top or the foot the transcript scrolls under the pointer, and the wheel scrolls it while the button is still down. Resizing lets go of the selection. |
-| Click on `transcript map` | Opens the map along the bottom row. A click on it jumps there, and one on a prompt's mark lands on that prompt; a drag is exact; the wheel moves it. It closes three seconds after the last touch. |
+| Click on the scroll rail | Off the thumb, moves the transcript so the thumb is centred where you clicked, or as near as the rail's ends allow; a click on a prompt's mark lands on that prompt. A click on the thumb takes hold of it without moving it. |
+| Drag on the scroll rail | Scrolls the transcript with the pointer, holding the thumb where you took it; at the foot it follows the newest line again. |
 
 [Moving through the transcript](../sessions/sessions.md#moving-through-the-transcript)
-describes the map, and [Run it](../getting-started/getting-started.md#run-it)
+describes the scroll rail, and [Run it](../getting-started/getting-started.md#run-it)
 the drag.
 
 ## Answering a permission question
@@ -217,9 +224,12 @@ a panel, it is not stood.
 
 | Key | What it does |
 | --- | --- |
-| Typing, paste | Narrows the list to the sessions whose title or branch holds the text, ignoring case. With no match the list says `no session holds "the text"`. |
+| Typing, paste | Narrows the list to the sessions whose title or branch holds the text, or the directory a row shows, ignoring case. With no match the list says `no session holds "the text"`, or `no session on <branch>` where <kbd>Ctrl+B</kbd> left nothing and nothing is typed. |
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Walks the list. In a window 70 columns or wider, the preview beside it follows the mark. |
-| <kbd>Enter</kbd> | Picks up the marked session. Nothing while nothing matches. |
+| <kbd>Enter</kbd> | Picks up the marked session. On one recorded in another directory, whose preview says `Enter to see how to resume`, the picker stays open and says under the list the `cd … && crucible --resume <id>` that picks it up there, broken after the `&&` onto a second row where one is too narrow. Nothing while nothing matches. |
+| <kbd>Ctrl+A</kbd> | Shows every project's sessions; again, only this one's. |
+| <kbd>Ctrl+B</kbd> | Keeps the sessions recorded on the branch checked out here; again, every branch's. Nothing, and left off the keys row, where no branch is checked out. |
+| <kbd>Ctrl+W</kbd> | Adds the sessions of this repository's other worktrees; again, takes them away. <kbd>Alt-Backspace</kbd> rubs out a word of the search; <kbd>Ctrl+Backspace</kbd> does too where the terminal reports it as Backspace held with Ctrl, but a terminal that sends it as <kbd>Ctrl+W</kbd> toggles the worktrees instead. |
 | <kbd>Esc</kbd> | Clears the search and marks the top. With nothing to clear, leaves: `cancelled, no session picked up`. |
 | <kbd>Ctrl+R</kbd> | Opens a rename over the marked session's title. While it is open, typing and paste edit the title, <kbd>Enter</kbd> saves it (an empty one is refused with `a title cannot be empty`), and <kbd>Esc</kbd> closes it and keeps the search. |
 | <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Leaves, rename open or not. |
@@ -261,6 +271,37 @@ and <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> leave with
 takes the one marked, and <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or
 <kbd>Ctrl+D</kbd> leave with `cancelled, the speed is unchanged`. Typed while a
 turn runs, the speed taken is asked for once the turn ends.
+
+### `/context`
+
+<kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
+redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
+runs, it stands over the turn with the figures that turn last reported, which
+include anything it has recorded since its last request.
+
+### `/usage`
+
+<kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
+redraws it; <kbd>Enter</kbd> and every other key do nothing. While it asks the
+plan for its limits, keys work as ever, and the block is drawn again when the
+answer comes. Typed while a turn runs, it stands over the turn with the totals
+and plan windows that turn last reported, and asks nothing.
+
+### `/settings`
+
+<kbd>←</kbd>, <kbd>→</kbd>, <kbd>Tab</kbd> and <kbd>Shift+Tab</kbd> switch
+between the Status, Config and Usage tabs, and <kbd>Esc</kbd>,
+<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> close the panel. Turning to Usage between
+turns asks the plan for its limits as `/usage` does. On Config,
+<kbd>↑</kbd> and <kbd>↓</kbd> walk the rows and <kbd>Enter</kbd> or
+<kbd>Space</kbd> changes the one marked: a switch flips, a list of three or
+fewer moves to the next choice, a longer list opens under the row, and the
+scroll speed steps up, back to 3 after 30. On the scroll speed <kbd>←</kbd>
+and <kbd>→</kbd> step it down and up instead. <kbd>/</kbd> starts a search
+that keeps the rows whose label holds what is typed; <kbd>↓</kbd> goes from it
+to the rows and <kbd>Esc</kbd> clears it. In an opened list <kbd>↑</kbd> and
+<kbd>↓</kbd> walk, <kbd>Enter</kbd> picks and <kbd>Esc</kbd> leaves the row as
+it was. Typed while a turn runs, it stands over the turn.
 
 ### `/theme`
 
@@ -318,7 +359,10 @@ footer `esc to cancel`.
 ### `/help`, and a command refused mid-turn
 
 `/help` writes the list of commands into the transcript, and there is nothing
-to close; so does `/release-notes`, which is refused while a turn runs. While a
+to close. `/release-notes` stands a list of releases: <kbd>Up</kbd> and
+<kbd>Down</kbd> move, <kbd>Enter</kbd> prints the one chosen into the
+transcript, <kbd>Esc</kbd> closes it, and the foot of the list names these keys.
+It is refused while a turn runs. While a
 turn runs `/help` stands as a panel instead: any key closes it, and
 so does a click on its rows or a wheel notch, and a resize redraws it. A
 command that cannot act while a turn runs stands a panel saying so, with
@@ -382,11 +426,14 @@ With one row of room the view gives it to the transcript and closes.
 
 <kbd>Ctrl+Q</kbd> while a turn runs stands the prompts waiting behind it.
 While the view stands the turn takes none of them, and closing it releases
-them all at once.
+them all at once. Between turns it reaches the prompts left queued behind a
+turn that stopped on a used-up plan, which wait over the box in the same panel
+until you send a prompt; closing the view leaves them waiting there.
 
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. |
-| <kbd>x</kbd> | Takes the marked prompt back into the box, where it can be edited or sent again. When the queue is then empty the view closes with it. |
+| <kbd>e</kbd>, <kbd>x</kbd> | Takes the marked prompt back into the box, cursor after it, where it can be edited or sent again. When the queue is then empty the view closes with it. A prompt too long to go in beside what the box already holds (1 MiB together) stays queued and marked, and the box is left as it was. The footer names <kbd>e</kbd>. |
+| <kbd>d</kbd>, <kbd>Delete</kbd> | Deletes the marked prompt without taking it back; the box is left as it was. When the queue is then empty the view closes with it. |
 | <kbd>Esc</kbd>, <kbd>Ctrl+Q</kbd> | Closes it. |
 | Anything else | Nothing while it stands, <kbd>Ctrl+C</kbd> included. |

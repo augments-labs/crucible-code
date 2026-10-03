@@ -46,7 +46,13 @@ fn every_command_is_reached_by_the_name_it_is_listed_under() {
 
 #[test]
 fn every_command_decides_what_it_can_do_mid_turn() {
-    let live = [Command::Help, Command::Theme];
+    let live = [
+        Command::Help,
+        Command::Theme,
+        Command::Settings,
+        Command::Context,
+        Command::Usage,
+    ];
     let deferred = [Command::Model, Command::Mode, Command::Fast];
 
     for command in EVERY {
@@ -377,6 +383,8 @@ fn help_answers_with_a_name_and_what_it_does() {
         [
             "/help            what these are",
             "/release-notes   what changed in each release",
+            "/context         what fills the model's window",
+            "/usage           what the session has used, and plan limits",
             "/model           pick which model answers",
             "/effort          pick how hard it thinks",
             "/fast            pick how fast it answers",
@@ -385,6 +393,7 @@ fn help_answers_with_a_name_and_what_it_does() {
             "/mode            ask · allowEdits · fullAccess",
             "/sandbox         inspect or configure sandbox confinement",
             "/theme           pick the colours crucible draws with",
+            "/settings        settings, and what is in force",
             "/resume          pick up an earlier session here",
             "/cache           inspect or clean prompt-cache state",
             "/compact         replace what is behind you with notes on it",
@@ -401,6 +410,8 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
         [
             "/help            what these are",
             "/release-notes   what changed in each release",
+            "/context         what fills the model's window",
+            "/usage           what the session has used, and plan limits",
             "/model           pick which model answers",
             "/effort          pick how hard it thinks",
             "/fast            pick how fast it answers",
@@ -409,6 +420,7 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
             "/mode            ask, allowEdits, fullAccess",
             "/sandbox         inspect or configure sandbox confinement",
             "/theme           pick the colours crucible draws with",
+            "/settings        settings, and what is in force",
             "/resume          pick up an earlier session here",
             "/cache           inspect or clean prompt-cache state",
             "/compact         replace what is behind you with notes on it",
@@ -596,7 +608,7 @@ fn release_notes_typed_while_a_turn_runs_is_refused_on_the_panel_with_its_reason
 
     assert!(
         rows.iter()
-            .any(|row| row.contains("prints a thousand rows into the answer being written")),
+            .any(|row| row.contains("prints into, or stands over, the answer being written")),
         "{rows:#?}"
     );
     assert!(

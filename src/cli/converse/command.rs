@@ -45,15 +45,21 @@ use super::{Held, Terms, mode, picking, warning};
 
 mod cache;
 mod clear;
+mod context;
 mod effort;
 mod fast;
 mod login;
 mod logout;
 mod model;
 pub(crate) mod notes;
+mod notes_list;
 mod resume;
 mod sandbox;
+mod settings;
 mod theme;
+mod usage;
+
+pub(crate) use usage::Clock;
 
 /// What a line beginning `/` can ask for.
 ///
@@ -63,8 +69,13 @@ mod theme;
 pub(super) enum Command {
     /// What these are.
     Help,
-    /// Every release crucible has had, or one of them in full.
+    /// A list of the releases to open one from, one of them in full, or every
+    /// release with `all`.
     ReleaseNotes,
+    /// How the window of the next request is spent, part by part.
+    Context,
+    /// What the session has used, and the plan windows its vendor reported.
+    Usage,
     /// Which model answers.
     Model,
     /// How hard it is asked to think.
@@ -81,6 +92,8 @@ pub(super) enum Command {
     Sandbox,
     /// Which table of colours the terminal is drawn with.
     Theme,
+    /// What is in force, every setting a menu can change, and the usage.
+    Settings,
     /// The sessions recorded here, and picking one of them up.
     Resume,
     /// Make room in the model's window now, rather than when it fills.
@@ -98,9 +111,11 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 15] = [
+const EVERY: [Command; 18] = [
     Command::Help,
     Command::ReleaseNotes,
+    Command::Context,
+    Command::Usage,
     Command::Model,
     Command::Effort,
     Command::Fast,
@@ -109,6 +124,7 @@ const EVERY: [Command; 15] = [
     Command::Mode,
     Command::Sandbox,
     Command::Theme,
+    Command::Settings,
     Command::Resume,
     Command::Cache,
     Command::Compact,
@@ -276,6 +292,8 @@ impl Command {
         match self {
             Self::Help => "/help",
             Self::ReleaseNotes => "/release-notes",
+            Self::Context => "/context",
+            Self::Usage => "/usage",
             Self::Model => "/model",
             Self::Effort => "/effort",
             Self::Fast => "/fast",
@@ -284,6 +302,7 @@ impl Command {
             Self::Mode => "/mode",
             Self::Sandbox => "/sandbox",
             Self::Theme => "/theme",
+            Self::Settings => "/settings",
             Self::Resume => "/resume",
             Self::Cache => "/cache",
             Self::Compact => "/compact",
@@ -297,6 +316,8 @@ impl Command {
         match self {
             Self::Help => "what these are",
             Self::ReleaseNotes => "what changed in each release",
+            Self::Context => "what fills the model's window",
+            Self::Usage => "what the session has used, and plan limits",
             Self::Model => "pick which model answers",
             Self::Effort => "pick how hard it thinks",
             Self::Fast => "pick how fast it answers",
@@ -311,6 +332,7 @@ impl Command {
             Self::Mode => mode::ring(glyphs),
             Self::Sandbox => "inspect or configure sandbox confinement",
             Self::Theme => "pick the colours crucible draws with",
+            Self::Settings => "settings, and what is in force",
             Self::Resume => "pick up an earlier session here",
             Self::Cache => "inspect or clean prompt-cache state",
             // What it does to the session rather than what it is for: somebody
@@ -343,7 +365,11 @@ impl Command {
     /// decides which of the three it is in the same place it names itself.
     const fn mid_turn(self) -> MidTurn {
         match self {
-            Self::Help | Self::Theme => MidTurn::Live,
+            // `/settings` writes the user's own file and changes the screen,
+            // never the runner, so it opens over a turn as `/theme` does.
+            Self::Help | Self::Theme | Self::Settings | Self::Context | Self::Usage => {
+                MidTurn::Live
+            }
             Self::Sandbox => {
                 MidTurn::Refused("changes the policy for new commands; open it between turns")
             }
@@ -371,11 +397,11 @@ impl Command {
             }
             Self::Clear => MidTurn::Refused("starts a new session, leaving the one being answered"),
             Self::Exit => MidTurn::Refused("ends the session, turn and all"),
-            // Refused rather than printed under the tail: a thousand rows
-            // would part the answer being written, and they will be there to
-            // print once it is done.
+            // Refused rather than printed under the tail: a list standing over
+            // the answer being written, or every release printed into it,
+            // would part it, and either will be there once it is done.
             Self::ReleaseNotes => {
-                MidTurn::Refused("prints a thousand rows into the answer being written")
+                MidTurn::Refused("prints into, or stands over, the answer being written")
             }
         }
     }
@@ -424,10 +450,13 @@ pub(super) fn wanted<'a>(commands: &Commands, line: &'a str) -> Option<Wanted<'a
 
 /// Runs a command that moves nothing but the screen, with a turn behind it.
 ///
-/// The picker and the list are the same ones the between-turns command opens;
-/// `while_waiting` is what differs. It is the turn's drain, run once a pass so
-/// the transcript goes on rendering while the panel stands, and it is the
-/// reason this is reached from the mid-turn loop rather than from `run`.
+/// The picker, the list and the panel are the same ones the between-turns
+/// command opens; `while_waiting` is what differs. It is the turn's drain, run
+/// once a pass so the transcript goes on rendering while the panel stands, and
+/// it is the reason this is reached from the mid-turn loop rather than from
+/// `run`. `counted` is what the running turn last reported — the window as it
+/// divided it, what it has used and who it asks — which `/context` and
+/// `/usage` show because the runner is away on the turn.
 ///
 /// # Errors
 ///
@@ -436,6 +465,7 @@ pub(super) fn live<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     wanted: &Owned,
+    counted: &Counted,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<(), Fatal> {
     let style = terms.style();
@@ -445,6 +475,9 @@ pub(super) fn live<T: Terminal>(
     };
     match wanted.command() {
         Command::Theme => theme::live(renderer, terms, rest, while_waiting),
+        Command::Context => context::live(renderer, terms, &counted.usage.context, while_waiting),
+        Command::Usage => usage::live(renderer, terms, counted, while_waiting),
+        Command::Settings => settings::live(renderer, terms, counted, while_waiting),
         Command::Help => {
             let commands = terms.commands.snapshot();
             // No keys to read: the list is stood, and any key closes it.
@@ -468,6 +501,20 @@ pub(super) fn live<T: Terminal>(
         // arm does not name is a build error at the match, not a silent skip.
         _ => Ok(()),
     }
+}
+
+/// What a running turn last reported, for the panels that show it while the
+/// runner is away on the turn.
+pub(super) struct Counted {
+    /// What the session has used, the window as the turn last divided it
+    /// among it.
+    pub(super) usage: api::Usage,
+    /// The provider the turn asks, by its name in the registry.
+    pub(super) serving: Option<&'static str>,
+    /// The permission mode the turn runs under.
+    pub(super) mode: Mode,
+    /// The session being recorded into, where the run is being kept at all.
+    pub(super) session: Option<crucible_types::SessionId>,
 }
 
 /// The stateless marker a panel with nothing to hold is stood with.
@@ -610,8 +657,8 @@ pub(super) fn apply_speed<T: Terminal>(
 /// reason it cannot run while a turn is, and the key that closes it. A word
 /// that names no command has neither, and is said back with the names nearest
 /// to it, as it would be between turns. The turn
-/// goes on above — the panel stands where the working row, the box, the status
-/// and the map were, and the transcript keeps its own rows. Nothing of the turn
+/// goes on above — the panel stands where the working row, the box and the
+/// status were, and the transcript keeps its own rows. Nothing of the turn
 /// changes: the command did nothing, and this is the whole of what happened.
 pub(super) fn refused<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -746,14 +793,21 @@ pub(super) fn run<T: Terminal>(
     // The one answer not hung off the line that asked: a timeline has a rail
     // of its own down the left, and a thousand rows indented under a mark
     // would be a second one beside it. One release and the refusals are set
-    // apart the same way, as the list's look draws them.
+    // apart the same way, as the timeline's look draws them.
     if let Wanted::Known {
         command: Command::ReleaseNotes,
         rest,
     } = wanted
     {
-        notes::run(rest, renderer, terms.style().glyphs())?;
-        renderer.commit("")?;
+        // Nothing after it, and a keyboard to walk with: the list of releases.
+        // Anywhere it cannot be stood, or with no keyboard, the command prints
+        // what `/release-notes all` does.
+        let walked =
+            rest.trim().is_empty() && held.answers.keys && notes_list::run(renderer, terms)?;
+        if !walked {
+            notes::run(rest, renderer, terms.style().glyphs())?;
+            renderer.commit("")?;
+        }
         return Ok(Ran::Again);
     }
 
@@ -778,7 +832,7 @@ fn answer<T: Terminal>(
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let style = terms.style();
     let glyphs = style.glyphs();
 
@@ -841,6 +895,11 @@ fn answer<T: Terminal>(
         } => theme::run(rest, renderer, terms, held.answers.keys)?,
 
         Wanted::Known {
+            command: Command::Settings,
+            ..
+        } => settings::run(renderer, conversation, terms, held.answers.keys)?,
+
+        Wanted::Known {
             command: Command::Sandbox,
             rest,
         } => sandbox::run(rest, renderer, (conversation, terms), held.answers.keys)?,
@@ -857,6 +916,16 @@ fn answer<T: Terminal>(
             command: Command::Cache,
             rest,
         } => cache::run(rest, renderer, conversation, terms)?,
+
+        Wanted::Known {
+            command: Command::Context,
+            ..
+        } => context::run(renderer, conversation, terms, held.answers.keys)?,
+
+        Wanted::Known {
+            command: Command::Usage,
+            ..
+        } => usage::run(renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Clear,
@@ -887,7 +956,7 @@ fn moded<T: Terminal>(
     terms: &Terms,
 ) -> Result<(), Fatal> {
     let style = terms.style();
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let ring = Row::new().then(Slot::Quiet, clip(mode::ring(style.glyphs()), columns));
 
     if said.is_empty() {
@@ -927,7 +996,7 @@ const HUNG: usize = 2;
 /// rows are hung after they are laid, and a row folded to the whole width is
 /// [`HUNG`] columns too wide once it is.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
-    let rows: Vec<Row> = fold(said, renderer.columns().saturating_sub(HUNG))
+    let rows: Vec<Row> = fold(said, renderer.transcript_columns().saturating_sub(HUNG))
         .into_iter()
         .map(|part| Row::new().then(Slot::Quiet, part))
         .collect();

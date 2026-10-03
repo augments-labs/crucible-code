@@ -36,6 +36,43 @@ fn an_answer_that_was_given_no_line_and_no_specimen_reads_back_empty_rather_than
 }
 
 #[test]
+fn an_answer_is_recommended_only_where_it_was_marked_and_its_name_stays_as_given() {
+    let plain = Answer::new("Rust");
+    assert!(!plain.is_recommended());
+
+    let marked = Answer::new("Rust").saying("the one").recommending();
+    assert!(marked.is_recommended());
+    assert_eq!(marked.answer(), "Rust");
+    assert_eq!(marked.says(), "the one");
+}
+
+#[test]
+fn a_question_keeps_the_recommended_mark_on_its_first_answer_only() {
+    let marks = |question: &Question| -> Vec<bool> {
+        question.answers().map(Answer::is_recommended).collect()
+    };
+
+    let second = Question::new(
+        "Language",
+        "Which one?",
+        [Answer::new("Rust"), Answer::new("Python").recommending()],
+    );
+    assert_eq!(marks(&second), [false, false]);
+
+    let both = Question::new(
+        "Language",
+        "Which one?",
+        [
+            Answer::new("Rust").recommending(),
+            Answer::new("Python").recommending(),
+            Answer::new("Go").recommending(),
+        ],
+    );
+    assert_eq!(marks(&both), [true, false, false]);
+    assert_eq!(both.answers().nth(1).map(Answer::answer), Some("Python"));
+}
+
+#[test]
 fn a_question_takes_one_answer_unless_it_was_asked_to_take_several() {
     let one = Question::new("Language", "Which one?", [Answer::new("Rust")]);
     assert!(!one.takes_several());

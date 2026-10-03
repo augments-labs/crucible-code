@@ -95,7 +95,7 @@ impl Provider for Fastened {
                 });
             }
             Ok(Box::new(Answered {
-                deltas: Reading(saying("answered").into_iter()),
+                deltas: Reading(saying("answered").into_iter(), None),
                 served: self.serves,
             }) as Box<dyn DeltaStream>)
         })
@@ -416,6 +416,7 @@ fn a_client_with_no_terminal_sets_the_speed_and_reads_what_was_served() -> Resul
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let sent = Request::new(

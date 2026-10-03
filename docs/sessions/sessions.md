@@ -13,7 +13,8 @@ The list is short on purpose, and so is the work behind it: the names come from
 a small index kept beside the logs, already in the order the sessions were
 started, and only the newest handful of the files it names are opened. A machine
 that has held crucible for a year opens the same number as one that installed it
-this morning.
+this morning. `/resume` looks further, once you ask it to; see
+[Switching without restarting](#switching-without-restarting).
 
 Only sessions that were asked something appear. Starting crucible and leaving
 without typing records a file with no turns in it, and there is no row to draw
@@ -38,25 +39,49 @@ Nothing is written where crucible had no screen to borrow, which is every run
 whose input or output is not a terminal. Nothing was hidden from you in one, so
 everything it drew is already in your own scrollback.
 
+The same is true with [`output.screen`](../configuration/configuration.md) set
+to `native`, which borrows no screen: each finished line is written once into
+your terminal's scrollback as the session goes, and only the part still
+changing at the foot is drawn again. `/clear` and `/resume` cannot take back
+what the terminal already holds, so the earlier transcript stays in its
+scrollback above the new one.
+
 ## Moving through the transcript
 
-The wheel moves the transcript a few rows at a time. For a long jump, use
-`transcript map →` at the bottom right, directly below the permission mode,
-model and effort. The arrow says it opens. Pointing turns the theme's exact
-accent into a compact background rectangle and switches the text to contrasting
-black or white. Click it and the whole bottom row becomes a map from `first` to
-`now`; hollow
-marks are prompts, and the filled mark is the place currently on screen.
+The wheel moves the transcript a few rows at a time. For a long jump, use the
+scroll rail: the transcript's last column, from its top row to its foot. The
+thumb, drawn heavier in the theme's accent, is the part of the whole transcript
+on screen, as long as that share of it and never shorter than a row; it sits at
+the bottom while you are at the newest line. A mark on the quiet track is a
+prompt you sent, at the place it falls in the whole transcript, and prompts too
+close to tell apart share one mark. The prompt you are reading under has its
+mark drawn larger, `●`, quiet on the track and in the accent on the thumb: the
+one you last landed on by clicking its mark, while it starts on screen and
+until you send another, and otherwise the latest prompt that starts at or above
+the screen's last row. With the pointer on the rail, the track and marks take
+the accent too, and the mark under the pointer is drawn larger, so you can see
+which prompt a click there lands on; moving off the rail puts it back.
 
-Drag anywhere along the map for an absolute jump, or click a hollow prompt mark
-to land on that prompt. The prompt box and everything standing over it stay where
-they are. The wheel still makes precise adjustments while the map is open, moving
-the transcript and its mark together. Three seconds after the last drag, click or
-wheel turn, the map becomes the bottom-right control again. It takes no keyboard
-binding: Escape, Return, Space and the arrows keep their existing meanings.
+Click the rail off the thumb and the transcript moves so the thumb is centred
+there, or as near as the rail's ends allow; click a mark and you land on that
+prompt. A click on the thumb takes hold of it without moving it, and a mark the
+thumb covers is drawn as thumb, unless it is the prompt you are reading under.
+Keep the button down and drag to scroll with the pointer, holding the thumb
+where you took it, and drag it to the foot to follow the newest line again. The
+prompt box and everything standing over it stay where they are. The rail takes
+no keyboard binding, and a drag that selects text never takes it.
 
-The open map uses the theme's quiet and accent colours and the terminal's own
-background. With colour off, the same shapes carry the distinction.
+While the whole transcript fits on screen there is nowhere else to go, so the
+column stands blank, and a click there opens nothing beside it. The
+transcript's text wraps one column narrower to leave it room, and a window
+narrower than 24 columns, where the prompt box also drops its frame, does not
+draw it. Set [`output.scrollRail`](../configuration/configuration.md) to
+`false` to give the column back to the text. With colour off, the thumb, track
+and marks still differ by shape, and with `output.glyphs` set to `ascii` the
+larger mark is `*`.
+
+With `output.screen` set to `native` there is no rail and the wheel is your
+terminal's: the transcript is in its scrollback, and you move through it there.
 
 ## Continuing
 
@@ -211,6 +236,47 @@ back, the file is cut to what was replayed before anything new is appended, a
 log this build cannot read is refused rather than half-understood, and a session
 another crucible has open is not available. The picker says so on the marked
 session's own line rather than waiting for Enter to find out.
+
+The picker looks through every session the index names, not the handful the
+opening screen reads, and lists up to 100 of them. It opens on this
+directory's, and three keys change what it shows, each pressed again to undo
+it. It opens even where this directory has none of its own, saying
+`no earlier session for this workspace` on its empty list, as long as another
+directory has one for these keys to reach; where none has, `/resume` says that
+line and stands nothing.
+
+- <kbd>Ctrl+A</kbd> shows every project's sessions.
+- <kbd>Ctrl+B</kbd> keeps only those recorded on the branch checked out here.
+  With no branch checked out it does nothing, and the keys row leaves it out.
+- <kbd>Ctrl+W</kbd> adds the sessions of this repository's other worktrees,
+  found by reading its `.git` directory; git itself is not run.
+
+The heading says what is shown, as `Resume a session · 3 of 12 · ~/code/app`,
+`all projects` or `this repository's worktrees`, with the branch ahead of it
+while <kbd>Ctrl+B</kbd> holds: `Resume a session · 3 of 12 · main · ~/code/app`.
+At eighty columns the keys row names each of the three by what it does next,
+as `ctrl+a all projects · ctrl+b this branch · ctrl+w worktrees · esc`; a
+narrower window gets the keys alone. A session from another directory shows
+that directory after its branch, and a search matches it too. Where the row is
+too narrow for the whole directory its front gives way, marked `…`, so the end
+that names the project is what you see. The sessions were read once when the
+picker opened, and again after a rename, so a key only filters them again.
+
+A session recorded in another directory cannot be resumed from this one, since
+it belongs to that directory's files, and the foot of its preview says
+`Enter to see how to resume`. Enter on one leaves the picker open on it and
+says, under the list, how to pick it up there:
+
+```text
+cd ~/code/website && crucible --resume 019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1
+```
+
+Where the window is too narrow for that on one row, it is broken after the `&&`,
+where a shell reads on to the next line, so pasting both rows runs it. In any
+window at least 56 columns wide the id is whole on its row; a directory too long
+for its row loses its front, marked `…`. On
+Windows the directory is written whole rather than under `~`, in double quotes
+where it needs them, which cmd and PowerShell both read.
 
 The preview reads a bounded message tail and uses the live transcript's message
 renderer. It omits supplemental diff bodies and compaction notices; selecting

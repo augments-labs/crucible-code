@@ -112,6 +112,7 @@ pub async fn turn(
         }
         Command::Decide(_) => Ended::Refused(ErrorCode::StaleDecision.into()),
         Command::Theme(_)
+        | Command::Setting { .. }
         | Command::Cancel
         | Command::Clear
         | Command::Resume(_)
@@ -127,12 +128,15 @@ pub async fn turn(
         | Command::Sandbox { .. }
         | Command::Help
         | Command::ReleaseNotes { .. }
+        | Command::Context
+        | Command::Usage
+        | Command::AskLimits
         | Command::Exit => Ended::Refused(ErrorCode::Busy.into()),
     }
 }
 
 /// The warned route a turn of `conversation` would go on with no yes.
-fn unanswered(conversation: &Conversation) -> Option<Warned> {
+pub(super) fn unanswered(conversation: &Conversation) -> Option<Warned> {
     conversation
         .consent()?
         .unanswered(conversation.serving()?, conversation.runner().model())
@@ -157,6 +161,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         Command::Prompt(_)
         | Command::Compact
         | Command::Theme(_)
+        | Command::Setting { .. }
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }
@@ -171,6 +176,9 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::Sandbox { .. }
         | Command::Help
         | Command::ReleaseNotes { .. }
+        | Command::Context
+        | Command::Usage
+        | Command::AskLimits
         | Command::Exit => Outcome::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -217,7 +225,7 @@ impl Ended {
                 })
             }
             Self::Turn(Err(problem)) => {
-                Outcome::Turn(TurnOutcome::Failed(Problem::failed(problem)))
+                Outcome::Turn(TurnOutcome::Failed(reading::failed(problem)))
             }
             Self::Room(Ok(Room::Made(compacted))) => Outcome::Room(RoomOutcome::Made {
                 replaced: reading::count(compacted.replaced),
@@ -225,7 +233,7 @@ impl Ended {
             Self::Room(Ok(Room::Nothing)) => Outcome::Room(RoomOutcome::Nothing),
             Self::Room(Ok(Room::Stopped)) => Outcome::Room(RoomOutcome::Stopped),
             Self::Room(Err(problem)) => {
-                Outcome::Room(RoomOutcome::Failed(Problem::failed(problem)))
+                Outcome::Room(RoomOutcome::Failed(reading::failed(problem)))
             }
             Self::Unrecorded(problem) => {
                 Outcome::Turn(TurnOutcome::Failed(Problem::failed(problem)))

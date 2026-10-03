@@ -2,20 +2,21 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-80x30 cursor 28,0 scrolled 0
-||                                  | No recent sessions                        ||
-||  /.../workspace                  |                                           ||
-||                                  | ----------------------------------------- ||
-||                                  |                                           ||
-||                                  | Tips                                      ||
-||                                  |                                           ||
-||                                  | - /          opens the command list       ||
-||                                  | - \ enter    adds a line without sending  ||
-||                                  | - shift+tab  steps the permission mode    ||
-||                                  | - ctrl+c     clears the line typed so far ||
-|+------------------------------------------------------------------------------+|
-|                                                                                |
-|> hello                                                                         |
+80x30 cursor 29,0 scrolled 0
+||                                                                             |||
+|| No recent sessions                                                          |||
+||                                                                             |||
+|| --------------------------------------------------------------------------- |||
+||                                                                             |#|
+|| Tips                                                                        |#|
+||                                                                             |#|
+|| - /          opens the command list                                         |#|
+|| - \ enter    adds a line without sending                                    |#|
+|| - shift+tab  steps the permission mode                                      |#|
+|| - ctrl+c     clears the line typed so far                                   |#|
+|+-----------------------------------------------------------------------------+#|
+|                                                                               #|
+|> hello                                                                        *|
 |--------------------------------------------------------------------------------|
 |                                                                                |
 |Google                                                                          |
@@ -32,4 +33,3 @@ expression: picture
 |  Keeps your message in the prompt box; nothing is sent                         |
 |                                                                                |
 |enter to choose - esc to go back                                                |
-|                                                                                |

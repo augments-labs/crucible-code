@@ -2,23 +2,24 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-60x24 cursor 22,0 scrolled 0
-|│ ──────────────────────────────────────────────────────── │|
-|│                                                          │|
-|│ Tips                                                     │|
-|│                                                          │|
-|│ · /          opens the command list                      │|
-|│ · \ enter    adds a line without sending                 │|
-|│ · shift+tab  steps the permission mode                   │|
-|│ · ctrl+c     clears the line typed so far                │|
-|╰──────────────────────────────────────────────────────────╯|
-|                                                            |
-|› start it                                                  |
-|                                                            |
-|● Bash(sleep 30)                                            |
-|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)           |
-|                                                            |
-|It is started. That is all.                                 |
+60x24 cursor 23,0 scrolled 0
+|│                                                         ││|
+|│ ─────────────────────────────────────────────────────── ││|
+|│                                                         ││|
+|│ Tips                                                    ││|
+|│                                                         ││|
+|│ · /          opens the command list                     │┃|
+|│ · \ enter    adds a line without sending                │┃|
+|│ · shift+tab  steps the permission mode                  │┃|
+|│ · ctrl+c     clears the line typed so far               │┃|
+|╰─────────────────────────────────────────────────────────╯┃|
+|                                                           ┃|
+|› start it                                                 ┃|
+|                                                           ●|
+|● Bash(sleep 30)                                           ┃|
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)          ┃|
+|                                                           ┃|
+|It is started. That is all.                                ┃|
 |────────────────────────────────────────────────────────────|
 |                                                            |
 |Still running                                               |
@@ -26,4 +27,3 @@ expression: window.picture()
 |› 1. Bash(sleep 30)   0s · 0 lines · 0 B                    |
 |                                                            |
 |esc to close · enter shows it · x stops it                  |
-|                                                            |

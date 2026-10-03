@@ -77,17 +77,15 @@ const SAID: usize = 256;
 /// meets.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Writes down the plan for the work in hand, replacing it whole. The user reads it \
-                as a panel above the prompt, and the call answers with the plan as it now \
-                stands. Worth using for work of several steps: write the plan out before \
-                starting, and call again as each task changes state."
+        about: "Writes down the plan for the work in hand, replacing it whole. The user sees it \
+                above the prompt, and the call answers with it. For work of several steps, write \
+                it first and call again as each task changes state."
             .into(),
         fields: vec![Field {
             name: TASKS,
             about: format!(
-                "Every task in the plan, in the order they should be read. This replaces the \
-                 plan entirely, so a task left out of a call has been removed from the plan. At \
-                 most {KEPT} tasks, and at most {SAID} bytes each."
+                "Every task, in reading order; one left out is removed. At most {KEPT} tasks of \
+                 {SAID} bytes."
             ),
             needed: true,
             shape: Shape::List {
@@ -101,9 +99,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: STATE,
                         about: format!(
-                            "Where the task is. {OPEN} is not started, and is what a task with \
-                             no state is read as; {DOING} is under way, and at most one task in \
-                             a plan may be; {DONE} is finished."
+                            "{OPEN} is not started, and the default; {DOING} is under way, for at \
+                             most one task; {DONE} is finished."
                         ),
                         needed: true,
                         shape: Shape::Choice(&[OPEN, DOING, DONE]),
@@ -747,6 +744,7 @@ mod tests {
 
         assert_eq!(one.as_str(), "1 task");
         assert_eq!(several.as_str(), "2 tasks");
+        assert_eq!(several.argument(), crucible_tools::Argument::Other);
     }
 
     #[test]

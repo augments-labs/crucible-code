@@ -240,6 +240,17 @@ fn the_row_beside_the_name_is_the_question_where_there_is_one_and_a_count_where_
         {"heading":"One","question":"First?","answers":[{"answer":"a"},{"answer":"z"}]},
         {"heading":"Two","question":"Second?","answers":[{"answer":"b"},{"answer":"y"}]}]}"#;
     assert_eq!(tool.summary(&ToolArgs::new(two)).as_str(), "2 questions");
+
+    // A question and a count are words, not a path or a command, so neither
+    // is coloured as one.
+    assert_eq!(
+        tool.summary(&ToolArgs::new(ONE)).argument(),
+        crucible_tools::Argument::Other
+    );
+    assert_eq!(
+        tool.summary(&ToolArgs::new(two)).argument(),
+        crucible_tools::Argument::Other
+    );
 }
 
 #[test]
@@ -327,4 +338,114 @@ fn a_heading_too_long_for_the_row_it_is_drawn_on_is_refused() {
 
     assert!(over.contains(&(HEADING_SHORT + 1).to_string()), "{over}");
     assert!(over.contains("heading"), "{over}");
+}
+
+/// A question whose answers are `answers`, written as a call would write them.
+fn offering(answers: &str) -> String {
+    format!(r#"{{"questions":[{{"heading":"H","question":"Q?","answers":[{answers}]}}]}}"#)
+}
+
+#[test]
+fn a_question_with_no_recommended_answer_stays_valid() {
+    let put = Arc::new(Whoever::saying(vec![Answered::new(["a"])]));
+
+    ran(put, &offering(r#"{"answer":"a"},{"answer":"b"}"#))
+        .expect("a question that recommends nothing");
+}
+
+#[test]
+fn the_first_answer_may_be_the_recommended_one() {
+    let put = Arc::new(Whoever::saying(vec![Answered::new(["a"])]));
+
+    ran(
+        put,
+        &offering(r#"{"answer":"a","recommended":true},{"answer":"b","recommended":false}"#),
+    )
+    .expect("a question recommending its first answer");
+}
+
+#[test]
+fn a_question_recommending_more_than_one_answer_is_refused() {
+    let over = refused(&offering(
+        r#"{"answer":"a","recommended":true},{"answer":"b","recommended":true}"#,
+    ));
+
+    assert!(over.contains("one recommended"), "{over}");
+}
+
+#[test]
+fn a_recommended_answer_that_is_not_listed_first_is_refused() {
+    let over = refused(&offering(
+        r#"{"answer":"a"},{"answer":"b","recommended":true}"#,
+    ));
+
+    assert!(over.contains("first"), "{over}");
+    assert!(over.contains("recommended"), "{over}");
+}
+
+#[test]
+fn a_recommended_flag_that_is_not_true_or_false_is_refused() {
+    let over = refused(&offering(
+        r#"{"answer":"a","recommended":"yes"},{"answer":"b"}"#,
+    ));
+
+    assert!(over.contains("recommended must be true or false"), "{over}");
+}
+
+#[test]
+fn the_recommended_answer_reaches_the_reader_marked_and_by_its_own_name() {
+    struct Seeing(Mutex<Vec<(String, bool)>>);
+
+    impl Put for Seeing {
+        fn put<'a>(
+            &'a self,
+            questions: &'a [Question],
+        ) -> crucible_runtime::BoxFuture<'a, Option<Vec<Answered>>> {
+            Box::pin(async move {
+                if let Ok(mut saw) = self.0.lock() {
+                    for answer in questions.iter().flat_map(Question::answers) {
+                        saw.push((answer.answer().to_owned(), answer.is_recommended()));
+                    }
+                }
+                Some(vec![Answered::new(["Rust"])])
+            })
+        }
+    }
+
+    let put = Arc::new(Seeing(Mutex::new(Vec::new())));
+    let seen = Arc::clone(&put);
+
+    let output = ran(
+        put,
+        &offering(r#"{"answer":"Rust","recommended":true},{"answer":"Python"}"#),
+    )
+    .expect("a call that recommends its first answer");
+
+    let saw = seen.0.lock().expect("nothing else holds it");
+    assert_eq!(
+        saw.as_slice(),
+        [("Rust".to_owned(), true), ("Python".to_owned(), false)]
+    );
+    assert_eq!(output.text().trim(), "Q? → Rust");
+}
+
+#[test]
+fn the_schema_offers_the_flag_on_an_answer_and_keeps_best_first() {
+    let tool = AskUser::new(Arc::new(Nobody));
+    let schema: serde_json::Value =
+        serde_json::from_str(tool.schema()).expect("a schema that is JSON");
+
+    let answers = "/properties/questions/items/properties/answers";
+    let about = schema.pointer(&format!("{answers}/description"));
+    assert!(
+        about
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|about| about.starts_with("Best first")),
+        "{about:?}"
+    );
+
+    let kind = schema.pointer(&format!("{answers}/items/properties/recommended/type"));
+    assert_eq!(kind, Some(&serde_json::json!("boolean")));
+    let required = schema.pointer(&format!("{answers}/items/required"));
+    assert_eq!(required, Some(&serde_json::json!(["answer"])));
 }

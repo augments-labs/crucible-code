@@ -30,16 +30,16 @@ use crucible_app::{AppError, Conversation, remember};
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{Home, Settings};
 use crucible_models::{
-    Delta, DeltaStream, Effort, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError,
-    Request,
+    Asked, Delta, DeltaStream, Effort, PromptCacheCapabilities, PromptCacheRoute, Provider,
+    ProviderError, Request,
 };
 use crucible_runner::{Event, EventEnvelope, Runner, Tools, Turned};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_session::Session;
 use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
 use crucible_types::{
-    AgentId, CredentialScopeId, Message, Modalities, Modality, PromptCacheEncoding, SessionId,
-    StopReason, ToolCall,
+    AgentId, CredentialScopeId, Message, Modalities, Modality, PlanWindows, PromptCacheEncoding,
+    SessionId, StopReason, ToolCall,
 };
 use crucible_workspace::Workspace;
 
@@ -115,6 +115,12 @@ struct Script {
     scope: CredentialScopeId,
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
     asked: Arc<AtomicUsize>,
+    /// The plan windows every response says its vendor reported.
+    limits: Option<PlanWindows>,
+    /// What its plan answers when asked, where it has a source to ask.
+    answering: Option<fn() -> Asked>,
+    /// How many times its plan was asked.
+    limits_asked: Arc<AtomicUsize>,
 }
 
 impl Script {
@@ -124,6 +130,25 @@ impl Script {
             scope: CredentialScopeId::new(),
             rounds: Mutex::new(rounds.into_iter()),
             asked: Arc::default(),
+            limits: None,
+            answering: None,
+            limits_asked: Arc::default(),
+        }
+    }
+
+    /// This, with a plan that answers `answer` each time it is asked.
+    fn answering(self, answer: fn() -> Asked) -> Self {
+        Self {
+            answering: Some(answer),
+            ..self
+        }
+    }
+
+    /// This, with every response reporting `limits`.
+    fn limiting(self, limits: PlanWindows) -> Self {
+        Self {
+            limits: Some(limits),
+            ..self
         }
     }
 
@@ -183,17 +208,31 @@ impl Provider for Script {
                 .next()
                 .unwrap_or_default();
 
-            Ok(Box::new(Reading(round.into_iter())) as Box<dyn DeltaStream>)
+            Ok(Box::new(Reading(round.into_iter(), self.limits.clone())) as Box<dyn DeltaStream>)
         })
+    }
+
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        let answer = self.answering?;
+        let asked = Arc::clone(&self.limits_asked);
+        Some(Box::pin(async move {
+            asked.fetch_add(1, Ordering::Relaxed);
+            answer()
+        }))
     }
 }
 
-/// The deltas of one round, handed over one at a time.
-struct Reading(std::vec::IntoIter<Delta>);
+/// The deltas of one round, handed over one at a time, and the plan windows
+/// the response reported.
+struct Reading(std::vec::IntoIter<Delta>, Option<PlanWindows>);
 
 impl DeltaStream for Reading {
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
         Box::pin(async move { self.0.next().map(Ok) })
+    }
+
+    fn limits(&self) -> Option<PlanWindows> {
+        self.1.clone()
     }
 }
 
@@ -399,6 +438,11 @@ impl Desk {
             .map(|seen| seen.clone())
             .unwrap_or_default()
     }
+}
+
+/// The environment of a host started with nothing in it.
+fn unset(_: &str) -> Option<String> {
+    None
 }
 
 /// What the settings file now says, read the way the next start reads it.

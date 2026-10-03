@@ -129,6 +129,7 @@ Settings {
         output_bytes: 10485760,
         concurrent_commands: 4,
     },
+    pinned: [],
 }
 === the project layer over it ===
 provider           Some("anthropic")
@@ -272,6 +273,7 @@ Settings {
         output_bytes: 10485760,
         concurrent_commands: 4,
     },
+    pinned: [],
 }
 === the project-local layer over both ===
 provider           Some("anthropic")
@@ -426,6 +428,7 @@ Settings {
         output_bytes: 10485760,
         concurrent_commands: 4,
     },
+    pinned: [],
 }
 === a project layer reaching for the key ===
 refused: <root>/project/.crucible/config.json: providers.anthropic.apiKeyEnv cannot be set here at line 2, column 33 — this file is inside the workspace and can arrive with a checkout, and this key only ever widens what crucible does without asking. A workspace file may tighten its own rules — permissions.ask and permissions.deny — and may not loosen anybody's. Put this one in the configuration file in your home directory

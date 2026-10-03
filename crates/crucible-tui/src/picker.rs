@@ -8,8 +8,10 @@
 //! caller reads as *there was no room to stand one*.
 //!
 //! It is handed strings and pre-drawn rows and knows no domain type. What
-//! narrowed the query, what the preview holds, and what the metadata line says
-//! are all decided before they arrive. Nothing here names a colour: every span
+//! narrowed the query, what the preview holds, what the metadata line says and
+//! what a notice under the panes tells the reader are all decided before they
+//! arrive. A directory on a row comes from a file, so the caller flattens it
+//! before handing it here. Nothing here names a colour: every span
 //! asks for a [`Slot`] and the palette settles what one is worth.
 //!
 //! The preview is drawn from the *end* of the rows it was handed: what a
@@ -27,7 +29,9 @@ use crate::width::{clip, columns as wide, windowed};
 /// The rows a picker spends on everything that is not a row of the split.
 ///
 /// The three the search line's frame costs, the heading under it, its blank,
-/// the two the panes' frames cost, the blank over the keys, and the keys.
+/// the two the panes' frames cost, the row over the keys — blank unless there
+/// is a notice to stand on it — and the keys. A notice of more rows than one
+/// takes the rest from the panes; see `spared`.
 const CHROME: usize = 9;
 
 /// The fewest body rows a picker stands in: one entry of the list.
@@ -75,6 +79,9 @@ pub struct Kept<'a> {
     pub when: &'a str,
     /// The branch it was recorded on, or empty where nothing was.
     pub branch: &'a str,
+    /// The directory it was recorded in, where that is not the one the picker
+    /// was opened in; empty for a session of this directory.
+    pub place: &'a str,
 }
 
 /// What a place on the picker answers to, for a caller that has to act on it.
@@ -144,8 +151,13 @@ pub struct Picker<'a> {
     pub nothing: &'a str,
     /// What the preview says where `sessions` is empty and a query did it.
     pub noview: &'a str,
-    /// The keys row, and the short form for a narrow window.
-    pub keys: (&'a str, &'a str),
+    /// Every form of the keys row, longest first: the first the window has
+    /// room for is drawn, and the last, cut, where none fits.
+    pub keys: &'a [&'a str],
+    /// What the picker has to tell the reader about the last key they pressed,
+    /// a row at a time, said between the panes and the keys. Empty leaves the
+    /// one row there blank; each row past the first is taken from the panes.
+    pub notice: &'a [&'a str],
     /// Where the pointer is resting: a row of what [`Picker::within`] answered,
     /// and a column of the window. `None` is a pointer never reported.
     pub pointer: Option<(usize, usize)>,
@@ -174,7 +186,8 @@ impl Picker<'_> {
         if columns < Self::NARROWEST || room < CHROME + FLOOR {
             return Vec::new();
         }
-        let body = room - CHROME;
+        let spared = spared(room, self.notice.len());
+        let body = room - CHROME - spared;
 
         // Worked out once and handed down: the frame's colour and the band
         // under a pair are one answer about where the pointer is, and asking
@@ -191,7 +204,7 @@ impl Picker<'_> {
         rows.push(self.edged(columns, glyphs, glyphs.top()));
         rows.extend(self.split(columns, body, glyphs, under));
         rows.push(self.edged(columns, glyphs, glyphs.bottom()));
-        rows.push(Row::new());
+        rows.extend(self.noticed(columns, spared));
         rows.push(self.keyed(columns));
         rows
     }
@@ -249,17 +262,18 @@ impl Picker<'_> {
     ///
     /// The pane's own answer to how far back a caller may scroll it: the pane
     /// shows the end of what it is handed, so a slice shorter than this is a
-    /// pane standing half empty rather than one scrolled back.
+    /// pane standing half empty rather than one scrolled back. A notice of
+    /// `notice` rows takes rows from the pane, so the count is asked with it.
     #[must_use]
-    pub const fn previews(room: usize) -> usize {
+    pub const fn previews(room: usize, notice: usize) -> usize {
         if room < CHROME + FLOOR {
             return 0;
         }
 
         // The pane's foot stands under the tail rather than over it, so the
-        // rows a session gets are what is left once the foot has been paid
-        // for.
-        (room - CHROME).saturating_sub(FOOTED)
+        // rows a session gets are what is left once the foot and the notice
+        // have been paid for.
+        (room - CHROME - spared(room, notice)).saturating_sub(FOOTED)
     }
 
     /// The framed line the query is typed into.
@@ -416,11 +430,10 @@ impl Picker<'_> {
                             return row;
                         }
 
-                        let aged = if one.branch.is_empty() {
-                            one.when.to_owned()
-                        } else {
-                            format!("{} {} {}", one.when, glyphs.dot(), one.branch)
-                        };
+                        // The directory last: it is there only on a row from
+                        // somewhere else, and the age the rows line up on
+                        // stays where it is on every one.
+                        let aged = aged(one, word, glyphs);
                         row.push(lit(on, Slot::Quiet), clip(&aged, word).to_owned());
                         row.fill(lit(on, Slot::Plain), inside);
                         row
@@ -472,14 +485,36 @@ impl Picker<'_> {
             .collect()
     }
 
+    /// The rows between the panes and the keys: one blank, or what the picker
+    /// was handed to tell the reader, each row cut where the window ends and
+    /// only as many past the first as the room `spared`.
+    fn noticed(&self, columns: usize, spared: usize) -> Vec<Row> {
+        if self.notice.is_empty() {
+            return vec![Row::new()];
+        }
+
+        self.notice
+            .iter()
+            .take(1 + spared)
+            .map(|said| {
+                let mut row = Row::new();
+                row.push(Slot::Plain, " ");
+                row.push(Slot::Plain, clip(said, columns.saturating_sub(2)));
+                row.clipped(columns)
+            })
+            .collect()
+    }
+
     /// What the keys do, in the longest form the window has room for.
     fn keyed(&self, columns: usize) -> Row {
         let room = columns - 2;
-        let said = if wide(self.keys.0) <= room {
-            self.keys.0
-        } else {
-            self.keys.1
-        };
+        let said = self
+            .keys
+            .iter()
+            .find(|form| wide(form) <= room)
+            .or(self.keys.last())
+            .copied()
+            .unwrap_or_default();
 
         let mut row = Row::new();
         row.push(Slot::Plain, " ");
@@ -498,7 +533,7 @@ impl Picker<'_> {
         if columns < Self::NARROWEST || room < CHROME + FLOOR {
             return Hit::Nothing;
         }
-        let body = room - CHROME;
+        let body = room - CHROME - spared(room, self.notice.len());
 
         match self.under(columns, body) {
             Under::Nothing => Hit::Nothing,
@@ -527,7 +562,10 @@ impl Picker<'_> {
         let last = columns.saturating_sub(2);
 
         if let Some(renaming) = self.renaming {
-            let pairs = shown(room.saturating_sub(CHROME));
+            let pairs = shown(
+                room.saturating_sub(CHROME)
+                    .saturating_sub(spared(room, self.notice.len())),
+            );
             let from = scrolled(self.marked, pairs, self.sessions.len());
 
             // The same window the row was drawn from, asked for again rather
@@ -587,6 +625,19 @@ impl Picker<'_> {
     }
 }
 
+/// The rows past its first that a notice of `notice` rows takes from the panes
+/// in `room`.
+///
+/// Every one it has, where the panes can give them up and still hold one entry
+/// of the list; otherwise as many as they can. A picker that stood fine before
+/// a key was pressed does not vanish because the key had something to say —
+/// the rows that do not fit are the ones left unsaid.
+const fn spared(room: usize, notice: usize) -> usize {
+    let wanted = notice.saturating_sub(1);
+    let spare = room.saturating_sub(CHROME + FLOOR);
+    if wanted < spare { wanted } else { spare }
+}
+
 /// The slot a span takes, given whether the pointer is resting on its row.
 ///
 /// One slot for the whole pair rather than one per span, because the ground is
@@ -595,6 +646,47 @@ impl Picker<'_> {
 /// carries its caret, so the two never have to be told apart by colour.
 const fn lit(on: bool, slot: Slot) -> Slot {
     if on { Slot::Pointed } else { slot }
+}
+
+/// The row under a session's title, in `room` columns: its age, its branch
+/// and, for a session from somewhere else, its directory.
+///
+/// Where the directory does not fit it gives way from its front, marked, as
+/// the command that resumes it does: two projects under one parent differ only
+/// at their ends, and a directory cut from its end would name the parent of
+/// both. The age and branch stay as they are; a row too narrow even for those
+/// is cut from its end by the caller like any other.
+fn aged(one: &Kept<'_>, room: usize, glyphs: Glyphs) -> String {
+    let dot = format!(" {} ", glyphs.dot());
+    let said = [one.when, one.branch]
+        .into_iter()
+        .filter(|said| !said.is_empty())
+        .collect::<Vec<_>>()
+        .join(&dot);
+    if one.place.is_empty() {
+        return said;
+    }
+
+    let before = if said.is_empty() {
+        String::new()
+    } else {
+        format!("{said}{dot}")
+    };
+    let fits = room.saturating_sub(wide(&before));
+    let mark = glyphs.ellipsis();
+    if wide(one.place) <= fits || fits <= wide(mark) {
+        return format!("{before}{}", one.place);
+    }
+    format!("{before}{mark}{}", ending(one.place, fits - wide(mark)))
+}
+
+/// The longest end of `text` at most `columns` wide.
+fn ending(text: &str, columns: usize) -> &str {
+    text.char_indices()
+        .map(|(at, _)| at)
+        .chain(std::iter::once(text.len()))
+        .find_map(|at| text.get(at..).filter(|rest| wide(rest) <= columns))
+        .unwrap_or_default()
 }
 
 /// A pane with nothing to show: one quiet sentence, then blank to `body`.

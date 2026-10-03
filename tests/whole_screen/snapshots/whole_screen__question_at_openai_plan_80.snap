@@ -3,19 +3,20 @@ source: tests/whole_screen/main.rs
 assertion_line: 2867
 expression: asked
 ---
-80x30 cursor 28,0 scrolled 0
-|│                                  │ Tips                                      │|
-|│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|                                                                                |
-|Warning: No provider selected. Use /model to select a provider and model.       |
-|                                                                                |
-|› /login                                                                        |
+80x30 cursor 29,0 scrolled 0
+|│                                                                             ││|
+|│ Tips                                                                        ││|
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|                                                                               ┃|
+|Warning: No provider selected. Use /model to select a provider and model.      ┃|
+|                                                                               ┃|
+|› /login                                                                       ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |OpenAI                                                                          |
@@ -33,4 +34,3 @@ expression: asked
 |  Returns to the list; nothing is chosen                                        |
 |                                                                                |
 |enter to choose · esc to go back                                                |
-|                                                                                |

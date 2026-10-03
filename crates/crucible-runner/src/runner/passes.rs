@@ -19,6 +19,8 @@
 //! Nothing here decides anything the runner did not already decide. This is
 //! where the loop lives now, not a second opinion about how a turn should go.
 
+use std::time::SystemTime;
+
 use crucible_agents::{GuardrailError, Rejection};
 use crucible_models::ProviderError;
 use crucible_tools::{Ask, ToolsetContext};
@@ -31,7 +33,7 @@ use crate::outcome::{RunResult, Turned};
 
 use super::{After, Counting, Judged, Listening, Runner, TurnBounds, Went, Work};
 
-use crate::{Event, TurnError};
+use crate::{Event, PlanLimitStop, TurnError};
 /// How one run's passes ended.
 ///
 /// The loop's own word for it, because the value a caller gets back carries a
@@ -135,11 +137,11 @@ impl<'a> AgentLoop<'a> {
                 .record(run.ancestry(), Message::said(line))
                 .await?;
             events.post(Event::Carried {
-                left: self
+                breakdown: self
                     .runner
                     .state
                     .load
-                    .left(counting.window, counting.reserve),
+                    .breakdown(counting.window, counting.reserve),
             });
         }
         for note in run.aside().take() {
@@ -147,11 +149,11 @@ impl<'a> AgentLoop<'a> {
                 .record(run.ancestry(), Message::said(note))
                 .await?;
             events.post(Event::Carried {
-                left: self
+                breakdown: self
                     .runner
                     .state
                     .load
-                    .left(counting.window, counting.reserve),
+                    .breakdown(counting.window, counting.reserve),
             });
         }
         Ok(())
@@ -210,6 +212,37 @@ impl<'a> AgentLoop<'a> {
             .await
     }
 
+    /// Holds the next request to the two ceilings that stop a turn before
+    /// anything is sent.
+    ///
+    /// The spend is this run's own. The plan is the vendor's: a reading that
+    /// has a window used up until a reset still to come says the request would
+    /// be refused, so it is not made. The reading is the last one for this
+    /// credential and model, since changing either lets it go. A window at
+    /// 100% with no reset does not stop it: whether it has started again is
+    /// not known, and the vendor's refusal is what says so.
+    fn held(&self, counting: &Counting) -> Result<(), TurnError> {
+        if let Some(ceiling) = self.run.policy().bounds.spend
+            && counting.spent.tokens() >= ceiling
+        {
+            return Err(TurnError::Spent { ceiling });
+        }
+        match self
+            .runner
+            .state
+            .limits
+            .as_ref()
+            .and_then(|limits| limits.exhausted(self.runner.model(), SystemTime::now()))
+        {
+            Some((window, resets_at)) => Err(TurnError::PlanLimit {
+                window: Some(window),
+                resets_at: Some(resets_at),
+                stopped: PlanLimitStop::BeforeSending,
+            }),
+            None => Ok(()),
+        }
+    }
+
     /// Takes passes until the turn ends, and says how it ended.
     ///
     /// The totals are the caller's, not this loop's. Every way out of here is
@@ -219,14 +252,15 @@ impl<'a> AgentLoop<'a> {
     /// # Errors
     ///
     /// [`TurnError`] where a request, a tool or the transcript itself failed,
-    /// and for the four endings a turn reaches rather than is stopped by:
+    /// and for the five endings a turn reaches rather than is stopped by:
     /// [`TurnError::Spent`] and [`TurnError::ToolOutputBytes`] where a ceiling
-    /// was crossed, [`TurnError::NoRoom`] where two compactions in a row freed
-    /// nothing, and [`TurnError::Refused`] where the reader declined a call.
-    /// None of the four is a failure, and all four end a turn the way one
-    /// does, which is why they leave through here rather than through
-    /// [`StopReason`]. A tool source's own step that gave up ends it as the
-    /// source's failure, as [`Runner::turn`] says.
+    /// was crossed, [`TurnError::PlanLimit`] where the plan is used up,
+    /// [`TurnError::NoRoom`] where two compactions in a row freed nothing, and
+    /// [`TurnError::Refused`] where the reader declined a call. None of the
+    /// five is a failure, and all five end a turn the way one does, which is
+    /// why they leave through here rather than through [`StopReason`]. A tool
+    /// source's own step that gave up ends it as the source's failure, as
+    /// [`Runner::turn`] says.
     ///
     /// A compaction's steps end it as [`Runner::compact`] says.
     /// The line recording the last answer, the part of an answer a full
@@ -286,7 +320,7 @@ impl<'a> AgentLoop<'a> {
             counting.load = self.runner.state.load;
             counting
                 .load
-                .requesting(self.runner.agent.instructions(), &advertised);
+                .requesting(&super::Fixed::of(&self.runner.agent, &tools));
 
             // Worked out per pass rather than once, because what it is measured
             // against can be corrected mid-turn: a window learned from a
@@ -297,11 +331,7 @@ impl<'a> AgentLoop<'a> {
                 .reserve(run.policy().compaction, counting.window);
             counting.reserve = reserve;
 
-            if let Some(ceiling) = run.policy().bounds.spend
-                && counting.spent.tokens() >= ceiling
-            {
-                return Err(TurnError::Spent { ceiling });
-            }
+            self.held(counting)?;
 
             // Before the request rather than after the answer, because here the
             // transcript *is* what the next request would carry — the results
@@ -314,7 +344,7 @@ impl<'a> AgentLoop<'a> {
                 // arithmetic reached before replacing it with the compaction
                 // activity, so the two cannot appear to disagree.
                 events.post(Event::Carried {
-                    left: counting.left(),
+                    breakdown: counting.breakdown(),
                 });
                 match self
                     .room(Compacting::Full, &mut fruitless, counting)
@@ -338,7 +368,7 @@ impl<'a> AgentLoop<'a> {
             counting.load = self.runner.state.load;
             counting
                 .load
-                .requesting(self.runner.agent.instructions(), &advertised);
+                .requesting(&super::Fixed::of(&self.runner.agent, &tools));
 
             let heard = match self
                 .runner
@@ -477,15 +507,29 @@ impl<'a> AgentLoop<'a> {
 
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
+            // Counted here, while the results still say what each edit
+            // changed; the transcript keeps the counts and not the lines.
+            let edits = results.iter().filter_map(|result| result.output.changed());
+            let mut edited = false;
+            for changed in edits {
+                self.runner.state.totals.changed(changed);
+                edited = true;
+            }
+            if edited {
+                events.post(Event::Used {
+                    totals: self.runner.state.totals,
+                });
+            }
+
             self.runner
                 .record(run.ancestry(), Message::ToolResults(results))
                 .await?;
             events.post(Event::Carried {
-                left: self
+                breakdown: self
                     .runner
                     .state
                     .load
-                    .left(counting.window, counting.reserve),
+                    .breakdown(counting.window, counting.reserve),
             });
 
             match went {

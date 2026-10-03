@@ -5,6 +5,8 @@
 //! decides anything about a terminal — that is `Style`'s job, one crate up,
 //! from these answers and what the terminal itself reports.
 
+use serde_json::Value;
+
 use super::Settings;
 
 impl Settings {
@@ -32,6 +34,12 @@ impl Settings {
         ThemeChoice::read(self.output("theme")?)
     }
 
+    /// How many of the theme's colours the transcript spends.
+    #[must_use]
+    pub fn transcript_colours(&self) -> Option<TranscriptColours> {
+        TranscriptColours::read(self.output("transcriptColours")?)
+    }
+
     /// Which theme fenced code is drawn in.
     ///
     /// Free text rather than a closed set, because the answers are somebody
@@ -40,6 +48,35 @@ impl Settings {
     #[must_use]
     pub fn syntax_theme(&self) -> Option<&str> {
         self.output("syntaxTheme")
+    }
+
+    /// Whether the transcript has a scroll rail on its right edge.
+    ///
+    /// A yes or no rather than an `Option`, unlike the answers above: nothing
+    /// on the command line can say otherwise, so what the files fall back to
+    /// is the answer, and it is the one the schema states. Only a `false`
+    /// turns it off.
+    #[must_use]
+    pub fn scroll_rail(&self) -> bool {
+        self.value
+            .get("output")
+            .and_then(|block| block.get("scrollRail"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    }
+
+    /// Whether crucible draws on a screen of its own or in the terminal's own
+    /// buffer.
+    ///
+    /// A value rather than an `Option`, as the scroll rail is: nothing on the
+    /// command line says otherwise, so what the files fall back to is the
+    /// answer. Read once, at the start, which is the only time a screen can be
+    /// taken or left alone.
+    #[must_use]
+    pub fn screen(&self) -> ScreenMode {
+        self.output("screen")
+            .and_then(ScreenMode::read)
+            .unwrap_or_default()
     }
 
     /// One string out of the `output` block.
@@ -136,8 +173,10 @@ pub enum ToolDetail {
 }
 
 impl ToolDetail {
-    /// Reads one of [`shape::TOOL_DETAIL`](crate::shape::TOOL_DETAIL).
-    fn read(found: &str) -> Option<Self> {
+    /// Reads one of the words `output.toolDetail` accepts, spelled as a
+    /// document spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
         match found {
             "compact" => Some(Self::Compact),
             "full" => Some(Self::Full),
@@ -162,11 +201,71 @@ pub enum Glyphs {
 }
 
 impl Glyphs {
-    /// Reads one of [`shape::GLYPHS`](crate::shape::GLYPHS).
-    fn read(found: &str) -> Option<Self> {
+    /// Reads one of the words `output.glyphs` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
         match found {
             "unicode" => Some(Self::Unicode),
             "ascii" => Some(Self::Ascii),
+            _ => None,
+        }
+    }
+}
+
+/// Where crucible draws.
+///
+/// Fullscreen is a screen of crucible's own, with its own scrollback, rail and
+/// selection. Native is the terminal's own buffer: what is finished goes into
+/// its scrollback once, and the terminal scrolls, selects and copies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScreenMode {
+    /// A screen of crucible's own.
+    #[default]
+    Fullscreen,
+    /// The terminal's own buffer and scrollback.
+    Native,
+}
+
+impl ScreenMode {
+    /// Reads one of the words `output.screen` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
+        match found {
+            "fullscreen" => Some(Self::Fullscreen),
+            "native" => Some(Self::Native),
+            _ => None,
+        }
+    }
+}
+
+/// How many of the theme's colours the transcript spends, and on what.
+///
+/// Which kind of thing gets which colour is the drawing's to say; this is only
+/// which of the three the reader chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TranscriptColours {
+    /// Code and paths in the theme's colour and links in a second, and
+    /// nothing else in a hue.
+    #[default]
+    Calm,
+    /// Calm, and a third and fourth colour on paths, versions and what a
+    /// call was about.
+    Balanced,
+    /// Balanced, and headings, lists, quotes and figures in colour too.
+    Rich,
+}
+
+impl TranscriptColours {
+    /// Reads one of the words `output.transcriptColours` accepts, spelled as
+    /// a document spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
+        match found {
+            "calm" => Some(Self::Calm),
+            "balanced" => Some(Self::Balanced),
+            "rich" => Some(Self::Rich),
             _ => None,
         }
     }
@@ -207,6 +306,7 @@ mod tests {
         assert_eq!(settings.color(), None);
         assert_eq!(settings.tool_detail(), None);
         assert_eq!(settings.glyphs(), None);
+        assert_eq!(settings.transcript_colours(), None);
     }
 
     #[test]
@@ -229,6 +329,35 @@ mod tests {
         for name in shape::THEME {
             assert!(ThemeChoice::read(name).is_some(), "theme: {name}");
         }
+        for name in shape::SCREEN {
+            assert!(ScreenMode::read(name).is_some(), "screen: {name}");
+        }
+        for name in shape::TRANSCRIPT_COLOURS {
+            assert!(
+                TranscriptColours::read(name).is_some(),
+                "transcriptColours: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_transcript_colouring_is_read_back_as_the_one_it_names() {
+        let read: Vec<Option<TranscriptColours>> = shape::TRANSCRIPT_COLOURS
+            .iter()
+            .map(|name| {
+                let text = format!(r#"{{"output": {{"transcriptColours": "{name}"}}}}"#);
+                Settings::resolve(vec![Document::sample(&text, Origin::User)]).transcript_colours()
+            })
+            .collect();
+
+        assert_eq!(
+            read,
+            [
+                Some(TranscriptColours::Calm),
+                Some(TranscriptColours::Balanced),
+                Some(TranscriptColours::Rich)
+            ]
+        );
     }
 
     #[test]
@@ -274,6 +403,38 @@ mod tests {
     }
 
     #[test]
+    fn the_scroll_rail_is_drawn_unless_a_layer_turns_it_off() {
+        let off = Document::sample(r#"{"output": {"scrollRail": false}}"#, Origin::User);
+        let on = Document::sample(r#"{"output": {"scrollRail": true}}"#, Origin::ProjectLocal);
+
+        assert!(Settings::resolve(Vec::new()).scroll_rail());
+        assert!(!Settings::resolve(vec![off.clone()]).scroll_rail());
+        assert!(Settings::resolve(vec![off, on]).scroll_rail());
+    }
+
+    #[test]
+    fn the_screen_is_fullscreen_unless_a_layer_says_native() {
+        let native = Document::sample(r#"{"output": {"screen": "native"}}"#, Origin::User);
+        let back = Document::sample(
+            r#"{"output": {"screen": "fullscreen"}}"#,
+            Origin::ProjectLocal,
+        );
+
+        assert_eq!(
+            Settings::resolve(Vec::new()).screen(),
+            ScreenMode::Fullscreen
+        );
+        assert_eq!(
+            Settings::resolve(vec![native.clone()]).screen(),
+            ScreenMode::Native
+        );
+        assert_eq!(
+            Settings::resolve(vec![native, back]).screen(),
+            ScreenMode::Fullscreen
+        );
+    }
+
+    #[test]
     fn the_defaults_the_schema_states_for_output_are_the_ones_it_falls_back_to() {
         assert_eq!(
             Color::read(shape::usual(&["output", "color"])),
@@ -290,6 +451,18 @@ mod tests {
         assert_eq!(
             ToolDetail::read(shape::usual(&["output", "toolDetail"])),
             Some(ToolDetail::default())
+        );
+        assert_eq!(
+            TranscriptColours::read(shape::usual(&["output", "transcriptColours"])),
+            Some(TranscriptColours::default())
+        );
+        assert_eq!(
+            shape::usual(&["output", "scrollRail"]).parse::<bool>(),
+            Ok(Settings::resolve(Vec::new()).scroll_rail())
+        );
+        assert_eq!(
+            ScreenMode::read(shape::usual(&["output", "screen"])),
+            Some(Settings::resolve(Vec::new()).screen())
         );
     }
 }

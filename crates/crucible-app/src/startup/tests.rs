@@ -1061,6 +1061,44 @@ fn the_agent_is_named_coding_and_stands_under_what_the_wiring_asked() {
 }
 
 #[test]
+fn context_counts_what_settings_append_to_the_system_field_as_project_instructions() {
+    // `/context` shows `systemPrompt.append` apart from crucible's own part of
+    // the field. The definition is what carries the split to the runner.
+    let sample = Sample::new("startup-context-appended");
+    let settings = sample
+        .settings(r#"{"systemPrompt":{"append":"Run the project checks before you finish."}}"#);
+    let told = under(&settings);
+    let appended = told
+        .strip_prefix(&under(&Settings::default()))
+        .expect("what is appended follows crucible's own part");
+
+    let built = specified("claude-opus-5", None, &settings, &told);
+
+    assert!(appended.contains("Run the project checks"), "{appended}");
+    assert_eq!(built.appended(), appended.len());
+}
+
+#[test]
+fn context_leaves_a_replaced_system_field_under_the_system_prompt() {
+    // `systemPrompt.custom` replaces crucible's own part rather than adding to
+    // it, so only what is appended after it is counted apart.
+    let sample = Sample::new("startup-context-custom");
+    let replaced = sample.user(r#"{"systemPrompt":{"custom":"Answer in haiku."}}"#);
+    let both = sample.user(
+        r#"{"systemPrompt":{"custom":"Answer in haiku.","append":"Run the project checks."}}"#,
+    );
+    let told = under(&both);
+    let appended = told
+        .strip_prefix(&under(&replaced))
+        .expect("what is appended follows the replaced part");
+
+    let built = specified("claude-opus-5", None, &both, &told);
+
+    assert!(appended.contains("Run the project checks"), "{appended}");
+    assert_eq!(built.appended(), appended.len());
+}
+
+#[test]
 fn a_definition_the_wiring_had_nothing_to_say_under_is_told_nothing() {
     // The rule `Agent::telling` enforces, at the one site outside the runner
     // that writes the field: no instructions and empty instructions are two
@@ -1881,4 +1919,40 @@ fn a_search_on_a_warned_model_sends_nothing_until_its_yes() {
     let _ = search();
     assert!(heard.load(std::sync::atomic::Ordering::SeqCst) > 0);
     drop(services);
+}
+
+/// A `MiniMax` key asks after its plan's limits only where it was given on a
+/// Token Plan row: a pay-as-you-go key, stored or exported, has no plan to ask
+/// after, and the key itself never says which it is.
+#[test]
+fn only_a_minimax_token_plan_key_asks_after_its_limits() {
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let settings = Settings::default();
+    let http = HttpTurns::unavailable();
+    let cases = [
+        ("minimax@token-plan.minimax.io", false, true),
+        ("minimax@token-plan.minimaxi.com", false, true),
+        ("minimax@minimax.io", false, false),
+        ("minimax@minimaxi.com", false, false),
+        // The variable answers before the store, on the pay-as-you-go row.
+        ("minimax@token-plan.minimax.io", true, false),
+    ];
+    for (at, (stored, exported, asks)) in cases.into_iter().enumerate() {
+        let sample = Sample::new(&format!("minimax-plan-{at}"));
+        let stored = sample.holding(&format!(
+            r#"{{"version":2,"keys":{{"{stored}":"sk-cp-fabricated-key"}},"subscriptions":{{}}}}"#
+        ));
+        let from = move |_: &str| exported.then(|| "fabricated-exported-key".to_owned());
+        let auth = ProviderAuth {
+            settings: &settings,
+            from: &from,
+            stored: &stored,
+            subscriptions: &subscriptions,
+        };
+
+        let provider = provider(Some(serving("minimax")), NOTHING_TO_ASK, auth, &http)
+            .unwrap_or_else(|error| panic!("case {at}: {error}"));
+
+        assert_eq!(provider.ask_limits().is_some(), asks, "case {at}");
+    }
 }

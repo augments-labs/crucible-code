@@ -8,7 +8,7 @@ use crucible_auth::Store;
 use crucible_builtins::{Ledger, Plan};
 use crucible_runner::{Agent, Model, Runner, Tools};
 use crucible_runtime::Cancel;
-use crucible_session::{Session, recent};
+use crucible_session::{Reach, Roots, Session, recent};
 use crucible_tools::Revealed;
 use crucible_tui::{Recording, Renderer};
 use crucible_types::{AgentId, Message, StopReason, ToolArgs, Transcript};
@@ -60,6 +60,7 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         style: std::cell::Cell::new(Style::plain()),
         chosen: std::cell::Cell::new(None),
         reading: std::cell::RefCell::default(),
+        settled: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         runtime: crate::cli::fake::runtime(),
         ending: crate::cli::ending::Ending::deaf(),
@@ -94,7 +95,7 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         environment: Box::new(|_| None),
         sessions: sample.logs(),
         workspace: sample.workspace(),
-        sending: crucible_tui::Sending::default(),
+        sending: std::cell::Cell::default(),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),
@@ -179,7 +180,12 @@ fn listed(sample: &Sample, of: usize) -> Vec<String> {
     let since = Instant::now();
 
     loop {
-        let found = recent(&sample.logs(), &sample.workspace(), 9);
+        let found = recent(
+            &sample.logs(),
+            Roots::These(&[sample.workspace().root()]),
+            Reach::FirstFrame,
+            9,
+        );
 
         if found.len() == of {
             return found
@@ -325,10 +331,15 @@ fn what_was_said_before_a_clear_comes_back_when_that_session_is_picked_up() {
 
     clearing(&sample, &terms, &mut conversation);
     assert_eq!(listed(&sample, 1), ["what was said before"]);
-    let picked = recent(&sample.logs(), &sample.workspace(), 1)
-        .first()
-        .map(|session| session.id().as_str().to_owned())
-        .expect("the cleared session is on the list");
+    let picked = recent(
+        &sample.logs(),
+        Roots::These(&[sample.workspace().root()]),
+        Reach::FirstFrame,
+        1,
+    )
+    .first()
+    .map(|session| session.id().as_str().to_owned())
+    .expect("the cleared session is on the list");
 
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = std::io::empty();

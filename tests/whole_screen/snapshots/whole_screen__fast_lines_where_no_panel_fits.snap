@@ -2,13 +2,12 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-80x9 cursor 6,4 scrolled 0
-|  /fast on — 75-100% more than Standard                                         |
-|  /fast off — The standard price and speed                                      |
-|                                                                                |
+80x8 cursor 6,4 scrolled 0
+|  /fast on — 75-100% more than Standard                                        │|
+|  /fast off — The standard price and speed                                     │|
+|                                                                               ●|
 |                                                                                |
 |                                                                100% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                               transcript map → |

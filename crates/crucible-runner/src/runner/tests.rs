@@ -89,6 +89,7 @@ mod aiming;
 mod attachments;
 mod attribution;
 mod beside;
+mod breakdown;
 mod cache_operations;
 mod compaction;
 mod context;
@@ -100,11 +101,13 @@ mod lifecycle;
 mod lifecycle_audit;
 mod outcome;
 mod pick_up;
+mod plan_limit;
 mod preserved;
 mod reporting;
 mod spending;
 mod storage;
 mod unanswered;
+mod usage;
 mod waiting;
 
 /// A destination that keeps the event and lets the attribution go.
@@ -376,6 +379,8 @@ impl Scripted {
             .filter_map(|event| match event {
                 Event::Aged { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
                 Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
                 | Event::Sandbox { .. }
@@ -404,6 +409,8 @@ impl Scripted {
             .filter_map(|event| match event {
                 Event::Unread { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
                 Event::Aged { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
                 | Event::Sandbox { .. }
@@ -442,6 +449,8 @@ impl Scripted {
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -455,7 +464,7 @@ impl Scripted {
         self.seen
             .try_iter()
             .filter_map(|event| match event {
-                Event::Carried { left } => Some(left),
+                Event::Carried { breakdown } => Some(breakdown.left()),
                 _ => None,
             })
             .collect()
@@ -480,6 +489,8 @@ impl Scripted {
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -508,6 +519,8 @@ impl Scripted {
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::Steered { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -535,6 +548,8 @@ impl Scripted {
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
@@ -737,7 +752,7 @@ impl Steering {
         self.seen
             .try_iter()
             .filter_map(|event| match event {
-                Event::Carried { left } => Some(left),
+                Event::Carried { breakdown } => Some(breakdown.left()),
                 _ => None,
             })
             .collect()

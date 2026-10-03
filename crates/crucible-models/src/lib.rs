@@ -91,7 +91,7 @@ pub use cache::{
 };
 pub use model::{MODEL_NAME_BYTES, ModelCapabilities, ModelError, ModelLimits};
 pub use provider::{
-    Attached, Content, Delta, DeltaStream, Effort, EffortError, Provider, ProviderError,
+    Asked, Attached, Content, Delta, DeltaStream, Effort, EffortError, Provider, ProviderError,
     ProviderLimit, Request, RequestPurpose,
 };
 pub use speed::{Cost, FastForm, Served, Speed};

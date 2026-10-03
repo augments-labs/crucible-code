@@ -6,17 +6,22 @@
 //! bounded things about each that the contract has a word for, and an event
 //! with no word — a sandbox fact, a cache fact, a receipt — is not sent.
 
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use crucible_client_api as api;
 use crucible_client_api::{
-    Capabilities, Capability, Model, Name, Percent, Problem, Progress, Snapshot, Stop, Text,
+    Capabilities, Capability, ErrorCode, Model, Name, Percent, Problem, Progress, Snapshot, Stop,
+    Text,
 };
 use crucible_models::{Effort, Served, Speed};
-use crucible_runner::Event;
+use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
 use crucible_tools::Mode;
-use crucible_types::StopReason;
+use crucible_types::{
+    CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
+};
 
-use crate::Conversation;
 use crate::switching::Retained;
+use crate::{Conversation, providers};
 
 /// Where `conversation` stands.
 ///
@@ -60,7 +65,11 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
 /// Called by a consumer with no terminal — today the one the headless tests
 /// drive; the terminal draws a turn from the runner's events as they stand.
 #[must_use]
-pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
+pub fn progress(
+    capabilities: Capabilities,
+    event: &Event,
+    serving: Option<&str>,
+) -> Option<Progress> {
     if !capabilities.has(Capability::Progress) {
         return None;
     }
@@ -93,21 +102,271 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         Event::Spent { spend } => Progress::Spent {
             tokens: spend.tokens(),
         },
+        // What a client with no terminal reads as `/context` while a turn
+        // runs; the terminal takes the same figures from the runner's event.
+        // The model is the snapshot's to say.
+        Event::Carried { breakdown } => Progress::Context(counted(breakdown)),
+        // What a client with no terminal reads as `/usage` while a turn runs,
+        // beside the context above: the session's totals as each response or
+        // edit moved them, and the plan's limits once a response updated them.
+        Event::Used { totals } => Progress::Used(used(totals)),
+        // No model is named here, so a family's group keeps the vendor's name.
+        Event::PlanLimits { windows } => Progress::Limits(limits(windows, serving, None)),
         Event::TurnFinished { turn, stop } => Progress::Finished {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
         },
-        Event::Failed { error } => Progress::Failed(Problem::failed(error)),
+        Event::Failed { error } => Progress::Failed(failed(error)),
         // A refusal whose second send a stop ended is no retry.
         Event::FastRefused { resent: false, .. }
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Wrote { .. }
-        | Event::Carried { .. }
         | Event::Aged { .. }
         | Event::Unread { .. }
         | Event::Steered { .. } => return None,
     })
+}
+
+/// What a client is told of a turn that ended on `error`.
+///
+/// A used-up plan has a code of its own, so that a client can tell a time to
+/// come back from a failure to report, and a sentence written here from the
+/// window's name and the reset in UTC: nothing the vendor wrote reaches it.
+/// Every other ending reads as what the terminal would have shown.
+pub(super) fn failed(error: &TurnError) -> Problem {
+    match error {
+        TurnError::PlanLimit {
+            window,
+            resets_at,
+            stopped,
+        } => Problem {
+            code: ErrorCode::PlanLimit,
+            message: Text::cut(&used_up(*window, *resets_at, *stopped)),
+        },
+        other => Problem::failed(other),
+    }
+}
+
+/// The sentence a client is told a used-up plan in.
+fn used_up(
+    window: Option<Window>,
+    resets_at: Option<SystemTime>,
+    stopped: PlanLimitStop,
+) -> String {
+    let window = window.map_or_else(String::new, |window| format!(" on the {}", window.named()));
+    let resets = resets_at.map_or_else(
+        || "the reset was not reported".to_owned(),
+        |at| format!("it resets at {}", Utc::new(at)),
+    );
+    let stopped = match stopped {
+        PlanLimitStop::BeforeSending => "the turn stopped before sending",
+        PlanLimitStop::Refused => "the vendor refused the request",
+    };
+    format!("the plan's usage limit is reached{window}; {resets}; {stopped}")
+}
+
+/// How the window of the next request to `model` is spent, as a client reads
+/// it.
+///
+/// Every category the runner counts is placed by name, so one it adds is a
+/// category this match, and so the contract, has to be told about. The
+/// reading of what is left is the one the prompt line and [`snapshot`] show.
+/// Called between turns by [`perform`](super::perform), and by the terminal
+/// mid-turn with the breakdown the turn last reported; a client with no
+/// terminal is streamed the same figures by [`progress`].
+#[must_use]
+pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
+    api::Context {
+        model: Model::new(model),
+        ..counted(breakdown)
+    }
+}
+
+/// What a session has used, and the plan's limits as far as its vendor said,
+/// as a client reads them.
+///
+/// Every figure is one the runner already holds, and reading them sends
+/// nothing anywhere: the limits are what the last response or the last
+/// answer to [`asking`](fn@super::asking) left, and asking is apart from this.
+/// The wall time is read as this is called. Called between turns by
+/// [`perform`](super::perform), and by the terminal mid-turn with the figures
+/// that turn last reported; a client with no terminal is streamed the same
+/// figures by [`progress`].
+#[must_use]
+pub fn usage(
+    model: &str,
+    breakdown: &Breakdown,
+    totals: &Totals,
+    limits: Option<&PlanWindows>,
+    serving: Option<&str>,
+) -> api::Usage {
+    api::Usage {
+        used: used(totals),
+        context: context(model, breakdown),
+        limits: limits.map_or_else(api::Limits::default, |windows| {
+            self::limits(windows, serving, Some(model))
+        }),
+    }
+}
+
+/// What the session's requests and edits have added up to, as a client reads
+/// it. The wall time is read as this is called: as the response ended or the
+/// edit counted, for one streamed mid-turn.
+fn used(totals: &Totals) -> api::Used {
+    let millis = |of: Duration| u64::try_from(of.as_millis()).unwrap_or(u64::MAX);
+    api::Used {
+        cost: cost(totals.cost()),
+        api_ms: millis(totals.api()),
+        wall_ms: millis(totals.started().elapsed()),
+        added: totals.added(),
+        removed: totals.removed(),
+        input: totals.input(),
+        output: totals.output(),
+        cache_read: totals.cache_read(),
+        cache_write: totals.cache_write(),
+    }
+}
+
+/// A session's cost as it crosses, in millionths of its currency.
+pub(super) fn cost(cost: SessionCost) -> api::Cost {
+    match cost {
+        SessionCost::Unspent => api::Cost::Unspent,
+        SessionCost::Priced(amount) => stated(amount)
+            .map_or(api::Cost::NotPriced, |(currency, micros)| {
+                api::Cost::Priced { currency, micros }
+            }),
+        SessionCost::AtLeast(amount) => stated(amount)
+            .map_or(api::Cost::NotPriced, |(currency, micros)| {
+                api::Cost::AtLeast { currency, micros }
+            }),
+        SessionCost::NotPriced => api::Cost::NotPriced,
+    }
+}
+
+/// An amount as its currency's code and millionths of it, where it can be
+/// stated.
+fn stated(amount: CostAmount) -> Option<(Name, u64)> {
+    // A femtocurrency is a billionth of a micro. A sum too large for the
+    // contract, or under a code that is not a name, is one nobody can read,
+    // so it is not stated: a capped figure would read as what was spent.
+    let micros = u64::try_from(amount.femtocurrency() / 1_000_000_000).ok()?;
+    Some((Name::new(amount.currency().as_str()).ok()?, micros))
+}
+
+/// Every limit a vendor reported, the plan-wide one first, drawn in the
+/// words of `serving`, the provider that reported them, while `in_use` is the
+/// model the session asks, and whether the vendor reported more than crosses:
+/// more than the reading kept, or a group left out here.
+pub(super) fn limits(
+    windows: &PlanWindows,
+    serving: Option<&str>,
+    in_use: Option<&str>,
+) -> api::Limits {
+    let groups: Vec<api::LimitGroup> = windows
+        .groups()
+        .filter_map(|one| group(one, serving, in_use))
+        .collect();
+    api::Limits {
+        more: windows.incomplete() || groups.len() < windows.groups().count(),
+        groups,
+    }
+}
+
+/// One limit and its windows, shortest first.
+///
+/// A name a vendor gave is kept stripped of control and format characters
+/// and cut under the contract's ceiling, so it always crosses; a group whose
+/// name somehow did not would be left out rather than called plan-wide.
+fn group(
+    group: &LimitGroup,
+    serving: Option<&str>,
+    in_use: Option<&str>,
+) -> Option<api::LimitGroup> {
+    Some(api::LimitGroup {
+        model: match group.scope() {
+            Scope::Plan => None,
+            Scope::Model(model) => Some(Name::new(drawn(model, serving, in_use)).ok()?),
+        },
+        limits: group
+            .windows()
+            .map(|(window, reading)| api::Limit {
+                window: self::window(window),
+                reading: self::reading(reading.used()),
+                resets_at: reading
+                    .resets_at()
+                    .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+                    .map(|since| since.as_secs()),
+            })
+            .collect(),
+    })
+}
+
+/// What a model's group is called where a client draws it: the name the
+/// catalog of `serving` gives the model the group was kept for, or, for a
+/// family of models, `in_use` where the family holds it; else the name the
+/// vendor gave the group, as it gave it.
+fn drawn<'a>(group: &'a ModelGroup, serving: Option<&str>, in_use: Option<&str>) -> &'a str {
+    let model = group
+        .key()
+        .and_then(ModelKey::model)
+        .or_else(|| in_use.filter(|model| group.holds(model)));
+    serving
+        .zip(model)
+        .and_then(|(provider, model)| providers::model_shown(provider, model))
+        .unwrap_or_else(|| group.name().as_str())
+}
+
+/// A window as a client names it.
+const fn window(window: Window) -> api::Window {
+    match window {
+        Window::FiveHour => api::Window::FiveHour,
+        Window::Daily => api::Window::Daily,
+        Window::Weekly => api::Window::Weekly,
+        Window::Monthly => api::Window::Monthly,
+        Window::Yearly => api::Window::Yearly,
+        Window::Lasting(minutes) => api::Window::Lasting { minutes },
+    }
+}
+
+/// How much of a window is used, in the vendor's measure.
+fn reading(used: Used) -> api::Reading {
+    match used {
+        Used::Percent(percent) => api::Reading::Percent(
+            Percent::new(percent.min(Percent::WHOLE.get())).unwrap_or(Percent::WHOLE),
+        ),
+        Used::Counted { used, total } => api::Reading::Counted { used, total },
+        Used::Unlimited => api::Reading::Unlimited,
+    }
+}
+
+/// The parts of `breakdown`, with no model named.
+fn counted(breakdown: &Breakdown) -> api::Context {
+    let mut context = api::Context {
+        model: None,
+        window: breakdown.window().map(u64::from),
+        left: breakdown.left().and_then(Percent::new),
+        system: 0,
+        instructions: 0,
+        tools: 0,
+        mcp: 0,
+        messages: 0,
+        reserve: 0,
+        free: 0,
+    };
+    for category in Category::EVERY {
+        let tokens = breakdown.tokens(category);
+        match category {
+            Category::SystemPrompt => context.system = tokens,
+            Category::ProjectInstructions => context.instructions = tokens,
+            Category::ToolSchemas => context.tools = tokens,
+            Category::McpToolSchemas => context.mcp = tokens,
+            Category::Messages => context.messages = tokens,
+            Category::Reserve => context.reserve = tokens,
+            Category::Free => context.free = tokens,
+        }
+    }
+    context
 }
 
 /// A count as it crosses: a `usize` on every machine this builds for fits.
@@ -191,3 +450,6 @@ pub const fn rung(effort: Effort) -> api::Rung {
         Effort::Max => api::Rung::Max,
     }
 }
+
+#[cfg(test)]
+mod tests;

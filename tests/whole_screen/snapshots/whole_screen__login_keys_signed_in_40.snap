@@ -3,12 +3,13 @@ source: tests/whole_screen/main.rs
 assertion_line: 1422
 expression: keys
 ---
-40x30 cursor 28,0 scrolled 0
-|                                        |
-|› /login                                |
+40x30 cursor 29,0 scrolled 0
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
+|                                        |
+|  DeepSeek                              |
+|  set DEEPSEEK_API_KEY                  |
 |                                        |
 |  Google                                |
 |  uses what is sent · set GEMINI_API_KEY|
@@ -30,7 +31,6 @@ expression: keys
 |                                        |
 |› MoonshotAI · kimi.com                 |
 |  signed in · may use what is sent      |
-|  · 8 more                              |
+|  · 7 more                              |
 |                                        |
 |esc to go back                          |
-|                                        |

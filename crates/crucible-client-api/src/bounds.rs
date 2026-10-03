@@ -56,8 +56,9 @@ pub const DEPTH: usize = 16;
 /// them that still allows a frame of lists of lists with a million entries in
 /// all. The fullest value here is a snapshot whose pending action is [`ITEMS`]
 /// questions of [`ITEMS`] choices: a choice is seven values — itself and two
-/// texts of three — and eight apiece leaves room for the questions around them
-/// and the snapshot around those.
+/// texts of three — and a question marks at most one choice as recommended,
+/// which adds a flag to that one alone. Eight apiece leaves room for that flag,
+/// the questions around the choices and the snapshot around those.
 pub const VALUES: usize = ITEMS * ITEMS * 8;
 
 /// A short word that identifies something: a provider, a model, a theme.

@@ -1,12 +1,13 @@
 //! What the `output` block and the terminal together decided.
 //!
-//! Resolved once, at startup, into plain answers the drawing can read without
-//! asking anything: whether to write colour and how much of it, which
-//! characters to draw with, and how much of a line to show. None of those may
-//! be asked per event — two are syscalls and the third is a file.
+//! Settled at startup, and again only when a command says so, into plain
+//! answers the drawing can read without asking anything: whether to write
+//! colour and how much of it, which characters to draw with, and how much of a
+//! line to show. None of those may be asked per event — two are syscalls and
+//! the third is a file.
 
-use crucible_config::{Color, Glyphs as Wanted, ThemeChoice, ToolDetail};
-use crucible_tui::{Glyphs, Ground, Palette, Theme};
+use crucible_config::{Color, Glyphs as Wanted, ThemeChoice, ToolDetail, TranscriptColours};
+use crucible_tui::{Design, Glyphs, Ground, Palette, Theme};
 
 /// What the `output` block said, before the terminal and the environment have
 /// their say.
@@ -30,6 +31,8 @@ pub(crate) struct Output {
     pub(crate) theme: Option<ThemeChoice>,
     /// Which theme fenced code is drawn in.
     pub(crate) syntax: Option<String>,
+    /// How many of the theme's colours the transcript spends.
+    pub(crate) colours: Option<TranscriptColours>,
 }
 
 /// The maximum columns shown in a compact tool heading.
@@ -117,6 +120,7 @@ impl Style {
             detail,
             theme: chosen,
             syntax,
+            colours,
         } = output;
 
         let color = match wanted.unwrap_or_default() {
@@ -178,7 +182,8 @@ impl Style {
                     .reading(six)
                     .addressing(links),
                 None => Palette::resolve(color, theme, exact, from).addressing(links),
-            },
+            }
+            .designing(Self::design(colours)),
             ground,
             glyphs: glyph_set(glyphs),
             detail: detail.unwrap_or_default(),
@@ -203,6 +208,16 @@ impl Style {
             Some(ThemeChoice::ColourblindDark) => Theme::ColourblindDark,
             Some(ThemeChoice::ColourblindLight) => Theme::ColourblindLight,
             Some(ThemeChoice::Ansi) => Theme::Ansi,
+        }
+    }
+
+    /// Which of a theme's inks each kind in the transcript wears, for the
+    /// answer a reader configured.
+    pub(crate) fn design(chosen: Option<TranscriptColours>) -> Design {
+        match chosen.unwrap_or_default() {
+            TranscriptColours::Calm => Design::Calm,
+            TranscriptColours::Balanced => Design::Balanced,
+            TranscriptColours::Rich => Design::Rich,
         }
     }
 
@@ -234,6 +249,25 @@ impl Style {
             palette: self.palette.wearing(theme),
             ..self
         }
+    }
+
+    /// The same style, spending a theme's inks the way a different design
+    /// does.
+    pub(crate) fn designing(self, design: Design) -> Self {
+        Self {
+            palette: self.palette.designing(design),
+            ..self
+        }
+    }
+
+    /// The same style, drawn with a different glyph set.
+    pub(crate) fn drawing(self, glyphs: Glyphs) -> Self {
+        Self { glyphs, ..self }
+    }
+
+    /// The same style, showing a tool call in a different detail.
+    pub(crate) fn detailing(self, detail: ToolDetail) -> Self {
+        Self { detail, ..self }
     }
 
     /// What a component's slots are worth here.

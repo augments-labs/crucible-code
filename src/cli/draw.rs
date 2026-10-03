@@ -8,8 +8,12 @@
 //! What this file composed itself is a different thing and goes out a different
 //! door. A call line and the line hanging under it are spans this program built,
 //! so they are handed to [`Renderer::present`] as rows and the palette decides
-//! their colour at the last moment: the mark and the tool's name in the accent,
-//! what the call was about and what came back in the quieter one. A row that
+//! their colour at the last moment: the mark in the reader's own foreground and
+//! the tool's name in it bold, the brackets and what came back in the quieter
+//! one, and what the call was about in the slot for the kind the tool said it
+//! is -- a path, an address, or a command or pattern -- which the reader's
+//! design gives an ink or leaves quiet, and anything else quiet in every
+//! design. A row that
 //! arrives already laid out is clipped to the window rather than folded into
 //! it, so nothing here is counting its columns a second time.
 //!
@@ -53,22 +57,24 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_builtins::Ended;
-use crucible_runner::{Event, Turned};
-use crucible_tools::{Sensitivity, Summary, ToolOutput};
+use crucible_runner::{Event, TurnError, Turned};
+use crucible_tools::{Argument, Sensitivity, Summary, ToolOutput};
 use crucible_tui::{
     Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
 use crucible_types::{
-    Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
+    Answer, Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
     RecordedToolOutput, StopReason, ToolCall, ToolId,
 };
 use crucible_workspace::{Workspace, written};
 
 use super::converse::Parting;
+use super::converse::command::Clock;
 use super::kept::Kept;
 use super::style::Style;
 
 pub(crate) mod opening;
+pub(crate) mod used_up;
 pub(crate) mod when;
 
 pub(crate) use opening::{Opening, opening};
@@ -82,6 +88,19 @@ pub(crate) use opening::{Opening, opening};
 /// The same two columns the reason and the answers are written behind, so the
 /// whole question reads as one block.
 const UNDER: &str = "  ";
+
+/// What an answer is called where it is drawn.
+///
+/// The name as the asker gave it, followed by the label where the asker marked
+/// it as the answer they would pick. The label is made here, for the row, and
+/// is in neither the name that is chosen nor the one handed back.
+pub(crate) fn offered(answer: &Answer) -> Cow<'_, str> {
+    if answer.is_recommended() {
+        Cow::Owned(format!("{} (Recommended)", answer.answer()))
+    } else {
+        Cow::Borrowed(answer.answer())
+    }
+}
 
 /// The narrowest a block's gutter of line numbers is drawn.
 ///
@@ -114,7 +133,7 @@ pub(crate) fn event<T: Terminal>(
     style: Style,
     kept: &mut Kept,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     let drawn = match event {
         // The turn number is in the title bar, not in the transcript: a line
@@ -129,16 +148,19 @@ pub(crate) fn event<T: Terminal>(
         // moment the next arrived.
         Event::TurnStarted { .. } => renderer.apart(),
 
-        // All four are transient live-foot state rather than transcript lines.
-        // Spend, retries and compaction shape the working row; carried load
-        // refreshes the remaining-window fact in the prompt. Each is true only
-        // until its next event, so committing every reading would leave a
-        // column of stale state in front of the answer.
+        // All of these are transient live-foot state rather than transcript
+        // lines. Spend, retries and compaction shape the working row; carried
+        // load refreshes the remaining-window fact in the prompt; what the
+        // session has used and the plan windows are kept for `/usage`. Each is
+        // true only until its next event, so committing every reading would
+        // leave a column of stale state in front of the answer.
         Event::Spent { .. }
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Retrying
         | Event::Carried { .. }
+        | Event::Used { .. }
+        | Event::PlanLimits { .. }
         | Event::Compacting { .. } => Ok(()),
 
         // What it came to does not. Room having been made is a thing that
@@ -179,7 +201,7 @@ pub(crate) fn event<T: Terminal>(
         // handed straight back to be written. Both commit through [`returned`],
         // which is why neither is drawn from this arm.
         Event::ToolRequested { call, summary, .. } => {
-            kept.calling(call.id.clone(), called(&call, &summary));
+            kept.calling(call.id.clone(), called(&call, &summary).text().to_owned());
             renderer.settle()
         }
 
@@ -240,6 +262,29 @@ pub(crate) fn event<T: Terminal>(
         // No mark in front of it either. The mark hangs a result off the line
         // that asked for it, and a failed turn was asked for by nobody's line
         // — it stands on its own, in the one colour kept for it.
+        //
+        // A used-up plan is the exception: nothing went wrong, and the turn
+        // waits on a clock rather than on a fix, so it gets a notice of its
+        // own in this program's words and never the error's sentence.
+        Event::Failed {
+            error:
+                TurnError::PlanLimit {
+                    window,
+                    resets_at,
+                    stopped,
+                },
+        } => {
+            renderer.settle()?;
+            renderer.apart()?;
+            let rows = used_up::rows(
+                (window, resets_at),
+                stopped,
+                columns,
+                style.glyphs(),
+                &Clock::system(),
+            );
+            renderer.present(&rows)
+        }
         Event::Failed { error } => {
             renderer.settle()?;
             renderer.apart()?;
@@ -289,7 +334,7 @@ fn refused_fast<T: Terminal>(
         "{provider} refused fast: {}. {then}",
         reason.trim_end_matches('.')
     );
-    let room = renderer.columns().saturating_sub(lead.columns());
+    let room = renderer.transcript_columns().saturating_sub(lead.columns());
     let rows = hung_off(lead, &Row::plain(said), room);
 
     renderer.settle()?;
@@ -357,7 +402,7 @@ pub(crate) fn gone<T: Terminal>(
     // Reserve the status and count before shortening the command. Its original
     // call holds the full heading; repeating a huge script here would undo the
     // compact transcript. Only a window too narrow for the fixed suffix wraps.
-    let window = renderer.columns();
+    let window = renderer.transcript_columns();
     let lead = Row::plain(format!("{mark} "));
     let room = style
         .output(window)
@@ -385,7 +430,7 @@ pub(crate) fn unconfigured<T: Terminal>(
     renderer: &mut Renderer<T>,
     said: &str,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let rows: Vec<Row> = fold(said, columns)
         .into_iter()
         .map(|row| Row::new().then(Slot::Strong, row))
@@ -567,7 +612,7 @@ fn rows<T: Terminal>(
     style: Style,
 ) -> Result<(), TerminalError> {
     let files: Vec<&str> = named.iter().map(String::as_str).collect();
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     renderer.present(&crucible_tui::Prompt::attached(
         &files,
         columns,
@@ -696,7 +741,7 @@ pub(crate) fn question<T: Terminal>(
     sensitivity: &Sensitivity,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     renderer.settle()?;
     for row in asked(call, sensitivity, columns) {
@@ -724,7 +769,7 @@ pub(crate) fn asking<T: Terminal>(
     of: usize,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     renderer.settle()?;
     let counted = if of > 1 {
@@ -738,12 +783,12 @@ pub(crate) fn asking<T: Terminal>(
 
     for (number, answer) in question.answers().enumerate() {
         let said = if answer.says().is_empty() {
-            format!("{UNDER}{}. {}", number + 1, answer.answer())
+            format!("{UNDER}{}. {}", number + 1, offered(answer))
         } else {
             format!(
                 "{UNDER}{}. {} {} {}",
                 number + 1,
-                answer.answer(),
+                offered(answer),
                 style.glyphs().dash(),
                 answer.says()
             )
@@ -778,24 +823,52 @@ pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Termi
     renderer.prompt(Slot::Plain, "\n")
 }
 
+/// A call's line, and what kind of thing the call was about.
+///
+/// The kind travels with the whole line rather than being read back out of it:
+/// the tool said it from the whole argument, so a window too narrow for the
+/// words cuts them and leaves the kind as it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Called {
+    /// The tool's name and, in brackets, what the call is about.
+    text: String,
+    /// What the bracketed words are, as the tool said.
+    argument: Argument,
+}
+
+impl Called {
+    /// A line and the kind of thing its bracketed words are.
+    pub(crate) fn new(text: impl Into<String>, argument: Argument) -> Self {
+        Self {
+            text: text.into(),
+            argument,
+        }
+    }
+
+    /// The words, whole.
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 /// What a call's line says: the tool, and what the call is about.
 ///
-/// The words in the brackets arrive on the event, worked out by the tool that
-/// owns the arguments. Reading those here to pull out a path would be a second
-/// reading of a schema the tool already owns, and the two would drift. A call
-/// nobody could read is drawn as the bare name, because empty brackets would
-/// claim it was about nothing.
+/// The words in the brackets, and what kind of thing they are, arrive on the
+/// event, worked out by the tool that owns the arguments. Reading those here to
+/// pull out a path would be a second reading of a schema the tool already
+/// owns, and the two would drift. A call nobody could read is drawn as the bare
+/// name, because empty brackets would claim it was about nothing.
 ///
 /// Whole, and without the mark: this is what the footing holds for as long as
 /// the tool is out, and the footing draws the mark itself because the mark is
 /// the part that moves.
-pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
+pub(crate) fn called(call: &ToolCall, summary: &Summary) -> Called {
     let name = pascal(&call.name);
 
     if summary.is_empty() {
-        name
+        Called::new(name, Argument::Other)
     } else {
-        format!("{name}({})", summary.as_str())
+        Called::new(format!("{name}({})", summary.as_str()), summary.argument())
     }
 }
 
@@ -808,23 +881,29 @@ pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
 /// ceiling does: a line as wide as the window with a mark still in front of it
 /// is a row the terminal wraps and the live tail never counted.
 ///
-/// The tool's name is in the accent and what the call is about is in the quieter
-/// colour, so a column of calls reads as the tools that ran with their arguments
-/// beside them rather than as a paragraph. They are told apart here, after the
-/// clipping and not before it, because how much of the line a narrow window
-/// leaves is decided on the whole of it — a name cut off before its bracket is a
-/// row with no arguments on it, and then there is nothing to tell apart.
+/// The tool's name is bold and what the call is about is in the slot for its
+/// kind, so a column of calls reads as the tools that ran with their arguments
+/// beside them rather than as a paragraph. The name and the argument are split
+/// apart here, after the clipping and not before it, because how much of the
+/// line a narrow window leaves is decided on the whole of it — a name cut off
+/// before its bracket is a row with no arguments on it, and then there is
+/// nothing to split. The kind is not decided here at all: it came with the line.
 ///
 /// An empty row comes back where the window has room for neither. Both callers
 /// draw the mark alone then — it still says a call was made, which is the half
 /// of this line the result hanging under it cannot say for itself.
-pub(crate) fn words(said: &str, window: usize, style: Style) -> Row {
+pub(crate) fn words(called: &Called, window: usize, style: Style) -> Row {
+    named(&fitted(called.text(), window, style), called.argument)
+}
+
+/// A call line's words cut to the columns a window this wide leaves them.
+fn fitted(said: &str, window: usize, style: Style) -> String {
     let glyphs = style.glyphs();
     let room = style
         .args(window)
         .min(window.saturating_sub(columns(glyphs.called()) + 1));
 
-    named(&heading(said, room, glyphs))
+    heading(said, room, glyphs)
 }
 
 /// Clips arguments inside their enclosing parentheses, so a shortened label
@@ -847,18 +926,40 @@ fn heading(said: &str, room: usize, glyphs: Glyphs) -> String {
     within(said, room, glyphs)
 }
 
-/// A call's words in the two slots they are read in: the tool's name where the
-/// eye lands, and what it was asked to do, quieter, after it.
+/// A call's words in the slots they are read in: the tool's name where the
+/// eye lands, and what it was asked to do after it, between quiet brackets,
+/// in the slot for the kind of thing the tool said it is.
 ///
-/// The whole of `said` and none of the layout — how much of it a row shows is
-/// the caller's: both the footing and the settled heading cut to one row;
-/// the expansion keeps the complete words.
-fn named(said: &str) -> Row {
+/// Given `said` already cut to the row, and the kind the tool decided from the
+/// whole argument, so the slot is the same however much of the words a window
+/// leaves. A kind that is none of a path, an address or a command stays quiet
+/// in every design. It picks a slot and nothing more, so the row's text is the
+/// call's in every design.
+fn named(said: &str, argument: Argument) -> Row {
     match said.split_once('(') {
-        Some((name, about)) => Row::new()
-            .then(Slot::Strong, name)
-            .then(Slot::Quiet, format!("({about}")),
-        None => Row::new().then(Slot::Strong, said),
+        Some((name, about)) => {
+            let (words, closed) = match about.strip_suffix(')') {
+                Some(words) => (words, true),
+                None => (about, false),
+            };
+            let kind = match argument {
+                Argument::Path => Slot::ArgumentPath,
+                Argument::Address => Slot::ArgumentAddress,
+                Argument::Command => Slot::ArgumentCommand,
+                Argument::Other => Slot::Quiet,
+            };
+
+            let row = Row::new()
+                .then(Slot::Bold, name)
+                .then(Slot::Quiet, "(")
+                .then(kind, words);
+            if closed {
+                row.then(Slot::Quiet, ")")
+            } else {
+                row
+            }
+        }
+        None => Row::new().then(Slot::Bold, said),
     }
 }
 
@@ -898,17 +999,18 @@ fn hung_off(lead: Row, words: &Row, room: usize) -> Vec<Row> {
 /// Writes the line of a call that has stopped being live.
 ///
 /// The same words the footing was drawing, in the same columns and the same
-/// colours, with the motion gone — the mark stops pulsing and settles on the
-/// accent, and the result that follows hangs under a line that is already there.
+/// colours, with the motion gone — the mark stops pulsing and stays in the
+/// reader's own foreground, and the result that follows hangs under a line that
+/// is already there.
 pub(crate) fn returned<T: Terminal>(
     renderer: &mut Renderer<T>,
-    said: &str,
+    said: &Called,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let words = words(said, renderer.columns(), style);
+    let words = words(said, renderer.transcript_columns(), style);
     renderer.settle()?;
     renderer.apart()?;
-    let mut row = Row::new().then(Slot::Accent, style.glyphs().called());
+    let mut row = Row::new().then(Slot::Plain, style.glyphs().called());
     if !words.is_empty() {
         row = row.then(Slot::Plain, " ").join(words);
     }
@@ -940,13 +1042,13 @@ pub(crate) fn gathered<T: Terminal>(
     style: Style,
 ) -> Result<usize, TerminalError> {
     let glyphs = style.glyphs();
-    let window = renderer.columns();
+    let window = renderer.transcript_columns();
 
     renderer.settle()?;
     renderer.apart()?;
 
     let lead = Row::new()
-        .then(Slot::Accent, glyphs.called())
+        .then(Slot::Plain, glyphs.called())
         .then(Slot::Plain, " ");
     let room = window.saturating_sub(lead.columns());
     let rows = hung_off(lead, &Row::new().then(Slot::Cut, flattened(said)), room);
@@ -1072,7 +1174,7 @@ fn finished(output: &Shown, beyond: usize, window: usize, style: Style, details:
     lead.push(Slot::Cut, clipped(said, preview, glyphs));
     if tail <= room {
         lead.push(Slot::Quiet, counted);
-        lead.push(Slot::Accent, opens);
+        lead.push(Slot::Quiet, opens);
         lead.push(Slot::Quiet, shut);
     }
     vec![lead]
@@ -1193,11 +1295,11 @@ fn structural(line: &str) -> bool {
 
 /// The two halves of what a cut result offers: how much it cut, and the door.
 ///
-/// Parted so they can be lit apart. The count is a fact about what came back
-/// and the key is the way to the rest of it, and a click on this row opens the
-/// same door the key does — so the accent goes on the half that answers one,
-/// the way the count of what is still running is lit under the box and the
-/// mark parting it from the mode is not.
+/// Parted so a row that stops offering can take the key off and keep the
+/// count: the count is a fact about what came back, and the key is the way to
+/// the rest of it. Both are as quiet as the hint they stand in, because the
+/// transcript keeps the theme's colour for code and links, and a click on this
+/// row opens the same door the key does.
 ///
 /// The words in front of both are in the cut slot rather than the quiet one the
 /// rest of this row is in. At rest the two look the same, which is right: a row
@@ -1267,7 +1369,7 @@ pub(crate) fn came_back<T: Terminal>(
 ) -> Result<(), TerminalError> {
     let details = kept
         .heading(call)
-        .is_some_and(|said| words(said, renderer.columns(), style).text() != flattened(said));
+        .is_some_and(|said| fitted(said, renderer.transcript_columns(), style) != flattened(said));
     // The first line the result writes, which is where the offer goes. Read
     // before the rows go down rather than counted back after them: a change is
     // written as one line however many rows it draws, so counting its rows back
@@ -1275,7 +1377,7 @@ pub(crate) fn came_back<T: Terminal>(
     let at = renderer.lines();
     let rows = if changed(&output).is_some() && renderer.is_terminal() {
         let retained = output.clone();
-        let rows = finished_rows(&retained, renderer.columns(), style, details);
+        let rows = finished_rows(&retained, renderer.transcript_columns(), style, details);
         let bytes = retained.diff.as_ref().map_or(0, Diff::retained);
         renderer.responsive(
             bytes,
@@ -1283,7 +1385,7 @@ pub(crate) fn came_back<T: Terminal>(
         )?;
         rows
     } else {
-        let rows = finished_rows(&output, renderer.columns(), style, details);
+        let rows = finished_rows(&output, renderer.transcript_columns(), style, details);
         renderer.present(&rows)?;
         rows
     };
@@ -1352,9 +1454,7 @@ fn unoffered(rows: &mut [Row]) {
             .spans()
             .map(|(slot, text)| (slot, text.to_owned()))
             .collect();
-        let key = spans
-            .iter()
-            .position(|(slot, text)| *slot == Slot::Accent && text == EXPAND);
+        let key = offered_at(&spans);
         // ` (+2 lines · ` keeps its count and loses the mark after it; a bare
         // ` (` was only ever the offer's.
         let counted = key
@@ -1384,6 +1484,25 @@ fn unoffered(rows: &mut [Row]) {
             }
         });
     }
+}
+
+/// Where the key's name stands in `spans`, if [`finished`] made an offer there.
+///
+/// Found by where it stands rather than by its slot, which is the quiet the
+/// words of a result can be in too: the key's name alone, after the opening
+/// [`offer`] writes and before its closing bracket.
+fn offered_at(spans: &[(Slot, String)]) -> Option<usize> {
+    spans.iter().enumerate().position(|(at, (slot, text))| {
+        *slot == Slot::Quiet
+            && text == EXPAND
+            && at
+                .checked_sub(1)
+                .and_then(|opens| spans.get(opens))
+                .is_some_and(|(slot, opens)| *slot == Slot::Quiet && opens.starts_with(" ("))
+            && spans
+                .get(at + 1)
+                .is_some_and(|(slot, shut)| *slot == Slot::Quiet && shut == ")")
+    })
 }
 
 /// Whether `text` is a change's own offer as [`finished`] writes it: the key's
@@ -1513,10 +1632,10 @@ fn counted(row: &mut Row, counts: Changed, dropped: usize, room: usize) {
     }
 }
 
-/// `word`, then a number of lines with the number emphasised.
+/// `word`, then a number of lines with the number in bold.
 fn count(row: &mut Row, word: &str, lines: usize) {
     row.push(Slot::Quiet, word);
-    row.push(Slot::Strong, lines.to_string());
+    row.push(Slot::Bold, lines.to_string());
     row.push(Slot::Quiet, if lines == 1 { " line" } else { " lines" });
 }
 
@@ -1641,7 +1760,7 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
 ///
 /// [`TerminalError::Io`] if the terminal could not be written to.
 pub(crate) fn unmade<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
-    let window = renderer.columns();
+    let window = renderer.transcript_columns();
     let rows = [Row::new().then(Slot::Quiet, clip(NOTHING, window))];
 
     renderer.present(&rows)
@@ -1666,7 +1785,7 @@ const NOTHING: &str = "there is nothing behind this turn worth replacing yet";
 ///
 /// [`TerminalError::Io`] if the terminal could not be written to.
 pub(crate) fn stopped<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
-    let window = renderer.columns();
+    let window = renderer.transcript_columns();
     let said = notice(StopReason::Cancelled).unwrap_or_default();
     let rows = [Row::new().then(Slot::Quiet, clip(said, window))];
 
@@ -1719,7 +1838,7 @@ pub(crate) fn refused<T: Terminal>(
     renderer.settle()?;
     renderer.apart()?;
     let flat = said.split_whitespace().collect::<Vec<_>>().join(" ");
-    let rows: Vec<Row> = fold(&flat, renderer.columns())
+    let rows: Vec<Row> = fold(&flat, renderer.transcript_columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Trouble, row))
         .collect();

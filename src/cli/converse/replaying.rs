@@ -174,7 +174,7 @@ fn streamed<T: Terminal>(
                 renderer.apart()?;
                 renderer.present(&draw::compacted_rows(
                     details,
-                    renderer.columns(),
+                    renderer.transcript_columns(),
                     against.style.glyphs(),
                 ))?;
             }
@@ -332,7 +332,7 @@ fn said<T: Terminal>(
     batch: &mut Batch<'_>,
     message: &Message,
 ) -> Result<(), Fatal> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let style = against.style;
 
     // Whatever the batch before this one never answered goes down first, where
@@ -394,7 +394,7 @@ fn said<T: Terminal>(
                 // the turn named it: the expansion carries the call's line, and
                 // a result whose call was never named would open under a heading
                 // nobody wrote.
-                kept.calling(call.id.clone(), line.clone());
+                kept.calling(call.id.clone(), line.text().to_owned());
 
                 // A call in a folded run has no row of its own: the line the
                 // run came to stands where the first of those rows would have,
@@ -512,7 +512,7 @@ struct Folded {
     /// The calls with a row of their own whose row has not gone down yet, with
     /// the line each will be drawn as. Drawn when the answer arrives, or when
     /// the walk moves on without one.
-    waiting: Vec<(ToolId, String)>,
+    waiting: Vec<(ToolId, draw::Called)>,
 }
 
 impl Folded {
@@ -620,12 +620,12 @@ impl Folded {
     }
 
     /// Holds a call's line back until its answer comes past.
-    fn named(&mut self, call: ToolId, line: String) {
+    fn named(&mut self, call: ToolId, line: draw::Called) {
         self.waiting.push((call, line));
     }
 
     /// The line held for this call, taken out to be drawn over its answer.
-    fn answering(&mut self, call: &ToolId) -> Option<String> {
+    fn answering(&mut self, call: &ToolId) -> Option<draw::Called> {
         let at = self.waiting.iter().position(|(held, _)| held == call)?;
         Some(self.waiting.remove(at).1)
     }

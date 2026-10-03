@@ -62,7 +62,31 @@ never asks for `sudo` or edits a shell profile. Use `--version`, `--dir` or
 `--dry-run` when the defaults are not the ones you want. The matching
 `uninstall.sh` removes only those executables and preserves `~/.crucible`;
 deleting configuration, credentials and sessions requires the explicit
-`--purge --yes` pair.
+`--purge --yes` pair. In a terminal the installer shows each step as it runs,
+with a bar while the archive downloads; piped, or under `NO_COLOR` or
+`TERM=dumb`, it prints one plain line per step instead. Either way a failure
+while it detects the platform, downloads, verifies, unpacks or installs names
+that step.
+
+On Windows, in PowerShell 5.1 or 7, run the release installer:
+
+```powershell
+irm https://github.com/augments-labs/crucible-code/releases/latest/download/install.ps1 | iex
+```
+
+It detects the architecture, verifies the Windows archive against the release's
+`SHA256SUMS` before unpacking it, and installs `crucible.exe`,
+`crucible-sandbox-broker.exe` and a `cru.exe` copy in
+`%LOCALAPPDATA%\Programs\crucible\bin`, without asking for elevation. It
+points out that directory, or one above it, when other users can change it,
+since they could then replace what it installed. It says
+whether that directory is on your `PATH` and how to add it, but changes `PATH`
+only when asked to. To pass options, such as `-AddToPath`,
+`-Version`, `-Dir` or `-DryRun`, run it as a script block:
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/augments-labs/crucible-code/releases/latest/download/install.ps1))) -AddToPath
+```
 
 For a manual Unix install, download the archive and `SHA256SUMS` from the
 [releases page](https://github.com/augments-labs/crucible-code/releases). On
@@ -309,7 +333,9 @@ can run past what one window shows: the highlight stays on the words it began
 on, and what scrolled off the window is copied with the rest. Resizing lets go
 of it, because a new width moves the words out from under the two ends. Holding
 <kbd>Shift</kbd> while you drag still hands the pointer back to your terminal,
-if its own selection is the one you wanted.
+if its own selection is the one you wanted. A press on the scroll rail, the
+transcript's last column, scrolls rather than selects, and no selection takes
+the rail.
 
 What a drag over the box takes is the picture: a border down each side, and
 blank ground out to the last column. So <kbd>Ctrl+Y</kbd> is still there for the
@@ -375,21 +401,22 @@ way the box is because they are the same thing a moment apart. They are your own
 words, one of them being typed and the rest already sent for:
 
 ```
-┌─ 4 queued ───────────────────────────────────────────────┐
+╭─ 4 queued ───────────────────────────────────────────────╮
 │ › fix the failing test                                   │
 │ › then run the gate                                      │
 │ › and write the changelog                                │
-│   … +1 more  (ctrl+q to see all)                         │
-└──────────────────────────────────────────────────────────┘
+│   … +1 more                                              │
+╰──────────────────────────────────────────── ctrl+q edit ─╯
 ```
 
-Three are named and the rest are counted, oldest first, which is the order they
-will be said in. A line too wide for the window is cut at the right. On a window
-too narrow to open a frame the panel is one indented row saying how many are
-waiting, since that is the fact that cannot go, and on one too short for
-everything standing over the box it gives its rows up before the row saying a
-turn is running does: a queued prompt has its own turn coming, and that row is
-written nowhere else.
+The bottom edge names the key that opens the queue, for one waiting prompt as
+for many. Three are named and the rest are counted, oldest first, which is the
+order they will be said in. A line too wide for the window is cut at the right.
+On a window too narrow to open a frame the panel is one indented row saying
+how many are waiting, since that is the fact that cannot go, and on one too
+short for everything standing over the box it gives its rows up before the row
+saying a turn is running does: a queued prompt has its own turn coming, and
+that row is written nowhere else.
 
 They go together. When the turn ends the whole queue is one turn: the oldest is
 its prompt and the rest are handed to the same turn before it asks anything, so
@@ -397,13 +424,17 @@ the model reads all of it and then answers all of it. Three lines typed behind a
 turn are one thing you wanted said, and answering the first before reading the
 third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
-write.
+write. A turn that stopped on a used-up plan is the exception: the queue waits
+over the box, where <kbd>Ctrl+Q</kbd> opens it to edit or delete, until you send
+a prompt, since sent on its own it would reach a plan that is spent.
 
-<kbd>Ctrl+Q</kbd> stands the whole queue where the box was. Up and down walk it,
-<kbd>x</kbd> takes the marked line back into the box to be edited or sent ahead
-of the rest, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes it. While it
-stands it has the keyboard, so <kbd>Esc</kbd> there closes the view rather than
-interrupting the turn.
+<kbd>Ctrl+Q</kbd> stands the whole queue where the box was, with a footer naming
+the keys that work. Up and down walk it, <kbd>e</kbd> takes the marked line back
+into the box to be edited or sent ahead of the rest, <kbd>d</kbd> deletes it
+without taking it back, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes
+it. While it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view
+rather than interrupting the turn. In a window too short for the whole queue the
+view scrolls, so the line the keys act on is always drawn, from its first row.
 
 Nothing leaves the queue while it stands open. The turn above goes on writing,
 tools go on running, the answer goes on arriving; what waits is the one moment
@@ -882,7 +913,9 @@ back to correct.
 | Command | What it does |
 | --- | --- |
 | `/help` | Lists these |
-| `/release-notes` | Prints what changed in each release, or in the one you name |
+| `/release-notes` | Lists the releases to open one, or prints the one you name |
+| `/context` | Shows how the model's window is spent by the next request, part by part |
+| `/usage` | Shows what the session has used, and how much of each of your plan's limits is gone |
 | `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
 | `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
@@ -891,6 +924,7 @@ back to correct.
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/sandbox` | Shows the [sandbox](../security/sandboxing.md) in force, and turns it on or off |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
+| `/settings` | Changes a [setting](../configuration/configuration.md) without editing JSON, and shows what is in force and what the session has used |
 | `/resume` | Stands what was worked on in this directory beside a preview of it, and picks one back up |
 | `/cache` | Shows what [prompt caching](../providers/prompt-caching.md) did, or cleans up what it left |
 | `/compact` | Replaces what is behind you with the model's own notes on it, making room |
@@ -917,14 +951,76 @@ this run is set up for, and the provider beside it, so the next crucible
 started anywhere begins with both. See [Providers and
 models](../providers/providers.md).
 
-`/release-notes` prints every release crucible has had into the transcript,
-oldest first: a row each for the older ones, saying how many entries each group
-held, then the ten newest in full, the one you are running last and marked
-`this version`. `/release-notes 0.41.1`, or `v0.41.1`, prints that release
-alone. The notes are the changelog of the build you are running, built into it,
+`/release-notes` opens a list of releases, newest first, each with its date and
+how many entries it holds; the one you are running is marked `this version`. The
+list shows the eight newest and a last row, `all N releases`, that opens the
+rest in place. <kbd>Up</kbd> and <kbd>Down</kbd> (or the wheel) move,
+<kbd>Enter</kbd> prints that release alone into the transcript, and
+<kbd>Esc</kbd> closes the list. `/release-notes 0.41.1`, or `v0.41.1`, prints
+that release without the list, and `/release-notes all` prints every release
+into the transcript, oldest first: a row each for the older ones, saying how
+many entries each group held, then the ten newest in full. Without a keyboard,
+or in a window too short to hold the list, `/release-notes` prints that same
+output. The notes are the changelog of the build you are running, built into it,
 so asking for them needs no network. Where a very narrow window would print more
 rows than the transcript keeps, the oldest rows are left out first, and the last
 row says how many.
+
+`/context` stands a panel over the prompt box: the model and the size of its
+window, one bar across the whole window, and a row for each part of the next
+request with its tokens and its share of the window. The parts are the system
+prompt, project instructions, the tool schemas advertised, those from MCP
+servers, the messages so far (tool results among them), the reserve kept free
+for the next answer and the tool results a pass carries back, and what is
+free. Project instructions are what
+`systemPrompt.append` adds, from whichever configuration file set it. Free is
+the figure the line above the box calls `window left`, the share of the room
+left before compaction, so the two always agree. A model whose window crucible
+does not know shows the tokens alone, with `window not known` in place of the
+size and no bar. Escape closes it.
+
+`/usage` stands a panel over the prompt box, headed with the provider and what
+pays for it (`API key`, or the sign-in's name, such as `ChatGPT sign-in`), with
+what the session has used: its cost, the time its requests were out and the time
+since it started, the lines edits added and removed, and its tokens in, out,
+read from a cache and written to one. A session with a model crucible has no
+price for says `not priced` rather than `$0.00`, as does one where an answer
+finished without saying what it used. A cost that reads `at least $0.40`
+includes an answer that was stopped before the provider said what it cost: its
+tokens are counted as far as it reported them, and the rest of the session is
+priced in full, so the session cost that much or more. Under that is the same
+context bar `/context` draws, and then the plan limits: one bar for each window
+the plan has, with when it starts again in your local time. The windows that
+apply to every model come first; a plan that limits a model on its own, as
+ChatGPT does for some, has a group of windows under that model's name after
+them, and one that limits a family of models, as MiniMax does, has its group
+named after the model you are using where the family includes it. A window is
+named by its length (`5-hour`, `Daily`, `Weekly`, `Monthly`, `Yearly`, or a
+length such as `3-hour`), a limit counted in requests reads `412 of 1,500 used`,
+and one the vendor does not limit reads `unlimited`. A reset already behind the
+clock reads `since passed`, as the window has started again since it was read.
+Where the plan reports more limits than the panel keeps, `more limits not
+reported` follows the last one drawn.
+
+The panel opens at once with what crucible already holds, from the last response
+or the last answer, and with the ChatGPT sign-in it then asks ChatGPT for every
+limit on the account, saying `asking openai…` as the block's last row until the
+answer comes and the block is drawn again. A Kimi Code sign-in or key asks Kimi
+the same way, saying `asking moonshot…`, for its 5-hour, weekly and monthly
+limits, whichever the plan has. A key given on a MiniMax Token Plan row asks
+MiniMax the same way, saying `asking minimax…`, for the 5-hour and weekly limits
+of each model or family the plan includes; the plan limits are asked for on the
+Token Plan sign-in row only. The Usage tab of `/settings` asks the same way when
+you turn to it. It asks at most once a minute, never on its own, and not at all
+until you have agreed to what is sent to that vendor; a credential the vendor
+refuses there is not asked again that session, and any other failure leaves what
+was shown. Any other key or sign-in, a key of MoonshotAI's open platform among
+them, says `limits not reported`. A window at 100% whose reset is still ahead
+ends the next turn before it is sent, with a notice naming the window and its
+reset, when the window is one of the plan's own or is in the group of the model
+you are using; a model's spent window does not stop another model. The session's
+counts are this run's, starting again for a session picked up with `/resume`.
+Escape closes it.
 
 ### A command typed while a turn runs
 
@@ -933,8 +1029,15 @@ one. Typing `/` while a turn runs opens the same command list the prompt opens,
 stood above the box, and the arrows walk it as they do there. What happens on
 Enter depends on the command:
 
-- **`/theme` and `/help`** are screen-only, and run at once, panel and all,
-  with the transcript going on behind them.
+- **`/theme`, `/help`, `/context` and `/usage`** are screen-only, and run at
+  once, panel and all, with the transcript going on behind them. `/context`
+  and `/usage` show the figures the running turn last reported, which for
+  `/context` include anything it has recorded since its last request; `/usage`
+  asks the plan nothing until the turn is over.
+- **`/settings`** opens at once too, over the running turn. A value changed
+  there is written to your user file as it is between turns, and a row that
+  applies at once changes the running session now; the others say `applies at
+  next start`.
 - **`/model`** cannot reach the runner answering this turn, so it is picked and
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already
@@ -944,8 +1047,9 @@ Enter depends on the command:
 - The rest (`/clear`, `/logout`, `/resume` and the like) move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.
-- **`/release-notes`** would print a thousand rows into the answer being
-  written, so it is refused on the same panel; ask for it once the turn ends.
+- **`/release-notes`** would stand a list over the answer being written, or
+  print every release into it, so it is refused on the same panel; ask for it
+  once the turn ends.
 - **A word that names no command**, typed alone, stands the same panel with
   the nearest names on it, and is not queued. With words after it the line is
   a prompt, and waits for the turn like any other.
@@ -1041,6 +1145,10 @@ something a session decided. The screen empties too, down to the welcome card a
 fresh start draws: the one you left is read back with `/resume` rather than by
 scrolling into it.
 
+With [`output.screen`](../configuration/configuration.md) set to `native` the
+screen is your terminal's, so `/clear` and `/resume` leave the earlier
+transcript in its scrollback, above what replaces it.
+
 `/resume` stands this directory's [sessions](../sessions/sessions.md) over the
 whole shell: a search line across the top, the sessions in one pane newest
 first, and the end of whichever one is marked drawn in the other.
@@ -1049,7 +1157,7 @@ first, and the end of whichever one is marked drawn in the other.
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ Search    a session, or a branch                                             │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- Resume a session · 3 of 12 · /home/you/code/my-project
+ Resume a session · 3 of 12 · ~/code/my-project
 
 ╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮
 │ › rename the parser error    │ │ › rename the parser error type              │
@@ -1067,12 +1175,20 @@ first, and the end of whichever one is marked drawn in the other.
 │                              │ │ Enter to resume · Esc to cancel             │
 ╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯
 
- ↑↓ to walk · ctrl+r to rename · type to search · esc to cancel
+ ctrl+a all projects · ctrl+b this branch · ctrl+w worktrees · esc
 ```
 
-Type to narrow the list. The line is matched against a session's title *and* the
-branch it was recorded on, and does not ask which of the two it was just given:
-`parser` and `fix/` both leave the first row above. The up and down arrows walk
+The keys row names what each key does in full where the window is wide enough;
+at eighty columns it names each of the three toggles by what it does next, and
+a narrower window gets only the keys. <kbd>Ctrl+A</kbd> shows every project's
+sessions, <kbd>Ctrl+B</kbd> keeps this branch's and <kbd>Ctrl+W</kbd> adds this
+repository's other worktrees; [Switching without
+restarting](../sessions/sessions.md#switching-without-restarting) says what
+each shows and what Enter does on a session from another directory.
+
+Type to narrow the list. The line is matched against a session's title, the
+branch it was recorded on and the directory its row shows, if any, and does not
+ask which it was just given: `parser` and `fix/` both leave the first row above. The up and down arrows walk
 what is left, and the preview follows the mark: it is drawn by the code that
 draws the live transcript, so the prompts, the calls, the rows results came back
 on and the model's prose are what picking that session up would put back on

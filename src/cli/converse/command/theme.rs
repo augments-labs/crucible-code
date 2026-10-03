@@ -552,18 +552,57 @@ fn ruleless(mut rows: Vec<Row>) -> Vec<Row> {
 }
 
 /// Takes it: on for this session, and written down for the next run.
-fn taken<T: Terminal>(
-    choice: ThemeChoice,
-    name: &str,
-    renderer: &mut Renderer<T>,
-    terms: &Terms,
-) -> Result<(), Fatal> {
+/// The name the interface theme in force goes by, where one was chosen.
+pub(super) fn worn(terms: &Terms) -> Option<&'static str> {
+    let chosen = terms.chosen.get()?;
+    EVERY
+        .iter()
+        .find(|(choice, _, _)| *choice == chosen)
+        .map(|(_, name, _)| *name)
+}
+
+/// Draws the whole screen in the interface theme `name` names, for this
+/// session, and says whether it named one. Writing it down is the caller's.
+pub(super) fn wear<T: Terminal>(name: &str, renderer: &mut Renderer<T>, terms: &Terms) -> bool {
+    let Some((choice, _, _)) = EVERY.iter().find(|(_, named, _)| *named == name) else {
+        return false;
+    };
+    put_on(*choice, renderer, terms);
+    true
+}
+
+/// Puts `choice` in force and repaints every row on screen in it.
+fn put_on<T: Terminal>(choice: ThemeChoice, renderer: &mut Renderer<T>, terms: &Terms) {
     let was = terms.style();
     let now = was.wearing(Style::theme(Some(choice), was.ground()));
 
     terms.style.set(now);
     terms.chosen.set(Some(choice));
     renderer.wears(now.palette());
+}
+
+/// Reads fenced code in the syntax theme `named`, for this session, and says
+/// whether this build reads code in one of that name. Writing it down is the
+/// caller's.
+pub(super) fn read_in<T: Terminal>(named: &str, renderer: &mut Renderer<T>, terms: &Terms) -> bool {
+    let Some(six) = crucible_tui::syntax::colours(named) else {
+        return false;
+    };
+
+    let now = terms.style().reading(six);
+    terms.style.set(now);
+    *terms.reading.borrow_mut() = Some(named.to_owned());
+    renderer.wears(now.palette());
+    true
+}
+
+fn taken<T: Terminal>(
+    choice: ThemeChoice,
+    name: &str,
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    put_on(choice, renderer, terms);
     renderer.commit(name)?;
 
     let Some(problem) = unwritten(terms, name.parse().map(Theme::Drawing)) else {
@@ -575,11 +614,13 @@ fn taken<T: Terminal>(
     // Wrapped rather than clipped, for the reason `/model` wraps the same
     // sentence: short as the row is, a narrow enough window would still cut it,
     // and half of it says nothing about what was lost.
-    let rows: Vec<Row> =
-        crucible_tui::fold("drawn this way for this session only", renderer.columns())
-            .into_iter()
-            .map(|row| Row::new().then(Slot::Quiet, row))
-            .collect();
+    let rows: Vec<Row> = crucible_tui::fold(
+        "drawn this way for this session only",
+        renderer.transcript_columns(),
+    )
+    .into_iter()
+    .map(|row| Row::new().then(Slot::Quiet, row))
+    .collect();
 
     Ok(renderer.present(&rows)?)
 }
@@ -590,14 +631,9 @@ fn reading<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let Some(six) = crucible_tui::syntax::colours(named) else {
+    if !read_in(named, renderer, terms) {
         return mistyped(named, renderer, terms);
-    };
-
-    let now = terms.style().reading(six);
-    terms.style.set(now);
-    *terms.reading.borrow_mut() = Some(named.to_owned());
-    renderer.wears(now.palette());
+    }
     renderer.commit(named)?;
 
     let Some(problem) = unwritten(terms, Name::new(named).map(Theme::Syntax)) else {
@@ -606,10 +642,13 @@ fn reading<T: Terminal>(
 
     renderer.commit(&problem)?;
 
-    let rows: Vec<Row> = fold("read this way for this session only", renderer.columns())
-        .into_iter()
-        .map(|row| Row::new().then(Slot::Quiet, row))
-        .collect();
+    let rows: Vec<Row> = fold(
+        "read this way for this session only",
+        renderer.transcript_columns(),
+    )
+    .into_iter()
+    .map(|row| Row::new().then(Slot::Quiet, row))
+    .collect();
 
     Ok(renderer.present(&rows)?)
 }

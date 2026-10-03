@@ -7,8 +7,10 @@
 //! called, the addresses the vendor serves and which of its services each one
 //! is, the headers it asks for beside the credential, the parts of the body
 //! only its own routes accept, how it asks for a fast answer and refuses one,
-//! how it counts what a response cost, how it words a failure, and what its
-//! prompt cache is known to do and to cost.
+//! how it counts what a response cost, how it words a failure, what its
+//! prompt cache is known to do and to cost, and where its plan says how much
+//! of its limits is used ([`asking`], which [`crate::completions`] asks
+//! through too).
 //!
 //! A vendor on this wire is a dialect and nothing else: a type that implements
 //! [`Dialect`], and a name for `Responses` over it. Every hook but the ones
@@ -29,34 +31,69 @@
 //! and so is a [`Credential`], which is what lets the whole protocol be tested
 //! against recorded bytes.
 
+pub(crate) mod asking;
 pub(crate) mod body;
 pub(crate) mod wire;
 
 use std::fmt;
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use crucible_credentials::{Credential, Outgoing, Redactions};
 use crucible_models::{
-    Delta, DeltaStream, FastForm, PromptCacheCapabilities, PromptCachePricing,
+    Asked, Delta, DeltaStream, FastForm, PromptCacheCapabilities, PromptCachePricing,
     PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request, Served, Speed,
 };
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
-    ContinuationScope, CredentialScopeId, Modalities, PricingDate, PricingError,
+    ContinuationScope, CredentialScopeId, Modalities, PlanWindows, PricingDate, PricingError,
     PromptCacheEncoding, PromptCacheRetentionClass,
 };
 use serde_json::Value;
 
 use crate::endpoint::Endpoint;
 use crate::json::Object;
-use crate::refusal::{Rules, refused_at};
+use crate::refusal::{Plan, PlanRule, Rules, refused_at};
 use crate::sse::SseEvent;
-use crate::stream::Response;
-use crate::transport::Transport;
+use crate::stream::{Limited, Response};
+use crate::transport::{Named, Reads, Transport, reads_none};
 
 /// What writes a field the vendor's automatic prefix cache reads, into the
 /// body being written.
 pub(crate) type Hint = fn(&mut Object<'_>);
+
+/// Where a vendor's plan says how much of its limits is used, and how what it
+/// says there is read.
+#[derive(Debug, Clone, Copy)]
+pub struct Usage {
+    /// The address asked, on the vendor's own host.
+    pub(crate) url: &'static str,
+    /// What an answer that came with a 200 says, read from one that arrived
+    /// at the instant given.
+    pub(crate) read: fn(&Value, SystemTime) -> Said,
+}
+
+/// What a plan's answer that came with a 200 says, as its vendor's reader
+/// reads it.
+#[derive(Debug)]
+pub(crate) enum Said {
+    /// How much of the plan's limits is used.
+    Windows(PlanWindows),
+    /// That the credential is refused, which a vendor that answers a 200 for
+    /// it says in its own words: asking again would meet the same.
+    Refused,
+    /// Nothing in the shape the vendor answers in.
+    Unread,
+}
+
+impl From<Option<PlanWindows>> for Said {
+    /// The windows read, or nothing read: for a vendor that refuses a
+    /// credential with a status rather than in an answer.
+    fn from(windows: Option<PlanWindows>) -> Self {
+        windows.map_or(Self::Unread, Self::Windows)
+    }
+}
 
 /// What a price is asked for: one model, at one revision, for a prompt of
 /// one size kept for one time, on one day.
@@ -229,9 +266,42 @@ pub trait Dialect: Sized + Send + Sync + 'static {
         None
     }
 
+    /// What tells the vendor's refusal of a used-up plan on `route` from any
+    /// other: a refusal that answers yes is [`ProviderError::PlanLimit`],
+    /// which is never retried. None, by default, where the vendor has no
+    /// such refusal or its shape is not known.
+    fn plan_refused(route: Self::Route) -> Option<PlanRule> {
+        let _ = route;
+        None
+    }
+
     /// The tier an event says the answer was served at, where it says one.
     fn served(data: &str) -> Option<Served> {
         let _ = data;
+        None
+    }
+
+    /// Which response headers `route` reports its subscription's usage
+    /// windows in, which the transport hands back and nothing else. None, by
+    /// default.
+    fn limit_headers(route: Self::Route) -> Option<Reads> {
+        let _ = route;
+        None
+    }
+
+    /// Where `route`'s plan says how much of its limits is used, and how its
+    /// answer is read. None, by default: a route with no such source is never
+    /// asked.
+    fn usage_source(route: Self::Route) -> Option<Usage> {
+        let _ = route;
+        None
+    }
+
+    /// The usage windows `named`, the headers [`Self::limit_headers`] reads,
+    /// say, read from a response that arrived at `arrived`; `None` where they
+    /// report no window crucible knows.
+    fn limits(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
+        let _ = (named, arrived);
         None
     }
 
@@ -332,8 +402,8 @@ impl Replay for Plain {
 
 /// A Responses provider, speaking `D`'s dialect.
 pub struct Responses<D: Dialect> {
-    credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
+    credential: Arc<dyn Credential>,
+    transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     credential_scope: CredentialScopeId,
     dialect: PhantomData<D>,
@@ -367,8 +437,8 @@ impl<D: Dialect> Responses<D> {
     ) -> Self {
         let credential_scope = credential.scope();
         Self {
-            credential,
-            transport,
+            credential: credential.into(),
+            transport: transport.into(),
             endpoint,
             credential_scope,
             dialect: PhantomData,
@@ -480,6 +550,19 @@ impl<D: Dialect> Provider for Responses<D> {
         self.stream_at(request, Speed::Standard, cancel)
     }
 
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        // Only the vendor's own services are asked: a gateway's address is not
+        // where the vendor keeps a plan.
+        let usage = self.vendor().and_then(D::usage_source)?;
+        Some(Box::pin(asking::ask(
+            D::NAME,
+            usage,
+            Arc::clone(&self.credential),
+            Arc::clone(&self.transport),
+            D::headers,
+        )))
+    }
+
     fn stream_at<'a>(
         &'a self,
         request: Request<'a>,
@@ -507,23 +590,49 @@ impl<D: Dialect> Provider for Responses<D> {
                 fast,
             )?;
 
+            // Only the vendor's own services are read for their windows: what a
+            // gateway puts in a header is not the vendor's to say.
             let response = self
                 .transport
-                .post(self.endpoint.as_str(), &mut outgoing, body, cancel)
+                .post_reading(
+                    self.endpoint.as_str(),
+                    &mut outgoing,
+                    body,
+                    cancel,
+                    self.vendor()
+                        .and_then(D::limit_headers)
+                        .unwrap_or(reads_none),
+                )
                 .await;
             let redactions = outgoing.redactions();
             let response =
                 response.map_err(|problem| problem.for_provider(D::NAME).redacted(&redactions))?;
 
+            // Read before the status is, because a vendor that reports its
+            // windows reports them on a refusal too, and a refusal of a
+            // used-up plan is when they matter most.
+            let arrived = SystemTime::now();
+            let limits = self
+                .vendor()
+                .and_then(D::limit_headers)
+                .and_then(|_| D::limits(response.named(), arrived));
+
             if response.status() != 200 {
                 // A refusal of the tier is read for only where one is
                 // documented, and only for a request that asked for it.
                 let rule = self.vendor().filter(|_| fast).and_then(D::fast_refused);
+                let plan = self.vendor().and_then(D::plan_refused).map(|rule| Plan {
+                    rule,
+                    arrived,
+                    reading: limits,
+                    model: request.model,
+                });
                 let error = refused_at(
                     D::NAME,
                     Rules {
                         fast: rule,
                         overlong: D::OVERLONG,
+                        plan,
                     },
                     response,
                     &redactions,
@@ -538,12 +647,16 @@ impl<D: Dialect> Provider for Responses<D> {
                 });
             }
 
-            Ok(Box::new(Response::with_wire(
+            let response = Response::with_wire(
                 response.into_reader(),
                 cancel.clone(),
                 redactions,
                 wire::Narration::<D>::for_request(&request, scope)?,
-            )) as Box<dyn DeltaStream>)
+            );
+            Ok(match limits {
+                Some(limits) => Box::new(Limited::new(response, limits)) as Box<dyn DeltaStream>,
+                None => Box::new(response),
+            })
         })
     }
 }

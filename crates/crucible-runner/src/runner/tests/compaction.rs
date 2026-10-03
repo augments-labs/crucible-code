@@ -120,7 +120,7 @@ fn a_compaction_posts_the_rebuilt_window_reading_immediately() {
         events
             .iter()
             .filter_map(|event| match event {
-                Event::Carried { left } => Some(*left),
+                Event::Carried { breakdown } => Some(breakdown.left()),
                 _ => None,
             })
             .collect::<Vec<_>>(),
@@ -699,7 +699,7 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
     let carried: Vec<Option<u8>> = events
         .iter()
         .filter_map(|event| match event {
-            Event::Carried { left } => Some(*left),
+            Event::Carried { breakdown } => Some(breakdown.left()),
             _ => None,
         })
         .collect();
@@ -1450,7 +1450,7 @@ fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
         .events()
         .into_iter()
         .filter_map(|event| match event {
-            Event::Carried { left } => Some(left),
+            Event::Carried { breakdown } => Some(breakdown.left()),
             _ => None,
         })
         .next_back()
@@ -1807,7 +1807,7 @@ fn the_room_a_line_typed_in_the_first_pass_reports_is_the_run_s_own() {
         .iter()
         .skip_while(|event| !matches!(event, Event::Steered { .. }))
         .find_map(|event| match event {
-            Event::Carried { left } => Some(*left),
+            Event::Carried { breakdown } => Some(breakdown.left()),
             _ => None,
         })
         .expect("no room reading followed the line the reader typed");
@@ -1872,7 +1872,7 @@ fn the_room_a_prune_reports_is_read_off_the_run_that_asked() {
         .events()
         .iter()
         .filter_map(|event| match event {
-            Event::Carried { left } => Some(*left),
+            Event::Carried { breakdown } => Some(breakdown.left()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -1883,4 +1883,31 @@ fn the_room_a_prune_reports_is_read_off_the_run_that_asked() {
         "the room reported after the prune was not measured against the run's \
          own reserve: {carried:?}"
     );
+}
+
+#[test]
+fn usage_a_recap_request_is_counted_in_the_session_totals() {
+    // A recap is a request like any other: the user pays for it, so `/usage`
+    // counts it.
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(200), None).unwrap(),
+        Some(17),
+        None,
+        None,
+        &[],
+    )
+    .unwrap();
+    let mut notes = recap("notes to self");
+    notes.push(Delta::Usage(usage));
+    let script = Script::new(vec![saying("first"), saying("second"), notes]);
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+    scripted.turn("first").unwrap();
+    scripted.turn("second").unwrap();
+    let before = scripted.runner.totals();
+
+    assert!(matches!(scripted.compacting().unwrap(), Room::Made(_)));
+
+    let after = scripted.runner.totals();
+    assert_eq!(after.input() - before.input(), 200);
+    assert_eq!(after.output() - before.output(), 17);
 }

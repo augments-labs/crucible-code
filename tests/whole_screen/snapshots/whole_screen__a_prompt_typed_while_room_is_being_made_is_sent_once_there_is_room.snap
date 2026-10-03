@@ -2,28 +2,28 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 20,4 scrolled 0
-|                                                                                |
-|two answer                                                                      |
-|                                                                                |
-|› the third thing                                                               |
-|                                                                                |
-|three answer                                                                    |
-|                                                                                |
-|› /compact                                                                      |
-|                                                                                |
-|────────────────────────────────────────────────────────────────────────────────|
-| compacted · you asked                                                          |
-| 4 messages became a recap · 6k → 7k carried · 2 turns kept whole               |
-|────────────────────────────────────────────────────────────────────────────────|
-|                                                                                |
-|› what next                                                                     |
-|                                                                                |
-|the answer to what was queued                                                   |
+80x24 cursor 21,4 scrolled 0
+|› the second thing                                                             │|
+|                                                                               │|
+|two answer                                                                     │|
+|                                                                               │|
+|› the third thing                                                              │|
+|                                                                               │|
+|three answer                                                                   │|
+|                                                                               │|
+|› /compact                                                                     •|
+|                                                                               │|
+|───────────────────────────────────────────────────────────────────────────────┃|
+| compacted · you asked                                                         ┃|
+| 4 messages became a recap · 5k → 6k carried · 2 turns kept whole              ┃|
+|───────────────────────────────────────────────────────────────────────────────┃|
+|                                                                               ┃|
+|› what next                                                                    ┃|
+|                                                                               ●|
+|the answer to what was queued                                                  ┃|
 |                                                                                |
 |                                                                 98% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                               transcript map → |

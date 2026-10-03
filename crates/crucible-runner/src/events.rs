@@ -10,10 +10,13 @@
 
 use crucible_models::ProviderError;
 use crucible_tools::{Looking, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote};
-use crucible_types::Spend;
 use crucible_types::{
     Ancestry, Attachment, ContextError, RunId, StopReason, ToolCall, ToolId, TurnId,
 };
+use crucible_types::{PlanWindows, Spend, Utc, Window};
+use std::time::SystemTime;
+
+use crate::{Breakdown, Totals};
 
 /// Why a turn ended badly.
 ///
@@ -41,8 +44,12 @@ pub enum TurnError {
     PromptCacheResource(#[from] crucible_types::PromptCacheResourceError),
 
     /// The provider failed.
+    ///
+    /// A provider's refusal of a used-up plan is not one: it arrives as
+    /// [`Self::PlanLimit`], which is how every consumer learns it is a time
+    /// to come back rather than a fault.
     #[error(transparent)]
-    Provider(#[from] ProviderError),
+    Provider(ProviderError),
 
     /// A tool could not be carried out.
     #[error(transparent)]
@@ -85,6 +92,22 @@ pub enum TurnError {
         ceiling: u64,
     },
 
+    /// The plan behind the credential is used up until a window starts again.
+    ///
+    /// The turn ends at a request boundary, so nothing is lost and nothing
+    /// waits: the next prompt after the reset continues as any prompt would.
+    /// Said in crucible's words alone, the window by its name and the reset as
+    /// ISO 8601 in UTC; nothing the vendor wrote is carried.
+    #[error("{}", plan_stop(*.window, *.resets_at, *.stopped))]
+    PlanLimit {
+        /// Which window is used up, where it is known.
+        window: Option<Window>,
+        /// When the plan can be used again, where it is known.
+        resets_at: Option<SystemTime>,
+        /// Whether the turn stopped before asking, or was refused.
+        stopped: PlanLimitStop,
+    },
+
     /// The model stopped before a complete structured recap was available.
     #[error(
         "compaction did not produce a complete structured recap; the original context was kept"
@@ -101,6 +124,54 @@ pub enum TurnError {
         /// The most tool-output text one turn retains.
         maximum: usize,
     },
+}
+
+/// How a turn found the plan used up, which is the difference between a
+/// request that was never made and one the vendor turned away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanLimitStop {
+    /// The last reading of the plan's windows had one used up with its reset
+    /// still to come, so nothing was sent.
+    BeforeSending,
+    /// The vendor refused the request for the plan.
+    Refused,
+}
+
+impl From<ProviderError> for TurnError {
+    /// A provider's failure, except its refusal of a used-up plan, which is the
+    /// turn's own ending. Written out rather than derived so that every place
+    /// a provider's failure becomes a turn's, the turn's requests and the
+    /// compaction's alike, tells that one apart the same way.
+    fn from(error: ProviderError) -> Self {
+        match error {
+            ProviderError::PlanLimit {
+                window, resets_at, ..
+            } => Self::PlanLimit {
+                window,
+                resets_at,
+                stopped: PlanLimitStop::Refused,
+            },
+            error => Self::Provider(error),
+        }
+    }
+}
+
+/// The sentence a turn stopped by a used-up plan ends in.
+fn plan_stop(
+    window: Option<Window>,
+    resets_at: Option<SystemTime>,
+    stopped: PlanLimitStop,
+) -> String {
+    let window = window.map_or_else(String::new, |window| format!(" on the {}", window.named()));
+    let resets = resets_at.map_or_else(
+        || ", with no reset reported".to_owned(),
+        |at| format!(", which resets at {}", Utc::new(at)),
+    );
+    let stopped = match stopped {
+        PlanLimitStop::BeforeSending => "the turn stopped before sending",
+        PlanLimitStop::Refused => "the vendor refused the request",
+    };
+    format!("usage limit reached{window}{resets}; {stopped}")
 }
 
 /// Where a worker reports what happened.
@@ -347,9 +418,13 @@ pub enum Event {
     /// percentage, so zero is the safe compaction boundary rather than the
     /// model's literal last token. `None` where no window is known: nothing draws
     /// a fraction of a number nobody stated.
+    ///
+    /// The percentage is [`Breakdown::left`], read off the one value both
+    /// figures come from, so no reader can hold a percentage its breakdown
+    /// was not counted with.
     Carried {
-        /// The usable percentage still free, rounded down.
-        left: Option<u8>,
+        /// The request this reading measured, by what holds the window.
+        breakdown: Breakdown,
     },
 
     /// Room is being made, and the turn has not ended.
@@ -380,6 +455,27 @@ pub enum Event {
     Spent {
         /// The running total, not the reading that moved it.
         spend: Spend,
+    },
+
+    /// What the session has used so far, posted as a response ends and as an
+    /// edit changes lines.
+    ///
+    /// The whole session's figures rather than the turn's, and the same value
+    /// [`Runner::totals`](crate::Runner::totals) reads between turns, so
+    /// `/usage` drawn over a running turn and after it says the same thing.
+    Used {
+        /// Every response and edit of the session so far.
+        totals: Totals,
+    },
+
+    /// How much of each plan window the vendor said had been used, once the
+    /// headers of a response this turn received updated the reading.
+    ///
+    /// Only a vendor that sends its windows on its responses posts this, and
+    /// only where the response carried a window the provider could read.
+    PlanLimits {
+        /// The whole reading, as of the response that last updated it.
+        windows: PlanWindows,
     },
 
     /// A turn ended.
@@ -503,7 +599,10 @@ impl std::fmt::Debug for Event {
                 .field("reason", reason)
                 .field("resent", resent)
                 .finish(),
-            Self::Carried { left } => f.debug_struct("Carried").field("left", left).finish(),
+            Self::Carried { breakdown } => f
+                .debug_struct("Carried")
+                .field("breakdown", breakdown)
+                .finish(),
             Self::Compacting { why, part } => f
                 .debug_struct("Compacting")
                 .field("why", why)
@@ -514,6 +613,11 @@ impl std::fmt::Debug for Event {
                 .field("compacted", compacted)
                 .finish(),
             Self::Spent { spend } => f.debug_struct("Spent").field("spend", spend).finish(),
+            Self::Used { totals } => f.debug_struct("Used").field("totals", totals).finish(),
+            Self::PlanLimits { windows } => f
+                .debug_struct("PlanLimits")
+                .field("windows", windows)
+                .finish(),
             Self::TurnFinished { turn, stop } => f
                 .debug_struct("TurnFinished")
                 .field("turn", turn)

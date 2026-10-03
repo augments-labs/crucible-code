@@ -6,9 +6,10 @@
 use serde_json::Value;
 
 use super::{
-    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Group, LoginOutcome, LogoutOutcome,
-    ModelOutcome, NotesOutcome, Problem, Release, Resource, ResumeOutcome, Retained, RoomOutcome,
-    SandboxOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome, maybe_problem,
+    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced, Group, LoginOutcome,
+    LogoutOutcome, ModelOutcome, NotesOutcome, Problem, Release, Resource, ResumeOutcome, Retained,
+    RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome,
+    TurnOutcome, maybe_problem,
 };
 use crate::error::{ErrorCode, Refusal};
 use crate::wire::{self, Fields, Writing};
@@ -487,6 +488,39 @@ impl ThemeOutcome {
         };
         fields.done()?;
         Ok(theme)
+    }
+}
+
+impl SettingOutcome {
+    pub(super) fn written(&self) -> Value {
+        match self {
+            Self::Remembered => Writing::kind("remembered"),
+            Self::Forced(by) => Writing::kind("forced").with(
+                "by",
+                match by {
+                    Forced::Environment => "environment",
+                    Forced::Project => "project",
+                },
+            ),
+            Self::Unwritten(problem) => failed("unwritten", problem),
+        }
+        .finish()
+    }
+
+    pub(super) fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let setting = match fields.kind()?.as_str() {
+            "remembered" => Self::Remembered,
+            "forced" => Self::Forced(match fields.string("by")?.as_str() {
+                "environment" => Forced::Environment,
+                "project" => Forced::Project,
+                _ => return Err(ErrorCode::Malformed.into()),
+            }),
+            "unwritten" => Self::Unwritten(problem(&mut fields)?),
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(setting)
     }
 }
 

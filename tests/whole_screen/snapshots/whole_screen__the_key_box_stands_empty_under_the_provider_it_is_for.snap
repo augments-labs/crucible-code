@@ -2,18 +2,19 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-80x24 cursor 20,4 scrolled 0
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|                                                                                |
-|Warning: No models available. Use /login or set an API key environment variable.|
-|Then use /model to select a model.                                              |
-|                                                                                |
-|› /login                                                                        |
+80x24 cursor 21,4 scrolled 0
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      ││|
+|│ · ctrl+c     clears the line typed so far                                   ││|
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                               ┃|
+|                                                                               ┃|
+|Warning: No models available. Use /login or set an API key environment         ┃|
+|variable. Then use /model to select a model.                                   ┃|
+|                                                                               ┃|
+|› /login                                                                       ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Log in                                                                          |
@@ -26,4 +27,3 @@ expression: picture
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |paste or type your API key · esc to go back                                     |
-|                                                                                |

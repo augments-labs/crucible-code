@@ -6,8 +6,12 @@ cd "$(dirname "$0")/../.."
 readonly INSTALL=$PWD/scripts/sh/install.sh
 readonly UNINSTALL=$PWD/scripts/sh/uninstall.sh
 scratch=$(mktemp -d)
-readonly scratch
 trap 'rm -rf -- "$scratch"' EXIT
+# The installer prints the directory as it resolves it, and the temporary
+# directory can sit behind a symbolic link (/var is /private/var on macOS), so
+# every expected directory is spelled the same way.
+scratch=$(cd -P -- "$scratch" && pwd -P)
+readonly scratch
 
 case $(uname -s) in
 Linux) platform=linux ;;
@@ -222,6 +226,255 @@ else
     echo '    skipped: this host cannot map another user id into a user namespace'
 fi
 
+# Runs a command with a terminal on standard input and output, `cols` wide, and
+# prints what the terminal was sent followed by `status=<exit status>`. The
+# status is printed from inside, since not every `script` returns it. A case
+# that means a locale sets LC_ALL, which outranks any LC_CTYPE or LANG the
+# caller exported.
+#
+# A case takes seconds. One still running after `terminal_bound` seconds is
+# reported as `HANG in_terminal`, with the process tree under `script` (each
+# process's state and what it waits in) and what the terminal was sent so far.
+# Then its processes are killed, and so is this script, since a caller may hold
+# the output inside a second command substitution that would hide a failed
+# status. The watchdog is this shell polling, so it leaves nothing behind.
+readonly terminal_bound=120
+in_terminal() {
+    local cols=$1 command sent pid status=0 deadline
+    shift
+    printf -v command '%q ' "$@"
+    command="stty cols $cols rows 24; $command; echo status=\$?"
+    sent=$(mktemp "$scratch/terminal.XXXXXX")
+    if script --version 2>/dev/null | grep -q util-linux; then
+        script -qec "$command" /dev/null </dev/null >"$sent" &
+    else
+        script -q /dev/null sh -c "$command" </dev/null >"$sent" &
+    fi
+    pid=$!
+    deadline=$((SECONDS + terminal_bound))
+    while kill -0 "$pid" 2>/dev/null && ((SECONDS < deadline)); do
+        sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        terminal_hung "$pid" "$sent" "$command"
+    fi
+    wait "$pid" || status=$?
+    cat "$sent"
+    rm -f -- "$sent"
+    return "$status"
+}
+
+# Reports and ends the case `in_terminal` started as `pid`: see above.
+terminal_hung() {
+    local pid=$1 sent=$2 command=$3 own_group tree groups p
+    local where="line ${BASH_LINENO[1]}"
+    [[ ${FUNCNAME[2]:-main} == main ]] ||
+        where+=" in ${FUNCNAME[2]}, called from line ${BASH_LINENO[2]}"
+    # `script` shares this script's process group, which is never signalled.
+    own_group=$(ps -o pgid= -p "$$" | tr -d ' ')
+    # `script`, everything under it, and every process in their groups but
+    # this script's: an orphan left in the terminal's group is still the case's.
+    tree=$(ps -A -o pid= -o ppid= -o pgid= | awk -v root="$pid" -v own="$own_group" '
+        { parent[$1] = $2; group[$1] = $3 }
+        END {
+            keep[root] = 1
+            do {
+                grew = 0
+                for (p in parent)
+                    if (!(p in keep) && (parent[p] in keep)) { keep[p] = 1; grew = 1 }
+            } while (grew)
+            for (p in keep) if ((p in group) && group[p] != own) groups[group[p]] = 1
+            for (p in group) if (group[p] in groups) keep[p] = 1
+            for (p in keep) if (p in group) print p, group[p]
+        }')
+    groups=$(printf '%s\n' "$tree" | awk -v own="$own_group" '$2 != own { print $2 }' | sort -u)
+    {
+        printf 'HANG in_terminal at %s: still running after %s seconds:\n    %s\n' \
+            "$where" "$terminal_bound" "$command"
+        echo 'processes:'
+        ps -o pid,ppid,pgid,stat,wchan,etime,command \
+            -p "$(printf '%s\n' "$tree" | awk '{ print $1 }' | paste -s -d, -)"
+        echo 'the terminal was sent, so far:'
+        cat -v "$sent"
+        echo
+    } >&2
+    for p in $groups; do
+        kill -KILL -- "-$p" 2>/dev/null || true
+    done
+    for p in $(printf '%s\n' "$tree" | awk '{ print $1 }'); do
+        kill -KILL "$p" 2>/dev/null || true
+    done
+    wait "$pid" 2>/dev/null || true
+    rm -f -- "$sent"
+    kill -TERM "$$"
+    exit 1
+}
+
+# Every check below names what it found, so a failure reads as the screen.
+expect() {
+    local what=$1 output=$2 pattern=$3
+    [[ $output == *"$pattern"* ]] || {
+        printf '%s: expected %q in:\n%s\n' "$what" "$pattern" "$output" >&2
+        exit 1
+    }
+}
+refuse() {
+    local what=$1 output=$2 pattern=$3
+    [[ $output != *"$pattern"* ]] || {
+        printf '%s: did not expect %q in:\n%s\n' "$what" "$pattern" "$output" >&2
+        exit 1
+    }
+}
+readonly ESC=$'\033'
+
+# What a reader sees: the output without its colour and line-clearing codes.
+visible() {
+    printf '%s' "$1" | sed "s/$ESC\\[[0-9;?]*[A-Za-z]//g"
+}
+
+echo '==> piped output names each step and carries no escape sequence'
+piped_bin=$scratch/piped-bin
+piped=$(install_from "$asset" "$piped_bin" 2>&1)
+refuse 'piped install' "$piped" "$ESC"
+expect 'piped install' "$piped" "install: crucible $version for $platform-$architecture"
+expect 'piped install' "$piped" "install: detect platform: $platform-$architecture"
+expect 'piped install' "$piped" 'install: verify checksum: ok'
+expect 'piped install' "$piped" 'install: unpack: ok'
+expect 'piped install' "$piped" "install: install: $piped_bin"
+expect 'piped install' "$piped" "Installed crucible, crucible-sandbox-broker and cru in $piped_bin"
+expect 'piped install' "$piped" "Add $piped_bin to PATH to run crucible."
+
+echo '==> NO_COLOR and TERM=dumb print the plain steps in a terminal'
+for plain_env in NO_COLOR=1 TERM=dumb; do
+    plain=$(in_terminal 80 env TERM=xterm "$plain_env" "$INSTALL" --version "$version" \
+        --dir "$scratch/plain-bin-${plain_env%%=*}" \
+        --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+    refuse "$plain_env in a terminal" "$plain" "$ESC"
+    expect "$plain_env in a terminal" "$plain" 'install: verify checksum: ok'
+    expect "$plain_env in a terminal" "$plain" 'status=0'
+done
+
+echo '==> a terminal sees each step, and the line that puts the directory on PATH'
+# The default directory is under a home of the test's own, so the sentences
+# that name it fit 80 columns however long the temporary directory's name is.
+for glyphs in en_US.UTF-8 C; do
+    shown_home=$scratch/home-$glyphs
+    shown=$(in_terminal 80 env -u LC_ALL -u LC_CTYPE LANG=$glyphs TERM=xterm \
+        HOME="$shown_home" "$INSTALL" --version "$version" \
+        --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+    expect "a $glyphs terminal" "$shown" "crucible $version"
+    expect "a $glyphs terminal" "$shown" "$ESC["
+    for step in 'detect platform' 'verify checksum' 'unpack' 'install'; do
+        if [[ $glyphs == C ]]; then
+            expect "a $glyphs terminal" "$(visible "$shown")" "ok $step"
+        else
+            expect "a $glyphs terminal" "$(visible "$shown")" "✓ $step"
+        fi
+    done
+    refuse "a $glyphs terminal" "$shown" 'install: '
+    expect "a $glyphs terminal" "$shown" '~/.local/bin is not on your PATH. Add it with:'
+    expect "a $glyphs terminal" "$shown" 'export PATH="$HOME/.local/bin:$PATH"'
+    expect "a $glyphs terminal" "$shown" 'Then run: crucible'
+    expect "a $glyphs terminal" "$shown" 'status=0'
+    [[ -x $shown_home/.local/bin/crucible ]]
+done
+# A directory outside the home is exported as it was resolved, on one line.
+shown_bin=$scratch/shown-bin
+shown=$(in_terminal 80 env TERM=xterm "$INSTALL" --version "$version" \
+    --dir "$shown_bin" --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+expect 'a directory outside the home' "$shown" "export PATH=\"$shown_bin:\$PATH\""
+expect 'a directory outside the home' "$shown" 'status=0'
+on_path_home=$scratch/home-on-path
+shown=$(in_terminal 80 env TERM=xterm HOME="$on_path_home" \
+    PATH="$on_path_home/.local/bin:$PATH" "$INSTALL" --version "$version" \
+    --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+expect 'a directory on PATH' "$shown" '~/.local/bin is on your PATH.'
+refuse 'a directory on PATH' "$shown" 'export PATH='
+
+echo '==> a checksum mismatch installs nothing and names the step'
+mismatch_bin=$scratch/mismatch-bin
+status=0
+mismatch_out=$(install_from "$bad_sum" "$mismatch_bin" 2>"$scratch/mismatch.err") || status=$?
+[[ $status == 1 ]] || {
+    printf 'a checksum mismatch exited %s, expected 1\n' "$status" >&2
+    exit 1
+}
+expect 'a piped mismatch' "$mismatch_out" 'install: verify checksum: failed'
+[[ $(cat "$scratch/mismatch.err") == 'install: archive checksum does not match SHA256SUMS' ]] || {
+    printf 'a piped mismatch changed its error: %s\n' "$(cat "$scratch/mismatch.err")" >&2
+    exit 1
+}
+mismatch=$(in_terminal 80 env TERM=xterm LC_ALL=C "$INSTALL" --version "$version" \
+    --dir "$mismatch_bin" \
+    --archive "$bad_sum/$stem.tar.gz" --checksums "$bad_sum/SHA256SUMS")
+expect 'a mismatch in a terminal' "$(visible "$mismatch")" 'x verify checksum'
+expect 'a mismatch in a terminal' "$mismatch" 'archive checksum does not match SHA256SUMS'
+expect 'a mismatch in a terminal' "$mismatch" 'Nothing was installed.'
+expect 'a mismatch in a terminal' "$mismatch" 'status=1'
+[[ ! -e $mismatch_bin ]] || {
+    echo 'a checksum mismatch created the installation directory' >&2
+    exit 1
+}
+
+echo '==> at 40 columns every line fits, with details under their step'
+narrow=$(in_terminal 40 env TERM=xterm LC_ALL=C "$INSTALL" --version "$version" \
+    --dir "$scratch/a-directory-whose-name-is-too-long-for-the-row" \
+    --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+expect 'a narrow terminal' "$narrow" 'status=0'
+# Every detail sits under its step, even one that would fit beside it, so the
+# list reads as one column.
+for step in "detect platform"$'\r\n'"    $platform-$architecture" \
+    "verify checksum"$'\r\n'"    SHA256SUMS"; do
+    expect 'a narrow terminal' "$(visible "$narrow")" $'\r'"  ok $step"
+done
+while IFS= read -r row; do
+    row=${row%$'\r'}
+    row=${row##*$'\r'}
+    row=$(visible "$row")
+    # The command that puts the directory on PATH is copied whole, so the
+    # terminal wraps it rather than the installer breaking it.
+    [[ $row != '  export PATH='* ]] || continue
+    ((${#row} <= 40)) || {
+        printf 'a row is wider than 40 columns (%s): %s\n' "${#row}" "$row" >&2
+        exit 1
+    }
+done <<<"$narrow"
+
+echo '==> a terminal with no controlling terminal behind it prints no shell error'
+# A new session has no controlling terminal, so /dev/tty cannot be opened even
+# though both outputs are still a terminal.
+if command -v setsid >/dev/null; then
+    ttyless_bin=$scratch/ttyless-bin
+    ttyless=$(in_terminal 80 setsid -w env TERM=xterm LC_ALL=C "$INSTALL" \
+        --version "$version" --dir "$ttyless_bin" \
+        --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+    refuse 'install with no controlling terminal' "$ttyless" '/dev/tty'
+    expect 'install with no controlling terminal' "$(visible "$ttyless")" 'ok install'
+    expect 'install with no controlling terminal' "$ttyless" 'status=0'
+    ttyless=$(in_terminal 80 setsid -w env TERM=xterm LC_ALL=C \
+        CRUCIBLE_CODE_HOME="$scratch/ttyless-home" "$UNINSTALL" --dir "$ttyless_bin")
+    refuse 'uninstall with no controlling terminal' "$ttyless" '/dev/tty'
+    expect 'uninstall with no controlling terminal' "$(visible "$ttyless")" 'ok remove'
+    expect 'uninstall with no controlling terminal' "$ttyless" 'status=0'
+else
+    echo '    skipped: this host has no setsid to start a session without a terminal'
+fi
+
+echo '==> uninstall marks its steps in a terminal and stays plain when piped'
+look_bin=$scratch/look-bin
+install_from "$asset" "$look_bin" >/dev/null
+removed=$(in_terminal 80 env TERM=xterm LC_ALL=C CRUCIBLE_CODE_HOME="$scratch/look-home" \
+    "$UNINSTALL" --dir "$look_bin")
+expect 'uninstall in a terminal' "$removed" "$ESC["
+expect 'uninstall in a terminal' "$(visible "$removed")" 'ok remove'
+expect 'uninstall in a terminal' "$removed" 'crucible is uninstalled.'
+expect 'uninstall in a terminal' "$removed" 'status=0'
+[[ ! -e $look_bin/crucible ]]
+install_from "$asset" "$look_bin" >/dev/null
+removed=$(CRUCIBLE_CODE_HOME=$scratch/look-home "$UNINSTALL" --dir "$look_bin" 2>&1)
+refuse 'piped uninstall' "$removed" "$ESC"
+expect 'piped uninstall' "$removed" 'crucible is uninstalled.'
+
 echo '==> uninstall preserves data by default'
 data=$scratch/home/.crucible
 mkdir -p "$data"
@@ -293,11 +546,13 @@ cat >"$discovery_tools/curl" <<'CURL'
 set -euo pipefail
 head=0
 output=
+headers=
 url=
 while (($#)); do
     case $1 in
     --head) head=1; shift ;;
     --output) output=${2:?fake curl: --output needs a value}; shift 2 ;;
+    --dump-header) headers=${2:?fake curl: --dump-header needs a value}; shift 2 ;;
     --write-out|--proto) shift 2 ;;
     *) url=$1; shift ;;
     esac
@@ -310,7 +565,20 @@ if ((head)); then
     exit 0
 fi
 [[ -n $output ]] || { echo 'fake curl: no output path' >&2; exit 2; }
-cp "${INSTALL_TEST_RELEASE:?}/${url##*/}" "$output"
+if [[ -n ${INSTALL_TEST_CURL_FAIL:-} ]]; then
+    echo 'curl: (22) The requested URL returned error: 404' >&2
+    exit 22
+fi
+asset=${INSTALL_TEST_RELEASE:?}/${url##*/}
+size=$(wc -c <"$asset" | tr -d ' ')
+[[ -z $headers ]] ||
+    printf 'HTTP/2 200\r\ncontent-length: %s\r\n\r\n' "${INSTALL_TEST_CURL_LENGTH:-$size}" >"$headers"
+if [[ -n ${INSTALL_TEST_CURL_SLOW:-} ]]; then
+    # Half the archive, long enough for a terminal to draw the bar at half.
+    head -c $((size / 2)) "$asset" >"$output"
+    sleep 1
+fi
+cp "$asset" "$output"
 CURL
 chmod +x "$discovery_tools/uname" "$discovery_tools/sysctl" "$discovery_tools/curl"
 
@@ -421,5 +689,54 @@ assert_discovery_refused operating-system Plan9 x86_64 'unsupported operating sy
 assert_discovery_refused architecture Linux riscv64 'unsupported architecture riscv64'
 assert_discovery_refused freebsd-arm64 FreeBSD arm64 \
     'FreeBSD releases are available only for x86-64'
+
+echo '==> a terminal download shows its bar, its size, and why it failed'
+download_release=$scratch/download-release
+discovery_release "$download_release" linux x86_64
+in_download() {
+    in_terminal 80 env TERM=xterm LC_ALL=C INSTALL_TEST_SYSTEM=Linux INSTALL_TEST_MACHINE=x86_64 \
+        INSTALL_TEST_VERSION="$version" INSTALL_TEST_RELEASE="$download_release" \
+        INSTALL_TEST_CURL_LOG="$scratch/download.urls" PATH="$discovery_tools:$PATH" "$@" \
+        "$INSTALL" --dry-run --version "$version" --dir "$scratch/download-bin"
+}
+downloaded=$(visible "$(in_download INSTALL_TEST_CURL_SLOW=1)")
+# The fake sends half the archive and pauses, so some frame shows a bar part
+# filled and part empty.
+expect 'a terminal download' "$downloaded" '#.'
+expect 'a terminal download' "$downloaded" '.  0.0 / 0.0 MB'
+expect 'a terminal download' "$downloaded" \
+    "ok download            crucible-$version-linux-x86_64.tar.gz - 0.0 MB"
+expect 'a terminal download' "$downloaded" 'status=0'
+# A size that is not a count of bytes draws no bar, and is never evaluated:
+# bash would read `inf` as a variable, and a subscript in its value would run.
+for length in 1e400 -nan 12abc; do
+    hostile=$(in_download INSTALL_TEST_CURL_SLOW=1 INSTALL_TEST_CURL_LENGTH="$length" \
+        a=1 inf="a[\$(touch $scratch/length-ran)]" nan="a[\$(touch $scratch/length-ran)]")
+    [[ ! -e $scratch/length-ran ]] || {
+        echo "a Content-Length of $length ran a command" >&2
+        exit 1
+    }
+    refuse "a Content-Length of $length" "$hostile" 'install.sh: line'
+    # The bar's sizes read `got / total MB`.
+    [[ ! $(visible "$hostile") =~ [0-9]\ /\ [0-9] ]] || {
+        printf 'a Content-Length of %s drew a bar:\n%s\n' "$length" "$hostile" >&2
+        exit 1
+    }
+    expect "a Content-Length of $length" "$hostile" 'status=0'
+done
+refused=$(visible "$(in_download INSTALL_TEST_CURL_FAIL=1)")
+# `x` is right-aligned under `ok`, so the label starts in the same column.
+expect 'a failed terminal download' "$refused" \
+    $'\r   x download            curl: (22) The requested URL returned error: 404'
+expect 'a failed terminal download' "$refused" 'Nothing was installed.'
+expect 'a failed terminal download' "$refused" 'status=22'
+status=0
+refused=$(INSTALL_TEST_SYSTEM=Linux INSTALL_TEST_MACHINE=x86_64 INSTALL_TEST_VERSION=$version \
+    INSTALL_TEST_RELEASE=$download_release INSTALL_TEST_CURL_LOG=$scratch/download.urls \
+    INSTALL_TEST_CURL_FAIL=1 PATH="$discovery_tools:$PATH" \
+    "$INSTALL" --dry-run --version "$version" --dir "$scratch/download-bin" 2>/dev/null) ||
+    status=$?
+((status == 22)) || { echo "a failed piped download exited $status, not curl's 22" >&2; exit 1; }
+expect 'a failed piped download' "$refused" 'install: download: failed'
 
 echo 'installer tests passed'

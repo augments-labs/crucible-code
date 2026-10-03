@@ -22,7 +22,7 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 71] = [
+const KEYS: [&str; 72] = [
     "ambiguous",
     "answers",
     "asks",
@@ -71,6 +71,7 @@ const KEYS: [&str; 71] = [
     "protocol",
     "provider",
     "questions",
+    "recommended",
     "replaced",
     "resources",
     "resumed",
@@ -97,15 +98,39 @@ const KEYS: [&str; 71] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 19] = [
+const MORE_KEYS: [&str; 49] = [
+    "added",
+    "api_ms",
+    "cache_read",
+    "cache_write",
+    "context",
+    "cost",
+    "currency",
+    "input",
+    "limits",
+    "more_limits",
+    "minutes",
+    "micros",
+    "output",
+    "removed",
+    "resets_at",
+    "total",
+    "windows",
+    "usage",
+    "used",
+    "wall_ms",
     "count",
     "date",
+    "free",
     "groups",
+    "instructions",
+    "mcp",
     "missing",
     "newest",
     "notes",
     "release",
     "releases",
+    "reserve",
     "route",
     "running",
     "sentence",
@@ -113,10 +138,16 @@ const MORE_KEYS: [&str; 19] = [
     "shown",
     "source",
     "speed",
+    "system",
+    "tools",
     "unwritten",
     "variable",
     "version",
     "why",
+    "window",
+    "setting",
+    "value",
+    "by",
 ];
 
 /// What a field name may not say, whatever else it says.
@@ -179,9 +210,57 @@ fn questions() -> Pending {
             choices: vec![Choice {
                 name: marked(),
                 says: marked(),
+                recommended: true,
             }],
         }],
     }
+}
+
+#[test]
+fn a_choice_marked_recommended_crosses_as_a_field_of_its_own_beside_its_unchanged_name() {
+    let choice = |name: &str, recommended| Choice {
+        name: Text::cut(name),
+        says: Text::cut(""),
+        recommended,
+    };
+    let pending = Pending::Questions {
+        id: PendingId::new(8),
+        questions: vec![Asked {
+            heading: Text::cut("h"),
+            asks: Text::cut("a"),
+            several: false,
+            choices: vec![choice("Typed flag", true), choice("Enum value", false)],
+        }],
+    };
+
+    let written = pending.written();
+    let first = "/questions/0/choices/0";
+    assert_eq!(
+        written.pointer(&format!("{first}/recommended")),
+        Some(&json!(true))
+    );
+    assert_eq!(written.pointer("/questions/0/choices/1/recommended"), None);
+    assert_eq!(
+        written.pointer(&format!("{first}/name/text")),
+        Some(&json!("Typed flag"))
+    );
+
+    assert_eq!(Pending::read(written.clone()).unwrap(), pending);
+
+    // A choice written before the flag existed has none, and reads as not
+    // recommended; one that says something else is not a flag.
+    let mut bare = written.clone();
+    bare.pointer_mut(first)
+        .and_then(Value::as_object_mut)
+        .unwrap()
+        .remove("recommended");
+    let read = Pending::read(bare).unwrap();
+    assert!(matches!(&read, Pending::Questions { questions, .. }
+        if questions.iter().flat_map(|one| &one.choices).all(|one| !one.recommended)));
+
+    let mut odd = written;
+    *odd.pointer_mut(&format!("{first}/recommended")).unwrap() = json!("yes");
+    assert_eq!(Pending::read(odd).unwrap_err().code(), ErrorCode::Malformed);
 }
 
 fn warning() -> Pending {
@@ -252,11 +331,18 @@ fn commands() -> Vec<Command> {
         Command::Sandbox { enabled: false },
         Command::Theme(Theme::Drawing(Palette::Dark)),
         Command::Theme(Theme::Syntax(name("base16"))),
+        Command::Setting {
+            name: name("output.scrollRail"),
+            value: name("false"),
+        },
         Command::Help,
         Command::ReleaseNotes { version: None },
         Command::ReleaseNotes {
             version: Some(name("v0.41.1")),
         },
+        Command::Context,
+        Command::Usage,
+        Command::AskLimits,
         Command::Exit,
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
@@ -335,6 +421,141 @@ fn login_outcomes() -> Vec<Outcome> {
         Outcome::Logout(LogoutOutcome::SignedOut {
             retained: retained(),
         }),
+    ]
+}
+
+/// How a window is spent, where everything about it is known, and where none
+/// of what may be left out is there.
+fn contexts() -> [Context; 2] {
+    [
+        Context {
+            model: Model::new(MARKER),
+            window: Some(200_000),
+            left: Percent::new(62),
+            system: 3_100,
+            instructions: 1_200,
+            tools: 9_400,
+            mcp: 4_800,
+            messages: 41_600,
+            reserve: 36_000,
+            free: 103_900,
+        },
+        Context {
+            model: None,
+            window: None,
+            left: None,
+            system: 3_100,
+            instructions: 0,
+            tools: 9_400,
+            mcp: 0,
+            messages: 41_600,
+            reserve: 0,
+            free: 0,
+        },
+    ]
+}
+
+/// The plan-wide limit and one kept for a model, between them every window
+/// and every reading there is, and more the vendor reported than were kept.
+fn plan_limits() -> Limits {
+    let limit = |window, reading, resets_at| Limit {
+        window,
+        reading,
+        resets_at,
+    };
+    let percent = |used| Reading::Percent(Percent::new(used).unwrap());
+    Limits {
+        groups: vec![
+            LimitGroup {
+                model: None,
+                limits: vec![
+                    limit(Window::FiveHour, percent(23), Some(1_700_000_000)),
+                    limit(Window::Daily, Reading::Unlimited, None),
+                    limit(Window::Weekly, percent(42), None),
+                    limit(Window::Monthly, percent(100), Some(1_702_000_000)),
+                ],
+            },
+            LimitGroup {
+                model: Some(name("GPT-5.3-Codex-Spark")),
+                limits: vec![
+                    limit(
+                        Window::Lasting { minutes: 180 },
+                        Reading::Counted {
+                            used: 412,
+                            total: 1_500,
+                        },
+                        Some(1_700_000_000),
+                    ),
+                    limit(Window::Yearly, percent(7), None),
+                ],
+            },
+        ],
+        more: true,
+    }
+}
+
+/// What a session has used, by position: priced with every window reported,
+/// not priced with none, known only as a floor, and before anything was asked
+/// with one window. Callers destructure it by position, so keep this order.
+fn usages() -> [Usage; 4] {
+    let [context, unknown] = contexts();
+    let used = Used {
+        cost: Cost::Priced {
+            currency: name("USD"),
+            micros: 1_840_000,
+        },
+        api_ms: 252_000,
+        wall_ms: 4_920_000,
+        added: 214,
+        removed: 37,
+        input: 1_420_000,
+        output: 38_100,
+        cache_read: 1_210_000,
+        cache_write: 92_400,
+    };
+    let counted = Usage {
+        used: used.clone(),
+        context,
+        limits: plan_limits(),
+    };
+    [
+        counted.clone(),
+        Usage {
+            used: Used {
+                cost: Cost::NotPriced,
+                ..used.clone()
+            },
+            limits: Limits::default(),
+            ..counted.clone()
+        },
+        Usage {
+            used: Used {
+                cost: Cost::AtLeast {
+                    currency: name("USD"),
+                    micros: 400_000,
+                },
+                ..used.clone()
+            },
+            ..counted.clone()
+        },
+        Usage {
+            used: Used {
+                cost: Cost::Unspent,
+                ..used
+            },
+            context: unknown,
+            limits: Limits {
+                groups: vec![LimitGroup {
+                    model: None,
+                    limits: vec![Limit {
+                        window: Window::Weekly,
+                        reading: Reading::Percent(Percent::new(0).unwrap()),
+                        resets_at: Some(1_700_000_000),
+                    }],
+                }],
+                more: false,
+            },
+        },
     ]
 }
 
@@ -432,6 +653,10 @@ fn outcomes() -> Vec<Outcome> {
         Outcome::Sandbox(SandboxOutcome::Unchanged(problem())),
         Outcome::Theme(ThemeOutcome::Remembered),
         Outcome::Theme(ThemeOutcome::Unwritten(problem())),
+        Outcome::Setting(SettingOutcome::Remembered),
+        Outcome::Setting(SettingOutcome::Forced(Forced::Environment)),
+        Outcome::Setting(SettingOutcome::Forced(Forced::Project)),
+        Outcome::Setting(SettingOutcome::Unwritten(problem())),
         Outcome::help(),
         Outcome::Notes(NotesOutcome::Listed {
             releases: vec![release(None), release(Some(marked()))],
@@ -447,6 +672,8 @@ fn outcomes() -> Vec<Outcome> {
         }),
         Outcome::Leaving,
     ];
+    outcomes.extend(contexts().into_iter().map(Outcome::Context));
+    outcomes.extend(usages().into_iter().map(Outcome::Usage));
     outcomes.extend(login_outcomes());
     outcomes.extend(turn_outcomes().into_iter().map(Outcome::Turn));
     outcomes.extend(Mode::EVERY.into_iter().map(Outcome::Mode));
@@ -477,6 +704,8 @@ fn responses() -> Vec<Response> {
 }
 
 fn progress() -> Vec<Progress> {
+    let [whole, unknown] = contexts();
+    let [counted, unpriced, _, unspent] = usages();
     vec![
         Progress::Started { turn: 1 },
         Progress::Delta { text: marked() },
@@ -493,6 +722,18 @@ fn progress() -> Vec<Progress> {
         Progress::Compacting { part: 2 },
         Progress::Compacted { replaced: 9 },
         Progress::Spent { tokens: 1234 },
+        // Streamed with the model left out: it is the snapshot's to say.
+        Progress::Context(Context {
+            model: None,
+            ..whole
+        }),
+        Progress::Context(unknown),
+        // Every cost and every window, each streamed as `/usage` reads it.
+        Progress::Used(counted.used),
+        Progress::Used(unpriced.used),
+        Progress::Used(unspent.used),
+        Progress::Limits(counted.limits),
+        Progress::Limits(unspent.limits),
         Progress::Finished {
             turn: 1,
             stop: Stop::Cancelled,
@@ -641,32 +882,36 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 24),
-        Command::Compact => (1, 24),
-        Command::Cancel => (2, 24),
-        Command::Decide(_) => (3, 24),
-        Command::Clear => (4, 24),
-        Command::Resume(_) => (5, 24),
+        Command::Prompt(_) => (0, 28),
+        Command::Compact => (1, 28),
+        Command::Cancel => (2, 28),
+        Command::Decide(_) => (3, 28),
+        Command::Clear => (4, 28),
+        Command::Resume(_) => (5, 28),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 24),
-        Command::SelectModel { effort: None, .. } => (7, 24),
-        Command::SetEffort(_) => (8, 24),
-        Command::SetMode(_) => (9, 24),
-        Command::CycleMode => (10, 24),
-        Command::Login { .. } => (11, 24),
-        Command::Logout { .. } => (12, 24),
-        Command::InspectCache => (13, 24),
-        Command::CleanCache => (14, 24),
-        Command::Sandbox { enabled: true } => (15, 24),
-        Command::Sandbox { enabled: false } => (16, 24),
-        Command::Theme(Theme::Drawing(_)) => (17, 24),
-        Command::Theme(Theme::Syntax(_)) => (18, 24),
-        Command::Help => (19, 24),
-        Command::ReleaseNotes { version: None } => (20, 24),
-        Command::ReleaseNotes { version: Some(_) } => (21, 24),
-        Command::Exit => (22, 24),
-        Command::SetSpeed(_) => (23, 24),
+        } => (6, 28),
+        Command::SelectModel { effort: None, .. } => (7, 28),
+        Command::SetEffort(_) => (8, 28),
+        Command::SetMode(_) => (9, 28),
+        Command::CycleMode => (10, 28),
+        Command::Login { .. } => (11, 28),
+        Command::Logout { .. } => (12, 28),
+        Command::InspectCache => (13, 28),
+        Command::CleanCache => (14, 28),
+        Command::Sandbox { enabled: true } => (15, 28),
+        Command::Sandbox { enabled: false } => (16, 28),
+        Command::Theme(Theme::Drawing(_)) => (17, 28),
+        Command::Theme(Theme::Syntax(_)) => (18, 28),
+        Command::Help => (19, 28),
+        Command::ReleaseNotes { version: None } => (20, 28),
+        Command::ReleaseNotes { version: Some(_) } => (21, 28),
+        Command::Exit => (22, 28),
+        Command::SetSpeed(_) => (23, 28),
+        Command::Context => (24, 28),
+        Command::Usage => (25, 28),
+        Command::Setting { .. } => (26, 28),
+        Command::AskLimits => (27, 28),
     }
 }
 
@@ -698,7 +943,14 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         | Outcome::Cancelling
         | Outcome::Mode(_)
         | Outcome::Help(_)
+        | Outcome::Context(_)
         | Outcome::Leaving => (0, 1),
+        Outcome::Usage(usage) => match usage.used.cost {
+            Cost::Unspent => (0, 4),
+            Cost::Priced { .. } => (1, 4),
+            Cost::NotPriced => (2, 4),
+            Cost::AtLeast { .. } => (3, 4),
+        },
         Outcome::Turn(turn) => turn_arm(turn),
         Outcome::Unasked(missing) => match missing {
             Missing::Credential => (0, 3),
@@ -776,6 +1028,12 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             ThemeOutcome::Remembered => (0, 2),
             ThemeOutcome::Unwritten(_) => (1, 2),
         },
+        Outcome::Setting(setting) => match setting {
+            SettingOutcome::Remembered => (0, 4),
+            SettingOutcome::Forced(Forced::Environment) => (1, 4),
+            SettingOutcome::Forced(Forced::Project) => (2, 4),
+            SettingOutcome::Unwritten(_) => (3, 4),
+        },
         Outcome::Notes(notes) => match notes {
             NotesOutcome::Listed { .. } => (0, 4),
             NotesOutcome::One(_) => (1, 4),
@@ -826,6 +1084,11 @@ fn every_arm_that_crosses_has_a_specimen() {
             }
         }
     }
+    for context in contexts() {
+        either("context.model", context.model.is_some());
+        either("context.window", context.window.is_some());
+        either("context.left", context.left.is_some());
+    }
     for snapshot in snapshots() {
         either("snapshot.session", snapshot.session.is_some());
         either("snapshot.provider", snapshot.provider.is_some());
@@ -838,6 +1101,9 @@ fn every_arm_that_crosses_has_a_specimen() {
     for what in [
         "response.correlation",
         "resource.expires_at",
+        "context.model",
+        "context.window",
+        "context.left",
         "snapshot.session",
         "snapshot.provider",
         "snapshot.model",
@@ -999,7 +1265,7 @@ fn framed(value: &Value) -> Vec<u8> {
 }
 
 fn asking(command: &Value) -> Value {
-    json!({"version": 1, "capabilities": [], "correlation": 41, "command": command})
+    json!({"version": 2, "capabilities": [], "correlation": 41, "command": command})
 }
 
 /// `frame` with `field` saying `value` instead.
@@ -1021,7 +1287,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 2, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 3, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1081,15 +1347,15 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"".to_vec(), None),
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
-        (b"{\"version\": 1".to_vec(), None),
-        (framed(&json!({"version": 1})), None),
+        (b"{\"version\": 2".to_vec(), None),
+        (framed(&json!({"version": 2})), None),
         (
-            framed(&json!({"version": 1, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 2, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
             framed(
-                &json!({"version": "1", "capabilities": [], "correlation": 41,
+                &json!({"version": "2", "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}}),
             ),
             Some(41),
@@ -1107,7 +1373,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 1, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 2, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -1298,15 +1564,19 @@ fn a_frame_of_more_values_than_any_needs_is_refused_while_it_is_read() {
 
 #[test]
 fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
-    let choice = || Choice {
+    // A question marks at most one of its choices, and the first.
+    let choice = |recommended| Choice {
         name: Text::cut("n"),
         says: Text::cut("s"),
+        recommended,
     };
     let asked = || Asked {
         heading: Text::cut("h"),
         asks: Text::cut("a"),
         several: true,
-        choices: vec![choice(); ITEMS],
+        choices: std::iter::once(choice(true))
+            .chain(vec![choice(false); ITEMS - 1])
+            .collect(),
     };
     let fullest = Snapshot {
         session: Some(SessionId::new()),
@@ -1342,10 +1612,10 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":1,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":1,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":1,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":1,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":2,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -1355,7 +1625,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":1,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -1518,7 +1788,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 2, 65_536, u64::MAX] {
+        for version in [0, 1, 3, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -1650,9 +1920,71 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 1_177_570_555_411_645_176),
+        (2, 17_377_940_167_198_915_265),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
+    );
+}
+
+#[test]
+fn a_context_with_no_window_says_no_room_left_and_none_free() {
+    // Both are read against the window, so without one a frame that states
+    // either states a figure nothing measured.
+    let [_, unknown] = contexts();
+    let response = Response {
+        correlation: Some(Correlation::new(3)),
+        outcome: Outcome::Context(unknown),
+    };
+    let frame: Value = serde_json::from_slice(&response.encode().unwrap()).unwrap();
+    let saying = |field: &str, value: Value| -> Vec<u8> {
+        let mut frame = frame.clone();
+        frame
+            .pointer_mut("/outcome/context")
+            .and_then(Value::as_object_mut)
+            .expect("a context is an object")
+            .insert(field.to_owned(), value);
+        framed(&frame)
+    };
+
+    assert_eq!(
+        Response::decode(&framed(&frame)).map_err(Refusal::code),
+        Ok(response)
+    );
+    assert!(Response::decode(&saying("free", json!(0))).is_ok());
+    for (field, value) in [("left", json!(62)), ("free", json!(1))] {
+        assert_eq!(
+            Response::decode(&saying(field, value)).unwrap_err().code(),
+            ErrorCode::Malformed,
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn a_context_streamed_during_a_turn_names_no_model() {
+    // The model is the snapshot's to say; a second place saying it is a
+    // second figure for one fact.
+    let streamed = progress()
+        .into_iter()
+        .find(|one| matches!(one, Progress::Context(context) if context.window.is_some()))
+        .expect("a context specimen with a window");
+    let mut frame: Value = serde_json::from_slice(&streamed.encode().unwrap()).unwrap();
+    assert_eq!(
+        Progress::decode(&framed(&frame)).map_err(Refusal::code),
+        Ok(streamed)
+    );
+
+    frame
+        .pointer_mut("/context")
+        .and_then(Value::as_object_mut)
+        .expect("a context is an object")
+        .insert(
+            "model".to_owned(),
+            json!({"text": "a-model", "truncated": false}),
+        );
+    assert_eq!(
+        Progress::decode(&framed(&frame)).unwrap_err().code(),
+        ErrorCode::Malformed
     );
 }
 
@@ -1681,5 +2013,228 @@ fn an_unasked_outcome_naming_nothing_it_knows_is_malformed() {
     assert_eq!(
         Response::decode(&framed(&nothing)).unwrap_err().code(),
         ErrorCode::Malformed
+    );
+}
+
+#[test]
+fn a_setting_crosses_as_the_name_of_its_key_and_the_word_for_its_value() {
+    let request = Request::new(
+        Capabilities::every(),
+        Correlation::new(4),
+        Command::Setting {
+            name: name("output.theme"),
+            value: name("light"),
+        },
+    );
+    let frame: Value = serde_json::from_slice(&request.encode().unwrap()).unwrap();
+    assert_eq!(
+        frame.get("command"),
+        Some(&json!({"kind": "setting", "name": "output.theme", "value": "light"})),
+        "{frame}"
+    );
+    assert_eq!(
+        Request::decode(&framed(&frame)).map_err(|refused| refused.refusal.code()),
+        Ok(request)
+    );
+
+    let response = Response {
+        correlation: Some(Correlation::new(4)),
+        outcome: Outcome::Setting(SettingOutcome::Forced(Forced::Project)),
+    };
+    let frame: Value = serde_json::from_slice(&response.encode().unwrap()).unwrap();
+    assert_eq!(
+        frame.get("outcome"),
+        Some(&json!({"kind": "setting", "setting": {"kind": "forced", "by": "project"}})),
+        "{frame}"
+    );
+    let elsewhere = with(
+        frame,
+        "outcome",
+        json!({"kind": "setting", "setting": {"kind": "forced", "by": "a-neighbour"}}),
+    );
+    assert_eq!(
+        Response::decode(&framed(&elsewhere)).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
+}
+
+#[test]
+fn plan_limit_crosses_as_a_word_of_its_own_with_a_fixed_sentence() {
+    assert!(ErrorCode::EVERY.contains(&ErrorCode::PlanLimit));
+    assert_eq!(ErrorCode::PlanLimit.as_str(), "plan_limit");
+    assert_eq!(ErrorCode::named("plan_limit"), Some(ErrorCode::PlanLimit));
+    assert_eq!(
+        Refusal::new(ErrorCode::PlanLimit).to_string(),
+        "the plan's usage limit is reached until one of its windows resets"
+    );
+}
+
+#[test]
+fn plan_limit_a_failed_turn_carrying_it_reads_back_as_it_was_written() {
+    let one = Progress::Failed(Problem {
+        code: ErrorCode::PlanLimit,
+        message: Text::cut("usage limit reached on the weekly window"),
+    });
+
+    let frame = one.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+
+    assert_eq!(
+        value.pointer("/problem/code"),
+        Some(&json!("plan_limit")),
+        "{value}"
+    );
+    assert_eq!(Progress::decode(&frame).unwrap(), one);
+}
+
+#[test]
+fn plan_limit_is_spoken_under_the_second_revision_and_not_the_first() {
+    assert_eq!(Version::CURRENT.number(), 2);
+    assert!(Version::CURRENT.spoken());
+    assert!(!Version::numbered(1).spoken());
+
+    let frame = with(asking(&json!({"kind": "help"})), "version", json!(1));
+    assert_eq!(
+        refused(&framed(&frame)),
+        (Some(41), ErrorCode::UnsupportedVersion)
+    );
+}
+
+#[test]
+fn limit_every_window_and_reading_reads_back_as_it_was_written() {
+    let limits = plan_limits();
+    let one = Progress::Limits(limits.clone());
+
+    let frame = one.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+
+    assert_eq!(Progress::decode(&frame).unwrap(), one);
+    assert_eq!(
+        value.pointer("/limits/1/model"),
+        Some(&json!("GPT-5.3-Codex-Spark")),
+        "{value}"
+    );
+    assert_eq!(
+        value.pointer("/limits/1/windows/0"),
+        Some(&json!({
+            "window": {"kind": "lasting", "minutes": 180},
+            "used": {"kind": "counted", "used": 412, "total": 1500},
+            "resets_at": 1_700_000_000,
+        })),
+        "{value}"
+    );
+    assert_eq!(value.pointer("/limits/0/model"), None, "{value}");
+    assert_eq!(value.pointer("/more_limits"), Some(&json!(true)), "{value}");
+    assert!(!limits.is_empty());
+    assert!(Limits::default().is_empty());
+
+    let whole = Progress::Limits(Limits::default());
+    let frame = whole.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(
+        value.pointer("/more_limits"),
+        Some(&json!(false)),
+        "{value}"
+    );
+    assert_eq!(Progress::decode(&frame).unwrap(), whole);
+}
+
+#[test]
+fn limit_a_usage_that_left_limits_out_reads_back_saying_so() {
+    let [counted, _, _, _] = usages();
+    assert!(counted.limits.more);
+    let response = Response {
+        correlation: Some(Correlation::new(5)),
+        outcome: Outcome::Usage(counted),
+    };
+    let frame = response.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(
+        value.pointer("/outcome/usage/more_limits"),
+        Some(&json!(true)),
+        "{value}"
+    );
+    assert_eq!(Response::decode(&frame).unwrap(), response);
+}
+
+/// A progress frame carrying `limits` as they were written.
+fn limits_frame(limits: &Value) -> Vec<u8> {
+    let frame = Progress::Limits(Limits::default()).encode().unwrap();
+    let mut value: Value = serde_json::from_slice(&frame).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("limits".to_owned(), limits.clone());
+    framed(&value)
+}
+
+#[test]
+fn limit_lists_over_the_plans_ceilings_are_refused() {
+    let window = json!({
+        "window": {"kind": "weekly"},
+        "used": {"kind": "percent", "used": 5},
+    });
+    let group = |windows: usize| json!({"windows": vec![window.clone(); windows]});
+
+    let groups = json!(vec![group(1); crucible_types::MAX_LIMIT_GROUPS + 1]);
+    let windows = json!([group(crucible_types::MAX_GROUP_WINDOWS + 1)]);
+    let named = json!([{
+        "model": "m".repeat(crucible_types::MAX_LIMIT_NAME_BYTES + 1),
+        "windows": [],
+    }]);
+    for over in [groups, windows, named] {
+        assert_eq!(
+            Progress::decode(&limits_frame(&over)).map_err(Refusal::code),
+            Err(ErrorCode::TooLarge),
+            "{over}"
+        );
+    }
+
+    let full = json!(vec![
+        group(crucible_types::MAX_GROUP_WINDOWS);
+        crucible_types::MAX_LIMIT_GROUPS
+    ]);
+    assert!(Progress::decode(&limits_frame(&full)).is_ok());
+}
+
+#[test]
+fn limit_readings_no_vendor_could_give_are_malformed() {
+    let reading =
+        |window: Value, used: Value| json!([{"windows": [{"window": window, "used": used}]}]);
+    let weekly = json!({"kind": "weekly"});
+    for wrong in [
+        reading(weekly.clone(), json!({"kind": "percent", "used": 101})),
+        reading(
+            weekly.clone(),
+            json!({"kind": "counted", "used": 3, "total": 0}),
+        ),
+        reading(
+            weekly.clone(),
+            json!({"kind": "counted", "used": 4, "total": 3}),
+        ),
+        reading(weekly.clone(), json!({"kind": "spent"})),
+        reading(
+            json!({"kind": "lasting", "minutes": 0}),
+            json!({"kind": "unlimited"}),
+        ),
+        reading(json!({"kind": "fortnightly"}), json!({"kind": "unlimited"})),
+        json!([{"model": "", "windows": []}]),
+        json!({"groups": []}),
+    ] {
+        assert!(Progress::decode(&limits_frame(&wrong)).is_err(), "{wrong}");
+    }
+}
+
+#[test]
+fn limit_asking_crosses_as_a_command_of_its_own() {
+    let frame = asking(&json!({"kind": "ask_limits"}));
+    let request = Request::decode(&framed(&frame)).unwrap();
+
+    assert_eq!(request.command(), &Command::AskLimits);
+    assert_eq!(Command::AskLimits.kind(), "ask_limits");
+    assert!(Command::KINDS.contains(&"ask_limits"));
+    assert_eq!(
+        Request::decode(&request.encode().unwrap()).unwrap(),
+        request
     );
 }

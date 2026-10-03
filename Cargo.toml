@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.44.2"
+version = "0.45.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -16,8 +16,8 @@ publish = false
 # than reviewed. Which edges are allowed is one list, in the crate-layering
 # section of `scripts/sh/repo-checks.sh`, checked against these manifests on
 # every run. It is not restated here: an arrow written down twice goes stale in
-# one of the two places without anything failing. What each crate is for is in
-# CLAUDE.md.
+# one of the two places without anything failing. What each crate is for is the
+# documentation that opens its `src/lib.rs`.
 #
 # `config` sits beside the others rather than above them: it reads files into
 # settings and hands them to the wiring, which is what applies them. Nothing
@@ -346,6 +346,26 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_System_Threading",
 ] }
 
+# The hour a plan window starts again, in the zone the reader lives in. `std`
+# knows instants and nothing of zones: turning one into a local wall clock means
+# reading the system's zone (`/etc/localtime` and `TZ` on Unix, the registry on
+# Windows) and the TZif rules behind it, which is a parser and a platform
+# branch apiece. Unix reads its zone rules from the zoneinfo directory, so
+# nothing is bundled there; Windows has no such directory, so
+# `tzdb-bundle-platform` compiles a copy of the zone database into the binary
+# for Windows alone, without which the registry's zone has no rules to read and
+# every time would be UTC. A machine whose zone still cannot be read is shown
+# its times in UTC, and says so. The provider crate takes it for the other
+# side of that hour: reading the RFC 3339 instant a vendor writes it as, which
+# `std` has no parser for.
+jiff = { version = "=0.2.28", default-features = false, features = [
+    "std",
+    "tz-system",
+    "tzdb-zoneinfo",
+    "tzdb-concatenated",
+    "tzdb-bundle-platform",
+] }
+
 # --- Encoded standards -------------------------------------------------------
 # These lint tables are the Rust compiler standard. Cross-file repository
 # policy is enforced by `scripts/sh/repo-checks.sh`.
@@ -514,6 +534,9 @@ sha2.workspace = true
 # documents, so this is the same version compiled once.
 serde_json.workspace = true
 thiserror.workspace = true
+# The local hour `/usage` says a plan window starts again at. Read only when the
+# panel is drawn, so starting pays nothing for it.
+jiff.workspace = true
 
 [dev-dependencies]
 # Named by the integration tests alone, which drive the seams these two own from

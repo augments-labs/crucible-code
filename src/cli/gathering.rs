@@ -19,6 +19,8 @@
 use crucible_tools::{Looking, ToolOutput};
 use crucible_types::ToolId;
 
+use crate::cli::draw::Called;
+
 /// How the counters are said, in the order they are said in.
 ///
 /// One table rather than a match per tense, because the two tenses of a counter
@@ -96,7 +98,7 @@ pub(crate) struct Alone {
     /// Which call it was.
     pub(crate) call: ToolId,
     /// The words its row would say.
-    pub(crate) said: String,
+    pub(crate) said: Called,
     /// What it came back with, where it has come back at all. `None` is a call
     /// the turn ended underneath, which has a row to write and no result to
     /// hang under it.
@@ -125,7 +127,7 @@ impl Gathering {
     /// settles it: the run has two calls now, so the first will not be written
     /// as a row of its own and its result belongs where the rest of the run's
     /// results are.
-    pub(crate) fn took(&mut self, call: ToolId, looking: Looking, said: String) -> Option<Alone> {
+    pub(crate) fn took(&mut self, call: ToolId, looking: Looking, said: Called) -> Option<Alone> {
         self.counted(call.clone(), looking);
 
         if self.calls.len() == 1 {

@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: on_the_first_beat(&picture)
+---
+80x24 cursor 21,4 scrolled 0
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      ││|
+|│ · ctrl+c     clears the line typed so far                                   ││|
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                               │|
+|› start it                                                                     │|
+|                                                                               ┃|
+|● Bash(sleep 30)                                                               ┃|
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                              ●|
+|                                                                               ┃|
+|It is started. That is all.                                                    ┃|
+|✳ writing (0s · ↓ 4 · esc to interrupt)                                         |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|1 queued                                                                        |
+|                                                                                |
+|› and add a test for the windows path                                           |
+|                                                                                |
+|↑↓ to walk · e edit · d delete · esc to close                                   |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1|

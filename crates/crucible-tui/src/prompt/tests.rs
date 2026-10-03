@@ -872,6 +872,23 @@ fn the_mark_on_a_committed_line_is_on_the_band_rather_than_beside_it() {
 }
 
 #[test]
+fn a_sent_prompt_and_the_files_under_it_carry_no_theme_colour() {
+    // The band is a ground and the reader's own foreground on it, the mark
+    // and the corner before a file included: nothing on the record of what
+    // was asked is in the theme's colour.
+    let palette = over((13, 13, 16));
+    let mut rows = Prompt::committed("fix it", 40, Glyphs::Unicode, true);
+    rows.extend(Prompt::attached(&[PICTURE], 40, Glyphs::Unicode, true));
+
+    for row in &rows {
+        let painted = row.paint(&palette);
+
+        assert!(painted.contains("48;2;"), "no band: {painted:?}");
+        assert!(!painted.contains("38;"), "an ink on the band: {painted:?}");
+    }
+}
+
+#[test]
 fn a_committed_line_still_takes_a_ground_where_the_terminal_said_nothing() {
     // Most terminals say nothing -- the question is not widely implemented --
     // so this is the ordinary case rather than the degraded one, and a band
@@ -1569,4 +1586,22 @@ fn in_the_ascii_set_the_label_is_joined_by_spaced_hyphens() {
         crate::label("deepseek", "deepseek-flash", None, None, Glyphs::Unicode),
         "deepseek · deepseek-flash"
     );
+}
+
+#[test]
+fn the_box_and_its_status_row_follow_the_colour_rule() {
+    // In every tone a mode is drawn in, with commands running: the count is
+    // the status row's one accent, and the mark is the typed row's.
+    // Wide as well as at eighty, where the keys after the mode give way.
+    for tone in [Slot::Quiet, Slot::AllowEdits, Slot::FullAccess] {
+        for columns in [80, 160] {
+            let rows = Prompt {
+                tone,
+                ..leaving("fix the flaky resume test", 2)
+            }
+            .rows(columns, Glyphs::Unicode);
+
+            crate::colour_rule::holds("prompt", &rows, |_| false);
+        }
+    }
 }

@@ -2,19 +2,20 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-80x24 cursor 22,0 scrolled 0
-|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
-|│                                  │ ───────────────────────────────────────── │|
-|│  /…/workspace                    │                                           │|
-|│                                  │ Tips                                      │|
-|│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|› /fast                                                                         |
+80x24 cursor 23,0 scrolled 0
+|│ No recent sessions                                                          ││|
+|│                                                                             ││|
+|│ ─────────────────────────────────────────────────────────────────────────── ││|
+|│                                                                             ││|
+|│ Tips                                                                        │┃|
+|│                                                                             │┃|
+|│ · /          opens the command list                                         │┃|
+|│ · \ enter    adds a line without sending                                    │┃|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› /fast                                                                        ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Speed · openai · gpt-5.6-sol · ChatGPT sign-in                                  |
@@ -26,4 +27,3 @@ expression: picture
 |  2.5x your plan's usage; 2x purchased credits · 1.5x faster                    |
 |                                                                                |
 |enter to choose · esc to cancel                                                 |
-|                                                                                |

@@ -855,6 +855,19 @@ fn the_three_edits_every_shell_answers_to_reach_the_line_here_too() {
 }
 
 #[test]
+fn ctrl_w_rubs_out_the_same_word_backspace_held_does() {
+    // Two spellings of one edit, kept apart only for whoever reads the keys
+    // before the editor does: the word that goes is the same word.
+    let mut held = lines("first line\nsecond word here");
+    let mut lettered = lines("first line\nsecond word here");
+
+    assert_eq!(held.press(Key::RubWord), Typed::Changed);
+    assert_eq!(lettered.press(Key::WordErase), Typed::Changed);
+    assert_eq!(lettered.text(), held.text());
+    assert_eq!(lettered.column(), held.column());
+}
+
+#[test]
 fn the_rest_of_a_line_ahead_goes_without_the_line_under_it() {
     let mut editor = lines("keep this\nand this");
     assert_eq!(editor.press(Key::Home), Typed::Changed);
@@ -943,4 +956,15 @@ fn a_line_too_long_for_the_box_is_not_put_in_it_at_all() {
         Typed::Refused
     );
     assert_eq!(editor.text(), "what was already there");
+}
+
+#[test]
+fn the_press_that_sends_can_be_swapped_with_a_line_already_typed() {
+    // `/settings` changes it while a session runs; what was typed stays, and
+    // the next Return is read the new way.
+    let mut editor = typed("one").multiline();
+    editor.send_with(Sending::AltEnter);
+
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.text(), "one\n");
 }

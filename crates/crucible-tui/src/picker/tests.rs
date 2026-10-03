@@ -7,33 +7,39 @@ const FIVE: [Kept<'static>; 5] = [
         title: "Prompt history with arrow navigation",
         when: "now",
         branch: "main",
+        place: "",
     },
     Kept {
         title: "/plugin",
         when: "7 hours ago",
         branch: "fix/background-command-offer",
+        place: "",
     },
     Kept {
         title: "/plugin",
         when: "8 hours ago",
         branch: "fix/minor-session-display",
+        place: "",
     },
     Kept {
         title: "/clear",
         when: "13 hours ago",
         branch: "main",
+        place: "",
     },
     Kept {
         title: "Release 0.23.0 smoke gates",
         when: "17 hours ago",
         branch: "main",
+        place: "",
     },
 ];
 
-const KEYS: (&str, &str) = (
+const KEYS: &[&str] = &[
     "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel",
+    "ctrl+r rename · type to search · esc",
     "↑↓ · ctrl+r · esc",
-);
+];
 
 /// The tail the preview pane is handed, already drawn.
 fn tail() -> Vec<Row> {
@@ -71,6 +77,7 @@ fn picker<'a>(sessions: &'a [Kept<'a>], preview: &'a [Row]) -> Picker<'a> {
         nothing: "no earlier session for this workspace",
         noview: "nothing to show",
         keys: KEYS,
+        notice: &[],
         pointer: None,
     }
 }
@@ -199,6 +206,28 @@ fn the_keys_are_the_last_row_and_the_heading_sits_under_the_search_line() {
 }
 
 #[test]
+fn the_keys_row_takes_the_longest_form_the_window_has_room_for() {
+    // Longest first, and a form is drawn only where all of it fits: two
+    // columns go to the row's margin and its last column.
+    let preview = tail();
+    let picker = picker(&FIVE, &preview);
+    let last = |columns: usize| {
+        let rows = picker.within(columns, 30, Glyphs::Unicode);
+        said(&rows, 30 - 1).trim().to_owned()
+    };
+    let long = "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel";
+
+    let middle = "ctrl+r rename · type to search · esc";
+    let wide = crate::width::columns;
+
+    assert_eq!(last(100), long);
+    assert_eq!(last(wide(long) + 2), long);
+    assert_eq!(last(wide(long) + 1), middle);
+    assert_eq!(last(wide(middle) + 2), middle);
+    assert_eq!(last(wide(middle) + 1), "↑↓ · ctrl+r · esc");
+}
+
+#[test]
 fn each_pane_stands_in_its_own_rounded_frame() {
     // The list and the preview each open with corners and close with corners:
     // one frame apiece, over the first row of the panes and under the last.
@@ -211,6 +240,103 @@ fn each_pane_stands_in_its_own_rounded_frame() {
     assert_eq!(over.matches('╮').count(), 2, "{over:?}");
     assert_eq!(under.matches('╰').count(), 2, "{under:?}");
     assert_eq!(under.matches('╯').count(), 2, "{under:?}");
+}
+
+#[test]
+fn a_session_from_another_directory_names_it_under_its_title() {
+    // The directory goes last on the row under the title, after the branch,
+    // so a list mixing directories still lines its ages up on the left. Kept
+    // short here: the list's share of a hundred columns is thirty-six.
+    let elsewhere = [
+        Kept {
+            place: "~/other",
+            ..FIVE[3]
+        },
+        Kept {
+            branch: "",
+            place: "~/third",
+            ..FIVE[4]
+        },
+    ];
+    let preview = tail();
+    let rows = picker(&elsewhere, &preview).within(100, 30, Glyphs::Unicode);
+
+    let first = said(&rows, LISTED + 1);
+    let second = said(&rows, LISTED + 4);
+    assert!(first.contains("13 hours ago · main · ~/other"), "{first:?}");
+    assert!(second.contains("17 hours ago · ~/third"), "{second:?}");
+}
+
+#[test]
+fn a_directory_too_long_for_its_row_keeps_the_end_that_names_the_project() {
+    // Two directories under one parent differ at their ends, so a row that
+    // cannot hold the whole of one gives up its front, marked, and the age
+    // and branch it lines up on stay whole.
+    let far = [Kept {
+        place: "~/projects/clients/northwind/website",
+        ..FIVE[3]
+    }];
+    let preview = tail();
+    let mut picker = picker(&far, &preview);
+    picker.marked = 0;
+    let rows = picker.within(100, 30, Glyphs::Unicode);
+
+    let row = said(&rows, LISTED + 1);
+    let row = row.split('│').nth(1).unwrap_or_default().trim_end();
+    assert!(row.contains("13 hours ago · main · …"), "{row:?}");
+    assert!(row.ends_with("/website"), "{row:?}");
+}
+
+#[test]
+fn a_notice_stands_on_the_row_between_the_panes_and_the_keys() {
+    let preview = tail();
+    let mut picker = picker(&FIVE, &preview);
+    picker.notice = &["cd ~/other && crucible --resume 1"];
+
+    let rows = picker.within(100, 30, Glyphs::Unicode);
+
+    let under = said(&rows, 30 - 2);
+    assert!(
+        under.contains("cd ~/other && crucible --resume 1"),
+        "{under:?}"
+    );
+    assert!(
+        said(&rows, 30 - 1).contains("↑↓ to walk"),
+        "{:?}",
+        said(&rows, 30 - 1)
+    );
+}
+
+#[test]
+fn a_notice_of_two_rows_takes_its_second_from_the_panes() {
+    // Both rows stand over the keys, in order, and the window is no taller
+    // for them: the panes are a row shorter, and the preview is the one that
+    // gives it up.
+    let preview = tail();
+    let mut picker = picker(&FIVE, &preview);
+    let plain = picker.within(100, 30, Glyphs::Unicode);
+    picker.notice = &["cd ~/other &&", "crucible --resume 1"];
+
+    let rows = picker.within(100, 30, Glyphs::Unicode);
+
+    assert_eq!(rows.len(), 30);
+    assert_eq!(said(&rows, 30 - 3).trim(), "cd ~/other &&");
+    assert_eq!(said(&rows, 30 - 2).trim(), "crucible --resume 1");
+    assert!(said(&rows, 30 - 1).contains("↑↓ to walk"), "{rows:?}");
+    assert!(
+        said(&rows, 30 - 4).contains('╰'),
+        "{:?}",
+        said(&rows, 30 - 4)
+    );
+    assert_eq!(said(&plain, 30 - 4), said(&rows, 30 - 5));
+    assert_eq!(Picker::previews(30, 2), Picker::previews(30, 1) - 1);
+    assert_eq!(Picker::previews(30, 0), Picker::previews(30, 1));
+
+    // Where the panes have no row left to give, the picker still stands, and
+    // what is left unsaid is the notice's second row.
+    let tight = picker.within(100, CHROME + FLOOR, Glyphs::Unicode);
+    assert_eq!(tight.len(), CHROME + FLOOR);
+    assert_eq!(said(&tight, CHROME + FLOOR - 2).trim(), "cd ~/other &&");
 }
 
 #[test]
@@ -264,7 +390,7 @@ fn the_pane_says_how_many_rows_of_a_session_it_shows() {
             .lines()
             .filter(|line| line.contains("line "))
             .count();
-        assert_eq!(Picker::previews(room), drawn, "in room for {room}");
+        assert_eq!(Picker::previews(room, 0), drawn, "in room for {room}");
     }
 }
 
@@ -274,13 +400,13 @@ fn a_pane_handed_exactly_what_it_shows_has_no_blank_left_over_the_rule() {
     // nothing between them: a gap there is the pane half empty while the
     // reader is still wheeling back through a tail that has more.
     let room = 30;
-    let preview: Vec<Row> = (0..Picker::previews(room))
+    let preview: Vec<Row> = (0..Picker::previews(room, 0))
         .map(|line| Row::new().then(Slot::Plain, format!("line {line}")))
         .collect();
 
     let rows = picker(&FIVE, &preview).within(100, room, Glyphs::Unicode);
     let drawn = picture(&rows, 100);
-    let last = format!("line {}", Picker::previews(room) - 1);
+    let last = format!("line {}", Picker::previews(room, 0) - 1);
     let at = drawn
         .lines()
         .position(|line| line.contains(&last))
@@ -385,6 +511,7 @@ fn the_marked_session_is_on_screen_on_every_rung_of_the_scroll() {
         title,
         when: "now",
         branch: "main",
+        place: "",
     })
     .collect();
     let preview = tail();
@@ -510,6 +637,7 @@ fn a_scrolled_list_answers_with_the_session_the_reader_can_see() {
         title,
         when: "now",
         branch: "main",
+        place: "",
     })
     .collect();
     let preview = tail();
@@ -726,4 +854,68 @@ fn the_whole_picker_after_a_query_that_matched_nothing() {
     picker.nothing = "no session holds \"deploy\"";
 
     insta::assert_snapshot!(picture(&picker.within(100, 20, Glyphs::Unicode), 100));
+}
+
+#[test]
+fn the_resume_picker_follows_the_colour_rule() {
+    // The worst case for the list beside it rather than what a transcript
+    // draws: a preview with an accent span on every row of it, so a list row
+    // that took one of its own would be a second on that line unless it is
+    // the selected session's.
+    let preview: Vec<Row> = [
+        "Bash(scripts/smoke.sh v0.23.0 2>&1 | tail -12)",
+        "Read(src/main.rs)",
+        "Edit(CHANGELOG.md)",
+        "Grep(colour)",
+        "Bash(cargo test)",
+        "Write(notes.md)",
+    ]
+    .iter()
+    .flat_map(|said| {
+        [
+            Row::new()
+                .then(Slot::Accent, "●")
+                .then(Slot::Plain, " ")
+                .then(Slot::Strong, *said),
+            Row::new().then(Slot::Quiet, "  └ done"),
+        ]
+    })
+    .collect();
+    let resting = picker(&FIVE, &preview);
+    let renaming = Picker {
+        renaming: Some("Release 0.23.0 smoke"),
+        ..picker(&FIVE, &preview)
+    };
+
+    for (name, shown) in [("resume picker", resting), ("renaming", renaming)] {
+        let rows = shown.within(100, 30, Glyphs::Unicode);
+        // The marked session's title row: its caret, and the title being
+        // typed into while it is renamed.
+        let marked = |at: usize| {
+            rows.get(at)
+                .is_some_and(|row| row.text().starts_with("│ › "))
+        };
+
+        crate::colour_rule::holds(name, &rows, marked);
+    }
+
+    // The levels, on the list at rest: the selected session's caret is the
+    // accent, and when a session was last touched is quiet.
+    let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
+    let slot_of = |text: &str| {
+        rows.iter()
+            .flat_map(Row::spans)
+            .find(|(_, said)| said.contains(text))
+            .map(|(slot, _)| slot)
+    };
+    assert_eq!(
+        slot_of("\u{203a}"),
+        Some(Slot::Accent),
+        "the selected row's caret"
+    );
+    assert_eq!(
+        slot_of("now \u{b7} main"),
+        Some(Slot::Quiet),
+        "when, and where"
+    );
 }

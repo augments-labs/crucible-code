@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 use crucible_models::{
     Delta, DeltaStream, Effort, PriceRate, PromptCacheCapabilities, PromptCachePricing,
@@ -21,8 +22,8 @@ use crucible_tools::{
     ToolError, ToolOutput, Verdict, Wrote,
 };
 use crucible_types::{
-    CredentialScopeId, Diff, Fragment, Message, Modalities, Modality, PricingCurrency, PricingDate,
-    PricingError, PricingUnit, PromptCacheEncoding, PromptCacheResourceError,
+    CredentialScopeId, Diff, Fragment, Message, Modalities, Modality, PlanWindows, PricingCurrency,
+    PricingDate, PricingError, PricingUnit, PromptCacheEncoding, PromptCacheResourceError,
     PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheRetentionClass, ToolArgs,
     ToolCall,
 };
@@ -149,6 +150,24 @@ pub(crate) struct Script {
     resource_delete: ResourceDelete,
     /// How this fixture answers the speed a request is asked at.
     fast: FastFixture,
+    /// The plan windows each answer's headers report, in the order the
+    /// answers go out; an answer past the end reports none.
+    limits: Mutex<VecDeque<Option<PlanWindows>>>,
+    /// The refusal of a used-up plan every request meets, where one does.
+    used_up: Option<UsedUp>,
+    /// How long each request is out before its answer starts.
+    waits: Duration,
+    /// Stopped once the next round has been handed out, as a reader pressing
+    /// Esc while an answer arrives.
+    interrupts: Mutex<Option<Cancel>>,
+}
+
+/// A vendor's refusal of a used-up plan: the reset it gave, and the windows
+/// the refusal's head reported.
+#[derive(Debug, Clone)]
+struct UsedUp {
+    resets_at: Option<SystemTime>,
+    reading: Option<PlanWindows>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -204,7 +223,33 @@ impl Script {
             restricts: None,
             reach: Reach::Model,
             fast: FastFixture::default(),
+            limits: Mutex::new(VecDeque::new()),
+            used_up: None,
+            waits: Duration::ZERO,
+            interrupts: Mutex::new(None),
         }
+    }
+
+    /// Stops the run through `cancel` once the first round has been handed
+    /// out, before the answer says how it ended: what that round reported is
+    /// all the response ever reports.
+    pub(crate) fn interrupted_by(self, cancel: Cancel) -> Self {
+        *self.interrupts.lock().unwrap() = Some(cancel);
+        self
+    }
+
+    /// Answers each request only once `waits` has passed, as a vendor
+    /// keeps a request out before it says anything.
+    pub(crate) const fn waiting(mut self, waits: Duration) -> Self {
+        self.waits = waits;
+        self
+    }
+
+    /// Answers whose headers report these plan windows, one per answer in
+    /// order.
+    pub(crate) fn limiting(self, each: impl IntoIterator<Item = Option<PlanWindows>>) -> Self {
+        *self.limits.lock().unwrap() = each.into_iter().collect();
+        self
     }
 
     /// A provider that refuses every request asked at [`Speed::Fast`] the way
@@ -294,6 +339,16 @@ impl Script {
     /// from.
     pub(crate) fn failing() -> Self {
         Self::refusing(401)
+    }
+
+    /// A provider that refuses every request because the plan is used up,
+    /// saying it resets at `resets_at` and reporting `reading` on the
+    /// refusal's head, the way a provider that owns such a wire tells it.
+    pub(crate) fn used_up(resets_at: Option<SystemTime>, reading: Option<PlanWindows>) -> Self {
+        Self {
+            used_up: Some(UsedUp { resets_at, reading }),
+            ..Self::new(Vec::new())
+        }
     }
 
     /// A provider that refuses every request with `status`.
@@ -612,6 +667,10 @@ impl Provider for Script {
                 speed,
             });
 
+            if !self.waits.is_zero() {
+                std::thread::sleep(self.waits);
+            }
+
             // Before anything is answered: the line is meant to arrive while the
             // request is out, not once it has been read.
             if let Some((steer, line)) = self.types.lock().unwrap().take() {
@@ -629,6 +688,18 @@ impl Provider for Script {
 
             if self.over_window {
                 return Err(ProviderError::WindowExceeded { provider: SCRIPT });
+            }
+
+            if let Some(UsedUp { resets_at, reading }) = self.used_up.clone() {
+                return Err(ProviderError::PlanLimit {
+                    provider: SCRIPT,
+                    window: reading
+                        .as_ref()
+                        .and_then(|reading| reading.exhausted(request.model, SystemTime::now()))
+                        .map(|(window, _)| window),
+                    resets_at,
+                    reading: reading.map(Box::new),
+                });
             }
 
             if let Some(status) = self.refuses {
@@ -654,6 +725,8 @@ impl Provider for Script {
                         .collect(),
                     breaks: true,
                     served: Served::Unsaid,
+                    limits: None,
+                    interrupts: None,
                 }) as Box<dyn DeltaStream>);
             }
             drop(drops);
@@ -666,12 +739,16 @@ impl Provider for Script {
                     deltas: VecDeque::new(),
                     breaks: self.breaks,
                     served: self.fast.serves,
+                    limits: None,
+                    interrupts: None,
                 }) as Box<dyn DeltaStream>);
             };
             Ok(Box::new(Recited {
                 deltas: round.into(),
                 breaks: self.breaks,
                 served: self.fast.serves,
+                limits: self.limits.lock().unwrap().pop_front().flatten(),
+                interrupts: self.interrupts.lock().unwrap().take(),
             }) as Box<dyn DeltaStream>)
         })
     }
@@ -823,6 +900,10 @@ struct Recited {
     breaks: bool,
     /// What the answer says about the speed it was served at.
     served: Served,
+    /// The plan windows its headers report.
+    limits: Option<PlanWindows>,
+    /// Stopped once its deltas have been handed out.
+    interrupts: Option<Cancel>,
 }
 
 impl DeltaStream for Recited {
@@ -830,10 +911,17 @@ impl DeltaStream for Recited {
         self.served
     }
 
+    fn limits(&self) -> Option<PlanWindows> {
+        self.limits.clone()
+    }
+
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
         Box::pin(async move {
             if let Some(delta) = self.deltas.pop_front() {
                 return Some(Ok(delta));
+            }
+            if let Some(cancel) = self.interrupts.take() {
+                cancel.request();
             }
 
             self.breaks.then(|| {

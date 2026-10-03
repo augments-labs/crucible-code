@@ -1,7 +1,8 @@
-//! Full-screen terminal rendering: the prompt, the streaming transcript, and
-//! the permission prompt.
+//! Terminal rendering: the prompt, the streaming transcript, and the
+//! permission prompt, full screen or in the terminal's own buffer.
 //!
-//! A session takes the alternate screen and every cell on it is this process's.
+//! A full-screen session takes the alternate screen and every cell on it is
+//! this process's.
 //! The window is cut into bands once — the transcript, what stands over the
 //! box, the box, and a foot — and each row is addressed by its number,
 //! so a frame writes the rows whose text is not already there and touches
@@ -17,6 +18,11 @@
 //! Which is also what makes a pane layout an ordinary change rather than a
 //! rewrite: a band is a rectangle of a screen this process already owns.
 //!
+//! A native session owns no screen. It draws the same bands as a live region
+//! at the foot of the reader's own buffer, and what the transcript has finished
+//! with is written once into that buffer's scrollback and let go of here; the
+//! renderer's native module says how.
+//!
 //! Depends on no other crate in this workspace. What reaches it is already
 //! text, so it never names a domain type, calls a tool or asks a provider for
 //! anything.
@@ -24,8 +30,11 @@
 mod asked;
 mod asking;
 mod bands;
+mod bar;
 mod clipboard;
 mod color;
+#[cfg(test)]
+mod colour_rule;
 #[cfg(test)]
 mod dump;
 mod editor;
@@ -50,20 +59,22 @@ mod render;
 mod row;
 mod running;
 mod sandbox_panel;
+mod scroll_rail;
 mod select;
 mod shelf;
 pub mod syntax;
+mod tab_row;
 mod terminal;
 mod timeline;
 mod title;
-mod transcript_map;
 mod welcome;
 mod width;
 mod working;
 
 pub use asked::{Asked, Choice, Given, Stop, Writing};
 pub use asking::Question;
-pub use color::{Palette, Sequence, Slot, Theme, Worn};
+pub use bar::{Bar, Fill, Part};
+pub use color::{Design, Palette, Sequence, Slot, Theme, Worn};
 pub use editor::{Editor, Key, Projection, Sending, Typed};
 pub use expanded::{Expanded, Shown};
 pub use forge::Forge;
@@ -80,11 +91,12 @@ pub use plan::{Plan, State, Task};
 pub use prompt::{CommandCount, Draft, Prompt, Recalled, Remaining, label};
 /// The most units of the transcript kept at once; a row put down whole costs one.
 pub const RECORDED: usize = record::MOST;
-pub use render::{Aimed, Caret, PromptRows, Renderer};
+pub use render::{Aimed, Caret, PromptRows, Renderer, ScreenMode};
 pub use row::Row;
 pub use running::{Command, Running};
 pub use sandbox_panel::{SandboxPanel, SandboxTab};
 pub use shelf::{Pane, Resting, Serving, Shelf, Stocked};
+pub use tab_row::TabRow;
 pub use terminal::ground::asked;
 pub use terminal::keyboard::{Pasting, Spelling};
 pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};
@@ -95,6 +107,7 @@ pub use terminal::system::SystemTerminal;
 pub use terminal::{Picture, Recording, Size, Terminal, TerminalError};
 pub use timeline::{Brief, Timeline, Told};
 pub use title::{TITLE, Title, TitleError};
+pub use welcome::fit::shorten;
 pub use welcome::{Recent, Welcome};
 pub use width::{clip, columns, cut, fold};
 pub use working::Working;

@@ -8,6 +8,131 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-03
+
+**`/context`, `/usage` and `/settings` show where the window, the session and
+your plan stand, and `output.screen: native` keeps the session in your
+terminal's own scrollback.** Colour follows one written rule, with
+`output.transcriptColours` choosing how much a reply spends, and the default
+tone sends about a quarter fewer bytes of instructions. Windows has an
+installer, `install.ps1`, and `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now refuses
+`1` and `2`.
+
+### Added
+
+- **`/context` shows how the model's window is spent.** One bar across the
+  window and a row each for the system prompt, project instructions, tool
+  schemas, MCP tool schemas, messages, the reserve and what is free, with
+  tokens and share; free reads the same as `window left` on the prompt line.
+  It opens mid-turn too, showing what the turn last reported.
+- **`/usage` shows what the session has used and how much of your plan is
+  gone.** Cost (`not priced` where the model has no price, never `$0.00`, and
+  `at least` once an answer is stopped before its cost is reported), request and
+  wall time, lines changed, tokens and the context bar, then a bar for every
+  limit a ChatGPT sign-in has, plan-wide and for each model it limits on its
+  own, the 5-hour, weekly and monthly limits of a Kimi Code sign-in or key, and
+  the 5-hour and weekly limits of a MiniMax Token Plan key, each with its reset
+  in local time. Opening it, or the Usage tab of `/settings`, asks the vendor
+  for those limits at most once a minute and only once you have agreed to what
+  is sent there; any other key says `limits not reported`, and a model's spent
+  limit stops turns on that model alone.
+- **`/settings` changes a setting without editing JSON.** Its Config tab lists
+  each switch and short choice, plus the mouse scroll speed, with a `/` search;
+  a change is written to your user file. The themes, glyphs, tool detail,
+  scroll rail and speed and the send key change at once, and a row only a new
+  start reads, such as colour, says `applies at next start`. Status shows the
+  version, model, sign-in, paths, session, sandbox and permission mode, read
+  only, and Usage is the `/usage` panel.
+- **`/release-notes` opens a list of releases to choose from.** It shows the
+  eight newest with their dates and entry counts, a row that reveals the rest,
+  and Enter prints the chosen release alone. `/release-notes <version>` is
+  unchanged, and `/release-notes all` prints every release at once as the bare
+  form did.
+- **`output.screen: native` keeps the session in your terminal's own
+  buffer.** Finished lines are written once into the terminal's scrollback and
+  only the part still changing at the foot is redrawn, so scrolling, search,
+  selection and copy are your terminal's. It is read at start, `/settings` has
+  a Screen mode row, and the scroll rail and crucible's own selection are off
+  there.
+- **The model can mark the answer it recommends.** In a question put by
+  `ask_user`, one answer may be marked recommended and listed first, and it is
+  drawn with `(Recommended)` after its name. What you choose and what is sent
+  back is still the name alone.
+- **`/resume` reaches every indexed session and can show other projects,
+  branches and worktrees.** It lists up to 100 of this directory's sessions
+  where it used to stop at those among the 64 newest logs, and opens even where
+  only another directory has any. <kbd>Ctrl+A</kbd> shows every project,
+  <kbd>Ctrl+B</kbd> keeps this branch and <kbd>Ctrl+W</kbd> adds this
+  repository's other worktrees, each named on the keys row by what it does next.
+  Enter on another directory's session says the `cd … && crucible --resume <id>`
+  that picks it up there, on two rows where one is too narrow to hold it.
+- **Windows has an installer.** In PowerShell 5.1 or 7,
+  `irm https://github.com/augments-labs/crucible-code/releases/latest/download/install.ps1 | iex`
+  verifies the Windows archive against `SHA256SUMS` before unpacking it into
+  `%LOCALAPPDATA%\Programs\crucible\bin`, and says how to put that directory
+  on `PATH`, which it changes only under `-AddToPath`.
+- **A used-up ChatGPT plan stops the turn instead of failing it.** A window
+  already at 100% with its reset ahead ends the next turn before anything is
+  sent, and the vendor's own usage-limit refusal is no longer asked again;
+  either way a notice names the window and when it resets, in local time,
+  and lines queued behind the turn wait over the prompt (ctrl+q) until you
+  send one. Clients with no terminal get the `plan_limit` code at protocol
+  revision 2.
+
+### Changed
+
+- **Colour follows one written rule, and you choose how much a reply spends.**
+  Each line has at most one accented thing for the eye to land on, not
+  counting the edges of a frame around it, such as the one around a question;
+  colour that means something keeps that meaning in every theme, and nothing
+  is said by colour alone, so the colourblind themes and `color` set to
+  `never` lose nothing. `output.transcriptColours`, a `/settings` row that
+  applies at once, is `calm` by default (inline code and paths in the theme's
+  colour, links in a second colour, headings, bold and tool names bold in your
+  own foreground), and `balanced` and `rich` add colours for paths, versions,
+  a call's argument, headings, lists, quotes and figures. The rule and the
+  three are in the theme section of the configuration docs.
+- **The installers show each step as it runs.** In a terminal, `install.sh`
+  and `install.ps1` mark each of detect platform, download, verify checksum,
+  unpack and install, draw a bar while the archive downloads, and end with
+  where crucible went and how to put it on `PATH`. Piped, or under
+  `NO_COLOR` or `TERM=dumb`, they print one plain `install:` line per step, and
+  a failure during one of those steps names it; flags, downloads, destinations
+  and exit codes are unchanged.
+- **The queue box always says how to open the queue, and the queue can delete a
+  message.** `ctrl+q edit` is on the box's bottom edge for one waiting message
+  as for many, and the open queue ends in a footer naming <kbd>↑</kbd><kbd>↓</kbd>,
+  <kbd>e</kbd> to edit, <kbd>d</kbd> to delete and <kbd>Esc</kbd>. Messages wrap
+  there instead of being cut; <kbd>x</kbd> still edits.
+- **A scroll rail on the transcript's right edge replaces the map behind the
+  bottom-row label.** Its thumb shows which part of the transcript is on screen
+  and a mark stands at each prompt; a click scrolls there, a drag on it scrolls
+  with the pointer, and a click on a mark lands on that prompt. The prompt you
+  are reading under has a larger mark, shown on the thumb too, and a pointer on
+  the rail lights the track and marks and enlarges the mark under it. It is on
+  by default and the transcript wraps one column narrower for it, so set
+  `output.scrollRail` to `false` to keep the full width.
+- **`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now takes 3 to 30, and its schema says so
+  with bounds.** `1` and `2`, a leading `+` and a leading zero are refused with
+  the range named; in a configuration file the value may now be a JSON integer
+  as well as a string. Set a value of 3 or more to keep the setting.
+- **A turn in the default tone spends about a quarter fewer bytes on
+  crucible's own instructions.** The system prompt and the descriptions of the
+  tools sent with every request are shorter, as are the compaction request and
+  the tools found by search, with no instruction dropped and no tool, argument
+  or choice renamed.
+- **The command list opens in a short window, scrolling with a count.** Where
+  there is no room for every command, as at 24 rows while a turn runs, it shows
+  what fits and ends on a quiet `↓ 2 more` row, with `↑ N more` over it once
+  <kbd>↓</kbd> has walked it down. It used to stay closed there.
+
+### Fixed
+
+- **Editing a queued message no longer loses it when the box cannot take it.**
+  With text already in the box, <kbd>e</kbd> or <kbd>x</kbd> on a queued message
+  too long to fit beside it took the message out of the queue and put it
+  nowhere. It now stays queued and marked, and the box keeps what you typed.
+
 ## [0.44.2] - 2026-10-01
 
 **Every model crucible knows now starts at its native context window, and a
@@ -4750,7 +4875,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...v0.45.0
 [0.44.2]: https://github.com/augments-labs/crucible-code/compare/v0.44.1...v0.44.2
 [0.44.1]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...v0.44.0

@@ -43,7 +43,7 @@ The file parses, and the value at `<path>` is the wrong kind of thing for
 that key. `<kind>` says which kind: `a string`, `true or false`, `a whole
 number that is not negative`, `a positive whole number within the documented
 ceiling`, `one of a fixed set of strings`, `a bounded set of nonempty
-strings`, `a whole number written as a string`, `a list`, `an object` or `an
+strings`, `a whole number, or one written as a string`, `a list`, `an object` or `an
 object of the extension's own settings`. One mistake that produces it is
 quoting a value that is not text: `{"sandbox":{"enabled":"true"}}` gets
 `sandbox.enabled wants true or false`, because `"true"` with quotes is a
@@ -284,6 +284,24 @@ asking for less does not help the second, the same prompt again carries on from
 the third, and the last is a stop crucible could not name, so asking again is
 what there is to try. `! stopped` is a turn you ended with <kbd>Esc</kbd>. See
 [when an answer stops early](getting-started.md#when-an-answer-stops-early).
+
+### `■ Usage limit reached · weekly window · resets Mon 09:00`
+
+The plan behind the ChatGPT sign-in, a Kimi Code sign-in or key, or a MiniMax
+Token Plan key, is
+used up for that window, and the turn ended there. The window is one of the plan's own or one it keeps for the model
+you are using; another model's spent window does not stop this one. The line
+under it says which way: `The turn stopped before sending` where what crucible
+last read put a window at 100% with its reset still ahead, so nothing went out;
+`The vendor refused the request` where the vendor said so itself. Either way
+nothing in the transcript was lost and the refusal is not asked again, since
+asking before the reset reaches the same answer. Send a prompt once the window
+starts again; `/usage` shows the window at 100% and when it resets, in your
+local time. `resets soon` is a reset the clock has reached, and
+`resets: not reported` is a refusal that named none, so send later. Prompts you
+queued behind that turn are not sent on to the spent plan: they stay queued over
+the box, where <kbd>Ctrl+Q</kbd> opens them to edit or delete, and follow the
+next prompt you send. The mark is `#` where the glyphs are ASCII.
 
 ## The network and proxies
 

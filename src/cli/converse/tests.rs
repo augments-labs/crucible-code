@@ -80,6 +80,7 @@ pub(crate) fn plain() -> Terms {
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
+        settled: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         runtime: runtime(),
         ending: crate::cli::ending::Ending::deaf(),
@@ -128,7 +129,7 @@ pub(crate) fn plain() -> Terms {
         // that are there is proved where they are recorded.
         sessions: unwritten.join("sessions"),
         workspace: Workspace::open(std::env::temp_dir()).expect("a temporary directory"),
-        sending: crucible_tui::Sending::default(),
+        sending: std::cell::Cell::default(),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),
@@ -189,11 +190,67 @@ pub(crate) fn scripted(script: Script, offered: Tools, session: Arc<Session>) ->
     )
 }
 
+/// What a session nothing has been sent in yet carries, as its runner
+/// measures it against a known window: a breakdown with a percentage to read
+/// off it, where [`crucible_runner::Breakdown::default`] has none.
+pub(crate) fn measured() -> crucible_runner::Breakdown {
+    Runner::new(
+        Box::new(Script::new(Vec::new())),
+        Tools::new(),
+        Agent::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: Some(200_000),
+                accepts: None,
+                effort: None,
+            },
+        ),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        Arc::new(Session::nowhere()),
+    )
+    .breakdown()
+}
+
 /// A conversation that answers nothing and records nowhere, for a command
 /// that asks the application about something other than the conversation.
 pub(crate) fn silent() -> Conversation {
     paired(Arc::new(Session::nowhere()), |session| {
         scripted(Script::new(Vec::new()), Tools::new(), session)
+    })
+}
+
+/// A conversation whose plan keeps a source of its limits and answers a
+/// weekly window plan-wide and a group for one model each time it is asked,
+/// and a handle on how many times it was.
+pub(crate) fn asking_plan() -> (Conversation, crate::cli::fake::Asked) {
+    use crucible_types::{
+        GroupName, ModelGroup, ModelKey, PlanWindows, Scope, Window, WindowReading,
+    };
+    let slug = "gpt-5.3-codex-spark";
+    let spark = ModelGroup::new(GroupName::new(slug).expect("a name"), ModelKey::exact(slug));
+    let windows = PlanWindows::new(std::time::SystemTime::now())
+        .with(Window::Weekly, WindowReading::new(31, None))
+        .within(
+            Scope::Model(spark),
+            Window::FiveHour,
+            WindowReading::new(12, None),
+        );
+    let script = Script::new(Vec::new()).answering(windows);
+    let asked = script.limits_asked();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    });
+    (conversation, asked)
+}
+
+/// A conversation whose plan keeps a source of its limits and, asked, never
+/// answers.
+pub(crate) fn stalled_plan() -> Conversation {
+    let script = Script::new(Vec::new()).stalling();
+    paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
     })
 }
 
@@ -311,14 +368,14 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
     let mut input = Cursor::new(Vec::new());
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers {
             input: &mut input,
             keys: false,
         },
         &opening,
     );
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(crucible_runner::Breakdown::default());
     let mut says = typing::under(&scripted(
         Script::new(Vec::new()),
         Tools::new(),
@@ -1072,7 +1129,7 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     let cancellation = terms.cancel.clone();
     let mut renderer = Renderer::new(Breaking {
         inner: Recording::new(80, 24),
-        left: 3,
+        left: 2,
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
@@ -1257,20 +1314,12 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
         "the box was not under the reading: {rows:?}"
     );
 
-    // The mode remains directly under the box for the whole stretch it is
-    // deciding things over. The dedicated transcript-map control is the one
-    // row below it now, so the mode is the penultimate row rather than the last.
-    assert!(
-        rows.iter()
-            .rev()
-            .nth(1)
-            .is_some_and(|row| row.contains("full access mode on")),
-        "the row under the box did not say the mode: {rows:?}"
-    );
+    // The mode remains directly under the box, on the window's last row, for
+    // the whole stretch it is deciding things over.
     assert!(
         rows.last()
-            .is_some_and(|row| row.contains("transcript map")),
-        "the map control was not under the mode: {rows:?}"
+            .is_some_and(|row| row.contains("full access mode on")),
+        "the row under the box did not say the mode: {rows:?}"
     );
 
     // And the cursor comes back into the box rather than onto the answer,
@@ -1402,6 +1451,7 @@ mod command;
 mod fast;
 mod held;
 mod login;
+mod plan_limit;
 mod question;
 mod release_notes;
 mod restricted;
@@ -1825,6 +1875,68 @@ fn a_session_that_took_no_screen_has_nothing_to_say_about_where_it_went() {
     assert_eq!(
         Parting::of(false, Some(file), Some("no room left on the device")),
         Parting::Nothing
+    );
+}
+
+#[test]
+fn native_takes_neither_the_screen_nor_the_pointer() {
+    // The reader's own buffer is the point of native mode: the alternate
+    // screen would hide its scrollback, and taking the pointer would take its
+    // selection and its wheel.
+    assert_eq!(
+        holds(ScreenMode::Native),
+        Holds {
+            screen: false,
+            pointer: false,
+        }
+    );
+}
+
+#[test]
+fn the_full_screen_takes_the_screen_and_the_pointer_as_it_always_has() {
+    // Beside the native case, so the two are read together.
+    assert_eq!(
+        holds(ScreenMode::Fullscreen),
+        Holds {
+            screen: true,
+            pointer: true,
+        }
+    );
+}
+
+#[test]
+fn a_native_session_that_ends_in_an_error_has_closed_its_region_by_the_time_it_returns() {
+    // What panicked on another thread and was kept is written out as the
+    // session lets go of the terminal, inside `converse`. A region still open
+    // then would be closed by the renderer's drop afterwards, rewinding over
+    // whatever was written below it -- so a session that leaves by an error
+    // closes it on the way out, as one that leaves by a quit does.
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    });
+    let mut renderer = Renderer::drawing(Recording::new(80, 24), ScreenMode::Native);
+    let mut input = Cursor::new(vec![b'x'; QUEUED_BYTES + 1]);
+
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect_err("an oversized line to end the session");
+    assert!(matches!(problem, Fatal::InputTooLong), "{problem:?}");
+
+    let returned = renderer.terminal().written().len();
+    assert!(returned > 0, "the session drew nothing");
+    renderer.closes().expect("a recording to take a write");
+    assert_eq!(
+        renderer.terminal().written().len(),
+        returned,
+        "the region was still open when the session returned its error"
     );
 }
 

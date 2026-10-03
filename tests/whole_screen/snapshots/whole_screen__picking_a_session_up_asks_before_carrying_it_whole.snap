@@ -2,18 +2,19 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 22,0 scrolled 0
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|› say something                                                                 |
-|                                                                                |
-|The first thing this session said.                                              |
+80x24 cursor 23,0 scrolled 0
+|│ · shift+tab  steps the permission mode                                      ││|
+|│ · ctrl+c     clears the line typed so far                                   ││|
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                               │|
+|› say something                                                                ┃|
+|                                                                               ┃|
+|The first thing this session said.                                             ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |This session is large                                                           |
 |                                                                                |
-|6k carried, from a session started just now. Carrying it whole spends that again|
+|5k carried, from a session started just now. Carrying it whole spends that again|
 |on every turn.                                                                  |
 |                                                                                |
 |› Carry on from summary                                                         |
@@ -26,4 +27,3 @@ expression: window.picture()
 |  written down; sessions are carried whole from now on                          |
 |                                                                                |
 |enter to choose · esc to carry it whole                                         |
-|                                                                                |

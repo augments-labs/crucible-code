@@ -74,12 +74,28 @@ const PROTECT: u64 = TOOL_RESULT_BYTES as u64;
 /// the recap alone is the answer.
 const MINIMUM: u64 = 30_000;
 
+/// Sends a recap request, and says when it went out.
+async fn timed(
+    provider: &dyn crucible_models::Provider,
+    pace: &mut super::fast::Pace,
+    request: Request<'_>,
+    run: &RunContext<'_>,
+) -> (
+    std::time::Instant,
+    Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
+) {
+    let went = std::time::Instant::now();
+    (went, super::fast::sent(provider, pace, request, run).await)
+}
+
 struct RecapReading<'a> {
     events: crate::Reporter<'a>,
     touched: &'a TrackedFiles,
     spent: &'a mut Spend,
     cache: super::CacheObservation,
     why: Compacting,
+    /// When the request went out, so the time waited on it is counted.
+    went: std::time::Instant,
 }
 
 /// How far a recap has run when the row that says so reads half done, in bytes.
@@ -194,7 +210,7 @@ impl Runner {
                 self.store.display_compacted(compacted, pruned).await;
                 events.post(crate::Event::Compacted { compacted });
                 events.post(crate::Event::Carried {
-                    left: self.left_under(run.policy().compaction),
+                    breakdown: self.breakdown_under(run.policy().compaction),
                 });
                 return Ok(Room::Made(compacted));
             }
@@ -301,10 +317,9 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &super::advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&super::Fixed::of(&self.agent, &self.state.tools));
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -321,7 +336,7 @@ impl Runner {
         self.store.display_compacted(compacted, pruned).await;
         events.post(crate::Event::Compacted { compacted });
         events.post(crate::Event::Carried {
-            left: self.left_under(run.policy().compaction),
+            breakdown: self.breakdown_under(run.policy().compaction),
         });
 
         Ok(Room::Made(compacted))
@@ -647,7 +662,7 @@ impl Runner {
             prompt_cache: Some(&cache),
             ..request
         };
-        let asked = super::fast::sent(&*self.provider, &mut self.pace, request, run).await;
+        let (went, asked) = timed(&*self.provider, &mut self.pace, request, run).await;
         // Recorded and reported before a failure ends the compaction, as a
         // turn's own request is.
         let disposition = super::request_disposition(&asked);
@@ -684,6 +699,7 @@ impl Runner {
                     spent,
                     cache,
                     why,
+                    went,
                 },
             )
             .await;
@@ -724,22 +740,42 @@ impl Runner {
         .await;
     }
 
-    /// Reads one standalone recap response while preserving attempt accounting.
+    /// Reads one standalone recap response, and counts it in the session's
+    /// totals however it ended.
     async fn read_recap(
         &mut self,
         asked: Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
         reading: RecapReading<'_>,
     ) -> Result<Recap, TurnError> {
+        let (events, went) = (reading.events, reading.went);
+        self.went_out(super::request_disposition(&asked), reading.cache);
+        self.limited(
+            asked.as_ref().ok().and_then(|stream| stream.limits()),
+            events,
+        );
+        let said = self.hear_recap(asked, reading).await;
+        self.answered(went, events, matches!(said, Ok((_, true))));
+        said.map(|(recap, _)| recap)
+    }
+
+    /// Reads one standalone recap response while preserving attempt
+    /// accounting, and says whether the provider said it was done.
+    async fn hear_recap(
+        &mut self,
+        asked: Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
+        reading: RecapReading<'_>,
+    ) -> Result<(Recap, bool), TurnError> {
         let RecapReading {
             events,
             touched,
             spent,
             cache,
             why,
+            went: _,
         } = reading;
         let mut stream = match asked {
             Ok(stream) => stream,
-            Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
+            Err(ProviderError::Cancelled(_)) => return Ok((Recap::Stopped, false)),
             Err(problem) => return Err(problem.into()),
         };
         let mut said = String::new();
@@ -750,7 +786,7 @@ impl Runner {
         while let Some(delta) = stream.next().await {
             let delta = match delta {
                 Ok(delta) => delta,
-                Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
+                Err(ProviderError::Cancelled(_)) => return Ok((Recap::Stopped, false)),
                 Err(problem) => return Err(problem.into()),
             };
             // Some protocols report accounting after the model's stop. Keep
@@ -758,13 +794,13 @@ impl Runner {
             if stopped.is_some()
                 && !matches!(delta, Delta::Usage(_) | Delta::Spent(_) | Delta::Carried(_))
             {
-                return Ok(Recap::Incomplete);
+                return Ok((Recap::Incomplete, false));
             }
             match delta {
                 Delta::Text(text) => {
                     said.push_str(&text);
                     if said.len() > MAX_RECAP_TEXT {
-                        return Ok(Recap::Incomplete);
+                        return Ok((Recap::Incomplete, false));
                     }
                     let now = reached(said.len() as u64);
                     if now != part {
@@ -773,6 +809,7 @@ impl Runner {
                     }
                 }
                 Delta::Spent(reported) => {
+                    self.state.totals.spent(reported.tokens());
                     *spent = before.and(reported);
                     events.post(crate::Event::Spent { spend: *spent });
                 }
@@ -790,19 +827,8 @@ impl Runner {
                         *spent = before.and(crucible_types::Spend::new(tokens));
                         events.post(crate::Event::Spent { spend: *spent });
                     }
-                    let cost = self
-                        .provider
-                        .prompt_cache_pricing(
-                            &self.agent.model().name,
-                            cache.model_revision,
-                            usage.input.total,
-                            cache.retention,
-                            cache.pricing_date,
-                        )
-                        .ok()
-                        .flatten()
-                        .and_then(|pricing| pricing.cost(&usage).ok())
-                        .unwrap_or(UsageCost::UNKNOWN);
+                    let (cost, price) = self.priced(&usage, cache);
+                    self.state.totals.used(&usage, price);
                     let outcome = usage.input.outcome(cache.reporting);
                     if let Some(attempt) = self
                         .state
@@ -825,9 +851,9 @@ impl Runner {
                     )
                     .await;
                 }
+                Delta::Carried(carried) => self.state.totals.carried(carried.tokens()),
                 Delta::ToolStarted { .. }
                 | Delta::ToolArgs(_)
-                | Delta::Carried(_)
                 | Delta::Continuation(_)
                 | Delta::Progress => {}
                 Delta::Stopped(reason) => {
@@ -836,7 +862,8 @@ impl Runner {
             }
         }
 
-        Ok(match stopped {
+        let completed = stopped.is_some_and(|reason| reason != StopReason::Cancelled);
+        let recap = match stopped {
             Some(StopReason::Yielded) if is_structured(&said) => {
                 append_files(&mut said, touched);
                 Recap::Complete(said)
@@ -852,7 +879,8 @@ impl Runner {
                 | StopReason::WantsTools,
             )
             | None => Recap::Incomplete,
-        })
+        };
+        Ok((recap, completed))
     }
 
     /// Clears old tool results from what the model is sent, and records it.
@@ -930,10 +958,9 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &super::advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&super::Fixed::of(&self.agent, &self.state.tools));
         true
     }
 }

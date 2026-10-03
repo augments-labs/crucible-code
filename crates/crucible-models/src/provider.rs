@@ -12,21 +12,25 @@
 //! `/cache cleanup` and the retirement ahead of an identity switch cross it on
 //! the thread that asked, which in the terminal is the one that draws.
 //!
-//! Opening a stream and reading from it are the two things here that wait on
-//! the world, so they hand back a [`BoxFuture`] that borrows no more than the
-//! call was given. Everything else a provider answers — its name, what it can
-//! spell, what it would encode for a request — describes it, and stays
+//! Opening a stream and reading from it wait on the world, so they hand back
+//! a [`BoxFuture`] that borrows no more than the call was given. So does
+//! asking a plan how much of its limits is used ([`Provider::ask_limits`]),
+//! whose future borrows nothing, so that it can be waited on away from the
+//! thread that asked. Everything else a provider answers — its name, what it
+//! can spell, what it would encode for a request — describes it, and stays
 //! synchronous.
 
 use std::fmt;
+use std::time::SystemTime;
 
 use crucible_credentials::{CredentialError, Redactions};
 use crucible_runtime::{BoxFuture, Cancel};
 
 use crate::speed::{FastForm, Served, Speed};
 use crucible_types::{
-    Carried, Continuation, Modalities, Modality, PricingDate, PricingError, PromptCacheEncoding,
-    PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId, ToolSchema, Transcript,
+    Carried, Continuation, Modalities, Modality, PlanWindows, PricingDate, PricingError,
+    PromptCacheEncoding, PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId,
+    ToolSchema, Transcript, Utc, Window,
 };
 
 /// Why a provider could not produce a response.
@@ -155,6 +159,39 @@ pub enum ProviderError {
         /// The vendor's reason, as it gave it.
         message: Box<str>,
     },
+
+    /// The vendor refused the request because the plan behind the credential
+    /// is used up until a window starts again.
+    ///
+    /// Told by the provider module that owns the wire, from the shape the
+    /// vendor gives that refusal, and never from a status alone: a 429 is
+    /// as often a moment's congestion as a used-up plan. Says nothing the
+    /// response wrote: the window is one of crucible's names and the reset an
+    /// instant, so the sentence is crucible's own.
+    #[error("{provider}: {}", used_up(*.window, *.resets_at))]
+    PlanLimit {
+        /// Which provider refused it.
+        provider: &'static str,
+        /// Which window is used up, where the response said.
+        window: Option<Window>,
+        /// When the plan can be used again, where the response said.
+        resets_at: Option<SystemTime>,
+        /// What the refused response's head reported of the plan's windows,
+        /// where its vendor reports them on a refusal as well as on an
+        /// answer; kept like any response's reading.
+        reading: Option<Box<PlanWindows>>,
+    },
+}
+
+/// The sentence a used-up plan is said in: crucible's own words, the window's
+/// name and the reset as ISO 8601 in UTC.
+fn used_up(window: Option<Window>, resets_at: Option<SystemTime>) -> String {
+    let window = window.map_or_else(String::new, |window| format!(" on the {}", window.named()));
+    let resets = resets_at.map_or_else(
+        || "the reset was not reported".to_owned(),
+        |at| format!("it resets at {}", Utc::new(at)),
+    );
+    format!("the plan's usage limit is reached{window}; {resets}")
 }
 
 impl ProviderError {
@@ -165,7 +202,10 @@ impl ProviderError {
     #[must_use]
     pub fn redacted(self, redactions: &Redactions) -> Self {
         match self {
-            Self::Limit { .. } | Self::WindowExceeded { .. } | Self::Cancelled(_) => self,
+            Self::Limit { .. }
+            | Self::WindowExceeded { .. }
+            | Self::Cancelled(_)
+            | Self::PlanLimit { .. } => self,
             Self::Transport { provider, problem } => Self::Transport {
                 provider,
                 problem: redactions.redact(&problem).into(),
@@ -246,7 +286,11 @@ impl ProviderError {
             | Self::Cancelled(_)
             | Self::Unconfigured(_)
             | Self::Held(_)
-            | Self::FastRefused { .. } => false,
+            | Self::FastRefused { .. }
+            // A used-up plan is about the plan rather than the moment: the
+            // same request is refused again until the window starts over,
+            // which is hours or days away rather than the pause a retry waits.
+            | Self::PlanLimit { .. } => false,
         }
     }
 }
@@ -585,6 +629,13 @@ pub trait DeltaStream: Send {
     fn served(&self) -> Served {
         Served::Unsaid
     }
+
+    /// What the response said of the subscription's usage windows, read off
+    /// its head as it arrived. `None`, the default, is the answer of every
+    /// response that says nothing of them, or nothing crucible reads.
+    fn limits(&self) -> Option<PlanWindows> {
+        None
+    }
 }
 
 /// One LLM backend adapter.
@@ -756,6 +807,32 @@ pub trait Provider: Send + Sync {
         let _ = model;
         FastForm::None
     }
+
+    /// Asks the vendor how much of the plan behind this credential is used,
+    /// where the vendor has a source a credential like it can read.
+    ///
+    /// `None` — the default — is no source: an API key, a gateway, or a plan
+    /// whose vendor publishes none. The future borrows nothing from the
+    /// provider, so it can be waited on away from the thread that asked; it
+    /// sends one request with the credential already given, to the vendor's
+    /// own host, and nothing else. Dropping it closes the request.
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        None
+    }
+}
+
+/// What asking a plan how much of its limits is used came to.
+#[derive(Debug)]
+pub enum Asked {
+    /// The plan's answer, which replaces what was known.
+    Answered(PlanWindows),
+
+    /// The source refused the credential or is not there to ask: asking again
+    /// with the same credential would be refused the same way.
+    Closed,
+
+    /// Anything else, which leaves what was known standing.
+    Failed(ProviderError),
 }
 
 impl fmt::Debug for dyn Provider {
@@ -775,6 +852,36 @@ impl fmt::Debug for dyn DeltaStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_limit_is_never_asked_again_and_says_only_crucibles_own_words() {
+        let seconds: u64 = 1_791_190_800;
+        let reset = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+        let named = ProviderError::PlanLimit {
+            provider: "openai",
+            window: Some(Window::Weekly),
+            resets_at: Some(reset),
+            reading: None,
+        };
+        let unsaid = ProviderError::PlanLimit {
+            provider: "openai",
+            window: None,
+            resets_at: None,
+            reading: None,
+        };
+
+        assert!(!named.transient());
+        assert!(!unsaid.transient());
+        assert_eq!(
+            named.to_string(),
+            "openai: the plan's usage limit is reached on the weekly window; \
+             it resets at 2026-10-05T09:00:00Z"
+        );
+        assert_eq!(
+            unsaid.to_string(),
+            "openai: the plan's usage limit is reached; the reset was not reported"
+        );
+    }
 
     #[test]
     fn a_delta_never_shows_what_a_tool_call_carries() {

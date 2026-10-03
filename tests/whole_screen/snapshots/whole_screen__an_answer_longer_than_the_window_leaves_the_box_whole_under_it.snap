@@ -2,20 +2,20 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x16 cursor 12,4 scrolled 0
-|dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over|
-|the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox  |
-|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
-|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. |
-|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the |
-|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps|
-|over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown |
-|fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
-|quick brown fox jumps over the lazy dog. done.                                  |
+80x16 cursor 13,4 scrolled 0
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     │|
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick│|
+|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.│|
+|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the│|
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     ●|
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick│|
+|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.│|
+|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the┃|
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     ┃|
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. done.    ┃|
 |                                                                                |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                               transcript map → |

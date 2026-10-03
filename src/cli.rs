@@ -15,6 +15,8 @@
 mod browser;
 mod choice;
 mod client;
+#[cfg(test)]
+mod colour_rule;
 mod converse;
 mod counting;
 mod draw;
@@ -517,7 +519,7 @@ fn asked(
 /// What the `output` block said, gathered out of the settled layers.
 ///
 /// Its own function because it is the one value in `run` that is only a list:
-/// five answers read out of one block, none of them decided here.
+/// six answers read out of one block, none of them decided here.
 fn drawn(settings: &crucible_config::Settings) -> style::Output {
     style::Output {
         color: settings.color(),
@@ -525,6 +527,7 @@ fn drawn(settings: &crucible_config::Settings) -> style::Output {
         detail: settings.tool_detail(),
         theme: settings.theme(),
         syntax: settings.syntax_theme().map(str::to_owned),
+        colours: settings.transcript_colours(),
     }
 }
 
@@ -533,8 +536,8 @@ fn drawn(settings: &crucible_config::Settings) -> style::Output {
 /// The translation from what a document may say to what the editor understands,
 /// and the only place the two spellings meet. Nothing said is Return sending,
 /// which is what almost every terminal makes possible and every reader expects.
-fn sends(settings: &crucible_config::Settings) -> crucible_tui::Sending {
-    match settings.sending() {
+pub(crate) fn sends(said: Option<crucible_config::Sending>) -> crucible_tui::Sending {
+    match said {
         Some(crucible_config::Sending::AltEnter) => crucible_tui::Sending::AltEnter,
         Some(crucible_config::Sending::Enter) | None => crucible_tui::Sending::Enter,
     }
@@ -686,7 +689,10 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // same handle to set a tab name and hand it back on the way out.
     let held = Title::set()?;
 
-    let mut renderer = Renderer::new(SystemTerminal::stdout());
+    // Where it draws is read here, once: a session cannot move between a
+    // screen of its own and the terminal's buffer without leaving half of
+    // itself in a scrollback the other does not keep.
+    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
 
     // The mode the files named, or the one that asks. `None` is "no layer
     // said", which is a different thing from a layer that said `ask` — but the
@@ -722,10 +728,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // Which press sends. Asked rather than worked out: a terminal that
         // keeps Shift and Return for itself reports nothing this program could
         // have read, and the reader is the one who can see that happening.
-        sending: sends(&settings),
+        sending: Cell::new(sends(settings.sending())),
         commands: converse::command::builtins(&settings.sandbox().enablement())?,
         providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
+        settled: RefCell::default(),
         cancel: cancel.clone(),
         // The runtime the conversation was assembled on, which its turns run
         // on too.
@@ -813,13 +820,23 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // which is a thing only its owner can say.
     renderer.rolls(settings.scroll_speed(&from)?.rows());
 
+    // And whether the transcript keeps its last column for the scroll rail.
+    // Read before anything is written into the transcript, so the first line
+    // is already folded at the width it will stay at.
+    renderer.rails(settings.scroll_rail());
+
     // What was worked on here before. This is on the startup path, which is
     // budgeted at twenty milliseconds, so it is bounded at both ends: the
     // component says how many rows it can use, and the scan reads names to
     // put a directory in time order and opens only the newest few files it
     // finds there. A directory nobody has worked in costs one read and draws
     // the heading with nothing under it.
-    let sessions = crucible_session::recent(home.sessions(), &workspace, Welcome::WANTED);
+    let sessions = crucible_session::recent(
+        home.sessions(),
+        crucible_session::Roots::These(&[workspace.root()]),
+        crucible_session::Reach::FirstFrame,
+        Welcome::WANTED,
+    );
 
     // Off the disk, so no socket is opened on the path the first frame is
     // measured on. Nothing said is asking: a release check is the sort of thing
@@ -990,6 +1007,17 @@ fn wanted(choice: &Choice, settings: &Settings, serving: Option<Served>) -> Opti
 /// run — the same reading `--model openai/` gets.
 fn thinking(asked: Option<Effort>, settings: &Settings, serving: Option<Served>) -> Option<Effort> {
     asked.or_else(|| settings.effort(serving?.name))
+}
+
+/// Where the renderer draws, for the screen the configuration names.
+///
+/// Written out case by case so a third screen in the configuration is a
+/// decision here rather than a default.
+fn drawn_on(screen: crucible_config::ScreenMode) -> crucible_tui::ScreenMode {
+    match screen {
+        crucible_config::ScreenMode::Fullscreen => crucible_tui::ScreenMode::Fullscreen,
+        crucible_config::ScreenMode::Native => crucible_tui::ScreenMode::Native,
+    }
 }
 
 /// Which earlier session the command line asked for, parsed at the boundary.

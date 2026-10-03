@@ -223,7 +223,7 @@ fn taken<T: Terminal>(
 
     // Wrapped rather than clipped: short as this row is, a narrow enough window
     // would still cut it, and half of it says nothing about what was asked for.
-    let rows: Vec<Row> = fold(&said, renderer.columns())
+    let rows: Vec<Row> = fold(&said, renderer.transcript_columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();
@@ -261,7 +261,7 @@ fn listed<T: Terminal>(
         // program guessing at a vendor's default and printing the guess.
         None => "the vendor's own default",
     };
-    let row = Row::new().then(Slot::Plain, clip(saying, renderer.columns()));
+    let row = Row::new().then(Slot::Plain, clip(saying, renderer.transcript_columns()));
 
     renderer.present(&[row])?;
 
@@ -274,7 +274,7 @@ fn listed<T: Terminal>(
 /// answer written out, and two answers to one question that differ by which
 /// surface asked it are two answers.
 fn listing<T: Terminal>(renderer: &mut Renderer<T>, served: &[Effort]) -> Result<(), Fatal> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let rows: Vec<Row> = served
         .iter()
         .map(|effort| {

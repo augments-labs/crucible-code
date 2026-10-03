@@ -71,11 +71,12 @@ pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{
     accepting, allowing, asking, choosing, drawing, forgetting, hastened, hastening, reading,
-    sandboxing, slowing, thinking, unasked,
+    sandboxing, setting, slowing, thinking, unasked,
 };
 pub use settings::{
-    Color, Compaction, Glyphs, McpServer, SandboxSettings, ScrollSpeed, Sending, Settings,
-    ThemeChoice, ToolDetail, Updates, When, local, user,
+    Color, Compaction, Forced, Glyphs, McpServer, SandboxSettings, ScreenMode, ScrollSpeed,
+    Sending, Settings, ThemeChoice, ToolDetail, TranscriptColours, Updates, When, local, user,
 };
 pub use shape::THEME;
+pub use shape::rows::{Row, RowId, Values, row, rows};
 pub use shape::schema::schema;

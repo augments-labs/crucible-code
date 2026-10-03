@@ -2,20 +2,22 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crucible_client_api::{
-    CacheOutcome, CleanOutcome, ClearOutcome, Command, EffortOutcome, ErrorCode, LoginOutcome,
-    LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Problem, Refusal, Request,
-    Resource, Response, ResumeOutcome, SandboxOutcome, SpeedOutcome, Standing, Theme, ThemeOutcome,
+    CacheOutcome, CleanOutcome, ClearOutcome, Command, EffortOutcome, ErrorCode, Forced,
+    LoginOutcome, LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Problem,
+    Refusal, Request, Resource, Response, ResumeOutcome, SandboxOutcome, SettingOutcome,
+    SpeedOutcome, Standing, Theme, ThemeOutcome, Usage,
 };
-use crucible_runner::PromptCacheCleanup;
+use crucible_runner::{Breakdown, PromptCacheCleanup};
 use crucible_runtime::Cancel;
 use crucible_session::{Session, SessionError};
 use crucible_tools::Mode;
 use crucible_types::{PromptCacheResourceError, PromptCacheResourceRecord, SessionId};
 use crucible_workspace::Workspace;
 
-use super::reading;
+use super::{asking, reading};
 use crate::Conversation;
 use crate::providers::{CredentialSource, Served, offered};
 use crate::remember::{self, RememberError};
@@ -43,6 +45,11 @@ pub struct Desk<'a> {
     /// Asked before a name a client sent is written down. The themes belong to
     /// whatever draws, which this crate does not reach, so the host answers.
     pub reads: fn(&str) -> bool,
+    /// What the environment the host was started in says a variable is.
+    ///
+    /// Asked before a setting is written, since a setting the environment
+    /// decides is the environment's: writing it down would change nothing.
+    pub environment: fn(&str) -> Option<String>,
     /// The release notes: every release where no version is named, and
     /// otherwise the release of the version named, as it was written.
     ///
@@ -84,6 +91,18 @@ pub enum Resumed {
     Failed(SessionError),
 }
 
+/// What came of `/settings` changing one row.
+#[derive(Debug)]
+pub enum Setting {
+    /// Written down, for this run and the next.
+    Remembered,
+    /// Something nearer than the user's own file decides it, so nothing was
+    /// written.
+    Forced(crucible_config::Forced),
+    /// It could not be written down.
+    Unwritten(RememberError),
+}
+
 /// What came of a command [`perform`] was given, in the application's own
 /// values.
 #[derive(Debug)]
@@ -119,10 +138,23 @@ pub enum Performed {
     },
     /// `/theme`: written down for the next run, or why not.
     Theme(Result<(), RememberError>),
+    /// `/settings`: one row written down, or why not.
+    Setting(Setting),
     /// `/help`.
     Help,
     /// `/release-notes`, as the host answered it.
     Notes(NotesOutcome),
+    /// `/context`: how the window of the next request is spent.
+    Context {
+        /// The model the request is for.
+        model: Box<str>,
+        /// The runner's count of it.
+        breakdown: Breakdown,
+    },
+    /// `/usage`: what the session has used, and the plan's limits as the
+    /// runner holds them once it was asked. Only [`Command::AskLimits`] asks
+    /// a vendor anything, and only as [`asking`](fn@super::asking) allows.
+    Usage(Box<Usage>),
     /// `/exit`.
     Leaving,
 }
@@ -202,7 +234,7 @@ pub async fn perform(
             .await
             .err(),
         },
-        Command::Theme(_) => keep(request, desk),
+        Command::Theme(_) | Command::Setting { .. } => keep(request, desk),
         Command::Help => Performed::Help,
         Command::ReleaseNotes { version } => {
             match (desk.notes)(version.as_ref().map(Name::as_str)) {
@@ -210,6 +242,20 @@ pub async fn perform(
                 Err(refused) => Performed::Refused(refused),
             }
         }
+        Command::Context => Performed::Context {
+            model: conversation.runner().model().into(),
+            breakdown: conversation.runner().breakdown(),
+        },
+        Command::Usage => asking::usage(conversation),
+        // Asked and awaited in a row: a client that would rather keep going
+        // while the plan answers starts the question with `asking` instead.
+        Command::AskLimits => match asking::started(conversation, Instant::now()) {
+            Some(question) => {
+                let answered = question.answered().await;
+                asking::asked(conversation, answered)
+            }
+            None => asking::usage(conversation),
+        },
         Command::Exit => Performed::Leaving,
     }
 }
@@ -226,8 +272,17 @@ pub async fn perform(
 /// written: one this host does not read code in is refused as
 /// [`ErrorCode::InvalidArgument`] and the file is left as it was, rather than
 /// made to name a theme the next start cannot find.
+///
+/// A setting is held to the same: a key that is not one of the menu's rows, or
+/// a value its row does not take, is refused as
+/// [`ErrorCode::InvalidArgument`] and nothing is written. The rows are only
+/// ever settings that loosen nothing, so a client cannot reach a permission or
+/// the sandbox through this door. A setting the environment or a project file
+/// decides is answered as forced and not written, since writing it would
+/// change nothing.
 pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
     match request.command() {
+        Command::Setting { name, value } => setting(desk, name.as_str(), value.as_str()),
         Command::Theme(Theme::Drawing(palette)) => Performed::Theme(remember::drawing(
             desk.switching.choosing,
             Palette::as_str(*palette),
@@ -257,8 +312,30 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::Sandbox { .. }
         | Command::Help
         | Command::ReleaseNotes { .. }
+        | Command::Context
+        | Command::Usage
+        | Command::AskLimits
         | Command::Exit => Performed::Refused(ErrorCode::Busy.into()),
     }
+}
+
+/// Writes `word` down as what the row `key` is set to, where nothing nearer
+/// decides it.
+fn setting(desk: &Desk<'_>, key: &str, word: &str) -> Performed {
+    let Some(row) = crucible_config::row(key).filter(|row| row.takes(word)) else {
+        return Performed::Refused(ErrorCode::InvalidArgument.into());
+    };
+    if row.values() == crucible_config::Values::Named && !(desk.reads)(word) {
+        return Performed::Refused(ErrorCode::InvalidArgument.into());
+    }
+    let environment = |name: &str| (desk.environment)(name);
+    Performed::Setting(match desk.switching.settings.forced(row, &environment) {
+        Some(forced) => Setting::Forced(forced),
+        None => match remember::setting(desk.switching.choosing, row, word) {
+            Ok(()) => Setting::Remembered,
+            Err(problem) => Setting::Unwritten(problem),
+        },
+    })
 }
 
 /// The provider `name` is in the registry the host lent.
@@ -379,8 +456,22 @@ impl Performed {
                 Ok(()) => ThemeOutcome::Remembered,
                 Err(problem) => ThemeOutcome::Unwritten(Problem::failed(problem)),
             }),
+            Self::Setting(setting) => Outcome::Setting(match setting {
+                Setting::Remembered => SettingOutcome::Remembered,
+                Setting::Forced(crucible_config::Forced::Environment) => {
+                    SettingOutcome::Forced(Forced::Environment)
+                }
+                Setting::Forced(crucible_config::Forced::Project) => {
+                    SettingOutcome::Forced(Forced::Project)
+                }
+                Setting::Unwritten(problem) => SettingOutcome::Unwritten(Problem::failed(problem)),
+            }),
             Self::Help => Outcome::help(),
             Self::Notes(notes) => Outcome::Notes(notes.clone()),
+            Self::Context { model, breakdown } => {
+                Outcome::Context(reading::context(model, breakdown))
+            }
+            Self::Usage(usage) => Outcome::Usage(usage.as_ref().clone()),
             Self::Leaving => Outcome::Leaving,
         }
     }
