@@ -377,6 +377,7 @@ fn running(
         // The detail is how wide a call's arguments may run in a wide window.
         RowId::ToolDetail => Some(terms.style().args(1000).to_string()),
         RowId::Send => Some(format!("{:?}", terms.sending.get())),
+        RowId::PinAfter => Some(terms.pinning.get().as_secs().to_string()),
         RowId::Colour
         | RowId::ScreenMode
         | RowId::Tone
@@ -478,6 +479,7 @@ fn the_settings_rows_that_apply_at_once_are_these() {
             "Transcript colours",
             "Tool detail",
             "Scroll rail",
+            "Seconds before a call pins",
             "Mouse scroll speed",
             "Send with"
         ]

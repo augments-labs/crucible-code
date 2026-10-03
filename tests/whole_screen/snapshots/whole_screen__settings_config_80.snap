@@ -3,7 +3,6 @@ source: tests/whole_screen/main.rs
 expression: config
 ---
 80x30 cursor 29,0 scrolled 0
-|╰─────────────────────────────────────────────────────────────────────────────╯│|
 |                                                                               │|
 |› /settings                                                                    ●|
 |────────────────────────────────────────────────────────────────────────────────|
@@ -22,6 +21,7 @@ expression: config
 |  Tool detail                                                            compact|
 |  Scroll rail                                                                 on|
 |  Screen mode                                 fullscreen · applies at next start|
+|  Seconds before a call pins                                               ‹ 3 ›|
 |  Mouse scroll speed                                                       ‹ 6 ›|
 |  Send with                                                                enter|
 |  Tone                                           concise · applies at next start|

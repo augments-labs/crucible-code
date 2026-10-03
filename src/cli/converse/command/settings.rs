@@ -34,6 +34,7 @@
 //! the terms, one entry a row, and a panel opened later shows it.
 
 use std::borrow::Cow;
+use std::time::Duration;
 
 use crucible_app::Conversation;
 use crucible_app::client::{Performed, Setting};
@@ -432,6 +433,7 @@ const fn takes(id: RowId) -> Takes {
         | RowId::ToolDetail
         | RowId::ScrollRail
         | RowId::ScrollSpeed
+        | RowId::PinAfter
         | RowId::Send => Takes::Now,
         RowId::Colour
         | RowId::Tone
@@ -487,6 +489,12 @@ fn worn<T: Terminal>(
         RowId::Send => crucible_config::Sending::read(word)
             .map(|said| terms.sending.set(sends(Some(said))))
             .is_some(),
+        // Read by each turn as it starts, so the next one holds its calls back
+        // for as long as this says.
+        RowId::PinAfter => word
+            .parse::<u64>()
+            .map(|seconds| terms.pinning.set(Duration::from_secs(seconds)))
+            .is_ok(),
         RowId::Colour
         | RowId::ScreenMode
         | RowId::Tone
@@ -528,6 +536,7 @@ const fn fullscreen_only(id: RowId) -> bool {
         | RowId::TranscriptColours
         | RowId::ToolDetail
         | RowId::ScreenMode
+        | RowId::PinAfter
         | RowId::Send
         | RowId::Tone
         | RowId::Compaction
@@ -555,6 +564,7 @@ impl Line {
             | RowId::ToolDetail
             | RowId::ScrollRail
             | RowId::ScreenMode
+            | RowId::PinAfter
             | RowId::ScrollSpeed
             | RowId::Send
             | RowId::Tone

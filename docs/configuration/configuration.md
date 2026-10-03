@@ -49,9 +49,10 @@ spans the bounded reread through the commit, so simultaneous crucible processes
 cannot silently lose one another's settings.
 
 `/settings` lists, on its Config tab, every setting that is a switch, a short
-list of choices or the mouse scroll speed, and changes one in the user file.
+list of choices or a number of seconds or rows, and changes one in the user file.
 The theme, syntax theme, transcript colours, glyphs, tool detail, scroll rail,
-scroll speed and the key that sends change at once. Colour, tone, compaction and the four prompt
+scroll speed and the key that sends change at once, and the delay before a
+running call is pinned changes from the next turn. Colour, tone, compaction and the four prompt
 caching rows say `applies at next start`, and the update check is read at the
 next start anyway, so it says nothing. A row a project file or the environment
 sets is shown with who set it and cannot be changed there, since the user file
@@ -538,6 +539,7 @@ you with no way to send at all.
 | `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window; `compact` by default. Clipped details remain expandable: recent ones from memory, older ones read back from the session log when the view reaches them, where the session has a log. |
 | `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt, and while a turn runs it also stands beside what the turn is showing, which it counts as the end of the transcript; a click off the thumb scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. The prompt you are reading under has a larger mark, and a pointer on the rail lights the track and marks and enlarges the mark under it. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
 | `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. `/clear` and `/resume` leave the earlier transcript in the terminal's scrollback. A line already written there is never changed afterwards, so a mark a finished reply gains later, or an offer to expand a clipped detail that is later withdrawn, stays as it was first written. On a terminal that does not rewrap its lines when the window narrows, narrowing it can take a few finished lines off the visible screen; the session file still has them. |
+| `pinAfterSeconds` | `0` to `60` | How many seconds a running tool call waits before it is drawn above the row that says a turn is running, with the end of its output and `(ctrl+b to background)`; `3` by default. A call that finishes sooner is only written to the transcript, so the rows over the box do not appear and vanish on every quick command, and Ctrl+B does nothing until the row offering it is shown. `0` draws every call the moment it is asked for. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light
@@ -1291,7 +1293,8 @@ is, and what was accepted instead:
 ```
 crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
 crucible has at line 3, column 5 — accepted here: color, theme,
-transcriptColours, syntaxTheme, glyphs, toolDetail, scrollRail, screen
+transcriptColours, syntaxTheme, glyphs, toolDetail, scrollRail, screen,
+pinAfterSeconds
 
 crucible: /home/you/api/.crucible/config.json: output.color does not accept
 beige at line 3, column 5 — accepted here: auto, always, never
