@@ -10,6 +10,10 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **The scroll rail's thumb keeps its length while a turn runs.** It used to
+  shrink and grow each time a running command's output appeared and went
+  under the transcript; the rail now stands beside what the turn is showing
+  and counts it as the end of the transcript.
 - **A checkout whose `.git` file names its git directory relatively records
   its branch again.** The path is now read from the checkout, as git reads it,
   rather than from the directory crucible was started in, so a submodule or a
