@@ -574,13 +574,14 @@ reply and on a path a tool call names, the second on an address a call names,
 and a fourth on versions and commit hashes in prose. `rich` adds the theme's
 colour on headings, bullets, list numbers and a call's command or pattern, the
 fourth on every figure in prose, and the third, slanted, on quotes. The tool
-says what its call names, so a question, a search's words or a task count
-stays grey in every design. A commit hash is 7 to 40 hex digits in one case,
+says what its call names: a `grep` or `glob` pattern is a command, and a
+question, a `web_search` query, a `tool_search` query, a task count and `#N`
+stay grey in every design. A commit hash is 7 to 40 hex digits in one case,
 with at least one digit and one letter, so `defaced` and `aBc1234` stay prose
-and `1234567` is a figure. `ansi` has no fourth colour to spare, and at 16 colours no theme
-has one, so what would wear it there stays in your own foreground. Only the
-colour changes: the words are the same in all three, and with no colour all
-three are the same text.
+and `1234567` is a figure. `ansi` has no fourth colour to spare, and at 16
+colours no theme has one, so what would wear it there stays in your own
+foreground. Only the colour changes: the words are the same in all three, and
+with no colour all three are the same text.
 
 `/theme` picks one at the prompt and writes it here. It draws a diff and a
 prompt row under the list in whatever your mark is standing on, because a theme
