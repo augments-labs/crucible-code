@@ -5,10 +5,12 @@
 //! tests replay its bytes into [`Emulator`], which moves the cursor relatively,
 //! wraps, scrolls rows off the top into a scrollback and erases to the end of
 //! the screen — the handful of things a native frame says — and rewraps what it
-//! holds when the window changes width, as most terminals now do. What a reader
-//! would find on scrolling back is then a list of strings to assert on.
+//! holds when the window changes width, as most terminals now do. Each cell
+//! keeps the colour it was written in. What a reader would find on scrolling
+//! back is then a list of strings to assert on.
 
 use std::cell::RefCell;
+use std::fmt::Write as _;
 use std::rc::Rc;
 
 use super::super::*;
@@ -16,21 +18,33 @@ use crate::color::{Palette, Slot};
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
 
+/// A character on screen, and the colour it was written in: an index into
+/// [`Emulator::pens`].
+type Cell = (char, usize);
+
+/// A cell nothing was written into.
+const EMPTY: Cell = (' ', 0);
+
 /// The main buffer of a terminal: a screen, and what scrolled off its top.
 #[derive(Debug)]
 struct Emulator {
     columns: usize,
     rows: usize,
-    screen: Vec<Vec<char>>,
+    screen: Vec<Vec<Cell>>,
     /// Whether each row of the screen ran on into the next by wrapping.
     ran_on: Vec<bool>,
-    scrollback: Vec<String>,
+    scrollback: Vec<Vec<Cell>>,
     /// The same, for each row of the scrollback.
     ran_on_back: Vec<bool>,
     /// Row and column of the cursor.
     at: (usize, usize),
     /// Whether the last character filled the row, so the next one wraps.
     wrapping: bool,
+    /// Every colour written so far, as the parameters that set it since the
+    /// last reset; the first is no colour at all.
+    pens: Vec<String>,
+    /// The colour the next character is written in.
+    pen: usize,
 }
 
 impl Emulator {
@@ -44,6 +58,8 @@ impl Emulator {
             ran_on_back: Vec::new(),
             at: (0, 0),
             wrapping: false,
+            pens: vec![String::new()],
+            pen: 0,
         }
     }
 
@@ -97,8 +113,7 @@ impl Emulator {
             return;
         }
         let top = self.screen.remove(0);
-        self.scrollback
-            .push(top.iter().collect::<String>().trim_end().to_owned());
+        self.scrollback.push(top);
         self.screen.push(Vec::new());
         self.ran_on_back.push(self.ran_on.remove(0));
         self.ran_on.push(false);
@@ -116,10 +131,10 @@ impl Emulator {
         let (row, column) = self.at;
         if let Some(line) = self.screen.get_mut(row) {
             if line.len() <= column {
-                line.resize(column + 1, ' ');
+                line.resize(column + 1, EMPTY);
             }
             if let Some(cell) = line.get_mut(column) {
-                *cell = character;
+                *cell = (character, self.pen);
             }
         }
         if column + 1 >= self.columns {
@@ -132,6 +147,10 @@ impl Emulator {
     fn control(&mut self, ending: char, parameters: &str) {
         // Private modes say nothing about where a character goes.
         if parameters.starts_with('?') {
+            return;
+        }
+        if ending == 'm' {
+            self.colours(parameters);
             return;
         }
         let count = parameters.parse::<usize>().unwrap_or(1).max(1);
@@ -176,6 +195,33 @@ impl Emulator {
         self.wrapping = false;
     }
 
+    /// Takes up the colour `parameters` set, on top of the one in force
+    /// unless they open with a reset.
+    fn colours(&mut self, parameters: &str) {
+        let (reset, added) = match parameters.split_once(';') {
+            Some(("0" | "", after)) => (true, after),
+            _ if matches!(parameters, "" | "0") => (true, ""),
+            _ => (false, parameters),
+        };
+        let worn = if reset {
+            ""
+        } else {
+            self.pens.get(self.pen).map_or("", String::as_str)
+        };
+        let pen = match (worn, added) {
+            (only, "") | ("", only) => only.to_owned(),
+            (under, over) => format!("{under};{over}"),
+        };
+        self.pen = self
+            .pens
+            .iter()
+            .position(|known| *known == pen)
+            .unwrap_or_else(|| {
+                self.pens.push(pen);
+                self.pens.len() - 1
+            });
+    }
+
     /// The window made `columns` wide, as a reader dragging its corner would,
     /// with everything it holds rewrapped to the new width.
     ///
@@ -186,17 +232,13 @@ impl Emulator {
     fn resize(&mut self, columns: usize) {
         let was = self.columns;
         let cursor = self.scrollback.len() + self.at.0;
-        let back = self
-            .scrollback
-            .drain(..)
-            .map(|row| row.chars().collect::<Vec<char>>())
-            .zip(self.ran_on_back.drain(..));
-        let rows: Vec<(Vec<char>, bool)> = back
+        let back = self.scrollback.drain(..).zip(self.ran_on_back.drain(..));
+        let rows: Vec<(Vec<Cell>, bool)> = back
             .chain(self.screen.drain(..).zip(self.ran_on.drain(..)))
             .collect();
 
         // Rows back into lines, with where in its line the cursor was.
-        let mut lines: Vec<Vec<char>> = Vec::new();
+        let mut lines: Vec<Vec<Cell>> = Vec::new();
         let mut line = Vec::new();
         let mut caret = (0, 0);
         for (index, (mut row, ran_on)) in rows.into_iter().enumerate() {
@@ -204,7 +246,7 @@ impl Emulator {
                 caret = (lines.len(), line.len() + self.at.1);
             }
             if ran_on {
-                row.resize(was, ' ');
+                row.resize(was, EMPTY);
                 line.extend(row);
             } else {
                 line.extend(row);
@@ -219,14 +261,14 @@ impl Emulator {
         }
 
         // And lines into rows at the new width.
-        let mut folded: Vec<(Vec<char>, bool)> = Vec::new();
+        let mut folded: Vec<(Vec<Cell>, bool)> = Vec::new();
         let mut at = (0, 0);
         for (index, line) in lines.into_iter().enumerate() {
             let first = folded.len();
-            let pieces: Vec<Vec<char>> = if line.is_empty() {
+            let pieces: Vec<Vec<Cell>> = if line.is_empty() {
                 vec![Vec::new()]
             } else {
-                line.chunks(columns).map(<[char]>::to_vec).collect()
+                line.chunks(columns).map(<[Cell]>::to_vec).collect()
             };
             let count = pieces.len();
             for (piece, row) in pieces.into_iter().enumerate() {
@@ -243,8 +285,7 @@ impl Emulator {
         let top = folded.len().saturating_sub(self.rows);
         let screen = folded.split_off(top);
         for (row, ran_on) in folded {
-            self.scrollback
-                .push(row.iter().collect::<String>().trim_end().to_owned());
+            self.scrollback.push(row);
             self.ran_on_back.push(ran_on);
         }
         for (row, ran_on) in screen {
@@ -260,18 +301,53 @@ impl Emulator {
 
     /// The screen, one string a row, padding taken off.
     fn screen(&self) -> Vec<String> {
-        self.screen
-            .iter()
-            .map(|row| row.iter().collect::<String>().trim_end().to_owned())
-            .collect()
+        self.screen.iter().map(|row| text(row)).collect()
+    }
+
+    /// The scrollback, the same way.
+    fn scrollback(&self) -> Vec<String> {
+        self.scrollback.iter().map(|row| text(row)).collect()
     }
 
     /// Everything a reader could scroll to: the scrollback, then the screen.
     fn all(&self) -> Vec<String> {
-        let mut all = self.scrollback.clone();
+        let mut all = self.scrollback();
         all.extend(self.screen());
         all
     }
+
+    /// The first `rows` rows a reader could scroll to, scrollback first, each
+    /// with its colours named: a run in a colour is the colour's parameters in
+    /// angle brackets, then its text.
+    fn coloured(&self, rows: usize) -> Vec<String> {
+        self.scrollback
+            .iter()
+            .chain(&self.screen)
+            .take(rows)
+            .map(|row| {
+                let kept = row.len() - row.iter().rev().take_while(|cell| **cell == EMPTY).count();
+                let mut said = String::new();
+                let mut pen = 0;
+                for (character, worn) in row.iter().take(kept) {
+                    if *worn != pen {
+                        pen = *worn;
+                        let _ = write!(said, "<{}>", self.pens.get(pen).map_or("", String::as_str));
+                    }
+                    said.push(*character);
+                }
+                said
+            })
+            .collect()
+    }
+}
+
+/// A row of cells as its characters, padding taken off.
+fn text(row: &[Cell]) -> String {
+    row.iter()
+        .map(|(character, _)| character)
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
 }
 
 /// What the terminal was sent and what it shows, shared with the renderer so a
@@ -328,7 +404,7 @@ impl Window {
     }
 
     fn scrollback(&self) -> Vec<String> {
-        self.0.borrow().emulator.scrollback.clone()
+        self.0.borrow().emulator.scrollback()
     }
 
     /// How many rows anywhere in the buffer say `text`.
@@ -604,6 +680,107 @@ fn a_native_narrowing_keeps_the_finished_rows_that_still_fit_on_screen() {
     }
     assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+}
+
+/// A palette that writes every hue it has, so a row's colours are on the
+/// record as well as its words.
+fn colourful() -> Palette {
+    Palette::resolve(true, crate::color::Theme::Dark, None, &|name| {
+        (name == "COLORTERM").then(|| "truecolor".to_owned())
+    })
+}
+
+/// Three turns, as a session puts them to its renderer: the line asked, a
+/// blank before the answer, the answer streamed in pieces with the session
+/// waiting for a key between them, the turn settled, and the box back under
+/// it while the session waits for the next line.
+fn three_turns(render: &mut Renderer<Window>) {
+    let turns: [(&str, &[&str]); 3] = [
+        (
+            "where is the renderer?",
+            &[
+                "The renderer is in **crucible-tui**; the session drives it ",
+                "from `converse`.",
+            ],
+        ),
+        (
+            "what does native mode keep?",
+            &[
+                "A finished line goes out once.\n\n",
+                "Only the part still changing is drawn again.",
+            ],
+        ),
+        ("and scrolling?", &["That is your terminal's own."]),
+    ];
+    render.wears(colourful());
+    render
+        .opens(Box::new(|_| vec![row("crucible"), row("the opening")]))
+        .unwrap();
+    stands(render);
+    render.seal().unwrap();
+    for (asked, pieces) in turns {
+        render.follows().unwrap();
+        render.settle().unwrap();
+        render.apart().unwrap();
+        render.landmark();
+        render
+            .responsive(
+                asked.len(),
+                Box::new(move |_| {
+                    vec![
+                        Row::new()
+                            .then(Slot::Accent, "› ")
+                            .then(Slot::Strong, asked),
+                    ]
+                }),
+            )
+            .unwrap();
+        render.apart().unwrap();
+        for piece in pieces {
+            render.stream(piece).unwrap();
+            render
+                .under(&[row("* thinking")], None, Palette::plain())
+                .unwrap();
+            render.seal().unwrap();
+        }
+        render.settle().unwrap();
+        render.under(&[], None, Palette::plain()).unwrap();
+        stands(render);
+        render.seal().unwrap();
+    }
+}
+
+#[test]
+fn what_a_native_session_leaves_above_its_region_is_the_full_screen_transcript() {
+    // The two modes are one record drawn two ways: whatever the full screen
+    // would show as the transcript, row for row and colour for colour, is what
+    // native mode has handed the terminal by the time the session waits for a
+    // key -- blanks between blocks included.
+    let fullscreen = Window::new(40, 10);
+    let mut whole = Renderer::drawing(fullscreen.clone(), ScreenMode::Fullscreen);
+    three_turns(&mut whole);
+    let mut painted = String::new();
+    let mut rows = 0;
+    for line in 0..whole.record.lines() {
+        for row in whole.record.folded(line) {
+            row.clipped(40).paint_into(&colourful(), &mut painted);
+            painted.push_str("\r\n");
+            rows += 1;
+        }
+    }
+    let mut transcript = Emulator::new(40, rows + 1);
+    transcript.feed(&painted);
+    let transcript = transcript.coloured(rows);
+
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    three_turns(&mut render);
+    let parked = render.native.as_ref().map_or(0, |native| native.parked);
+    let seen = window.0.borrow();
+    let above = seen.emulator.scrollback.len() + seen.emulator.at.0 - parked;
+    let held = seen.emulator.coloured(above);
+
+    assert_eq!(held, transcript);
 }
 
 /// What a native session leaves on the reader's screen once its renderer is

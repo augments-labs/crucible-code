@@ -10,7 +10,9 @@
 //!
 //! In native mode the terminal's own scrollback keeps it instead, and a line
 //! written there is let go of here as it is written, numbered as if it had
-//! fallen off the top: the record then holds only what has not gone out yet.
+//! fallen off the top: the record then holds only what has not gone out yet,
+//! and remembers only whether the last line to go was blank, so the next block
+//! is parted from it as it would be from a line still held.
 //!
 //! A line is held as a [`Row`] — spans carrying slots — rather than as the
 //! bytes a terminal would receive, so a narrower window re-wraps rather than
@@ -237,6 +239,15 @@ pub(crate) struct Record {
     /// nothing on is a blank line and a line nobody has written on yet is not:
     /// the two are the same row and different facts.
     open: bool,
+    /// Whether what was let go of last ended in a blank line, for
+    /// [`Self::parted`] to answer once nothing is held.
+    ///
+    /// In native mode the record empties every time the session waits for a
+    /// key, but the transcript has not: it is in the terminal, ending in
+    /// whatever went out last. A record that answered from what it holds alone
+    /// would take every block after that for the first of the session, and
+    /// part none of them from the one above.
+    parted_before: bool,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -273,6 +284,7 @@ impl Record {
             opening: None,
             landmarks: VecDeque::new(),
             landed: None,
+            parted_before: true,
             open: false,
         }
     }
@@ -447,6 +459,7 @@ impl Record {
     fn drop_oldest(&mut self) {
         if let Some(line) = self.lines.pop_front() {
             self.weight = self.weight.saturating_sub(line.weight());
+            self.parted_before = Self::blank(&line);
         }
         let tall = self.tall.pop_front().unwrap_or(0);
         self.before = self.ends.pop_front().unwrap_or(self.before);
@@ -524,15 +537,23 @@ impl Record {
     /// What a caller asks before putting one there, so that two things that
     /// each want space around them get one row between them rather than two.
     /// A record nobody has written to is parted: there is nothing above to be
-    /// parted from.
+    /// parted from. One holding nothing because it let go of everything it had
+    /// ends in whatever it let go of last, which is still above.
     pub(crate) fn parted(&self) -> bool {
         match self.lines.back() {
-            None => true,
-            Some(Line::Flowed(row)) => !self.open && row.text().trim().is_empty(),
-            Some(Line::Responsive { rows, .. }) => {
+            None => self.parted_before,
+            Some(Line::Flowed(_)) if self.open => false,
+            Some(line) => Self::blank(line),
+        }
+    }
+
+    /// Whether a finished line is a row of nothing.
+    fn blank(line: &Line) -> bool {
+        match line {
+            Line::Flowed(row) | Line::Set(row) => row.text().trim().is_empty(),
+            Line::Responsive { rows, .. } => {
                 rows.last().is_none_or(|row| row.text().trim().is_empty())
             }
-            Some(Line::Set(row)) => row.text().trim().is_empty(),
         }
     }
 
@@ -565,6 +586,7 @@ impl Record {
         self.following = true;
         self.opening = None;
         self.open = false;
+        self.parted_before = true;
     }
 
     /// How many lines the session has taken, including those since dropped.
