@@ -196,6 +196,16 @@ try {
     Assert-Lacks $run.Out 'install: unpack' 'checksum mismatch'
     if (Test-Path -LiteralPath $refused) { Stop-Test 'a checksum mismatch created the installation directory' }
 
+    # SHA256SUMS lines are matched to the archive by exact name. A line for
+    # another file whose name differs only by U+00AD SOFT HYPHEN, which a
+    # culture-aware comparison ignores, is not a second line for this one.
+    $hyphenSums = Join-Path $root 'SHA256SUMS.hyphen'
+    [IO.File]::WriteAllText($hyphenSums,
+        "$hash  $stem.tar.gz`n" + ('0' * 64) + "  $([char]0x00AD)$stem.tar.gz`n", (New-Object Text.UTF8Encoding $true))
+    $run = Invoke-Installer ($release + @('-Checksums', $hyphenSums, '-Dir', (Join-Path $root 'hyphen-sums')))
+    if ($run.Status -ne 0) { Stop-Test "a checksum line for a name with a soft hyphen exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Out 'install: verify checksum: ok' 'soft hyphen in SHA256SUMS'
+
     # A cru.exe that is not this crucible.exe is someone else's, and stays.
     $taken = Join-Path $root 'taken'
     $null = New-Item -ItemType Directory -Path $taken
@@ -294,6 +304,14 @@ exit 7
     Assert-Lacks $run.Out 'PATH' 'second -AddToPath'
     $now = Get-UserPath
     if ($null -eq $now -or $now.Value -cne $wanted) { Stop-Test 'a second -AddToPath changed the user PATH again' }
+
+    # A PATH entry is the directory only when their names agree ignoring case
+    # alone: one that differs by a soft hyphen is another directory.
+    $hyphen = Join-Path $root 'hyphen-path'
+    $key.SetValue('Path', "$hyphen$([char]0x00AD)", [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $hyphen, '-AddToPath'))
+    if ($run.Status -ne 0) { Stop-Test "an install beside a PATH entry with a soft hyphen exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Out "Added $hyphen to your user PATH" 'soft hyphen in PATH'
 } finally {
     $env:NO_COLOR = $savedNoColor
     if (-not (Test-UserPathAsFound)) {
