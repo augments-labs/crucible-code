@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows installer matches names by their exact characters.** A
+  checksum line, archive member or PATH entry whose name differs only by a
+  character such as a soft hyphen is no longer taken for the one it wants.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and
