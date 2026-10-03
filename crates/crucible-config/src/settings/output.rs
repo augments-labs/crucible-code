@@ -59,6 +59,20 @@ impl Settings {
             .unwrap_or(true)
     }
 
+    /// Whether crucible draws on a screen of its own or in the terminal's own
+    /// buffer.
+    ///
+    /// A value rather than an `Option`, as the scroll rail is: nothing on the
+    /// command line says otherwise, so what the files fall back to is the
+    /// answer. Read once, at the start, which is the only time a screen can be
+    /// taken or left alone.
+    #[must_use]
+    pub fn screen(&self) -> ScreenMode {
+        self.output("screen")
+            .and_then(ScreenMode::read)
+            .unwrap_or_default()
+    }
+
     /// One string out of the `output` block.
     fn output(&self, key: &str) -> Option<&str> {
         self.value.get("output")?.get(key)?.as_str()
@@ -193,6 +207,33 @@ impl Glyphs {
     }
 }
 
+/// Where crucible draws.
+///
+/// Fullscreen is a screen of crucible's own, with its own scrollback, rail and
+/// selection. Native is the terminal's own buffer: what is finished goes into
+/// its scrollback once, and the terminal scrolls, selects and copies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScreenMode {
+    /// A screen of crucible's own.
+    #[default]
+    Fullscreen,
+    /// The terminal's own buffer and scrollback.
+    Native,
+}
+
+impl ScreenMode {
+    /// Reads one of the words `output.screen` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
+        match found {
+            "fullscreen" => Some(Self::Fullscreen),
+            "native" => Some(Self::Native),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::document::{Document, Origin};
@@ -250,6 +291,9 @@ mod tests {
         for name in shape::THEME {
             assert!(ThemeChoice::read(name).is_some(), "theme: {name}");
         }
+        for name in shape::SCREEN {
+            assert!(ScreenMode::read(name).is_some(), "screen: {name}");
+        }
     }
 
     #[test]
@@ -305,6 +349,28 @@ mod tests {
     }
 
     #[test]
+    fn the_screen_is_fullscreen_unless_a_layer_says_native() {
+        let native = Document::sample(r#"{"output": {"screen": "native"}}"#, Origin::User);
+        let back = Document::sample(
+            r#"{"output": {"screen": "fullscreen"}}"#,
+            Origin::ProjectLocal,
+        );
+
+        assert_eq!(
+            Settings::resolve(Vec::new()).screen(),
+            ScreenMode::Fullscreen
+        );
+        assert_eq!(
+            Settings::resolve(vec![native.clone()]).screen(),
+            ScreenMode::Native
+        );
+        assert_eq!(
+            Settings::resolve(vec![native, back]).screen(),
+            ScreenMode::Fullscreen
+        );
+    }
+
+    #[test]
     fn the_defaults_the_schema_states_for_output_are_the_ones_it_falls_back_to() {
         assert_eq!(
             Color::read(shape::usual(&["output", "color"])),
@@ -325,6 +391,10 @@ mod tests {
         assert_eq!(
             shape::usual(&["output", "scrollRail"]).parse::<bool>(),
             Ok(Settings::resolve(Vec::new()).scroll_rail())
+        );
+        assert_eq!(
+            ScreenMode::read(shape::usual(&["output", "screen"])),
+            Some(Settings::resolve(Vec::new()).screen())
         );
     }
 }

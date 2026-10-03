@@ -395,6 +395,15 @@
           ],
           "type": "string"
         },
+        "screen": {
+          "default": "fullscreen",
+          "description": "Where crucible draws, read at start: fullscreen takes a screen of its own with its own scrollback, rail and selection; native draws in the terminal's own buffer and leaves scrolling, selection and copy to the terminal",
+          "enum": [
+            "fullscreen",
+            "native"
+          ],
+          "type": "string"
+        },
         "scrollRail": {
           "default": true,
           "description": "Whether the transcript has a one-column rail on its right edge showing where the screen is and where each prompt was; a click or a drag on it scrolls there",

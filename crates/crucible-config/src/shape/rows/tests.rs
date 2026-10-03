@@ -266,6 +266,7 @@ fn every_row_has_its_own_identity() {
         RowId::Colour,
         RowId::ToolDetail,
         RowId::ScrollRail,
+        RowId::ScreenMode,
         RowId::ScrollSpeed,
         RowId::Send,
         RowId::Tone,

@@ -74,8 +74,8 @@ pub use remember::{
     sandboxing, setting, slowing, thinking, unasked,
 };
 pub use settings::{
-    Color, Compaction, Forced, Glyphs, McpServer, SandboxSettings, ScrollSpeed, Sending, Settings,
-    ThemeChoice, ToolDetail, Updates, When, local, user,
+    Color, Compaction, Forced, Glyphs, McpServer, SandboxSettings, ScreenMode, ScrollSpeed,
+    Sending, Settings, ThemeChoice, ToolDetail, Updates, When, local, user,
 };
 pub use shape::THEME;
 pub use shape::rows::{Row, RowId, Values, row, rows};
