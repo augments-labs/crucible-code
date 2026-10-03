@@ -14,6 +14,9 @@ change in any release with no deprecation period.
   anything in that directory's name on Windows.** A name holding `%`, `$` or a
   backtick is written so PowerShell reads it back exactly, and cmd runs nothing
   rather than a command built from an environment variable.
+- **The Windows installer matches names by their exact characters.** A
+  checksum line, archive member or PATH entry whose name differs only by a
+  character such as a soft hyphen is no longer taken for the one it wants.
 - **The Windows installer refuses a version followed by a newline.** Its
   version check let one through and failed later on the archive instead of
   saying the version is invalid.
