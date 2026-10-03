@@ -1920,3 +1920,39 @@ fn a_search_on_a_warned_model_sends_nothing_until_its_yes() {
     assert!(heard.load(std::sync::atomic::Ordering::SeqCst) > 0);
     drop(services);
 }
+
+/// A `MiniMax` key asks after its plan's limits only where it was given on a
+/// Token Plan row: a pay-as-you-go key, stored or exported, has no plan to ask
+/// after, and the key itself never says which it is.
+#[test]
+fn only_a_minimax_token_plan_key_asks_after_its_limits() {
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let settings = Settings::default();
+    let http = HttpTurns::unavailable();
+    let cases = [
+        ("minimax@token-plan.minimax.io", false, true),
+        ("minimax@token-plan.minimaxi.com", false, true),
+        ("minimax@minimax.io", false, false),
+        ("minimax@minimaxi.com", false, false),
+        // The variable answers before the store, on the pay-as-you-go row.
+        ("minimax@token-plan.minimax.io", true, false),
+    ];
+    for (at, (stored, exported, asks)) in cases.into_iter().enumerate() {
+        let sample = Sample::new(&format!("minimax-plan-{at}"));
+        let stored = sample.holding(&format!(
+            r#"{{"version":2,"keys":{{"{stored}":"sk-cp-fabricated-key"}},"subscriptions":{{}}}}"#
+        ));
+        let from = move |_: &str| exported.then(|| "fabricated-exported-key".to_owned());
+        let auth = ProviderAuth {
+            settings: &settings,
+            from: &from,
+            stored: &stored,
+            subscriptions: &subscriptions,
+        };
+
+        let provider = provider(Some(serving("minimax")), NOTHING_TO_ASK, auth, &http)
+            .unwrap_or_else(|error| panic!("case {at}: {error}"));
+
+        assert_eq!(provider.ask_limits().is_some(), asks, "case {at}");
+    }
+}

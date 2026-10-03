@@ -23,3 +23,24 @@ handling of MiniMax's overflow, the Pi coding agent's overflow matcher, and
 are unconfirmed. The closing `(2013)` follows the thinking refusal above. If
 the vendor words the refusal otherwise, it is not recognised and stays a
 refusal that ends the turn, so a mismatch fails safe.
+
+`token-plan-remains.json`: the answer to `GET /v1/token_plan/remains` in the
+shape of the vendor's own command-line client, MiniMax-AI/cli at commit
+06e47c70: the field names of `QuotaModelRemain` in `src/types/api.ts`, and
+the three models of `test/fixtures/quota-response.json`. It is reconstructed
+from notes on those files rather than copied from them. The `MiniMax-M*`
+entry's figures are the ones that fixture holds. For `speech-hd` and
+`image-01` only the two totals are its own; their counts are written as the
+totals, which that client reads as nothing used, and their times are the
+first entry's. The optional fields `*_remaining_percent` and `*_status` are
+absent there, as they are in that fixture; the tests that read them set them
+on a copy. The site's own page,
+https://platform.minimax.io/docs/token-plan/faq, prints the request but no
+answer.
+
+The refused-key code the plan reader closes on, `1004`, is the vendor's
+documented code for "not authorized / token not match group / cookie is
+missing", from its error-code table,
+https://platform.minimax.io/docs/api-reference/errorcode. The vendor gives it
+under `base_resp` in an answer whose HTTP status is 200. It has not been seen
+in a live answer; the body the tests use for it is constructed.
