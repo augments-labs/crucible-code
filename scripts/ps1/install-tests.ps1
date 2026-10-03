@@ -253,6 +253,21 @@ try {
     Assert-Contains $run.Err "install: invalid version $version-" 'Kelvin sign in a version'
     if (Test-Path -LiteralPath $kelvin) { Stop-Test 'a refused version created the installation directory' }
 
+    # A version is matched to its very end, so one with a newline after it is
+    # refused. Passed from a script, since a command line would not keep it.
+    $newline = Join-Path $root 'newline'
+    $trailing = Join-Path $root 'trailing.ps1'
+    [IO.File]::WriteAllText($trailing, @'
+param([string]$Installer, [string]$Version, [string]$Archive, [string]$Checksums, [string]$Dir)
+& $Installer -Version "$Version`n" -Archive $Archive -Checksums $Checksums -Dir $Dir
+exit $LASTEXITCODE
+'@)
+    $run = Invoke-Installer @('-Installer', $installer, '-Version', $version, '-Archive', $archive,
+        '-Checksums', $sums, '-Dir', $newline) $trailing
+    if ($run.Status -ne 2) { Stop-Test "a version ending in a newline exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Err "install: invalid version $version" 'newline after a version'
+    if (Test-Path -LiteralPath $newline) { Stop-Test 'a version ending in a newline created the installation directory' }
+
     # Run as a script block in the caller's PowerShell, as the documented
     # `& ([scriptblock]::Create((irm ...)))` runs it, the installer leaves
     # its status in LASTEXITCODE and returns to the caller, which goes on to

@@ -520,8 +520,9 @@ function Invoke-CrucibleInstall {
         }
         if ($Version.StartsWith('v', [StringComparison]::Ordinal)) { $Version = $Version.Substring(1) }
         # Matched with case, since a match that ignores it folds U+212A
-        # KELVIN SIGN to k and would let it through.
-        if ($Version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
+        # KELVIN SIGN to k and would let it through, and anchored with \A and
+        # \z, since $ also matches before a final newline.
+        if ($Version -cnotmatch '\A[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?\z') {
             Stop-Install 2 "invalid version $Version"
         }
 
