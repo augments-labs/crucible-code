@@ -1905,6 +1905,42 @@ fn the_full_screen_takes_the_screen_and_the_pointer_as_it_always_has() {
 }
 
 #[test]
+fn a_native_session_that_ends_in_an_error_has_closed_its_region_by_the_time_it_returns() {
+    // What panicked on another thread and was kept is written out as the
+    // session lets go of the terminal, inside `converse`. A region still open
+    // then would be closed by the renderer's drop afterwards, rewinding over
+    // whatever was written below it -- so a session that leaves by an error
+    // closes it on the way out, as one that leaves by a quit does.
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    });
+    let mut renderer = Renderer::drawing(Recording::new(80, 24), ScreenMode::Native);
+    let mut input = Cursor::new(vec![b'x'; QUEUED_BYTES + 1]);
+
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect_err("an oversized line to end the session");
+    assert!(matches!(problem, Fatal::InputTooLong), "{problem:?}");
+
+    let returned = renderer.terminal().written().len();
+    assert!(returned > 0, "the session drew nothing");
+    renderer.closes().expect("a recording to take a write");
+    assert_eq!(
+        renderer.terminal().written().len(),
+        returned,
+        "the region was still open when the session returned its error"
+    );
+}
+
+#[test]
 fn a_session_that_ended_cleanly_leaves_only_the_way_back() {
     // The quit was asked for, so there is no failure to report -- but the id
     // that comes back to this exact session has never been on the screen, and

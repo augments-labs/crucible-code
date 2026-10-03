@@ -38,6 +38,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::io::BufRead;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
@@ -426,6 +427,35 @@ fn holds(mode: ScreenMode) -> Holds {
     }
 }
 
+/// Closes a renderer's live region when dropped.
+///
+/// A region left open would be closed by the renderer's own drop, after the
+/// session has given the terminal back — rewinding over whatever was written
+/// below it by then.
+struct Closing<'a, T: Terminal>(&'a mut Renderer<T>);
+
+impl<T: Terminal> Deref for Closing<'_, T> {
+    type Target = Renderer<T>;
+
+    fn deref(&self) -> &Renderer<T> {
+        self.0
+    }
+}
+
+impl<T: Terminal> DerefMut for Closing<'_, T> {
+    fn deref_mut(&mut self) -> &mut Renderer<T> {
+        self.0
+    }
+}
+
+impl<T: Terminal> Drop for Closing<'_, T> {
+    fn drop(&mut self) {
+        // Nowhere to report it: the terminal that refused is the one a report
+        // would be written to.
+        let _ = self.0.closes();
+    }
+}
+
 /// Reads prompts and takes turns until input ends.
 ///
 /// `input` is standard input in a real run. It is a parameter so that a test
@@ -511,6 +541,14 @@ pub(crate) fn converse<T: Terminal>(
     } else {
         None
     };
+
+    // Last of the guards, so that it is the first given back: in the
+    // terminal's own buffer the live region is closed however this returns —
+    // by a quit, by an error, or unwinding — while the modes are still held,
+    // and before anything kept for the way out is written below it. Nothing
+    // on a screen of crucible's own.
+    let mut closing = Closing(renderer);
+    let renderer = &mut *closing;
 
     // Everything the session keeps between turns and hands to each of them:
     // the line being typed, the lines finished behind it, what a result had no
@@ -788,7 +826,9 @@ pub(crate) fn converse<T: Terminal>(
 
     // In the terminal's own buffer the live region is closed while the modes
     // are still held, so what they and any held-back panic write on the way
-    // out lands below it. Nothing on a screen of crucible's own.
+    // out lands below it. Nothing on a screen of crucible's own. Closed here
+    // so a terminal that refuses is reported; `closing` covers every other
+    // way out, and does nothing once this has run.
     renderer.closes()?;
 
     // Whatever was said about the log while the screen was still up went with
