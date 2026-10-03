@@ -14,6 +14,9 @@ change in any release with no deprecation period.
   shrink and grow each time a running command's output appeared and went
   under the transcript; the rail now stands beside what the turn is showing
   and counts it as the end of the transcript.
+- **The Windows installer matches names by their exact characters.** A
+  checksum line, archive member or PATH entry whose name differs only by a
+  character such as a soft hyphen is no longer taken for the one it wants.
 - **The Windows installer refuses a version followed by a newline.** Its
   version check let one through and failed later on the archive instead of
   saying the version is invalid.
