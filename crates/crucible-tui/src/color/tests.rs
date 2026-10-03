@@ -452,9 +452,10 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // whichever of those two the pointer has made it, so it has no hue of its
     // own at either end. Emphasis, Struck, Doing and Bold are that same
     // foreground with an attribute on it -- a slant, a line through it, and
-    // weight -- so what they are legible against is whatever Plain was. A link is not among them: it wears the accent under
-    // its line, and is checked with the hues. The band takes a ground and writes no ink
-    // at all, so the words on it stay theirs, and its mark is the same band. The six code
+    // weight -- so what they are legible against is whatever Plain was. A link
+    // is not among them: it wears the accent under its line, and is checked
+    // with the hues. The band takes a ground and writes no ink at all, so the
+    // words on it stay theirs, and its mark is the same band. The six code
     // slots are a syntax theme's to fill — empty until one is read, and never
     // in any table here.
     let hueless: Vec<Slot> = all()

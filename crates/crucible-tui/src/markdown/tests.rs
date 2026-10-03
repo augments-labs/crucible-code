@@ -75,10 +75,7 @@ fn the_two_are_told_apart_inside_one_line() {
     let said = whole("*this* and **that**");
 
     assert_eq!(drawn(&said), "this and that");
-    assert_eq!(
-        slots(&said),
-        vec![Slot::Emphasis, Slot::Plain, Slot::Bold]
-    );
+    assert_eq!(slots(&said), vec![Slot::Emphasis, Slot::Plain, Slot::Bold]);
 }
 
 #[test]
@@ -1442,7 +1439,11 @@ fn a_reply_spends_the_theme_colour_on_code_and_links_alone() {
     assert_eq!(slot_of("Fixed"), Some(Slot::Bold), "a heading: {said:?}");
     assert_eq!(slot_of("the note"), Some(Slot::Bold), "bold: {said:?}");
     assert_eq!(slot_of("file"), Some(Slot::Bold), "a header cell: {said:?}");
-    assert_eq!(slot_of("lines"), Some(Slot::Bold), "a header cell: {said:?}");
+    assert_eq!(
+        slot_of("lines"),
+        Some(Slot::Bold),
+        "a header cell: {said:?}"
+    );
     assert_eq!(slot_of("wait_for_index"), Some(Slot::Code), "{said:?}");
     assert_eq!(slot_of("the issue"), Some(Slot::Link), "{said:?}");
     assert!(

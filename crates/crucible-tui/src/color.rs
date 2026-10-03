@@ -9,15 +9,22 @@
 //! **Which slot a span takes is one rule, in three levels.**
 //!
 //! 1. **Accent** is the one thing on a line the eye should land on: the
-//!    selected row's caret, a call's mark, a release heading's mark, a link,
-//!    a key or a count that opens something, and the rule that opens a panel,
-//!    which is the whole of its line. It is [`Slot::Accent`]. A frame in the
-//!    accent, as around a question, is the frame and not a span of what it
-//!    holds: its top and bottom are whole lines, and its edges run down both
-//!    sides of every row inside, which is counted between them. The slots
-//!    drawn in the accent's ink for a reason of their own are not a second
-//!    accent: [`Slot::Strong`] for the name, version or figure a row is read
-//!    for, [`Slot::Link`] and [`Slot::Code`].
+//!    selected row's caret, a release heading's mark, a link, a key or a
+//!    count that opens something, and the rule that opens a panel, which is
+//!    the whole of its line. It is [`Slot::Accent`]. A frame in the accent, as
+//!    around a question, is the frame and not a span of what it holds: its top
+//!    and bottom are whole lines, and its edges run down both sides of every
+//!    row inside, which is counted between them. The slots drawn in the
+//!    accent's ink for a reason of their own are not a second accent:
+//!    [`Slot::Strong`] for the title, name, version or figure a panel, a note
+//!    or the banner is read for, [`Slot::Link`] and [`Slot::Code`].
+//!
+//!    Inside the transcript, selection and panels aside, the accent's ink is
+//!    spent on inline code and links and on nothing else: they are what a
+//!    reader copies or follows. Headings, bold, a table's header, a tool's
+//!    name and the figures of a count are weight, not colour, and are
+//!    [`Slot::Bold`]; a call's mark is the reader's own foreground, and a
+//!    prompt's band carries no hue.
 //! 2. **Meaning** is a fact a reader acts on: success, a warning, trouble, a
 //!    line added or removed, a permissive mode, a task's state, a bar's
 //!    categories.
@@ -68,8 +75,9 @@
 //! The slots that carry an attribute and no hue at all are the same deferral
 //! read the other way: weight, a slant and a line through the text are the
 //! reader's own foreground, moved, and a foreground that is already legible on
-//! their ground is still legible bolder. A terminal that draws neither loses the emphasis
-//! and keeps the words, which is why nothing is ever said by weight alone.
+//! their ground is still legible bolder. A terminal that draws neither loses
+//! the emphasis and keeps the words, which is why nothing is ever said by
+//! weight alone.
 //!
 //! A diff is one of three kinds of thing that take the ground, and it takes it
 //! the only way that is safe: a slot painting a ground paints its ink in the same
@@ -117,8 +125,8 @@ mod derived;
 pub enum Slot {
     /// The reader's own foreground. Most of what is drawn is this.
     Plain,
-    /// The one thing on a line the eye should land on: a mark, the selected
-    /// row's caret, the live prompt's mark, a key that opens something, and
+    /// The one thing on a line the eye should land on: a release heading's
+    /// mark, the selected row's caret, the live prompt's mark, a key that opens something, and
     /// the rule that opens a panel. A frame around a question is drawn in it
     /// too, with an edge each side of every row inside; the edges are the
     /// frame, and the row's one accent is counted between them. The prompt
@@ -1097,11 +1105,7 @@ impl Palette {
     /// It hands back the band rather than a whole palette so that what else a
     /// palette carries stays the caller's to keep: the syntax theme survives a
     /// change of table, and a field added later cannot be silently reset here.
-    fn banding(
-        depth: Depth,
-        theme: Theme,
-        ground: Option<(u8, u8, u8)>,
-    ) -> Option<Sequence> {
+    fn banding(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Option<Sequence> {
         // `ansi` means the sixteen and nothing else. The band is derived rather
         // than chosen, but it still has to be spelled at some rung, and a
         // reader picks that answer precisely because their terminal — or
