@@ -8,6 +8,10 @@
 //! looking at. What falls off the top is not lost: the session log holds every
 //! message, and the line a session ends on says where that is.
 //!
+//! In native mode the terminal's own scrollback keeps it instead, and a line
+//! written there is let go of here as it is written, numbered as if it had
+//! fallen off the top: the record then holds only what has not gone out yet.
+//!
 //! A line is held as a [`Row`] — spans carrying slots — rather than as the
 //! bytes a terminal would receive, so a narrower window re-wraps rather than
 //! reflows. Only the lines the viewport covers are folded and painted, and that
@@ -434,14 +438,24 @@ impl Record {
     /// Drops oldest logical lines until the record is back under its ceiling.
     fn spill(&mut self) {
         while self.weight > MOST && self.lines.len() > 1 {
-            if let Some(line) = self.lines.pop_front() {
-                self.weight = self.weight.saturating_sub(line.weight());
-            }
-            let tall = self.tall.pop_front().unwrap_or(0);
-            self.before = self.ends.pop_front().unwrap_or(self.before);
-            self.rows -= usize::from(tall);
-            self.gone += 1;
+            self.drop_oldest();
         }
+        self.forget_landmarks();
+    }
+
+    /// Drops the oldest line held, counting it as gone.
+    fn drop_oldest(&mut self) {
+        if let Some(line) = self.lines.pop_front() {
+            self.weight = self.weight.saturating_sub(line.weight());
+        }
+        let tall = self.tall.pop_front().unwrap_or(0);
+        self.before = self.ends.pop_front().unwrap_or(self.before);
+        self.rows -= usize::from(tall);
+        self.gone += 1;
+    }
+
+    /// Lets go of the prompt landmarks whose lines have gone.
+    fn forget_landmarks(&mut self) {
         while self.landmarks.front().is_some_and(|line| *line < self.gone) {
             self.landmarks.pop_front();
         }
@@ -676,6 +690,60 @@ impl Record {
         self.landed = None;
         while self.landmarks.len() > MOST_LANDMARKS {
             self.landmarks.pop_front();
+        }
+    }
+}
+
+/// What native mode hands over to the terminal's own scrollback.
+///
+/// There the record holds only what has not gone out yet: a line written into
+/// the reader's buffer is the terminal's to keep, and holding it here as well
+/// would be a second copy of the session that nothing draws again.
+impl Record {
+    /// The first line still held, numbered as [`Self::lines`] numbers them.
+    pub(crate) fn first(&self) -> usize {
+        self.gone
+    }
+
+    /// One past the last line that can no longer change: every line held but
+    /// the one still being written to.
+    pub(crate) fn finished(&self) -> usize {
+        self.lines() - usize::from(self.open)
+    }
+
+    /// How many display rows the held lines from `line` on come to.
+    pub(crate) fn rows_from(&self, line: usize) -> usize {
+        self.tall
+            .iter()
+            .skip(line.saturating_sub(self.gone))
+            .map(|tall| usize::from(*tall))
+            .sum()
+    }
+
+    /// Line `line` as the display rows it comes to now; none where it is not
+    /// held.
+    pub(crate) fn folded(&self, line: usize) -> Vec<Row> {
+        line.checked_sub(self.gone)
+            .and_then(|held| self.lines.get(held))
+            .map(|held| self.fold(held))
+            .unwrap_or_default()
+    }
+
+    /// Lets go of every line before `through`, keeping the numbering.
+    ///
+    /// The same as a spill, which is what it is: a line that has gone keeps its
+    /// number, so a caller holding one names nothing rather than another line,
+    /// and an opening that has partly gone is no longer laid out again.
+    pub(crate) fn lets_go(&mut self, through: usize) {
+        while self.gone < through && !self.lines.is_empty() {
+            self.drop_oldest();
+        }
+        self.forget_landmarks();
+        if self.top.line < self.gone {
+            self.top = Spot {
+                line: self.gone,
+                into: 0,
+            };
         }
     }
 }
