@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A fresh MiniMax Token Plan window no longer stops every turn until it
+  resets.** A count of 0 with no share left or status to say otherwise could
+  mean nothing used as much as nothing left, and was read as nothing left;
+  such a window is now left unread, and only one the plan marks spent holds
+  turns back.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and
