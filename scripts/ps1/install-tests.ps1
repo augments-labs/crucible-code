@@ -196,6 +196,16 @@ try {
     Assert-Lacks $run.Out 'install: unpack' 'checksum mismatch'
     if (Test-Path -LiteralPath $refused) { Stop-Test 'a checksum mismatch created the installation directory' }
 
+    # SHA256SUMS lines are matched to the archive by exact name. A line for
+    # another file whose name differs only by U+00AD SOFT HYPHEN, which a
+    # culture-aware comparison ignores, is not a second line for this one.
+    $hyphenSums = Join-Path $root 'SHA256SUMS.hyphen'
+    [IO.File]::WriteAllText($hyphenSums,
+        "$hash  $stem.tar.gz`n" + ('0' * 64) + "  $([char]0x00AD)$stem.tar.gz`n", (New-Object Text.UTF8Encoding $true))
+    $run = Invoke-Installer ($release + @('-Checksums', $hyphenSums, '-Dir', (Join-Path $root 'hyphen-sums')))
+    if ($run.Status -ne 0) { Stop-Test "a checksum line for a name with a soft hyphen exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Out 'install: verify checksum: ok' 'soft hyphen in SHA256SUMS'
+
     # A cru.exe that is not this crucible.exe is someone else's, and stays.
     $taken = Join-Path $root 'taken'
     $null = New-Item -ItemType Directory -Path $taken
@@ -242,6 +252,21 @@ try {
     if ($run.Status -ne 2) { Stop-Test "a version holding a Kelvin sign exited $($run.Status)" }
     Assert-Contains $run.Err "install: invalid version $version-" 'Kelvin sign in a version'
     if (Test-Path -LiteralPath $kelvin) { Stop-Test 'a refused version created the installation directory' }
+
+    # A version is matched to its very end, so one with a newline after it is
+    # refused. Passed from a script, since a command line would not keep it.
+    $newline = Join-Path $root 'newline'
+    $trailing = Join-Path $root 'trailing.ps1'
+    [IO.File]::WriteAllText($trailing, @'
+param([string]$Installer, [string]$Version, [string]$Archive, [string]$Checksums, [string]$Dir)
+& $Installer -Version "$Version`n" -Archive $Archive -Checksums $Checksums -Dir $Dir
+exit $LASTEXITCODE
+'@)
+    $run = Invoke-Installer @('-Installer', $installer, '-Version', $version, '-Archive', $archive,
+        '-Checksums', $sums, '-Dir', $newline) $trailing
+    if ($run.Status -ne 2) { Stop-Test "a version ending in a newline exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Err "install: invalid version $version" 'newline after a version'
+    if (Test-Path -LiteralPath $newline) { Stop-Test 'a version ending in a newline created the installation directory' }
 
     # Run as a script block in the caller's PowerShell, as the documented
     # `& ([scriptblock]::Create((irm ...)))` runs it, the installer leaves
@@ -294,6 +319,14 @@ exit 7
     Assert-Lacks $run.Out 'PATH' 'second -AddToPath'
     $now = Get-UserPath
     if ($null -eq $now -or $now.Value -cne $wanted) { Stop-Test 'a second -AddToPath changed the user PATH again' }
+
+    # A PATH entry is the directory only when their names agree ignoring case
+    # alone: one that differs by a soft hyphen is another directory.
+    $hyphen = Join-Path $root 'hyphen-path'
+    $key.SetValue('Path', "$hyphen$([char]0x00AD)", [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $hyphen, '-AddToPath'))
+    if ($run.Status -ne 0) { Stop-Test "an install beside a PATH entry with a soft hyphen exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Out "Added $hyphen to your user PATH" 'soft hyphen in PATH'
 } finally {
     $env:NO_COLOR = $savedNoColor
     if (-not (Test-UserPathAsFound)) {
