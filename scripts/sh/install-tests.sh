@@ -124,6 +124,35 @@ if install_from "$bad_sum" "$scratch/checksum-bin" 2>/dev/null; then
     exit 1
 fi
 
+echo '==> a local archive is unpacked from the bytes that were hashed'
+# The fake hasher reports the honest sum, then swaps the archive on disk for
+# another release, as a writer racing the installer would.
+swap_tools=$scratch/swap-tools
+swapped=$scratch/swapped
+mkdir -p "$swap_tools"
+release "$swapped" "crucible $version" broker
+printf '# swapped in after hashing\n' >>"$swapped/$stem/crucible-sandbox-broker"
+tar -czf "$swapped/$stem.tar.gz" -C "$swapped" "$stem"
+racing=$scratch/racing
+cp -R "$asset" "$racing"
+real_sum=$(command -v sha256sum || command -v shasum || command -v sha256)
+cat >"$swap_tools/sha256sum" <<SUM
+#!/usr/bin/env bash
+set -euo pipefail
+case \$(basename "$real_sum") in
+sha256sum) "$real_sum" "\$1" ;;
+shasum) "$real_sum" -a 256 "\$1" ;;
+*) printf '%s  %s\n' "\$("$real_sum" -q "\$1")" "\$1" ;;
+esac
+cp -- "$swapped/$stem.tar.gz" "$racing/$stem.tar.gz"
+SUM
+chmod +x "$swap_tools/sha256sum"
+PATH="$swap_tools:$PATH" install_from "$racing" "$scratch/racing-bin" >/dev/null 2>&1 || true
+if grep -q 'swapped in after hashing' "$scratch/racing-bin/crucible-sandbox-broker" 2>/dev/null; then
+    echo 'installer unpacked an archive other than the one it hashed' >&2
+    exit 1
+fi
+
 echo '==> an archive directory cannot be a symbolic link'
 symlink_dir=$scratch/symlink-dir
 mkdir -p "$symlink_dir/payload"
@@ -541,9 +570,16 @@ set -euo pipefail
 }
 printf '%s\n' "${INSTALL_TEST_TRANSLATED:-0}"
 SYSCTL
+# The fake refuses a call that would read the user's ~/.curlrc: curl reads it
+# unless `-q` is the first argument, and it can redirect where curl connects.
 cat >"$discovery_tools/curl" <<'CURL'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ ${1:-} == -q ]] || {
+    echo 'fake curl: called without -q first, so ~/.curlrc would be read' >&2
+    exit 2
+}
+shift
 head=0
 output=
 headers=

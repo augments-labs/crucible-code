@@ -25,6 +25,9 @@ change in any release with no deprecation period.
 - **The Windows installer matches names by their exact characters.** A
   checksum line, archive member or PATH entry whose name differs only by a
   character such as a soft hyphen is no longer taken for the one it wants.
+- **`install.sh` installs exactly what it verified.** A local `--archive` is
+  copied once and that copy is both hashed and unpacked, and curl no longer
+  reads your `~/.curlrc`, which could change where a release is fetched from.
 - **The Windows installer refuses a version followed by a newline.** Its
   version check let one through and failed later on the archive instead of
   saying the version is invalid.
