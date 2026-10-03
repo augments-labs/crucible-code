@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A checkout whose `.git` file is a symbolic link records its branch and
+  lists its worktrees again.** The link is followed as git follows it, and the
+  file it leads to is still read only when it is a small ordinary file.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and
