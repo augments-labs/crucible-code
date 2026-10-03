@@ -2241,6 +2241,91 @@ fn the_transcript_spends_the_theme_colour_on_code_and_links_alone() {
     assert!(spent.is_empty(), "the accent in the transcript: {spent:?}");
 }
 
+/// A reply with each thing the transcript draws in weight -- a heading, a
+/// raised phrase, a table's header -- and a call whose result counts what it
+/// changed, drawn in `style`.
+fn weighted_turn(style: Style) -> Vec<Row> {
+    let mut renderer = Renderer::new(Recording::new(80, 60));
+    renderer.wears(style.palette());
+    let mut kept = Kept::default();
+
+    let mut turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta(
+            "## What changed\n\nThe wait is **moved**, not removed.\n\n\
+             | File | Lines |\n| --- | --- |\n| resume.rs | 3 |\n",
+        ),
+    ];
+    turn.push(Beat::Answered("Update(src/cli/converse/resume.rs)"));
+    turn.push(beat(Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::ok("changed resume.rs").showing(changed()),
+        receipt: None,
+    }));
+    turn.push(beat(Event::TurnFinished {
+        turn: TurnId::FIRST,
+        stop: StopReason::Yielded,
+    }));
+
+    for beat in turn {
+        match beat {
+            Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
+            Beat::Answered(said) => returned(&mut renderer, said, style),
+        }
+        .expect("the turn to draw");
+    }
+
+    renderer.tail(60)
+}
+
+#[test]
+fn with_colour_off_what_colour_draws_in_weight_reads_as_it_was_written() {
+    // Weight is a slot, and colour off has no slots to put it in: the heading,
+    // the raised phrase and the table keep the markdown they arrived in, and
+    // the call and its count say the same words they do in colour.
+    let text = |style: Style| -> Vec<String> {
+        weighted_turn(style)
+            .iter()
+            .map(|row| row.text().trim_end().to_owned())
+            .collect()
+    };
+    let plain = text(Style::plain());
+
+    assert_eq!(
+        plain.get(..10),
+        Some(
+            &[
+                "## What changed",
+                "",
+                "The wait is **moved**, not removed.",
+                "",
+                "| File | Lines |",
+                "| --- | --- |",
+                "| resume.rs | 3 |",
+                "",
+                "\u{25cf} Update(src/cli/converse/resume.rs)",
+                "  \u{23bf} Added 3 lines, removed 3 lines",
+            ]
+            .map(String::from)[..]
+        ),
+        "{plain:#?}"
+    );
+
+    // The call and its count are the same words whether or not colour draws
+    // them: only the slot they are in moved.
+    let coloured = text(Style::coloured());
+    let call = |rows: &[String]| -> Vec<String> {
+        rows.iter()
+            .skip_while(|row| !row.starts_with('\u{25cf}'))
+            .take(2)
+            .cloned()
+            .collect()
+    };
+    assert_eq!(call(&coloured), call(&plain));
+}
+
 #[test]
 fn the_transcript_with_colour_off_shows_every_word_and_mark_colour_does() {
     // With no colour there is no slot to put a marker's meaning in, so the
