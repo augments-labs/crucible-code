@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-03
+
+**`/context`, `/usage` and `/settings` show where the window, the session and
+your plan stand, and `output.screen: native` keeps the session in your
+terminal's own scrollback.** Colour follows one written rule, with
+`output.transcriptColours` choosing how much a reply spends, and the default
+tone sends about a quarter fewer bytes of instructions. Windows has an
+installer, `install.ps1`, and `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now refuses
+`1` and `2`.
+
 ### Added
 
 - **`/context` shows how the model's window is spent.** One bar across the
@@ -4865,7 +4875,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...v0.45.0
 [0.44.2]: https://github.com/augments-labs/crucible-code/compare/v0.44.1...v0.44.2
 [0.44.1]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...v0.44.0
