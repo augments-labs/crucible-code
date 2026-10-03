@@ -115,12 +115,63 @@ if "$INSTALL" --dry-run --version "$version" --dir "$scratch/root-link" \
     exit 1
 fi
 
+echo '==> a version is ASCII digits and letters under a UTF-8 locale too'
+# Bracket ranges follow the locale: under en_US.UTF-8, [0-9] takes an
+# Arabic-Indic digit and [A-Za-z] takes accented and other letters.
+utf8=$(locale -a 2>/dev/null | grep -ixE 'en_US\.utf-?8' | head -n 1) || true
+if [[ -n $utf8 ]]; then
+    for odd in "9.8.7-$(printf '\303\251')" "$(printf '\331\241').8.7" \
+        "9.8.7-$(printf '\302\262')" "9.8.7-rc$(printf '\304\261')"; do
+        if problem=$(LC_ALL=$utf8 "$INSTALL" --dry-run --version "$odd" \
+            --dir "$scratch/odd-version-bin" \
+            --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS" 2>&1); then
+            printf 'installer accepted the version %s under %s\n' "$odd" "$utf8" >&2
+            exit 1
+        fi
+        [[ $problem == *'invalid version'* ]] || {
+            printf 'installer accepted the version %s under %s: %s\n' "$odd" "$utf8" "$problem" >&2
+            exit 1
+        }
+    done
+else
+    echo '    skipped: this host has no en_US UTF-8 locale'
+fi
+
 echo '==> checksum mismatch is refused'
 bad_sum=$scratch/bad-sum
 cp -R "$asset" "$bad_sum"
 printf '%064d  %s.tar.gz\n' 0 "$stem" >"$bad_sum/SHA256SUMS"
 if install_from "$bad_sum" "$scratch/checksum-bin" 2>/dev/null; then
     echo 'installer accepted a mismatched checksum' >&2
+    exit 1
+fi
+
+echo '==> a local archive is unpacked from the bytes that were hashed'
+# The fake hasher reports the honest sum, then swaps the archive on disk for
+# another release, as a writer racing the installer would.
+swap_tools=$scratch/swap-tools
+swapped=$scratch/swapped
+mkdir -p "$swap_tools"
+release "$swapped" "crucible $version" broker
+printf '# swapped in after hashing\n' >>"$swapped/$stem/crucible-sandbox-broker"
+tar -czf "$swapped/$stem.tar.gz" -C "$swapped" "$stem"
+racing=$scratch/racing
+cp -R "$asset" "$racing"
+real_sum=$(command -v sha256sum || command -v shasum || command -v sha256)
+cat >"$swap_tools/sha256sum" <<SUM
+#!/usr/bin/env bash
+set -euo pipefail
+case \$(basename "$real_sum") in
+sha256sum) "$real_sum" "\$1" ;;
+shasum) "$real_sum" -a 256 "\$1" ;;
+*) printf '%s  %s\n' "\$("$real_sum" -q "\$1")" "\$1" ;;
+esac
+cp -- "$swapped/$stem.tar.gz" "$racing/$stem.tar.gz"
+SUM
+chmod +x "$swap_tools/sha256sum"
+PATH="$swap_tools:$PATH" install_from "$racing" "$scratch/racing-bin" >/dev/null 2>&1 || true
+if grep -q 'swapped in after hashing' "$scratch/racing-bin/crucible-sandbox-broker" 2>/dev/null; then
+    echo 'installer unpacked an archive other than the one it hashed' >&2
     exit 1
 fi
 
@@ -541,9 +592,16 @@ set -euo pipefail
 }
 printf '%s\n' "${INSTALL_TEST_TRANSLATED:-0}"
 SYSCTL
+# The fake refuses a call that would read the user's ~/.curlrc: curl reads it
+# unless `-q` is the first argument, and it can redirect where curl connects.
 cat >"$discovery_tools/curl" <<'CURL'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ ${1:-} == -q ]] || {
+    echo 'fake curl: called without -q first, so ~/.curlrc would be read' >&2
+    exit 2
+}
+shift
 head=0
 output=
 headers=

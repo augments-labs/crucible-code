@@ -64,11 +64,14 @@ is inside it. A command shows the line as it was sent, operators and all,
 because `a && b` is two commands *if the first one worked*, and consent to a
 list of commands is consent to something nobody sent.
 
-That line is folded to the window rather than cut, and control characters in it
-become spaces, because the text is the model's to choose: a name with its tail
-missing is one you agree to without having read it, and a control character
-left in it moves the cursor inside a row nothing measured. Nothing runs while
-the panel is on screen.
+That line is folded to the window rather than cut, control characters in it
+become spaces, and Unicode format characters such as bidi overrides, isolates
+and the zero-width space are dropped (the joiners emoji and some scripts need
+are kept), because the text is the model's to choose: a name with its tail
+missing is one you agree to without having read it, a
+control character left in it moves the cursor inside a row nothing measured,
+and an override shows you the line in an order other than the one that runs.
+Nothing runs while the panel is on screen.
 
 Under it, where the call gave one, is the model's own line saying what the call
 is for. It is a caption on the command and not a claim standing beside it;

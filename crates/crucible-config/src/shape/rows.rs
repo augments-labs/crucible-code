@@ -18,9 +18,9 @@
 //! widening.
 
 use super::{
-    COLOR, COMPACTION_WHEN, DOCUMENT, Field, GLYPHS, PROMPT_CACHE_ISOLATION, PROMPT_CACHE_MODE,
-    PROMPT_CACHE_PERSISTENT, PROMPT_CACHE_RETENTION, SCREEN, SCROLL_SPEED, SEND, THEME, TONE,
-    TOOL_DETAIL, TRANSCRIPT_COLOURS, UPDATE_CHECK,
+    COLOR, COMPACTION_WHEN, DOCUMENT, Field, GLYPHS, PIN_AFTER, PROMPT_CACHE_ISOLATION,
+    PROMPT_CACHE_MODE, PROMPT_CACHE_PERSISTENT, PROMPT_CACHE_RETENTION, SCREEN, SCROLL_SPEED, SEND,
+    THEME, TONE, TOOL_DETAIL, TRANSCRIPT_COLOURS, UPDATE_CHECK,
 };
 
 #[cfg(test)]
@@ -68,6 +68,8 @@ pub enum RowId {
     ScrollRail,
     /// `output.screen`.
     ScreenMode,
+    /// `output.pinAfterSeconds`.
+    PinAfter,
     /// `env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`.
     ScrollSpeed,
     /// `input.send`.
@@ -177,6 +179,12 @@ const SPEED: Values = Values::Whole {
     most: SCROLL_SPEED.most,
 };
 
+/// How long a running call is held back, as the row offers it.
+const PINNING: Values = Values::Whole {
+    least: PIN_AFTER.least,
+    most: PIN_AFTER.most,
+};
+
 /// Every row, in the order a menu lists them.
 ///
 /// What draws first, then the keyboard, then what the model is asked under,
@@ -225,6 +233,12 @@ const ROWS: &[Row] = &[
         "output.screen",
         "Screen mode",
         Values::Choice(SCREEN),
+    ),
+    Row::new(
+        RowId::PinAfter,
+        "output.pinAfterSeconds",
+        "Seconds before a call pins",
+        PINNING,
     ),
     Row::new(
         RowId::ScrollSpeed,

@@ -21,6 +21,16 @@
 //! this commits it still, so what the transcript keeps is the same words with
 //! the motion gone.
 //!
+//! A held call is not drawn the moment it is asked for. Most commands are over
+//! in a fraction of a second, and a row put up for each and taken down a moment
+//! later is the screen blinking on every call; a call stands over the row only
+//! once it has been out for as long as `output.pinAfterSeconds` says
+//! ([`Turning::pinning`]), and one that answers sooner goes
+//! to the transcript without ever having been drawn here. Elapsed time alone
+//! decides it, because nothing about a command's text says how long it will
+//! take. The background key reads the same standing call, so it does nothing
+//! until the row offering it is on screen.
+//!
 //! Not every call is held. One that is the only call of its pass, cannot be
 //! backgrounded and only looks up something elsewhere has nothing to draw
 //! again: no output arrives under it, no key points at it, and its words are
@@ -133,7 +143,7 @@ const QUEUED: usize = ROWS + 1;
 /// the call, and the row under it offering to leave the command running.
 ///
 /// Three rather than two, because the offer is drawn from the moment a call that
-/// supports it is out. It is one row and it is the only thing on screen that says
+/// supports it stands. It is one row and it is the only thing on screen that says
 /// what a key would do about the command in front of you, so it belongs with the
 /// call rather than with the sample the call's output gives way as. A call that
 /// cannot be left running needs one fewer row.
@@ -292,6 +302,10 @@ pub(super) struct Turning {
     /// What the footing was last drawn from, so a redraw that would draw the
     /// same rows again can be skipped. `None` before the first.
     drawn: Option<Drawn>,
+    /// How long a call is out before it stands over the row: `output.pinAfterSeconds`,
+    /// handed in by [`Turning::pinning`]. Nought for a turn told nothing, which is
+    /// every call drawn the moment it is asked for, as nought in the file says.
+    pinned_after: Duration,
 }
 
 /// One call still waiting for its result.
@@ -299,6 +313,8 @@ pub(super) struct Turning {
 struct Calling {
     /// The identity its result and live output carry.
     id: ToolId,
+    /// When it was asked for, which is what [`Turning::pinning`] counts from.
+    asked: Instant,
     /// The words the call row says, without its moving mark.
     said: draw::Called,
     /// What this call has printed while it runs.
@@ -441,7 +457,7 @@ impl Printing {
     /// of what the command has printed.
     fn rows(&self, columns: usize, spare: usize, style: Style, backgroundable: bool) -> Vec<Row> {
         // One row for the offer, whatever else there is room for. It is drawn from
-        // the moment the call is out, because a command that has printed nothing
+        // the moment the call stands, because a command that has printed nothing
         // for half a minute is the one somebody most wants to put down — and a
         // command that has printed something is the one whose counts go in front
         // of the same offer.
@@ -592,6 +608,7 @@ impl Turning {
             calling: VecDeque::new(),
             queued: Queued::default(),
             drawn: None,
+            pinned_after: Duration::ZERO,
         }
     }
 
@@ -601,6 +618,22 @@ impl Turning {
         Self {
             totals,
             limits,
+            ..self
+        }
+    }
+
+    /// The same turn, holding each call back from the row over the working
+    /// row until it has been out for `after`.
+    ///
+    /// Most commands are over in well under a second, and some reaching a
+    /// server in two; a row put up for each and taken down again is the screen
+    /// blinking on every call. Held back, a call that answers in time goes to
+    /// the transcript and nowhere else, and the band above the box stays the
+    /// height it was. The working row says `running` throughout, so the wait is
+    /// not a stretch of saying nothing.
+    pub(super) fn pinning(self, after: Duration) -> Self {
+        Self {
+            pinned_after: after,
             ..self
         }
     }
@@ -699,6 +732,7 @@ impl Turning {
                 } else {
                     self.calling.push_back(Calling {
                         id: call.id.clone(),
+                        asked: Instant::now(),
                         said,
                         printing: Printing::default(),
                         backgroundable: *backgroundable,
@@ -813,8 +847,7 @@ impl Turning {
     /// which is not advertised cannot leave a request behind for a later Bash
     /// call to consume.
     pub(super) fn can_background(&self) -> bool {
-        self.calling
-            .front()
+        self.standing()
             .is_some_and(|calling| calling.backgroundable)
     }
 
@@ -848,7 +881,7 @@ impl Turning {
             // that carried the front call's name would leave that number to
             // reach the screen on the next beat: right twice a second by
             // accident, which is not the same as right.
-            calling: self.calling.front().map(|calling| {
+            calling: self.standing().map(|calling| {
                 if self.folds() {
                     self.outstanding()
                 } else {
@@ -856,8 +889,7 @@ impl Turning {
                 }
             }),
             backgroundable: self
-                .calling
-                .front()
+                .standing()
                 .is_some_and(|calling| calling.backgroundable),
 
             // And the same for the prompt waiting, which is why it was cut
@@ -871,8 +903,7 @@ impl Turning {
             // that moves whenever they do answers the only question the loop is
             // asking.
             printed: self
-                .calling
-                .front()
+                .standing()
                 .map_or(0, |calling| calling.printing.changed),
 
             making: self.making,
@@ -1017,7 +1048,7 @@ impl Turning {
         // its own turn will say it.
         let spare = room.saturating_sub(QUEUED);
         let panel_rows = self.queued.rows(spare, columns, style);
-        let calling = self.calling.front();
+        let calling = self.standing();
         let standing = if calling
             .is_some_and(|calling| calling.backgroundable || calling.printing.lines() > 0)
         {
@@ -1257,6 +1288,20 @@ impl Turning {
         } else {
             " "
         }
+    }
+
+    /// The call drawn over the row, where one has been out long enough to be.
+    ///
+    /// The front of the queue, because that is the call asked for first and so
+    /// the one out longest: where it is too young to stand, every call behind
+    /// it is younger still. Read off the clock rather than kept, so the frame
+    /// at which it comes due is one [`Turning::moved`] sees change, and the
+    /// loop that asks that sixty times a second draws it without waiting for
+    /// anything else to happen.
+    fn standing(&self) -> Option<&Calling> {
+        self.calling
+            .front()
+            .filter(|calling| calling.asked.elapsed() >= self.pinned_after)
     }
 
     /// How long the turn has been running.

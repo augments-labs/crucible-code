@@ -62,6 +62,7 @@ fn offering(
         | Shape::TextSet { .. }
         | Shape::Flag
         | Shape::Whole(_)
+        | Shape::Within(_)
         | Shape::Pattern(_)
         | Shape::List { .. }
         | Shape::Opaque => {}
@@ -82,7 +83,7 @@ fn spelled(shape: &Shape, example: &str) -> Value {
         ),
         // A count goes into a document as a number, and a `Whole` beside it as
         // the string that one deliberately is.
-        Shape::Count | Shape::Limit(_) => json!(
+        Shape::Count | Shape::Limit(_) | Shape::Within(_) => json!(
             example
                 .parse::<u64>()
                 .expect("a count is written down as a whole number")

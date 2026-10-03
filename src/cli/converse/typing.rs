@@ -883,13 +883,22 @@ fn working<T: Terminal>(
     // The list a `/`-started line has open stands directly above the box, over
     // the running row and plan, as it does at the prompt: a list is what the
     // reader is looking at while it is open, so the rows above give way to it.
-    let mut over = footing
-        .turning
-        .rows(footing.planning, footing.counting, columns, style, room);
-    let left = room.saturating_sub(over.len());
-    over.extend(footing.opened_list.rows(columns, left, style.glyphs()));
+    //
+    // The turn's own rows read as the transcript's last rows, with the scroll
+    // rail beside them, so they are laid out at the transcript's width. The
+    // list is not the transcript's and keeps the window's.
+    let turn = footing.turning.rows(
+        footing.planning,
+        footing.counting,
+        renderer.transcript_columns(),
+        style,
+        room,
+    );
+    let left = room.saturating_sub(turn.len());
+    let over = footing.opened_list.rows(columns, left, style.glyphs());
 
     Footed {
+        turn,
         over,
         boxed: boxed.rows,
         pointed: boxed.pointed,
@@ -905,6 +914,8 @@ fn working<T: Terminal>(
 /// otherwise push the box off the bottom of the screen.
 struct Footed {
     /// The row saying the turn is running, and the plan above it.
+    turn: Vec<Row>,
+    /// The list a `/`-started line has open, under the turn.
     over: Vec<Row>,
     /// The box.
     boxed: Vec<Row>,
@@ -1240,7 +1251,7 @@ pub(super) fn during<T: Terminal>(
                         editor,
                         steer,
                     };
-                    notice = queue(reading, turning, renderer.columns(), style);
+                    notice = queue(reading, turning, renderer.transcript_columns(), style);
                     moved = true;
                 }
 
@@ -1748,7 +1759,7 @@ fn rewrap<T: Terminal>(
     style: Style,
 ) -> Result<(), Fatal> {
     renderer.resized()?;
-    turning.queueing(queued.waiting_all(), renderer.columns(), style);
+    turning.queueing(queued.waiting_all(), renderer.transcript_columns(), style);
     Ok(())
 }
 
@@ -1767,7 +1778,7 @@ pub(super) fn stand<T: Terminal>(
 
     let pointed = footed.pointed.as_ref().map(|(at, row)| (*at, row));
     let prompt = replacement(&footed.boxed, footed.caret, pointed)?;
-    renderer.replace(prompt, &footed.over, style.palette())?;
+    renderer.replace_running(prompt, &footed.turn, &footed.over, style.palette())?;
     Ok(())
 }
 

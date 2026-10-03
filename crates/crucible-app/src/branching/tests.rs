@@ -85,6 +85,27 @@ fn a_linked_worktree_names_its_own_branch() {
     assert_eq!(current(&checkout).as_deref(), Some("fix/wrapping"));
 }
 
+#[test]
+fn a_relative_gitdir_is_read_from_the_checkout_not_the_process_directory() {
+    // Git writes `gitdir: ../somewhere` when asked for relative paths, and a
+    // submodule's `.git` file is always relative. The process runs from
+    // somewhere else entirely, so only the checkout's own directory resolves
+    // it.
+    let scratch = Scratch::new("relative-worktree");
+    let somewhere = scratch.root().join("somewhere");
+    fs::create_dir_all(&somewhere).expect("the pointed-at git directory");
+    fs::write(somewhere.join("HEAD"), "ref: refs/heads/fix/relative\n").expect("a HEAD file");
+
+    let checkout = scratch.root().join("checkout");
+    fs::create_dir_all(&checkout).expect("the worktree checkout");
+    fs::write(checkout.join(".git"), "gitdir: ../somewhere\n").expect("the .git pointer file");
+
+    let process = std::env::current_dir().expect("the process directory");
+    assert!(!process.starts_with(scratch.root()), "{process:?}");
+
+    assert_eq!(current(&checkout).as_deref(), Some("fix/relative"));
+}
+
 /// A repository laid out as `git worktree add` leaves it: a main checkout at
 /// `main` whose `.git` directory keeps `worktrees/<name>/gitdir` for each
 /// linked checkout, and each linked checkout's `.git` file pointing back.
@@ -294,4 +315,56 @@ fn a_git_file_past_a_few_kilobytes_is_not_one_git_wrote() {
     )
     .expect("an oversize .git file");
     assert_eq!(current(&checkout), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dot_git_file_that_is_a_link_out_of_the_checkout_is_followed_and_still_bounded() {
+    // Tools that keep a checkout's git pointer elsewhere leave `.git` as a
+    // symbolic link to a file outside the checkout. Git follows it, so its
+    // branch and its sibling checkouts read; the file it leads to is held to
+    // the same bound and the same refusal of a pipe as one standing there.
+    use std::os::unix::fs::symlink;
+
+    let repository = Repository::new("linked-dot-git");
+    let first = repository.linked("first", false);
+    let second = repository.linked("second", false);
+    fs::write(
+        repository
+            .scratch
+            .root()
+            .join("main/.git/worktrees/first/HEAD"),
+        "ref: refs/heads/fix/linked\n",
+    )
+    .expect("the linked checkout's HEAD");
+
+    let kept = repository.scratch.root().join("kept");
+    fs::create_dir_all(&kept).expect("a directory outside the checkout");
+    fs::rename(first.join(".git"), kept.join("first.git")).expect("the pointer moved out");
+    symlink(kept.join("first.git"), first.join(".git")).expect("a .git link");
+
+    assert_eq!(current(&first).as_deref(), Some("fix/linked"));
+    let mut found = worktrees(&first);
+    found.sort();
+    let mut expected = vec![repository.main(), second];
+    expected.sort();
+    assert_eq!(found, expected);
+
+    // Past the bound, the link leads to no repository.
+    let padding = " ".repeat(64 * 1024);
+    let pointed = fs::read_to_string(kept.join("first.git")).expect("the pointer");
+    fs::write(
+        kept.join("first.git"),
+        format!("{}{padding}\n", pointed.trim()),
+    )
+    .expect("an oversize pointer");
+    assert_eq!(current(&first), None);
+    assert!(worktrees(&first).is_empty());
+
+    // A pipe at the link's end is refused without waiting on it.
+    piped(&kept.join("first.git"));
+    let at = first.clone();
+    assert_eq!(promptly(move || current(&at)), Some(None));
+    let at = first.clone();
+    assert_eq!(promptly(move || worktrees(&at)), Some(Vec::new()));
 }

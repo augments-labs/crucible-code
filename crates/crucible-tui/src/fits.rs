@@ -756,26 +756,36 @@ fn the_release_timeline_fits_the_window_it_is_printed_into() {
 
 #[test]
 fn the_scroll_rail_fits_the_band_it_stands_beside() {
-    // A rail is as tall as the transcript band it stands for, and one column
-    // wide where the window can spare one. Three places in a record far longer
-    // than any band, and one that fits, at every height the band can be, at
-    // rest and with the pointer on its first row, its middle and its last,
-    // and with the current prompt the latest above the band's foot, one
-    // landed on in the band, and one landed on that has left it.
+    // A rail is as tall as the rows it stands beside — the transcript band and
+    // a running turn's own rows under it, which the renderer folds a column
+    // narrower to leave it — and one column wide where the window can spare
+    // one. The room is shared between the band and the turn every way that
+    // matters: all band, a turn of one row, half and half, and all turn.
+    // Three places in a record far longer than any band, and one that fits,
+    // at every height the two can be, at rest and with the pointer on the
+    // rail's first row, its middle and its last, and with the current prompt
+    // the latest above the band's foot, one landed on in the band, and one
+    // landed on that has left it.
     down("the scroll rail", |columns, room, glyphs| {
         let mut rows = Vec::new();
-        for (total, top) in [(0, 0), (100_000, 0), (100_000, 50_000), (100_000, 99_999)] {
-            let place = Place {
-                total,
-                top,
-                height: room,
-            };
-            for landed in [None, Some(0), Some(49_999)] {
-                let rail = ScrollRail::new(place, [0, 7, 49_999, 99_999], landed);
-                for pointer in [None, Some(0), Some(room / 2), room.checked_sub(1)] {
-                    let laid = rail.rows(columns, glyphs, pointer);
-                    assert!(laid.is_empty() || laid.len() == room, "{columns}x{room}");
-                    rows = laid;
+        for turn in [0, room.min(1), room / 2, room] {
+            for (total, top) in [(0, 0), (100_000, 0), (100_000, 50_000), (100_000, 99_999)] {
+                let place = Place {
+                    total,
+                    top,
+                    height: room - turn,
+                }
+                .under_turn(turn);
+                for landed in [None, Some(0), Some(49_999)] {
+                    let rail = ScrollRail::new(place, [0, 7, 49_999, 99_999], landed);
+                    for pointer in [None, Some(0), Some(room / 2), room.checked_sub(1)] {
+                        let laid = rail.rows(columns, glyphs, pointer);
+                        assert!(
+                            laid.is_empty() || laid.len() == room,
+                            "{columns}x{room}, {turn} of them the turn's"
+                        );
+                        rows = laid;
+                    }
                 }
             }
         }

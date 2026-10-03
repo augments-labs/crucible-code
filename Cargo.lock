@@ -138,6 +138,12 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
@@ -317,7 +323,7 @@ version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b9f2e4c67f833b660cdb0a3523065869fb35570177239812ed4c905aeff87b"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "crossterm_winapi",
  "document-features",
  "mio",
@@ -339,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-agents"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-models",
  "crucible-tools",
@@ -349,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-app"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-agents",
  "crucible-auth",
@@ -381,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-attachments"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-types",
  "crucible-workspace",
@@ -392,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-auth"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "base64 0.23.1",
  "crucible-credentials",
@@ -411,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-builtins"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-attachments",
  "crucible-runtime",
@@ -432,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-client-api"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-types",
  "serde_core",
@@ -441,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-code"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "arboard",
  "clap",
@@ -485,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-config"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-models",
  "crucible-sandbox",
@@ -499,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-context"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-models",
  "crucible-tools",
@@ -510,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-credentials"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-types",
  "sha2",
@@ -519,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-extension"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-registry",
  "crucible-runtime",
@@ -534,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-http"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "base64 0.23.1",
  "crucible-credentials",
@@ -551,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-mcp"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
@@ -565,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-models"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-credentials",
  "crucible-runtime",
@@ -576,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-privacy"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "rustix",
  "thiserror",
@@ -585,7 +591,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-provider"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "base64 0.23.1",
  "crucible-credentials",
@@ -603,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-registry"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "thiserror",
  "uuid",
@@ -611,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-agents",
  "crucible-attachments",
@@ -631,14 +637,14 @@ dependencies = [
 
 [[package]]
 name = "crucible-runtime"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "crucible-sandbox"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-runtime",
  "crucible-storage",
@@ -652,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-broker"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "libc",
  "rustix",
@@ -663,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-local"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "base64 0.23.1",
  "crucible-http",
@@ -685,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-session"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-privacy",
  "crucible-runtime",
@@ -703,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-storage"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-types",
  "serde_json",
@@ -714,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tools"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-registry",
  "crucible-runtime",
@@ -730,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-transport"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
@@ -741,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tui"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "base64 0.23.1",
  "crossterm",
@@ -755,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-types"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "serde_json",
  "sha2",
@@ -765,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-update"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "crucible-http",
  "crucible-privacy",
@@ -778,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-workspace"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "rustix",
  "thiserror",
@@ -798,6 +804,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "defmt"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2953bfe4f93bbd20cc71198842756f77d161884c99ebbabc41d80231ded88d1"
+dependencies = [
+ "bitflags 1.3.2",
+ "defmt-macros",
+]
+
+[[package]]
+name = "defmt-macros"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bad9c72e7ca2137e0dc3813245a0d282fd6daad32fd800af018306a9169b5fe8"
+dependencies = [
+ "defmt-parser",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "defmt-parser"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]
@@ -822,7 +859,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "objc2",
 ]
 
@@ -1164,15 +1201,16 @@ dependencies = [
 
 [[package]]
 name = "hyper-util"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
+checksum = "ddc03d96684f9226b8a787cdb71488417b53ab5ea8fdb1dac946cb9431cc8bff"
 dependencies = [
  "bytes",
  "futures-channel",
  "futures-util",
  "http",
  "http-body",
+ "httparse",
  "hyper",
  "libc",
  "pin-project-lite",
@@ -1248,10 +1286,12 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jiff"
-version = "0.2.28"
+version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4603d3033e49e2b0e31229fcab20a5d40089c607d975cd9c80551dc69eed9102"
+checksum = "0ab1baf72f08796de0260609515130699b890ac25f30e610ad894bc5856cafdb"
 dependencies = [
+ "defmt",
+ "jiff-core",
  "jiff-static",
  "jiff-tzdb-platform",
  "log",
@@ -1262,11 +1302,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "jiff-static"
-version = "0.2.28"
+name = "jiff-core"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "782d32378dddf207193ac91cefb848ad41abb58195c95168e1291227a0832b47"
+checksum = "5e52fe76043ccecc9005d2305ebaadf7d7fc0cc89ca6baa10a94d6bc68c7128c"
 dependencies = [
+ "defmt",
+ "log",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "378268a1116ad67ae6228701118ac9f491d78fda38a40a1f1a9e1348de6f7212"
+dependencies = [
+ "jiff-core",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -1417,7 +1468,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "objc2",
  "objc2-core-graphics",
  "objc2-foundation",
@@ -1429,7 +1480,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "dispatch2",
  "objc2",
 ]
@@ -1440,7 +1491,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "dispatch2",
  "objc2",
  "objc2-core-foundation",
@@ -1459,7 +1510,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "objc2",
  "objc2-core-foundation",
 ]
@@ -1470,7 +1521,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "objc2",
  "objc2-core-foundation",
 ]
@@ -1568,7 +1619,7 @@ version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "crc32fast",
  "fdeflate",
  "flate2",
@@ -1647,7 +1698,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
 ]
 
 [[package]]
@@ -1687,7 +1738,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -1987,18 +2038,18 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2077,9 +2128,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.26.5"
+version = "0.26.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c85f2c3ef0b1cd58b36682f4b17aaa995f0e5db534d85692b4903abce21f67"
+checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
 dependencies = [
  "rustls",
  "tokio",
@@ -2268,7 +2319,7 @@ version = "0.31.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3c36a0f861ad76d0901f2800b46321410d9f73f2ea88aac0650d86c32688073"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "rustix",
  "wayland-backend",
  "wayland-scanner",
@@ -2280,7 +2331,7 @@ version = "0.32.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23d0c813de3daa2ed6520af85a3bd49b0e722a3078506899aa9686fea58dc4b6"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "wayland-backend",
  "wayland-client",
  "wayland-scanner",
@@ -2292,7 +2343,7 @@ version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb04e52f7836d7c7976c78ca0250d61e33873c34156a2a1fc9474828ec268234"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.1",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",

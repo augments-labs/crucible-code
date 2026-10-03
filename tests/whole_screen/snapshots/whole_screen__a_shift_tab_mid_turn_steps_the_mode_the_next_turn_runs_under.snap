@@ -8,7 +8,7 @@ expression: on_the_first_beat(&window.picture())
 |│ Tips                                                                        ││|
 |│                                                                             ││|
 |│ · /          opens the command list                                         ││|
-|│ · \ enter    adds a line without sending                                    │┃|
+|│ · \ enter    adds a line without sending                                    ││|
 |│ · shift+tab  steps the permission mode                                      │┃|
 |│ · ctrl+c     clears the line typed so far                                   │┃|
 |╰─────────────────────────────────────────────────────────────────────────────╯┃|
@@ -19,9 +19,9 @@ expression: on_the_first_beat(&window.picture())
 |  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                              ┃|
 |                                                                               ┃|
 |It is started. That is all.                                                    ┃|
-|                                                                                |
-|✳ writing (0s · ↓ 4 · esc to interrupt)                                         |
-|                                                                                |
+|                                                                               ┃|
+|✳ writing (0s · ↓ 4 · esc to interrupt)                                        ┃|
+|                                                                               ┃|
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|

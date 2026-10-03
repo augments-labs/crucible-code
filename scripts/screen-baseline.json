@@ -163,19 +163,19 @@
       "opened": [
         "Watched::allowing(\"mode-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "8630cd15232e9b291da8cc7c8e22229d42d7ed4694611b18912931f0a40d9749"
+      "sha256": "fd669e58d9b6ca88bdc3e523299ec8d57b7f7e945b1b3751e5d408096406fe7c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
       "case": "a_single_waiting_prompt_is_told_the_key_that_opens_the_queue",
       "opened": [],
-      "sha256": "e2e94472950e29daecfa31d3206d1e795081f75670baea10b400feb247165538"
+      "sha256": "5de7deef9616b5250c31d5a68b62d51b7f9b46fc9e1a1e4d6238a08f34bb3733"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window.snap",
       "case": "a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window",
       "opened": [],
-      "sha256": "bc3069fce5f2ed2c61e22d043429ff821446f71df1cce1728afa034c633bf25d"
+      "sha256": "a7fe2d4c45969e0e5337173451d6c519bf8642722212b23196aadcee47e6cd8d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_opens_the_command_list_above_the_box.snap",
@@ -191,7 +191,7 @@
       "opened": [
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "03f801a89dffb51062d7b5de190c8c8acc38e286cc2936f9df6fc1ca247d4043"
+      "sha256": "8c6ebf96549b781e5a4ed373cbfe28b88e42d3e2376aae5d3ff3c7aab0d25e73"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
@@ -707,7 +707,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "d71b3420a7f2d20f76bae85774bfb578ac1d6d96313bc48ea5f3e1d0e1fb8bd6"
+      "sha256": "6e630baba93d79973ec0ea42053bf0f8db0a674f4af66c5c2ec0e4128035c906"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_80.snap",
@@ -716,7 +716,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "b78d4b7b05b922bb8e31cfd7cef9e406dd91fdd8bfe39dff8aa64bbe664a80e9"
+      "sha256": "c530563abeec4e706d02f1503253bb9b04cc4a0224567aedfc87796b25440ee6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_40.snap",
