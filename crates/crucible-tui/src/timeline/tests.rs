@@ -279,7 +279,7 @@ fn a_mark_the_rail_and_a_bold_lead_each_wear_their_slot() {
     assert!(
         spans(lead)
             .iter()
-            .any(|(slot, text)| *slot == Slot::Strong && text.contains("A first command.")),
+            .any(|(slot, text)| *slot == Slot::Bold && text.contains("A first command.")),
         "{:?}",
         spans(lead)
     );

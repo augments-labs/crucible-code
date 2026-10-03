@@ -858,8 +858,9 @@ fn the_whole_picker_after_a_query_that_matched_nothing() {
 
 #[test]
 fn the_resume_picker_follows_the_colour_rule() {
-    // A session's tail as the transcript draws it: a call's mark takes the
-    // accent, so a list row beside it must not take a second one unless it is
+    // The worst case for the list beside it rather than what a transcript
+    // draws: a preview with an accent span on every row of it, so a list row
+    // that took one of its own would be a second on that line unless it is
     // the selected session's.
     let preview: Vec<Row> = [
         "Bash(scripts/smoke.sh v0.23.0 2>&1 | tail -12)",

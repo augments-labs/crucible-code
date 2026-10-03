@@ -797,7 +797,7 @@ fn a_run_with_colour_in_it_reads_the_markers_out_of_the_answer() {
     let written = drawn.render.terminal.written();
     let read = format!(
         "a {}loud{} word",
-        colourful().open(Slot::Strong),
+        colourful().open(Slot::Bold),
         colourful().close()
     );
 
@@ -848,7 +848,7 @@ fn a_theme_chosen_mid_session_repaints_what_is_already_on_screen() {
 
     let frame = drawn.render.terminal.written();
     assert!(
-        !frame.contains(colourful().open(Slot::Strong).as_str()),
+        !frame.contains(colourful().open(Slot::Bold).as_str()),
         "{frame:?}"
     );
     let screen = Picture::of(frame, 80, 24);
@@ -870,7 +870,7 @@ fn a_fence_the_model_never_closed_does_not_reach_the_next_message() {
     let written = drawn.render.terminal.written();
     assert!(written.contains("after "), "{written:?}");
     assert!(
-        written.contains(colourful().open(Slot::Strong).as_str()),
+        written.contains(colourful().open(Slot::Bold).as_str()),
         "{written:?}"
     );
 }

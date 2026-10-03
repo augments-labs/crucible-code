@@ -1360,7 +1360,9 @@ impl Markdown {
             // worse than plain ones it has not.
             Slot::Struck
         } else if self.line.heading || self.line.emphasis.raised {
-            Slot::Strong
+            // Weight in the reader's own foreground, not the theme's colour:
+            // a reply full of headings would otherwise read in the accent.
+            Slot::Bold
         } else if self.line.emphasis.leant {
             Slot::Emphasis
         } else {

@@ -1095,7 +1095,7 @@ fn a_turn_asked_to_stop_still_lets_the_call_it_had_out_come_back() {
 }
 
 #[test]
-fn the_dot_on_a_live_call_appears_and_disappears_in_the_theme_slot() {
+fn the_dot_on_a_live_call_appears_and_disappears_in_the_readers_own_colour() {
     let style = Style::plain();
     let now = Instant::now();
 
@@ -1118,6 +1118,10 @@ fn the_dot_on_a_live_call_appears_and_disappears_in_the_theme_slot() {
         .collect::<Vec<_>>();
 
     assert_eq!(dots, [1, 0, 1, 0]);
+    // The live row a run is counted on wears the same mark in the same slot,
+    // as the line the transcript settles it into does.
+    let counting = Turning::started(Breakdown::default()).counted("Read 2 files", 80, style);
+    assert_eq!(counting.kinds().next(), Some(Slot::Plain), "{counting:?}");
     let command_columns = frames
         .iter()
         .map(|row| {
@@ -1135,7 +1139,7 @@ fn the_dot_on_a_live_call_appears_and_disappears_in_the_theme_slot() {
     for row in &frames {
         assert!(row.text().ends_with("Read(src/main.rs)"), "{}", row.text());
         assert!(row.columns() <= 80, "{}", row.text());
-        assert_eq!(row.kinds().next(), Some(Slot::Accent), "{row:?}");
+        assert_eq!(row.kinds().next(), Some(Slot::Plain), "{row:?}");
     }
 
     for columns in 0..=20 {

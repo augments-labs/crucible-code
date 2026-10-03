@@ -872,6 +872,23 @@ fn the_mark_on_a_committed_line_is_on_the_band_rather_than_beside_it() {
 }
 
 #[test]
+fn a_sent_prompt_and_the_files_under_it_carry_no_theme_colour() {
+    // The band is a ground and the reader's own foreground on it, the mark
+    // and the corner before a file included: nothing on the record of what
+    // was asked is in the theme's colour.
+    let palette = over((13, 13, 16));
+    let mut rows = Prompt::committed("fix it", 40, Glyphs::Unicode, true);
+    rows.extend(Prompt::attached(&[PICTURE], 40, Glyphs::Unicode, true));
+
+    for row in &rows {
+        let painted = row.paint(&palette);
+
+        assert!(painted.contains("48;2;"), "no band: {painted:?}");
+        assert!(!painted.contains("38;"), "an ink on the band: {painted:?}");
+    }
+}
+
+#[test]
 fn a_committed_line_still_takes_a_ground_where_the_terminal_said_nothing() {
     // Most terminals say nothing -- the question is not widely implemented --
     // so this is the ordinary case rather than the degraded one, and a band
