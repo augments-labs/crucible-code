@@ -19,6 +19,9 @@ change in any release with no deprecation period.
   one for PowerShell (`Set-Location -LiteralPath`, which reads `[` and `]`
   literally) and the resume, each on its own row under its label, since `&&` is
   a parse error in the PowerShell Windows ships.
+- **The Windows installer refuses a version followed by a newline.** Its
+  version check let one through and failed later on the archive instead of
+  saying the version is invalid.
 - **The rollback drill always tests the tree it runs in.** It used to reuse
   any binary left in `target/debug`, so an older build could pass in the
   tree's place; it now builds the candidate each run and refuses one whose
