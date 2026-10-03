@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.sh` accepts only an ASCII version.** Under a UTF-8 locale its
+  version check took non-ASCII digits and letters, such as `é` or an
+  Arabic-Indic digit; it now refuses them in every locale.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and
