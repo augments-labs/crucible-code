@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows installer refuses a version followed by a newline.** Its
+  version check let one through and failed later on the archive instead of
+  saying the version is invalid.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and
