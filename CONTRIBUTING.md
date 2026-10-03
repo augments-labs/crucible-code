@@ -16,6 +16,15 @@ cargo build
 cargo run -- --help
 ```
 
+On Linux, clone and build under `umask 022`. Many distributions default to
+`umask 002`, which leaves the checkout and `target/` group-writable, and the
+sandbox refuses a broker image that a group member could rewrite, checking every
+directory above it. The sandbox tests then fail for a directory mode rather than
+for your change, with an error that names the broker path and says "a directory
+above it is writable by a group or by everyone"; `namei -l <path>` shows which
+one. To repair a checkout already made, run `chmod -R go-w .` from its root, or
+fix the directory `namei` names if it lies above the checkout.
+
 [Building](docs/building/index.md) lists platform packages and cross-compilation
 options.
 
@@ -118,13 +127,8 @@ repository does keep, such as the configuration schema, is committed where it
 is read instead, and `scripts/sh/repo-checks.sh` fails on anything tracked
 under `generated/`.
 
-Run the checks from a checkout whose directories are not group-writable, which
-is what `umask 022` produces. Linux sandboxing refuses a broker image that a
-group member could rewrite, and it walks the whole path to it, so a tree
-created under `umask 002` fails the sandbox tests for its mode rather than for
-anything in the change under test. The error names the broker path and says a
-directory above it is writable by a group or by everyone; `namei -l <path>`
-shows which one.
+Run the checks from a checkout made under `umask 022`, as
+[Set up](#set-up) describes; on Linux the sandbox tests fail otherwise.
 
 On Linux, a test build keeps the sandbox's state in a directory of its own
 checkout, `/var/tmp/crucible-code-sandbox-{uid}-v1-{token}`, where the token is
