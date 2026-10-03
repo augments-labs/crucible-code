@@ -42,7 +42,9 @@ everything it drew is already in your own scrollback.
 The same is true with [`output.screen`](../configuration/configuration.md) set
 to `native`, which borrows no screen: each finished line is written once into
 your terminal's scrollback as the session goes, and only the part still
-changing at the foot is drawn again.
+changing at the foot is drawn again. `/clear` and `/resume` cannot take back
+what the terminal already holds, so the earlier transcript stays in its
+scrollback above the new one.
 
 ## Moving through the transcript
 
