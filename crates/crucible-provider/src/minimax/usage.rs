@@ -5,13 +5,17 @@
 //! group for each model or family of models (`model_remains`), each with a
 //! 5-hour window (`current_interval_*`) and a weekly one (`current_weekly_*`)
 //! counted in requests, each ending at an instant in milliseconds since the
-//! epoch. A status of 3 is a window with no limit, a total of 0 is no window,
-//! and a model with neither window is none the plan includes.
+//! epoch. A status of 3 is a window with no limit and one of 2 a window with
+//! nothing left, a total of 0 is no window, and a model with neither window is
+//! none the plan includes.
 //!
 //! The vendor's counts are ambiguous: older answers give what is left under
 //! `*_usage_count`, and newer ones may give what is used. As that client does,
 //! a share left (`*_remaining_percent`) is read for what is used where it is
-//! given, and the count is otherwise read as what is left.
+//! given, and the count is otherwise read as what is left. A count of 0 is
+//! then a fresh window as much as a spent one, and a spent one holds back
+//! every turn on its models until it resets, so it is read as spent only where
+//! the status says so, and otherwise the window is not read at all.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -28,6 +32,9 @@ const CN: &str = "https://api.minimax.cn/v1/token_plan/remains";
 
 /// The status a window with no limit carries.
 const UNLIMITED: u64 = 3;
+
+/// The status a window with nothing left carries.
+const EXHAUSTED: u64 = 2;
 
 /// The status an answer carries for a key the vendor does not accept, which it
 /// answers with a 200 rather than a 401: see `fixtures/SOURCES.md`.
@@ -129,7 +136,8 @@ fn not_in_plan(entry: &Map<String, Value>, prefix: &str) -> bool {
 
 /// The window an entry reports under `prefix`, ending at the instant under
 /// `ends`, read with no reset where that is past [`FURTHEST_RESET`] after
-/// `arrived`; `None` for a total of 0 or a figure that is not read.
+/// `arrived`; `None` for a total of 0, a figure that is not read, or a count
+/// of 0 with no share left and no status that says the window is spent.
 fn window(
     entry: &Map<String, Value>,
     prefix: &str,
@@ -142,7 +150,13 @@ fn window(
     let total = figure(entry, prefix, "total_count")?.as_u64()?;
     let used = match figure(entry, prefix, "remaining_percent") {
         Some(left) => used_of(total, left.as_f64()?)?,
-        None => total.saturating_sub(figure(entry, prefix, "usage_count")?.as_u64()?),
+        None => match figure(entry, prefix, "usage_count")?.as_u64()? {
+            0 if figure(entry, prefix, "status").and_then(Value::as_u64) == Some(EXHAUSTED) => {
+                total
+            }
+            0 => return None,
+            left => total.saturating_sub(left),
+        },
     };
     let resets_at = entry
         .get(ends)

@@ -10,9 +10,24 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **`install.sh` accepts only an ASCII version.** Under a UTF-8 locale its
-  version check took non-ASCII digits and letters, such as `é` or an
-  Arabic-Indic digit; it now refuses them in every locale.
+- **A fresh MiniMax Token Plan window no longer stops every turn until it
+  resets.** A count of 0 with no share left or status to say otherwise could
+  mean nothing used as much as nothing left, and was read as nothing left;
+  such a window is now left unread, and only one the plan marks spent holds
+  turns back.
+- **A checkout whose `.git` file is a symbolic link records its branch and
+  lists its worktrees again.** The link is followed as git follows it, and the
+  file it leads to is still read only when it is a small ordinary file.
+- **The Windows installer matches names by their exact characters.** A
+  checksum line, archive member or PATH entry whose name differs only by a
+  character such as a soft hyphen is no longer taken for the one it wants.
+- **The Windows installer refuses a version followed by a newline.** Its
+  version check let one through and failed later on the archive instead of
+  saying the version is invalid.
+- **The rollback drill always tests the tree it runs in.** It used to reuse
+  any binary left in `target/debug`, so an older build could pass in the
+  tree's place; it now builds the candidate each run and refuses one whose
+  version is not the workspace version.
 
 ## [0.45.0] - 2026-10-03
 
