@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crucible_types::{GroupName, ModelGroup, ModelKey, PlanWindows, Scope, Window, WindowReading};
 use serde_json::{Map, Value};
 
-use crate::responses::Usage;
+use crate::responses::{Said, Usage};
 
 /// Where a minimax.io key's plan is asked.
 const IO: &str = "https://api.minimax.io/v1/token_plan/remains";
@@ -28,6 +28,16 @@ const CN: &str = "https://api.minimax.cn/v1/token_plan/remains";
 
 /// The status a window with no limit carries.
 const UNLIMITED: u64 = 3;
+
+/// The status an answer carries for a key the vendor does not accept, which it
+/// answers with a 200 rather than a 401.
+const KEY_REFUSED: i64 = 1004;
+
+/// The furthest after an answer arrived that a window's reset is read: a year,
+/// far past the longest window a plan reports, a week. An instant beyond it is
+/// no reset any window has, and is read as none, which holds back no turn,
+/// rather than as one that would hold turns back for as long as it says.
+const FURTHEST_RESET: Duration = Duration::from_hours(365 * 24);
 
 /// Where the plan of a key served at `endpoint` is asked: on the site that
 /// served it, and nowhere for an address that is not one of the vendor's.
@@ -42,15 +52,24 @@ pub(super) fn source(endpoint: &crate::endpoint::Endpoint) -> Option<Usage> {
     Some(Usage { url, read })
 }
 
-/// The windows an answer that arrived at `arrived` says; `None` for one that
-/// is not the shape the vendor answers in, or whose status is not 0: a
-/// refusal, which says nothing of the plan.
-fn read(body: &Value, arrived: SystemTime) -> Option<PlanWindows> {
-    let body = body.as_object()?;
-    let status = body.get("base_resp")?.get("status_code")?.as_i64()?;
-    if status != 0 {
-        return None;
+/// What an answer that arrived at `arrived` says: the key refused for
+/// [`KEY_REFUSED`], and nothing read for one that is not the shape the vendor
+/// answers in or whose status is any other but 0, a refusal that says nothing
+/// of the plan.
+fn read(body: &Value, arrived: SystemTime) -> Said {
+    let status = body
+        .get("base_resp")
+        .and_then(|status| status.get("status_code"))
+        .and_then(Value::as_i64);
+    match status {
+        Some(0) => windows(body, arrived).into(),
+        Some(KEY_REFUSED) => Said::Refused,
+        _ => Said::Unread,
     }
+}
+
+/// The windows an answer whose status is 0 says.
+fn windows(body: &Value, arrived: SystemTime) -> Option<PlanWindows> {
     let mut windows = PlanWindows::new(arrived);
     for entry in body.get("model_remains")?.as_array()? {
         let Some(entry) = entry.as_object() else {
@@ -70,7 +89,7 @@ fn read(body: &Value, arrived: SystemTime) -> Option<PlanWindows> {
             continue;
         }
         for (length, prefix, ends) in WINDOWS {
-            if let Some(reading) = window(entry, prefix, ends) {
+            if let Some(reading) = window(entry, prefix, ends, arrived) {
                 windows = windows.within(scope.clone(), length, reading);
             }
         }
@@ -109,8 +128,14 @@ fn not_in_plan(entry: &Map<String, Value>, prefix: &str) -> bool {
 }
 
 /// The window an entry reports under `prefix`, ending at the instant under
-/// `ends`; `None` for a total of 0 or a figure that is not read.
-fn window(entry: &Map<String, Value>, prefix: &str, ends: &str) -> Option<WindowReading> {
+/// `ends`, read with no reset where that is past [`FURTHEST_RESET`] after
+/// `arrived`; `None` for a total of 0 or a figure that is not read.
+fn window(
+    entry: &Map<String, Value>,
+    prefix: &str,
+    ends: &str,
+    arrived: SystemTime,
+) -> Option<WindowReading> {
     if figure(entry, prefix, "status").and_then(Value::as_u64) == Some(UNLIMITED) {
         return Some(WindowReading::unlimited());
     }
@@ -122,7 +147,12 @@ fn window(entry: &Map<String, Value>, prefix: &str, ends: &str) -> Option<Window
     let resets_at = entry
         .get(ends)
         .and_then(Value::as_u64)
-        .and_then(|millis| UNIX_EPOCH.checked_add(Duration::from_millis(millis)));
+        .and_then(|millis| UNIX_EPOCH.checked_add(Duration::from_millis(millis)))
+        .filter(|at| {
+            arrived
+                .checked_add(FURTHEST_RESET)
+                .is_some_and(|furthest| *at <= furthest)
+        });
     WindowReading::counted(used, total, resets_at)
 }
 

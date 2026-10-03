@@ -138,15 +138,18 @@ async fn minimax_usage_is_asked_of_the_keys_own_site_with_the_key_and_nothing_el
         assert_eq!(sent.method, Method::Get);
         assert_eq!(sent.url, address);
         assert!(sent.body.is_empty());
+        // The key, what is asked for and who asks: any other header fails here.
+        let mut names = sent
+            .headers
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, ["accept", "authorization", "user-agent"]);
         assert!(
             sent.headers
                 .iter()
-                .any(|(name, value)| name == "authorization" && value == &format!("Bearer {KEY}")),
-            "{:?}",
-            sent.headers
-                .iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>()
+                .any(|(name, value)| name == "authorization" && value == &format!("Bearer {KEY}"))
         );
         assert_eq!(replay.sent_count(), Some(1));
     }
@@ -265,14 +268,18 @@ async fn minimax_usage_a_remaining_percent_says_what_is_used_and_its_absence_lea
     );
 }
 
+/// An answer that came with a 200 and carries `code` under `base_resp`.
+fn refused_with(code: i64, said: &str) -> String {
+    json!({
+        "base_resp": {"status_code": code, "status_msg": said},
+        "model_remains": remains().get("model_remains").cloned(),
+    })
+    .to_string()
+}
+
 #[tokio::test]
 async fn minimax_usage_a_nonzero_base_resp_is_a_refusal_and_no_reading() {
-    let refused = json!({
-        "base_resp": {"status_code": 1004, "status_msg": "login fail"},
-        "model_remains": remains().get("model_remains").cloned(),
-    });
-
-    let (asked, _) = asked_on_plan(MiniMax::IO, 200, &refused.to_string()).await;
+    let (asked, _) = asked_on_plan(MiniMax::IO, 200, &refused_with(1002, "rate limit")).await;
 
     assert!(
         matches!(
@@ -284,6 +291,15 @@ async fn minimax_usage_a_nonzero_base_resp_is_a_refusal_and_no_reading() {
         ),
         "{asked:?}"
     );
+}
+
+#[tokio::test]
+async fn minimax_usage_a_key_refused_inside_a_200_closes_the_source() {
+    // The vendor refuses a key it does not accept with a 200 and its own code,
+    // where another vendor answers 401: it is not asked again that session.
+    let (asked, _) = asked_on_plan(MiniMax::IO, 200, &refused_with(1004, "login fail")).await;
+
+    assert!(matches!(asked, Some(Asked::Closed)), "{asked:?}");
 }
 
 #[tokio::test]
@@ -303,4 +319,40 @@ async fn minimax_usage_a_family_group_holds_its_models_and_an_exact_one_its_own(
     assert_eq!(holding("MiniMax-M3"), ["MiniMax-M*"]);
     assert_eq!(holding("speech-2.8-hd"), Vec::<String>::new());
     assert_eq!(holding("speech-hd"), ["speech-hd"]);
+}
+
+#[tokio::test]
+async fn minimax_usage_a_reset_past_any_window_is_no_reset_and_stops_no_turn() {
+    let now = SystemTime::now();
+    let millis = |at: SystemTime| {
+        u64::try_from(
+            at.duration_since(UNIX_EPOCH)
+                .expect("after the epoch")
+                .as_millis(),
+        )
+        .expect("within u64")
+    };
+    // The family's 5-hour window spent, ending where each case says.
+    let spent_until = |ends: u64| {
+        first_with(&[
+            ("current_interval_total_count", json!(10)),
+            ("current_interval_usage_count", json!(0)),
+            ("end_time", json!(ends)),
+        ])
+    };
+
+    let soon = read(&spent_until(millis(now + Duration::from_hours(1)))).await;
+    let never = read(&spent_until(u64::MAX)).await;
+
+    let five_hour = |windows: &PlanWindows| {
+        windows
+            .groups()
+            .next()
+            .and_then(|group| group.reading(Window::FiveHour))
+            .map(WindowReading::resets_at)
+    };
+    assert!(matches!(five_hour(&soon), Some(Some(_))));
+    assert!(soon.exhausted("MiniMax-M2.7", now).is_some());
+    assert_eq!(five_hour(&never), Some(None));
+    assert_eq!(never.exhausted("MiniMax-M2.7", now), None);
 }

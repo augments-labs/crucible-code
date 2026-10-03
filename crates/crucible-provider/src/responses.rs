@@ -69,9 +69,30 @@ pub(crate) type Hint = fn(&mut Object<'_>);
 pub struct Usage {
     /// The address asked, on the vendor's own host.
     pub(crate) url: &'static str,
-    /// The windows an answer says, read from one that arrived at the instant
-    /// given; `None` where it is not the shape the vendor answers in.
-    pub(crate) read: fn(&Value, SystemTime) -> Option<PlanWindows>,
+    /// What an answer that came with a 200 says, read from one that arrived
+    /// at the instant given.
+    pub(crate) read: fn(&Value, SystemTime) -> Said,
+}
+
+/// What a plan's answer that came with a 200 says, as its vendor's reader
+/// reads it.
+#[derive(Debug)]
+pub(crate) enum Said {
+    /// How much of the plan's limits is used.
+    Windows(PlanWindows),
+    /// That the credential is refused, which a vendor that answers a 200 for
+    /// it says in its own words: asking again would meet the same.
+    Refused,
+    /// Nothing in the shape the vendor answers in.
+    Unread,
+}
+
+impl From<Option<PlanWindows>> for Said {
+    /// The windows read, or nothing read: for a vendor that refuses a
+    /// credential with a status rather than in an answer.
+    fn from(windows: Option<PlanWindows>) -> Self {
+        windows.map_or(Self::Unread, Self::Windows)
+    }
 }
 
 /// What a price is asked for: one model, at one revision, for a prompt of
