@@ -18,6 +18,9 @@ change in any release with no deprecation period.
 - **A checkout whose `.git` file is a symbolic link records its branch and
   lists its worktrees again.** The link is followed as git follows it, and the
   file it leads to is still read only when it is a small ordinary file.
+- **`/usage` no longer hangs when `TZ` names a pipe or a device.** A `TZ`
+  naming anything but a regular file of a zone file's size is not read, and
+  reset times are shown in UTC, labelled as such.
 - **The Windows installer matches names by their exact characters.** A
   checksum line, archive member or PATH entry whose name differs only by a
   character such as a soft hyphen is no longer taken for the one it wants.
