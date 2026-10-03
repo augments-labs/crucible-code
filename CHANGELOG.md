@@ -13,6 +13,9 @@ change in any release with no deprecation period.
 - **A checkout whose `.git` file is a symbolic link records its branch and
   lists its worktrees again.** The link is followed as git follows it, and the
   file it leads to is still read only when it is a small ordinary file.
+- **The Windows installer refuses a version followed by a newline.** Its
+  version check let one through and failed later on the archive instead of
+  saying the version is invalid.
 - **The rollback drill always tests the tree it runs in.** It used to reuse
   any binary left in `target/debug`, so an older build could pass in the
   tree's place; it now builds the candidate each run and refuses one whose
