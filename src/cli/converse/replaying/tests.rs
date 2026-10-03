@@ -854,14 +854,18 @@ fn a_resumed_session_comes_back_in_the_colours_it_was_drawn_in() {
 
     for (slot, text) in [
         (Slot::PromptMark, style.glyphs().caret()),
-        (Slot::Accent, style.glyphs().called()),
-        (Slot::Strong, "Read"),
+        (Slot::Bold, "Read"),
         (Slot::Quiet, "(crucible.json)"),
     ] {
         let wanted = format!("{}{text}{}", palette.open(slot), palette.close());
 
         assert!(screen.contains(&wanted), "{screen:?} is missing {wanted:?}");
     }
+    // A call's mark is the reader's own foreground, as it was when drawn live.
+    let mark = style.glyphs().called();
+    assert!(screen.contains(mark), "{screen:?}");
+    let accented = format!("{}{mark}", palette.open(Slot::Accent));
+    assert!(!screen.contains(&accented), "{screen:?} has {accented:?}");
 
     // And the ground behind what was asked, which is a slot rather than a
     // word: the band down the side of a prompt is what a reader picks their

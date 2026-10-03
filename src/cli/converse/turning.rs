@@ -1152,8 +1152,9 @@ impl Turning {
     /// The line for the call whose tool is out.
     ///
     /// The dot appears and disappears on the same beat as the turn's own mark.
-    /// Visibility supplies the motion; when visible it stays in the theme's
-    /// accent instead of cycling through colours. Its empty face is a space in
+    /// Visibility supplies the motion; when visible it stays in the reader's own
+    /// foreground, as the committed line's mark does, instead of cycling through
+    /// colours. Its empty face is a space in
     /// that same one-column field, so the command does not move between frames
     /// or when the live call becomes a committed one.
     ///
@@ -1209,7 +1210,7 @@ impl Turning {
 
     fn call(&self, said: &str, columns: usize, style: Style) -> Row {
         let row = Row::new()
-            .then(Slot::Accent, self.mark(style))
+            .then(Slot::Plain, self.mark(style))
             .clipped(columns);
 
         match draw::words(said, columns, style) {
@@ -1234,7 +1235,7 @@ impl Turning {
         let glyphs = style.glyphs();
         let room = columns.saturating_sub(crucible_tui::columns(glyphs.called()) + 1);
         let row = Row::new()
-            .then(Slot::Accent, self.mark(style))
+            .then(Slot::Plain, self.mark(style))
             .clipped(columns);
 
         match draw::clipped(counting, room, glyphs) {

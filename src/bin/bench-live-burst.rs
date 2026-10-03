@@ -197,8 +197,8 @@ fn footing(lines: &[String], from: usize, running: Duration) -> Vec<Row> {
     let mut rows = vec![
         Row::new(),
         Row::new()
-            .then(Slot::Accent, glyphs.called())
-            .then(Slot::Strong, " Bash")
+            .then(Slot::Plain, glyphs.called())
+            .then(Slot::Bold, " Bash")
             .then(Slot::Quiet, "(cargo build --release)"),
     ];
 
