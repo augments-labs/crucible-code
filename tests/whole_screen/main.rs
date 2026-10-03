@@ -2887,6 +2887,17 @@ fn releases_newest_first() -> Vec<&'static str> {
         .collect()
 }
 
+/// How many lines `version`'s section takes in the changelog.
+fn release_lines(version: &str) -> usize {
+    let heading = format!("## [{version}]");
+    include_str!("../../CHANGELOG.md")
+        .lines()
+        .skip_while(|line| !line.starts_with(&heading))
+        .skip(1)
+        .take_while(|line| !line.starts_with("## ["))
+        .count()
+}
+
 /// The rows of `picture` without the edges they are drawn between or the
 /// spaces that pad them.
 fn trimmed(picture: &str) -> Vec<String> {
@@ -3078,7 +3089,15 @@ fn release_notes_list_reveals_every_release_in_place_on_the_row_that_was_ninth()
 fn release_notes_list_down_then_enter_puts_the_second_version_alone_in_the_transcript() {
     let every = releases_newest_first();
     let second = every.get(1).copied().expect("two releases");
-    let mut window = Watched::open("release-notes-list-second", 80, 120);
+    // Tall enough for the whole release, so its heading and the command above
+    // it are still on screen however long the newest-but-one notes run: no
+    // changelog line wraps to more than two rows at this width.
+    let rows = 2 * release_lines(second) + 40;
+    let mut window = Watched::open(
+        "release-notes-list-second",
+        80,
+        u16::try_from(rows).expect("a release fits a terminal"),
+    );
     window.types_until("/release-notes\r", "enter opens it");
     window.types_until("\x1b[B\r", &format!("\u{25c6} {second}"));
     let picture = window.picture();
