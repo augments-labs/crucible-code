@@ -34,7 +34,6 @@ mod kind;
 mod table;
 
 use crate::syntax::Syntax;
-pub use kind::path;
 use table::Table;
 
 /// The longest run of one marker character read as a marker.

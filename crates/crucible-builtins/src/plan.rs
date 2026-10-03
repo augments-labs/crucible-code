@@ -744,6 +744,7 @@ mod tests {
 
         assert_eq!(one.as_str(), "1 task");
         assert_eq!(several.as_str(), "2 tasks");
+        assert_eq!(several.argument(), crucible_tools::Argument::Other);
     }
 
     #[test]

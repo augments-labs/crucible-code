@@ -1655,6 +1655,36 @@ fn a_heading_a_quote_a_bullet_and_a_number_each_say_what_they_are() {
 }
 
 #[test]
+fn a_hash_is_a_hash_in_capitals_too() {
+    let said = finished("landed as 3436980F, then 9FCEB02D0AE598E95DC970B74767F19372D61AF8.");
+
+    assert_eq!(kind_of(&said, "3436980F"), Some(Slot::Revision), "{said:?}");
+    assert_eq!(
+        kind_of(&said, "9FCEB02D0AE598E95DC970B74767F19372D61AF8"),
+        Some(Slot::Revision),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn hex_digits_that_spell_a_word_or_a_number_are_not_a_hash() {
+    // Seven to forty hex digits would take in all of these. A word made of the
+    // letters a to f is still a word, in either case, and a run of digits is
+    // a figure, so a hash needs a digit and a letter, in one case.
+    let said = finished("the defaced and effaced DEFACED wall had 1234567 bricks, aBc1234 too");
+
+    for word in ["defaced", "effaced", "DEFACED", "aBc1234"] {
+        let holding: Vec<Slot> = said
+            .iter()
+            .filter(|(_, text)| text.contains(word))
+            .map(|(slot, _)| *slot)
+            .collect();
+        assert_eq!(holding, [Slot::Plain], "{word}: {said:?}");
+    }
+    assert_eq!(kind_of(&said, "1234567"), Some(Slot::Figure), "{said:?}");
+}
+
+#[test]
 fn a_word_that_only_looks_like_a_kind_is_prose() {
     // Too short to be a hash, letters only, and a number inside a word.
     let said = finished("abc123 x86_64 deadbeef 2026-10-03 v2");

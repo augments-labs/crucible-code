@@ -400,7 +400,12 @@ fn a_live_result_the_store_let_go_of_opens_once_the_last_has_arrived() {
             stop: Some(StopReason::WantsTools),
         });
         kept.calling(id.clone(), "bash".to_owned());
-        draw::returned(&mut renderer, "bash", Style::plain()).expect("a recording cannot fail");
+        draw::returned(
+            &mut renderer,
+            &draw::Called::new("bash", crucible_tools::Argument::Other),
+            Style::plain(),
+        )
+        .expect("a recording cannot fail");
         let output = ToolOutput::ok(printed(number, LINES));
         draw::came_back(
             &mut renderer,
@@ -530,7 +535,12 @@ fn drawn(
     number: usize,
     lines: usize,
 ) -> usize {
-    draw::returned(renderer, "bash", Style::plain()).expect("a recording cannot fail");
+    draw::returned(
+        renderer,
+        &draw::Called::new("bash", crucible_tools::Argument::Other),
+        Style::plain(),
+    )
+    .expect("a recording cannot fail");
     let line = renderer.lines();
     draw::came_back(
         renderer,

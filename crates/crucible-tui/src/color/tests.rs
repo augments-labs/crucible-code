@@ -1031,6 +1031,27 @@ fn ansi_has_no_fourth_colour_so_what_would_wear_one_is_the_readers_own() {
 }
 
 #[test]
+fn at_sixteen_colours_no_theme_has_a_fourth_colour() {
+    // A decision, not an accident: every other of the sixteen already means
+    // something, so at the basic rung a version, a hash and a figure stay the
+    // reader's foreground in every theme and every design, as they do in ansi
+    // at every rung.
+    for theme in THEMES {
+        for design in DESIGNS {
+            let palette = wearing(Depth::Basic, theme, None).designing(design);
+
+            for slot in [Slot::Revision, Slot::Figure] {
+                assert_eq!(
+                    palette.open(slot).as_str(),
+                    "",
+                    "{theme:?} {design:?} at sixteen colours: {slot:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn a_palette_nobody_chose_a_design_for_is_calm() {
     assert_eq!(Design::default(), Design::Calm);
     assert_eq!(Palette::plain().design(), Design::Calm);

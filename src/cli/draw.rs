@@ -10,9 +10,10 @@
 //! so they are handed to [`Renderer::present`] as rows and the palette decides
 //! their colour at the last moment: the mark in the reader's own foreground and
 //! the tool's name in it bold, the brackets and what came back in the quieter
-//! one, and what the call was about in the slot for its kind -- a path, an
-//! address, or a command -- which the reader's design gives an ink or leaves
-//! quiet. A row that
+//! one, and what the call was about in the slot for the kind the tool said it
+//! is -- a path, an address, or a command or pattern -- which the reader's
+//! design gives an ink or leaves quiet, and anything else quiet in every
+//! design. A row that
 //! arrives already laid out is clipped to the window rather than folded into
 //! it, so nothing here is counting its columns a second time.
 //!
@@ -57,7 +58,7 @@ use std::path::Path;
 
 use crucible_builtins::Ended;
 use crucible_runner::{Event, TurnError, Turned};
-use crucible_tools::{Sensitivity, Summary, ToolOutput};
+use crucible_tools::{Argument, Sensitivity, Summary, ToolOutput};
 use crucible_tui::{
     Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
@@ -200,7 +201,7 @@ pub(crate) fn event<T: Terminal>(
         // handed straight back to be written. Both commit through [`returned`],
         // which is why neither is drawn from this arm.
         Event::ToolRequested { call, summary, .. } => {
-            kept.calling(call.id.clone(), called(&call, &summary));
+            kept.calling(call.id.clone(), called(&call, &summary).text().to_owned());
             renderer.settle()
         }
 
@@ -822,24 +823,52 @@ pub(crate) fn ended<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Termi
     renderer.prompt(Slot::Plain, "\n")
 }
 
+/// A call's line, and what kind of thing the call was about.
+///
+/// The kind travels with the whole line rather than being read back out of it:
+/// the tool said it from the whole argument, so a window too narrow for the
+/// words cuts them and leaves the kind as it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Called {
+    /// The tool's name and, in brackets, what the call is about.
+    text: String,
+    /// What the bracketed words are, as the tool said.
+    argument: Argument,
+}
+
+impl Called {
+    /// A line and the kind of thing its bracketed words are.
+    pub(crate) fn new(text: impl Into<String>, argument: Argument) -> Self {
+        Self {
+            text: text.into(),
+            argument,
+        }
+    }
+
+    /// The words, whole.
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 /// What a call's line says: the tool, and what the call is about.
 ///
-/// The words in the brackets arrive on the event, worked out by the tool that
-/// owns the arguments. Reading those here to pull out a path would be a second
-/// reading of a schema the tool already owns, and the two would drift. A call
-/// nobody could read is drawn as the bare name, because empty brackets would
-/// claim it was about nothing.
+/// The words in the brackets, and what kind of thing they are, arrive on the
+/// event, worked out by the tool that owns the arguments. Reading those here to
+/// pull out a path would be a second reading of a schema the tool already
+/// owns, and the two would drift. A call nobody could read is drawn as the bare
+/// name, because empty brackets would claim it was about nothing.
 ///
 /// Whole, and without the mark: this is what the footing holds for as long as
 /// the tool is out, and the footing draws the mark itself because the mark is
 /// the part that moves.
-pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
+pub(crate) fn called(call: &ToolCall, summary: &Summary) -> Called {
     let name = pascal(&call.name);
 
     if summary.is_empty() {
-        name
+        Called::new(name, Argument::Other)
     } else {
-        format!("{name}({})", summary.as_str())
+        Called::new(format!("{name}({})", summary.as_str()), summary.argument())
     }
 }
 
@@ -852,23 +881,29 @@ pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
 /// ceiling does: a line as wide as the window with a mark still in front of it
 /// is a row the terminal wraps and the live tail never counted.
 ///
-/// The tool's name is bold and what the call is about is in the quieter
-/// colour, so a column of calls reads as the tools that ran with their arguments
-/// beside them rather than as a paragraph. They are told apart here, after the
-/// clipping and not before it, because how much of the line a narrow window
-/// leaves is decided on the whole of it — a name cut off before its bracket is a
-/// row with no arguments on it, and then there is nothing to tell apart.
+/// The tool's name is bold and what the call is about is in the slot for its
+/// kind, so a column of calls reads as the tools that ran with their arguments
+/// beside them rather than as a paragraph. The name and the argument are split
+/// apart here, after the clipping and not before it, because how much of the
+/// line a narrow window leaves is decided on the whole of it — a name cut off
+/// before its bracket is a row with no arguments on it, and then there is
+/// nothing to split. The kind is not decided here at all: it came with the line.
 ///
 /// An empty row comes back where the window has room for neither. Both callers
 /// draw the mark alone then — it still says a call was made, which is the half
 /// of this line the result hanging under it cannot say for itself.
-pub(crate) fn words(said: &str, window: usize, style: Style) -> Row {
+pub(crate) fn words(called: &Called, window: usize, style: Style) -> Row {
+    named(&fitted(called.text(), window, style), called.argument)
+}
+
+/// A call line's words cut to the columns a window this wide leaves them.
+fn fitted(said: &str, window: usize, style: Style) -> String {
     let glyphs = style.glyphs();
     let room = style
         .args(window)
         .min(window.saturating_sub(columns(glyphs.called()) + 1));
 
-    named(&heading(said, room, glyphs))
+    heading(said, room, glyphs)
 }
 
 /// Clips arguments inside their enclosing parentheses, so a shortened label
@@ -893,35 +928,31 @@ fn heading(said: &str, room: usize, glyphs: Glyphs) -> String {
 
 /// A call's words in the slots they are read in: the tool's name where the
 /// eye lands, and what it was asked to do after it, between quiet brackets,
-/// in the slot for the kind of thing it is.
+/// in the slot for the kind of thing the tool said it is.
 ///
-/// The kind is told once, here, from the words alone: an address, a path by
-/// the same rule an answer's inline code is told by, and anything else a
-/// command or a pattern. It picks a slot and nothing more, so the row's text
-/// is the call's in every design.
-///
-/// The whole of `said` and none of the layout — how much of it a row shows is
-/// the caller's: both the footing and the settled heading cut to one row;
-/// the expansion keeps the complete words.
-fn named(said: &str) -> Row {
+/// Given `said` already cut to the row, and the kind the tool decided from the
+/// whole argument, so the slot is the same however much of the words a window
+/// leaves. A kind that is none of a path, an address or a command stays quiet
+/// in every design. It picks a slot and nothing more, so the row's text is the
+/// call's in every design.
+fn named(said: &str, argument: Argument) -> Row {
     match said.split_once('(') {
         Some((name, about)) => {
-            let (argument, closed) = match about.strip_suffix(')') {
-                Some(argument) => (argument, true),
+            let (words, closed) = match about.strip_suffix(')') {
+                Some(words) => (words, true),
                 None => (about, false),
             };
-            let kind = if argument.starts_with("https://") || argument.starts_with("http://") {
-                Slot::ArgumentAddress
-            } else if crucible_tui::markdown::path(argument) {
-                Slot::ArgumentPath
-            } else {
-                Slot::ArgumentCommand
+            let kind = match argument {
+                Argument::Path => Slot::ArgumentPath,
+                Argument::Address => Slot::ArgumentAddress,
+                Argument::Command => Slot::ArgumentCommand,
+                Argument::Other => Slot::Quiet,
             };
 
             let row = Row::new()
                 .then(Slot::Bold, name)
                 .then(Slot::Quiet, "(")
-                .then(kind, argument);
+                .then(kind, words);
             if closed {
                 row.then(Slot::Quiet, ")")
             } else {
@@ -973,7 +1004,7 @@ fn hung_off(lead: Row, words: &Row, room: usize) -> Vec<Row> {
 /// is already there.
 pub(crate) fn returned<T: Terminal>(
     renderer: &mut Renderer<T>,
-    said: &str,
+    said: &Called,
     style: Style,
 ) -> Result<(), TerminalError> {
     let words = words(said, renderer.transcript_columns(), style);
@@ -1336,9 +1367,9 @@ pub(crate) fn came_back<T: Terminal>(
     output: Shown,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let details = kept.heading(call).is_some_and(|said| {
-        words(said, renderer.transcript_columns(), style).text() != flattened(said)
-    });
+    let details = kept
+        .heading(call)
+        .is_some_and(|said| fitted(said, renderer.transcript_columns(), style) != flattened(said));
     // The first line the result writes, which is where the offer goes. Read
     // before the rows go down rather than counted back after them: a change is
     // written as one line however many rows it draws, so counting its rows back

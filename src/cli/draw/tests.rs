@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crucible_models::ProviderError;
 use crucible_runner::TurnError;
-use crucible_tools::{Command, Summary, Target};
+use crucible_tools::{Argument, Command, Summary, Target};
 use crucible_tui::{Picture, Recording, Size};
 use crucible_types::{
     Attachment, Change, Diff, Line, Modality, Question, ToolArgs, ToolId, TurnId,
@@ -182,6 +182,20 @@ fn announced(name: &str, args: &str, summary: &str) -> String {
     renderer.terminal().written().to_string()
 }
 
+/// A call's line with the kind its tool would have said, standing in for the
+/// tools these tests do not build: a file tool's argument is a path, a shell
+/// or a search's a command or a pattern, a fetch's an address.
+fn line(said: &str) -> Called {
+    let name = said.split_once('(').map_or(said, |(name, _)| name);
+    let argument = match name {
+        "Read" | "Write" | "Edit" | "Update" => Argument::Path,
+        "Bash" | "Grep" | "Glob" => Argument::Command,
+        "WebFetch" => Argument::Address,
+        _ => Argument::Other,
+    };
+    Called::new(said, argument)
+}
+
 /// What the terminal ends up with once the call whose line reads `said` has
 /// answered and its line has stopped being live.
 fn committed(said: &str, window: usize, style: Style) -> String {
@@ -191,7 +205,7 @@ fn committed(said: &str, window: usize, style: Style) -> String {
     // frame is drawn, so one nobody told would draw every row plain.
     renderer.wears(style.palette());
 
-    returned(&mut renderer, said, style).expect("the call to commit");
+    returned(&mut renderer, &line(said), style).expect("the call to commit");
 
     renderer.terminal().written().to_string()
 }
@@ -203,7 +217,7 @@ fn pictured(said: &str, window: usize, style: Style) -> Vec<String> {
     let mut renderer = Renderer::new(Recording::new(window, 24));
     renderer.wears(style.palette());
 
-    returned(&mut renderer, said, style).expect("the call to commit");
+    returned(&mut renderer, &line(said), style).expect("the call to commit");
 
     renderer.terminal().picture().said()
 }
@@ -214,7 +228,8 @@ fn a_requested_call_reads_as_the_tool_and_what_the_call_is_about() {
         called(
             &call("read", r#"{"path":"src/main.rs"}"#),
             &Summary::new("src/main.rs")
-        ),
+        )
+        .text(),
         "Read(src/main.rs)"
     );
 }
@@ -329,7 +344,9 @@ fn a_call_nobody_could_read_is_drawn_as_the_bare_name() {
     // Empty brackets would say the call was about nothing, when what happened
     // is that its arguments could not be read at all. The tool refuses it a
     // moment later and says so properly.
-    let said = called(&call("bash", "not json"), &Summary::new(""));
+    let said = called(&call("bash", "not json"), &Summary::new(""))
+        .text()
+        .to_owned();
 
     assert_eq!(said, "Bash");
     assert!(!said.contains("()"), "{said}");
@@ -345,10 +362,10 @@ fn a_tool_the_model_names_with_underscores_is_written_as_one_word() {
 fn a_long_summary_is_cut_on_the_footing_which_is_redrawn_every_frame() {
     let long = "x".repeat(200);
 
-    let line = words(&long, WIDE, Style::plain()).text();
+    let said = words(&line(&long), WIDE, Style::plain()).text();
 
-    assert!(line.ends_with('…'), "{line}");
-    assert!(line.chars().count() <= args(), "{line}");
+    assert!(said.ends_with('…'), "{said}");
+    assert!(said.chars().count() <= args(), "{said}");
 }
 
 #[test]
@@ -367,7 +384,7 @@ fn compact_headings_keep_their_parentheses_in_both_glyph_sets() {
         for name in ["Bash", "WebFetch", "WebSearch", "Read"] {
             let long = format!("{name}({})", "界argument ".repeat(100));
             for width in 1..100 {
-                let row = words(&long, width, Style::drawn(glyphs));
+                let row = words(&line(&long), width, Style::drawn(glyphs));
                 let text = row.text();
                 assert!(row.columns() <= width, "{width}: {text}");
                 if text.contains('(') {
@@ -413,7 +430,7 @@ fn a_long_command_with_no_output_keeps_its_full_heading_for_expansion() {
     let call = call("bash", "{}");
     let heading = format!("Bash(python3 -c '{}')", "pass; ".repeat(200));
     kept.calling(call.id.clone(), heading.clone());
-    returned(&mut renderer, &heading, Style::plain()).unwrap();
+    returned(&mut renderer, &line(&heading), Style::plain()).unwrap();
     returning(&mut renderer, &mut kept, "");
     let picture = renderer.terminal().picture().said().join("\n");
     assert!(picture.contains("ctrl+o to expand"), "{picture}");
@@ -1077,7 +1094,7 @@ fn transcript(turn: Vec<Beat>) -> String {
     for beat in turn {
         match beat {
             Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
-            Beat::Answered(said) => returned(&mut renderer, said, style),
+            Beat::Answered(said) => returned(&mut renderer, &line(said), style),
         }
         .expect("the turn to draw");
     }
@@ -2112,7 +2129,7 @@ fn ruled_turn(style: Style) -> Vec<Row> {
     for beat in turn {
         match beat {
             Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
-            Beat::Answered(said) => returned(&mut renderer, said, style),
+            Beat::Answered(said) => returned(&mut renderer, &line(said), style),
         }
         .expect("the turn to draw");
     }
@@ -2292,7 +2309,7 @@ fn weighted_turn(style: Style) -> Vec<Row> {
     for beat in turn {
         match beat {
             Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
-            Beat::Answered(said) => returned(&mut renderer, said, style),
+            Beat::Answered(said) => returned(&mut renderer, &line(said), style),
         }
         .expect("the turn to draw");
     }
@@ -2370,44 +2387,89 @@ fn the_transcript_with_colour_off_shows_every_word_and_mark_colour_does() {
     crate::cli::colour_rule::holds("transcript, colour off", &plain, |_| false);
 }
 
-/// The slots a call row's words were built in, with their text.
-fn argued(said: &str) -> Vec<(Slot, String)> {
-    words(said, WIDE, Style::plain())
+/// The slots a call row's words were built in, with their text, at `window`.
+fn argued(said: &Called, window: usize) -> Vec<(Slot, String)> {
+    words(said, window, Style::plain())
         .spans()
         .map(|(slot, text)| (slot, text.to_owned()))
         .collect()
 }
 
+/// The line a call is drawn on, through the tool's own summary of it.
+fn summarised(name: &str, argument: Argument, about: &str) -> Called {
+    called(&call(name, "{}"), &Summary::of(argument, about))
+}
+
 #[test]
-fn a_call_rows_argument_takes_the_slot_for_its_kind() {
-    // Decided once, here, from what the argument is, and only picking a slot:
-    // the brackets stay quiet and the words are the ones the call was made with.
-    for (said, kind, argument) in [
-        ("Read(src/main.rs)", Slot::ArgumentPath, "src/main.rs"),
+fn a_call_rows_argument_takes_the_slot_for_the_kind_its_tool_said() {
+    // The tool that parsed the argument says what it is, and the row only
+    // picks the slot for it: a command with a slash in it is still a command,
+    // a file with no extension is still a path, and the brackets stay quiet.
+    for (said, slot, name, argument) in [
         (
-            "WebFetch(https://example.test/pull/1)",
+            summarised("read", Argument::Path, "Makefile"),
+            Slot::ArgumentPath,
+            "Read",
+            "Makefile",
+        ),
+        (
+            summarised("bash", Argument::Command, "scripts/sh/check.sh"),
+            Slot::ArgumentCommand,
+            "Bash",
+            "scripts/sh/check.sh",
+        ),
+        (
+            summarised("grep", Argument::Command, "src/cli"),
+            Slot::ArgumentCommand,
+            "Grep",
+            "src/cli",
+        ),
+        (
+            summarised(
+                "web_fetch",
+                Argument::Address,
+                "https://example.test/pull/1",
+            ),
             Slot::ArgumentAddress,
+            "WebFetch",
             "https://example.test/pull/1",
         ),
         (
-            "Bash(cargo test -p crucible-tui)",
-            Slot::ArgumentCommand,
-            "cargo test -p crucible-tui",
+            summarised("ask_user", Argument::Other, "Which language?"),
+            Slot::Quiet,
+            "AskUser",
+            "Which language?",
         ),
     ] {
-        let name = said.split_once('(').map_or(said, |(name, _)| name);
-
         assert_eq!(
-            argued(said),
+            argued(&said, WIDE),
             [
                 (Slot::Bold, name.to_owned()),
                 (Slot::Quiet, "(".to_owned()),
-                (kind, argument.to_owned()),
+                (slot, argument.to_owned()),
                 (Slot::Quiet, ")".to_owned()),
             ],
-            "{said}"
+            "{}",
+            said.text()
         );
     }
+}
+
+#[test]
+fn a_narrow_window_cuts_an_arguments_words_and_keeps_its_kind() {
+    // Decided from the whole argument before the row was cut, so a resize
+    // that leaves `Cargo.t…` still draws a path.
+    let said = summarised("read", Argument::Path, "Cargo.toml");
+    let whole = argued(&said, WIDE);
+    let narrow = argued(&said, 14);
+
+    assert_eq!(
+        whole.get(2),
+        Some(&(Slot::ArgumentPath, "Cargo.toml".to_owned()))
+    );
+    let (slot, cut) = narrow.get(2).expect("the argument, cut");
+    assert_eq!(*slot, Slot::ArgumentPath, "{narrow:?}");
+    assert_ne!(cut, "Cargo.toml", "{narrow:?}");
 }
 
 #[test]
@@ -2425,17 +2487,37 @@ fn each_design_draws_a_call_rows_argument_in_its_own_ink() {
         let palette = Style::coloured().designing(design).palette();
 
         for (said, ink) in [
-            ("Read(src/main.rs)", path),
-            ("WebFetch(https://example.test/pull/1)", address),
-            ("Grep(wait_for_index)", command),
+            (summarised("read", Argument::Path, "Cargo.toml"), path),
+            (
+                summarised("web_fetch", Argument::Address, "https://example.test"),
+                address,
+            ),
+            (
+                summarised("grep", Argument::Command, "wait_for_index"),
+                command,
+            ),
+            // Words that are none of those wear what calm gives every
+            // argument, in every design: a question is not a command.
+            (
+                summarised("ask_user", Argument::Other, "Which language?"),
+                quiet,
+            ),
+            (summarised("todo_write", Argument::Other, "3 tasks"), quiet),
         ] {
-            let row = words(said, WIDE, Style::plain());
-            let worn = row
-                .spans()
-                .nth(2)
-                .map(|(slot, _)| palette.open(slot).as_str().to_owned());
+            for window in [WIDE, 16] {
+                let row = words(&said, window, Style::plain());
+                let worn = row
+                    .spans()
+                    .nth(2)
+                    .map(|(slot, _)| palette.open(slot).as_str().to_owned());
 
-            assert_eq!(worn.as_deref(), Some(ink), "{design:?}: {said}");
+                assert_eq!(
+                    worn.as_deref(),
+                    Some(ink),
+                    "{design:?} at {window}: {}",
+                    said.text()
+                );
+            }
         }
     }
 }

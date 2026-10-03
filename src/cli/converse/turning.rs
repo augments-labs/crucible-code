@@ -300,7 +300,7 @@ struct Calling {
     /// The identity its result and live output carry.
     id: ToolId,
     /// The words the call row says, without its moving mark.
-    said: String,
+    said: draw::Called,
     /// What this call has printed while it runs.
     printing: Printing,
     /// Whether the call can be left to finish after its tool answers the turn.
@@ -324,7 +324,7 @@ pub(super) struct Settled {
     /// Which call it was.
     pub(super) call: ToolId,
     /// The words its row says, without the moving mark it wore while it ran.
-    pub(super) said: String,
+    pub(super) said: draw::Called,
     /// What kind of looking-around it was, where it was only that.
     pub(super) looking: Option<Looking>,
 }
@@ -852,7 +852,7 @@ impl Turning {
                 if self.folds() {
                     self.outstanding()
                 } else {
-                    calling.said.clone()
+                    calling.said.text().to_owned()
                 }
             }),
             backgroundable: self
@@ -1208,7 +1208,7 @@ impl Turning {
         }
     }
 
-    fn call(&self, said: &str, columns: usize, style: Style) -> Row {
+    fn call(&self, said: &draw::Called, columns: usize, style: Style) -> Row {
         let row = Row::new()
             .then(Slot::Plain, self.mark(style))
             .clipped(columns);

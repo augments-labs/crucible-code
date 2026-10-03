@@ -292,7 +292,9 @@ pub enum Slot {
     ArgumentPath,
     /// What a call is about, where that is an address on the web.
     ArgumentAddress,
-    /// What a call is about otherwise: a command, a pattern, a query.
+    /// What a call is about, where that is a command it runs or a pattern it
+    /// looks for. Words that are none of these kinds, such as a question or a
+    /// query, are [`Slot::Quiet`] and take no design's ink.
     ArgumentCommand,
 }
 

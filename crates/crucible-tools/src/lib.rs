@@ -27,7 +27,7 @@ pub use permissions::{
 pub use revealed::Revealed;
 pub use source::{Fetch, Page, Search, SearchResponse, SearchResult, SourceError};
 pub use tool::{
-    Account, CallResultAcceptance, Looking, PendingCallResult, Remembered, Summary, Tool,
+    Account, Argument, CallResultAcceptance, Looking, PendingCallResult, Remembered, Summary, Tool,
     ToolContext, ToolError, ToolOutput, Unwatched, Watch, Wrote,
 };
 pub use toolset::{

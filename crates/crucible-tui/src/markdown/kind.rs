@@ -50,10 +50,9 @@ const EXTENSIONS: [&str; 52] = [
 ///
 /// One word with no metacharacter in it, that is not an option and not an
 /// address, and that either has a slash in it or ends in an extension a file
-/// is named with. Shared by everything that tells a path from code, so an
-/// answer and a call row cannot disagree about one.
-#[must_use]
-pub fn path(text: &str) -> bool {
+/// is named with. Only an answer's inline code is told this way: a call row's
+/// argument arrives with the kind its tool said.
+fn path(text: &str) -> bool {
     if text.is_empty()
         || text.starts_with('-')
         || text.contains("://")
@@ -388,15 +387,22 @@ fn version(word: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Seven to forty hex digits with both a digit and a letter among them.
+/// Seven to forty hex digits in one case, with both a digit and a letter
+/// among them.
 ///
-/// Lowercase only, which is how every tool that prints one prints it; a word
-/// of letters alone is a word, and digits alone are a figure.
+/// Either case, since tools print both, but never the two mixed, which no
+/// tool prints; a word of the letters a to f alone is a word, and digits
+/// alone are a figure.
 fn hash(word: &str) -> bool {
+    let lower = word
+        .bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    let upper = word
+        .bytes()
+        .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b));
+
     (7..=40).contains(&word.len())
-        && word
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && (lower || upper)
         && word.bytes().any(|b| b.is_ascii_digit())
         && word.bytes().any(|b| b.is_ascii_alphabetic())
 }

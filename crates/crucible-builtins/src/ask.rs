@@ -262,7 +262,7 @@ impl Tool for AskUser {
             return Summary::new("");
         };
         let Ok(Some(questions)) = parsed.list(QUESTIONS) else {
-            return summary::field(NAME, args, QUESTION);
+            return summary::field(NAME, args, QUESTION, crucible_tools::Argument::Other);
         };
 
         match questions.len() {

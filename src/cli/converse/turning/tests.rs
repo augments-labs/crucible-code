@@ -262,7 +262,7 @@ fn a_lone_call_that_can_be_backgrounded_stands_in_the_footing_as_before() {
 fn lines(settled: Vec<Settled>) -> Vec<(ToolId, String)> {
     settled
         .into_iter()
-        .map(|one| (one.call, one.said))
+        .map(|one| (one.call, one.said.text().to_owned()))
         .collect()
 }
 
@@ -1109,7 +1109,11 @@ fn the_dot_on_a_live_call_appears_and_disappears_in_the_readers_own_colour() {
             ..Turning::started(Breakdown::default())
         };
 
-        moment.call("Read(src/main.rs)", 80, style)
+        moment.call(
+            &draw::Called::new("Read(src/main.rs)", crucible_tools::Argument::Path),
+            80,
+            style,
+        )
     };
     let frames = (0..4).map(face).collect::<Vec<_>>();
     let dots = frames
@@ -1150,7 +1154,11 @@ fn the_dot_on_a_live_call_appears_and_disappears_in_the_readers_own_colour() {
                     .expect("a clock past its own epoch"),
                 ..Turning::started(Breakdown::default())
             }
-            .call("Read(a/very/long/path.rs)", columns, style);
+            .call(
+                &draw::Called::new("Read(a/very/long/path.rs)", crucible_tools::Argument::Path),
+                columns,
+                style,
+            );
             assert!(row.columns() <= columns, "{columns}: {}", row.text());
         }
     }
