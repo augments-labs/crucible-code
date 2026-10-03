@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.45.1] - 2026-10-03
+
+**A patch for 0.45.0: a fresh MiniMax Token Plan window no longer stops every
+turn, and quick commands no longer flash a row above the working row.** On
+Windows, `/resume` prints commands that run in PowerShell 5.1 and change drive,
+and both installers refuse what they could not verify. Format characters that
+could reorder or hide text no longer reach your terminal, and `/usage` no longer
+hangs on a `TZ` that names a pipe.
+
 ### Fixed
 
 - **A quick command no longer flashes a row above the working row.** A running
@@ -63,6 +72,10 @@ change in any release with no deprecation period.
   Unicode format character in a model's answer, a tool result or a file name
   could reorder or hide what was drawn around it; the screen and redirected
   output now drop them, keeping only the joiners emoji and some scripts need.
+
+- **0.45.0's notes undersold what stops a turn.** They said only a used-up
+  ChatGPT plan, or one model's own limit, stops turns; a spent plan-wide window
+  of a Kimi Code or MiniMax Token Plan sign-in stops turns on every model too.
 
 ## [0.45.0] - 2026-10-03
 
@@ -4931,7 +4944,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.1...HEAD
+[0.45.1]: https://github.com/augments-labs/crucible-code/compare/v0.45.0...v0.45.1
 [0.45.0]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...v0.45.0
 [0.44.2]: https://github.com/augments-labs/crucible-code/compare/v0.44.1...v0.44.2
 [0.44.1]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...v0.44.1
