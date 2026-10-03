@@ -85,6 +85,27 @@ fn a_linked_worktree_names_its_own_branch() {
     assert_eq!(current(&checkout).as_deref(), Some("fix/wrapping"));
 }
 
+#[test]
+fn a_relative_gitdir_is_read_from_the_checkout_not_the_process_directory() {
+    // Git writes `gitdir: ../somewhere` when asked for relative paths, and a
+    // submodule's `.git` file is always relative. The process runs from
+    // somewhere else entirely, so only the checkout's own directory resolves
+    // it.
+    let scratch = Scratch::new("relative-worktree");
+    let somewhere = scratch.root().join("somewhere");
+    fs::create_dir_all(&somewhere).expect("the pointed-at git directory");
+    fs::write(somewhere.join("HEAD"), "ref: refs/heads/fix/relative\n").expect("a HEAD file");
+
+    let checkout = scratch.root().join("checkout");
+    fs::create_dir_all(&checkout).expect("the worktree checkout");
+    fs::write(checkout.join(".git"), "gitdir: ../somewhere\n").expect("the .git pointer file");
+
+    let process = std::env::current_dir().expect("the process directory");
+    assert!(!process.starts_with(scratch.root()), "{process:?}");
+
+    assert_eq!(current(&checkout).as_deref(), Some("fix/relative"));
+}
+
 /// A repository laid out as `git worktree add` leaves it: a main checkout at
 /// `main` whose `.git` directory keeps `worktrees/<name>/gitdir` for each
 /// linked checkout, and each linked checkout's `.git` file pointing back.
