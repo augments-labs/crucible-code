@@ -14,6 +14,9 @@ change in any release with no deprecation period.
   its branch again.** The path is now read from the checkout, as git reads it,
   rather than from the directory crucible was started in, so a submodule or a
   worktree made with relative paths shows its branch in `/resume`.
+- **The Windows installer matches names by their exact characters.** A
+  checksum line, archive member or PATH entry whose name differs only by a
+  character such as a soft hyphen is no longer taken for the one it wants.
 - **The Windows installer refuses a version followed by a newline.** Its
   version check let one through and failed later on the archive instead of
   saying the version is invalid.
