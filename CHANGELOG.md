@@ -14,6 +14,11 @@ change in any release with no deprecation period.
   anything in that directory's name on Windows.** A name holding `%`, `$` or a
   backtick is written so PowerShell reads it back exactly, and cmd runs nothing
   rather than a command built from an environment variable.
+- **On Windows, `/resume` now prints a command for another directory that runs
+  in PowerShell 5.1 and changes drive.** It prints a row for cmd (`pushd`), a
+  row for PowerShell (`Set-Location -LiteralPath`, which reads `[` and `]`
+  literally) and the resume on a row of its own, since `&&` is a parse error
+  in the PowerShell Windows ships.
 
 ## [0.45.0] - 2026-10-03
 

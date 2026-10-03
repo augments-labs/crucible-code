@@ -1324,15 +1324,22 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
     let root = crucible_workspace::typed(yonder.root())
         .display()
         .to_string();
-    let command = format!("cd {root} && crucible --resume {}", away.as_str());
+    let resume = format!("crucible --resume {}", away.as_str());
+    #[cfg(not(windows))]
+    let (columns, said) = {
+        let command = format!("cd {root} && {resume}");
+        (wide(&command) + 2, vec![command])
+    };
+    #[cfg(windows)]
+    let (columns, said) = (400, windows_said(&root, &resume, 400, Glyphs::Unicode));
     assert_eq!(
         elsewhere(
             stood.marked().expect("marked"),
             None,
-            wide(&command) + 2,
+            columns,
             Glyphs::Unicode
         ),
-        [command]
+        said
     );
 
     // The foot under its preview says what Enter does there, which is not
@@ -1360,6 +1367,7 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
     assert_eq!(stood.told, None);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn the_command_to_resume_elsewhere_breaks_after_its_and_and_never_cuts_the_id() {
     // A real id, as long as one ever is, and a directory longer than the
@@ -1483,34 +1491,136 @@ fn a_posix_shell_is_handed_a_directory_under_home() {
     assert_eq!(commanded(&home.join("my code"), Some(&home)), "~/'my code'");
 }
 
+const AWAY: &str = "019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1";
+
+/// What Windows is told for a session recorded in `place`, across `columns`.
+fn on_windows(place: &str, columns: usize) -> Vec<String> {
+    windows_said(
+        place,
+        &format!("crucible --resume {AWAY}"),
+        columns,
+        Glyphs::Unicode,
+    )
+}
+
 #[test]
-fn cmd_and_powershell_read_the_directory_back_whole() {
-    // Double quotes are the quoting both shells share, and a directory
-    // without a character either acts on is left bare.
+fn windows_is_told_a_row_for_cmd_and_a_row_for_powershell() {
     assert_eq!(
-        windows_quoted(r"C:\code\crucible-code"),
-        r"C:\code\crucible-code"
+        on_windows(r"D:\code\website", 120),
+        [
+            r"cmd:        pushd D:\code\website".to_owned(),
+            r"PowerShell: Set-Location -LiteralPath D:\code\website".to_owned(),
+            format!("then:       crucible --resume {AWAY}"),
+        ]
     );
-    assert_eq!(windows_quoted(r"C:\a b"), r#""C:\a b""#);
-    assert_eq!(windows_quoted(r"C:\a&b"), r#""C:\a&b""#);
-    // A double quote cannot be in a Windows name, and is the one character
-    // that would end the quoting in both: it is not written.
-    assert_eq!(windows_quoted(r#"C:\a" & del b"#), r#""C:\a & del b""#);
+}
+
+#[test]
+fn no_windows_row_joins_two_commands() {
+    // `&&` is a parse error in Windows PowerShell 5.1, the one Windows ships,
+    // and `;` separates nothing in cmd: each row is one command on its own.
+    for place in [r"D:\code\website", r"D:\a b", r"D:\a&b", r"D:\a[1]"] {
+        for columns in [200, 80, 56, 30] {
+            for row in on_windows(place, columns) {
+                assert!(!row.contains("&&"), "{row:?}");
+                assert!(!row.contains(';'), "{row:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn cmd_changes_drive_and_powershell_reads_no_wildcard() {
+    // cmd's `cd` stays on the current drive; `pushd` moves to the
+    // directory's. PowerShell's `cd` reads `[` and `]` as a wildcard, which
+    // `-LiteralPath` does not.
+    assert_eq!(
+        on_windows(r"D:\a b[1]", 120),
+        [
+            r#"cmd:        pushd "D:\a b[1]""#.to_owned(),
+            r"PowerShell: Set-Location -LiteralPath 'D:\a b[1]'".to_owned(),
+            format!("then:       crucible --resume {AWAY}"),
+        ]
+    );
 }
 
 #[test]
 fn neither_shell_expands_anything_in_the_directory() {
-    // PowerShell expands `$name` and reads a backtick as an escape inside
-    // double quotes; both are escaped, so it reads the name back as it is.
-    assert_eq!(windows_quoted(r"C:\a$HOME"), r#""C:\a`$HOME""#);
-    assert_eq!(windows_quoted(r"C:\a`nb"), r#""C:\a``nb""#);
-    // cmd expands `%NAME%` even inside double quotes, and what it expands to
-    // can end the quoting, so no `%` is written: PowerShell builds it back.
+    // Inside cmd's double quotes `$` and a backtick are plain; inside
+    // PowerShell's single quotes nothing is special but the quote.
     assert_eq!(
-        windows_quoted(r"C:\a%PATH%b"),
-        r#""C:\a$([char]37)PATH$([char]37)b""#
+        on_windows(r"D:\a$HOME`n", 120),
+        [
+            r#"cmd:        pushd "D:\a$HOME`n""#.to_owned(),
+            r"PowerShell: Set-Location -LiteralPath 'D:\a$HOME`n'".to_owned(),
+            format!("then:       crucible --resume {AWAY}"),
+        ]
     );
-    assert!(!windows_quoted(r"C:\x%CMDCMDLINE:exe=exe&calc&%").contains('%'));
+    // cmd expands `%NAME%` even inside double quotes, so it is given no row
+    // for a directory that holds a `%`.
+    assert_eq!(
+        on_windows(r"D:\a%PATH%b", 120),
+        [
+            r"PowerShell: Set-Location -LiteralPath 'D:\a%PATH%b'".to_owned(),
+            format!("then:       crucible --resume {AWAY}"),
+        ]
+    );
+    // PowerShell ends its single quotes at a typographic one too; each is
+    // doubled, which it reads back as one.
+    assert_eq!(
+        on_windows("D:\\it's \u{2019}x\u{2018}", 120),
+        [
+            "cmd:        pushd \"D:\\it's \u{2019}x\u{2018}\"".to_owned(),
+            "PowerShell: Set-Location -LiteralPath 'D:\\it''s \u{2019}\u{2019}x\u{2018}\u{2018}'"
+                .to_owned(),
+            format!("then:       crucible --resume {AWAY}"),
+        ]
+    );
+    // A double quote cannot be in a Windows name, and would end cmd's
+    // quoting: cmd is not given it. PowerShell's single quotes hold it as it is.
+    assert_eq!(
+        on_windows(r#"D:\a" & del b"#, 120),
+        [
+            r#"cmd:        pushd "D:\a & del b""#.to_owned(),
+            r#"PowerShell: Set-Location -LiteralPath 'D:\a" & del b'"#.to_owned(),
+            format!("then:       crucible --resume {AWAY}"),
+        ]
+    );
+}
+
+#[test]
+fn a_narrow_window_gives_each_label_its_own_row_and_keeps_the_id_whole() {
+    assert_eq!(
+        on_windows(r"D:\code\website", 56),
+        [
+            "cmd:".to_owned(),
+            r"pushd D:\code\website".to_owned(),
+            "PowerShell:".to_owned(),
+            r"Set-Location -LiteralPath D:\code\website".to_owned(),
+            "then:".to_owned(),
+            format!("crucible --resume {AWAY}"),
+        ]
+    );
+
+    // A directory too long for its row loses its front, and says so.
+    let long = r"D:\a-directory-whose-name-runs-past-half-the-window\website";
+    let rows = on_windows(long, 56);
+    assert!(rows.iter().all(|row| wide(row) <= 54), "{rows:#?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with("pushd …") && row.ends_with(r"\website")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.starts_with("Set-Location -LiteralPath …") && row.ends_with(r"\website")
+        }),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.contains(&format!("crucible --resume {AWAY}")),
+        "{rows:#?}"
+    );
 }
 
 #[cfg(windows)]
@@ -1520,7 +1630,7 @@ fn cmd_and_powershell_are_handed_the_directory_whole() {
     let home = under(&["Users", "ada"]);
     assert_eq!(
         commanded(&home.join("my code"), Some(&home)),
-        format!("\"{}\"", home.join("my code").display())
+        home.join("my code").display().to_string()
     );
 }
 
