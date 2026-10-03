@@ -111,9 +111,12 @@ async fn kimi_usage_all_three_windows_are_read_as_percentages() {
     let weekly = windows
         .reading(Window::Weekly)
         .and_then(WindowReading::resets_at);
+    // Both sides are built by the platform's own arithmetic, as a clock that
+    // counts coarser than a nanosecond, as Windows's does, keeps what it can
+    // of the fraction alike on each.
     assert_eq!(
-        weekly.and_then(|reset| reset.duration_since(at(WEEKLY_RESET)).ok()),
-        Some(Duration::from_nanos(443_553_353)),
+        weekly,
+        at(WEEKLY_RESET).checked_add(Duration::from_nanos(443_553_353)),
         "an offset and a fraction of a second are read"
     );
     assert_eq!(
