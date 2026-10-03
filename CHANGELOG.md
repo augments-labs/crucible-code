@@ -14,6 +14,10 @@ change in any release with no deprecation period.
   anything in that directory's name on Windows.** A name holding `%`, `$` or a
   backtick is written so PowerShell reads it back exactly, and cmd runs nothing
   rather than a command built from an environment variable.
+- **The rollback drill always tests the tree it runs in.** It used to reuse
+  any binary left in `target/debug`, so an older build could pass in the
+  tree's place; it now builds the candidate each run and refuses one whose
+  version is not the workspace version.
 
 ## [0.45.0] - 2026-10-03
 
