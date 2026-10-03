@@ -14,6 +14,9 @@ change in any release with no deprecation period.
   Unicode format character in a model's answer, a tool result or a file name
   could reorder or hide what was drawn around it; the screen and redirected
   output now drop them, keeping only the joiners emoji and some scripts need.
+- **A checkout whose `.git` file is a symbolic link records its branch and
+  lists its worktrees again.** The link is followed as git follows it, and the
+  file it leads to is still read only when it is a small ordinary file.
 - **The Windows installer matches names by their exact characters.** A
   checksum line, archive member or PATH entry whose name differs only by a
   character such as a soft hyphen is no longer taken for the one it wants.
