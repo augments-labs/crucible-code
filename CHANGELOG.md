@@ -15,6 +15,10 @@ change in any release with no deprecation period.
   mean nothing used as much as nothing left, and was read as nothing left;
   such a window is now left unread, and only one the plan marks spent holds
   turns back.
+- **The rollback drill always tests the tree it runs in.** It used to reuse
+  any binary left in `target/debug`, so an older build could pass in the
+  tree's place; it now builds the candidate each run and refuses one whose
+  version is not the workspace version.
 
 ## [0.45.0] - 2026-10-03
 
