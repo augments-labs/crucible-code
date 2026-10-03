@@ -28,6 +28,8 @@ mod bar;
 mod clipboard;
 mod color;
 #[cfg(test)]
+mod colour_rule;
+#[cfg(test)]
 mod dump;
 mod editor;
 mod escape;

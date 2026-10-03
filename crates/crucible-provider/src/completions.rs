@@ -6,7 +6,8 @@
 //! the vendors that serve this wire is a [`Dialect`]: what the provider is
 //! called, the addresses the vendor serves, the headers it asks for beside the
 //! credential, how it counts what a response cost, how it spells a rung of
-//! effort, and what its prompt cache is known to do.
+//! effort, what its prompt cache is known to do, and where its plan says how
+//! much of its limits is used.
 //!
 //! A second vendor on this wire is a dialect and nothing else: a type that
 //! implements [`Dialect`], and a name for `Chat` over it.
@@ -158,6 +159,15 @@ pub trait Dialect: Send + Sync + 'static {
     /// `None` leaves it to the reasons every vendor on this wire shares.
     fn stopped(reason: &str) -> Option<StopReason> {
         let _ = reason;
+        None
+    }
+
+    /// Where the plan behind a credential sent to `endpoint`, one of
+    /// [`Self::ADDRESSES`], says how much of its limits is used, and how its
+    /// answer is read. None, by default: an address with no such source is
+    /// never asked.
+    fn usage_source(endpoint: &Endpoint) -> Option<Usage> {
+        let _ = endpoint;
         None
     }
 }
@@ -425,6 +435,22 @@ impl<D: Dialect> Provider for Chat<D> {
                 wire::Completions::<D>::for_request(&request, self.keeping(&request)),
             )) as Box<dyn DeltaStream>)
         })
+    }
+
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        // Only the vendor's own addresses are asked: a gateway's address is
+        // not where the vendor keeps a plan.
+        if !self.vendor() {
+            return None;
+        }
+        let usage = D::usage_source(&self.endpoint)?;
+        Some(Box::pin(asking::ask(
+            D::NAME,
+            usage,
+            Arc::clone(&self.credential),
+            Arc::clone(&self.transport),
+            D::headers,
+        )))
     }
 }
 

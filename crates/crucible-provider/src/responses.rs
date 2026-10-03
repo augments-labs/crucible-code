@@ -9,7 +9,8 @@
 //! only its own routes accept, how it asks for a fast answer and refuses one,
 //! how it counts what a response cost, how it words a failure, what its
 //! prompt cache is known to do and to cost, and where its plan says how much
-//! of its limits is used ([`asking`]).
+//! of its limits is used ([`asking`], which [`crate::completions`] asks
+//! through too).
 //!
 //! A vendor on this wire is a dialect and nothing else: a type that implements
 //! [`Dialect`], and a name for `Responses` over it. Every hook but the ones

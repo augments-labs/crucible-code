@@ -517,3 +517,23 @@ fn deleting_a_queued_line_gives_back_the_bytes_it_held() {
 
     assert_eq!(queue.bytes, "second".len());
 }
+
+#[test]
+fn the_queue_view_follows_the_colour_rule() {
+    // The marked line is the accent from its mark to its last word; the rest
+    // read plain and the footer quiet.
+    let (queue, _) = queued(&[
+        "first",
+        "a second line long enough to wrap in a narrow window, and then some",
+        "third",
+    ]);
+    for (columns, glyphs) in [(80, Style::plain()), (40, Style::plain())] {
+        for at in 0..3 {
+            let laid = rows(&queue, at, columns, 20, glyphs);
+
+            crate::cli::colour_rule::holds(&format!("queue view at {columns}"), &laid, |row| {
+                crate::cli::colour_rule::marked(row)
+            });
+        }
+    }
+}

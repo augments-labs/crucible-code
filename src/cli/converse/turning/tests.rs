@@ -1700,3 +1700,21 @@ fn usage_a_turn_keeps_what_it_last_reported_for_the_panel_over_it() {
     assert_eq!(turning.totals(), posted);
     assert_eq!(turning.limits(), Some(windows(42)));
 }
+
+#[test]
+fn the_queue_box_follows_the_colour_rule() {
+    // A mark per waiting line and the key on the bottom edge, each the one
+    // accent on its row, whether the box names every line or counts the rest.
+    for lines in [
+        &["fix the failing test"][..],
+        &["one", "two", "three", "four", "five", "six", "seven"][..],
+    ] {
+        for columns in [80, 40] {
+            let mut turning = Turning::started(Breakdown::default());
+            turning.queueing(lines.iter().copied(), columns, Style::plain());
+            let rows = turning.rows(&nothing(), "", columns, Style::plain(), 24);
+
+            crate::cli::colour_rule::holds(&format!("queue box at {columns}"), &rows, |_| false);
+        }
+    }
+}
