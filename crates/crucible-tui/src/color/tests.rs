@@ -145,7 +145,7 @@ fn at(depth: Depth) -> Palette {
 
 /// The same, in a named theme and over a named terminal ground.
 fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette {
-    let (band, band_mark) = Palette::banding(depth, theme, ground);
+    let band = Palette::banding(depth, theme, ground);
 
     Palette {
         depth,
@@ -154,7 +154,6 @@ fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette 
         ground,
         code: Code::default(),
         band,
-        band_mark,
         pointed: false,
     }
 }
@@ -455,8 +454,7 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // foreground with an attribute on it -- a slant, a line through it, and
     // weight -- so what they are legible against is whatever Plain was. A link is not among them: it wears the accent under
     // its line, and is checked with the hues. The band takes a ground and writes no ink
-    // at all, so the words on it stay theirs — its mark is the one slot here
-    // that does carry a hue and is checked with the band instead. The six code
+    // at all, so the words on it stay theirs, and its mark is the same band. The six code
     // slots are a syntax theme's to fill — empty until one is read, and never
     // in any table here.
     let hueless: Vec<Slot> = all()
@@ -485,6 +483,7 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Doing,
             Slot::Done,
             Slot::Prompt,
+            Slot::PromptMark,
             Slot::Comment,
             Slot::Keyword,
             Slot::Str,
@@ -653,18 +652,22 @@ fn the_band_is_nothing_at_all_where_there_is_no_colour() {
 }
 
 #[test]
-fn the_mark_on_the_band_carries_its_ground_and_its_accent_in_one_sequence() {
-    // The inks the band carries. Each goes in the same sequence as the
-    // ground for the reason every other ground-painting slot's does: two
-    // sequences are two chances to write one and not the other.
+fn the_mark_on_the_band_is_the_band_and_carries_no_colour_of_its_own() {
+    // A prompt's band carries no hue: the mark before the words is the
+    // reader's own foreground on the same ground as the words, so the row is
+    // one sequence of theirs, moved a step, from the first column to the last.
     for theme in THEMES {
         let palette = wearing(Depth::Exact, theme, Some((13, 13, 16)));
-        let accent = sets(palette.open(Slot::Accent).as_str()).0;
         let slot = Slot::PromptMark;
         let (ink, ground) = sets(palette.open(slot).as_str());
 
         assert_ne!(ground, Sets::Nothing, "{theme:?}: {slot:?} took no ground");
-        assert_eq!(ink, accent, "{theme:?}: {slot:?} changed the accent");
+        assert_eq!(ink, Sets::Nothing, "{theme:?}: {slot:?} took an ink");
+        assert_eq!(
+            palette.open(slot),
+            palette.open(Slot::Prompt),
+            "{theme:?}: {slot:?} is not the band"
+        );
     }
 }
 
