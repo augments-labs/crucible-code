@@ -105,7 +105,7 @@ also [build for another platform yourself](cross-compiling.md).
 ## The rollback drill
 
 `scripts/sh/rollback-drill.sh` proves the previous release can still read what
-this tree writes. It builds v0.44.2 from the local tag in a scratch worktree
+this tree writes. It builds v0.45.0 from the local tag in a scratch worktree
 (it never fetches) and runs that binary headless over a copy of session
 fixtures the candidate binary has read and recovered: a conversation must
 replay byte-identical, a session ending in an unanswered tool call must recover
