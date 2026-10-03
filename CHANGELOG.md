@@ -17,15 +17,15 @@ change in any release with no deprecation period.
   It opens mid-turn too, showing what the turn last reported.
 - **`/usage` shows what the session has used and how much of your plan is
   gone.** Cost (`not priced` where the model has no price, never `$0.00`, and
-  `at least` once an answer is stopped before its cost is reported), request
-  and wall time, lines changed, tokens and the context bar, then a bar for
-  every limit a ChatGPT sign-in has, plan-wide and for each model it limits on
-  its own, the 5-hour, weekly and monthly limits of a Kimi Code sign-in or
-  key, and the 5-hour and weekly limits of a MiniMax Token Plan key, each with
-  its reset in local time. Opening it, or the Usage tab of `/settings`, asks the
-  vendor for those limits at most once a minute and only once you have agreed
-  to what is sent there; any other key says `limits not
-  reported`, and a model's spent limit stops turns on that model alone.
+  `at least` once an answer is stopped before its cost is reported), request and
+  wall time, lines changed, tokens and the context bar, then a bar for every
+  limit a ChatGPT sign-in has, plan-wide and for each model it limits on its
+  own, the 5-hour, weekly and monthly limits of a Kimi Code sign-in or key, and
+  the 5-hour and weekly limits of a MiniMax Token Plan key, each with its reset
+  in local time. Opening it, or the Usage tab of `/settings`, asks the vendor
+  for those limits at most once a minute and only once you have agreed to what
+  is sent there; any other key says `limits not reported`, and a model's spent
+  limit stops turns on that model alone.
 - **`/settings` changes a setting without editing JSON.** Its Config tab lists
   each switch and short choice, plus the mouse scroll speed, with a `/` search;
   a change is written to your user file. The themes, glyphs, tool detail,

@@ -981,10 +981,10 @@ size and no bar. Escape closes it.
 
 `/usage` stands a panel over the prompt box, headed with the provider and what
 pays for it (`API key`, or the sign-in's name, such as `ChatGPT sign-in`), with
-what the session has used: its cost, the time its requests were out and the
-time since it started, the lines edits added and removed, and its tokens in,
-out, read from a cache and written to one. A session with a model crucible has
-no price for says `not priced` rather than `$0.00`, as does one where an answer
+what the session has used: its cost, the time its requests were out and the time
+since it started, the lines edits added and removed, and its tokens in, out,
+read from a cache and written to one. A session with a model crucible has no
+price for says `not priced` rather than `$0.00`, as does one where an answer
 finished without saying what it used. A cost that reads `at least $0.40`
 includes an answer that was stopped before the provider said what it cost: its
 tokens are counted as far as it reported them, and the rest of the session is
@@ -994,33 +994,33 @@ the plan has, with when it starts again in your local time. The windows that
 apply to every model come first; a plan that limits a model on its own, as
 ChatGPT does for some, has a group of windows under that model's name after
 them, and one that limits a family of models, as MiniMax does, has its group
-named after the model you are using where the family includes it. A window is named by its length (`5-hour`, `Daily`, `Weekly`, `Monthly`,
-`Yearly`, or a length such as `3-hour`), a limit counted in requests reads
-`412 of 1,500 used`, and one the vendor does not limit reads `unlimited`. A
-reset already behind the clock reads `since passed`, as the window has started
-again since it was read. Where the plan reports more limits than the panel
-keeps, `more limits not reported` follows the last one drawn.
+named after the model you are using where the family includes it. A window is
+named by its length (`5-hour`, `Daily`, `Weekly`, `Monthly`, `Yearly`, or a
+length such as `3-hour`), a limit counted in requests reads `412 of 1,500 used`,
+and one the vendor does not limit reads `unlimited`. A reset already behind the
+clock reads `since passed`, as the window has started again since it was read.
+Where the plan reports more limits than the panel keeps, `more limits not
+reported` follows the last one drawn.
 
-The panel opens at once with what crucible already holds, from the last
-response or the last answer, and with the ChatGPT sign-in it then asks ChatGPT
-for every limit on the account, saying `asking openai…` as the block's last row
-until the answer comes and the block is drawn again. A Kimi Code sign-in or key
-asks Kimi the same way, saying `asking moonshot…`, for its 5-hour, weekly and
-monthly limits, whichever the plan has. A key given on a MiniMax Token Plan row
-asks MiniMax the same way, saying `asking minimax…`, for the 5-hour and weekly
-limits of each model or family the plan includes; the plan limits are asked for
-on the Token Plan sign-in row only. The Usage tab of
-`/settings` asks the same way when you turn to it. It asks at most once a
-minute, never on its own, and not at all until you have agreed to what is sent
-to that vendor; a credential the vendor refuses there is not asked again that
-session, and any other failure leaves what was shown. Any other key or sign-in,
-a key of MoonshotAI's open platform among them, says
-`limits not reported`. A window at 100% whose reset is still ahead ends the next
-turn before it is sent, with a notice naming the window and its reset, when the
-window is one of the plan's own or is in the group of the model you are using;
-a model's spent window does not stop another model. The session's counts are
-this run's, starting again for a session picked up with `/resume`. Escape
-closes it.
+The panel opens at once with what crucible already holds, from the last response
+or the last answer, and with the ChatGPT sign-in it then asks ChatGPT for every
+limit on the account, saying `asking openai…` as the block's last row until the
+answer comes and the block is drawn again. A Kimi Code sign-in or key asks Kimi
+the same way, saying `asking moonshot…`, for its 5-hour, weekly and monthly
+limits, whichever the plan has. A key given on a MiniMax Token Plan row asks
+MiniMax the same way, saying `asking minimax…`, for the 5-hour and weekly limits
+of each model or family the plan includes; the plan limits are asked for on the
+Token Plan sign-in row only. The Usage tab of `/settings` asks the same way when
+you turn to it. It asks at most once a minute, never on its own, and not at all
+until you have agreed to what is sent to that vendor; a credential the vendor
+refuses there is not asked again that session, and any other failure leaves what
+was shown. Any other key or sign-in, a key of MoonshotAI's open platform among
+them, says `limits not reported`. A window at 100% whose reset is still ahead
+ends the next turn before it is sent, with a notice naming the window and its
+reset, when the window is one of the plan's own or is in the group of the model
+you are using; a model's spent window does not stop another model. The session's
+counts are this run's, starting again for a session picked up with `/resume`.
+Escape closes it.
 
 ### A command typed while a turn runs
 
