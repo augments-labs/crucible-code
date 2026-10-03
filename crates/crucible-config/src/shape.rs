@@ -415,6 +415,10 @@ pub const THEME: &[&str] = &[
 /// can interrogate over a pipe — so this is the answer, not a fallback for one.
 pub(crate) const GLYPHS: &[&str] = &["unicode", "ascii"];
 
+/// Every answer `output.transcriptColours` accepts, from the fewest colours to
+/// the most.
+pub(crate) const TRANSCRIPT_COLOURS: &[&str] = &["calm", "balanced", "rich"];
+
 /// What the model is asked under, where the reader wants something else.
 ///
 /// Two hooks that look alike and are not. `append` adds to what crucible says;
@@ -481,6 +485,15 @@ const OUTPUT: &[Field] = &[
         shape: Shape::Choice(THEME),
         examples: &[],
         usual: Some("auto"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "transcriptColours",
+        about: "How many of the theme's colours the transcript spends: calm on code, paths and links, balanced on versions and a call's path or address too, rich on headings, lists, quotes and figures as well",
+        shape: Shape::Choice(TRANSCRIPT_COLOURS),
+        examples: &[],
+        usual: Some("calm"),
         needed: false,
         widens: false,
     },

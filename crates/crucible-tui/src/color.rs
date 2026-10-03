@@ -17,14 +17,21 @@
 //!    row inside, which is counted between them. The slots drawn in the
 //!    accent's ink for a reason of their own are not a second accent:
 //!    [`Slot::Strong`] for the title, name, version or figure a panel, a note
-//!    or the banner is read for, [`Slot::Link`] and [`Slot::Code`].
+//!    or the banner is read for, [`Slot::Code`], and the kinds a [`Design`]
+//!    gives the theme colour.
 //!
-//!    Inside the transcript, selection and panels aside, the accent's ink is
-//!    spent on inline code and links and on nothing else: they are what a
-//!    reader copies or follows. Headings, bold, a table's header, a tool's
-//!    name and the figures of a count are weight, not colour, and are
-//!    [`Slot::Bold`]; a call's mark is the reader's own foreground, and a
-//!    prompt's band carries no hue.
+//!    Inside the transcript, selection and panels aside, which of a theme's
+//!    inks a kind of thing is drawn in is the [`Design`] the reader chose. In
+//!    calm, the one nobody has to choose, the accent's ink is spent on inline
+//!    code and paths and on nothing else, since they are what a reader copies
+//!    or goes to find, and a link is the second colour, underlined, since it
+//!    is what a reader follows. Balanced and rich spend a third and a fourth
+//!    colour on paths, versions and the like, and rich the accent on
+//!    headings, bullets, numbers and a call's command; none of those is the
+//!    line's one accent, which is [`Slot::Accent`] alone. Bold, a table's
+//!    header, a tool's name and the figures of a count are weight, not
+//!    colour, and are [`Slot::Bold`]; a call's mark is the reader's own
+//!    foreground, and a prompt's band carries no hue.
 //! 2. **Meaning** is a fact a reader acts on: success, a warning, trouble, a
 //!    line added or removed, a permissive mode, a task's state, a bar's
 //!    categories.
@@ -79,7 +86,7 @@
 //! the emphasis and keeps the words. Most of what they mark is also a mark or
 //! a position — a heading is a row of its own, a tool's name leads its call —
 //! but with colour on, a phrase a reply raised is told from its sentence by
-//! weight alone, since the theme's colour is kept for code and links: a
+//! weight alone, since the theme's colour is kept for code and paths: a
 //! terminal without bold reads it as prose. With colour off the markers it was
 //! raised with are still there, so nothing is said by colour alone.
 //!
@@ -139,12 +146,12 @@ pub enum Slot {
     /// The accent, emphasised: the product's name, and a command's name.
     Strong,
     /// The reader's own foreground, bold: what a row of the transcript is read
-    /// for — a heading, a phrase raised in what a model says, a table's header,
-    /// a tool's name, the figures in a count.
+    /// for — a phrase raised in what a model says, a heading's own raised
+    /// words, a table's header, a tool's name, the figures in a count.
     ///
-    /// Weight and no hue, so a reply full of headings and a run of calls does
-    /// not read in the theme's colour, which the transcript keeps for code and
-    /// links.
+    /// Weight and no hue, so a reply full of raised phrases and a run of calls
+    /// does not read in the theme's colour, which the transcript keeps for code
+    /// and paths.
     Bold,
     /// Contrasting text on the exact accent as a ground under the pointer.
     ///
@@ -167,7 +174,8 @@ pub enum Slot {
     /// No ground either way. A ground under one row would answer the other
     /// question — which row is this — and the reader is not asking it.
     Cut,
-    /// The words a link was written under.
+    /// The words a link was written under, a bare address, and a numbered
+    /// reference: the second colour, underlined, in every design.
     Link,
     /// A phrase the answer leant on rather than raised its voice for.
     Emphasis,
@@ -262,6 +270,51 @@ pub enum Slot {
     Name,
     /// The punctuation that joins the rest.
     Operator,
+    /// Inline code an answer wrote that names a file or a directory.
+    ///
+    /// The kinds from here down are what [`Design`] decides: each is one kind
+    /// of thing in the transcript, and which ink it is worth is the design's
+    /// to say rather than the code that found it.
+    Path,
+    /// A version or a commit hash written in prose.
+    Revision,
+    /// Any other figure written in prose.
+    Figure,
+    /// A heading in an answer.
+    Heading,
+    /// A bullet's mark.
+    Bullet,
+    /// The number that opens an item of a numbered list.
+    Ordinal,
+    /// The words of a quote, beside its quiet bar.
+    Quote,
+    /// What a call is about, where that is a path.
+    ArgumentPath,
+    /// What a call is about, where that is an address on the web.
+    ArgumentAddress,
+    /// What a call is about otherwise: a command, a pattern, a query.
+    ArgumentCommand,
+}
+
+/// How many colours the transcript spends, and on which kinds of thing.
+///
+/// Closed, and matched whole wherever a kind is given its ink, so a design
+/// added later has to say what every kind is worth before it compiles. Only
+/// the inks change between them, never the text: a design is worn by a
+/// palette, and with colour off every design draws the same characters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Design {
+    /// The theme colour for inline code and paths, the second for links, and
+    /// everything else the reader's own foreground, weight or quiet.
+    #[default]
+    Calm,
+    /// Calm, with paths in the third colour, a call's address in the second,
+    /// and versions and commit hashes in prose in the fourth.
+    Balanced,
+    /// Balanced, with headings, bullets, numbers and a call's command in the
+    /// theme colour, every figure in prose in the fourth, and quotes in the
+    /// third, slanted.
+    Rich,
 }
 
 /// One slot's answer at each rung of the ladder.
@@ -327,14 +380,22 @@ pub enum Theme {
 struct Tones {
     /// Borders, marks, rules.
     accent: Ink,
-    /// The accent with a line under it: words a reader can open.
+    /// The second colour with a line under it: words a reader can open.
     ///
-    /// Spelled out rather than made from the accent at the point of use,
-    /// because an [`Ink`] is a whole sequence and the render path may not
-    /// allocate one. A test holds each to its accent.
+    /// Spelled out rather than made from the second colour at the point of
+    /// use, because an [`Ink`] is a whole sequence and the render path may not
+    /// allocate one. A test holds each to its second colour.
     link: Ink,
     /// The accent, emphasised.
     strong: Ink,
+    /// The second colour: what a reader can open, apart from the theme's own.
+    second: Ink,
+    /// The third: where things are, and somebody else's words.
+    third: Ink,
+    /// The fourth: which version, which commit, how many.
+    fourth: Ink,
+    /// The third, slanted: a quote. Spelled out for the reason a link is.
+    quote: Ink,
     /// The narrowest permission mode, and a task a plan has finished with.
     green: Ink,
     /// The widest permission mode, and the task under way.
@@ -361,9 +422,9 @@ const DARK: Tones = Tones {
         basic: "\x1b[36m",
     },
     link: Ink {
-        exact: "\x1b[4;38;2;18;137;127m",
-        indexed: "\x1b[4;38;5;30m",
-        basic: "\x1b[4;36m",
+        exact: "\x1b[4;38;2;97;145;230m",
+        indexed: "\x1b[4;38;5;68m",
+        basic: "\x1b[4;34m",
     },
     // The accent again, emphasised rather than lightened: a terminal brightens
     // a bold colour on its own, and doing it here as well pushes the result off
@@ -372,6 +433,27 @@ const DARK: Tones = Tones {
         exact: "\x1b[1;38;2;18;137;127m",
         indexed: "\x1b[1;38;5;30m",
         basic: "\x1b[1;36m",
+    },
+    second: Ink {
+        exact: "\x1b[38;2;97;145;230m",
+        indexed: "\x1b[38;5;68m",
+        basic: "\x1b[34m",
+    },
+    third: Ink {
+        exact: "\x1b[38;2;165;130;235m",
+        indexed: "\x1b[38;5;141m",
+        basic: "\x1b[35m",
+    },
+    // The designs' pink, darkened to clear white for a terminal that reported no ground.
+    fourth: Ink {
+        exact: "\x1b[38;2;218;114;166m",
+        indexed: "\x1b[38;5;175m",
+        basic: "",
+    },
+    quote: Ink {
+        exact: "\x1b[3;38;2;165;130;235m",
+        indexed: "\x1b[3;38;5;141m",
+        basic: "\x1b[3;35m",
     },
     green: Ink {
         exact: "\x1b[38;2;53;145;90m",
@@ -434,14 +516,34 @@ const LIGHT: Tones = Tones {
         basic: "\x1b[36m",
     },
     link: Ink {
-        exact: "\x1b[4;38;2;13;107;98m",
-        indexed: "\x1b[4;38;5;23m",
-        basic: "\x1b[4;36m",
+        exact: "\x1b[4;38;2;38;84;180m",
+        indexed: "\x1b[4;38;5;25m",
+        basic: "\x1b[4;34m",
     },
     strong: Ink {
         exact: "\x1b[1;38;2;13;107;98m",
         indexed: "\x1b[1;38;5;23m",
         basic: "\x1b[1;36m",
+    },
+    second: Ink {
+        exact: "\x1b[38;2;38;84;180m",
+        indexed: "\x1b[38;5;25m",
+        basic: "\x1b[34m",
+    },
+    third: Ink {
+        exact: "\x1b[38;2;115;70;190m",
+        indexed: "\x1b[38;5;98m",
+        basic: "\x1b[35m",
+    },
+    fourth: Ink {
+        exact: "\x1b[38;2;170;50;110m",
+        indexed: "\x1b[38;5;125m",
+        basic: "",
+    },
+    quote: Ink {
+        exact: "\x1b[3;38;2;115;70;190m",
+        indexed: "\x1b[3;38;5;98m",
+        basic: "\x1b[3;35m",
     },
     green: Ink {
         exact: "\x1b[38;2;44;122;57m",
@@ -500,14 +602,34 @@ const COLOURBLIND_DARK: Tones = Tones {
         basic: "\x1b[36m",
     },
     link: Ink {
-        exact: "\x1b[4;38;2;63;167;196m",
-        indexed: "\x1b[4;38;5;38m",
-        basic: "\x1b[4;36m",
+        exact: "\x1b[4;38;2;204;121;167m",
+        indexed: "\x1b[4;38;5;175m",
+        basic: "\x1b[4;34m",
     },
     strong: Ink {
         exact: "\x1b[1;38;2;63;167;196m",
         indexed: "\x1b[1;38;5;38m",
         basic: "\x1b[1;36m",
+    },
+    second: Ink {
+        exact: "\x1b[38;2;204;121;167m",
+        indexed: "\x1b[38;5;175m",
+        basic: "\x1b[34m",
+    },
+    third: Ink {
+        exact: "\x1b[38;2;40;180;140m",
+        indexed: "\x1b[38;5;36m",
+        basic: "\x1b[35m",
+    },
+    fourth: Ink {
+        exact: "\x1b[38;2;230;215;80m",
+        indexed: "\x1b[38;5;185m",
+        basic: "",
+    },
+    quote: Ink {
+        exact: "\x1b[3;38;2;40;180;140m",
+        indexed: "\x1b[3;38;5;36m",
+        basic: "\x1b[3;35m",
     },
     green: Ink {
         exact: "\x1b[38;2;74;158;255m",
@@ -557,14 +679,34 @@ const COLOURBLIND_LIGHT: Tones = Tones {
         basic: "\x1b[36m",
     },
     link: Ink {
-        exact: "\x1b[4;38;2;15;95;120m",
-        indexed: "\x1b[4;38;5;24m",
-        basic: "\x1b[4;36m",
+        exact: "\x1b[4;38;2;150;60;120m",
+        indexed: "\x1b[4;38;5;89m",
+        basic: "\x1b[4;34m",
     },
     strong: Ink {
         exact: "\x1b[1;38;2;15;95;120m",
         indexed: "\x1b[1;38;5;24m",
         basic: "\x1b[1;36m",
+    },
+    second: Ink {
+        exact: "\x1b[38;2;150;60;120m",
+        indexed: "\x1b[38;5;89m",
+        basic: "\x1b[34m",
+    },
+    third: Ink {
+        exact: "\x1b[38;2;0;115;85m",
+        indexed: "\x1b[38;5;29m",
+        basic: "\x1b[35m",
+    },
+    fourth: Ink {
+        exact: "\x1b[38;2;120;100;0m",
+        indexed: "\x1b[38;5;94m",
+        basic: "",
+    },
+    quote: Ink {
+        exact: "\x1b[3;38;2;0;115;85m",
+        indexed: "\x1b[3;38;5;29m",
+        basic: "\x1b[3;35m",
     },
     green: Ink {
         exact: "\x1b[38;2;28;95;168m",
@@ -616,14 +758,31 @@ const ANSI: Tones = Tones {
         basic: "\x1b[36m",
     },
     link: Ink {
-        exact: "\x1b[4;36m",
-        indexed: "\x1b[4;36m",
-        basic: "\x1b[4;36m",
+        exact: "\x1b[4;34m",
+        indexed: "\x1b[4;34m",
+        basic: "\x1b[4;34m",
     },
     strong: Ink {
         exact: "\x1b[1;36m",
         indexed: "\x1b[1;36m",
         basic: "\x1b[1;36m",
+    },
+    second: Ink {
+        exact: "\x1b[34m",
+        indexed: "\x1b[34m",
+        basic: "\x1b[34m",
+    },
+    third: Ink {
+        exact: "\x1b[35m",
+        indexed: "\x1b[35m",
+        basic: "\x1b[35m",
+    },
+    // No fourth: every other of the sixteen already means something here.
+    fourth: NONE,
+    quote: Ink {
+        exact: "\x1b[3;35m",
+        indexed: "\x1b[3;35m",
+        basic: "\x1b[3;35m",
     },
     green: Ink {
         exact: "\x1b[32m",
@@ -719,9 +878,10 @@ impl Slot {
     /// rather than the theme.
     // The lint would fold `Code` into `Accent` because they share an ink
     // today, but they are different meanings that a theme may one day split;
-    // the comment on `Code` carries the reasoning.
+    // the comment on `Code` carries the reasoning. The kinds a design decides
+    // share inks across designs for the same reason.
     #[allow(clippy::match_same_arms)]
-    const fn ink(self, theme: Theme) -> Option<Ink> {
+    const fn ink(self, theme: Theme, design: Design) -> Option<Ink> {
         let tones = theme.tones();
 
         Some(match self {
@@ -745,12 +905,12 @@ impl Slot {
                 indexed: "\x1b[3m",
                 basic: "\x1b[3m",
             },
-            // A line under the words, in the accent: underline is what a
-            // terminal has always meant a link by, and the accent is the one
-            // colour the theme keeps for what it wants the reader's eye on.
-            // Both, because the address is no longer written out beside the
-            // words -- the words are all there is to find, and a line alone
-            // under the reader's own foreground is easy to read past.
+            // A line under the words, in the second colour: underline is what
+            // a terminal has always meant a link by, and a colour of its own
+            // keeps a link from reading as the inline code beside it. Both,
+            // because the address is no longer written out beside the words --
+            // the words are all there is to find, and a line alone under the
+            // reader's own foreground is easy to read past.
             Self::Link => tones.link,
             // A line through the words and nothing else. What a struck phrase
             // means is that the answer changed its mind in front of the reader,
@@ -810,6 +970,53 @@ impl Slot {
             | Self::Number
             | Self::Name
             | Self::Operator => return None,
+            // The kinds, each the ink the design in force gives it. Calm is
+            // what the transcript was before there were designs: a path is the
+            // code it was written as, and the rest is plain, weight or quiet.
+            Self::Path => match design {
+                Design::Calm => tones.accent,
+                Design::Balanced | Design::Rich => tones.third,
+            },
+            Self::Revision => match design {
+                Design::Calm => NONE,
+                Design::Balanced | Design::Rich => tones.fourth,
+            },
+            Self::Figure => match design {
+                Design::Calm | Design::Balanced => NONE,
+                Design::Rich => tones.fourth,
+            },
+            Self::Heading => match design {
+                Design::Calm | Design::Balanced => Ink {
+                    exact: "\x1b[1m",
+                    indexed: "\x1b[1m",
+                    basic: "\x1b[1m",
+                },
+                Design::Rich => tones.strong,
+            },
+            Self::Bullet => match design {
+                Design::Calm | Design::Balanced => QUIET,
+                Design::Rich => tones.accent,
+            },
+            Self::Ordinal => match design {
+                Design::Calm | Design::Balanced => NONE,
+                Design::Rich => tones.accent,
+            },
+            Self::Quote => match design {
+                Design::Calm | Design::Balanced => QUIET,
+                Design::Rich => tones.quote,
+            },
+            Self::ArgumentPath => match design {
+                Design::Calm => QUIET,
+                Design::Balanced | Design::Rich => tones.third,
+            },
+            Self::ArgumentAddress => match design {
+                Design::Calm => QUIET,
+                Design::Balanced | Design::Rich => tones.second,
+            },
+            Self::ArgumentCommand => match design {
+                Design::Calm | Design::Balanced => QUIET,
+                Design::Rich => tones.accent,
+            },
         })
     }
 }
@@ -945,6 +1152,12 @@ pub struct Palette {
     /// syntax theme is loaded at all — a session that never shows code pays for
     /// none of this.
     code: Code,
+    /// Which kinds of thing in the transcript take which of the theme's inks.
+    ///
+    /// On the palette rather than the table, because it is the reader's
+    /// choice and not the terminal's, and a theme changed mid-session keeps
+    /// it.
+    design: Design,
     /// Whether the pointer is resting on a result the transcript cut short.
     ///
     /// Carried here rather than decided by whoever built the row, because what
@@ -1084,8 +1297,22 @@ impl Palette {
             ground,
             band,
             code: Code::default(),
+            design: Design::Calm,
             pointed: false,
         }
+    }
+
+    /// The same palette, spending its inks the way `design` says.
+    #[must_use]
+    pub const fn designing(mut self, design: Design) -> Self {
+        self.design = design;
+        self
+    }
+
+    /// Which design this palette spends its inks by.
+    #[must_use]
+    pub const fn design(&self) -> Design {
+        self.design
     }
 
     /// The palette, writing addresses beside the words that carry one.
@@ -1266,6 +1493,7 @@ impl Palette {
             ground: None,
             band: None,
             code: Code::default(),
+            design: Design::Calm,
             pointed: false,
         }
     }
@@ -1288,7 +1516,7 @@ impl Palette {
             return Worn::Chosen("");
         }
 
-        let Some(ink) = slot.ink(self.theme) else {
+        let Some(ink) = slot.ink(self.theme, self.design) else {
             // The two the table has no answer for. Held on the palette because
             // they were worked out from the reader's ground rather than chosen.
             let computed = match slot {

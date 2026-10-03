@@ -59,7 +59,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 30] {
+fn all() -> [Slot; 40] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -93,6 +93,16 @@ fn all() -> [Slot; 30] {
             Slot::Operator => 27,
             Slot::Code => 28,
             Slot::Bold => 29,
+            Slot::Path => 30,
+            Slot::Revision => 31,
+            Slot::Figure => 32,
+            Slot::Heading => 33,
+            Slot::Bullet => 34,
+            Slot::Ordinal => 35,
+            Slot::Quote => 36,
+            Slot::ArgumentPath => 37,
+            Slot::ArgumentAddress => 38,
+            Slot::ArgumentCommand => 39,
         }
     }
 
@@ -127,6 +137,16 @@ fn all() -> [Slot; 30] {
         Slot::Operator,
         Slot::Code,
         Slot::Bold,
+        Slot::Path,
+        Slot::Revision,
+        Slot::Figure,
+        Slot::Heading,
+        Slot::Bullet,
+        Slot::Ordinal,
+        Slot::Quote,
+        Slot::ArgumentPath,
+        Slot::ArgumentAddress,
+        Slot::ArgumentCommand,
     ];
 
     for (index, slot) in slots.into_iter().enumerate() {
@@ -154,6 +174,7 @@ fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette 
         ground,
         code: Code::default(),
         band,
+        design: Design::Calm,
         pointed: false,
     }
 }
@@ -336,18 +357,26 @@ fn every_colour_is_legible_on_the_ground_its_theme_is_for() {
     // The claim every theme rests on. A table is tuned to one ground, so that
     // ground is what it is measured against -- and it clears a higher bar than
     // the old one-palette-for-everything did, which is the whole trade.
-    for theme in THEMES {
+    // In every design, since a design is which of a theme's inks a slot
+    // spends, and an ink only one design reaches is an ink all the same.
+    for (theme, design) in THEMES
+        .into_iter()
+        .flat_map(|theme| DESIGNS.map(|design| (theme, design)))
+    {
         for slot in all() {
-            let (Sets::Exact(hue), Sets::Nothing) =
-                sets(wearing(Depth::Exact, theme, None).open(slot).as_str())
-            else {
+            let (Sets::Exact(hue), Sets::Nothing) = sets(
+                wearing(Depth::Exact, theme, None)
+                    .designing(design)
+                    .open(slot)
+                    .as_str(),
+            ) else {
                 continue;
             };
 
             let ratio = contrast(hue, ground_of(theme));
             assert!(
                 ratio >= LEGIBLE,
-                "{theme:?}: {slot:?} is {ratio:.2}:1 on the ground it is for, under {LEGIBLE}:1"
+                "{theme:?} {design:?}: {slot:?} is {ratio:.2}:1 on the ground it is for, under {LEGIBLE}:1"
             );
         }
     }
@@ -407,10 +436,16 @@ fn the_table_a_terminal_that_said_nothing_gets_clears_a_light_ground_too() {
     // neither question, which is exactly who gets this table.
     const BOTH: f64 = 3.0;
 
-    for slot in all() {
-        let (Sets::Exact(hue), Sets::Nothing) =
-            sets(wearing(Depth::Exact, Theme::Dark, None).open(slot).as_str())
-        else {
+    for (design, slot) in DESIGNS
+        .into_iter()
+        .flat_map(|design| all().map(|slot| (design, slot)))
+    {
+        let (Sets::Exact(hue), Sets::Nothing) = sets(
+            wearing(Depth::Exact, Theme::Dark, None)
+                .designing(design)
+                .open(slot)
+                .as_str(),
+        ) else {
             continue;
         };
 
@@ -418,7 +453,7 @@ fn the_table_a_terminal_that_said_nothing_gets_clears_a_light_ground_too() {
             let ratio = contrast(hue, ground);
             assert!(
                 ratio >= BOTH,
-                "{slot:?} is {ratio:.2}:1 against {ground:?}, under {BOTH}:1 — \
+                "{design:?}: {slot:?} is {ratio:.2}:1 against {ground:?}, under {BOTH}:1 — \
                  Dark is what a terminal that reported nothing gets, whichever \
                  ground it turns out to have"
             );
@@ -457,7 +492,9 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // with the hues. The band takes a ground and writes no ink at all, so the
     // words on it stay theirs, and its mark is the same band. The six code
     // slots are a syntax theme's to fill — empty until one is read, and never
-    // in any table here.
+    // in any table here. The kinds after them are listed where calm, the
+    // design nobody has to choose, gives them no hue of its own: weight,
+    // quiet, or the reader's foreground.
     let hueless: Vec<Slot> = all()
         .into_iter()
         .filter(|slot| {
@@ -492,6 +529,15 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Name,
             Slot::Operator,
             Slot::Bold,
+            Slot::Revision,
+            Slot::Figure,
+            Slot::Heading,
+            Slot::Bullet,
+            Slot::Ordinal,
+            Slot::Quote,
+            Slot::ArgumentPath,
+            Slot::ArgumentAddress,
+            Slot::ArgumentCommand,
         ]
     );
 }
@@ -710,11 +756,16 @@ fn quiet_is_the_terminals_own_answer_at_every_rung() {
 
 #[test]
 fn a_run_that_writes_no_colour_writes_no_bytes() {
-    let palette = Palette::plain();
+    // In every design: which ink a kind spends is a question colour being off
+    // has already answered, so the text is all any design draws there.
+    for design in DESIGNS {
+        let palette = Palette::plain().designing(design);
 
-    for slot in all() {
-        assert_eq!(palette.open(slot).as_str(), "", "{slot:?}");
+        for slot in all() {
+            assert_eq!(palette.open(slot).as_str(), "", "{design:?}: {slot:?}");
+        }
     }
+    let palette = Palette::plain();
     assert_eq!(palette.close(), "");
     assert!(!palette.writes_color());
 }
@@ -851,29 +902,25 @@ fn a_table_that_spends_less_does_not_make_the_next_one_spend_less() {
 }
 
 #[test]
-fn a_link_is_the_accent_with_a_line_under_it_in_every_theme() {
-    // The link's ink is written out by hand beside the accent's, because the
-    // render path may not allocate one. This is what keeps the two from
-    // drifting apart when a theme is re-tuned: the same colour, underlined.
+fn a_link_is_the_second_colour_with_a_line_under_it_and_a_quote_the_third_slanted() {
+    // Each ink is written out by hand beside the colour it is made from,
+    // because the render path may not allocate one. This is what keeps the
+    // pairs from drifting apart when a theme is re-tuned: the same colour,
+    // underlined or slanted.
     for theme in THEMES {
         let tones = theme.tones();
-        let underlined = |sequence: &str| sequence.replacen("\x1b[", "\x1b[4;", 1);
+        let with = |attribute: &str, sequence: &str| {
+            sequence.replacen("\x1b[", &format!("\x1b[{attribute};"), 1)
+        };
 
-        assert_eq!(
-            tones.link.exact,
-            underlined(tones.accent.exact),
-            "{theme:?}"
-        );
-        assert_eq!(
-            tones.link.indexed,
-            underlined(tones.accent.indexed),
-            "{theme:?}"
-        );
-        assert_eq!(
-            tones.link.basic,
-            underlined(tones.accent.basic),
-            "{theme:?}"
-        );
+        for (made, from, attribute) in [
+            (tones.link, tones.second, "4"),
+            (tones.quote, tones.third, "3"),
+        ] {
+            assert_eq!(made.exact, with(attribute, from.exact), "{theme:?}");
+            assert_eq!(made.indexed, with(attribute, from.indexed), "{theme:?}");
+            assert_eq!(made.basic, with(attribute, from.basic), "{theme:?}");
+        }
     }
 }
 
@@ -884,19 +931,28 @@ fn every_theme_resolves_every_slot_the_colour_rule_uses_and_ansi_keeps_to_the_si
     // takes, and every theme has to say what that slot looks like. Ansi is
     // the reader asking for their terminal's own sixteen, so no slot in it
     // names one of the 256 or a channel value, at any rung or on any ground.
-    for theme in THEMES {
+    // In every design; the one gap allowed is the fourth colour in ansi, which
+    // the sixteen have none of to spare, so what wears it there is the
+    // reader's own foreground.
+    for (theme, design) in THEMES
+        .into_iter()
+        .flat_map(|theme| DESIGNS.map(|design| (theme, design)))
+    {
         for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
             for ground in [None, Some((0, 0, 0)), Some((255, 255, 255))] {
-                let dark = wearing(depth, Theme::Dark, ground);
-                let worn = wearing(depth, theme, ground);
+                let dark = wearing(depth, Theme::Dark, ground).designing(design);
+                let worn = wearing(depth, theme, ground).designing(design);
 
                 for slot in all() {
                     let written = worn.open(slot);
                     let written = written.as_str();
+                    let fourth = matches!(slot, Slot::Revision | Slot::Figure);
 
                     assert!(
-                        dark.open(slot).as_str().is_empty() || !written.is_empty(),
-                        "{theme:?} at {depth:?} on {ground:?} leaves {slot:?} unresolved"
+                        dark.open(slot).as_str().is_empty()
+                            || !written.is_empty()
+                            || (theme == Theme::Ansi && fourth),
+                        "{theme:?} {design:?} at {depth:?} on {ground:?} leaves {slot:?} unresolved"
                     );
 
                     if theme == Theme::Ansi {
@@ -911,4 +967,81 @@ fn every_theme_resolves_every_slot_the_colour_rule_uses_and_ansi_keeps_to_the_si
             }
         }
     }
+}
+
+/// Every design there is, so no check can quietly cover only the default.
+const DESIGNS: [Design; 3] = [Design::Calm, Design::Balanced, Design::Rich];
+
+#[test]
+fn each_kind_takes_the_ink_its_design_gives_it() {
+    // The table the designs were chosen from, in the Dark theme at the exact
+    // rung: the theme colour, the 2nd, the 3rd and the 4th, and which of them
+    // a kind of thing in the transcript is drawn in under each design. Calm
+    // leaves everything but code, paths and links as the reader's own
+    // foreground, weight or quiet.
+    let accent = "\x1b[38;2;18;137;127m";
+    let link = "\x1b[4;38;2;97;145;230m";
+    let second = "\x1b[38;2;97;145;230m";
+    let third = "\x1b[38;2;165;130;235m";
+    let fourth = "\x1b[38;2;218;114;166m";
+    let quiet = "\x1b[90m";
+    let bold = "\x1b[1m";
+
+    let kinds: [(Slot, [&str; 3]); 11] = [
+        (Slot::Link, [link, link, link]),
+        (Slot::Path, [accent, third, third]),
+        (Slot::Revision, ["", fourth, fourth]),
+        (Slot::Figure, ["", "", fourth]),
+        (Slot::Heading, [bold, bold, "\x1b[1;38;2;18;137;127m"]),
+        (Slot::Bullet, [quiet, quiet, accent]),
+        (Slot::Ordinal, ["", "", accent]),
+        (Slot::Quote, [quiet, quiet, "\x1b[3;38;2;165;130;235m"]),
+        (Slot::ArgumentPath, [quiet, third, third]),
+        (Slot::ArgumentAddress, [quiet, second, second]),
+        (Slot::ArgumentCommand, [quiet, quiet, accent]),
+    ];
+
+    for (slot, inks) in kinds {
+        for (design, ink) in DESIGNS.into_iter().zip(inks) {
+            let palette = wearing(Depth::Exact, Theme::Dark, None).designing(design);
+
+            assert_eq!(palette.open(slot).as_str(), ink, "{design:?}: {slot:?}");
+        }
+    }
+}
+
+#[test]
+fn ansi_has_no_fourth_colour_so_what_would_wear_one_is_the_readers_own() {
+    // The sixteen have no fourth hue that is not already spent on a meaning,
+    // so a version, a hash and a figure stay the reader's foreground there at
+    // every rung and in every design.
+    for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
+        for design in DESIGNS {
+            let palette = wearing(depth, Theme::Ansi, None).designing(design);
+
+            for slot in [Slot::Revision, Slot::Figure] {
+                assert_eq!(
+                    palette.open(slot).as_str(),
+                    "",
+                    "{design:?} at {depth:?}: {slot:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_palette_nobody_chose_a_design_for_is_calm() {
+    assert_eq!(Design::default(), Design::Calm);
+    assert_eq!(Palette::plain().design(), Design::Calm);
+    assert_eq!(
+        Palette::resolve(
+            true,
+            Theme::Dark,
+            None,
+            &environment(&[(COLORTERM, "truecolor")])
+        )
+        .design(),
+        Design::Calm
+    );
 }

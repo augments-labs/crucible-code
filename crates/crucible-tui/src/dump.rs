@@ -102,6 +102,16 @@ fn marked(slot: Slot) -> Option<&'static str> {
         Slot::Number => Some("Number"),
         Slot::Name => Some("Name"),
         Slot::Operator => Some("Operator"),
+        Slot::Path => Some("Path"),
+        Slot::Revision => Some("Revision"),
+        Slot::Figure => Some("Figure"),
+        Slot::Heading => Some("Heading"),
+        Slot::Bullet => Some("Bullet"),
+        Slot::Ordinal => Some("Ordinal"),
+        Slot::Quote => Some("Quote"),
+        Slot::ArgumentPath => Some("ArgumentPath"),
+        Slot::ArgumentAddress => Some("ArgumentAddress"),
+        Slot::ArgumentCommand => Some("ArgumentCommand"),
     }
 }
 

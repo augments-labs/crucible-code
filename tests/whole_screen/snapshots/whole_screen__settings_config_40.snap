@@ -15,6 +15,7 @@ expression: config
 |  Syntax theme          Monokai Extended|
 |  Glyphs                         unicode|
 |  Colour    auto · applies at next start|
+|  Transcript colours                calm|
 |  Tool detail                    compact|
 |  Scroll rail                         on|
 |  Mouse scroll speed               ‹ 6 ›|
@@ -28,7 +29,6 @@ expression: config
 |  Cache isolation                session|
 |    applies at next start               |
 |  Cache retention        providerDefault|
-|    applies at next start               |
 |  ↓ 1 more                              |
 |                                        |
 |↑↓ walk · enter changes · / search      |

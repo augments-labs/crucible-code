@@ -19,14 +19,22 @@
 //! link's words are held because nothing says they were a link's words until
 //! the `](` after them. Either one that runs past its bound, or past the line
 //! it is on, is handed out as the text it turned out to be.
+//!
+//! On the way out, each settled run is told by the kind of thing it is, which
+//! is what a design colours: a span of code that names a file is a path, and a
+//! word of prose can be a version, a hash, a figure or a list's number. That
+//! holds a span until it ends and a word with a digit in it until the word
+//! does, both bounded, and changes a slot and never a character.
 
 use crate::color::Slot;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 
+mod kind;
 mod table;
 
 use crate::syntax::Syntax;
+pub use kind::path;
 use table::Table;
 
 /// The longest run of one marker character read as a marker.
@@ -383,6 +391,13 @@ pub struct Markdown {
     /// every line, since it is a fact about the terminal rather than about the
     /// answer.
     glyphs: Glyphs,
+    /// What each settled run is a kind of, and what is held while that is
+    /// still being decided.
+    ///
+    /// Outside the scan rather than part of it: it reads what the scan says,
+    /// and the scan's state is reset at every line while a word of prose held
+    /// at the end of a delta belongs to no line yet.
+    kinds: kind::Kinds,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -436,6 +451,16 @@ impl Markdown {
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
+        let mut kinds = std::mem::take(&mut self.kinds);
+        self.scan(delta, room, &mut |slot, text, address| {
+            kinds.tell(slot, text, address, say);
+        });
+        self.kinds = kinds;
+    }
+
+    /// Reads `delta` into runs, each under the slot its markers gave it; what
+    /// kind of thing a run of prose or code is gets told on the way out.
+    fn scan(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         // Where the text not yet handed on begins.
         let mut run = 0;
 
@@ -723,9 +748,10 @@ impl Markdown {
                 true
             }
             // A quote is a bar down the left and the words beside it, which is
-            // what a reader already knows a quote looks like. The whole line
-            // goes quiet: the point of a quote is that the words are somebody
-            // else's.
+            // what a reader already knows a quote looks like. The bar is
+            // quiet, and the words are a quote's, which is quiet too unless
+            // the design says otherwise: the point of a quote is that the
+            // words are somebody else's.
             '>' if held.opened && held.count == 1 && next == ' ' => {
                 self.opens_block();
                 self.line.quoted = true;
@@ -888,7 +914,7 @@ impl Markdown {
         }
 
         self.line.marked = Marked::Drawn;
-        say(Slot::Quiet, self.glyphs.bullet(), None);
+        say(Slot::Bullet, self.glyphs.bullet(), None);
         say(Slot::Quiet, " ", None);
     }
 
@@ -1171,6 +1197,17 @@ impl Markdown {
     /// The last moment there is: the reader is dropped between messages, and
     /// text still held when that happens is text the reader never sees.
     pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        let mut kinds = std::mem::take(&mut self.kinds);
+        self.close(room, &mut |slot, text, address| {
+            kinds.tell(slot, text, address, say);
+        });
+        kinds.flush(say);
+        self.kinds = kinds;
+    }
+
+    /// Lets go of whatever the scan was still holding, which a line's end does
+    /// as well as a message's.
+    fn close(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         // A run of markers is held for the character that says what it was,
         // and the end of a message is that character never arriving. Settled
         // against a line break, because the end of a message ends everything a
@@ -1218,7 +1255,7 @@ impl Markdown {
         let ended = self.inside;
         // Belt and braces: the line break puts a link back before it gets here,
         // and the reset below would drop what one was holding without a sound.
-        self.finish(room, say);
+        self.close(room, say);
 
         // The line of code is complete, so this is the moment it can be read.
         self.read_code(say);
@@ -1344,8 +1381,10 @@ impl Markdown {
 
     /// The slot everything read right now is written under.
     fn slot(&self) -> Slot {
-        if self.inside != Inside::Prose || self.line.quoted {
+        if self.inside != Inside::Prose {
             Slot::Quiet
+        } else if self.line.quoted {
+            Slot::Quote
         } else if self.line.code {
             // Above everything a phrase can otherwise be: backticks say the
             // reader is being handed something to copy or go and find, and
@@ -1359,9 +1398,12 @@ impl Markdown {
             // that it was taken back -- bold words the answer has retracted are
             // worse than plain ones it has not.
             Slot::Struck
-        } else if self.line.heading || self.line.emphasis.raised {
-            // Weight in the reader's own foreground, not the theme's colour:
-            // a reply full of headings would otherwise read in the accent.
+        } else if self.line.heading {
+            // A heading of its own, so a design can tell it from a phrase
+            // the answer raised; weight alone until one does.
+            Slot::Heading
+        } else if self.line.emphasis.raised {
+            // Weight in the reader's own foreground, not the theme's colour.
             Slot::Bold
         } else if self.line.emphasis.leant {
             Slot::Emphasis

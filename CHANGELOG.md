@@ -64,16 +64,17 @@ change in any release with no deprecation period.
 
 ### Changed
 
-- **Colour follows one written rule.** Each line has at most one accented thing
-  for the eye to land on, not counting the edges of a frame around it, such as
-  the one around a question; colour that means something keeps that meaning in
-  every theme, and nothing is said by colour alone, so the colourblind themes
-  and `color` set to `never` lose nothing. In replies and tool calls only
-  inline code and links take the theme's colour (panels, notes, `/help` names,
-  `/release-notes` versions and the banner keep it): headings, bold, tool names
-  and the figures of a count are bold in your own foreground, and a sent
-  prompt's row has no colour beyond its background. The rule is in the theme
-  section of the configuration docs.
+- **Colour follows one written rule, and you choose how much a reply spends.**
+  Each line has at most one accented thing for the eye to land on, not
+  counting the edges of a frame around it, such as the one around a question;
+  colour that means something keeps that meaning in every theme, and nothing
+  is said by colour alone, so the colourblind themes and `color` set to
+  `never` lose nothing. `output.transcriptColours`, a `/settings` row that
+  applies at once, is `calm` by default (inline code and paths in the theme's
+  colour, links in a second colour, headings, bold and tool names bold in your
+  own foreground), and `balanced` and `rich` add colours for paths, versions,
+  a call's argument, headings, lists, quotes and figures. The rule and the
+  three are in the theme section of the configuration docs.
 - **The installers show each step as it runs.** In a terminal, `install.sh`
   and `install.ps1` mark each of detect platform, download, verify checksum,
   unpack and install, draw a bar while the archive downloads, and end with

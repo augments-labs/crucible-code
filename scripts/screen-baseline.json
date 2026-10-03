@@ -707,7 +707,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "aac924524f52d6984daa654b2b21770d96ca90ef2623926212ec2551b8cdc00f"
+      "sha256": "26cd2e2b3b99ce7e14d6e8d0b14ff9e20cdcc839ae53012e5e9d2628043361c5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_80.snap",
@@ -716,7 +716,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "a5bb27c1f73647a8be65a0ccac985918a4114f0753ad898c8d9601c0e47dcb6a"
+      "sha256": "8949b685c25fcbbc48ded914708016b1e96e7ce1a5bbefa3f353bb0e2c32a254"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_40.snap",

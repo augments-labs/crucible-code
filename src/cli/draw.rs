@@ -9,9 +9,10 @@
 //! door. A call line and the line hanging under it are spans this program built,
 //! so they are handed to [`Renderer::present`] as rows and the palette decides
 //! their colour at the last moment: the mark in the reader's own foreground and
-//! the tool's name in it bold, what the call was about and what came back in
-//! the quieter one. None of it is in the theme's colour, which the transcript
-//! keeps for inline code and links. A row that
+//! the tool's name in it bold, the brackets and what came back in the quieter
+//! one, and what the call was about in the slot for its kind -- a path, an
+//! address, or a command -- which the reader's design gives an ink or leaves
+//! quiet. A row that
 //! arrives already laid out is clipped to the window rather than folded into
 //! it, so nothing here is counting its columns a second time.
 //!
@@ -890,17 +891,43 @@ fn heading(said: &str, room: usize, glyphs: Glyphs) -> String {
     within(said, room, glyphs)
 }
 
-/// A call's words in the two slots they are read in: the tool's name where the
-/// eye lands, and what it was asked to do, quieter, after it.
+/// A call's words in the slots they are read in: the tool's name where the
+/// eye lands, and what it was asked to do after it, between quiet brackets,
+/// in the slot for the kind of thing it is.
+///
+/// The kind is told once, here, from the words alone: an address, a path by
+/// the same rule an answer's inline code is told by, and anything else a
+/// command or a pattern. It picks a slot and nothing more, so the row's text
+/// is the call's in every design.
 ///
 /// The whole of `said` and none of the layout — how much of it a row shows is
 /// the caller's: both the footing and the settled heading cut to one row;
 /// the expansion keeps the complete words.
 fn named(said: &str) -> Row {
     match said.split_once('(') {
-        Some((name, about)) => Row::new()
-            .then(Slot::Bold, name)
-            .then(Slot::Quiet, format!("({about}")),
+        Some((name, about)) => {
+            let (argument, closed) = match about.strip_suffix(')') {
+                Some(argument) => (argument, true),
+                None => (about, false),
+            };
+            let kind = if argument.starts_with("https://") || argument.starts_with("http://") {
+                Slot::ArgumentAddress
+            } else if crucible_tui::markdown::path(argument) {
+                Slot::ArgumentPath
+            } else {
+                Slot::ArgumentCommand
+            };
+
+            let row = Row::new()
+                .then(Slot::Bold, name)
+                .then(Slot::Quiet, "(")
+                .then(kind, argument);
+            if closed {
+                row.then(Slot::Quiet, ")")
+            } else {
+                row
+            }
+        }
         None => Row::new().then(Slot::Bold, said),
     }
 }

@@ -34,6 +34,12 @@ impl Settings {
         ThemeChoice::read(self.output("theme")?)
     }
 
+    /// How many of the theme's colours the transcript spends.
+    #[must_use]
+    pub fn transcript_colours(&self) -> Option<TranscriptColours> {
+        TranscriptColours::read(self.output("transcriptColours")?)
+    }
+
     /// Which theme fenced code is drawn in.
     ///
     /// Free text rather than a closed set, because the answers are somebody
@@ -193,6 +199,37 @@ impl Glyphs {
     }
 }
 
+/// How many of the theme's colours the transcript spends, and on what.
+///
+/// Which kind of thing gets which colour is the drawing's to say; this is only
+/// which of the three the reader chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TranscriptColours {
+    /// Code and paths in the theme's colour and links in a second, and
+    /// nothing else in a hue.
+    #[default]
+    Calm,
+    /// Calm, and a third and fourth colour on paths, versions and what a
+    /// call was about.
+    Balanced,
+    /// Balanced, and headings, lists, quotes and figures in colour too.
+    Rich,
+}
+
+impl TranscriptColours {
+    /// Reads one of the words `output.transcriptColours` accepts, spelled as
+    /// a document spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
+        match found {
+            "calm" => Some(Self::Calm),
+            "balanced" => Some(Self::Balanced),
+            "rich" => Some(Self::Rich),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::document::{Document, Origin};
@@ -228,6 +265,7 @@ mod tests {
         assert_eq!(settings.color(), None);
         assert_eq!(settings.tool_detail(), None);
         assert_eq!(settings.glyphs(), None);
+        assert_eq!(settings.transcript_colours(), None);
     }
 
     #[test]
@@ -250,6 +288,32 @@ mod tests {
         for name in shape::THEME {
             assert!(ThemeChoice::read(name).is_some(), "theme: {name}");
         }
+        for name in shape::TRANSCRIPT_COLOURS {
+            assert!(
+                TranscriptColours::read(name).is_some(),
+                "transcriptColours: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_transcript_colouring_is_read_back_as_the_one_it_names() {
+        let read: Vec<Option<TranscriptColours>> = shape::TRANSCRIPT_COLOURS
+            .iter()
+            .map(|name| {
+                let text = format!(r#"{{"output": {{"transcriptColours": "{name}"}}}}"#);
+                Settings::resolve(vec![Document::sample(&text, Origin::User)]).transcript_colours()
+            })
+            .collect();
+
+        assert_eq!(
+            read,
+            [
+                Some(TranscriptColours::Calm),
+                Some(TranscriptColours::Balanced),
+                Some(TranscriptColours::Rich)
+            ]
+        );
     }
 
     #[test]
@@ -321,6 +385,10 @@ mod tests {
         assert_eq!(
             ToolDetail::read(shape::usual(&["output", "toolDetail"])),
             Some(ToolDetail::default())
+        );
+        assert_eq!(
+            TranscriptColours::read(shape::usual(&["output", "transcriptColours"])),
+            Some(TranscriptColours::default())
         );
         assert_eq!(
             shape::usual(&["output", "scrollRail"]).parse::<bool>(),
