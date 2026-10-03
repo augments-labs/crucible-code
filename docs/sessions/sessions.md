@@ -276,7 +276,9 @@ where a shell reads on to the next line, so pasting both rows runs it. In any
 window at least 56 columns wide the id is whole on its row; a directory too long
 for its row loses its front, marked `…`. On
 Windows the directory is written whole rather than under `~`, in double quotes
-where it needs them, which cmd and PowerShell both read.
+where it needs them, which cmd and PowerShell both read. A directory whose name
+holds `%`, `$` or a backtick is written for PowerShell, with those escaped so
+nothing in the name is expanded; cmd finds no such directory and runs nothing.
 
 The preview reads a bounded message tail and uses the live transcript's message
 renderer. It omits supplemental diff bodies and compaction notices; selecting

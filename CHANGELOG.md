@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The command `/resume` prints for another directory no longer expands
+  anything in that directory's name on Windows.** A name holding `%`, `$` or a
+  backtick is written so PowerShell reads it back exactly, and cmd runs nothing
+  rather than a command built from an environment variable.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and

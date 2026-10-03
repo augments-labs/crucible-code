@@ -438,7 +438,7 @@ pub(super) fn homed(path: &Path, home: Option<&Path>) -> String {
 /// into reads back as that directory: under `~`, which a POSIX shell expands.
 #[cfg(not(windows))]
 fn commanded(path: &Path, home: Option<&Path>) -> String {
-    quoted(&homed(path, home))
+    posix_quoted(&homed(path, home))
 }
 
 /// The directory a `cd` is handed, in the spelling the shell it is pasted
@@ -446,25 +446,54 @@ fn commanded(path: &Path, home: Option<&Path>) -> String {
 /// directory of that name rather than the home directory.
 #[cfg(windows)]
 fn commanded(path: &Path, _home: Option<&Path>) -> String {
-    quoted(&homed(path, None))
+    windows_quoted(&homed(path, None))
 }
 
-/// `place` as cmd and PowerShell both read it back as the same directory.
+/// `place` as PowerShell reads it back as the same directory, and cmd too
+/// wherever one line can say it to both.
 ///
 /// Left bare where every character is one neither treats specially, which is
 /// most directories, and otherwise in double quotes, the one quoting the two
 /// share. A double quote cannot be in a Windows name and is the one character
 /// that would end the quoting in both, so it is not written. Inside the quotes
-/// cmd still expands `%NAME%`, and PowerShell `$name` and a backtick: no
-/// quoting both shells read alike keeps those literal.
-#[cfg(windows)]
-fn quoted(place: &str) -> String {
+/// PowerShell still expands `$name` and reads a backtick as an escape, so both
+/// are escaped with a backtick; and cmd still expands `%NAME%`, into text that
+/// can itself end the quoting, so no `%` is written: `$([char]37)` has
+/// PowerShell build it back. No line keeps all three literal in both shells,
+/// so a directory holding one is written for PowerShell, the shell Windows
+/// opens by default and the one Crucible installs from; cmd is then handed a
+/// directory that does not exist, and its `&&` runs nothing.
+///
+/// Written for every platform, though only Windows calls it, so that what it
+/// writes is tested wherever the tests run.
+#[cfg_attr(
+    all(not(windows), not(test)),
+    expect(dead_code, reason = "only Windows writes its directories this way")
+)]
+fn windows_quoted(place: &str) -> String {
     let place: String = place.chars().filter(|&c| c != '"').collect();
     let bare = !place.is_empty()
         && place
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_@+=,.-:\\".contains(c));
-    if bare { place } else { format!("\"{place}\"") }
+    if bare {
+        return place;
+    }
+
+    let mut written = String::with_capacity(place.len() + 2);
+    written.push('"');
+    for c in place.chars() {
+        match c {
+            '$' | '`' => {
+                written.push('`');
+                written.push(c);
+            }
+            '%' => written.push_str("$([char]37)"),
+            _ => written.push(c),
+        }
+    }
+    written.push('"');
+    written
 }
 
 /// `place` as a POSIX shell reads it back as the same directory.
@@ -473,8 +502,17 @@ fn quoted(place: &str) -> String {
 /// most directories, and otherwise in single quotes, inside which nothing is
 /// special but the quote itself. A leading `~/` stays outside the quotes,
 /// because quoted it is a directory named `~` rather than the home directory.
-#[cfg(not(windows))]
-fn quoted(place: &str) -> String {
+///
+/// Written for every platform, though Windows never calls it, so that what it
+/// writes is tested wherever the tests run.
+#[cfg_attr(
+    all(windows, not(test)),
+    expect(
+        dead_code,
+        reason = "Windows writes its directories for cmd and PowerShell"
+    )
+)]
+fn posix_quoted(place: &str) -> String {
     let (tilde, rest) = match place.strip_prefix("~/") {
         Some(rest) => ("~/", rest),
         None if place == "~" => return place.to_owned(),
