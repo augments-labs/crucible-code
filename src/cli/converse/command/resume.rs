@@ -20,9 +20,9 @@
 //! key; the index is read again only after a rename, to show what it now
 //! holds. A session from another directory is never picked up here, since it is
 //! bound to the directory it was recorded in: Enter on one says the command
-//! that resumes it there instead. Windows is told it as a row for cmd and a row
-//! for PowerShell, because no one line runs the same in both; `windows_said`
-//! says why.
+//! that resumes it there instead. Windows is told it as a command for cmd and
+//! one for PowerShell, because no one line runs the same in both;
+//! `windows_said` says why.
 //!
 //! Picking one up leaves nothing behind. The session being left is closed
 //! here, which is the last chance to say that its log stopped being written,
@@ -580,8 +580,8 @@ fn posix_said(place: &str, resume: &str, columns: usize, glyphs: Glyphs) -> Vec<
     vec![format!("cd {place} &&"), resume.to_owned()]
 }
 
-/// What Windows is told: a row changing to `place` for cmd, one for
-/// PowerShell, and the command both then run, each labelled.
+/// What Windows is told: a command changing to `place` for cmd, one for
+/// PowerShell, and the command both then run, each under its label.
 ///
 /// No one line is read the same by cmd and by either PowerShell. Windows
 /// PowerShell 5.1, the one Windows ships, refuses `&&`, and cmd does not end a
@@ -593,51 +593,36 @@ fn posix_said(place: &str, resume: &str, columns: usize, glyphs: Glyphs) -> Vec<
 /// own row, said once, rather than joined to either by a separator one of
 /// them would refuse. A directory cmd cannot be handed gets no cmd row.
 ///
-/// The labels stand beside their rows where the resume fits that way, and on
-/// rows of their own where it does not, so the id is whole on its row in any
-/// window at least 56 columns wide.
+/// Each label is a row of its own above its command, at every width, so a
+/// command row holds the command alone and a copy of it carries nothing else
+/// into the shell. The rows are as flush as POSIX's, and the id is whole on
+/// its row in any window at least 56 columns wide.
 ///
 /// Built on every platform, though only Windows says it, so that what it
 /// writes is tested wherever the tests run.
 fn windows_said(place: &str, resume: &str, columns: usize, glyphs: Glyphs) -> Vec<String> {
-    const CMD: &str = "cmd:";
-    const POWERSHELL: &str = "PowerShell:";
-    const THEN: &str = "then:";
-
     let room = columns.saturating_sub(2);
-    let mut steps: Vec<(&str, &str, String)> = Vec::with_capacity(2);
-    if let Some(quoted) = cmd_quoted(place) {
-        steps.push((CMD, "pushd ", quoted));
-    }
-    steps.push((
-        POWERSHELL,
-        "Set-Location -LiteralPath ",
-        powershell_quoted(place),
-    ));
-
-    let label = wide(POWERSHELL) + 1;
-    let beside = label + wide(resume) <= room;
     let mut rows = Vec::with_capacity(6);
-    for (name, verb, quoted) in steps {
-        if beside {
-            let fits = room.saturating_sub(label + wide(verb));
-            rows.push(format!(
-                "{name:<label$}{verb}{}",
-                cut(&quoted, fits, glyphs)
-            ));
-        } else {
-            let fits = room.saturating_sub(wide(verb));
-            rows.push(name.to_owned());
-            rows.push(format!("{verb}{}", cut(&quoted, fits, glyphs)));
-        }
+    if let Some(quoted) = cmd_quoted(place) {
+        rows.push("cmd".to_owned());
+        rows.push(entered("pushd ", &quoted, room, glyphs));
     }
-    if beside {
-        rows.push(format!("{THEN:<label$}{resume}"));
-    } else {
-        rows.push(THEN.to_owned());
-        rows.push(resume.to_owned());
-    }
+    rows.push("PowerShell".to_owned());
+    rows.push(entered(
+        "Set-Location -LiteralPath ",
+        &powershell_quoted(place),
+        room,
+        glyphs,
+    ));
+    rows.push("then".to_owned());
+    rows.push(resume.to_owned());
     rows
+}
+
+/// `verb` and the directory it changes to, the directory cut to fit `room`.
+fn entered(verb: &str, quoted: &str, room: usize, glyphs: Glyphs) -> String {
+    let fits = room.saturating_sub(wide(verb));
+    format!("{verb}{}", cut(quoted, fits, glyphs))
 }
 
 /// `place` whole where it is at most `columns` wide, and otherwise its longest

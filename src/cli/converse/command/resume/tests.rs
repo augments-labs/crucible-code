@@ -1508,9 +1508,12 @@ fn windows_is_told_a_row_for_cmd_and_a_row_for_powershell() {
     assert_eq!(
         on_windows(r"D:\code\website", 120),
         [
-            r"cmd:        pushd D:\code\website".to_owned(),
-            r"PowerShell: Set-Location -LiteralPath D:\code\website".to_owned(),
-            format!("then:       crucible --resume {AWAY}"),
+            "cmd".to_owned(),
+            r"pushd D:\code\website".to_owned(),
+            "PowerShell".to_owned(),
+            r"Set-Location -LiteralPath D:\code\website".to_owned(),
+            "then".to_owned(),
+            format!("crucible --resume {AWAY}"),
         ]
     );
 }
@@ -1521,9 +1524,27 @@ fn no_windows_row_joins_two_commands() {
     // and `;` separates nothing in cmd: each row is one command on its own.
     for place in [r"D:\code\website", r"D:\a b", r"D:\a&b", r"D:\a[1]"] {
         for columns in [200, 80, 56, 30] {
-            for row in on_windows(place, columns) {
+            let rows = on_windows(place, columns);
+            for row in &rows {
                 assert!(!row.contains("&&"), "{row:?}");
                 assert!(!row.contains(';'), "{row:?}");
+            }
+            // A label is a row of its own, so a command row copied whole
+            // carries nothing but the command into the shell.
+            for pair in rows.chunks(2) {
+                let [label, command] = pair else {
+                    panic!("a label without its command: {rows:?}");
+                };
+                assert!(
+                    ["cmd", "PowerShell", "then"].contains(&label.as_str()),
+                    "{rows:?}"
+                );
+                assert!(
+                    ["pushd ", "Set-Location -LiteralPath ", "crucible --resume "]
+                        .iter()
+                        .any(|verb| command.starts_with(verb)),
+                    "{rows:?}"
+                );
             }
         }
     }
@@ -1537,9 +1558,12 @@ fn cmd_changes_drive_and_powershell_reads_no_wildcard() {
     assert_eq!(
         on_windows(r"D:\a b[1]", 120),
         [
-            r#"cmd:        pushd "D:\a b[1]""#.to_owned(),
-            r"PowerShell: Set-Location -LiteralPath 'D:\a b[1]'".to_owned(),
-            format!("then:       crucible --resume {AWAY}"),
+            "cmd".to_owned(),
+            r#"pushd "D:\a b[1]""#.to_owned(),
+            "PowerShell".to_owned(),
+            r"Set-Location -LiteralPath 'D:\a b[1]'".to_owned(),
+            "then".to_owned(),
+            format!("crucible --resume {AWAY}"),
         ]
     );
 }
@@ -1551,9 +1575,12 @@ fn neither_shell_expands_anything_in_the_directory() {
     assert_eq!(
         on_windows(r"D:\a$HOME`n", 120),
         [
-            r#"cmd:        pushd "D:\a$HOME`n""#.to_owned(),
-            r"PowerShell: Set-Location -LiteralPath 'D:\a$HOME`n'".to_owned(),
-            format!("then:       crucible --resume {AWAY}"),
+            "cmd".to_owned(),
+            r#"pushd "D:\a$HOME`n""#.to_owned(),
+            "PowerShell".to_owned(),
+            r"Set-Location -LiteralPath 'D:\a$HOME`n'".to_owned(),
+            "then".to_owned(),
+            format!("crucible --resume {AWAY}"),
         ]
     );
     // cmd expands `%NAME%` even inside double quotes, so it is given no row
@@ -1561,8 +1588,10 @@ fn neither_shell_expands_anything_in_the_directory() {
     assert_eq!(
         on_windows(r"D:\a%PATH%b", 120),
         [
-            r"PowerShell: Set-Location -LiteralPath 'D:\a%PATH%b'".to_owned(),
-            format!("then:       crucible --resume {AWAY}"),
+            "PowerShell".to_owned(),
+            r"Set-Location -LiteralPath 'D:\a%PATH%b'".to_owned(),
+            "then".to_owned(),
+            format!("crucible --resume {AWAY}"),
         ]
     );
     // PowerShell ends its single quotes at a typographic one too; each is
@@ -1570,10 +1599,12 @@ fn neither_shell_expands_anything_in_the_directory() {
     assert_eq!(
         on_windows("D:\\it's \u{2019}x\u{2018}", 120),
         [
-            "cmd:        pushd \"D:\\it's \u{2019}x\u{2018}\"".to_owned(),
-            "PowerShell: Set-Location -LiteralPath 'D:\\it''s \u{2019}\u{2019}x\u{2018}\u{2018}'"
-                .to_owned(),
-            format!("then:       crucible --resume {AWAY}"),
+            "cmd".to_owned(),
+            "pushd \"D:\\it's \u{2019}x\u{2018}\"".to_owned(),
+            "PowerShell".to_owned(),
+            "Set-Location -LiteralPath 'D:\\it''s \u{2019}\u{2019}x\u{2018}\u{2018}'".to_owned(),
+            "then".to_owned(),
+            format!("crucible --resume {AWAY}"),
         ]
     );
     // A double quote cannot be in a Windows name, and would end cmd's
@@ -1581,23 +1612,26 @@ fn neither_shell_expands_anything_in_the_directory() {
     assert_eq!(
         on_windows(r#"D:\a" & del b"#, 120),
         [
-            r#"cmd:        pushd "D:\a & del b""#.to_owned(),
-            r#"PowerShell: Set-Location -LiteralPath 'D:\a" & del b'"#.to_owned(),
-            format!("then:       crucible --resume {AWAY}"),
+            "cmd".to_owned(),
+            r#"pushd "D:\a & del b""#.to_owned(),
+            "PowerShell".to_owned(),
+            r#"Set-Location -LiteralPath 'D:\a" & del b'"#.to_owned(),
+            "then".to_owned(),
+            format!("crucible --resume {AWAY}"),
         ]
     );
 }
 
 #[test]
-fn a_narrow_window_gives_each_label_its_own_row_and_keeps_the_id_whole() {
+fn every_label_has_a_row_of_its_own_and_the_id_stays_whole() {
     assert_eq!(
         on_windows(r"D:\code\website", 56),
         [
-            "cmd:".to_owned(),
+            "cmd".to_owned(),
             r"pushd D:\code\website".to_owned(),
-            "PowerShell:".to_owned(),
+            "PowerShell".to_owned(),
             r"Set-Location -LiteralPath D:\code\website".to_owned(),
-            "then:".to_owned(),
+            "then".to_owned(),
             format!("crucible --resume {AWAY}"),
         ]
     );

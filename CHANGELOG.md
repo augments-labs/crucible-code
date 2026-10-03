@@ -15,10 +15,10 @@ change in any release with no deprecation period.
   backtick is written so PowerShell reads it back exactly, and cmd runs nothing
   rather than a command built from an environment variable.
 - **On Windows, `/resume` now prints a command for another directory that runs
-  in PowerShell 5.1 and changes drive.** It prints a row for cmd (`pushd`), a
-  row for PowerShell (`Set-Location -LiteralPath`, which reads `[` and `]`
-  literally) and the resume on a row of its own, since `&&` is a parse error
-  in the PowerShell Windows ships.
+  in PowerShell 5.1 and changes drive.** It prints a command for cmd (`pushd`),
+  one for PowerShell (`Set-Location -LiteralPath`, which reads `[` and `]`
+  literally) and the resume, each on its own row under its label, since `&&` is
+  a parse error in the PowerShell Windows ships.
 
 ## [0.45.0] - 2026-10-03
 
