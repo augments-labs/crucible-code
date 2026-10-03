@@ -170,6 +170,22 @@ pub trait Dialect: Send + Sync + 'static {
         let _ = endpoint;
         None
     }
+
+    /// Whether [`Self::usage_source`] is asked only for a credential the
+    /// wiring says was given on a plan's row: for a vendor whose plan keys and
+    /// pay-as-you-go keys go to the same addresses, with nothing in a key to
+    /// tell them apart. False, by default: every credential sent to an address
+    /// with a source is asked for.
+    const PLAN_TOLD: bool = false;
+}
+
+/// What the wiring said of the row a credential was given on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Given {
+    /// Nothing: the provider was built by [`Chat::at`].
+    Unsaid,
+    /// A plan's row, whose limits there are to ask.
+    OnPlan,
 }
 
 /// What a model's reasoning is to the vendor that wrote it.
@@ -228,9 +244,9 @@ pub struct Chat<D: Dialect> {
     transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     credential_scope: CredentialScopeId,
-    /// Where the plan behind the credential says how much of its limits is
-    /// used, for a credential the wiring said has one.
-    limits: Option<Usage>,
+    /// What the wiring said of the row the credential was given on, read
+    /// only by a dialect whose plan is asked when told.
+    given: Given,
     dialect: PhantomData<D>,
 }
 
@@ -242,10 +258,10 @@ impl<D: Dialect> fmt::Debug for Chat<D> {
             .field("transport", &self.transport)
             .field("endpoint", &self.endpoint)
             .field("credential_scope", &self.credential_scope);
-        // Shown only where it is set, so a provider with no plan to ask shows
-        // as it did before it could have one.
-        if let Some(limits) = &self.limits {
-            shown.field("limits", limits);
+        // Shown only where it was said, so a provider built by `at` shows as
+        // it did before the wiring could say anything.
+        if self.given != Given::Unsaid {
+            shown.field("given", &self.given);
         }
         shown.finish()
     }
@@ -279,16 +295,16 @@ impl<D: Dialect> Chat<D> {
             transport: transport.into(),
             endpoint,
             credential_scope,
-            limits: None,
+            given: Given::Unsaid,
             dialect: PhantomData,
         }
     }
 
-    /// The same provider, asking `usage` for its plan's limits when asked:
-    /// for a credential the wiring knows is a plan's, since nothing in the
+    /// The same provider, told its credential was given on a plan's row, as
+    /// a dialect that sets [`Dialect::PLAN_TOLD`] asks to be: nothing in the
     /// credential says so to the provider.
-    pub(crate) const fn asking(mut self, usage: Usage) -> Self {
-        self.limits = Some(usage);
+    pub(crate) const fn on_plan_row(mut self) -> Self {
+        self.given = Given::OnPlan;
         self
     }
 
@@ -377,19 +393,6 @@ impl<D: Dialect> Provider for Chat<D> {
         body::prompt_cache_encoding(request)
     }
 
-    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
-        // Only the vendor's own services are asked: a gateway's address is not
-        // where the vendor keeps a plan.
-        let usage = self.limits.filter(|_| self.vendor())?;
-        Some(Box::pin(asking::ask(
-            D::NAME,
-            usage,
-            Arc::clone(&self.credential),
-            Arc::clone(&self.transport),
-            D::headers,
-        )))
-    }
-
     fn stream<'a>(
         &'a self,
         request: Request<'a>,
@@ -440,7 +443,9 @@ impl<D: Dialect> Provider for Chat<D> {
     fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
         // Only the vendor's own addresses are asked: a gateway's address is
         // not where the vendor keeps a plan.
-        if !self.vendor() {
+        // A dialect asked only when told is not asked for a credential the
+        // wiring said nothing of.
+        if !self.vendor() || (D::PLAN_TOLD && self.given != Given::OnPlan) {
             return None;
         }
         let usage = D::usage_source(&self.endpoint)?;

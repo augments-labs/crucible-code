@@ -20,6 +20,7 @@ use crate::completions::wire::Thought;
 use crate::completions::{Chat, Dialect, Reasoning};
 use crate::endpoint::Endpoint;
 use crate::refusal::SILENT;
+use crate::responses::Usage;
 use crate::transport::Transport;
 
 mod usage;
@@ -111,6 +112,14 @@ impl Dialect for MiniMaxChat {
             512,
         )
     }
+
+    fn usage_source(endpoint: &Endpoint) -> Option<Usage> {
+        usage::source(endpoint)
+    }
+
+    // A Token Plan key and a pay-as-you-go key are served at the same
+    // addresses, and only the first has a plan: see [`MiniMax::on_plan`].
+    const PLAN_TOLD: bool = true;
 }
 
 /// How `MiniMax`'s refusal of a request too large for the model opens.
@@ -171,12 +180,7 @@ impl Chat<MiniMaxChat> {
         credential: Box<dyn Credential>,
         transport: Box<dyn Transport>,
     ) -> Self {
-        let limits = usage::source(&endpoint);
-        let provider = Self::at(endpoint, credential, transport);
-        match limits {
-            Some(limits) => provider.asking(limits),
-            None => provider,
-        }
+        Self::at(endpoint, credential, transport).on_plan_row()
     }
 }
 
