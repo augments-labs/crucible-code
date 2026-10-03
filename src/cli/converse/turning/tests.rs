@@ -1771,8 +1771,6 @@ fn a_command_that_answers_before_the_delay_is_never_drawn_over_the_row() {
             "{frame:?}"
         );
     }
-    assert!(!turning.can_background(), "a key nothing offered was live");
-
     let settled = turning.saw(&Event::ToolFinished {
         call: ToolId::new("a"),
         output: ToolOutput::ok("done"),
@@ -1792,7 +1790,6 @@ fn a_command_still_running_past_the_delay_stands_over_the_row_with_its_key() {
     turning.saw(&requested_as("bash", true));
     turning.saw(&printed("Compiling one\n"));
     assert!(turning.moved(), "the first frame was never drawn");
-    assert!(!turning.can_background());
 
     aged(&mut turning);
 
@@ -1815,4 +1812,38 @@ fn a_command_still_running_past_the_delay_stands_over_the_row_with_its_key() {
             .any(|row| row.contains("1 line") && row.contains("(ctrl+b to background)")),
         "{frame:?}"
     );
+}
+
+#[test]
+fn a_command_can_be_backgrounded_before_its_row_is_drawn() {
+    // The delay is about drawing, not about the key. Somebody who knows a
+    // command will run long presses ctrl+b the moment it starts, and the row
+    // offering it is not up yet; the press still reaches the call. The hint
+    // waits for the row all the same.
+    let mut early = Turning::started(Breakdown::default()).pinning(PINNED);
+    early.saw(&requested_as("bash", true));
+    let frame = footing(&early);
+    assert!(
+        early.can_background(),
+        "ctrl+b did nothing before the row was drawn"
+    );
+    assert_eq!(frame.len(), ROWS, "the row was drawn early: {frame:?}");
+    assert!(!frame.iter().any(|row| row.contains("ctrl+b")), "{frame:?}");
+
+    // What the transcript is handed once the command lets go is what it is
+    // handed when the key is pressed under the drawn row, and the band goes
+    // back to the rows it was.
+    let mut late = Turning::started(Breakdown::default()).pinning(PINNED);
+    late.saw(&requested_as("bash", true));
+    aged(&mut late);
+    assert!(late.can_background());
+
+    let left = || Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::ok("Left running in the background"),
+        receipt: None,
+    };
+    assert_eq!(lines(early.saw(&left())), lines(late.saw(&left())));
+    assert_eq!(footing(&early).len(), ROWS);
+    assert!(!early.can_background());
 }

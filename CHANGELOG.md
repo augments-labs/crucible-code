@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Ctrl+B backgrounds a command from the moment it starts.** Since 0.45.1 the
+  key did nothing until the running command's row was drawn, three seconds in by
+  default; the row still waits for `output.pinAfterSeconds`, but the key no
+  longer does.
+
 ## [0.45.1] - 2026-10-03
 
 **A patch for 0.45.0: a fresh MiniMax Token Plan window no longer stops every

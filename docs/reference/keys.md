@@ -131,7 +131,7 @@ wheel. These differ:
 | <kbd>Shift-Tab</kbd> | Steps the mode for the turn that starts next, and the row under the box says which. The running turn keeps the mode it began under. |
 | <kbd>Ctrl+C</kbd> | Clears the box. When it is already empty it offers to leave as at the prompt, and the second press within two seconds stops the turn and ends the session. |
 | <kbd>Ctrl+D</kbd> | Nothing. |
-| <kbd>Ctrl+B</kbd> | Leaves the running command in the background, when its row offers `(ctrl+b to background)`. Nothing otherwise. See [Leaving one running](../tools/commands.md#leaving-one-running). |
+| <kbd>Ctrl+B</kbd> | Leaves the running command in the background, where it can be, including in the seconds before its row offering `(ctrl+b to background)` is drawn ([`output.pinAfterSeconds`](../configuration/configuration.md#output)). Nothing otherwise. See [Leaving one running](../tools/commands.md#leaving-one-running). |
 | <kbd>Ctrl+Q</kbd> | Stands the prompts waiting in the queue. Nothing while it is empty. |
 | <kbd>Ctrl+O</kbd> | Stands the cut results under the tail of the answer, which goes on arriving above them. |
 | <kbd>Ctrl+E</kbd>, <kbd>Tab</kbd> | Nothing. |
