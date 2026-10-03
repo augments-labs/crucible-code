@@ -13,6 +13,10 @@ change in any release with no deprecation period.
 - **The Windows installer matches names by their exact characters.** A
   checksum line, archive member or PATH entry whose name differs only by a
   character such as a soft hyphen is no longer taken for the one it wants.
+- **The rollback drill always tests the tree it runs in.** It used to reuse
+  any binary left in `target/debug`, so an older build could pass in the
+  tree's place; it now builds the candidate each run and refuses one whose
+  version is not the workspace version.
 
 ## [0.45.0] - 2026-10-03
 

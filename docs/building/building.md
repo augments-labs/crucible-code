@@ -111,8 +111,12 @@ fixtures the candidate binary has read and recovered: a conversation must
 replay byte-identical, a session ending in an unanswered tool call must recover
 to the same bytes on both sides, and `--sandbox` and `--extensions` must agree.
 Everything happens under scratch directories with no model selected, so no
-provider is called and no real session is read. `scripts/sh/rollback-drill-selftest.sh`
-runs the drill clean and against a corrupted fixture, which must fail. CI runs
+provider is called and no real session is read. The candidate is built from
+the current tree on every run, and a binary given with `--candidate-binary` must
+report the workspace version, so a stale build in `target/debug` cannot pass in
+the tree's place. `scripts/sh/rollback-drill-selftest.sh` runs the drill clean
+and against a corrupted fixture, which must fail, and checks that a candidate of
+another version is refused. CI runs
 the drill and its self-test on Linux, both macOS and both Windows cells with a
 30-minute timeout. Each cell builds the previous release once and hands that
 binary to both. A run on `dev` keeps it in the Actions cache, and pull requests
