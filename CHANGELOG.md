@@ -10,10 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **A checkout whose `.git` file names its git directory relatively records
-  its branch again.** The path is now read from the checkout, as git reads it,
-  rather than from the directory crucible was started in, so a submodule or a
-  worktree made with relative paths shows its branch in `/resume`.
+- **A fresh MiniMax Token Plan window no longer stops every turn until it
+  resets.** A count of 0 with no share left or status to say otherwise could
+  mean nothing used as much as nothing left, and was read as nothing left;
+  such a window is now left unread, and only one the plan marks spent holds
+  turns back.
 - **A checkout whose `.git` file is a symbolic link records its branch and
   lists its worktrees again.** The link is followed as git follows it, and the
   file it leads to is still read only when it is a small ordinary file.
