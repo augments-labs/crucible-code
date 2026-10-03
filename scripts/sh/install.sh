@@ -301,7 +301,11 @@ if [[ -z $archive ]]; then
     fi
 fi
 version=${version#v}
-[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+# The classes are spelled out: a range such as [0-9] or [A-Za-z] follows the
+# locale, and under a UTF-8 one takes non-ASCII digits and letters too.
+digit=0123456789
+alnum=${digit}ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+[[ $version =~ ^[$digit]+\.[$digit]+\.[$digit]+([.-][$alnum.-]+)?$ ]] || {
     printf 'install: invalid version %q\n' "$version" >&2
     exit 2
 }
