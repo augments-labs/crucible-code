@@ -337,6 +337,7 @@ async fn minimax_usage_a_reset_past_any_window_is_no_reset_and_stops_no_turn() {
         first_with(&[
             ("current_interval_total_count", json!(10)),
             ("current_interval_usage_count", json!(0)),
+            ("current_interval_status", json!(2)),
             ("end_time", json!(ends)),
         ])
     };
@@ -355,4 +356,38 @@ async fn minimax_usage_a_reset_past_any_window_is_no_reset_and_stops_no_turn() {
     assert!(soon.exhausted("MiniMax-M2.7", now).is_some());
     assert_eq!(five_hour(&never), Some(None));
     assert_eq!(never.exhausted("MiniMax-M2.7", now), None);
+}
+
+#[tokio::test]
+async fn minimax_usage_a_count_of_0_alone_never_reads_a_fresh_window_as_spent() {
+    let now = SystemTime::now();
+    let soon = u64::try_from(
+        (now + Duration::from_hours(1))
+            .duration_since(UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_millis(),
+    )
+    .expect("within u64");
+    // A fresh window as an answer that counts what is used gives it: nothing
+    // used, with no share left and no status to say which the count means.
+    let fresh = read(&first_with(&[
+        ("current_interval_usage_count", json!(0)),
+        ("end_time", json!(soon)),
+    ]))
+    .await;
+
+    assert_eq!(fresh.exhausted("MiniMax-M2.7", now), None);
+    // Its weekly total is 0, so with the 5-hour window unread the family has
+    // no window to show.
+    let names: Vec<String> = grouped(&fresh).into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["speech-hd", "image-01"]);
+
+    // The same count with the status the vendor gives a spent window is spent.
+    let spent = read(&first_with(&[
+        ("current_interval_usage_count", json!(0)),
+        ("current_interval_status", json!(2)),
+        ("end_time", json!(soon)),
+    ]))
+    .await;
+    assert!(spent.exhausted("MiniMax-M2.7", now).is_some());
 }
