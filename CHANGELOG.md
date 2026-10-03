@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.45.2] - 2026-10-03
+
+**Ctrl+B backgrounds a running command from the moment it starts again, and
+`/usage` no longer hangs when `/etc/localtime` is a pipe or a device.** Both
+fix behaviour 0.45.1 introduced or left open.
+
 ### Fixed
 
 - **Ctrl+B backgrounds a command from the moment it starts.** Since 0.45.1 the
@@ -4954,7 +4960,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.2...HEAD
+[0.45.2]: https://github.com/augments-labs/crucible-code/compare/v0.45.1...v0.45.2
 [0.45.1]: https://github.com/augments-labs/crucible-code/compare/v0.45.0...v0.45.1
 [0.45.0]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...v0.45.0
 [0.44.2]: https://github.com/augments-labs/crucible-code/compare/v0.44.1...v0.44.2
