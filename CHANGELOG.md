@@ -14,6 +14,9 @@ change in any release with no deprecation period.
   Unicode format character in a model's answer, a tool result or a file name
   could reorder or hide what was drawn around it; the screen and redirected
   output now drop them, keeping only the joiners emoji and some scripts need.
+- **The Windows installer matches names by their exact characters.** A
+  checksum line, archive member or PATH entry whose name differs only by a
+  character such as a soft hyphen is no longer taken for the one it wants.
 - **The Windows installer refuses a version followed by a newline.** Its
   version check let one through and failed later on the archive instead of
   saying the version is invalid.
