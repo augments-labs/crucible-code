@@ -1462,33 +1462,60 @@ fn a_directory_is_written_under_home_and_quoted_where_a_shell_needs_it() {
     );
 }
 
-#[cfg(not(windows))]
 #[test]
 fn a_posix_shell_reads_the_directory_back_whole() {
-    assert_eq!(quoted("~/code/crucible-code"), "~/code/crucible-code");
-    assert_eq!(quoted("/srv/x_y@1.2+3=4:5,6%7"), "/srv/x_y@1.2+3=4:5,6%7");
-    assert_eq!(quoted("~/my code"), "~/'my code'");
-    assert_eq!(quoted("/srv/it's"), r"'/srv/it'\''s'");
-    assert_eq!(quoted("~"), "~");
-    assert_eq!(quoted("/a;rm -rf b"), "'/a;rm -rf b'");
+    assert_eq!(posix_quoted("~/code/crucible-code"), "~/code/crucible-code");
+    assert_eq!(
+        posix_quoted("/srv/x_y@1.2+3=4:5,6%7"),
+        "/srv/x_y@1.2+3=4:5,6%7"
+    );
+    assert_eq!(posix_quoted("~/my code"), "~/'my code'");
+    assert_eq!(posix_quoted("/srv/it's"), r"'/srv/it'\''s'");
+    assert_eq!(posix_quoted("~"), "~");
+    assert_eq!(posix_quoted("/a;rm -rf b"), "'/a;rm -rf b'");
+}
 
+#[cfg(not(windows))]
+#[test]
+fn a_posix_shell_is_handed_a_directory_under_home() {
     // Under home, where a POSIX shell expands `~` back.
     let home = under(&["home", "ada"]);
     assert_eq!(commanded(&home.join("my code"), Some(&home)), "~/'my code'");
 }
 
-#[cfg(windows)]
 #[test]
 fn cmd_and_powershell_read_the_directory_back_whole() {
     // Double quotes are the quoting both shells share, and a directory
     // without a character either acts on is left bare.
-    assert_eq!(quoted(r"C:\code\crucible-code"), r"C:\code\crucible-code");
-    assert_eq!(quoted(r"C:\a b"), r#""C:\a b""#);
-    assert_eq!(quoted(r"C:\a&b"), r#""C:\a&b""#);
+    assert_eq!(
+        windows_quoted(r"C:\code\crucible-code"),
+        r"C:\code\crucible-code"
+    );
+    assert_eq!(windows_quoted(r"C:\a b"), r#""C:\a b""#);
+    assert_eq!(windows_quoted(r"C:\a&b"), r#""C:\a&b""#);
     // A double quote cannot be in a Windows name, and is the one character
     // that would end the quoting in both: it is not written.
-    assert_eq!(quoted(r#"C:\a" & del b"#), r#""C:\a & del b""#);
+    assert_eq!(windows_quoted(r#"C:\a" & del b"#), r#""C:\a & del b""#);
+}
 
+#[test]
+fn neither_shell_expands_anything_in_the_directory() {
+    // PowerShell expands `$name` and reads a backtick as an escape inside
+    // double quotes; both are escaped, so it reads the name back as it is.
+    assert_eq!(windows_quoted(r"C:\a$HOME"), r#""C:\a`$HOME""#);
+    assert_eq!(windows_quoted(r"C:\a`nb"), r#""C:\a``nb""#);
+    // cmd expands `%NAME%` even inside double quotes, and what it expands to
+    // can end the quoting, so no `%` is written: PowerShell builds it back.
+    assert_eq!(
+        windows_quoted(r"C:\a%PATH%b"),
+        r#""C:\a$([char]37)PATH$([char]37)b""#
+    );
+    assert!(!windows_quoted(r"C:\x%CMDCMDLINE:exe=exe&calc&%").contains('%'));
+}
+
+#[cfg(windows)]
+#[test]
+fn cmd_and_powershell_are_handed_the_directory_whole() {
     // Whole, never under `~`, which cmd reads as a directory of that name.
     let home = under(&["Users", "ada"]);
     assert_eq!(
