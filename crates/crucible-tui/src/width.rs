@@ -65,8 +65,8 @@ pub(crate) fn advance(character: char) -> Option<usize> {
 }
 
 /// Whether `character` is a Unicode format character (general category `Cf`):
-/// the bidi marks, embeddings, overrides and isolates, the zero-width
-/// characters and the byte order mark among them.
+/// the bidi marks, embeddings, overrides and isolates, the zero-width space
+/// and the byte order mark among them, but not the two joiners below.
 ///
 /// Drawn, one reorders or hides the text around it: an override in a file
 /// name or a model's answer shows the reader a row that says something other
@@ -74,10 +74,14 @@ pub(crate) fn advance(character: char) -> Option<usize> {
 /// stored transcript keeps them; this is a question asked on the way to a
 /// terminal.
 ///
-/// The same set `crucible_types` drops from a limit's name. Neither crate may
-/// name the other, so the two lists are held to each other by a test in the
-/// command line, which reaches both. U+2065, unassigned between the invisible
-/// operators and the isolates, is taken with them.
+/// The zero-width non-joiner and joiner, U+200C and U+200D, are kept: they
+/// join an emoji sequence or shape Persian and Indic script, and the terminal
+/// draws them as part of the characters around them.
+///
+/// Otherwise the same set `crucible_types` drops from a limit's name. Neither
+/// crate may name the other, so the two lists are held to each other by a test
+/// in the command line, which reaches both. U+2065, unassigned between the
+/// invisible operators and the isolates, is taken with them.
 pub(crate) const fn unshown(character: char) -> bool {
     matches!(
         character,
@@ -89,7 +93,8 @@ pub(crate) const fn unshown(character: char) -> bool {
             | '\u{890}'..='\u{891}'
             | '\u{8e2}'
             | '\u{180e}'
-            | '\u{200b}'..='\u{200f}'
+            | '\u{200b}'
+            | '\u{200e}'..='\u{200f}'
             | '\u{202a}'..='\u{202e}'
             | '\u{2060}'..='\u{206f}'
             | '\u{feff}'

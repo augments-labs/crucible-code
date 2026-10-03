@@ -525,6 +525,16 @@ mod tests {
     }
 
     #[test]
+    fn a_joined_emoji_keeps_its_joiner() {
+        // The joiner is what makes three emoji one family on screen, and the
+        // non-joiner shapes Persian and Indic script: neither is dropped.
+        let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}";
+        assert_eq!(Row::plain(family).text(), family);
+        let persian = "\u{645}\u{6cc}\u{200c}\u{62e}\u{648}\u{627}\u{647}\u{645}";
+        assert_eq!(Row::plain(persian).text(), persian);
+    }
+
+    #[test]
     fn a_span_carrying_an_address_is_painted_as_one() {
         // The whole of what makes a word in the transcript openable: the text
         // is unchanged and an address travels beside it, so a terminal that

@@ -10,10 +10,10 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **Bidi overrides and zero-width characters no longer reach your terminal.**
-  A Unicode format character in a model's answer, a tool result or a file name
+- **Bidi overrides and zero-width spaces no longer reach your terminal.** A
+  Unicode format character in a model's answer, a tool result or a file name
   could reorder or hide what was drawn around it; the screen and redirected
-  output now drop them, as limit names already did.
+  output now drop them, keeping only the joiners emoji and some scripts need.
 
 ## [0.45.0] - 2026-10-03
 
