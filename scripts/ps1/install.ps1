@@ -357,7 +357,10 @@ function Invoke-CrucibleInstall {
     }
 
     # The directories a new terminal will find on PATH, for the user and for
-    # the machine.
+    # the machine. Windows names a directory ignoring case alone, so an entry
+    # matches ordinally ignoring case: the -ieq family compares by culture,
+    # which also ignores characters such as U+00AD SOFT HYPHEN that make a
+    # different name.
     function Test-OnPath([string]$Path) {
         $want = $Path.TrimEnd('\')
         foreach ($scope in 'User', 'Machine') {
@@ -366,7 +369,7 @@ function Invoke-CrucibleInstall {
             foreach ($entry in ($value -split ';')) {
                 if (-not $entry) { continue }
                 $entry = [Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\')
-                if ($entry -ieq $want) { return $true }
+                if ([string]::Equals($entry, $want, [StringComparison]::OrdinalIgnoreCase)) { return $true }
             }
         }
         return $false
@@ -424,7 +427,7 @@ function Invoke-CrucibleInstall {
         $at = $Path
         while ($at) {
             $exposure = Get-Exposure $at $false
-            if (-not $exposure -and $at -eq $Path) {
+            if (-not $exposure -and [string]::Equals($at, $Path, [StringComparison]::Ordinal)) {
                 foreach ($file in $Files) {
                     $exposure = Get-Exposure $file $true
                     if ($exposure) { break }
@@ -446,7 +449,8 @@ function Invoke-CrucibleInstall {
         try {
             $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
             $current = ''
-            if ($key.GetValueNames() -contains 'Path') {
+            if (@($key.GetValueNames() | Where-Object {
+                            [string]::Equals($_, 'Path', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
                 $kind = $key.GetValueKind('Path')
                 $current = [string]$key.GetValue('Path', '',
                     [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
@@ -514,7 +518,7 @@ function Invoke-CrucibleInstall {
                 $latest.Dispose()
             }
         }
-        if ($Version.StartsWith('v')) { $Version = $Version.Substring(1) }
+        if ($Version.StartsWith('v', [StringComparison]::Ordinal)) { $Version = $Version.Substring(1) }
         # Matched with case, since a match that ignores it folds U+212A
         # KELVIN SIGN to k and would let it through, and anchored with \A and
         # \z, since $ also matches before a final newline.
@@ -587,9 +591,14 @@ function Invoke-CrucibleInstall {
             Copy-Item -LiteralPath $Archive -Destination $copy
             $Archive = $copy
         }
+        # Names in SHA256SUMS and in the archive are matched ordinally and with
+        # case, as install.sh matches them: they name entries in a release,
+        # not files on this disk, and -ceq compares by culture, which ignores
+        # characters such as U+00AD SOFT HYPHEN.
         $expected = @(Get-Content -LiteralPath $Checksums | ForEach-Object {
                 $fields = @(($_.Trim()) -split '\s+')
-                if ($fields.Count -ge 2 -and ($fields[1] -ceq $archiveName -or $fields[1] -ceq "*$archiveName") -and
+                if ($fields.Count -ge 2 -and ([string]::Equals($fields[1], $archiveName, [StringComparison]::Ordinal) -or
+                    [string]::Equals($fields[1], "*$archiveName", [StringComparison]::Ordinal)) -and
                     $fields[0] -match '^[0-9A-Fa-f]+$') {
                     $fields[0].ToLowerInvariant()
                 }
@@ -614,17 +623,18 @@ function Invoke-CrucibleInstall {
         for ($i = 0; $i -lt $members.Count; $i++) {
             $member = $members[$i]
             $kind = $details[$i].Substring(0, 1)
-            if ($member -ceq $stem -or $member -ceq "$stem/") {
+            if ([string]::Equals($member, $stem, [StringComparison]::Ordinal) -or
+                [string]::Equals($member, "$stem/", [StringComparison]::Ordinal)) {
                 if ($kind -ne 'd') { Stop-Install 1 "archive directory $member is not a directory" }
             } elseif ($member.StartsWith("$stem/", [StringComparison]::Ordinal) -and
-                $files -ccontains $member.Substring($stem.Length + 1)) {
+                [Array]::IndexOf($files, $member.Substring($stem.Length + 1)) -ge 0) {
                 if ($kind -ne '-') { Stop-Install 1 "archive file $member is not a regular file" }
             } else {
                 Stop-Install 1 "unexpected archive member $member"
             }
         }
         foreach ($wanted in 'crucible.exe', 'crucible-sandbox-broker.exe') {
-            if (@($members | Where-Object { $_ -ceq "$stem/$wanted" }).Count -ne 1) {
+            if (@($members | Where-Object { [string]::Equals($_, "$stem/$wanted", [StringComparison]::Ordinal) }).Count -ne 1) {
                 Stop-Install 1 "archive does not contain exactly one $wanted"
             }
         }
@@ -639,8 +649,8 @@ function Invoke-CrucibleInstall {
 
         Start-Step 'install'
         $destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir).TrimEnd('\')
-        if (-not $destination -or $destination.EndsWith(':') -or
-            [System.IO.Path]::GetPathRoot("$destination\") -eq "$destination\") {
+        if (-not $destination -or $destination.EndsWith(':', [StringComparison]::Ordinal) -or
+            [string]::Equals([System.IO.Path]::GetPathRoot("$destination\"), "$destination\", [StringComparison]::Ordinal)) {
             Stop-Install 2 'the installation directory resolves to root'
         }
         $where = Get-Shown $destination
@@ -743,7 +753,7 @@ function Invoke-CrucibleInstall {
             # rest holds nothing double quotes would read.
             $literal = "'" + ($destination -replace "['\u2018-\u201B]", '$0$0') + ";'"
             $below = $where.Substring([Math]::Min($where.Length, '%LOCALAPPDATA%'.Length))
-            if ($where.StartsWith('%LOCALAPPDATA%') -and $below -notmatch '[`$"\u201C-\u201E]') {
+            if ($where.StartsWith('%LOCALAPPDATA%', [StringComparison]::Ordinal) -and $below -notmatch '[`$"\u201C-\u201E]') {
                 $literal = '"$env:LOCALAPPDATA' + $below + ';"'
             }
             # A console that is not UTF-8 shows some characters as the ASCII

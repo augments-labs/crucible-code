@@ -19,6 +19,9 @@ change in any release with no deprecation period.
   one for PowerShell (`Set-Location -LiteralPath`, which reads `[` and `]`
   literally) and the resume, each on its own row under its label, since `&&` is
   a parse error in the PowerShell Windows ships.
+- **The Windows installer matches names by their exact characters.** A
+  checksum line, archive member or PATH entry whose name differs only by a
+  character such as a soft hyphen is no longer taken for the one it wants.
 - **The Windows installer refuses a version followed by a newline.** Its
   version check let one through and failed later on the archive instead of
   saying the version is invalid.
