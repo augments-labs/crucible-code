@@ -638,14 +638,64 @@ fn a_zone_named_by_a_pipe_is_never_waited_on() {
 fn only_a_zone_file_of_a_zone_file_s_size_is_read() {
     use std::ffi::OsStr;
 
-    assert!(!readable_zone(Some(OsStr::new("/dev/zero"))));
-    assert!(!readable_zone(Some(OsStr::new(":/dev/zero"))));
-    assert!(!readable_zone(Some(OsStr::new("/"))));
-    assert!(readable_zone(None));
-    assert!(readable_zone(Some(OsStr::new(""))));
-    assert!(readable_zone(Some(OsStr::new("Europe/Paris"))));
-    assert!(readable_zone(Some(OsStr::new("EST5EDT,M3.2.0,M11.1.0"))));
-    assert!(readable_zone(Some(OsStr::new("/nowhere/at/all"))));
+    let nowhere = Path::new("/nowhere/at/all");
+    assert!(!readable_zone(Some(OsStr::new("/dev/zero")), nowhere));
+    assert!(!readable_zone(Some(OsStr::new(":/dev/zero")), nowhere));
+    assert!(!readable_zone(Some(OsStr::new("/")), nowhere));
+    assert!(readable_zone(None, nowhere));
+    assert!(readable_zone(Some(OsStr::new("")), nowhere));
+    assert!(readable_zone(Some(OsStr::new("Europe/Paris")), nowhere));
+    assert!(readable_zone(
+        Some(OsStr::new("EST5EDT,M3.2.0,M11.1.0")),
+        nowhere
+    ));
+    assert!(readable_zone(Some(OsStr::new("/nowhere/at/all")), nowhere));
+}
+
+/// With `TZ` unset the zone is read from `/etc/localtime`, held to the same
+/// bound: a pipe, a device or an oversized file there, reached directly or
+/// through the usual symlink, is never read, and a zone file there still is.
+#[cfg(unix)]
+#[test]
+fn a_localtime_that_is_not_a_zone_file_s_size_is_never_read() {
+    let dir = std::env::temp_dir().join(format!("crucible-localtime-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let pipe = dir.join("pipe");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&pipe)
+        .status()
+        .expect("mkfifo");
+    assert!(made.success(), "mkfifo: {made}");
+    let oversized = dir.join("oversized");
+    std::fs::File::create(&oversized)
+        .and_then(|file| file.set_len(ZONE_FILE + 1))
+        .expect("an oversized file");
+    let zone = dir.join("zone");
+    std::fs::write(&zone, b"TZif").expect("a zone-sized file");
+    let linked_pipe = dir.join("linked-pipe");
+    std::os::unix::fs::symlink(&pipe, &linked_pipe).expect("a symlink to the pipe");
+    let linked_zone = dir.join("linked-zone");
+    std::os::unix::fs::symlink(&zone, &linked_zone).expect("a symlink to the zone");
+
+    let read = |localtime: &Path| readable_zone(None, localtime);
+    let read_anyway = [&*pipe, &linked_pipe, &oversized, Path::new("/dev/zero")]
+        .into_iter()
+        .filter(|localtime| read(localtime))
+        .map(|localtime| localtime.display().to_string())
+        .collect::<Vec<_>>();
+    let accepted = [&*zone, &linked_zone, &dir.join("missing")]
+        .into_iter()
+        .all(read);
+    // A `TZ` that names a zone decides alone, whatever `/etc/localtime` is.
+    let named = readable_zone(Some(std::ffi::OsStr::new("Europe/Paris")), &pipe);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        read_anyway.is_empty(),
+        "read as /etc/localtime: {read_anyway:?}"
+    );
+    assert!(accepted);
+    assert!(named);
 }
 
 #[test]

@@ -549,8 +549,8 @@ gives way to the row that says the turn is running at all.
 None of it is drawn until the call has been out for three seconds
 ([`output.pinAfterSeconds`](../configuration/configuration.md#output)): one
 that answers sooner goes to the transcript and nowhere else, so a quick command
-does not flash a row over the box, and `ctrl+b` waits for the row that offers
-it.
+does not flash a row over the box. The wait is only about drawing: `ctrl+b`
+leaves a command running from the moment it starts, before its row is shown.
 
 Where a response asked for several at once, that row counts them instead of
 naming one (`8 WebFetch`, or `2 WebFetch and 7 Read`), and the count falls as
