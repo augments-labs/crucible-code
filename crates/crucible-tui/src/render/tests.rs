@@ -2353,3 +2353,148 @@ fn a_glyph_set_taken_mid_answer_leaves_the_answer_read_where_it_was() {
         "{said:#?}"
     );
 }
+
+// The rail beside a running turn.
+
+/// A renderer with the rail on, on a window sixty columns wide and thirty rows
+/// tall, holding eighty numbered lines with the box under them.
+fn railed_turn() -> Drawn {
+    let mut drawn = Drawn::new(60, 30);
+    drawn.rails(true);
+    for line in 0..80 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn
+}
+
+/// Stands `turn` under the transcript as a running turn's own rows, with
+/// `over` under them and the box under both.
+fn running(drawn: &mut Drawn, turn: &[Row], over: &[Row]) {
+    let (rows, caret) = boxed();
+    drawn
+        .replace_running(
+            PromptRows {
+                rows: &rows,
+                caret,
+                pointed: None,
+            },
+            turn,
+            over,
+            Palette::plain(),
+        )
+        .unwrap();
+}
+
+/// `count` rows of a running command's output.
+fn printed(count: usize) -> Vec<Row> {
+    (0..count).map(|n| Row::plain(format!("out {n}"))).collect()
+}
+
+/// The rail's column, read down every row from the top of the transcript band
+/// to the foot of the turn band.
+fn rail_down(drawn: &Drawn) -> String {
+    let screen = drawn.screen();
+    let column = drawn.columns() - 1;
+    let bands = drawn.bands();
+    (bands.transcript.start..bands.turn.end)
+        .map(|row| screen.row(row).chars().nth(column).unwrap_or(' '))
+        .collect()
+}
+
+/// How many rows of `rail` the thumb covers.
+fn thumb_of(rail: &str) -> usize {
+    rail.chars().filter(|cell| *cell == '┃').count()
+}
+
+#[test]
+fn a_running_turn_that_grows_barely_moves_the_rail_thumb() {
+    // A running command's output coming and going under the transcript took
+    // the band from twenty-six rows to eighteen, and the rail and thumb with
+    // it: a thumb of eight rows became one of four, every time the output
+    // appeared. The turn's rows are the transcript's tail while it runs, so the
+    // rail stands beside them too and the thumb keeps its length.
+    let mut drawn = railed_turn();
+    running(&mut drawn, &standing(), &[]);
+    let short = rail_down(&drawn);
+    running(&mut drawn, &printed(9), &[]);
+    let tall = rail_down(&drawn);
+
+    assert_eq!(drawn.bands().transcript.len(), 18, "{tall:?}");
+    assert_eq!(short.chars().count(), tall.chars().count());
+    assert!(
+        thumb_of(&short).abs_diff(thumb_of(&tall)) <= 1,
+        "one row of turn: {short:?}, nine: {tall:?}"
+    );
+    // Following the foot, the thumb reaches the rail's last row either way.
+    assert!(
+        short.ends_with('┃') && tall.ends_with('┃'),
+        "{short:?} {tall:?}"
+    );
+}
+
+#[test]
+fn a_running_turn_s_rows_leave_the_rail_its_column() {
+    let mut drawn = railed_turn();
+    running(&mut drawn, &[Row::plain("x".repeat(80))], &[]);
+
+    let screen = drawn.screen();
+    let at = drawn.bands().turn.start;
+    assert_eq!(screen.row(at), format!("{}┃", "x".repeat(59)));
+}
+
+#[test]
+fn a_list_under_a_running_turn_stands_beside_no_rail_and_is_not_counted() {
+    // The list a line opened is not the transcript's: it keeps the window's
+    // width and the rail stops at the turn's last row. Twenty-four band rows
+    // and the turn's one are twenty-five rail rows over eighty-one, so the
+    // thumb is eight rows; counting the list too would have made it nine.
+    let mut drawn = railed_turn();
+    let list = vec![Row::plain("y".repeat(60)), Row::plain("/help")];
+    running(&mut drawn, &standing(), &list);
+
+    let bands = drawn.bands();
+    let screen = drawn.screen();
+    assert_eq!(bands.transcript.len(), 24);
+    assert_eq!(screen.row(bands.turn.end - 2), "y".repeat(60));
+    assert_eq!(screen.row(bands.turn.end - 1), "/help");
+    assert_eq!(
+        rail_down(&drawn),
+        format!("{}{}y ", "│".repeat(17), "┃".repeat(8))
+    );
+}
+
+#[test]
+fn rows_stood_under_the_transcript_by_anything_but_a_turn_stand_beside_no_rail() {
+    // A question or a picker stands in the same band, and is not the
+    // transcript's either: the rail is the band's alone, as between turns.
+    let mut drawn = railed_turn();
+    drawn.under(&printed(9), None, Palette::plain()).unwrap();
+
+    let bands = drawn.bands();
+    let screen = drawn.screen();
+    assert_eq!(screen.row(bands.turn.start), "out 0");
+    assert_eq!(rail_of(&drawn).chars().count(), bands.transcript.len());
+}
+
+#[test]
+fn a_press_on_the_rail_beside_a_running_turn_steers_the_transcript() {
+    let mut drawn = railed_turn();
+    running(&mut drawn, &printed(9), &[]);
+    drawn.scrolled(-1000).unwrap();
+    assert!(drawn.screen().row(0).starts_with("line 0 "));
+
+    // The rail's last row stands beside the turn's last row: a press there
+    // takes the band back to the foot, and is the rail's, not the turn's.
+    let foot = drawn.bands().turn.end - 1;
+    assert_eq!(rail_click(&mut drawn, foot), None);
+    let bands = drawn.bands();
+    assert!(
+        drawn
+            .screen()
+            .row(bands.transcript.end - 1)
+            .starts_with("line 79 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+    assert!(rail_down(&drawn).ends_with('┃'));
+}

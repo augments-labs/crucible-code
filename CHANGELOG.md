@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The scroll rail's thumb keeps its length while a turn runs.** It used to
+  shrink and grow each time a running command's output appeared and went
+  under the transcript; the rail now stands beside what the turn is showing
+  and counts it as the end of the transcript.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and

@@ -154,10 +154,21 @@ pub enum Aimed {
 /// full without the other: a turn stands in the first while it runs, a list a
 /// line opened stands there between turns, and the box holds the second
 /// whenever there is one to type into.
+///
+/// The rows a running turn leads the first slot with are also kept unpainted,
+/// beside their painted copy: they read as the transcript's last rows, so the
+/// scroll rail stands beside them too, and its cell there changes from one
+/// frame to the next as the transcript's does.
 #[derive(Debug, Default)]
 struct Standing {
     /// What a running turn is showing, and anything else standing over the box.
     turn: Vec<String>,
+    /// The first rows of `turn`, unpainted, where a running turn put them
+    /// there: the turn's own rows, laid out at the transcript's width. Empty
+    /// between turns and under anything else standing there.
+    running: Vec<Row>,
+    /// The palette `running` was handed in, for painting it beside the rail.
+    ran: Option<Palette>,
     /// Where the cursor belongs in it, where anything is typing into it.
     turned: Option<Caret>,
     /// The box.
@@ -170,6 +181,8 @@ impl Standing {
     /// Forget both, for a window whose size has changed underneath them.
     fn clear(&mut self) {
         self.turn.clear();
+        self.running.clear();
+        self.ran = None;
         self.turned = None;
         self.prompt.clear();
         self.prompted = None;
@@ -552,14 +565,19 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the frame could not be written.
     fn steered(&mut self, arrived: &Pressed, bands: &Bands) -> Result<bool, TerminalError> {
+        // The band's height is what the record seeks against; the rail's,
+        // which is the band's and the running turn's under it, is what a row
+        // of the rail is counted in.
         let rows = bands.transcript.len();
+        let railed = self.railed_rows(bands);
+        let height = railed.len();
         match *arrived {
             Pressed::Clicked { row, column } => {
                 // A press is a new hold, whatever the last one was: a thumb
                 // whose release never arrived is let go here, or the drag
                 // this press starts would move it.
                 self.grip = None;
-                if Some(column) != self.rail_column() || !bands.transcript.contains(&row) {
+                if Some(column) != self.rail_column() || !railed.contains(&row) {
                     return Ok(false);
                 }
                 let Some((rail, thumb)) = self
@@ -572,7 +590,7 @@ impl<T: Terminal> Renderer<T> {
                     self.draw()?;
                     return Ok(true);
                 };
-                let at = row - bands.transcript.start;
+                let at = row - railed.start;
                 if !thumb.contains(&at) {
                     let top = if let Some(prompt) = rail.prompt_at(at, self.record.prompts()) {
                         self.record.lands(prompt);
@@ -608,11 +626,11 @@ impl<T: Terminal> Renderer<T> {
                     && let Some(thumb) = rail.thumb()
                 {
                     let at = row
-                        .saturating_sub(bands.transcript.start)
-                        .min(rows.saturating_sub(1));
+                        .saturating_sub(railed.start)
+                        .min(height.saturating_sub(1));
                     let start = at
                         .saturating_sub(grip)
-                        .min(rows.saturating_sub(thumb.len()));
+                        .min(height.saturating_sub(thumb.len()));
                     owed |= self.record.seek(rail.top_for(start), rows);
                 }
                 if owed {
@@ -667,10 +685,26 @@ impl<T: Terminal> Renderer<T> {
         (folds < self.size.columns).then_some(folds)
     }
 
-    /// The rail as the transcript band stands now, where one is drawn.
+    /// How many of the turn band's rows read as the transcript's tail: a
+    /// running turn's own rows, as many of them as the band has room for.
+    fn turn_tail(&self, bands: &Bands) -> usize {
+        self.standing.running.len().min(bands.turn.len())
+    }
+
+    /// The window rows the rail stands beside: the transcript band, and the
+    /// running turn's rows directly under it.
+    fn railed_rows(&self, bands: &Bands) -> Range<usize> {
+        bands.transcript.start..bands.transcript.end + self.turn_tail(bands)
+    }
+
+    /// The rail as the transcript band, and the running turn under it, stand
+    /// now, where one is drawn.
     fn rail(&self, bands: &Bands) -> Option<ScrollRail> {
         self.rail_column()?;
-        let place = self.record.place(bands.transcript.len());
+        let place = self
+            .record
+            .place(bands.transcript.len())
+            .under_turn(self.turn_tail(bands));
         Some(ScrollRail::new(
             place,
             self.record.prompts(),
@@ -680,11 +714,11 @@ impl<T: Terminal> Renderer<T> {
 
     /// The rail row the pointer is on, where it is on a rail with a thumb.
     ///
-    /// `None` off the rail's column, outside the band, and on a rail over a
-    /// record that fits, which is blank and answers no pointer.
+    /// `None` off the rail's column, outside the rows it stands beside, and on
+    /// a rail over a record that fits, which is blank and answers no pointer.
     fn rail_pointed(&self, bands: &Bands) -> Option<usize> {
         let (row, column) = self.pointing?;
-        if Some(column) != self.rail_column() || !bands.transcript.contains(&row) {
+        if Some(column) != self.rail_column() || !self.railed_rows(bands).contains(&row) {
             return None;
         }
         self.rail(bands)?.thumb()?;
@@ -1235,6 +1269,30 @@ impl<T: Terminal> Renderer<T> {
         over: &[Row],
         palette: Palette,
     ) -> Result<(), TerminalError> {
+        self.replace_running(prompt, &[], over, palette)
+    }
+
+    /// [`Renderer::replace`] while a turn runs: `turn` is what the turn itself
+    /// is showing, and `over` anything else standing under it and over the box.
+    ///
+    /// The turn's rows read as the transcript's last rows while it runs, and
+    /// the scroll rail treats them so: it stands beside them as it does beside
+    /// the transcript band, counts them as the record's tail and as rows on
+    /// screen, and so keeps one length while they grow and shrink. They are
+    /// laid out at [`Renderer::transcript_columns`] to leave it its column; a
+    /// row wider than that is clipped to it. What stands in `over` — a list a
+    /// line opened — is not the transcript's and stands beside no rail.
+    ///
+    /// # Errors
+    ///
+    /// `TerminalError::Io` if the terminal could not be written to.
+    pub fn replace_running(
+        &mut self,
+        prompt: PromptRows<'_>,
+        turn: &[Row],
+        over: &[Row],
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
             return Ok(());
         }
@@ -1245,7 +1303,18 @@ impl<T: Terminal> Renderer<T> {
             self.size.columns,
             &mut self.standing.prompt,
         );
-        paint(over, &palette, self.size.columns, &mut self.standing.turn);
+        paint(
+            turn.iter().chain(over),
+            &palette,
+            self.size.columns,
+            &mut self.standing.turn,
+        );
+        let folds = self.folds();
+        self.standing.running.clear();
+        self.standing
+            .running
+            .extend(turn.iter().map(|row| row.clipped(folds)));
+        self.standing.ran = (!turn.is_empty()).then_some(palette);
         self.standing.prompted = Some(prompt.caret);
         self.standing.turned = None;
         self.prompt_target = prompt.pointed.map(|(at, _)| at);
@@ -1297,6 +1366,8 @@ impl<T: Terminal> Renderer<T> {
         }
 
         paint(rows, &palette, self.size.columns, &mut self.standing.turn);
+        self.standing.running.clear();
+        self.standing.ran = None;
         self.standing.turned = caret;
         self.draw()
     }
@@ -1861,12 +1932,25 @@ impl<T: Terminal> Renderer<T> {
         }
 
         // Taken out and put back, because a painted row is borrowed from the
-        // same `self` the frame is written into.
+        // same `self` the frame is written into. A running turn's own rows
+        // lead the band and read as the transcript's tail, so the rail goes on
+        // beside them: each is painted afresh with the rail's cell for its
+        // row, made the transcript's width first as a transcript row is.
         let turn = std::mem::take(&mut self.standing.turn);
-        for (at, row) in (bands.turn.start..bands.turn.end).zip(&turn) {
-            self.painted.put(at, row);
+        let running = std::mem::take(&mut self.standing.running);
+        let ran = self.standing.ran.unwrap_or(palette);
+        for (index, (at, painted)) in (bands.turn.start..bands.turn.end).zip(&turn).enumerate() {
+            match (running.get(index), rail.next()) {
+                (Some(row), Some(cell)) => {
+                    let mut row = row.clipped(folds);
+                    row.pad(folds);
+                    self.painted.paint(at, &row.join(cell), &ran);
+                }
+                _ => self.painted.put(at, painted),
+            }
         }
         self.standing.turn = turn;
+        self.standing.running = running;
 
         let prompt = std::mem::take(&mut self.standing.prompt);
         for (at, row) in (bands.prompt.start..bands.prompt.end).zip(&prompt) {
@@ -1967,13 +2051,24 @@ impl<T: Terminal> Taking<'_, T> {
 /// Clipped here rather than at the frame, because this is where the width is
 /// known and the row still is: a row wider than the window would otherwise be
 /// wrapped by the terminal onto a row belonging to another band.
-fn paint(rows: &[Row], palette: &Palette, columns: usize, into: &mut Vec<String>) {
-    into.resize_with(rows.len(), String::new);
-
-    for (row, painted) in rows.iter().zip(into.iter_mut()) {
-        painted.clear();
-        row.clipped(columns).paint_into(palette, painted);
+fn paint<'a>(
+    rows: impl IntoIterator<Item = &'a Row>,
+    palette: &Palette,
+    columns: usize,
+    into: &mut Vec<String>,
+) {
+    let mut count = 0;
+    for row in rows {
+        if count == into.len() {
+            into.push(String::new());
+        }
+        if let Some(painted) = into.get_mut(count) {
+            painted.clear();
+            row.clipped(columns).paint_into(palette, painted);
+        }
+        count += 1;
     }
+    into.truncate(count);
 }
 
 #[cfg(test)]
