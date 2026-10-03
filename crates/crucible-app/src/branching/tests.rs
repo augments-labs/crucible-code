@@ -295,3 +295,55 @@ fn a_git_file_past_a_few_kilobytes_is_not_one_git_wrote() {
     .expect("an oversize .git file");
     assert_eq!(current(&checkout), None);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_dot_git_file_that_is_a_link_out_of_the_checkout_is_followed_and_still_bounded() {
+    // Tools that keep a checkout's git pointer elsewhere leave `.git` as a
+    // symbolic link to a file outside the checkout. Git follows it, so its
+    // branch and its sibling checkouts read; the file it leads to is held to
+    // the same bound and the same refusal of a pipe as one standing there.
+    use std::os::unix::fs::symlink;
+
+    let repository = Repository::new("linked-dot-git");
+    let first = repository.linked("first", false);
+    let second = repository.linked("second", false);
+    fs::write(
+        repository
+            .scratch
+            .root()
+            .join("main/.git/worktrees/first/HEAD"),
+        "ref: refs/heads/fix/linked\n",
+    )
+    .expect("the linked checkout's HEAD");
+
+    let kept = repository.scratch.root().join("kept");
+    fs::create_dir_all(&kept).expect("a directory outside the checkout");
+    fs::rename(first.join(".git"), kept.join("first.git")).expect("the pointer moved out");
+    symlink(kept.join("first.git"), first.join(".git")).expect("a .git link");
+
+    assert_eq!(current(&first).as_deref(), Some("fix/linked"));
+    let mut found = worktrees(&first);
+    found.sort();
+    let mut expected = vec![repository.main(), second];
+    expected.sort();
+    assert_eq!(found, expected);
+
+    // Past the bound, the link leads to no repository.
+    let padding = " ".repeat(64 * 1024);
+    let pointed = fs::read_to_string(kept.join("first.git")).expect("the pointer");
+    fs::write(
+        kept.join("first.git"),
+        format!("{}{padding}\n", pointed.trim()),
+    )
+    .expect("an oversize pointer");
+    assert_eq!(current(&first), None);
+    assert!(worktrees(&first).is_empty());
+
+    // A pipe at the link's end is refused without waiting on it.
+    piped(&kept.join("first.git"));
+    let at = first.clone();
+    assert_eq!(promptly(move || current(&at)), Some(None));
+    let at = first.clone();
+    assert_eq!(promptly(move || worktrees(&at)), Some(Vec::new()));
+}
