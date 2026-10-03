@@ -10,9 +10,10 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **`/usage` no longer hangs when `/etc/localtime` is a pipe or a device.**
-  With `TZ` unset, an `/etc/localtime` that is not a regular file of a zone
-  file's size is not read, and reset times are shown in UTC, labelled as such.
+- **Ctrl+B backgrounds a command from the moment it starts.** Since 0.45.1 the
+  key did nothing until the running command's row was drawn, three seconds in by
+  default; the row still waits for `output.pinAfterSeconds`, but the key no
+  longer does.
 
 ## [0.45.1] - 2026-10-03
 
