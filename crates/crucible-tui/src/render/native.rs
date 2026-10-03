@@ -22,10 +22,12 @@
 //! A resize redraws the region and nothing else. How far back its top now is
 //! cannot be asked of the terminal, so it is worked out from how wide each row
 //! of the region was against the new width, counted as a terminal that rewraps
-//! would count it. On one that does not, narrowing counts high, which erases
-//! a few rows above the region rather than leaving a stale copy of it in the
-//! scrollback: losing rows from the screen that are still in the record of
-//! the reader's terminal is the cheaper of the two.
+//! would count it. On one that does not, narrowing counts high, and the erase
+//! that opens the next frame takes finished rows just above the region off the
+//! visible screen. They went out once and were let go of, so nothing draws
+//! them again; the session file still has them. Counting low instead would
+//! leave a stale copy of the region in the scrollback on every terminal that
+//! does rewrap, which is most of them.
 
 use std::fmt::Write as _;
 

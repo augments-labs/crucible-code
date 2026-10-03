@@ -4,8 +4,9 @@
 //! and nothing scrolls. Native mode writes into a buffer that does, so these
 //! tests replay its bytes into [`Emulator`], which moves the cursor relatively,
 //! wraps, scrolls rows off the top into a scrollback and erases to the end of
-//! the screen — the handful of things a native frame says. What a reader would
-//! find on scrolling back is then a list of strings to assert on.
+//! the screen — the handful of things a native frame says — and rewraps what it
+//! holds when the window changes width, as most terminals now do. What a reader
+//! would find on scrolling back is then a list of strings to assert on.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -21,7 +22,11 @@ struct Emulator {
     columns: usize,
     rows: usize,
     screen: Vec<Vec<char>>,
+    /// Whether each row of the screen ran on into the next by wrapping.
+    ran_on: Vec<bool>,
     scrollback: Vec<String>,
+    /// The same, for each row of the scrollback.
+    ran_on_back: Vec<bool>,
     /// Row and column of the cursor.
     at: (usize, usize),
     /// Whether the last character filled the row, so the next one wraps.
@@ -34,7 +39,9 @@ impl Emulator {
             columns,
             rows,
             screen: vec![Vec::new(); rows],
+            ran_on: vec![false; rows],
             scrollback: Vec::new(),
+            ran_on_back: Vec::new(),
             at: (0, 0),
             wrapping: false,
         }
@@ -93,10 +100,15 @@ impl Emulator {
         self.scrollback
             .push(top.iter().collect::<String>().trim_end().to_owned());
         self.screen.push(Vec::new());
+        self.ran_on_back.push(self.ran_on.remove(0));
+        self.ran_on.push(false);
     }
 
     fn put(&mut self, character: char) {
         if self.wrapping {
+            if let Some(ran_on) = self.ran_on.get_mut(self.at.0) {
+                *ran_on = true;
+            }
             self.at.1 = 0;
             self.down();
             self.wrapping = false;
@@ -146,11 +158,17 @@ impl Emulator {
                 for below in self.screen.iter_mut().skip(row + 1) {
                     below.clear();
                 }
+                for ran_on in self.ran_on.iter_mut().skip(row) {
+                    *ran_on = false;
+                }
             }
             'K' => {
                 let (row, column) = self.at;
                 if let Some(line) = self.screen.get_mut(row) {
                     line.truncate(column);
+                }
+                if let Some(ran_on) = self.ran_on.get_mut(row) {
+                    *ran_on = false;
                 }
             }
             _ => return,
@@ -158,10 +176,86 @@ impl Emulator {
         self.wrapping = false;
     }
 
-    /// The window made wider, as a reader dragging its corner would.
-    fn widen(&mut self, columns: usize) {
-        assert!(columns >= self.columns, "this terminal does not narrow");
+    /// The window made `columns` wide, as a reader dragging its corner would,
+    /// with everything it holds rewrapped to the new width.
+    ///
+    /// Rows that ran on into each other by wrapping are one line again, and
+    /// each line is folded at the new width. The cursor keeps its place in the
+    /// line it was on; nothing below it that is empty is kept; and the screen
+    /// is the foot of what is left, the rest above it being scrollback.
+    fn resize(&mut self, columns: usize) {
+        let was = self.columns;
+        let cursor = self.scrollback.len() + self.at.0;
+        let back = self
+            .scrollback
+            .drain(..)
+            .map(|row| row.chars().collect::<Vec<char>>())
+            .zip(self.ran_on_back.drain(..));
+        let rows: Vec<(Vec<char>, bool)> = back
+            .chain(self.screen.drain(..).zip(self.ran_on.drain(..)))
+            .collect();
+
+        // Rows back into lines, with where in its line the cursor was.
+        let mut lines: Vec<Vec<char>> = Vec::new();
+        let mut line = Vec::new();
+        let mut caret = (0, 0);
+        for (index, (mut row, ran_on)) in rows.into_iter().enumerate() {
+            if index == cursor {
+                caret = (lines.len(), line.len() + self.at.1);
+            }
+            if ran_on {
+                row.resize(was, ' ');
+                line.extend(row);
+            } else {
+                line.extend(row);
+                lines.push(std::mem::take(&mut line));
+            }
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        while lines.len() > caret.0 + 1 && lines.last().is_some_and(Vec::is_empty) {
+            lines.pop();
+        }
+
+        // And lines into rows at the new width.
+        let mut folded: Vec<(Vec<char>, bool)> = Vec::new();
+        let mut at = (0, 0);
+        for (index, line) in lines.into_iter().enumerate() {
+            let first = folded.len();
+            let pieces: Vec<Vec<char>> = if line.is_empty() {
+                vec![Vec::new()]
+            } else {
+                line.chunks(columns).map(<[char]>::to_vec).collect()
+            };
+            let count = pieces.len();
+            for (piece, row) in pieces.into_iter().enumerate() {
+                folded.push((row, piece + 1 < count));
+            }
+            if index == caret.0 {
+                at = (first + caret.1 / columns, caret.1 % columns);
+                while folded.len() <= at.0 {
+                    folded.push((Vec::new(), false));
+                }
+            }
+        }
+
+        let top = folded.len().saturating_sub(self.rows);
+        let screen = folded.split_off(top);
+        for (row, ran_on) in folded {
+            self.scrollback
+                .push(row.iter().collect::<String>().trim_end().to_owned());
+            self.ran_on_back.push(ran_on);
+        }
+        for (row, ran_on) in screen {
+            self.screen.push(row);
+            self.ran_on.push(ran_on);
+        }
+        self.screen.resize(self.rows, Vec::new());
+        self.ran_on.resize(self.rows, false);
+        self.at = (at.0.saturating_sub(top), at.1);
         self.columns = columns;
+        self.wrapping = false;
     }
 
     /// The screen, one string a row, padding taken off.
@@ -229,8 +323,12 @@ impl Window {
         self.0.borrow().emulator.at
     }
 
-    fn widen(&self, columns: usize) {
-        self.0.borrow_mut().emulator.widen(columns);
+    fn resize(&self, columns: usize) {
+        self.0.borrow_mut().emulator.resize(columns);
+    }
+
+    fn scrollback(&self) -> Vec<String> {
+        self.0.borrow().emulator.scrollback.clone()
     }
 
     /// How many rows anywhere in the buffer say `text`.
@@ -298,7 +396,11 @@ fn addresses_a_row(written: &str) -> bool {
 }
 
 #[test]
-fn native_writes_no_alternate_screen_mouse_capture_or_screen_row_address() {
+fn a_native_frame_never_names_a_screen_row() {
+    // The alternate screen and the pointer are taken by guards the session
+    // holds, not by the renderer, so the sequences checked first below are
+    // ones no renderer writes in either mode: they are a fence, not the proof.
+    // That native mode takes neither is `holds`, in the session's own tests.
     let window = Window::new(40, 10);
     let mut render = native(&window);
 
@@ -313,7 +415,7 @@ fn native_writes_no_alternate_screen_mouse_capture_or_screen_row_address() {
         .unwrap();
     render.seal().unwrap();
     render.settle().unwrap();
-    window.widen(50);
+    window.resize(50);
     render.resized().unwrap();
     stands(&mut render);
     drop(render);
@@ -433,7 +535,7 @@ fn a_native_resize_redraws_only_the_live_region() {
         .unwrap();
     window.take();
 
-    window.widen(60);
+    window.resize(60);
     render.resized().unwrap();
     stands(&mut render);
     render
@@ -447,6 +549,59 @@ fn a_native_resize_redraws_only_the_live_region() {
     );
     assert_eq!(window.rows_saying("in the scrollback"), 1);
     assert_eq!(window.rows_saying("and so is this"), 1);
+    assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+}
+
+#[test]
+fn a_native_narrowing_keeps_the_finished_rows_that_still_fit_on_screen() {
+    // Counted as a terminal that rewraps would count it, and replayed into
+    // one that does: the region grows a row, the finished row at the top goes
+    // into the scrollback, and every other finished row stays on screen once,
+    // above a region drawn once at the new width.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    for at in 0..6 {
+        render.commit(&format!("said {at:02}")).unwrap();
+    }
+    render.seal().unwrap();
+    let thinking = [row("* thinking about the narrower window")];
+    render.under(&thinking, None, Palette::plain()).unwrap();
+    assert_eq!(
+        window.screen().iter().filter(|row| !row.is_empty()).count(),
+        10,
+        "the window was not full before it narrowed: {:#?}",
+        window.screen()
+    );
+    window.take();
+
+    window.resize(20);
+    render.resized().unwrap();
+    stands(&mut render);
+    render.under(&thinking, None, Palette::plain()).unwrap();
+
+    let after = window.take();
+    assert!(
+        !after.contains("said"),
+        "a resize wrote finished rows again: {after:?}"
+    );
+    assert_eq!(window.scrollback(), ["said 00"], "{:#?}", window.all());
+    let screen = window.screen();
+    assert_eq!(
+        screen.get(..5),
+        Some(&["said 01", "said 02", "said 03", "said 04", "said 05"].map(String::from)[..]),
+        "a finished row that still fitted was erased or moved: {screen:#?}"
+    );
+    for at in 0..6 {
+        assert_eq!(
+            window.rows_saying(&format!("said {at:02}")),
+            1,
+            "said {at:02}: {:#?}",
+            window.all()
+        );
+    }
     assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
