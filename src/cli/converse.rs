@@ -287,6 +287,12 @@ pub(crate) struct Terms {
     /// part of the style — it is about what arrives from the terminal rather
     /// than about what is drawn to it.
     pub(crate) sending: Cell<Sending>,
+    /// How long a running tool call is out before it stands over the row that
+    /// says a turn is running, from `output.pinAfterSeconds`.
+    ///
+    /// A `Cell` for the reason [`sending`](Self::sending) is: `/settings`
+    /// changes it, and each turn reads it as it starts.
+    pub(crate) pinning: Cell<Duration>,
     /// The commands a `/` line is read against.
     ///
     /// A registry rather than the list itself, because what is in it is a
@@ -1525,8 +1531,9 @@ fn take<T: Terminal>(
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
     let runner = conversation.runner();
-    let mut turning =
-        Turning::started(runner.breakdown()).using(runner.totals(), runner.plan_limits());
+    let mut turning = Turning::started(runner.breakdown())
+        .using(runner.totals(), runner.plan_limits())
+        .pinning(terms.pinning.get());
 
     // A turn can start with prompts already behind it: room is made before the
     // queue is read, so a line typed during the last turn is still waiting when

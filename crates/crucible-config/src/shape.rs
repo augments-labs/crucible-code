@@ -68,6 +68,16 @@ pub(crate) enum Shape {
     /// the same way a [`Choice`](Shape::Choice) and its reader are.
     Whole(&'static Whole),
 
+    /// A whole number between two bounds, both included, written as a JSON
+    /// integer and nothing else.
+    ///
+    /// What a [`Limit`](Shape::Limit) is where nought means something: a
+    /// delay of none is a delay, and a ceiling of none is not a ceiling. Not a
+    /// [`Whole`](Shape::Whole), because a key outside `env` is not the
+    /// environment and has no string to accept; the walk refuses a value
+    /// outside the bounds the way it refuses a limit past its ceiling.
+    Within(&'static Whole),
+
     /// A string an editor checks against this pattern.
     ///
     /// The pattern is what the schema publishes. Refusing a string that does
@@ -310,7 +320,8 @@ const PROVIDER: Shape = Shape::Fields(&[
 /// either way.
 const VALUE: Shape = Shape::Text;
 
-/// The bounds a whole number in the `env` block is allowed to fall between.
+/// The bounds a whole number is allowed to fall between: one in the `env` block,
+/// or a [`Shape::Within`] anywhere else.
 ///
 /// The block is the environment, so the number may be written as the string the
 /// environment holds or as a JSON integer. The schema publishes the bounds for
@@ -548,7 +559,25 @@ const OUTPUT: &[Field] = &[
         needed: false,
         widens: false,
     },
+    Field {
+        name: "pinAfterSeconds",
+        about: "How many seconds a running tool call waits before it is drawn above the working row with its output and ctrl+b; one that finishes sooner is only written to the transcript, and 0 draws every call at once",
+        shape: Shape::Within(&PIN_AFTER),
+        // The bounds are the answers, and the schema writes them out.
+        examples: &[],
+        usual: Some("3"),
+        needed: false,
+        widens: false,
+    },
 ];
+
+/// How long `output.pinAfterSeconds` may hold a running call back, in seconds.
+///
+/// Nought at the bottom, which is every call drawn the moment it is asked for.
+/// A minute at the top: a call still out after that is one somebody is waiting
+/// on, and a row held back longer would be the key that puts it down held back
+/// with it.
+pub(crate) const PIN_AFTER: Whole = Whole { least: 0, most: 60 };
 
 /// Every answer `input.send` accepts.
 ///
@@ -1511,6 +1540,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Within(_)
             | Self::Pattern(_)
             | Self::Named { .. }
             | Self::List { .. }
@@ -1536,6 +1566,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Within(_)
             | Self::Pattern(_)
             | Self::List { .. }
             | Self::Opaque => None,
@@ -1557,6 +1588,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Within(_)
             | Self::Pattern(_)
             | Self::List { .. }
             | Self::Named { .. }
@@ -1584,6 +1616,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Within(_)
             | Self::Pattern(_)
             | Self::List { .. }
             | Self::Opaque => None,
@@ -1617,6 +1650,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Within(_)
             | Self::Pattern(_)
             | Self::Fields(_)
             | Self::Named { .. }
@@ -1634,6 +1668,7 @@ impl Shape {
             Self::TextSet { .. } => "a bounded set of nonempty strings",
             Self::Flag => "true or false",
             Self::Whole(_) => "a whole number, or one written as a string",
+            Self::Within(_) => "a whole number within the documented bounds",
             Self::Pattern(_) => "a string of the documented form",
             Self::Fields(_) | Self::Named { .. } => "an object",
             Self::List { .. } => "a list",

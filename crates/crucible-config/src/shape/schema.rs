@@ -94,6 +94,9 @@ fn of(shape: &Shape) -> Value {
                 { "type": "string", "pattern": pattern(bounds) }
             ]
         }),
+        Shape::Within(bounds) => json!({
+            "type": "integer", "minimum": bounds.least, "maximum": bounds.most
+        }),
         Shape::Pattern(pattern) => json!({ "type": "string", "pattern": pattern }),
         Shape::Fields(_) | Shape::Named { .. } => object(shape),
         // An object and nothing more. No `properties`, because the names are
@@ -280,6 +283,7 @@ fn described(field: &Field) -> Value {
         | Shape::Limit(_)
         | Shape::Flag
         | Shape::Whole(_)
+        | Shape::Within(_)
         | Shape::Pattern(_)
         | Shape::Fields(_)
         | Shape::Named { .. }
@@ -315,7 +319,7 @@ fn stated(shape: &Shape, usual: &str) -> Value {
         Shape::Flag => usual
             .parse::<bool>()
             .map_or_else(|_| Value::from(usual), Value::from),
-        Shape::Count | Shape::Limit(_) => usual
+        Shape::Count | Shape::Limit(_) | Shape::Within(_) => usual
             .parse::<u64>()
             .map_or_else(|_| Value::from(usual), Value::from),
         Shape::TextSet { .. } => json!([]),
@@ -408,6 +412,7 @@ fn object(shape: &Shape) -> Value {
         | Shape::Limit(_)
         | Shape::Flag
         | Shape::Whole(_)
+        | Shape::Within(_)
         | Shape::Pattern(_)
         | Shape::List { .. }
         | Shape::TextSet { .. }

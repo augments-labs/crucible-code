@@ -139,6 +139,7 @@ fn leaves(shape: &'static Shape, path: &mut Vec<&'static str>, found: &mut Vec<S
         | Shape::TextSet { .. }
         | Shape::Flag
         | Shape::Whole(_)
+        | Shape::Within(_)
         | Shape::Pattern(_)
         | Shape::List { .. }
         | Shape::Opaque => found.push(path.join(".")),
@@ -210,7 +211,7 @@ fn every_settings_row_offers_what_its_declaration_accepts() {
         let agrees = match (row.values, &field.shape) {
             (Values::Flag, Shape::Flag) => true,
             (Values::Choice(offered), Shape::Choice(accepted)) => offered == *accepted,
-            (Values::Whole { least, most }, Shape::Whole(whole)) => {
+            (Values::Whole { least, most }, Shape::Whole(whole) | Shape::Within(whole)) => {
                 least == whole.least && most == whole.most
             }
             (Values::Named, Shape::Text) => row.key == "output.syntaxTheme",
@@ -250,6 +251,13 @@ fn a_settings_row_takes_only_the_words_its_declaration_reads() {
     for word in ["2", "31", "06", "+6", "six", ""] {
         assert!(!take(speed, word), "{word}");
     }
+    let pinning = "output.pinAfterSeconds";
+    for word in ["0", "3", "60"] {
+        assert!(take(pinning, word), "{word}");
+    }
+    for word in ["61", "03", "-1", "1.5", "three", ""] {
+        assert!(!take(pinning, word), "{word}");
+    }
     // Which names there are is the host's to say; any name is one to ask it.
     assert!(take("output.syntaxTheme", "base16"));
     assert!(!take("output.syntaxTheme", ""));
@@ -268,6 +276,7 @@ fn every_row_has_its_own_identity() {
         RowId::ToolDetail,
         RowId::ScrollRail,
         RowId::ScreenMode,
+        RowId::PinAfter,
         RowId::ScrollSpeed,
         RowId::Send,
         RowId::Tone,

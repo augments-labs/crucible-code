@@ -395,6 +395,13 @@
           ],
           "type": "string"
         },
+        "pinAfterSeconds": {
+          "default": 3,
+          "description": "How many seconds a running tool call waits before it is drawn above the working row with its output and ctrl+b; one that finishes sooner is only written to the transcript, and 0 draws every call at once",
+          "maximum": 60,
+          "minimum": 0,
+          "type": "integer"
+        },
         "screen": {
           "default": "fullscreen",
           "description": "Where crucible draws, read at start: fullscreen takes a screen of its own with its own scrollback, rail and selection; native draws in the terminal's own buffer and leaves scrolling, selection and copy to the terminal",

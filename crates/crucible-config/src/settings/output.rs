@@ -9,6 +9,15 @@ use serde_json::Value;
 
 use super::Settings;
 
+/// What `output.pinAfterSeconds` is where no layer sets it.
+///
+/// Three, because a command that is over at once is over in under a second and
+/// one chained or reaching a server is often over in two: a row put up for each
+/// of those and taken down again is the screen blinking on every call, and a
+/// command that is still going after three is one somebody may want to watch
+/// or put down.
+const PIN_AFTER_SECONDS: u64 = 3;
+
 impl Settings {
     /// Whether to write colour, when the command line does not say.
     #[must_use]
@@ -63,6 +72,24 @@ impl Settings {
             .and_then(|block| block.get("scrollRail"))
             .and_then(Value::as_bool)
             .unwrap_or(true)
+    }
+
+    /// How long a running tool call is out before it is drawn above the row
+    /// that says a turn is running.
+    ///
+    /// A value rather than an `Option`, as the scroll rail is. The walk has
+    /// already refused a number outside its bounds, so what is read here is
+    /// either one of them or nothing, and nothing is the default the schema
+    /// states.
+    #[must_use]
+    pub fn pin_after(&self) -> std::time::Duration {
+        let seconds = self
+            .value
+            .get("output")
+            .and_then(|block| block.get("pinAfterSeconds"))
+            .and_then(Value::as_u64)
+            .unwrap_or(PIN_AFTER_SECONDS);
+        std::time::Duration::from_secs(seconds)
     }
 
     /// Whether crucible draws on a screen of its own or in the terminal's own
@@ -371,6 +398,35 @@ mod tests {
     }
 
     #[test]
+    fn a_running_call_is_held_back_for_the_seconds_a_layer_says_and_no_more_than_a_minute() {
+        let read = |text: &str| Document::parse(text, "settings.json", Origin::User);
+
+        assert_eq!(
+            Settings::resolve(Vec::new()).pin_after(),
+            std::time::Duration::from_secs(3)
+        );
+        for seconds in [0, 1, 60] {
+            let document = read(&format!(
+                r#"{{"output": {{"pinAfterSeconds": {seconds}}}}}"#
+            ))
+            .unwrap_or_else(|error| panic!("{seconds} was refused: {error}"));
+            assert_eq!(
+                Settings::resolve(vec![document]).pin_after(),
+                std::time::Duration::from_secs(seconds)
+            );
+        }
+        for written in ["61", "-1", "1.5", r#""3""#, "true"] {
+            assert!(
+                read(&format!(
+                    r#"{{"output": {{"pinAfterSeconds": {written}}}}}"#
+                ))
+                .is_err(),
+                "{written} was accepted"
+            );
+        }
+    }
+
+    #[test]
     fn auto_is_an_answer_a_layer_can_state_rather_than_the_absence_of_one() {
         // The same shape `output.color` has: a nearer layer says `auto` to
         // undo a theme a further one named, and that is not the same as saying
@@ -463,6 +519,10 @@ mod tests {
         assert_eq!(
             ScreenMode::read(shape::usual(&["output", "screen"])),
             Some(Settings::resolve(Vec::new()).screen())
+        );
+        assert_eq!(
+            shape::usual(&["output", "pinAfterSeconds"]).parse::<u64>(),
+            Ok(Settings::resolve(Vec::new()).pin_after().as_secs())
         );
     }
 }

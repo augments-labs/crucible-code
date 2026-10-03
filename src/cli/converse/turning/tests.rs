@@ -81,6 +81,19 @@ fn requested_of_batch(id: &str, name: &str, about: &str, backgroundable: bool) -
 }
 
 /// Everything the footing says, one string per row.
+/// The delay `output.pinAfterSeconds` holds a running call back by when unset.
+const PINNED: Duration = Duration::from_secs(3);
+
+/// Every call out, as if it had been out for as long as a call is before it
+/// stands over the row: what a test drawing a live call is about.
+fn aged(turning: &mut Turning) {
+    for calling in &mut turning.calling {
+        calling.asked = Instant::now()
+            .checked_sub(turning.pinned_after)
+            .unwrap_or(calling.asked);
+    }
+}
+
 fn footing(turning: &Turning) -> Vec<String> {
     turning
         .rows(&nothing(), "", 80, Style::plain(), 24)
@@ -1729,4 +1742,77 @@ fn the_queue_box_follows_the_colour_rule() {
             crate::cli::colour_rule::holds(&format!("queue box at {columns}"), &rows, |_| false);
         }
     }
+}
+
+#[test]
+fn a_command_that_answers_before_the_delay_is_never_drawn_over_the_row() {
+    // Most commands are over in a fraction of a second, and a row put up for
+    // each and taken down a moment later is the screen blinking on every
+    // call. The footing at every instant of this one's life is what the
+    // reader would have seen, and the call is in none of them: the word on
+    // the row says `running`, and the band stays the three rows it was.
+    let mut turning = Turning::started(Breakdown::default()).pinning(PINNED);
+
+    turning.saw(&requested_as("bash", true));
+    let asked = footing(&turning);
+    turning.saw(&printed("Compiling one\n"));
+    let printing = footing(&turning);
+
+    for frame in [&asked, &printing] {
+        assert_eq!(
+            frame.len(),
+            ROWS,
+            "a call younger than the delay was drawn: {frame:?}"
+        );
+        assert!(
+            !frame
+                .iter()
+                .any(|row| row.contains("Bash") || row.contains("ctrl+b")),
+            "{frame:?}"
+        );
+    }
+    assert!(!turning.can_background(), "a key nothing offered was live");
+
+    let settled = turning.saw(&Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::ok("done"),
+        receipt: None,
+    });
+    assert_eq!(
+        settled.len(),
+        1,
+        "the call was not handed to the transcript"
+    );
+    assert_eq!(footing(&turning).len(), ROWS);
+}
+
+#[test]
+fn a_command_still_running_past_the_delay_stands_over_the_row_with_its_key() {
+    let mut turning = Turning::started(Breakdown::default()).pinning(PINNED);
+    turning.saw(&requested_as("bash", true));
+    turning.saw(&printed("Compiling one\n"));
+    assert!(turning.moved(), "the first frame was never drawn");
+    assert!(!turning.can_background());
+
+    aged(&mut turning);
+
+    // The frame it comes due on is one the loop sees as new, so it is drawn
+    // at the delay rather than whenever something else next happens.
+    assert!(turning.moved(), "the call came due and the footing did not");
+    assert!(
+        turning.can_background(),
+        "the offer stood and the key was dead"
+    );
+
+    let frame = footing(&turning);
+    assert!(
+        frame.iter().any(|row| row.contains("Bash(src/main.rs)")),
+        "{frame:?}"
+    );
+    assert!(
+        frame
+            .iter()
+            .any(|row| row.contains("1 line") && row.contains("(ctrl+b to background)")),
+        "{frame:?}"
+    );
 }

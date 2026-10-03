@@ -96,6 +96,7 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         sessions: sample.logs(),
         workspace: sample.workspace(),
         sending: std::cell::Cell::default(),
+        pinning: std::cell::Cell::default(),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),

@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A quick command no longer flashes a row above the working row.** A running
+  call is drawn there, with its output and `ctrl+b to background`, only after
+  three seconds, and one that finishes sooner goes straight to the transcript.
+  The new `output.pinAfterSeconds` (0 to 60, also in `/settings`) sets the delay;
+  `0` draws every call at once, as before.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and

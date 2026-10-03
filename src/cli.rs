@@ -729,6 +729,8 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // keeps Shift and Return for itself reports nothing this program could
         // have read, and the reader is the one who can see that happening.
         sending: Cell::new(sends(settings.sending())),
+        // How long a running call waits before it stands over the working row.
+        pinning: Cell::new(settings.pin_after()),
         commands: converse::command::builtins(&settings.sandbox().enablement())?,
         providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),

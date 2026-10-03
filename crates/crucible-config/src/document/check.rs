@@ -98,6 +98,15 @@ impl Reader<'_> {
                     Err(self.wrong_type(shape, spot))
                 }
             }
+            Shape::Within(bounds) => {
+                if value.as_u64().is_some_and(|value| {
+                    (u64::from(bounds.least)..=u64::from(bounds.most)).contains(&value)
+                }) {
+                    Ok(())
+                } else {
+                    Err(self.wrong_type(shape, spot))
+                }
+            }
             Shape::TextSet { maximum, bytes } => {
                 let Some(paths) = value.as_array() else {
                     return Err(self.wrong_type(shape, spot));

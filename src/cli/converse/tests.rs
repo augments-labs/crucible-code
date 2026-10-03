@@ -130,6 +130,8 @@ pub(crate) fn plain() -> Terms {
         sessions: unwritten.join("sessions"),
         workspace: Workspace::open(std::env::temp_dir()).expect("a temporary directory"),
         sending: std::cell::Cell::default(),
+        // As the start reads it, so a row changing it is seen to change it.
+        pinning: std::cell::Cell::new(crucible_config::Settings::default().pin_after()),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),
