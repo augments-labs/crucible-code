@@ -2539,3 +2539,19 @@ fn a_design_changes_which_ink_a_kind_wears_and_never_a_word() {
         assert_eq!(texts(Style::coloured().designing(design)), on, "{design:?}");
     }
 }
+
+#[test]
+fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
+    // Two lists, because neither crate may name the other: a format character
+    // a limit's name keeps would be drawn reordering the row, and one only the
+    // screen drops would be a name the two disagree about.
+    for character in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
+        if character.is_control() {
+            continue;
+        }
+        let said = format!("a{character}b");
+        let drawn = crucible_tui::Row::plain(said.as_str()).text() == "ab";
+        let named = crucible_types::GroupName::new(&said).is_some_and(|name| name.as_str() == "ab");
+        assert_eq!(drawn, named, "U+{:04X}", u32::from(character));
+    }
+}

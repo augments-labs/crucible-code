@@ -33,15 +33,16 @@ use crate::width;
 ///
 /// What survives an abandoned sequence, and any other control character,
 /// becomes a space: a row occupies one row, and a character that moves the
-/// cursor or rings the terminal is not text.
+/// cursor or rings the terminal is not text. A format character is dropped
+/// outright, as [`width::unshown`] says why, and as a limit's name drops it.
 fn words(text: String) -> String {
-    if !text.contains(char::is_control) {
+    if !text.contains(|character: char| character.is_control() || width::unshown(character)) {
         return text;
     }
 
     let mut escapes = Escapes::default();
     text.chars()
-        .filter(|character| !escapes.holds(*character))
+        .filter(|character| !escapes.holds(*character) && !width::unshown(*character))
         .map(|character| {
             if character.is_control() {
                 ' '
@@ -502,6 +503,25 @@ mod tests {
     /// The same, on a terminal that will take an address as well.
     fn addressed() -> Palette {
         colourful().addressing(true)
+    }
+
+    #[test]
+    fn a_format_character_is_neither_drawn_nor_counted() {
+        // A right-to-left override from a model or a file name would reverse
+        // everything drawn after it on the row, and a zero-width space or a
+        // soft hyphen hides or shows what the reader cannot account for.
+        for format in ['\u{202e}', '\u{2066}', '\u{200b}', '\u{feff}', '\u{ad}'] {
+            let row =
+                Row::plain(format!("abc{format}def")).then(Slot::Accent, format!("{format}g"));
+
+            assert_eq!(row.text(), "abcdefg", "U+{:04X}", u32::from(format));
+            assert_eq!(row.columns(), 7, "U+{:04X}", u32::from(format));
+            assert!(
+                !row.paint(&colourful()).contains(format),
+                "U+{:04X}",
+                u32::from(format)
+            );
+        }
     }
 
     #[test]

@@ -579,6 +579,25 @@ fn a_redirected_run_writes_no_escape_at_all() {
 }
 
 #[test]
+fn a_format_character_from_elsewhere_reaches_no_screen_and_no_file() {
+    // Streamed, committed or written to a pipe, a right-to-left override would
+    // reorder what is drawn after it, so it is dropped on the way in.
+    for mut drawn in [
+        Renderer::new(Recording::new(80, 24)),
+        Renderer::new(Recording::redirected(80, 24)),
+    ] {
+        drawn.commit("result \u{202e}txt.exe").unwrap();
+        drawn.stream("an \u{2067}answer\u{2069}").unwrap();
+        drawn.settle().unwrap();
+
+        let written = drawn.terminal.written();
+        assert!(!written.contains('\u{202e}'), "{written:?}");
+        assert!(!written.contains('\u{2067}'), "{written:?}");
+        assert!(written.contains("result txt.exe"), "{written:?}");
+    }
+}
+
+#[test]
 fn a_redirected_run_is_given_every_line_as_text() {
     let mut render = Renderer::new(Recording::redirected(80, 24));
     render.commit("first").unwrap();
