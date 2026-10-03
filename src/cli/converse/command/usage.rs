@@ -29,10 +29,10 @@
 //! A cost nobody priced reads `not priced`, never `$0.00`. A reset time is the
 //! reader's own wall clock, read in the system's zone as the panel opens; a
 //! machine whose zone cannot be read is shown UTC, and the times say so, as is
-//! one whose `TZ` names anything on disk but a regular file of a zone file's
-//! size: the zone is read on the drawing thread, which a pipe or an endless
-//! file would hold. A
-//! reset the clock is already past says `since passed`: the window has
+//! one whose `TZ`, or with `TZ` unset whose `/etc/localtime`, names anything
+//! on disk but a regular file of a zone file's size: the zone is read on the
+//! drawing thread, which a pipe or an endless file would hold. A reset the
+//! clock is already past says `since passed`: the window has
 //! started again since the reading its figure is from.
 //!
 //! [`body`] draws the blocks at a width and nothing else, so the panel here
@@ -43,6 +43,7 @@
 //! asks nothing: the turn has the conversation.
 
 use std::ffi::OsStr;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crucible_app::Conversation;
@@ -82,23 +83,38 @@ const COUNT_MARGIN: usize = 4;
 /// key pressed.
 pub(super) const BEAT: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// The largest zone file `TZ` may name; a real one is a few kilobytes.
+/// The largest zone file the system's zone may be read from; a real one is a
+/// few kilobytes.
 const ZONE_FILE: u64 = 1 << 20;
 
-/// Whether the system's zone may be read with `tz` as `TZ`: whether it names
-/// a zone, a rule or nothing on disk, or else a regular file no larger than
-/// [`ZONE_FILE`]. The zone is read on the drawing thread, and what a path
-/// names is read whole, so a pipe would hold the panel until something wrote
-/// to it and an endless file until memory ran out.
-fn readable_zone(tz: Option<&OsStr>) -> bool {
-    let Some(name) = tz.and_then(OsStr::to_str) else {
+/// Where the system's zone is read from when `TZ` is unset.
+const LOCALTIME: &str = "/etc/localtime";
+
+/// Whether the system's zone may be read with `tz` as `TZ` and `localtime`
+/// as `/etc/localtime`: whether `TZ` names a zone, a rule or nothing on disk,
+/// or else a [`zone_sized`] file, and, with `TZ` unset, whether `localtime`
+/// is one. The zone is read on the drawing thread, and what a path names is
+/// read whole, so a pipe would hold the panel until something wrote to it and
+/// an endless file until memory ran out.
+fn readable_zone(tz: Option<&OsStr>, localtime: &Path) -> bool {
+    let Some(tz) = tz else {
+        return zone_sized(localtime);
+    };
+    let Some(name) = tz.to_str() else {
         return true;
     };
     let name = name.strip_prefix(':').unwrap_or(name);
     if name.is_empty() || TimeZone::get(name).is_ok() {
         return true;
     }
-    std::fs::metadata(name).map_or(true, |found| found.is_file() && found.len() <= ZONE_FILE)
+    zone_sized(Path::new(name))
+}
+
+/// Whether `path` names nothing, or a regular file no larger than
+/// [`ZONE_FILE`] once every symlink is followed, as `/etc/localtime` usually
+/// is one into the zone database.
+fn zone_sized(path: &Path) -> bool {
+    std::fs::metadata(path).map_or(true, |found| found.is_file() && found.len() <= ZONE_FILE)
 }
 
 /// The wall clock reset times are read against: now, in the reader's zone.
@@ -113,7 +129,7 @@ impl Clock {
     /// Now, in the zone this machine says it is in, or in UTC where it says
     /// nothing readable.
     pub(crate) fn system() -> Self {
-        let readable = readable_zone(std::env::var_os("TZ").as_deref());
+        let readable = readable_zone(std::env::var_os("TZ").as_deref(), Path::new(LOCALTIME));
         let (zone, guessed) = readable
             .then(|| TimeZone::try_system().ok())
             .flatten()
