@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Self-test for the headless prior-binary rollback drill.
 #
-# Two gates, no network, no credentials, no provider call:
+# Three gates, no network, no credentials, no provider call:
 #
+#   0. the drill refuses a candidate that is not the workspace version;
 #   1. the drill passes on clean fixtures;
 #   2. the drill fails (exit 1, falsification held) when a fixture is
 #      corrupted in a way the previous binary must refuse.
@@ -87,6 +88,24 @@ cleanup() {
     rm -rf -- "$scratch"
 }
 trap cleanup EXIT
+
+# Gate 0: a candidate that is not this tree's version is refused before
+# anything runs, so a stale binary left in the target directory cannot pass the
+# drill in place of the tree. The stand-in names a version no tree has and is
+# given as both binaries, since the refusal comes before the previous binary is
+# looked at.
+stale=$scratch/stale-crucible
+printf '#!/usr/bin/env bash\necho "crucible 0.0.0-stale"\n' >"$stale"
+chmod +x "$stale"
+status=0
+"$DRILL" --candidate-binary "$stale" --prior-binary "$stale" >"$scratch/stale.log" 2>&1 || status=$?
+if ((status == 2)) && grep -Fq 'not the workspace version' "$scratch/stale.log"; then
+    say "a candidate of another version is refused"
+else
+    printf 'FAIL the drill ran a candidate of another version (exit %d)\n' "$status" >&2
+    shown "$scratch/stale.log"
+    failed=1
+fi
 
 if [[ -n $prior ]]; then
     [[ -f $prior && -x $prior ]] || {
