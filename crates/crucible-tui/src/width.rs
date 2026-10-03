@@ -10,7 +10,9 @@
 //! What is *not* text is [`crate::escape`]'s to recognise. Width and escapes are
 //! two questions and this module answers only the first, but every walk over a
 //! string has to ask both — a sequence is instruction, so it takes no columns
-//! and reaches no screen.
+//! and reaches no screen. A format character that would reorder or hide the
+//! text around it is [`unshown`], and costs nothing and reaches no screen
+//! either.
 
 use std::ops::Range;
 
@@ -34,9 +36,9 @@ pub(crate) const EMOJI_PRESENTATION: char = '\u{FE0F}';
 /// an attribute set for every row after it.
 ///
 /// So this drops what may not be drawn — every character that costs no column,
-/// which is a sequence's parameters, the escape that opened it, and any control
-/// byte that arrived on its own. Nothing here changes a width, because nothing
-/// dropped was ever counted.
+/// which is a sequence's parameters, the escape that opened it, any control
+/// byte that arrived on its own, and any [`unshown`] format character. Nothing
+/// here changes a width, because nothing dropped was ever counted.
 ///
 /// Colour crucible writes for itself never travels as bytes inside a string; it
 /// belongs to a [`crate::Row`] and is applied as the row is drawn. So there is
@@ -53,9 +55,58 @@ pub(crate) fn spoken(said: &str) -> String {
 ///
 /// `None` for one that is not drawn at all — a control character is dropped
 /// rather than counted, because a stray escape byte from a tool would move a
-/// cursor this process believes it is tracking.
+/// cursor this process believes it is tracking, and so is an [`unshown`]
+/// format character.
 pub(crate) fn advance(character: char) -> Option<usize> {
+    if unshown(character) {
+        return None;
+    }
     character.width()
+}
+
+/// Whether `character` is a Unicode format character (general category `Cf`):
+/// the bidi marks, embeddings, overrides and isolates, the zero-width space
+/// and the byte order mark among them, but not the two joiners below.
+///
+/// Drawn, one reorders or hides the text around it: an override in a file
+/// name or a model's answer shows the reader a row that says something other
+/// than what it holds. So none is drawn, counted or kept for the screen. A
+/// stored transcript keeps them; this is a question asked on the way to a
+/// terminal.
+///
+/// The zero-width non-joiner and joiner, U+200C and U+200D, are kept: they
+/// join an emoji sequence or shape Persian and Indic script, and the terminal
+/// draws them as part of the characters around them.
+///
+/// Otherwise the same set `crucible_types` drops from a limit's name. Neither
+/// crate may name the other, so the two lists are held to each other by a test
+/// in the command line, which reaches both. U+2065, unassigned between the
+/// invisible operators and the isolates, is taken with them.
+pub(crate) const fn unshown(character: char) -> bool {
+    matches!(
+        character,
+        '\u{ad}'
+            | '\u{600}'..='\u{605}'
+            | '\u{61c}'
+            | '\u{6dd}'
+            | '\u{70f}'
+            | '\u{890}'..='\u{891}'
+            | '\u{8e2}'
+            | '\u{180e}'
+            | '\u{200b}'
+            | '\u{200e}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
 }
 
 /// Whether [`EMOJI_PRESENTATION`] after `base` makes the pair two columns.

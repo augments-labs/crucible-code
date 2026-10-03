@@ -10,20 +10,50 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **The scroll rail's thumb keeps its length while a turn runs.** It used to
-  shrink and grow each time a running command's output appeared and went
-  under the transcript; the rail now stands beside what the turn is showing
-  and counts it as the end of the transcript.
+- **A checkout whose `.git` file names its git directory relatively records
+  its branch again.** The path is now read from the checkout, as git reads it,
+  rather than from the directory crucible was started in, so a submodule or a
+  worktree made with relative paths shows its branch in `/resume`.
+- **A fresh MiniMax Token Plan window no longer stops every turn until it
+  resets.** A count of 0 with no share left or status to say otherwise could
+  mean nothing used as much as nothing left, and was read as nothing left;
+  such a window is now left unread, and only one the plan marks spent holds
+  turns back.
+- **The command `/resume` prints for another directory no longer expands
+  anything in that directory's name on Windows.** A name holding `%`, `$` or a
+  backtick is written so PowerShell reads it back exactly, and cmd runs nothing
+  rather than a command built from an environment variable.
+- **On Windows, `/resume` now prints a command for another directory that runs
+  in PowerShell 5.1 and changes drive.** It prints a command for cmd (`pushd`),
+  one for PowerShell (`Set-Location -LiteralPath`, which reads `[` and `]`
+  literally) and the resume, each on its own row under its label, since `&&` is
+  a parse error in the PowerShell Windows ships.
+- **A checkout whose `.git` file is a symbolic link records its branch and
+  lists its worktrees again.** The link is followed as git follows it, and the
+  file it leads to is still read only when it is a small ordinary file.
+- **`/usage` no longer hangs when `TZ` names a pipe or a device.** A `TZ`
+  naming anything but a regular file of a zone file's size is not read, and
+  reset times are shown in UTC, labelled as such.
 - **The Windows installer matches names by their exact characters.** A
   checksum line, archive member or PATH entry whose name differs only by a
   character such as a soft hyphen is no longer taken for the one it wants.
+- **`install.sh` installs exactly what it verified.** A local `--archive` is
+  copied once and that copy is both hashed and unpacked, and curl no longer
+  reads your `~/.curlrc`, which could change where a release is fetched from.
 - **The Windows installer refuses a version followed by a newline.** Its
   version check let one through and failed later on the archive instead of
   saying the version is invalid.
+- **`install.sh` accepts only an ASCII version.** Under a UTF-8 locale its
+  version check took non-ASCII digits and letters, such as `é` or an
+  Arabic-Indic digit; it now refuses them in every locale.
 - **The rollback drill always tests the tree it runs in.** It used to reuse
   any binary left in `target/debug`, so an older build could pass in the
   tree's place; it now builds the candidate each run and refuses one whose
   version is not the workspace version.
+- **Bidi overrides and zero-width spaces no longer reach your terminal.** A
+  Unicode format character in a model's answer, a tool result or a file name
+  could reorder or hide what was drawn around it; the screen and redirected
+  output now drop them, keeping only the joiners emoji and some scripts need.
 
 ## [0.45.0] - 2026-10-03
 

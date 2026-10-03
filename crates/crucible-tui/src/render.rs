@@ -45,6 +45,7 @@ use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::{Size, Terminal, TerminalError};
+use crate::width;
 
 use std::ops::Range;
 use std::time::{Duration, Instant};
@@ -2020,15 +2021,20 @@ struct Taking<'a, T: Terminal> {
 impl<T: Terminal> Taking<'_, T> {
     /// Add one run of text wearing `slot`.
     ///
-    /// The escape bytes go here and nowhere else. Colour in a tool result is
-    /// bytes an untrusted string put there: a row of the record is spans this
-    /// program painted from a palette, and a byte of a redirected run's output
-    /// is one this program meant to write.
+    /// The escape bytes go here and nowhere else, and the format characters
+    /// with them. Colour in a tool result is bytes an untrusted string put
+    /// there: a row of the record is spans this program painted from a
+    /// palette, and a byte of a redirected run's output is one this program
+    /// meant to write.
     fn take(&mut self, slot: Slot, text: &str, link: Option<&str>) -> Result<(), TerminalError> {
         let escapes = &mut *self.escapes;
         self.free.clear();
-        self.free
-            .extend(text.chars().filter(|character| !escapes.holds(*character)));
+        // A format character goes with the escapes: it would reorder or hide
+        // the text around it in a terminal and in a file read in one later.
+        self.free.extend(
+            text.chars()
+                .filter(|character| !escapes.holds(*character) && !width::unshown(*character)),
+        );
 
         self.record.write(slot, self.free, link);
 
