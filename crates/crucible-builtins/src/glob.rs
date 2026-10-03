@@ -336,7 +336,7 @@ impl Tool for Glob {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, PATTERN)
+        summary::field(NAME, args, PATTERN, crucible_tools::Argument::Command)
     }
 
     fn looking(&self, _args: &ToolArgs) -> Option<Looking> {

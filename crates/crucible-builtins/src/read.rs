@@ -750,7 +750,7 @@ impl Tool for Read {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, PATH)
+        summary::field(NAME, args, PATH, crucible_tools::Argument::Path)
     }
 
     fn looking(&self, _args: &ToolArgs) -> Option<Looking> {

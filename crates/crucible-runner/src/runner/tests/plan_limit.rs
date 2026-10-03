@@ -303,6 +303,61 @@ fn models_weekly(limits: &PlanWindows) -> Option<WindowReading> {
         .and_then(|group| group.reading(Window::Weekly))
 }
 
+/// A session on the model `model` whose first answer reported a weekly
+/// window, `percent` used and starting again at `resets_at`, in a group that
+/// holds back every model whose id starts as `pattern` does before its `*`.
+fn prefixed_on(model: &str, pattern: &str, percent: u8, resets_at: SystemTime) -> Scripted {
+    let reading = PlanWindows::new(SystemTime::now()).within(
+        Scope::Model(ModelGroup::new(
+            GroupName::new(pattern).expect("a group's name"),
+            ModelKey::prefixed(pattern),
+        )),
+        Window::Weekly,
+        WindowReading::new(percent, Some(resets_at)),
+    );
+    let mut serving = fixture().model().clone();
+    serving.name = model.into();
+    let script = Script::new(vec![saying("one"), saying("two")]).limiting([Some(reading)]);
+    let mut scripted = Scripted::under(
+        script,
+        Tools::new(),
+        Agent::new(AgentId::new("test"), serving),
+    );
+    scripted.turn("one").expect("the first turn to finish");
+    assert_eq!(scripted.asked().len(), 1);
+    scripted
+}
+
+#[test]
+fn plan_limit_a_used_up_prefix_group_ends_the_turn_of_a_model_it_holds() {
+    let reset = tomorrow();
+    let mut scripted = prefixed_on("MiniMax-M2.7", "MiniMax-M*", 100, reset);
+
+    let problem = scripted.turn("two").unwrap_err();
+
+    assert!(
+        matches!(
+            problem,
+            TurnError::PlanLimit {
+                window: Some(Window::Weekly),
+                resets_at: Some(at),
+                stopped: PlanLimitStop::BeforeSending,
+            } if at == reset
+        ),
+        "{problem:?}"
+    );
+    assert_eq!(scripted.asked().len(), 1);
+}
+
+#[test]
+fn plan_limit_a_used_up_prefix_group_lets_a_model_it_does_not_hold_go_out() {
+    let mut scripted = prefixed_on("speech-2.8-hd", "MiniMax-M*", 100, tomorrow());
+
+    scripted.turn("two").expect("the turn to go out");
+
+    assert_eq!(scripted.asked().len(), 2);
+}
+
 #[test]
 fn plan_limit_a_later_response_updates_only_the_groups_it_names() {
     let reset = tomorrow();

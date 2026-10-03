@@ -100,8 +100,26 @@ pub enum ToolError {
     },
 }
 
+/// What kind of thing a call's [`Summary`] names.
+///
+/// Said by the tool, which parsed the argument and knows which field it came
+/// from, so nothing that draws the row has to guess it back out of the words.
+/// Closed: a row tells these four apart and no others, and a new one is a
+/// decision every reader of it makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Argument {
+    /// A file or directory the call opens, writes or changes.
+    Path,
+    /// An address the call reaches.
+    Address,
+    /// A command the call runs or a pattern it looks for.
+    Command,
+    /// Words that are none of those: a question, a query, a count.
+    Other,
+}
+
 /// What a call is about, in the words the transcript shows beside the tool's
-/// name.
+/// name, and what kind of thing those words are.
 ///
 /// A type of its own rather than a `String`, for the reason [`ToolArgs`] is
 /// one: it is made out of a call's arguments, and a `bash` call's arguments are
@@ -109,25 +127,47 @@ pub enum ToolError {
 /// and then carrying a copy of part of them under another name would be no
 /// redaction at all.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Summary(Box<str>);
+pub struct Summary {
+    /// The words.
+    said: Box<str>,
+    /// What they are, decided from the whole argument before any row cuts it.
+    argument: Argument,
+}
 
 impl Summary {
-    /// Takes the words a tool worked out from its own arguments.
+    /// Takes the words a tool worked out from its own arguments, where they
+    /// are not a path, an address, a command or a pattern.
     #[must_use]
     pub fn new(said: impl Into<Box<str>>) -> Self {
-        Self(said.into())
+        Self::of(Argument::Other, said)
+    }
+
+    /// Takes the words a tool worked out from its own arguments, and what kind
+    /// of thing they are.
+    #[must_use]
+    pub fn of(argument: Argument, said: impl Into<Box<str>>) -> Self {
+        Self {
+            said: said.into(),
+            argument,
+        }
     }
 
     /// The words, for whatever is drawing the row.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.said
+    }
+
+    /// What kind of thing the words are.
+    #[must_use]
+    pub const fn argument(&self) -> Argument {
+        self.argument
     }
 
     /// Whether the call said nothing that could be summarised.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.said.is_empty()
     }
 }
 

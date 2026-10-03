@@ -17,14 +17,15 @@ change in any release with no deprecation period.
   It opens mid-turn too, showing what the turn last reported.
 - **`/usage` shows what the session has used and how much of your plan is
   gone.** Cost (`not priced` where the model has no price, never `$0.00`, and
-  `at least` once an answer is stopped before its cost is reported), request
-  and wall time, lines changed, tokens and the context bar, then a bar for
-  every limit a ChatGPT sign-in has, plan-wide and for each model it limits on
-  its own, and the 5-hour, weekly and monthly limits of a Kimi Code sign-in or
-  key, each with its reset in local time. Opening it, or the Usage tab of
-  `/settings`, asks the vendor for those limits at most once a minute and only
-  once you have agreed to what is sent there; any other key says `limits not
-  reported`, and a model's spent limit stops turns on that model alone.
+  `at least` once an answer is stopped before its cost is reported), request and
+  wall time, lines changed, tokens and the context bar, then a bar for every
+  limit a ChatGPT sign-in has, plan-wide and for each model it limits on its
+  own, the 5-hour, weekly and monthly limits of a Kimi Code sign-in or key, and
+  the 5-hour and weekly limits of a MiniMax Token Plan key, each with its reset
+  in local time. Opening it, or the Usage tab of `/settings`, asks the vendor
+  for those limits at most once a minute and only once you have agreed to what
+  is sent there; any other key says `limits not reported`, and a model's spent
+  limit stops turns on that model alone.
 - **`/settings` changes a setting without editing JSON.** Its Config tab lists
   each switch and short choice, plus the mouse scroll speed, with a `/` search;
   a change is written to your user file. The themes, glyphs, tool detail,
@@ -70,16 +71,17 @@ change in any release with no deprecation period.
 
 ### Changed
 
-- **Colour follows one written rule.** Each line has at most one accented thing
-  for the eye to land on, not counting the edges of a frame around it, such as
-  the one around a question; colour that means something keeps that meaning in
-  every theme, and nothing is said by colour alone, so the colourblind themes
-  and `color` set to `never` lose nothing. In replies and tool calls only
-  inline code and links take the theme's colour (panels, notes, `/help` names,
-  `/release-notes` versions and the banner keep it): headings, bold, tool names
-  and the figures of a count are bold in your own foreground, and a sent
-  prompt's row has no colour beyond its background. The rule is in the theme
-  section of the configuration docs.
+- **Colour follows one written rule, and you choose how much a reply spends.**
+  Each line has at most one accented thing for the eye to land on, not
+  counting the edges of a frame around it, such as the one around a question;
+  colour that means something keeps that meaning in every theme, and nothing
+  is said by colour alone, so the colourblind themes and `color` set to
+  `never` lose nothing. `output.transcriptColours`, a `/settings` row that
+  applies at once, is `calm` by default (inline code and paths in the theme's
+  colour, links in a second colour, headings, bold and tool names bold in your
+  own foreground), and `balanced` and `rich` add colours for paths, versions,
+  a call's argument, headings, lists, quotes and figures. The rule and the
+  three are in the theme section of the configuration docs.
 - **The installers show each step as it runs.** In a terminal, `install.sh`
   and `install.ps1` mark each of detect platform, download, verify checksum,
   unpack and install, draw a bar while the archive downloads, and end with

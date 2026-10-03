@@ -264,6 +264,7 @@ fn every_row_has_its_own_identity() {
         RowId::SyntaxTheme,
         RowId::Glyphs,
         RowId::Colour,
+        RowId::TranscriptColours,
         RowId::ToolDetail,
         RowId::ScrollRail,
         RowId::ScreenMode,

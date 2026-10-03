@@ -114,7 +114,7 @@ impl Tool for Write {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, PATH)
+        summary::field(NAME, args, PATH, crucible_tools::Argument::Path)
     }
 
     fn remember(&self, args: &ToolArgs) -> Option<Remembered> {

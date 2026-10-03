@@ -240,6 +240,17 @@ fn the_row_beside_the_name_is_the_question_where_there_is_one_and_a_count_where_
         {"heading":"One","question":"First?","answers":[{"answer":"a"},{"answer":"z"}]},
         {"heading":"Two","question":"Second?","answers":[{"answer":"b"},{"answer":"y"}]}]}"#;
     assert_eq!(tool.summary(&ToolArgs::new(two)).as_str(), "2 questions");
+
+    // A question and a count are words, not a path or a command, so neither
+    // is coloured as one.
+    assert_eq!(
+        tool.summary(&ToolArgs::new(ONE)).argument(),
+        crucible_tools::Argument::Other
+    );
+    assert_eq!(
+        tool.summary(&ToolArgs::new(two)).argument(),
+        crucible_tools::Argument::Other
+    );
 }
 
 #[test]

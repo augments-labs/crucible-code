@@ -1,5 +1,5 @@
 use super::*;
-use crate::color::{Palette, Theme};
+use crate::color::{Design, Palette, Theme};
 use crate::width;
 
 /// A window wide enough that nothing here is laid out against its edge.
@@ -83,7 +83,7 @@ fn a_heading_loses_its_hashes_and_keeps_its_words() {
     let said = whole("### What it costs\nthe paragraph under it");
 
     assert_eq!(drawn(&said), "What it costs\nthe paragraph under it");
-    assert_eq!(slots(&said), vec![Slot::Bold, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Heading, Slot::Plain]);
 }
 
 #[test]
@@ -93,7 +93,8 @@ fn a_hash_that_no_space_follows_is_a_hash() {
 
 #[test]
 fn a_hash_partway_along_a_line_is_a_hash() {
-    assert_eq!(drawn(&whole("issue # 12")), "issue # 12");
+    // Ended, since a number at the end of a delta is held until its word is.
+    assert_eq!(drawn(&ended("issue # 12")), "issue # 12");
 }
 
 #[test]
@@ -162,7 +163,14 @@ fn a_bullet_stays_a_bullet_rather_than_opening_emphasis() {
     assert_eq!(drawn(&said), "• first\n• second\n");
     assert_eq!(
         slots(&said),
-        vec![Slot::Quiet, Slot::Plain, Slot::Quiet, Slot::Plain]
+        vec![
+            Slot::Bullet,
+            Slot::Quiet,
+            Slot::Plain,
+            Slot::Bullet,
+            Slot::Quiet,
+            Slot::Plain
+        ]
     );
 }
 
@@ -222,10 +230,16 @@ fn a_marker_that_never_closes_costs_its_own_paragraph_and_no_more() {
 
 #[test]
 fn a_run_that_meant_nothing_is_put_back_where_it_was() {
-    let said = whole("2 * 3 * 4");
+    // Ended, since a number at the end of a delta is held until its word is.
+    let said = ended("2 * 3 * 4");
 
+    // Nothing opened emphasis: the figures are figures and the stars prose.
     assert_eq!(drawn(&said), "2 * 3 * 4");
-    assert_eq!(slots(&said), vec![Slot::Plain]);
+    assert!(
+        said.iter()
+            .all(|(slot, _)| matches!(slot, Slot::Plain | Slot::Figure)),
+        "{said:?}"
+    );
 }
 
 #[test]
@@ -468,15 +482,16 @@ fn the_mark_is_quiet_and_the_item_is_not() {
     // where one item stops.
     let said = whole("- an item\n");
 
-    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Bullet, Slot::Quiet, Slot::Plain]);
 }
 
 #[test]
 fn a_dash_that_is_not_a_bullet_is_left_exactly_where_it_was() {
     // Only at the start of a line, and only with a space after it. Everything
     // else is arithmetic, a flag, or a word somebody hyphenated.
+    // Ended, since a number at the end of a delta is held until its word is.
     for prose in ["5 - 3 = 2", "pass --colour never", "-–—", "-no space"] {
-        assert_eq!(drawn(&whole(prose)), prose, "{prose:?}");
+        assert_eq!(drawn(&ended(prose)), prose, "{prose:?}");
     }
 }
 
@@ -497,7 +512,7 @@ fn a_quote_is_a_bar_and_the_words_beside_it() {
     assert_eq!(drawn(&said), "│ somebody else said this\n");
     // The break itself is written after the line's state is dropped, so that no
     // row carries a slot into the one below it.
-    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Quote, Slot::Plain]);
 }
 
 #[test]
@@ -507,7 +522,7 @@ fn a_quote_ends_where_the_line_does() {
     let said = whole("> quoted\nplain again\n");
 
     assert_eq!(drawn(&said), "│ quoted\nplain again\n");
-    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Quiet, Slot::Quote, Slot::Plain]);
 }
 
 #[test]
@@ -785,7 +800,8 @@ fn nothing_inside_a_fence_is_read_as_a_table() {
 fn the_header_is_raised_and_the_bars_are_quiet() {
     // Reading across: the header's two cells raised with the bar between them
     // quiet, the break, the rule, the break, then a body row whose cells are
-    // the prose they were written as with the bar and the padding quiet.
+    // the prose they were written as with the bar and the padding quiet, and
+    // the figure in the second of them told as one.
     let said = whole("| file | lines |\n| --- | --- |\n| main.rs | 42 |\n\n");
 
     assert_eq!(
@@ -798,7 +814,7 @@ fn the_header_is_raised_and_the_bars_are_quiet() {
             Slot::Quiet,
             Slot::Plain,
             Slot::Quiet,
-            Slot::Plain,
+            Slot::Figure,
             Slot::Quiet,
             Slot::Plain,
         ]
@@ -1178,9 +1194,11 @@ fn emphasis_nobody_closed_ends_where_the_next_block_starts() {
     assert_eq!(
         slots(&said),
         vec![
+            Slot::Bullet,
             Slot::Quiet,
             Slot::Bold,
             Slot::Plain,
+            Slot::Bullet,
             Slot::Quiet,
             Slot::Plain
         ]
@@ -1421,10 +1439,10 @@ fn a_heading_is_still_a_heading_and_not_a_number() {
 }
 
 #[test]
-fn a_reply_spends_the_theme_colour_on_code_and_links_alone() {
+fn a_calm_reply_spends_the_theme_colour_on_code_alone() {
     // Headings, raised phrases and a table's header are weight in the reader's
-    // own foreground; the theme's colour is kept for what the reader copies or
-    // follows.
+    // own foreground; the theme's colour is kept for what the reader copies,
+    // and a link is the second colour.
     let said = whole(
         "# Fixed\n\nSee **the note**, `wait_for_index` and \
          [the issue](https://example.com/1).\n\n\
@@ -1436,7 +1454,7 @@ fn a_reply_spends_the_theme_colour_on_code_and_links_alone() {
             .map(|(slot, _)| *slot)
     };
 
-    assert_eq!(slot_of("Fixed"), Some(Slot::Bold), "a heading: {said:?}");
+    assert_eq!(slot_of("Fixed"), Some(Slot::Heading), "a heading: {said:?}");
     assert_eq!(slot_of("the note"), Some(Slot::Bold), "bold: {said:?}");
     assert_eq!(slot_of("file"), Some(Slot::Bold), "a header cell: {said:?}");
     assert_eq!(
@@ -1451,19 +1469,20 @@ fn a_reply_spends_the_theme_colour_on_code_and_links_alone() {
         "the accent, bold, in a reply: {said:?}"
     );
 
-    // And the two that keep it still wear the accent's ink.
+    // And code still wears the accent's ink, a heading weight alone, and a
+    // link a line under an ink that is not the accent's.
     for theme in [Theme::Dark, Theme::Light, Theme::ColourblindDark] {
         let palette = Palette::resolve(true, theme, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         });
         let accent = palette.open(Slot::Accent);
         let accent = accent.as_str().trim_start_matches("\x1b[");
+        let link = palette.open(Slot::Link);
 
         assert_eq!(palette.open(Slot::Code).as_str(), format!("\x1b[{accent}"));
-        assert_eq!(
-            palette.open(Slot::Link).as_str(),
-            format!("\x1b[4;{accent}")
-        );
+        assert_eq!(palette.open(Slot::Heading).as_str(), "\x1b[1m");
+        assert!(link.as_str().starts_with("\x1b[4;38;2;"), "{theme:?}");
+        assert_ne!(link.as_str(), format!("\x1b[4;{accent}"), "{theme:?}");
     }
 }
 
@@ -1495,4 +1514,183 @@ fn model_prose_is_plain_and_follows_the_colour_rule() {
     }
 
     crate::colour_rule::holds("model text", &rows, |_| false);
+}
+
+/// One whole answer, read and finished, with the slot each run was said under.
+fn finished(answer: &str) -> Vec<(Slot, String)> {
+    let mut markdown = Markdown::default();
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, _: Option<&str>| said.push((slot, text.to_owned()));
+    markdown.read(answer, ROOM, &mut into);
+    markdown.finish(ROOM, &mut into);
+    said
+}
+
+/// The slot the run spelling exactly `text` was said under, where one was.
+fn kind_of(said: &[(Slot, String)], text: &str) -> Option<Slot> {
+    said.iter()
+        .find(|(_, run)| run == text)
+        .map(|(slot, _)| *slot)
+}
+
+/// An answer naming one of each kind a design can colour.
+const KINDS: &str = "See [the pull request](https://example.test/1) and \
+                     https://example.test/2, then `src/cli/draw.rs`: it ships \
+                     in 0.45.0 as 3436980f, and 641 passed.\n";
+
+#[test]
+fn what_an_answer_names_takes_the_slot_for_its_kind() {
+    // Which kind a run is was decided here, once, and only picks its slot:
+    // the characters are exactly the ones the answer wrote.
+    let said = finished(KINDS);
+
+    assert_eq!(
+        kind_of(&said, "the pull request"),
+        Some(Slot::Link),
+        "{said:?}"
+    );
+    assert_eq!(
+        kind_of(&said, "https://example.test/2"),
+        Some(Slot::Link),
+        "{said:?}"
+    );
+    assert_eq!(
+        kind_of(&said, "src/cli/draw.rs"),
+        Some(Slot::Path),
+        "{said:?}"
+    );
+    assert_eq!(kind_of(&said, "0.45.0"), Some(Slot::Revision), "{said:?}");
+    assert_eq!(kind_of(&said, "3436980f"), Some(Slot::Revision), "{said:?}");
+    assert_eq!(kind_of(&said, "641"), Some(Slot::Figure), "{said:?}");
+    assert_eq!(
+        drawn(&said),
+        "See the pull request and https://example.test/2, then src/cli/draw.rs: \
+         it ships in 0.45.0 as 3436980f, and 641 passed.\n"
+    );
+}
+
+#[test]
+fn each_design_draws_an_answers_kinds_in_its_own_inks() {
+    // The same answer under each design, in the Dark theme at the exact rung.
+    let truecolor = |name: &str| (name == "COLORTERM").then(|| "truecolor".to_owned());
+    let said = finished(KINDS);
+    let underlined = "\x1b[4;38;2;97;145;230m";
+    let accent = "\x1b[38;2;18;137;127m";
+    let third = "\x1b[38;2;165;130;235m";
+    let fourth = "\x1b[38;2;218;114;166m";
+
+    for (design, path, revision, figure) in [
+        (Design::Calm, accent, "", ""),
+        (Design::Balanced, third, fourth, ""),
+        (Design::Rich, third, fourth, fourth),
+    ] {
+        let palette = Palette::resolve(true, Theme::Dark, None, &truecolor).designing(design);
+        let ink =
+            |text: &str| kind_of(&said, text).map(|slot| palette.open(slot).as_str().to_owned());
+
+        assert_eq!(
+            ink("the pull request").as_deref(),
+            Some(underlined),
+            "{design:?}"
+        );
+        assert_eq!(
+            ink("https://example.test/2").as_deref(),
+            Some(underlined),
+            "{design:?}"
+        );
+        assert_eq!(ink("src/cli/draw.rs").as_deref(), Some(path), "{design:?}");
+        assert_eq!(ink("0.45.0").as_deref(), Some(revision), "{design:?}");
+        assert_eq!(ink("3436980f").as_deref(), Some(revision), "{design:?}");
+        assert_eq!(ink("641").as_deref(), Some(figure), "{design:?}");
+    }
+}
+
+#[test]
+fn a_version_split_across_deltas_is_still_one_version() {
+    let mut markdown = Markdown::default();
+    let mut said = read(&mut markdown, "ships in 0.4");
+    said.extend(read(&mut markdown, "5.0 today"));
+    markdown.finish(ROOM, &mut |slot, text, _| {
+        said.push((slot, text.to_owned()));
+    });
+
+    assert_eq!(kind_of(&said, "0.45.0"), Some(Slot::Revision), "{said:?}");
+    assert_eq!(drawn(&said), "ships in 0.45.0 today");
+}
+
+#[test]
+fn code_that_is_not_a_path_stays_code() {
+    // A command, a name and a field are copied rather than opened, and a dot
+    // between two words is not a file's extension.
+    for code in [
+        "cargo test -p crucible-tui",
+        "wait_for_index",
+        "self.line",
+        "*.rs",
+    ] {
+        let said = finished(&format!("run `{code}` now"));
+
+        assert_eq!(kind_of(&said, code), Some(Slot::Code), "{said:?}");
+    }
+    for path in ["src/cli/draw.rs", "Cargo.toml", "docs/", "./install"] {
+        let said = finished(&format!("open `{path}` now"));
+
+        assert_eq!(kind_of(&said, path), Some(Slot::Path), "{said:?}");
+    }
+}
+
+#[test]
+fn a_heading_a_quote_a_bullet_and_a_number_each_say_what_they_are() {
+    let said = finished("## Why\n\n> the picker\n\n- one\n1. first\n");
+
+    assert_eq!(kind_of(&said, "Why"), Some(Slot::Heading), "{said:?}");
+    assert_eq!(kind_of(&said, "the picker"), Some(Slot::Quote), "{said:?}");
+    assert_eq!(
+        kind_of(&said, Glyphs::default().bullet()),
+        Some(Slot::Bullet),
+        "{said:?}"
+    );
+    assert_eq!(kind_of(&said, "1."), Some(Slot::Ordinal), "{said:?}");
+    assert_eq!(drawn(&said).lines().last(), Some("1. first"));
+}
+
+#[test]
+fn a_hash_is_a_hash_in_capitals_too() {
+    let said = finished("landed as 3436980F, then 9FCEB02D0AE598E95DC970B74767F19372D61AF8.");
+
+    assert_eq!(kind_of(&said, "3436980F"), Some(Slot::Revision), "{said:?}");
+    assert_eq!(
+        kind_of(&said, "9FCEB02D0AE598E95DC970B74767F19372D61AF8"),
+        Some(Slot::Revision),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn hex_digits_that_spell_a_word_or_a_number_are_not_a_hash() {
+    // Seven to forty hex digits would take in all of these. A word made of the
+    // letters a to f is still a word, in either case, and a run of digits is
+    // a figure, so a hash needs a digit and a letter, in one case.
+    let said = finished("the defaced and effaced DEFACED wall had 1234567 bricks, aBc1234 too");
+
+    for word in ["defaced", "effaced", "DEFACED", "aBc1234"] {
+        let holding: Vec<Slot> = said
+            .iter()
+            .filter(|(_, text)| text.contains(word))
+            .map(|(slot, _)| *slot)
+            .collect();
+        assert_eq!(holding, [Slot::Plain], "{word}: {said:?}");
+    }
+    assert_eq!(kind_of(&said, "1234567"), Some(Slot::Figure), "{said:?}");
+}
+
+#[test]
+fn a_word_that_only_looks_like_a_kind_is_prose() {
+    // Too short to be a hash, letters only, and a number inside a word.
+    let said = finished("abc123 x86_64 deadbeef 2026-10-03 v2");
+
+    assert!(
+        said.iter().all(|(slot, _)| *slot == Slot::Plain),
+        "{said:?}"
+    );
 }

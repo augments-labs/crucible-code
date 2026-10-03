@@ -164,7 +164,7 @@ impl Tool for WebSearch {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(SEARCH, args, QUERY)
+        summary::field(SEARCH, args, QUERY, crucible_tools::Argument::Other)
     }
 
     fn looking(&self, _args: &ToolArgs) -> Option<Looking> {
@@ -338,7 +338,7 @@ impl Tool for WebFetch {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(FETCH, args, URL)
+        summary::field(FETCH, args, URL, crucible_tools::Argument::Address)
     }
 
     fn looking(&self, _args: &ToolArgs) -> Option<Looking> {

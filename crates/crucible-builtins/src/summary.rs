@@ -12,22 +12,28 @@
 //! is allowed to shrug, because the alternative is a transcript row that
 //! reports an error the next row reports properly.
 
-use crucible_tools::{Remembered, Summary};
+use crucible_tools::{Argument, Remembered, Summary};
 use crucible_types::ToolArgs;
 
 use crate::args::Args;
 
-/// The text `field` carries, or nothing where the call cannot be read.
+/// The text `field` carries, or nothing where the call cannot be read, as the
+/// kind of thing the tool says that field holds.
 ///
 /// Optional whatever the schema says, because the schema is not what arrived. A
 /// required field the model left out is a call that will be refused, and it
 /// reaches here first.
-pub(crate) fn field(tool: &'static str, args: &ToolArgs, field: &str) -> Summary {
+pub(crate) fn field(
+    tool: &'static str,
+    args: &ToolArgs,
+    field: &str,
+    argument: Argument,
+) -> Summary {
     let said = Args::parse(tool, args)
         .ok()
         .and_then(|args| args.optional_text(field).ok().flatten().map(str::to_owned));
 
-    Summary::new(said.unwrap_or_default())
+    Summary::of(argument, said.unwrap_or_default())
 }
 
 /// The path a file tool's call names, volunteered for a compaction to track.
@@ -59,11 +65,20 @@ pub(crate) fn remembered(
 
 #[cfg(test)]
 mod tests {
-    use crucible_tools::Tool;
+    use crucible_tools::{Argument, Tool};
 
     use super::*;
     use crate::sample::Sample;
     use crate::{Bash, Edit, Glob, Grep, Ledger, Read, Write};
+
+    /// A tool, its name, its arguments, the argument summarised and its kind.
+    type Case = (
+        Box<dyn Tool>,
+        &'static str,
+        &'static str,
+        &'static str,
+        Argument,
+    );
 
     #[test]
     fn each_tool_names_the_argument_its_call_is_about() {
@@ -75,36 +90,41 @@ mod tests {
         let workspace = sample.workspace();
         let seen = Ledger::new();
 
-        let tools: [(Box<dyn Tool>, &str, &str, &str); 6] = [
+        let tools: [Case; 6] = [
             (
                 Box::new(Read::new(workspace.clone(), seen.clone())),
                 "read",
                 r#"{"path":"src/main.rs"}"#,
                 "src/main.rs",
+                Argument::Path,
             ),
             (
                 Box::new(Write::new(workspace.clone(), seen)),
                 "write",
                 r#"{"path":"notes.md","content":"hello"}"#,
                 "notes.md",
+                Argument::Path,
             ),
             (
                 Box::new(Edit::new(workspace.clone())),
                 "edit",
                 r#"{"path":"src/lib.rs","find":"a","replace":"b"}"#,
                 "src/lib.rs",
+                Argument::Path,
             ),
             (
                 Box::new(Grep::new(workspace.clone())),
                 "grep",
                 r#"{"pattern":"fn main","path":"src"}"#,
                 "fn main",
+                Argument::Command,
             ),
             (
                 Box::new(Glob::new(workspace.clone())),
                 "glob",
                 r#"{"pattern":"**/*.rs","path":"src"}"#,
                 "**/*.rs",
+                Argument::Command,
             ),
             (
                 Box::new(Bash::new(
@@ -114,14 +134,21 @@ mod tests {
                 "bash",
                 r#"{"command":"cargo test"}"#,
                 "cargo test",
+                Argument::Command,
             ),
         ];
 
-        for (tool, name, args, expected) in tools {
+        for (tool, name, args, expected, argument) in tools {
+            let summary = tool.summary(&ToolArgs::new(args));
             assert_eq!(
-                tool.summary(&ToolArgs::new(args)).as_str(),
+                summary.as_str(),
                 expected,
                 "{name} summarised the wrong argument"
+            );
+            assert_eq!(
+                summary.argument(),
+                argument,
+                "{name} said its argument is the wrong kind of thing"
             );
         }
     }
@@ -132,7 +159,7 @@ mod tests {
         // guessed at words for it would be the wrong explanation arriving
         // first.
         for unreadable in ["not json", "{}", r#"{"path":7}"#] {
-            let said = field("read", &ToolArgs::new(unreadable), "path");
+            let said = field("read", &ToolArgs::new(unreadable), "path", Argument::Path);
             assert!(said.is_empty(), "{unreadable} was summarised as something");
         }
     }

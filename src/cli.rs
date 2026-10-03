@@ -519,7 +519,7 @@ fn asked(
 /// What the `output` block said, gathered out of the settled layers.
 ///
 /// Its own function because it is the one value in `run` that is only a list:
-/// five answers read out of one block, none of them decided here.
+/// six answers read out of one block, none of them decided here.
 fn drawn(settings: &crucible_config::Settings) -> style::Output {
     style::Output {
         color: settings.color(),
@@ -527,6 +527,7 @@ fn drawn(settings: &crucible_config::Settings) -> style::Output {
         detail: settings.tool_detail(),
         theme: settings.theme(),
         syntax: settings.syntax_theme().map(str::to_owned),
+        colours: settings.transcript_colours(),
     }
 }
 

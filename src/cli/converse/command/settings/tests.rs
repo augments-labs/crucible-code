@@ -373,6 +373,7 @@ fn running(
         RowId::ScrollRail => Some(renderer.transcript_columns().to_string()),
         RowId::ScrollSpeed => Some(renderer.scroll_rows().to_string()),
         RowId::Glyphs => Some(format!("{:?}", terms.style().glyphs())),
+        RowId::TranscriptColours => Some(format!("{:?}", terms.style().palette().design())),
         // The detail is how wide a call's arguments may run in a wide window.
         RowId::ToolDetail => Some(terms.style().args(1000).to_string()),
         RowId::Send => Some(format!("{:?}", terms.sending.get())),
@@ -474,6 +475,7 @@ fn the_settings_rows_that_apply_at_once_are_these() {
             "Theme",
             "Syntax theme",
             "Glyphs",
+            "Transcript colours",
             "Tool detail",
             "Scroll rail",
             "Mouse scroll speed",

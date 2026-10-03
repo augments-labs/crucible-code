@@ -3,7 +3,6 @@ source: tests/whole_screen/main.rs
 expression: config
 ---
 80x30 cursor 29,0 scrolled 0
-|│ · ctrl+c     clears the line typed so far                                   ││|
 |╰─────────────────────────────────────────────────────────────────────────────╯│|
 |                                                                               │|
 |› /settings                                                                    ●|
@@ -19,6 +18,7 @@ expression: config
 |  Syntax theme                                                  Monokai Extended|
 |  Glyphs                                                                 unicode|
 |  Colour                                            auto · applies at next start|
+|  Transcript colours                                                        calm|
 |  Tool detail                                                            compact|
 |  Scroll rail                                                                 on|
 |  Screen mode                                 fullscreen · applies at next start|

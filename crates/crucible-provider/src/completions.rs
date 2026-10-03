@@ -170,6 +170,22 @@ pub trait Dialect: Send + Sync + 'static {
         let _ = endpoint;
         None
     }
+
+    /// Whether [`Self::usage_source`] is asked only for a credential the
+    /// wiring says was given on a plan's row: for a vendor whose plan keys and
+    /// pay-as-you-go keys go to the same addresses, with nothing in a key to
+    /// tell them apart. False, by default: every credential sent to an address
+    /// with a source is asked for.
+    const PLAN_TOLD: bool = false;
+}
+
+/// What the wiring said of the row a credential was given on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Given {
+    /// Nothing: the provider was built by [`Chat::at`].
+    Unsaid,
+    /// A plan's row, whose limits there are to ask.
+    OnPlan,
 }
 
 /// What a model's reasoning is to the vendor that wrote it.
@@ -228,17 +244,26 @@ pub struct Chat<D: Dialect> {
     transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     credential_scope: CredentialScopeId,
+    /// What the wiring said of the row the credential was given on, read
+    /// only by a dialect whose plan is asked when told.
+    given: Given,
     dialect: PhantomData<D>,
 }
 
 impl<D: Dialect> fmt::Debug for Chat<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(D::TITLE)
+        let mut shown = f.debug_struct(D::TITLE);
+        shown
             .field("credential", &self.credential)
             .field("transport", &self.transport)
             .field("endpoint", &self.endpoint)
-            .field("credential_scope", &self.credential_scope)
-            .finish()
+            .field("credential_scope", &self.credential_scope);
+        // Shown only where it was said, so a provider built by `at` shows as
+        // it did before the wiring could say anything.
+        if self.given != Given::Unsaid {
+            shown.field("given", &self.given);
+        }
+        shown.finish()
     }
 }
 
@@ -270,8 +295,17 @@ impl<D: Dialect> Chat<D> {
             transport: transport.into(),
             endpoint,
             credential_scope,
+            given: Given::Unsaid,
             dialect: PhantomData,
         }
+    }
+
+    /// The same provider, told its credential was given on a plan's row, as
+    /// a dialect that sets [`Dialect::PLAN_TOLD`] asks to be: nothing in the
+    /// credential says so to the provider.
+    pub(crate) const fn on_plan_row(mut self) -> Self {
+        self.given = Given::OnPlan;
+        self
     }
 
     /// Where reasoning kept for `request` is bound, or nothing where the vendor
@@ -409,7 +443,9 @@ impl<D: Dialect> Provider for Chat<D> {
     fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
         // Only the vendor's own addresses are asked: a gateway's address is
         // not where the vendor keeps a plan.
-        if !self.vendor() {
+        // A dialect asked only when told is not asked for a credential the
+        // wiring said nothing of.
+        if !self.vendor() || (D::PLAN_TOLD && self.given != Given::OnPlan) {
             return None;
         }
         let usage = D::usage_source(&self.endpoint)?;

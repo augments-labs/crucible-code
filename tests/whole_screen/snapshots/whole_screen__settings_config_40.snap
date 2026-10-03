@@ -15,6 +15,7 @@ expression: config
 |  Syntax theme          Monokai Extended|
 |  Glyphs                         unicode|
 |  Colour    auto · applies at next start|
+|  Transcript colours                calm|
 |  Tool detail                    compact|
 |  Scroll rail                         on|
 |  Screen mode                 fullscreen|
@@ -28,7 +29,6 @@ expression: config
 |  Prompt caching                  prefer|
 |    applies at next start               |
 |  Cache isolation                session|
-|    applies at next start               |
 |  ↓ 2 more                              |
 |                                        |
 |↑↓ walk · enter changes · / search      |

@@ -855,7 +855,9 @@ fn a_resumed_session_comes_back_in_the_colours_it_was_drawn_in() {
     for (slot, text) in [
         (Slot::PromptMark, style.glyphs().caret()),
         (Slot::Bold, "Read"),
-        (Slot::Quiet, "(crucible.json)"),
+        (Slot::Quiet, "("),
+        (Slot::ArgumentPath, "crucible.json"),
+        (Slot::Quiet, ")"),
     ] {
         let wanted = format!("{}{text}{}", palette.open(slot), palette.close());
 

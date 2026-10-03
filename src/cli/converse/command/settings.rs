@@ -15,8 +15,9 @@
 //! **A change is a request.** Enter or space asks the application, through the
 //! client contract, to write one key to the user's own file — the file and the
 //! splice `/theme` writes with. What a running session can take is put in
-//! force the moment it is written: the theme, the syntax theme, the glyphs,
-//! the tool detail, the scroll rail, the wheel's speed and the key that sends.
+//! force the moment it is written: the theme, the syntax theme, the
+//! transcript's colours, the glyphs, the tool detail, the scroll rail, the
+//! wheel's speed and the key that sends.
 //! What only a start reads says so on its row, changed or not, and [`takes`]
 //! is where each row is given one answer or the other. A file that cannot be
 //! written leaves a live change in force for this session and says so on the
@@ -44,7 +45,7 @@ use crucible_tui::{
 };
 
 use crate::cli::client::{Out, astray};
-use crate::cli::style::glyph_set;
+use crate::cli::style::{Style, glyph_set};
 use crate::cli::{Fatal, sends};
 
 use super::region::{self, Ended, Moved};
@@ -426,6 +427,7 @@ const fn takes(id: RowId) -> Takes {
     match id {
         RowId::Theme
         | RowId::SyntaxTheme
+        | RowId::TranscriptColours
         | RowId::Glyphs
         | RowId::ToolDetail
         | RowId::ScrollRail
@@ -454,6 +456,15 @@ fn worn<T: Terminal>(
     match row.id() {
         RowId::Theme => theme::wear(word, renderer, terms),
         RowId::SyntaxTheme => theme::read_in(word, renderer, terms),
+        // Which ink a kind wears is the palette's, so a design is a palette
+        // worn again, as a theme is.
+        RowId::TranscriptColours => crucible_config::TranscriptColours::read(word)
+            .map(|chosen| {
+                let now = terms.style().designing(Style::design(Some(chosen)));
+                terms.style.set(now);
+                renderer.wears(now.palette());
+            })
+            .is_some(),
         RowId::ScrollRail => {
             renderer.rails(word == "true");
             true
@@ -514,6 +525,7 @@ const fn fullscreen_only(id: RowId) -> bool {
         | RowId::SyntaxTheme
         | RowId::Glyphs
         | RowId::Colour
+        | RowId::TranscriptColours
         | RowId::ToolDetail
         | RowId::ScreenMode
         | RowId::Send
@@ -539,6 +551,7 @@ impl Line {
             RowId::SyntaxTheme => terms.reading.borrow().clone(),
             RowId::Glyphs
             | RowId::Colour
+            | RowId::TranscriptColours
             | RowId::ToolDetail
             | RowId::ScrollRail
             | RowId::ScreenMode

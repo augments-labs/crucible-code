@@ -15,7 +15,7 @@ use crucible_models::{Asked, ProviderError};
 use crucible_runtime::Cancel;
 use serde_json::Value;
 
-use super::Usage;
+use super::{Said, Usage};
 use crate::transport::{PostBodyError, Transport};
 
 /// The most bytes of an answer read: far more than a plan with every limit a
@@ -30,9 +30,10 @@ const WAIT: Duration = Duration::from_secs(10);
 /// credential.
 ///
 /// A 401, 403 or 404 is [`Asked::Closed`]: the credential is refused there, or
-/// the source is not there for it, and asking again would meet the same. Any
-/// other failure is [`Asked::Failed`], with the exact credential sent redacted
-/// from what it says.
+/// the source is not there for it, and asking again would meet the same. So is
+/// an answer the dialect reads as the credential refused ([`Said::Refused`]).
+/// Any other failure is [`Asked::Failed`], with the exact credential sent
+/// redacted from what it says.
 pub(crate) async fn ask(
     provider: &'static str,
     usage: Usage,
@@ -90,16 +91,15 @@ pub(crate) async fn ask(
             });
         }
     };
-    serde_json::from_slice::<Value>(&body)
+    let said = serde_json::from_slice::<Value>(&body)
         .ok()
-        .and_then(|answer| (usage.read)(&answer, arrived))
-        .map_or_else(
-            || {
-                Asked::Failed(ProviderError::Protocol {
-                    provider,
-                    problem: "the plan's usage was not in a shape crucible reads".into(),
-                })
-            },
-            Asked::Answered,
-        )
+        .map_or(Said::Unread, |answer| (usage.read)(&answer, arrived));
+    match said {
+        Said::Windows(windows) => Asked::Answered(windows),
+        Said::Refused => Asked::Closed,
+        Said::Unread => Asked::Failed(ProviderError::Protocol {
+            provider,
+            problem: "the plan's usage was not in a shape crucible reads".into(),
+        }),
+    }
 }

@@ -4354,8 +4354,8 @@ fn a_settings_toggle_folds_the_transcript_again_and_is_left_in_it() {
     window.types_until("say hello\r", "Hello.");
 
     window.types_until("/settings\r", "esc to close");
-    // Down to the rail, five rows below the theme, and turn it off.
-    window.types_until("\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B", "› Scroll rail");
+    // Down to the rail, six rows below the theme, and turn it off.
+    window.types_until("\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B", "› Scroll rail");
     window.types_until("\r", "off");
     window.types_until("\x1b", "Scroll rail set to off");
     let picture = window.picture();
