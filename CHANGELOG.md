@@ -15,6 +15,9 @@ change in any release with no deprecation period.
   three seconds, and one that finishes sooner goes straight to the transcript.
   The new `output.pinAfterSeconds` (0 to 60, also in `/settings`) sets the delay;
   `0` draws every call at once, as before.
+- **The Windows installer refuses a version followed by a newline.** Its
+  version check let one through and failed later on the archive instead of
+  saying the version is invalid.
 - **The rollback drill always tests the tree it runs in.** It used to reuse
   any binary left in `target/debug`, so an older build could pass in the
   tree's place; it now builds the candidate each run and refuses one whose
