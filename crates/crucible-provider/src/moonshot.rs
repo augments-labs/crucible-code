@@ -3,7 +3,9 @@
 //! The wire is [`crate::completions`], which writes the request, reads the
 //! response and sends one for the other, and `Chat<Kimi>` is what ships. What
 //! is Kimi's is here: its addresses, the name it is told crucible goes by, how
-//! it counts a cached prompt (in [`wire`]), and what its cache is known to do.
+//! it counts a cached prompt (in [`wire`]), what its cache is known to do,
+//! and where a Kimi Code plan says how much of its limits is used (in
+//! [`usage`]).
 //! [`body`] and [`stream`] hold nothing that ships: they keep Kimi's tests
 //! where they were, reaching the shared wire through this dialect.
 //!
@@ -13,6 +15,7 @@
 
 mod body;
 mod stream;
+mod usage;
 mod wire;
 
 use crucible_credentials::Outgoing;
@@ -29,6 +32,7 @@ use serde_json::Value;
 
 use crate::completions::{Chat, Dialect};
 use crate::endpoint::Endpoint;
+use crate::responses::Usage;
 
 /// What this provider is called, in errors and in the status line.
 const NAME: &str = "moonshot";
@@ -91,6 +95,10 @@ impl Dialect for Kimi {
 
     fn usage(payload: &Value) -> Result<Option<Delta>, ProviderError> {
         wire::usage(payload)
+    }
+
+    fn usage_source(endpoint: &Endpoint) -> Option<Usage> {
+        usage::usage(endpoint)
     }
 
     fn own_fast(model: &str) -> Option<crucible_models::Cost> {
@@ -159,3 +167,5 @@ mod fast_tests;
 mod identity;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod usage_tests;

@@ -1,0 +1,14 @@
+{
+  "usages": {
+    "limit_5h": { "used_ratio": 0.12, "reset_time": "2026-10-03T15:40:00Z" },
+    "limit_7d": { "used_ratio": 0.31, "reset_time": "2026-10-05T09:00:00.443553353+02:00" },
+    "limit_month_total": { "used_ratio": 0.09, "reset_time": "2026-11-01T09:00:00Z" },
+    "limit_month_code": { "used_ratio": 0.75, "reset_time": "2026-11-01T09:00:00Z" }
+  },
+  "boosterWallet": {
+    "balance": { "type": "BOOSTER", "amount": 500000000, "amountLeft": 250000000 },
+    "monthlyChargeLimit": { "priceInCents": 2000, "currency": "USD" },
+    "monthlyUsed": { "priceInCents": 500, "currency": "USD" },
+    "monthlyChargeLimitEnabled": true
+  }
+}

@@ -755,6 +755,10 @@ the coding console's spelling, that being the one crucible asks: `k3`,
 serves `kimi-k3`, `kimi-k2.7-code` and `kimi-k2.7-code-highspeed`, and does not
 serve a 256k K3 at all, so a key from there is a `baseUrl` and a typed name.
 
+A Kimi Code key or sign-in has a plan with limits, which `/usage` asks Kimi for
+at the coding console of its own site. A key from the open platform has no such
+plan, so it is never asked, and neither is an address of your own in `baseUrl`.
+
 Requests to this provider identify crucible by name in the `user-agent` header.
 MoonshotAI's terms require a client to say truthfully what it is, and treat a
 tampered identifier as a violation.
