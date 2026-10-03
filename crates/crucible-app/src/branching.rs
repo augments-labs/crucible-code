@@ -45,10 +45,12 @@ pub fn current(root: &Path) -> Option<String> {
     let git = root.join(".git");
 
     // In a linked worktree `.git` is a file naming where the real directory
-    // is, and that is where this worktree's own HEAD lives.
+    // is, and that is where this worktree's own HEAD lives. A relative name
+    // is relative to the checkout, as git reads it, not to this process.
     let head = if git.is_file() {
         let pointed = small(&git)?;
-        Path::new(pointed.strip_prefix("gitdir:")?.trim()).join("HEAD")
+        root.join(pointed.strip_prefix("gitdir:")?.trim())
+            .join("HEAD")
     } else {
         git.join("HEAD")
     };

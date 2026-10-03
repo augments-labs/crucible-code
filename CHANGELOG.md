@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A checkout whose `.git` file names its git directory relatively records
+  its branch again.** The path is now read from the checkout, as git reads it,
+  rather than from the directory crucible was started in, so a submodule or a
+  worktree made with relative paths shows its branch in `/resume`.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and
