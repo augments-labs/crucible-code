@@ -15,6 +15,9 @@ change in any release with no deprecation period.
   three seconds, and one that finishes sooner goes straight to the transcript.
   The new `output.pinAfterSeconds` (0 to 60, also in `/settings`) sets the delay;
   `0` draws every call at once, as before.
+- **The Windows installer matches names by their exact characters.** A
+  checksum line, archive member or PATH entry whose name differs only by a
+  character such as a soft hyphen is no longer taken for the one it wants.
 - **The Windows installer refuses a version followed by a newline.** Its
   version check let one through and failed later on the archive instead of
   saying the version is invalid.
