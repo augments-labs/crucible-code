@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/usage` no longer hangs when `/etc/localtime` is a pipe or a device.**
+  With `TZ` unset, an `/etc/localtime` that is not a regular file of a zone
+  file's size is not read, and reset times are shown in UTC, labelled as such.
+
 ## [0.45.1] - 2026-10-03
 
 **A patch for 0.45.0: a fresh MiniMax Token Plan window no longer stops every
