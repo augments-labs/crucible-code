@@ -28,8 +28,10 @@
 //! ([`Turning::pinning`]), and one that answers sooner goes
 //! to the transcript without ever having been drawn here. Elapsed time alone
 //! decides it, because nothing about a command's text says how long it will
-//! take. The background key reads the same standing call, so it does nothing
-//! until the row offering it is on screen.
+//! take. The delay is about drawing and nothing else: the background key reads
+//! the call at the front of the queue whether or not it stands yet, so somebody
+//! who knows a command will run long can put it down the moment it starts, and
+//! it leaves for the transcript the way a drawn one does.
 //!
 //! Not every call is held. One that is the only call of its pass, cannot be
 //! backgrounded and only looks up something elsewhere has nothing to draw
@@ -843,11 +845,14 @@ impl Turning {
 
     /// Whether the call at the front of the turn can be left running.
     ///
-    /// The key reader asks the same live state the hint is drawn from, so a key
-    /// which is not advertised cannot leave a request behind for a later Bash
-    /// call to consume.
+    /// The key reader asks the same live call the hint is drawn for, so a key
+    /// pressed with nothing backgroundable out cannot leave a request behind
+    /// for a later Bash call to consume. The live call rather than the
+    /// [standing](Self::standing) one: the hint waits out
+    /// `output.pinAfterSeconds`, and the key does not.
     pub(super) fn can_background(&self) -> bool {
-        self.standing()
+        self.calling
+            .front()
             .is_some_and(|calling| calling.backgroundable)
     }
 
