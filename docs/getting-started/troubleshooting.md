@@ -287,7 +287,8 @@ what there is to try. `! stopped` is a turn you ended with <kbd>Esc</kbd>. See
 
 ### `■ Usage limit reached · weekly window · resets Mon 09:00`
 
-The plan behind the ChatGPT sign-in, or behind a Kimi Code sign-in or key, is
+The plan behind the ChatGPT sign-in, a Kimi Code sign-in or key, or a MiniMax
+Token Plan key, is
 used up for that window, and the turn ended there. The window is one of the plan's own or one it keeps for the model
 you are using; another model's spent window does not stop this one. The line
 under it says which way: `The turn stopped before sending` where what crucible

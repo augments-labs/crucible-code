@@ -4,14 +4,14 @@
 //! sites, the name it is told crucible goes by, the fields its reference
 //! names where the wire's others differ, how it reports a failure inside an
 //! answer and which of its failures is a request too large for the model,
-//! what its cache is known to do, and that its models want their reasoning
-//! back.
+//! what its cache is known to do, that its models want their reasoning
+//! back, and where a Token Plan key's limits are asked ([`usage`]).
 //!
 //! Its models write their reasoning into the answer between tags unless
 //! asked to keep it apart, so every request asks: read as the answer, it
 //! would put the model's working in front of the user as though it were one.
 
-use crucible_credentials::Outgoing;
+use crucible_credentials::{Credential, Outgoing};
 use crucible_models::{Delta, PromptCacheCapabilities, PromptCacheProvenance, ProviderError};
 use crucible_types::{Modalities, Modality};
 use serde_json::Value;
@@ -20,6 +20,10 @@ use crate::completions::wire::Thought;
 use crate::completions::{Chat, Dialect, Reasoning};
 use crate::endpoint::Endpoint;
 use crate::refusal::SILENT;
+use crate::responses::Usage;
+use crate::transport::Transport;
+
+mod usage;
 
 /// What this provider is called, in errors and in the status line.
 const NAME: &str = "minimax";
@@ -108,6 +112,14 @@ impl Dialect for MiniMaxChat {
             512,
         )
     }
+
+    fn usage_source(endpoint: &Endpoint) -> Option<Usage> {
+        usage::source(endpoint)
+    }
+
+    // A Token Plan key and a pay-as-you-go key are served at the same
+    // addresses, and only the first has a plan: see [`MiniMax::on_plan`].
+    const PLAN_TOLD: bool = true;
 }
 
 /// How `MiniMax`'s refusal of a request too large for the model opens.
@@ -156,7 +168,23 @@ impl Chat<MiniMaxChat> {
     /// Where a key or plan of minimaxi.com is served. A key of one site is
     /// refused by the other's.
     pub const CN: Endpoint = CN;
+
+    /// A provider on a Token Plan key, which asks the plan's limits of the
+    /// site that serves `endpoint` when asked for them: what [`Self::at`]
+    /// builds otherwise. A pay-as-you-go key has no plan to ask, and the
+    /// provider never reads a key to tell, so the wiring, which knows the
+    /// sign-in row the key was given under, says which this is.
+    #[must_use]
+    pub fn on_plan(
+        endpoint: Endpoint,
+        credential: Box<dyn Credential>,
+        transport: Box<dyn Transport>,
+    ) -> Self {
+        Self::at(endpoint, credential, transport).on_plan_row()
+    }
 }
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod usage_tests;

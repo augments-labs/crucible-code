@@ -86,7 +86,7 @@ fn limit_every_window_reading_and_group_crosses_under_its_own_name() {
         .with(Window::Weekly, WindowReading::new(100, None))
         .within(spark, Window::Yearly, WindowReading::new(1, None));
 
-    let crossed = limits(&reported, Some("openai"));
+    let crossed = limits(&reported, Some("openai"), None);
 
     let limit = |window, reading, resets_at| api::Limit {
         window,
@@ -125,7 +125,7 @@ fn limit_every_window_reading_and_group_crosses_under_its_own_name() {
             more: false,
         }
     );
-    assert!(limits(&PlanWindows::new(SystemTime::UNIX_EPOCH), None).is_empty());
+    assert!(limits(&PlanWindows::new(SystemTime::UNIX_EPOCH), None, None).is_empty());
 }
 
 /// The group a provider module keeps for the model whose slug is `slug`,
@@ -145,7 +145,7 @@ fn drawn(scope: Scope, serving: Option<&str>) -> Option<String> {
         Window::FiveHour,
         WindowReading::new(7, None),
     );
-    let crossed = limits(&reported, serving);
+    let crossed = limits(&reported, serving, None);
     let model = crossed.groups.first()?.model.as_ref()?;
     Some(model.as_str().to_owned())
 }
@@ -197,11 +197,11 @@ fn reading_of(models: usize) -> PlanWindows {
 
 #[test]
 fn limit_a_reading_cut_at_its_ceiling_crosses_saying_there_are_more() {
-    let full = limits(&reading_of(MAX_LIMIT_GROUPS - 1), Some("openai"));
+    let full = limits(&reading_of(MAX_LIMIT_GROUPS - 1), Some("openai"), None);
     assert_eq!(full.groups.len(), MAX_LIMIT_GROUPS);
     assert!(!full.more);
 
-    let over = limits(&reading_of(MAX_LIMIT_GROUPS), Some("openai"));
+    let over = limits(&reading_of(MAX_LIMIT_GROUPS), Some("openai"), None);
     assert_eq!(over.groups.len(), MAX_LIMIT_GROUPS);
     assert!(over.more);
 
@@ -210,6 +210,51 @@ fn limit_a_reading_cut_at_its_ceiling_crosses_saying_there_are_more() {
             .with(Window::Weekly, WindowReading::new(5, None))
             .cut(),
         None,
+        None,
     );
     assert!(said.more);
+}
+
+/// What a group of every model `pattern` starts reads as in `/usage`, while
+/// `in_use` is the model of `serving` the session asks.
+fn prefix_drawn(pattern: &str, serving: &str, in_use: &str) -> Option<String> {
+    let reported = PlanWindows::new(SystemTime::UNIX_EPOCH).within(
+        Scope::Model(ModelGroup::new(
+            GroupName::new(pattern).unwrap(),
+            ModelKey::prefixed(pattern),
+        )),
+        Window::FiveHour,
+        WindowReading::counted(1_272, 1_500, None).unwrap(),
+    );
+    let read = super::usage(
+        in_use,
+        &crucible_runner::Breakdown::default(),
+        &crucible_runner::Totals::default(),
+        Some(&reported),
+        Some(serving),
+    );
+    let model = read.limits.groups.first()?.model.as_ref()?;
+    Some(model.as_str().to_owned())
+}
+
+#[test]
+fn limit_a_family_group_is_drawn_by_the_catalogs_name_for_the_model_in_use_it_holds() {
+    assert_eq!(
+        prefix_drawn("gpt-6*", "openai", "gpt-6-astra").as_deref(),
+        Some("GPT-6 Astra")
+    );
+    assert_eq!(
+        prefix_drawn("MiniMax-M*", "minimax", "MiniMax-M2.7").as_deref(),
+        Some("MiniMax-M2.7")
+    );
+    // A family that does not hold the model in use keeps the vendor's name.
+    assert_eq!(
+        prefix_drawn("speech-*", "minimax", "MiniMax-M2.7").as_deref(),
+        Some("speech-*")
+    );
+    // So does one whose model the catalog has no name for.
+    assert_eq!(
+        prefix_drawn("gpt-6*", "anthropic", "gpt-6-astra").as_deref(),
+        Some("gpt-6*")
+    );
 }

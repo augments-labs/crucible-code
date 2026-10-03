@@ -226,7 +226,7 @@ pub(super) fn usage(route: Serving) -> Option<Usage> {
     match route {
         Serving::Subscription => Some(Usage {
             url: USAGE,
-            read: asked,
+            read: |body, arrived| asked(body, arrived).into(),
         }),
         Serving::Api => None,
     }

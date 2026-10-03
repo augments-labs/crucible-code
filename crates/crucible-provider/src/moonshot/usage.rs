@@ -64,7 +64,10 @@ pub(super) fn usage(endpoint: &Endpoint) -> Option<Usage> {
     } else {
         return None;
     };
-    Some(Usage { url, read: asked })
+    Some(Usage {
+        url,
+        read: |body, arrived| asked(body, arrived).into(),
+    })
 }
 
 /// The windows `body` says, read from an answer that arrived at `arrived`;
