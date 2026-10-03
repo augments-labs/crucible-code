@@ -574,6 +574,80 @@ fn a_windows_machine_reads_its_zone_from_the_database_built_in() {
     assert!(!clock.guessed, "{:?}", clock.zone);
 }
 
+/// Set in the copy of this binary a zone test starts, to run its body there.
+#[cfg(unix)]
+const ZONE_BODY: &str = "CRUCIBLE_TEST_ZONE_BODY";
+
+/// A `TZ` naming a pipe nobody writes to is never opened: opening one waits
+/// for a writer, and the clock is read on the drawing thread. The panel shows
+/// UTC, and says so, instead.
+#[cfg(unix)]
+#[test]
+fn a_zone_named_by_a_pipe_is_never_waited_on() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    if std::env::var_os(ZONE_BODY).is_some() {
+        let clock = Clock::system();
+        assert!(clock.guessed, "{:?}", clock.zone);
+        return;
+    }
+    let pipe = std::env::temp_dir().join(format!("crucible-zone-pipe-{}", std::process::id()));
+    let _ = std::fs::remove_file(&pipe);
+    let made = std::process::Command::new("mkfifo")
+        .arg(&pipe)
+        .status()
+        .expect("mkfifo");
+    assert!(made.success(), "mkfifo: {made}");
+    let test = module_path!()
+        .split_once("::")
+        .map_or(module_path!(), |(_, path)| path);
+    let mut copy = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            &format!("{test}::a_zone_named_by_a_pipe_is_never_waited_on"),
+            "--exact",
+            "--test-threads=1",
+        ])
+        .env(ZONE_BODY, "1")
+        .env("TZ", &pipe)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("a copy of the test binary");
+    let started = Instant::now();
+    let ended = loop {
+        if let Some(status) = copy.try_wait().expect("the copy's status") {
+            break Some(status);
+        }
+        if started.elapsed() > Duration::from_secs(20) {
+            let _ = copy.kill();
+            let _ = copy.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let _ = std::fs::remove_file(&pipe);
+    let ended = ended.expect("reading the zone waited on the pipe `TZ` names");
+    assert!(ended.success(), "{ended}");
+}
+
+/// A `TZ` naming something endless, a device here, is never read, and one
+/// naming a zone or a POSIX rule still is.
+#[cfg(unix)]
+#[test]
+fn only_a_zone_file_of_a_zone_file_s_size_is_read() {
+    use std::ffi::OsStr;
+
+    assert!(!readable_zone(Some(OsStr::new("/dev/zero"))));
+    assert!(!readable_zone(Some(OsStr::new(":/dev/zero"))));
+    assert!(!readable_zone(Some(OsStr::new("/"))));
+    assert!(readable_zone(None));
+    assert!(readable_zone(Some(OsStr::new(""))));
+    assert!(readable_zone(Some(OsStr::new("Europe/Paris"))));
+    assert!(readable_zone(Some(OsStr::new("EST5EDT,M3.2.0,M11.1.0"))));
+    assert!(readable_zone(Some(OsStr::new("/nowhere/at/all"))));
+}
+
 #[test]
 fn usage_follows_the_colour_rule() {
     // A bar's used part is the one accent on its row, whatever the provider

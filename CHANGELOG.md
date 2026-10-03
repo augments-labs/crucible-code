@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/usage` no longer hangs when `TZ` names a pipe or a device.** A `TZ`
+  naming anything but a regular file of a zone file's size is not read, and
+  reset times are shown in UTC, labelled as such.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and
