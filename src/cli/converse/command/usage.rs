@@ -28,7 +28,10 @@
 //!
 //! A cost nobody priced reads `not priced`, never `$0.00`. A reset time is the
 //! reader's own wall clock, read in the system's zone as the panel opens; a
-//! machine whose zone cannot be read is shown UTC, and the times say so. A
+//! machine whose zone cannot be read is shown UTC, and the times say so, as is
+//! one whose `TZ` names anything on disk but a regular file of a zone file's
+//! size: the zone is read on the drawing thread, which a pipe or an endless
+//! file would hold. A
 //! reset the clock is already past says `since passed`: the window has
 //! started again since the reading its figure is from.
 //!
@@ -39,6 +42,7 @@
 //! Over a running turn it stands with the figures that turn last reported and
 //! asks nothing: the turn has the conversation.
 
+use std::ffi::OsStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crucible_app::Conversation;
@@ -78,6 +82,25 @@ const COUNT_MARGIN: usize = 4;
 /// key pressed.
 pub(super) const BEAT: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// The largest zone file `TZ` may name; a real one is a few kilobytes.
+const ZONE_FILE: u64 = 1 << 20;
+
+/// Whether the system's zone may be read with `tz` as `TZ`: whether it names
+/// a zone, a rule or nothing on disk, or else a regular file no larger than
+/// [`ZONE_FILE`]. The zone is read on the drawing thread, and what a path
+/// names is read whole, so a pipe would hold the panel until something wrote
+/// to it and an endless file until memory ran out.
+fn readable_zone(tz: Option<&OsStr>) -> bool {
+    let Some(name) = tz.and_then(OsStr::to_str) else {
+        return true;
+    };
+    let name = name.strip_prefix(':').unwrap_or(name);
+    if name.is_empty() || TimeZone::get(name).is_ok() {
+        return true;
+    }
+    std::fs::metadata(name).map_or(true, |found| found.is_file() && found.len() <= ZONE_FILE)
+}
+
 /// The wall clock reset times are read against: now, in the reader's zone.
 pub(crate) struct Clock {
     now: Timestamp,
@@ -90,8 +113,11 @@ impl Clock {
     /// Now, in the zone this machine says it is in, or in UTC where it says
     /// nothing readable.
     pub(crate) fn system() -> Self {
-        let (zone, guessed) =
-            TimeZone::try_system().map_or((TimeZone::UTC, true), |zone| (zone, false));
+        let readable = readable_zone(std::env::var_os("TZ").as_deref());
+        let (zone, guessed) = readable
+            .then(|| TimeZone::try_system().ok())
+            .flatten()
+            .map_or((TimeZone::UTC, true), |zone| (zone, false));
         Self {
             now: Timestamp::now(),
             zone,
