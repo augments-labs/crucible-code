@@ -26,6 +26,9 @@
 //! **What somebody else decided is locked.** A row a project file or the shell
 //! states is shown with who set it and changes nothing: writing the user's
 //! file under it would be an answer that looks taken and does nothing.
+//! So is what only a screen of crucible's own draws, in a session drawn in the
+//! terminal's own buffer: the rail and the wheel's speed say `fullscreen mode
+//! only` there, for the same reason.
 //!
 //! What the start read is not read again, so what this panel wrote is kept on
 //! the terms, one entry a row, and a panel opened later shows it.
@@ -110,10 +113,20 @@ struct Line {
     row: &'static Setting_,
     /// Spelled as a document spells it: `true`, `dark`, `6`.
     value: String,
-    /// Who decided it, where the user's own file does not.
-    forced: Option<Forced>,
+    /// Why it cannot be changed here, where it cannot.
+    locked: Option<Lock>,
     /// Read only at the next start, which its row says.
     later: bool,
+}
+
+/// Why a row cannot be changed from the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lock {
+    /// A layer the user's own file does not outrank says what it is.
+    Set(Forced),
+    /// What it changes is drawn only on a screen of crucible's own, and this
+    /// session draws in the terminal's.
+    FullscreenOnly,
 }
 
 /// One row of the Status tab.
@@ -380,8 +393,8 @@ fn settle<T: Terminal>(
             None
         }
         Performed::Setting(Setting::Forced(by)) => {
-            line.forced = Some(by);
-            panel.note = Some(locked(by).to_owned());
+            line.locked = Some(Lock::Set(by));
+            panel.note = Some(locked(Lock::Set(by)).to_owned());
             None
         }
         other => {
@@ -426,7 +439,8 @@ const fn takes(id: RowId) -> Takes {
         | RowId::CacheMode
         | RowId::CacheIsolation
         | RowId::CacheRetention
-        | RowId::CachePersistent => Takes::NextStart,
+        | RowId::CachePersistent
+        | RowId::ScreenMode => Takes::NextStart,
         RowId::UpdateCheck => Takes::NextUse,
     }
 }
@@ -474,6 +488,7 @@ fn worn<T: Terminal>(
             .map(|said| terms.sending.set(sends(Some(said))))
             .is_some(),
         RowId::Colour
+        | RowId::ScreenMode
         | RowId::Tone
         | RowId::Compaction
         | RowId::UpdateCheck
@@ -492,10 +507,35 @@ fn kept(terms: &Terms, row: &'static Setting_, word: String) {
 }
 
 /// The sentence a locked row answers a key with.
-const fn locked(by: Forced) -> &'static str {
+const fn locked(by: Lock) -> &'static str {
     match by {
-        Forced::Project => "this value is set by the project config",
-        Forced::Environment => "this value is set by the environment",
+        Lock::Set(Forced::Project) => "this value is set by the project config",
+        Lock::Set(Forced::Environment) => "this value is set by the environment",
+        Lock::FullscreenOnly => "this setting applies only in fullscreen mode",
+    }
+}
+
+/// Whether the row `id` changes only what a screen of crucible's own draws:
+/// the rail, and the wheel that scrolls a transcript the terminal does not
+/// hold. In native mode the terminal scrolls, so neither is offered.
+const fn fullscreen_only(id: RowId) -> bool {
+    match id {
+        RowId::ScrollRail | RowId::ScrollSpeed => true,
+        RowId::Theme
+        | RowId::SyntaxTheme
+        | RowId::Glyphs
+        | RowId::Colour
+        | RowId::TranscriptColours
+        | RowId::ToolDetail
+        | RowId::ScreenMode
+        | RowId::Send
+        | RowId::Tone
+        | RowId::Compaction
+        | RowId::UpdateCheck
+        | RowId::CacheMode
+        | RowId::CacheIsolation
+        | RowId::CacheRetention
+        | RowId::CachePersistent => false,
     }
 }
 
@@ -514,6 +554,7 @@ impl Line {
             | RowId::TranscriptColours
             | RowId::ToolDetail
             | RowId::ScrollRail
+            | RowId::ScreenMode
             | RowId::ScrollSpeed
             | RowId::Send
             | RowId::Tone
@@ -530,15 +571,26 @@ impl Line {
             .iter()
             .find(|(key, _)| *key == row.key())
             .map(|(_, word)| word.clone());
-        let value = shown
+        // A session in the terminal's own buffer draws no rail, whatever the
+        // files say, and the row says what is drawn.
+        let unoffered = terms.settings.screen() == crucible_config::ScreenMode::Native
+            && fullscreen_only(row.id());
+        let rail_off = (unoffered && row.id() == RowId::ScrollRail).then(|| "false".to_owned());
+        let value = rail_off
+            .or(shown)
             .or(settled)
             .or_else(|| terms.settings.stated(row, &from))
             .or_else(|| row.usual().map(str::to_owned))
             .unwrap_or_default();
+        let locked = if unoffered {
+            Some(Lock::FullscreenOnly)
+        } else {
+            terms.settings.forced(row, &from).map(Lock::Set)
+        };
         Self {
             row,
             value,
-            forced: terms.settings.forced(row, &from),
+            locked,
             later: takes(row.id()) == Takes::NextStart,
         }
     }
@@ -557,9 +609,10 @@ impl Line {
 
     /// What is said after the value: who set it, or when it is read.
     fn aside(&self) -> Option<&'static str> {
-        match self.forced {
-            Some(Forced::Project) => Some("set by project config"),
-            Some(Forced::Environment) => Some("set by the environment"),
+        match self.locked {
+            Some(Lock::Set(Forced::Project)) => Some("set by project config"),
+            Some(Lock::Set(Forced::Environment)) => Some("set by the environment"),
+            Some(Lock::FullscreenOnly) => Some("fullscreen mode only"),
             None => self.later.then_some("applies at next start"),
         }
     }
@@ -809,7 +862,7 @@ impl Panel {
         let Values::Whole { least, most } = line.row.values() else {
             return None;
         };
-        if let Some(by) = line.forced {
+        if let Some(by) = line.locked {
             self.note = Some(locked(by).to_owned());
             return Some(Moved::Redraw);
         }
@@ -836,7 +889,7 @@ impl Panel {
         let Some(line) = self.lines.get(at) else {
             return Moved::Still;
         };
-        if let Some(by) = line.forced {
+        if let Some(by) = line.locked {
             self.note = Some(locked(by).to_owned());
             return Moved::Redraw;
         }

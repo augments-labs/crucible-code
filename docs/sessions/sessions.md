@@ -39,6 +39,13 @@ Nothing is written where crucible had no screen to borrow, which is every run
 whose input or output is not a terminal. Nothing was hidden from you in one, so
 everything it drew is already in your own scrollback.
 
+The same is true with [`output.screen`](../configuration/configuration.md) set
+to `native`, which borrows no screen: each finished line is written once into
+your terminal's scrollback as the session goes, and only the part still
+changing at the foot is drawn again. `/clear` and `/resume` cannot take back
+what the terminal already holds, so the earlier transcript stays in its
+scrollback above the new one.
+
 ## Moving through the transcript
 
 The wheel moves the transcript a few rows at a time. For a long jump, use the
@@ -72,6 +79,9 @@ draw it. Set [`output.scrollRail`](../configuration/configuration.md) to
 `false` to give the column back to the text. With colour off, the thumb, track
 and marks still differ by shape, and with `output.glyphs` set to `ascii` the
 larger mark is `*`.
+
+With `output.screen` set to `native` there is no rail and the wheel is your
+terminal's: the transcript is in its scrollback, and you move through it there.
 
 ## Continuing
 

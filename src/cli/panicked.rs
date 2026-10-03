@@ -11,13 +11,17 @@
 //! drawing thread instead, which says it in the transcript the next time it
 //! comes round to the prompt. What it has not said by the time the session
 //! lets go is written to standard error then, once the screen is the reader's
-//! own again, so a panic is never lost. A panic on the drawing thread itself
-//! still goes to the hook in force before: it ends the session, and there is
-//! nobody left to keep it for — nor for what it had taken to say, if it gave
-//! up while saying it. What the drawing thread took for a draw that failed is
-//! put back whole and written out with the rest: a line drawn before the
-//! failure went to a terminal that has just failed, so it may be said twice,
-//! but it is not lost.
+//! own again, so a panic on another thread is never lost. A panic on the
+//! drawing thread itself still goes to the hook in force before: it ends the
+//! session, and there is nobody left to keep it for — nor for what it had
+//! taken to say, if it gave up while saying it. That hook writes it where the
+//! cursor stands, so it can be lost: onto a screen of crucible's own, which
+//! goes when the screen is handed back, or into the live region of the
+//! terminal's own buffer, which closing that region on the way out may
+//! erase. What the drawing thread took for a draw that failed is put back
+//! whole and written out with the rest: a line drawn before the failure went
+//! to a terminal that has just failed, so it may be said twice, but it is not
+//! lost.
 //!
 //! Only a session holding the terminal takes the hook, and it puts back the
 //! hook it found when it lets go, so every other path panics the way that hook

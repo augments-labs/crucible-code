@@ -38,6 +38,12 @@ change in any release with no deprecation period.
   and Enter prints the chosen release alone. `/release-notes <version>` is
   unchanged, and `/release-notes all` prints every release at once as the bare
   form did.
+- **`output.screen: native` keeps the session in your terminal's own
+  buffer.** Finished lines are written once into the terminal's scrollback and
+  only the part still changing at the foot is redrawn, so scrolling, search,
+  selection and copy are your terminal's. It is read at start, `/settings` has
+  a Screen mode row, and the scroll rail and crucible's own selection are off
+  there.
 - **The model can mark the answer it recommends.** In a question put by
   `ask_user`, one answer may be marked recommended and listed first, and it is
   drawn with `(Recommended)` after its name. What you choose and what is sent

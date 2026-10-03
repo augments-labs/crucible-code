@@ -1,7 +1,8 @@
-//! Full-screen terminal rendering: the prompt, the streaming transcript, and
-//! the permission prompt.
+//! Terminal rendering: the prompt, the streaming transcript, and the
+//! permission prompt, full screen or in the terminal's own buffer.
 //!
-//! A session takes the alternate screen and every cell on it is this process's.
+//! A full-screen session takes the alternate screen and every cell on it is
+//! this process's.
 //! The window is cut into bands once — the transcript, what stands over the
 //! box, the box, and a foot — and each row is addressed by its number,
 //! so a frame writes the rows whose text is not already there and touches
@@ -16,6 +17,11 @@
 //!
 //! Which is also what makes a pane layout an ordinary change rather than a
 //! rewrite: a band is a rectangle of a screen this process already owns.
+//!
+//! A native session owns no screen. It draws the same bands as a live region
+//! at the foot of the reader's own buffer, and what the transcript has finished
+//! with is written once into that buffer's scrollback and let go of here; the
+//! renderer's native module says how.
 //!
 //! Depends on no other crate in this workspace. What reaches it is already
 //! text, so it never names a domain type, calls a tool or asks a provider for
@@ -85,7 +91,7 @@ pub use plan::{Plan, State, Task};
 pub use prompt::{CommandCount, Draft, Prompt, Recalled, Remaining, label};
 /// The most units of the transcript kept at once; a row put down whole costs one.
 pub const RECORDED: usize = record::MOST;
-pub use render::{Aimed, Caret, PromptRows, Renderer};
+pub use render::{Aimed, Caret, PromptRows, Renderer, ScreenMode};
 pub use row::Row;
 pub use running::{Command, Running};
 pub use sandbox_panel::{SandboxPanel, SandboxTab};

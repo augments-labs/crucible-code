@@ -415,6 +415,12 @@ pub const THEME: &[&str] = &[
 /// can interrogate over a pipe — so this is the answer, not a fallback for one.
 pub(crate) const GLYPHS: &[&str] = &["unicode", "ascii"];
 
+/// Every answer `output.screen` accepts.
+///
+/// Read once, at the start: a screen is taken or left alone before the first
+/// frame, and a session cannot move from one to the other with its transcript.
+pub(crate) const SCREEN: &[&str] = &["fullscreen", "native"];
+
 /// Every answer `output.transcriptColours` accepts, from the fewest colours to
 /// the most.
 pub(crate) const TRANSCRIPT_COLOURS: &[&str] = &["calm", "balanced", "rich"];
@@ -530,6 +536,15 @@ const OUTPUT: &[Field] = &[
         shape: Shape::Flag,
         examples: &[],
         usual: Some("true"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "screen",
+        about: "Where crucible draws, read at start: fullscreen takes a screen of its own with its own scrollback, rail and selection; native draws in the terminal's own buffer and leaves scrolling, selection and copy to the terminal",
+        shape: Shape::Choice(SCREEN),
+        examples: &[],
+        usual: Some("fullscreen"),
         needed: false,
         widens: false,
     },

@@ -1145,6 +1145,10 @@ something a session decided. The screen empties too, down to the welcome card a
 fresh start draws: the one you left is read back with `/resume` rather than by
 scrolling into it.
 
+With [`output.screen`](../configuration/configuration.md) set to `native` the
+screen is your terminal's, so `/clear` and `/resume` leave the earlier
+transcript in its scrollback, above what replaces it.
+
 `/resume` stands this directory's [sessions](../sessions/sessions.md) over the
 whole shell: a search line across the top, the sessions in one pane newest
 first, and the end of whichever one is marked drawn in the other.

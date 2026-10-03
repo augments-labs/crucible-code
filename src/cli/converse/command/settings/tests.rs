@@ -378,6 +378,7 @@ fn running(
         RowId::ToolDetail => Some(terms.style().args(1000).to_string()),
         RowId::Send => Some(format!("{:?}", terms.sending.get())),
         RowId::Colour
+        | RowId::ScreenMode
         | RowId::Tone
         | RowId::Compaction
         | RowId::UpdateCheck
@@ -504,6 +505,7 @@ fn a_settings_row_only_a_new_start_reads_says_so_before_it_is_changed() {
         "Cache isolation",
         "Cache retention",
         "Persistent cache",
+        "Screen mode",
     ] {
         assert!(
             row(label).ends_with("· applies at next start"),
@@ -760,5 +762,80 @@ fn usage_tab_closed_with_the_question_out_answers_it_and_the_next_opening_asks_n
     assert!(
         again.out.is_none(),
         "the plan was asked again within the minute"
+    );
+}
+
+#[test]
+fn in_native_mode_the_rows_only_a_screen_of_its_own_draws_are_off_and_locked() {
+    let sample = Sample::new("settings-native");
+    let terms = Terms {
+        settings: sample.user(r#"{"output": {"screen": "native", "scrollRail": true}}"#),
+        ..keeping(&sample)
+    };
+    let counted = counted();
+    let before = std::fs::read_to_string(sample.user_file()).expect("the user file");
+    let mut panel = Panel::new(&terms, &counted);
+
+    let rows = drawn(&mut panel, 80, 40);
+    let row = |label: &str| {
+        rows.iter()
+            .find(|row| row.contains(label))
+            .cloned()
+            .unwrap_or_else(|| panic!("no {label} row in {rows:#?}"))
+    };
+    assert!(
+        row("Scroll rail").ends_with("off · fullscreen mode only"),
+        "{rows:#?}"
+    );
+    assert!(
+        row("Mouse scroll speed").ends_with("· fullscreen mode only"),
+        "{rows:#?}"
+    );
+    assert!(
+        row("Screen mode").ends_with("native · applies at next start"),
+        "{rows:#?}"
+    );
+
+    for label in ["Scroll rail", "Mouse scroll speed"] {
+        walk_to(&mut panel, label);
+        assert_eq!(key(&mut panel, Pressed::Key(Key::Enter)), Moved::Redraw);
+        assert_eq!(panel.asked_word(), None, "{label} asked for a change");
+        let rows = drawn(&mut panel, 80, 40);
+        assert_eq!(
+            rows.last().map(String::as_str),
+            Some("this setting applies only in fullscreen mode"),
+            "{rows:#?}"
+        );
+    }
+    walk_to(&mut panel, "Mouse scroll speed");
+    assert_eq!(key(&mut panel, Pressed::Key(Key::Right)), Moved::Redraw);
+    assert_eq!(panel.asked_word(), None);
+    assert_eq!(
+        std::fs::read_to_string(sample.user_file()).ok(),
+        Some(before),
+        "nothing was written"
+    );
+}
+
+#[test]
+fn in_fullscreen_mode_the_scroll_rail_row_is_neither_locked_nor_said_to_be_native() {
+    let terms = plain();
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+
+    let rows = drawn(&mut panel, 80, 40);
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Scroll rail") && row.ends_with("on")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Screen mode")
+            && row.ends_with("fullscreen · applies at next start")),
+        "{rows:#?}"
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains("fullscreen mode only")),
+        "{rows:#?}"
     );
 }

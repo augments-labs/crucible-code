@@ -1,0 +1,337 @@
+//! Native mode: drawing in the terminal's own buffer.
+//!
+//! The full screen names every row it writes, because it owns them all. Here
+//! nothing is owned but a live region at the foot of whatever the reader's
+//! shell left on screen, so a frame is relative: back to the top of the region
+//! the last frame drew, erase to the end of the screen, write anything the
+//! record has let go of as rows the terminal scrolls into its own scrollback,
+//! then the region again — the transcript still being written, what a turn is
+//! showing, and the box. No row is ever addressed by number, because a number
+//! here lands on whatever the shell had put there.
+//!
+//! A line goes out once. It leaves the live region when it is sealed — at the
+//! moment the session next waits for a key, which is after a reply has had
+//! the mark hung on it and before anyone could read it half-finished — or
+//! sooner, when the region could no longer show it, and the record lets go of
+//! it as it is written: the terminal is what keeps it now, and keeping it here
+//! too would be a second copy of the session that nothing draws again. So an
+//! edit to a line that has gone out ([`Renderer::amend`],
+//! [`Renderer::subordinate`]) does nothing, as it does to any line the record
+//! has dropped.
+//!
+//! A resize redraws the region and nothing else. How far back its top now is
+//! cannot be asked of the terminal, so it is worked out from how wide each row
+//! of the region was against the new width, counted as a terminal that rewraps
+//! would count it. On one that does not, narrowing counts high, and the erase
+//! that opens the next frame takes finished rows just above the region off the
+//! visible screen. They went out once and were let go of, so nothing draws
+//! them again; the session file still has them. Counting low instead would
+//! leave a stale copy of the region in the scrollback on every terminal that
+//! does rewrap, which is most of them.
+
+use std::fmt::Write as _;
+
+use super::Renderer;
+use super::frame::{BEGIN_SYNC, END_SYNC, HIDE, SHOW};
+use crate::terminal::{Size, Terminal, TerminalError};
+use crate::width;
+
+/// Erases from the cursor to the end of the screen.
+const ERASE_BELOW: &str = "\x1b[J";
+
+/// What a native frame keeps between one frame and the next.
+#[derive(Debug, Default)]
+pub(super) struct Native {
+    /// One past the last line the session has sealed: lines before it go out
+    /// to the scrollback at the next frame.
+    sealed: usize,
+    /// The display width of each row of the region last drawn, top first.
+    widths: Vec<usize>,
+    /// The row of the region the cursor was left on, counted from its top.
+    parked: usize,
+    /// The column the cursor was left on.
+    column: usize,
+    /// How far back the region's top is, where something other than the last
+    /// frame decided it — a resize.
+    rewind: Option<usize>,
+    /// What the region said last time, park included, so a frame that would
+    /// say the same is not written.
+    shown: String,
+    /// Reused for each frame's bytes.
+    frame: String,
+    /// Whether a frame has been written, so there is a region to close.
+    drawn: bool,
+    /// Whether the region has been closed for good.
+    left: bool,
+}
+
+impl Native {
+    /// Works out how far back the region's top is once the window is `size`.
+    fn rewound(&mut self, size: Size) {
+        let columns = size.columns.max(1);
+        let above: usize = self
+            .widths
+            .iter()
+            .take(self.parked)
+            .map(|width| width.div_ceil(columns).max(1))
+            .sum();
+        let back = above + self.column / columns;
+        self.rewind = Some(back.min(size.rows.saturating_sub(1)));
+    }
+}
+
+/// What a frame writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Writes {
+    /// What has been sealed, then the live region.
+    Live,
+    /// Everything the record holds, the line being written included, and no
+    /// region after it: the frame that closes one.
+    Everything,
+}
+
+impl<T: Terminal> Renderer<T> {
+    /// Lets every line finished so far go to the scrollback, and draws.
+    ///
+    /// Called wherever the session waits for a key: nothing still to be
+    /// edited is finished by then, and nothing the reader is about to read is
+    /// left only in the region.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub(super) fn seal(&mut self) -> Result<(), TerminalError> {
+        let finished = self.record.finished();
+        let Some(native) = &mut self.native else {
+            return Ok(());
+        };
+        if native.sealed >= finished {
+            return Ok(());
+        }
+        native.sealed = finished;
+        self.draw()
+    }
+
+    /// One native frame.
+    pub(super) fn draw_native(&mut self) -> Result<(), TerminalError> {
+        self.framed(Writes::Live)
+    }
+
+    /// Notes that the window changed size, before it is laid out again.
+    pub(super) fn native_resize(&mut self, size: Size) {
+        if let Some(native) = &mut self.native {
+            native.rewound(size);
+        }
+    }
+
+    /// Writes out everything the record holds, leaving no region behind.
+    ///
+    /// What emptying the transcript means here: the scrollback is the
+    /// reader's terminal's, and nothing this process writes can take back
+    /// what is in it, so what was said stays said above what replaces it.
+    pub(super) fn native_empties(&mut self) -> Result<(), TerminalError> {
+        if self.native.is_none() || !self.terminal.is_terminal() {
+            return Ok(());
+        }
+        self.record.end();
+        self.framed(Writes::Everything)
+    }
+
+    /// Closes the region for good: everything held is written out, nothing
+    /// that stood is left, and the cursor is shown at the start of a row of
+    /// its own, where the shell will write next.
+    ///
+    /// Nothing where output is redirected, in the full screen, where nothing
+    /// was drawn, and the second time.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub(super) fn leave(&mut self) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(());
+        }
+        match &self.native {
+            Some(native) if native.drawn && !native.left => {}
+            _ => return Ok(()),
+        }
+        self.record.end();
+        let written = self.framed(Writes::Everything);
+        if let Some(native) = &mut self.native {
+            native.left = true;
+        }
+        written
+    }
+
+    /// Closes the region for good, before the renderer itself goes.
+    ///
+    /// For a session ending while it still holds the terminal's modes: what
+    /// those write on their way out, and anything held back to be said then,
+    /// lands on the clean row this leaves rather than inside a region that
+    /// dropping the renderer would rewind into. Nothing in the full screen,
+    /// and nothing is drawn after it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn closes(&mut self) -> Result<(), TerminalError> {
+        self.leave()
+    }
+
+    /// Writes one frame, taking the state it keeps out of `self` while it
+    /// does.
+    fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {
+        let Some(mut native) = self.native.take() else {
+            return Ok(());
+        };
+        let written = self.frame_into(&mut native, writes);
+        self.native = Some(native);
+        written
+    }
+
+    fn frame_into(&mut self, native: &mut Native, writes: Writes) -> Result<(), TerminalError> {
+        if native.left {
+            return Ok(());
+        }
+
+        let columns = self.size.columns.max(1);
+        let bands = self.bands();
+        let room = bands.transcript.len();
+        let first = self.record.first();
+        let finished = self.record.finished();
+
+        // What goes out: what is sealed, and then whatever the region could
+        // not show — a line that has scrolled off the top of the region would
+        // otherwise be a line nobody ever sees.
+        let through = match writes {
+            Writes::Everything => self.record.lines(),
+            Writes::Live => {
+                let mut through = native.sealed.min(finished).max(first);
+                while through < finished && self.record.rows_from(through) > room {
+                    through += 1;
+                }
+                through
+            }
+        };
+
+        let mut out = std::mem::take(&mut native.frame);
+        out.clear();
+        out.push_str(BEGIN_SYNC);
+        out.push_str(HIDE);
+        let rewound = native.rewind.take();
+        let up = rewound.unwrap_or(native.parked);
+        out.push('\r');
+        if up > 0 {
+            let _ = write!(out, "\x1b[{up}A");
+        }
+        out.push_str(ERASE_BELOW);
+
+        let mut emitted = false;
+        for line in first..through {
+            for row in self.record.folded(line) {
+                row.clipped(columns).paint_into(&self.palette, &mut out);
+                out.push_str("\r\n");
+                emitted = true;
+            }
+        }
+        self.record.lets_go(through);
+
+        let region = out.len();
+        native.widths.clear();
+        let mut parked = 0;
+        let mut column = 0;
+        if writes == Writes::Live {
+            let showing = self.record.view(room);
+            let shown = showing.len();
+            for row in showing {
+                if !native.widths.is_empty() {
+                    out.push_str("\r\n");
+                }
+                let row = if row.columns() > columns {
+                    row.clipped(columns)
+                } else {
+                    row
+                };
+                native.widths.push(row.columns());
+                row.paint_into(&self.palette, &mut out);
+            }
+            let turn = self.standing.turn.iter().take(bands.turn.len());
+            let turned = turn.len();
+            let prompt = self.standing.prompt.iter().take(bands.prompt.len());
+            let prompted = prompt.len();
+            for painted in turn.chain(prompt) {
+                if !native.widths.is_empty() {
+                    out.push_str("\r\n");
+                }
+                native.widths.push(width::columns(painted));
+                out.push_str(painted);
+            }
+
+            let rows = native.widths.len();
+            if rows > 0 {
+                let (row, at) = self
+                    .standing
+                    .prompted
+                    .filter(|_| prompted > 0)
+                    .map(|caret| (shown + turned + caret.row, caret.column))
+                    .or_else(|| {
+                        self.standing
+                            .turned
+                            .filter(|_| turned > 0)
+                            .map(|caret| (shown + caret.row, caret.column))
+                    })
+                    .unwrap_or((shown + turned, 0));
+                parked = row.min(rows - 1);
+                column = at.min(columns - 1);
+                let back = rows - 1 - parked;
+                if back > 0 {
+                    let _ = write!(out, "\x1b[{back}A");
+                }
+                let _ = write!(out, "\x1b[{}G", column + 1);
+            }
+        }
+        let live = out.len();
+
+        // A frame that would leave the screen as it is costs nothing: a turn
+        // is a great many frames in which only the clock moved.
+        let unchanged = writes == Writes::Live
+            && !emitted
+            && rewound.is_none()
+            && out.get(region..live) == Some(native.shown.as_str());
+        if unchanged {
+            native.frame = out;
+            return Ok(());
+        }
+
+        out.push_str(SHOW);
+        out.push_str(END_SYNC);
+        let written = self
+            .terminal
+            .write(&out)
+            .and_then(|()| self.terminal.flush());
+
+        native.shown.clear();
+        native
+            .shown
+            .push_str(out.get(region..live).unwrap_or_default());
+        native.parked = parked;
+        native.column = column;
+        native.drawn = true;
+        native.frame = out;
+        written
+    }
+}
+
+/// The region closed on the way out, unwinding included, so a session that
+/// ends any way at all leaves the reader's shell on a clean row with its
+/// cursor showing.
+impl<T: Terminal> Drop for Renderer<T> {
+    fn drop(&mut self) {
+        // Nowhere to report it: the terminal that refused is the one a report
+        // would be written to.
+        let _ = self.leave();
+    }
+}
+
+#[cfg(test)]
+mod tests;

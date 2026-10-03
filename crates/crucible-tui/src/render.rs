@@ -1,4 +1,6 @@
-//! Full-screen rendering: crucible owns the window and every row in it.
+//! Rendering, full screen by default: crucible owns the window and every row
+//! in it. Native mode, the other [`ScreenMode`], is the exception to most of
+//! what follows and says so in its own module.
 //!
 //! This process takes the alternate screen, so the terminal's scroll buffer is
 //! not where the session lives. What replaces it is [`Record`] — a bounded
@@ -13,7 +15,10 @@
 //! names the row it writes and never counts how far to move or how much to
 //! erase. There is no rewind, no live region, and no arithmetic about how tall
 //! the last frame turned out to be — the class of defect this crate has spent
-//! the most on cannot be expressed here.
+//! the most on cannot be expressed here. Native mode has all three, because
+//! the reader's own buffer is a screen nobody owns; they are confined to
+//! [`native`], whose frame is the one place a row is counted rather than
+//! named.
 //!
 //! What a frame costs is bounded by the window and not by the delta: the rows
 //! whose painted bytes are the same as last time are not written at all, which
@@ -45,8 +50,10 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 mod frame;
+mod native;
 mod painted;
 
+use native::Native;
 use painted::Painted;
 
 /// How far one notch of the wheel moves the transcript, until told otherwise.
@@ -184,10 +191,32 @@ enum Arriving {
     Answer,
 }
 
-/// Draws the session onto a screen this process owns.
+/// Where a renderer draws.
+///
+/// Settled once, when the renderer is made, because the two are different
+/// promises about the terminal rather than two looks of one: one takes a screen
+/// of its own and keeps the session there, the other writes into the buffer the
+/// reader's shell was using and leaves what is finished to the terminal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScreenMode {
+    /// A screen of crucible's own: its own scrollback, rail and selection.
+    #[default]
+    Fullscreen,
+    /// The terminal's own buffer: what is finished is written once into its
+    /// scrollback, and only a live region at the bottom is drawn again.
+    Native,
+}
+
+/// Draws the session: onto a screen this process owns, or at the foot of the
+/// terminal's own buffer.
 #[derive(Debug)]
 pub struct Renderer<T: Terminal> {
     terminal: T,
+    /// Where finished rows go and what a frame may redraw, in native mode.
+    ///
+    /// `None` is the full screen. Held as the state native mode needs rather
+    /// than as a flag beside it, so the mode and what it keeps cannot disagree.
+    native: Option<Native>,
     /// Everything that has been said, and where in it the reader is looking.
     record: Record,
     /// The rows at the foot of the window that are not the transcript.
@@ -314,11 +343,25 @@ impl<T: Terminal> Renderer<T> {
     /// trade for a pipe.
     #[must_use]
     pub fn new(terminal: T) -> Self {
+        Self::drawing(terminal, ScreenMode::Fullscreen)
+    }
+
+    /// A renderer drawing on `terminal` in `mode`.
+    ///
+    /// [`Renderer::new`] is the full screen. What decides which a session gets
+    /// is configuration, read once at launch: changing it under a session
+    /// would leave half of it in a scrollback the other mode does not keep.
+    #[must_use]
+    pub fn drawing(terminal: T, mode: ScreenMode) -> Self {
         let size = terminal.size().unwrap_or(Size::FALLBACK);
 
         Self {
             record: Record::new(size.columns),
             terminal,
+            native: match mode {
+                ScreenMode::Fullscreen => None,
+                ScreenMode::Native => Some(Native::default()),
+            },
             standing: Standing::default(),
             prompt_target: None,
             pointed_changed: false,
@@ -352,6 +395,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be read or written.
     pub fn pressed(&mut self) -> Result<Option<Pressed>, TerminalError> {
+        self.seal()?;
         loop {
             if let Some(patience) = self.rests_in()
                 && !waiting(patience)?
@@ -374,6 +418,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be read or written.
     pub fn waiting(&mut self, patience: Duration) -> Result<bool, TerminalError> {
+        self.seal()?;
         self.repose()?;
         let patience = self.rests_in().map_or(patience, |due| due.min(patience));
         let ready = waiting(patience)?;
@@ -404,6 +449,23 @@ impl<T: Terminal> Renderer<T> {
     pub fn took(&mut self, arrived: Pressed) -> Result<Option<Pressed>, TerminalError> {
         if !self.terminal.is_terminal() {
             return Ok(Some(arrived));
+        }
+
+        // The terminal's own buffer has its own selection and its own wheel,
+        // and this process asked for no presses of the pointer. One that
+        // arrives anyway is answered by nothing: there is no rail to steer, no
+        // selection to make and no band to scroll.
+        if self.native.is_some()
+            && matches!(
+                arrived,
+                Pressed::Hovered { .. }
+                    | Pressed::Clicked { .. }
+                    | Pressed::Dragged { .. }
+                    | Pressed::Released { .. }
+                    | Pressed::Scrolled { .. }
+            )
+        {
+            return Ok(None);
         }
 
         let bands = self.bands();
@@ -921,7 +983,9 @@ impl<T: Terminal> Renderer<T> {
     /// the whole width. Nothing changes where output is redirected: a file has
     /// no right edge.
     pub fn rails(&mut self, on: bool) {
-        self.rails = on;
+        // Native mode has no band to put one beside: the terminal's own
+        // scrollbar is the rail.
+        self.rails = on && self.native.is_none();
         self.grip = None;
         self.record.resized(self.folds());
         self.unselects();
@@ -1308,6 +1372,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn parting(&mut self, rows: &[Row]) -> Result<(), TerminalError> {
+        self.leave()?;
         for row in rows {
             self.terminal.write(&row.paint(&self.palette))?;
 
@@ -1371,6 +1436,7 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
+        self.native_resize(size);
         self.size = size;
         self.record.resized(self.folds());
         self.standing.clear();
@@ -1401,6 +1467,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn empties(&mut self) -> Result<(), TerminalError> {
+        self.native_empties()?;
         self.record.empties();
         self.standing.clear();
         self.prompt_target = None;
@@ -1495,7 +1562,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn scrolled(&mut self, by: i32) -> Result<bool, TerminalError> {
-        if !self.terminal.is_terminal() {
+        if !self.terminal.is_terminal() || self.native.is_some() {
             return Ok(false);
         }
 
@@ -1522,6 +1589,15 @@ impl<T: Terminal> Renderer<T> {
     pub fn follows(&mut self) -> Result<(), TerminalError> {
         self.record.follow();
         self.draw()
+    }
+
+    /// Where this renderer draws.
+    #[must_use]
+    pub fn screen(&self) -> ScreenMode {
+        match self.native {
+            Some(_) => ScreenMode::Native,
+            None => ScreenMode::Fullscreen,
+        }
     }
 
     /// Whether output is going to a terminal rather than a pipe or a file.
@@ -1669,6 +1745,12 @@ impl<T: Terminal> Renderer<T> {
     /// sentence.
     #[must_use]
     pub fn aimed(&self, at: usize) -> Option<Aimed> {
+        // A window row names nothing here: the region moves with the
+        // reader's own scrollback, and no press of the pointer arrives.
+        if self.native.is_some() {
+            return None;
+        }
+
         let bands = self.bands();
 
         if bands.transcript.contains(&at) {
@@ -1727,6 +1809,10 @@ impl<T: Terminal> Renderer<T> {
         // each arrived. What is left is to make sure it has them.
         if !self.terminal.is_terminal() {
             return self.terminal.flush();
+        }
+
+        if self.native.is_some() {
+            return self.draw_native();
         }
 
         let bands = self.bands();

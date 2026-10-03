@@ -537,6 +537,7 @@ you with no way to send at all.
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in; `Monokai Extended` by default. |
 | `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window; `compact` by default. Clipped details remain expandable: recent ones from memory, older ones read back from the session log when the view reaches them, where the session has a log. |
 | `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt; a click off the thumb scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. The prompt you are reading under has a larger mark, and a pointer on the rail lights the track and marks and enlarges the mark under it. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
+| `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. `/clear` and `/resume` leave the earlier transcript in the terminal's scrollback. A line already written there is never changed afterwards, so a mark a finished reply gains later, or an offer to expand a clipped detail that is later withdrawn, stays as it was first written. On a terminal that does not rewrap its lines when the window narrows, narrowing it can take a few finished lines off the visible screen; the session file still has them. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light
@@ -644,6 +645,10 @@ Hold **Shift** while you drag and the selection is your terminal's own again.
 Every terminal keeps Shift as the way past a program holding the pointer, which
 is the answer for a reader who wanted their emulator's selection rather than
 this one.
+
+With `output.screen` set to `native`, crucible does not hold the mouse at all:
+the wheel, a drag and a click are your terminal's, and every key works as it
+does on a screen of crucible's own.
 
 ### `updates`
 
@@ -1286,7 +1291,7 @@ is, and what was accepted instead:
 ```
 crucible: /home/you/api/.crucible/config.json: output.colour is not a setting
 crucible has at line 3, column 5 — accepted here: color, theme,
-transcriptColours, syntaxTheme, glyphs, toolDetail, scrollRail
+transcriptColours, syntaxTheme, glyphs, toolDetail, scrollRail, screen
 
 crucible: /home/you/api/.crucible/config.json: output.color does not accept
 beige at line 3, column 5 — accepted here: auto, always, never

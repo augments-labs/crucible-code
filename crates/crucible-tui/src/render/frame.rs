@@ -32,25 +32,25 @@ const ERASE_ROW: &str = "\x1b[K";
 /// in force paints that background across the rest of the row on every terminal
 /// that honours it, so a row whose colour ran to the edge would lend it to the
 /// row replacing it.
-const PLAIN: &str = "\x1b[m";
+pub(super) const PLAIN: &str = "\x1b[m";
 
 /// Hold the screen: what follows is one picture, not a sequence of them.
-const BEGIN_SYNC: &str = "\x1b[?2026h";
+pub(super) const BEGIN_SYNC: &str = "\x1b[?2026h";
 
 /// Show it. Paired with [`BEGIN_SYNC`] by [`Frame::sealed`], which is the only
 /// way bytes leave this type.
-const END_SYNC: &str = "\x1b[?2026l";
+pub(super) const END_SYNC: &str = "\x1b[?2026l";
 
 /// Take the cursor off the screen while the frame is assembled.
 ///
 /// Not decoration. A terminal that does not know [`BEGIN_SYNC`] paints as the
 /// bytes arrive, and a cursor stepping through every row of a redraw is visible
 /// on exactly those terminals.
-const HIDE: &str = "\x1b[?25l";
+pub(super) const HIDE: &str = "\x1b[?25l";
 
 /// Put it back. Paired with [`HIDE`] by [`Frame::sealed`], for the same reason
 /// the sequences above it are.
-const SHOW: &str = "\x1b[?25h";
+pub(super) const SHOW: &str = "\x1b[?25h";
 
 /// The bytes of one frame, assembled into a buffer that outlives it.
 #[derive(Debug, Default)]

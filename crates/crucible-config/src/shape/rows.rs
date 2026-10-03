@@ -19,8 +19,8 @@
 
 use super::{
     COLOR, COMPACTION_WHEN, DOCUMENT, Field, GLYPHS, PROMPT_CACHE_ISOLATION, PROMPT_CACHE_MODE,
-    PROMPT_CACHE_PERSISTENT, PROMPT_CACHE_RETENTION, SCROLL_SPEED, SEND, THEME, TONE, TOOL_DETAIL,
-    TRANSCRIPT_COLOURS, UPDATE_CHECK,
+    PROMPT_CACHE_PERSISTENT, PROMPT_CACHE_RETENTION, SCREEN, SCROLL_SPEED, SEND, THEME, TONE,
+    TOOL_DETAIL, TRANSCRIPT_COLOURS, UPDATE_CHECK,
 };
 
 #[cfg(test)]
@@ -66,6 +66,8 @@ pub enum RowId {
     ToolDetail,
     /// `output.scrollRail`.
     ScrollRail,
+    /// `output.screen`.
+    ScreenMode,
     /// `env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`.
     ScrollSpeed,
     /// `input.send`.
@@ -217,6 +219,12 @@ const ROWS: &[Row] = &[
         "output.scrollRail",
         "Scroll rail",
         Values::Flag,
+    ),
+    Row::new(
+        RowId::ScreenMode,
+        "output.screen",
+        "Screen mode",
+        Values::Choice(SCREEN),
     ),
     Row::new(
         RowId::ScrollSpeed,
