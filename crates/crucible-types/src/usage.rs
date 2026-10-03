@@ -695,6 +695,11 @@ impl GroupName {
 /// isolates, the zero-width characters and the byte order mark among them.
 /// Drawn, either reorders or hides the text around it. U+2065, unassigned
 /// between the invisible operators and the isolates, is taken with them.
+///
+/// The terminal drops the same format characters from everything it draws,
+/// except the zero-width non-joiner and joiner, which join characters on
+/// screen. Neither crate may name the other, so a test in the command line
+/// holds the two lists to each other.
 const fn unshown(character: char) -> bool {
     character.is_control()
         || matches!(

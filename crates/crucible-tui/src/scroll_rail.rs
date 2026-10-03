@@ -1,10 +1,19 @@
 //! The scroll rail: one column on the transcript's right edge that says where
 //! the band is in what the record retains, and where each prompt was.
 //!
-//! The rail is the transcript band's height and stands for the whole retained
-//! record, scaled. The thumb is the share of it on screen, never shorter than
-//! a row, so it sits at the top for the oldest line held and at the bottom
-//! while the band follows the foot. A prompt is a mark on the row its first
+//! The rail stands beside the transcript band and, while a turn runs, beside
+//! the turn's own rows under it, and stands for the whole retained record,
+//! scaled. Those turn rows read as the transcript's last rows, so they are
+//! counted as the record's tail and as rows on screen: the rail and its thumb
+//! keep one length while a running command's output appears and goes, rather
+//! than shrinking with the band each time the turn grows. What else stands
+//! there — a list a line opened, a question, a picker — is not the
+//! transcript's, and the rail neither stands beside it nor counts it. The
+//! thumb is the share of the rail on screen, never shorter than a row, so it
+//! sits at the top for the oldest line held and at the bottom while the band
+//! follows the foot. Scrolled back, the turn's rows still stand under the band
+//! rather than after the rows it shows, so the thumb starts where the band's
+//! top is and is long enough to count them too. A prompt is a mark on the row its first
 //! line falls at in the whole record, scaled the same way, so several prompts
 //! that scale to one row are one mark. A mark that falls on the thumb is drawn
 //! as thumb: the two share the cell and the thumb wins, so a press there takes
@@ -32,7 +41,7 @@
 //!
 //! Nothing here grows with the session. The rail is laid out from three
 //! numbers and the prompt landmarks the record keeps a fixed number of, into a
-//! row per band row.
+//! row per row it stands beside.
 
 use std::ops::Range;
 
@@ -56,12 +65,26 @@ pub(crate) fn spared(columns: usize) -> bool {
 /// Where a band stands in what the record retains, in display rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Place {
-    /// Every display row the record still holds.
+    /// Every display row the record still holds, and any turn rows read as
+    /// its tail.
     pub(crate) total: usize,
     /// How many of those are above the band's first row.
     pub(crate) top: usize,
-    /// How tall the band is, and so the rail.
+    /// How many rows are on screen: the band's, and any turn rows under it.
+    /// The rail is as tall.
     pub(crate) height: usize,
+}
+
+impl Place {
+    /// The same place with `turn` rows of a running turn standing under the
+    /// band, counted as the record's last rows and as rows on screen.
+    pub(crate) fn under_turn(self, turn: usize) -> Self {
+        Self {
+            total: self.total.saturating_add(turn),
+            top: self.top,
+            height: self.height.saturating_add(turn),
+        }
+    }
 }
 
 /// The rail as laid out for one frame.
@@ -69,7 +92,7 @@ pub(crate) struct Place {
 pub(crate) struct ScrollRail {
     /// Every display row the record held when the rail was laid out.
     total: usize,
-    /// How tall the band is, and so the rail.
+    /// How tall the rail is.
     height: usize,
     /// The rows the thumb covers; `None` while the record fits the band.
     thumb: Option<Range<usize>>,
@@ -184,8 +207,9 @@ impl ScrollRail {
             .find(|prompt| scaled(*prompt, self.total, self.height) == row)
     }
 
-    /// The rail as cells, one row a band row, for a window `columns` wide,
-    /// with the pointer on rail row `pointer` where it is on the rail at all.
+    /// The rail as cells, one row a row it stands beside, for a window
+    /// `columns` wide, with the pointer on rail row `pointer` where it is on
+    /// the rail at all.
     ///
     /// No rows at all where the window cannot spare the column. Each row is
     /// one column, structural, and blank where the record fits, pointer or
