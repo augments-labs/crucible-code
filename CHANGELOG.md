@@ -14,6 +14,10 @@ change in any release with no deprecation period.
   Unicode format character in a model's answer, a tool result or a file name
   could reorder or hide what was drawn around it; the screen and redirected
   output now drop them, keeping only the joiners emoji and some scripts need.
+- **The rollback drill always tests the tree it runs in.** It used to reuse
+  any binary left in `target/debug`, so an older build could pass in the
+  tree's place; it now builds the candidate each run and refuses one whose
+  version is not the workspace version.
 
 ## [0.45.0] - 2026-10-03
 

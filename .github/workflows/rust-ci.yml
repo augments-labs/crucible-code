@@ -183,9 +183,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/prior-bin
           key: ${{ steps.prior.outputs.cache-primary-key }}
-      - name: Build the candidate binary
-        shell: bash
-        run: cargo build --locked --bin crucible
+      # The drill builds the candidate from this checkout itself, so no step
+      # builds it beforehand, and the self-test's runs find it current.
       - name: Run the rollback drill
         shell: bash
         run: |
