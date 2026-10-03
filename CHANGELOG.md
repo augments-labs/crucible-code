@@ -14,6 +14,9 @@ change in any release with no deprecation period.
   its branch again.** The path is now read from the checkout, as git reads it,
   rather than from the directory crucible was started in, so a submodule or a
   worktree made with relative paths shows its branch in `/resume`.
+- **The Windows installer refuses a version followed by a newline.** Its
+  version check let one through and failed later on the archive instead of
+  saying the version is invalid.
 - **The rollback drill always tests the tree it runs in.** It used to reuse
   any binary left in `target/debug`, so an older build could pass in the
   tree's place; it now builds the candidate each run and refuses one whose
