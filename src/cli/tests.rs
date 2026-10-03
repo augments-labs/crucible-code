@@ -632,3 +632,15 @@ fn the_store_a_run_writes_through_takes_a_moved_providers_speed_out_first() {
     let kept = std::fs::read_to_string(&file).expect("the user's file");
     assert!(!kept.contains("\"fast\""), "{kept}");
 }
+
+#[test]
+fn a_native_screen_setting_draws_natively_and_the_default_draws_full_screen() {
+    assert_eq!(
+        drawn_on(crucible_config::ScreenMode::Native),
+        crucible_tui::ScreenMode::Native
+    );
+    assert_eq!(
+        drawn_on(crucible_config::ScreenMode::default()),
+        crucible_tui::ScreenMode::Fullscreen
+    );
+}

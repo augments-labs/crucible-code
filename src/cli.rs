@@ -688,7 +688,10 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // same handle to set a tab name and hand it back on the way out.
     let held = Title::set()?;
 
-    let mut renderer = Renderer::new(SystemTerminal::stdout());
+    // Where it draws is read here, once: a session cannot move between a
+    // screen of its own and the terminal's buffer without leaving half of
+    // itself in a scrollback the other does not keep.
+    let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
 
     // The mode the files named, or the one that asks. `None` is "no layer
     // said", which is a different thing from a layer that said `ask` — but the
@@ -1003,6 +1006,17 @@ fn wanted(choice: &Choice, settings: &Settings, serving: Option<Served>) -> Opti
 /// run — the same reading `--model openai/` gets.
 fn thinking(asked: Option<Effort>, settings: &Settings, serving: Option<Served>) -> Option<Effort> {
     asked.or_else(|| settings.effort(serving?.name))
+}
+
+/// Where the renderer draws, for the screen the configuration names.
+///
+/// Written out case by case so a third screen in the configuration is a
+/// decision here rather than a default.
+fn drawn_on(screen: crucible_config::ScreenMode) -> crucible_tui::ScreenMode {
+    match screen {
+        crucible_config::ScreenMode::Fullscreen => crucible_tui::ScreenMode::Fullscreen,
+        crucible_config::ScreenMode::Native => crucible_tui::ScreenMode::Native,
+    }
 }
 
 /// Which earlier session the command line asked for, parsed at the boundary.

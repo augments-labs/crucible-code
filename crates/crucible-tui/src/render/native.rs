@@ -161,6 +161,21 @@ impl<T: Terminal> Renderer<T> {
         written
     }
 
+    /// Closes the region for good, before the renderer itself goes.
+    ///
+    /// For a session ending while it still holds the terminal's modes: what
+    /// those write on their way out, and anything held back to be said then,
+    /// lands on the clean row this leaves rather than inside a region that
+    /// dropping the renderer would rewind into. Nothing in the full screen,
+    /// and nothing is drawn after it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn closes(&mut self) -> Result<(), TerminalError> {
+        self.leave()
+    }
+
     /// Writes one frame, taking the state it keeps out of `self` while it
     /// does.
     fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {

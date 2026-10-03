@@ -59,7 +59,8 @@ use crucible_runner::{Event, Runner, TurnError, Turned};
 use crucible_runtime::Cancel;
 use crucible_session::Session;
 use crucible_tui::{
-    Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal, TerminalError,
+    Editor, Pasting, Raw, Renderer, Reporting, Screen, ScreenMode, Sending, Spelling, Terminal,
+    TerminalError,
 };
 use crucible_types::{Attachment, Compacting, SessionId, Spend};
 
@@ -398,6 +399,33 @@ impl Parting {
     }
 }
 
+/// Which of the terminal's modes a session takes, given where it draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Holds {
+    /// The alternate screen.
+    screen: bool,
+    /// Reports of the pointer's buttons, motion and wheel.
+    pointer: bool,
+}
+
+/// What a session drawing in `mode` takes from the terminal.
+///
+/// Native mode takes neither: its point is the reader's own buffer, whose
+/// scrollback the alternate screen would hide and whose selection and wheel
+/// taking the pointer would take.
+fn holds(mode: ScreenMode) -> Holds {
+    match mode {
+        ScreenMode::Fullscreen => Holds {
+            screen: true,
+            pointer: true,
+        },
+        ScreenMode::Native => Holds {
+            screen: false,
+            pointer: false,
+        },
+    }
+}
+
 /// Reads prompts and takes turns until input ends.
 ///
 /// `input` is standard input in a real run. It is a parameter so that a test
@@ -431,7 +459,8 @@ pub(crate) fn converse<T: Terminal>(
     // configuration, a provider nobody named, a home directory that would not
     // be made private — and a refusal written to a screen that is handed back
     // in the same breath is one nobody reads.
-    let screen = Screen::take()?;
+    let holds = holds(renderer.screen());
+    let screen = if holds.screen { Screen::take()? } else { None };
 
     // Whether the transcript is about to be taken away with the screen it was
     // drawn on, which is the whole of what decides if there is anything to say
@@ -475,8 +504,13 @@ pub(crate) fn converse<T: Terminal>(
     // forwarding buttons is not using them itself, so a selection has to be
     // this program's or nobody's. Shift is still the way past a program
     // holding the pointer, and stays the answer for a reader who wanted their
-    // emulator's own selection instead of this one.
-    let _pointer = Reporting::on()?;
+    // emulator's own selection instead of this one — or native mode, which
+    // leaves the pointer to the terminal altogether.
+    let _pointer = if holds.pointer {
+        Reporting::on()?
+    } else {
+        None
+    };
 
     // Everything the session keeps between turns and hands to each of them:
     // the line being typed, the lines finished behind it, what a result had no
@@ -751,6 +785,11 @@ pub(crate) fn converse<T: Terminal>(
     }
 
     renderer.settle()?;
+
+    // In the terminal's own buffer the live region is closed while the modes
+    // are still held, so what they and any held-back panic write on the way
+    // out lands below it. Nothing on a screen of crucible's own.
+    renderer.closes()?;
 
     // Whatever was said about the log while the screen was still up went with
     // it, which is why the failure reaches here at all: pointing a reader at a

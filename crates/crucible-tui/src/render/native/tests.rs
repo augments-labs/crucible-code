@@ -520,6 +520,24 @@ fn a_native_renderer_closes_its_live_region_when_a_panic_unwinds_past_it() {
 }
 
 #[test]
+fn a_native_region_closed_before_the_renderer_goes_is_left_alone_after() {
+    // A session closes its region while the guards it took are still held,
+    // so whatever is written on the way out lands on a clean row below it
+    // rather than inside a region the drop would then rewind into.
+    let window = Window::new(40, 10);
+    let mut render = session(&window);
+
+    render.closes().unwrap();
+    left_clean(&window);
+    let closed = window.take();
+    render.commit("too late to draw").unwrap();
+    drop(render);
+
+    assert!(!closed.is_empty(), "closing wrote nothing");
+    assert_eq!(window.written(), "", "the renderer drew after closing");
+}
+
+#[test]
 fn a_redirected_native_renderer_writes_plain_text_and_nothing_on_drop() {
     let window = Window::redirected(40, 10);
     let mut render = native(&window);
