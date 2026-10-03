@@ -30,8 +30,10 @@
 //! one stands would otherwise hold the reader until something wrote to it, a
 //! file without end would be read into memory whole, and a symbolic link
 //! leading out of its directory is a file the checkout does not hold. A `.git`
-//! directory that is itself such a link still reads, because the directory is
-//! resolved before anything in it is opened. Anything else is the same quiet
+//! that is itself such a link still reads, as git reads it: a directory is
+//! resolved before anything in it is opened, and a `.git` file is resolved to
+//! where the link leads and read there, under the same bound and the same
+//! refusal of anything but an ordinary file. Anything else is the same quiet
 //! `None` as a directory that is not a repository.
 
 use std::fs;
@@ -48,7 +50,7 @@ pub fn current(root: &Path) -> Option<String> {
     // is, and that is where this worktree's own HEAD lives. A relative name
     // is relative to the checkout, as git reads it, not to this process.
     let head = if git.is_file() {
-        let pointed = small(&git)?;
+        let pointed = pointer(&git)?;
         root.join(pointed.strip_prefix("gitdir:")?.trim())
             .join("HEAD")
     } else {
@@ -125,13 +127,22 @@ fn common(root: &Path) -> Option<PathBuf> {
     // directory's `commondir` names the shared one, relative to itself. A
     // `.git` file with no `commondir` beside its target — a submodule — has
     // its own directory as the common one.
-    let pointed = small(&git)?;
+    let pointed = pointer(&git)?;
     let own = root.join(pointed.strip_prefix("gitdir:")?.trim());
     let common = match small(&own.join("commondir")) {
         Some(common) => own.join(common.trim()),
         None => own,
     };
     fs::canonicalize(common).ok()
+}
+
+/// What a checkout's `.git` file says, following it first where it is a
+/// symbolic link — git does, and a checkout whose pointer is kept elsewhere
+/// leaves one. The file it leads to is then read by [`small`] from the
+/// directory it stands in, under the same bound and the same refusal of
+/// anything but a regular file.
+fn pointer(git: &Path) -> Option<String> {
+    small(&fs::canonicalize(git).ok()?)
 }
 
 /// How much of one of git's own small files is read. A deliberate bound
