@@ -190,7 +190,7 @@ rustls = { version = "=0.23.45", default-features = false, features = ["std", "t
 # The same TLS over an asynchronous socket: the reads, writes, wakeups and
 # close-notify a handshake and its records need, which `rustls` leaves to its
 # caller. Default features off for the same reason as above.
-tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 # The Mozilla root set a server's certificate is checked against, compiled in:
 # no system store, bundle or platform verifier is read, so a certificate is
 # trusted the same way on every machine. Named here for `crucible-http`, the one
