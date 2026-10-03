@@ -59,7 +59,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 29] {
+fn all() -> [Slot; 30] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -92,6 +92,7 @@ fn all() -> [Slot; 29] {
             Slot::Name => 26,
             Slot::Operator => 27,
             Slot::Code => 28,
+            Slot::Bold => 29,
         }
     }
 
@@ -125,6 +126,7 @@ fn all() -> [Slot; 29] {
         Slot::Name,
         Slot::Operator,
         Slot::Code,
+        Slot::Bold,
     ];
 
     for (index, slot) in slots.into_iter().enumerate() {
@@ -143,7 +145,7 @@ fn at(depth: Depth) -> Palette {
 
 /// The same, in a named theme and over a named terminal ground.
 fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette {
-    let (band, band_mark) = Palette::banding(depth, theme, ground);
+    let band = Palette::banding(depth, theme, ground);
 
     Palette {
         depth,
@@ -152,7 +154,6 @@ fn wearing(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Palette 
         ground,
         code: Code::default(),
         band,
-        band_mark,
         pointed: false,
     }
 }
@@ -449,13 +450,12 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // the reader's own foreground and Quiet is their theme's answer to "subdued
     // on this ground", which is the one judgement worth deferring to. Cut is
     // whichever of those two the pointer has made it, so it has no hue of its
-    // own at either end. The other
-    // three are that same foreground with an attribute on it -- weight, a
-    // slant, and a line through it -- so what they are legible against is
-    // whatever Plain was. A link is not among them: it wears the accent under
-    // its line, and is checked with the hues. The band takes a ground and writes no ink
-    // at all, so the words on it stay theirs — its mark is the one slot here
-    // that does carry a hue and is checked with the band instead. The six code
+    // own at either end. Emphasis, Struck, Doing and Bold are that same
+    // foreground with an attribute on it -- a slant, a line through it, and
+    // weight -- so what they are legible against is whatever Plain was. A link
+    // is not among them: it wears the accent under its line, and is checked
+    // with the hues. The band takes a ground and writes no ink at all, so the
+    // words on it stay theirs, and its mark is the same band. The six code
     // slots are a syntax theme's to fill — empty until one is read, and never
     // in any table here.
     let hueless: Vec<Slot> = all()
@@ -484,12 +484,14 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Doing,
             Slot::Done,
             Slot::Prompt,
+            Slot::PromptMark,
             Slot::Comment,
             Slot::Keyword,
             Slot::Str,
             Slot::Number,
             Slot::Name,
             Slot::Operator,
+            Slot::Bold,
         ]
     );
 }
@@ -651,18 +653,47 @@ fn the_band_is_nothing_at_all_where_there_is_no_colour() {
 }
 
 #[test]
-fn the_mark_on_the_band_carries_its_ground_and_its_accent_in_one_sequence() {
-    // The inks the band carries. Each goes in the same sequence as the
-    // ground for the reason every other ground-painting slot's does: two
-    // sequences are two chances to write one and not the other.
+fn the_mark_on_the_band_is_the_band_and_carries_no_colour_of_its_own() {
+    // A prompt's band carries no hue: the mark before the words is the
+    // reader's own foreground on the same ground as the words, so the row is
+    // one sequence of theirs, moved a step, from the first column to the last.
     for theme in THEMES {
         let palette = wearing(Depth::Exact, theme, Some((13, 13, 16)));
-        let accent = sets(palette.open(Slot::Accent).as_str()).0;
         let slot = Slot::PromptMark;
         let (ink, ground) = sets(palette.open(slot).as_str());
 
         assert_ne!(ground, Sets::Nothing, "{theme:?}: {slot:?} took no ground");
-        assert_eq!(ink, accent, "{theme:?}: {slot:?} changed the accent");
+        assert_eq!(ink, Sets::Nothing, "{theme:?}: {slot:?} took an ink");
+        assert_eq!(
+            palette.open(slot),
+            palette.open(Slot::Prompt),
+            "{theme:?}: {slot:?} is not the band"
+        );
+    }
+}
+
+#[test]
+fn bold_is_weight_and_no_colour_in_every_theme_and_at_every_rung() {
+    // What a row of the transcript is read for -- a heading, a raised phrase,
+    // a tool's name -- is weight rather than colour, so the one byte that says
+    // so is the same in every table and on every terminal, and no theme spends
+    // a hue on it: `ansi` included, since there is nothing here to spell in
+    // the sixteen or out of them.
+    for theme in THEMES {
+        for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
+            for ground in [None, Some((0, 0, 0)), Some((255, 255, 255))] {
+                assert_eq!(
+                    wearing(depth, theme, ground).open(Slot::Bold).as_str(),
+                    "\x1b[1m",
+                    "{theme:?} at {depth:?} on {ground:?}"
+                );
+            }
+        }
+        assert_eq!(
+            wearing(Depth::Off, theme, None).open(Slot::Bold).as_str(),
+            "",
+            "{theme:?} with colour off"
+        );
     }
 }
 

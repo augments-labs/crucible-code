@@ -8,26 +8,26 @@ expression: "pictured(80, Glyphs::Ascii)"
 <Accent>* </><Strong>0.36.0</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Added</>                                                                        
-<Quiet>|  </><Quiet>-</><Quiet> </><Strong>A first command.</> It lists what there is.                                   
+<Quiet>|  </><Quiet>-</><Quiet> </><Bold>A first command.</> It lists what there is.                                   
 <Quiet>|</>                                                                               
 <Quiet>|</>                                                                               
 <Accent>* </><Strong>0.37.0</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Fixed</>                                                                        
-<Quiet>|  </><Quiet>-</><Quiet> </><Strong>A crash on start is gone.</> It read a file that was not there.               
+<Quiet>|  </><Quiet>-</><Quiet> </><Bold>A crash on start is gone.</> It read a file that was not there.               
 <Quiet>|  </><Quiet>-</><Quiet> </>Another fix.                                                               
 <Quiet>|</>                                                                               
 <Quiet>|</>                                                                               
 <Accent>* </><Strong>0.38.0</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Changed</>                                                                      
-<Quiet>|  </><Strong>A paragraph under a </><Strong>he</><Strong>ading.</> It holds no bullet at all.                      
+<Quiet>|  </><Bold>A paragraph under a </><Bold>he</><Bold>ading.</> It holds no bullet at all.                      
 <Quiet>|</>                                                                               
 <Quiet>|</>                                                                               
 <Accent>* </><Strong>0.39.0</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Security</>                                                                     
-<Quiet>|  </><Quiet>-</><Quiet> </><Strong>A TLS 1.3 </><Strong>ha</><Strong>ndshake that breaks the protocol's encryption rules is refused.</>
+<Quiet>|  </><Quiet>-</><Quiet> </><Bold>A TLS 1.3 </><Bold>ha</><Bold>ndshake that breaks the protocol's encryption rules is refused.</>
 <Quiet>|  </>  crucible now uses rustls 0.23.45, which rejects a handshake message a      
 <Quiet>|  </>  server sends in plaintext.                                                 
 <Quiet>|</>                                                                               
@@ -35,9 +35,9 @@ expression: "pictured(80, Glyphs::Ascii)"
 <Accent>* </><Strong>0.40.0</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Added</>                                                                        
-<Quiet>|  </><Quiet>-</><Quiet> </><Strong>A table.</>                                                                   
+<Quiet>|  </><Quiet>-</><Quiet> </><Bold>A table.</>                                                                   
 <Quiet>|</>                                                                               
-<Quiet>|  </><Strong>Key</><Quiet>   </><Quiet> </><Quiet>|</><Quiet> </><Strong>What it does</>                                                        
+<Quiet>|  </><Bold>Key</><Quiet>   </><Quiet> </><Quiet>|</><Quiet> </><Bold>What it does</>                                                        
 <Quiet>|  </><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>+</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</>                                                        
 <Quiet>|  </><Code>Ctrl+O</><Quiet> </><Quiet>|</><Quiet> </>opens                                                               
 <Quiet>|</>                                                                               
@@ -45,7 +45,7 @@ expression: "pictured(80, Glyphs::Ascii)"
 <Accent>* </><Strong>0.41.0</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Fixed</>                                                                        
-<Quiet>|  </><Quiet>-</><Quiet> </><Strong>Code keeps its lines.</>                                                      
+<Quiet>|  </><Quiet>-</><Quiet> </><Bold>Code keeps its lines.</>                                                      
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>first line</>                                                                   
 <Quiet>|  </><Quiet>second line</>                                                                  
@@ -54,29 +54,29 @@ expression: "pictured(80, Glyphs::Ascii)"
 <Accent>* </><Strong>0.41.1</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Fixed</>                                                                        
-<Quiet>|  </><Quiet>-</><Quiet> </><Strong>A link.</> See <Link>the notes</> for more.                                            
+<Quiet>|  </><Quiet>-</><Quiet> </><Bold>A link.</> See <Link>the notes</> for more.                                            
 <Quiet>|</>                                                                               
 <Quiet>|</>                                                                               
 <Accent>* </><Strong>0.42.0</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Removed</>                                                                      
-<Quiet>|  </><Quiet>-</><Quiet> </><Strong>An old flag.</> It did nothing.                                               
+<Quiet>|  </><Quiet>-</><Quiet> </><Bold>An old flag.</> It did nothing.                                               
 <Quiet>|</>                                                                               
 <Quiet>|</>                                                                               
 <Accent>* </><Strong>0.43.0</><Quiet> - 2026-09-29</>                                                           
 <Quiet>|</>                                                                               
 <Quiet>|  </><Quiet>Added</>                                                                        
-<Quiet>|  </><Quiet>-</><Quiet> </><Strong>A number.</> It was <Link>#123</> upstream.                                            
+<Quiet>|  </><Quiet>-</><Quiet> </><Bold>A number.</> It was <Link>#123</> upstream.                                            
 <Quiet>|</>                                                                               
 <Quiet>|</>                                                                               
 <Accent>* </><Strong>0.43.3</><Quiet> - 2026-09-29</><Quiet> - this version</>                                            
                                                                                 
-   <Strong>The newest summary.</> Output redirected under <Code>output.color</> keeps the markdown. 
+   <Bold>The newest summary.</> Output redirected under <Code>output.color</> keeps the markdown. 
                                                                                 
    <Quiet>Fixed</>                                                                        
-   <Quiet>-</><Quiet> </><Strong>Output keeps its markers.</> That setting dropped them, so <Code>**loud**</> came out  
+   <Quiet>-</><Quiet> </><Bold>Output keeps its markers.</> That setting dropped them, so <Code>**loud**</> came out  
      as loud.                                                                   
-   <Quiet>-</><Quiet> </><Strong>A second fix.</> With a longer sentence that has to wrap at forty columns and 
+   <Quiet>-</><Quiet> </><Bold>A second fix.</> With a longer sentence that has to wrap at forty columns and 
      at eighty too, so that the hanging indent shows.                           
                                                                                 
 <Quiet>  + </>12 releases - ten newest in full - /release-notes <version> prints one

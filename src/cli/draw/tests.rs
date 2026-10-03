@@ -242,26 +242,28 @@ fn a_call_that_answered_commits_the_words_it_was_drawn_with() {
 
 #[test]
 fn a_call_that_answered_keeps_the_colours_it_was_drawn_in() {
-    // The mark in the accent, the tool's name in the accent emphasised, what the
-    // call was about in the quieter one -- and all three still there once the
-    // line has stopped moving. A line that gave its colour up at the moment it
+    // The mark in the reader's own foreground, the tool's name in it bold, what
+    // the call was about in the quieter one -- and all three still there once
+    // the line has stopped moving. A line that gave its colour up at the moment it
     // was written out would leave one coloured row above the box and a colourless
     // copy of it in the transcript, with the join wherever the turn is now.
     let style = Style::coloured();
     let palette = style.palette();
     let written = committed("Read(src/main.rs)", WIDE, style);
 
-    for (slot, text) in [
-        (Slot::Accent, style.glyphs().called()),
-        (Slot::Strong, "Read"),
-        (Slot::Quiet, "(src/main.rs)"),
-    ] {
+    for (slot, text) in [(Slot::Bold, "Read"), (Slot::Quiet, "(src/main.rs)")] {
         let painted = format!("{}{text}{}", palette.open(slot), palette.close());
 
         assert!(
             written.contains(&painted),
             "{written:?} is missing {painted:?}"
         );
+    }
+    let mark = style.glyphs().called();
+    assert!(written.contains(mark), "{written:?}");
+    for slot in [Slot::Accent, Slot::Strong, Slot::Bold] {
+        let painted = format!("{}{mark}", palette.open(slot));
+        assert!(!written.contains(&painted), "{written:?} has {painted:?}");
     }
 }
 
@@ -499,7 +501,7 @@ fn a_cut_result_says_it_is_one_by_the_slot_its_words_are_in() {
             Slot::Quiet,
             Slot::Cut,
             Slot::Quiet,
-            Slot::Accent,
+            Slot::Quiet,
             Slot::Quiet
         ]
     );
@@ -1992,6 +1994,31 @@ fn a_row_that_stops_offering_keeps_its_count_and_loses_the_key() {
 }
 
 #[test]
+fn a_result_that_says_the_keys_name_is_not_taken_for_the_offer() {
+    // The key is as quiet as the words around it, so what finds the offer is
+    // where it stands -- between its opening bracket and its closing one --
+    // and not the slot. A result whose own words are the key's name keeps them.
+    let mut rows = vec![
+        one(&ToolOutput::ok(EXPAND), WIDE, Style::plain()),
+        one(
+            &ToolOutput::ok(format!("{EXPAND}\nmore")),
+            WIDE,
+            Style::plain(),
+        ),
+    ];
+    unoffered(&mut rows);
+
+    let said: Vec<String> = rows.iter().map(Row::text).collect();
+    assert_eq!(
+        said,
+        [
+            format!("  \u{23bf} {EXPAND}"),
+            format!("  \u{23bf} {EXPAND} (+1 lines)"),
+        ]
+    );
+}
+
+#[test]
 fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
     let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
         1,
@@ -2142,15 +2169,15 @@ fn the_transcript_follows_the_colour_rule() {
     }
 
     // One span of each level, in the slot the rule gives it: a call's mark is
-    // the accent, an added line carries its meaning, the path in passing is
-    // quiet and what the model says is plain.
+    // the reader's own foreground, an added line carries its meaning, the path
+    // in passing is quiet and what the model says is plain.
     let slot_of = |text: &str| {
         rows.iter()
             .flat_map(Row::spans)
             .find(|(_, said)| said.contains(text))
             .map(|(slot, _)| slot)
     };
-    assert_eq!(slot_of("\u{25cf}"), Some(Slot::Accent), "a call's mark");
+    assert_eq!(slot_of("\u{25cf}"), Some(Slot::Plain), "a call's mark");
     assert_eq!(slot_of("# what stops"), Some(Slot::Added), "an added line");
     assert_eq!(
         slot_of("(src/cli/converse/resume.rs)"),
@@ -2160,6 +2187,143 @@ fn the_transcript_follows_the_colour_rule() {
     assert_eq!(slot_of("The test waits"), Some(Slot::Plain), "model prose");
 
     crate::cli::colour_rule::holds("transcript", &rows, |_| false);
+}
+
+/// The slot of every span of [`ruled_turn`] in colour whose text, trimmed, is
+/// `wanted`, in the order they are drawn.
+fn ruled_slots(wanted: &str) -> Vec<Slot> {
+    ruled_turn(Style::coloured())
+        .iter()
+        .flat_map(Row::spans)
+        .filter(|(_, text)| text.trim() == wanted)
+        .map(|(slot, _)| slot)
+        .collect()
+}
+
+#[test]
+fn a_calls_mark_is_the_readers_own_colour_on_every_row_it_leads() {
+    // Two calls that answered and the run they were folded into.
+    assert_eq!(
+        ruled_slots("\u{25cf}"),
+        [Slot::Plain, Slot::Plain, Slot::Plain]
+    );
+}
+
+#[test]
+fn a_tools_name_is_weight_rather_than_the_theme_colour() {
+    assert_eq!(ruled_slots("Read"), [Slot::Bold]);
+    assert_eq!(ruled_slots("Update"), [Slot::Bold]);
+}
+
+#[test]
+fn the_figures_of_a_count_are_weight_rather_than_the_theme_colour() {
+    // "Added 3 lines, removed 3 lines".
+    assert_eq!(ruled_slots("3"), [Slot::Bold, Slot::Bold]);
+}
+
+#[test]
+fn the_key_a_cut_result_names_is_as_quiet_as_the_hint_it_is_in() {
+    assert_eq!(ruled_slots(EXPAND), [Slot::Quiet]);
+}
+
+#[test]
+fn the_transcript_spends_the_theme_colour_on_code_and_links_alone() {
+    // What keeps the theme's colour is what the reader copies or follows.
+    assert_eq!(ruled_slots("wait_for_index"), [Slot::Code]);
+    assert_eq!(ruled_slots("the issue"), [Slot::Link]);
+
+    let rows = ruled_turn(Style::coloured());
+    let spent: Vec<(Slot, &str)> = rows
+        .iter()
+        .flat_map(Row::spans)
+        .filter(|(slot, _)| matches!(slot, Slot::Accent | Slot::Strong))
+        .collect();
+    assert!(spent.is_empty(), "the accent in the transcript: {spent:?}");
+}
+
+/// A reply with each thing the transcript draws in weight -- a heading, a
+/// raised phrase, a table's header -- and a call whose result counts what it
+/// changed, drawn in `style`.
+fn weighted_turn(style: Style) -> Vec<Row> {
+    let mut renderer = Renderer::new(Recording::new(80, 60));
+    renderer.wears(style.palette());
+    let mut kept = Kept::default();
+
+    let mut turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta(
+            "## What changed\n\nThe wait is **moved**, not removed.\n\n\
+             | File | Lines |\n| --- | --- |\n| resume.rs | 3 |\n",
+        ),
+    ];
+    turn.push(Beat::Answered("Update(src/cli/converse/resume.rs)"));
+    turn.push(beat(Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::ok("changed resume.rs").showing(changed()),
+        receipt: None,
+    }));
+    turn.push(beat(Event::TurnFinished {
+        turn: TurnId::FIRST,
+        stop: StopReason::Yielded,
+    }));
+
+    for beat in turn {
+        match beat {
+            Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
+            Beat::Answered(said) => returned(&mut renderer, said, style),
+        }
+        .expect("the turn to draw");
+    }
+
+    renderer.tail(60)
+}
+
+#[test]
+fn with_colour_off_what_colour_draws_in_weight_reads_as_it_was_written() {
+    // Weight is a slot, and colour off has no slots to put it in: the heading,
+    // the raised phrase and the table keep the markdown they arrived in, and
+    // the call and its count say the same words they do in colour.
+    let text = |style: Style| -> Vec<String> {
+        weighted_turn(style)
+            .iter()
+            .map(|row| row.text().trim_end().to_owned())
+            .collect()
+    };
+    let plain = text(Style::plain());
+
+    assert_eq!(
+        plain.get(..10),
+        Some(
+            &[
+                "## What changed",
+                "",
+                "The wait is **moved**, not removed.",
+                "",
+                "| File | Lines |",
+                "| --- | --- |",
+                "| resume.rs | 3 |",
+                "",
+                "\u{25cf} Update(src/cli/converse/resume.rs)",
+                "  \u{23bf} Added 3 lines, removed 3 lines",
+            ]
+            .map(String::from)[..]
+        ),
+        "{plain:#?}"
+    );
+
+    // The call and its count are the same words whether or not colour draws
+    // them: only the slot they are in moved.
+    let coloured = text(Style::coloured());
+    let call = |rows: &[String]| -> Vec<String> {
+        rows.iter()
+            .skip_while(|row| !row.starts_with('\u{25cf}'))
+            .take(2)
+            .cloned()
+            .collect()
+    };
+    assert_eq!(call(&coloured), call(&plain));
 }
 
 #[test]

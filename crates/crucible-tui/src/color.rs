@@ -9,15 +9,22 @@
 //! **Which slot a span takes is one rule, in three levels.**
 //!
 //! 1. **Accent** is the one thing on a line the eye should land on: the
-//!    selected row's caret, a call's mark, a release heading's mark, a link,
-//!    a key or a count that opens something, and the rule that opens a panel,
-//!    which is the whole of its line. It is [`Slot::Accent`]. A frame in the
-//!    accent, as around a question, is the frame and not a span of what it
-//!    holds: its top and bottom are whole lines, and its edges run down both
-//!    sides of every row inside, which is counted between them. The slots
-//!    drawn in the accent's ink for a reason of their own are not a second
-//!    accent: [`Slot::Strong`] for the name, version or figure a row is read
-//!    for, [`Slot::Link`] and [`Slot::Code`].
+//!    selected row's caret, a release heading's mark, a link, a key or a
+//!    count that opens something, and the rule that opens a panel, which is
+//!    the whole of its line. It is [`Slot::Accent`]. A frame in the accent, as
+//!    around a question, is the frame and not a span of what it holds: its top
+//!    and bottom are whole lines, and its edges run down both sides of every
+//!    row inside, which is counted between them. The slots drawn in the
+//!    accent's ink for a reason of their own are not a second accent:
+//!    [`Slot::Strong`] for the title, name, version or figure a panel, a note
+//!    or the banner is read for, [`Slot::Link`] and [`Slot::Code`].
+//!
+//!    Inside the transcript, selection and panels aside, the accent's ink is
+//!    spent on inline code and links and on nothing else: they are what a
+//!    reader copies or follows. Headings, bold, a table's header, a tool's
+//!    name and the figures of a count are weight, not colour, and are
+//!    [`Slot::Bold`]; a call's mark is the reader's own foreground, and a
+//!    prompt's band carries no hue.
 //! 2. **Meaning** is a fact a reader acts on: success, a warning, trouble, a
 //!    line added or removed, a permissive mode, a task's state, a bar's
 //!    categories.
@@ -65,11 +72,16 @@
 //! the terminal's own theme has made, so it is the one colour worth deferring
 //! to rather than computing.
 //!
-//! Two slots carry an attribute and no hue at all, which is the same deferral
-//! read the other way: weight and a line through the text are the reader's own
-//! foreground, moved, and a foreground that is already legible on their ground
-//! is still legible bolder. A terminal that draws neither loses the emphasis
-//! and keeps the words, which is why nothing is ever said by weight alone.
+//! The slots that carry an attribute and no hue at all are the same deferral
+//! read the other way: weight, a slant and a line through the text are the
+//! reader's own foreground, moved, and a foreground that is already legible on
+//! their ground is still legible bolder. A terminal that draws neither loses
+//! the emphasis and keeps the words. Most of what they mark is also a mark or
+//! a position — a heading is a row of its own, a tool's name leads its call —
+//! but with colour on, a phrase a reply raised is told from its sentence by
+//! weight alone, since the theme's colour is kept for code and links: a
+//! terminal without bold reads it as prose. With colour off the markers it was
+//! raised with are still there, so nothing is said by colour alone.
 //!
 //! A diff is one of three kinds of thing that take the ground, and it takes it
 //! the only way that is safe: a slot painting a ground paints its ink in the same
@@ -92,8 +104,8 @@
 //! and can never fight a terminal theme nobody here has seen. That is also why
 //! the words on it stay the reader's own foreground: a step that small leaves a
 //! foreground they already chose for that ground exactly as legible as it was.
-//! Only the mark takes an ink, and it takes the accent, on the same ground, in
-//! one sequence.
+//! The mark before the words takes no ink either, so a prompt's band carries no
+//! hue at all.
 //!
 //! Most terminals do not answer. The question is not widely implemented, and it
 //! is not asked at all where a reply would arrive late enough to become a
@@ -117,15 +129,23 @@ mod derived;
 pub enum Slot {
     /// The reader's own foreground. Most of what is drawn is this.
     Plain,
-    /// The one thing on a line the eye should land on: a mark, the selected
-    /// row's caret, the live prompt's mark, a key that opens something, and
-    /// the rule that opens a panel. A frame around a question is drawn in it
+    /// The one thing on a line the eye should land on: a release heading's
+    /// mark, the selected row's caret, the live prompt's mark, a key that
+    /// opens something, and the rule that opens a panel. A frame around a question is drawn in it
     /// too, with an edge each side of every row inside; the edges are the
     /// frame, and the row's one accent is counted between them. The prompt
     /// box's own border is [`Slot::Quiet`]; see `Prompt::BORDER`.
     Accent,
     /// The accent, emphasised: the product's name, and a command's name.
     Strong,
+    /// The reader's own foreground, bold: what a row of the transcript is read
+    /// for — a heading, a phrase raised in what a model says, a table's header,
+    /// a tool's name, the figures in a count.
+    ///
+    /// Weight and no hue, so a reply full of headings and a run of calls does
+    /// not read in the theme's colour, which the transcript keeps for code and
+    /// links.
+    Bold,
     /// Contrasting text on the exact accent as a ground under the pointer.
     ///
     /// The ground is the same accent [`Slot::Accent`] uses as ink at rest. The
@@ -211,10 +231,12 @@ pub enum Slot {
     /// module doc gives. Nothing at all where no ground is known — which is a
     /// state the prompt row is drawn correctly in rather than a failure.
     Prompt,
-    /// The mark before it, on that same ground.
+    /// The mark before it, and the corner before a file sent with it, on that
+    /// same ground.
     ///
-    /// The one ink the band carries, and the accent, so the mark reads as the
-    /// same mark it is everywhere else.
+    /// The band and nothing else: the reader's own foreground, as the words
+    /// beside it are. A record of what was asked is found by its band and its
+    /// mark, not by a colour, so it spends none of the theme's.
     PromptMark,
     /// A run of fenced code that is a comment.
     ///
@@ -753,7 +775,10 @@ impl Slot {
             // foreground, emphasised. There is no ladder to climb because there
             // is no colour to spend -- an attribute is the same byte on a
             // terminal with sixteen colours and on one with sixteen million.
-            Self::Doing => Ink {
+            // What a transcript row is read for takes the same byte for the
+            // same reason, and is a slot of its own because it means something
+            // else: a task under way is not a heading.
+            Self::Doing | Self::Bold => Ink {
                 exact: "\x1b[1m",
                 indexed: "\x1b[1m",
                 basic: "\x1b[1m",
@@ -831,48 +856,23 @@ impl std::fmt::Display for Worn {
     }
 }
 
-/// One computed sequence: a ground, and an ink to go with it where there is one.
-///
-/// The pair travels together for the reason every other ground-painting slot's
-/// does — a ground written without its ink leaves the reader's own foreground
-/// as the other half of a contrast nobody checked.
-fn painted(ground: (u8, u8, u8), ink: Option<Ink>, depth: Depth) -> Option<Sequence<BAND>> {
+/// One computed ground, and no ink: the words on it stay the reader's own
+/// foreground, for the reason the module doc gives.
+fn painted(ground: (u8, u8, u8), depth: Depth) -> Option<Sequence<BAND>> {
     use std::fmt::Write as _;
 
     let mut sequence = Sequence::empty();
     let (red, green, blue) = ground;
 
-    // Opened but not closed: the ink's parameters are spliced in before the
-    // `m`, so the pair leaves as one sequence rather than two. Two would be two
-    // chances to write one and not the other, which is the thing the rule about
-    // taking the ground exists to stop.
     match depth {
-        Depth::Exact => write!(sequence, "\x1b[48;2;{red};{green};{blue}"),
-        Depth::Indexed => write!(sequence, "\x1b[48;5;{}", derived::nearest_indexed(ground)),
+        Depth::Exact => write!(sequence, "\x1b[48;2;{red};{green};{blue}m"),
+        Depth::Indexed => write!(sequence, "\x1b[48;5;{}m", derived::nearest_indexed(ground)),
         // The background parameter is the foreground one, ten higher.
-        Depth::Basic => write!(sequence, "\x1b[{}", derived::nearest_basic(ground) + 10),
+        Depth::Basic => write!(sequence, "\x1b[{}m", derived::nearest_basic(ground) + 10),
         Depth::Off => return None,
     }
     .ok()?;
 
-    if let Some(ink) = ink {
-        let worn = match depth {
-            Depth::Exact => ink.exact,
-            Depth::Indexed => ink.indexed,
-            Depth::Basic => ink.basic,
-            Depth::Off => return None,
-        };
-
-        // The table's value is a whole sequence, so what is wanted out of it is
-        // the parameters between the brackets and the `m`.
-        let parameters = worn
-            .strip_prefix("\x1b[")
-            .and_then(|rest| rest.strip_suffix('m'))?;
-
-        write!(sequence, ";{parameters}").ok()?;
-    }
-
-    sequence.write_str("m").ok()?;
     Some(sequence)
 }
 
@@ -939,8 +939,6 @@ pub struct Palette {
     /// That ground, blended a step. `None` where none is known, and then the
     /// prompt row simply does not take one.
     band: Option<Sequence>,
-    /// The same ground, carrying the accent, for the mark on that row.
-    band_mark: Option<Sequence>,
     /// What the syntax theme in force says the six code slots are worth.
     ///
     /// Empty until something reads a fence, which is also the first moment a
@@ -980,10 +978,11 @@ struct Code {
 const LIGHTEN: u8 = 12;
 const DARKEN: u8 = 4;
 
-/// The most bytes a ground-and-ink sequence can come to.
+/// The room a computed sequence is held in.
 ///
-/// `\x1b[1;48;2;255;255;255;38;2;255;255;255m` is forty, and that is the
-/// longest of them: a ground, an ink and the bold a mark may carry.
+/// Forty bytes is what a ground, an ink and bold together come to
+/// (`\x1b[1;48;2;255;255;255;38;2;255;255;255m`). The band is a ground alone
+/// and uses nineteen of it; a syntax theme's ink is widened into the same room.
 const BAND: usize = 40;
 
 /// The most bytes an ink on its own can come to.
@@ -1076,7 +1075,7 @@ impl Palette {
         let depth = if color { Self::depth(from) } else { Depth::Off };
         // Worked out here, once, and held: the only alternative is formatting
         // it per span per frame, and the render path may not.
-        let (band, band_mark) = Self::banding(depth, theme, ground);
+        let band = Self::banding(depth, theme, ground);
 
         Self {
             depth,
@@ -1084,7 +1083,6 @@ impl Palette {
             theme,
             ground,
             band,
-            band_mark,
             code: Code::default(),
             pointed: false,
         }
@@ -1102,20 +1100,16 @@ impl Palette {
         self
     }
 
-    /// The two sequences blended off the reader's ground, at the rung the table
-    /// in force allows.
+    /// The band blended off the reader's ground, at the rung the table in force
+    /// allows.
     ///
     /// Its own function because they are settled in two places — once from the
     /// environment, and again every time the picker moves its mark — and the
     /// two disagreeing is a band that outlives the theme it was blended for.
-    /// It hands back the pair rather than a whole palette so that what else a
+    /// It hands back the band rather than a whole palette so that what else a
     /// palette carries stays the caller's to keep: the syntax theme survives a
     /// change of table, and a field added later cannot be silently reset here.
-    fn banding(
-        depth: Depth,
-        theme: Theme,
-        ground: Option<(u8, u8, u8)>,
-    ) -> (Option<Sequence>, Option<Sequence>) {
+    fn banding(depth: Depth, theme: Theme, ground: Option<(u8, u8, u8)>) -> Option<Sequence> {
         // `ansi` means the sixteen and nothing else. The band is derived rather
         // than chosen, but it still has to be spelled at some rung, and a
         // reader picks that answer precisely because their terminal — or
@@ -1127,10 +1121,7 @@ impl Palette {
         };
         let band = Self::band(ground.unwrap_or(Self::nominal(theme)));
 
-        (
-            painted(band, None, rung),
-            painted(band, Some(theme.tones().accent), rung),
-        )
+        painted(band, rung)
     }
 
     /// The ground a table was drawn for, where nothing has said what the real
@@ -1229,23 +1220,23 @@ impl Palette {
     ///
     /// Everything the terminal decided is carried across — how far up the
     /// ladder it goes, and the band blended off its own ground — because none
-    /// of that is the theme's to change. Only the mark's ink is worked out
-    /// again, since it is the one computed value a table has a say in.
+    /// of that is the theme's to change. Only the band is worked out again,
+    /// since the rung it is spelled at, and the ground it is blended off where
+    /// the terminal never said, are the table's.
     #[must_use]
     pub fn wearing(self, theme: Theme) -> Self {
-        // The blend off the ground is fixed, but the rung it is spelled at and
-        // the ink the mark takes are both the table's, so both are settled
-        // again — by the same function the environment settles them with, so
-        // moving the picker's mark cannot reach a state resolving never could.
+        // The blend off the ground is fixed, but the rung it is spelled at is
+        // the table's, so it is settled again — by the same function the
+        // environment settles it with, so moving the picker's mark cannot reach
+        // a state resolving never could.
         // `depth` is the terminal's own answer throughout and is never narrowed
         // in place: a table that spends less does not make the next one spend
         // less too.
-        let (band, band_mark) = Self::banding(self.depth, theme, self.ground);
+        let band = Self::banding(self.depth, theme, self.ground);
 
         Self {
             theme,
             band,
-            band_mark,
             ..self
         }
     }
@@ -1274,7 +1265,6 @@ impl Palette {
             theme: Theme::Dark,
             ground: None,
             band: None,
-            band_mark: None,
             code: Code::default(),
             pointed: false,
         }
@@ -1302,7 +1292,6 @@ impl Palette {
             // The two the table has no answer for. Held on the palette because
             // they were worked out from the reader's ground rather than chosen.
             let computed = match slot {
-                Slot::PromptMark => self.band_mark,
                 Slot::Comment => self.code.comment.map(Sequence::widened),
                 Slot::Keyword => self.code.keyword.map(Sequence::widened),
                 Slot::Str => self.code.string.map(Sequence::widened),

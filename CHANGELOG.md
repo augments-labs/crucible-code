@@ -68,8 +68,12 @@ change in any release with no deprecation period.
   for the eye to land on, not counting the edges of a frame around it, such as
   the one around a question; colour that means something keeps that meaning in
   every theme, and nothing is said by colour alone, so the colourblind themes
-  and `color` set to `never` lose nothing. The rule is in the theme section of
-  the configuration docs.
+  and `color` set to `never` lose nothing. In replies and tool calls only
+  inline code and links take the theme's colour (panels, notes, `/help` names,
+  `/release-notes` versions and the banner keep it): headings, bold, tool names
+  and the figures of a count are bold in your own foreground, and a sent
+  prompt's row has no colour beyond its background. The rule is in the theme
+  section of the configuration docs.
 - **The installers show each step as it runs.** In a terminal, `install.sh`
   and `install.ps1` mark each of detect platform, download, verify checksum,
   unpack and install, draw a bar while the archive downloads, and end with

@@ -8,8 +8,10 @@
 //! What this file composed itself is a different thing and goes out a different
 //! door. A call line and the line hanging under it are spans this program built,
 //! so they are handed to [`Renderer::present`] as rows and the palette decides
-//! their colour at the last moment: the mark and the tool's name in the accent,
-//! what the call was about and what came back in the quieter one. A row that
+//! their colour at the last moment: the mark in the reader's own foreground and
+//! the tool's name in it bold, what the call was about and what came back in
+//! the quieter one. None of it is in the theme's colour, which the transcript
+//! keeps for inline code and links. A row that
 //! arrives already laid out is clipped to the window rather than folded into
 //! it, so nothing here is counting its columns a second time.
 //!
@@ -849,7 +851,7 @@ pub(crate) fn called(call: &ToolCall, summary: &Summary) -> String {
 /// ceiling does: a line as wide as the window with a mark still in front of it
 /// is a row the terminal wraps and the live tail never counted.
 ///
-/// The tool's name is in the accent and what the call is about is in the quieter
+/// The tool's name is bold and what the call is about is in the quieter
 /// colour, so a column of calls reads as the tools that ran with their arguments
 /// beside them rather than as a paragraph. They are told apart here, after the
 /// clipping and not before it, because how much of the line a narrow window
@@ -897,9 +899,9 @@ fn heading(said: &str, room: usize, glyphs: Glyphs) -> String {
 fn named(said: &str) -> Row {
     match said.split_once('(') {
         Some((name, about)) => Row::new()
-            .then(Slot::Strong, name)
+            .then(Slot::Bold, name)
             .then(Slot::Quiet, format!("({about}")),
-        None => Row::new().then(Slot::Strong, said),
+        None => Row::new().then(Slot::Bold, said),
     }
 }
 
@@ -939,8 +941,9 @@ fn hung_off(lead: Row, words: &Row, room: usize) -> Vec<Row> {
 /// Writes the line of a call that has stopped being live.
 ///
 /// The same words the footing was drawing, in the same columns and the same
-/// colours, with the motion gone — the mark stops pulsing and settles on the
-/// accent, and the result that follows hangs under a line that is already there.
+/// colours, with the motion gone — the mark stops pulsing and stays in the
+/// reader's own foreground, and the result that follows hangs under a line that
+/// is already there.
 pub(crate) fn returned<T: Terminal>(
     renderer: &mut Renderer<T>,
     said: &str,
@@ -949,7 +952,7 @@ pub(crate) fn returned<T: Terminal>(
     let words = words(said, renderer.transcript_columns(), style);
     renderer.settle()?;
     renderer.apart()?;
-    let mut row = Row::new().then(Slot::Accent, style.glyphs().called());
+    let mut row = Row::new().then(Slot::Plain, style.glyphs().called());
     if !words.is_empty() {
         row = row.then(Slot::Plain, " ").join(words);
     }
@@ -987,7 +990,7 @@ pub(crate) fn gathered<T: Terminal>(
     renderer.apart()?;
 
     let lead = Row::new()
-        .then(Slot::Accent, glyphs.called())
+        .then(Slot::Plain, glyphs.called())
         .then(Slot::Plain, " ");
     let room = window.saturating_sub(lead.columns());
     let rows = hung_off(lead, &Row::new().then(Slot::Cut, flattened(said)), room);
@@ -1113,7 +1116,7 @@ fn finished(output: &Shown, beyond: usize, window: usize, style: Style, details:
     lead.push(Slot::Cut, clipped(said, preview, glyphs));
     if tail <= room {
         lead.push(Slot::Quiet, counted);
-        lead.push(Slot::Accent, opens);
+        lead.push(Slot::Quiet, opens);
         lead.push(Slot::Quiet, shut);
     }
     vec![lead]
@@ -1234,11 +1237,11 @@ fn structural(line: &str) -> bool {
 
 /// The two halves of what a cut result offers: how much it cut, and the door.
 ///
-/// Parted so they can be lit apart. The count is a fact about what came back
-/// and the key is the way to the rest of it, and a click on this row opens the
-/// same door the key does — so the accent goes on the half that answers one,
-/// the way the count of what is still running is lit under the box and the
-/// mark parting it from the mode is not.
+/// Parted so a row that stops offering can take the key off and keep the
+/// count: the count is a fact about what came back, and the key is the way to
+/// the rest of it. Both are as quiet as the hint they stand in, because the
+/// transcript keeps the theme's colour for code and links, and a click on this
+/// row opens the same door the key does.
 ///
 /// The words in front of both are in the cut slot rather than the quiet one the
 /// rest of this row is in. At rest the two look the same, which is right: a row
@@ -1393,9 +1396,7 @@ fn unoffered(rows: &mut [Row]) {
             .spans()
             .map(|(slot, text)| (slot, text.to_owned()))
             .collect();
-        let key = spans
-            .iter()
-            .position(|(slot, text)| *slot == Slot::Accent && text == EXPAND);
+        let key = offered_at(&spans);
         // ` (+2 lines · ` keeps its count and loses the mark after it; a bare
         // ` (` was only ever the offer's.
         let counted = key
@@ -1425,6 +1426,25 @@ fn unoffered(rows: &mut [Row]) {
             }
         });
     }
+}
+
+/// Where the key's name stands in `spans`, if [`finished`] made an offer there.
+///
+/// Found by where it stands rather than by its slot, which is the quiet the
+/// words of a result can be in too: the key's name alone, after the opening
+/// [`offer`] writes and before its closing bracket.
+fn offered_at(spans: &[(Slot, String)]) -> Option<usize> {
+    spans.iter().enumerate().position(|(at, (slot, text))| {
+        *slot == Slot::Quiet
+            && text == EXPAND
+            && at
+                .checked_sub(1)
+                .and_then(|opens| spans.get(opens))
+                .is_some_and(|(slot, opens)| *slot == Slot::Quiet && opens.starts_with(" ("))
+            && spans
+                .get(at + 1)
+                .is_some_and(|(slot, shut)| *slot == Slot::Quiet && shut == ")")
+    })
 }
 
 /// Whether `text` is a change's own offer as [`finished`] writes it: the key's
@@ -1554,10 +1574,10 @@ fn counted(row: &mut Row, counts: Changed, dropped: usize, room: usize) {
     }
 }
 
-/// `word`, then a number of lines with the number emphasised.
+/// `word`, then a number of lines with the number in bold.
 fn count(row: &mut Row, word: &str, lines: usize) {
     row.push(Slot::Quiet, word);
-    row.push(Slot::Strong, lines.to_string());
+    row.push(Slot::Bold, lines.to_string());
     row.push(Slot::Quiet, if lines == 1 { " line" } else { " lines" });
 }
 
