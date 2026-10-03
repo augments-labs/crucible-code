@@ -68,7 +68,7 @@ mod working;
 pub use asked::{Asked, Choice, Given, Stop, Writing};
 pub use asking::Question;
 pub use bar::{Bar, Fill, Part};
-pub use color::{Palette, Sequence, Slot, Theme, Worn};
+pub use color::{Design, Palette, Sequence, Slot, Theme, Worn};
 pub use editor::{Editor, Key, Projection, Sending, Typed};
 pub use expanded::{Expanded, Shown};
 pub use forge::Forge;

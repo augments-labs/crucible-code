@@ -20,7 +20,7 @@
 use super::{
     COLOR, COMPACTION_WHEN, DOCUMENT, Field, GLYPHS, PROMPT_CACHE_ISOLATION, PROMPT_CACHE_MODE,
     PROMPT_CACHE_PERSISTENT, PROMPT_CACHE_RETENTION, SCROLL_SPEED, SEND, THEME, TONE, TOOL_DETAIL,
-    UPDATE_CHECK,
+    TRANSCRIPT_COLOURS, UPDATE_CHECK,
 };
 
 #[cfg(test)]
@@ -60,6 +60,8 @@ pub enum RowId {
     Glyphs,
     /// `output.color`.
     Colour,
+    /// `output.transcriptColours`.
+    TranscriptColours,
     /// `output.toolDetail`.
     ToolDetail,
     /// `output.scrollRail`.
@@ -197,6 +199,12 @@ const ROWS: &[Row] = &[
         "output.color",
         "Colour",
         Values::Choice(COLOR),
+    ),
+    Row::new(
+        RowId::TranscriptColours,
+        "output.transcriptColours",
+        "Transcript colours",
+        Values::Choice(TRANSCRIPT_COLOURS),
     ),
     Row::new(
         RowId::ToolDetail,

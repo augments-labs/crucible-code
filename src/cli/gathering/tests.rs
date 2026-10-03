@@ -1,14 +1,20 @@
 //! What a run of calls that only looked around says it did.
 
 use super::Gathering;
-use crucible_tools::{Looking, ToolOutput};
+use crate::cli::draw::Called;
+use crucible_tools::{Argument, Looking, ToolOutput};
 use crucible_types::ToolId;
+
+/// A call's line, as a file tool's call says it.
+fn line(said: &str) -> Called {
+    Called::new(said, Argument::Path)
+}
 
 /// A run holding one of each, in the order the counters are said.
 fn gathering(looking: &[Looking]) -> Gathering {
     let mut gathering = Gathering::default();
     for (at, one) in looking.iter().enumerate() {
-        gathering.took(ToolId::new(format!("call-{at}")), *one, String::new());
+        gathering.took(ToolId::new(format!("call-{at}")), *one, line(""));
     }
     gathering
 }
@@ -100,21 +106,21 @@ fn the_first_call_of_a_run_is_held_back_until_a_second_one_arrives() {
 
     assert!(
         gathering
-            .took(ToolId::new("a"), Looking::File, "Read(one)".to_owned())
+            .took(ToolId::new("a"), Looking::File, line("Read(one)"))
             .is_none()
     );
 
     let alone = gathering
-        .took(ToolId::new("b"), Looking::File, "Read(two)".to_owned())
+        .took(ToolId::new("b"), Looking::File, line("Read(two)"))
         .expect("the first call, let go now the run has a second");
 
     assert_eq!(alone.call, ToolId::new("a"));
-    assert_eq!(alone.said, "Read(one)");
+    assert_eq!(alone.said.text(), "Read(one)");
 
     // And once only: the run is settled, so nothing after it is held back.
     assert!(
         gathering
-            .took(ToolId::new("c"), Looking::File, "Read(three)".to_owned())
+            .took(ToolId::new("c"), Looking::File, line("Read(three)"))
             .is_none()
     );
 }
@@ -123,7 +129,7 @@ fn the_first_call_of_a_run_is_held_back_until_a_second_one_arrives() {
 #[test]
 fn only_the_held_call_keeps_its_result_here() {
     let mut gathering = Gathering::default();
-    gathering.took(ToolId::new("a"), Looking::File, "Read(one)".to_owned());
+    gathering.took(ToolId::new("a"), Looking::File, line("Read(one)"));
 
     assert!(
         gathering
@@ -145,7 +151,7 @@ fn only_the_held_call_keeps_its_result_here() {
 #[test]
 fn a_run_knows_which_calls_it_counted() {
     let mut gathering = Gathering::default();
-    gathering.took(ToolId::new("a"), Looking::File, String::new());
+    gathering.took(ToolId::new("a"), Looking::File, line(""));
 
     assert!(gathering.holds(&ToolId::new("a")));
     assert!(!gathering.holds(&ToolId::new("b")));
@@ -155,8 +161,8 @@ fn a_run_knows_which_calls_it_counted() {
 #[test]
 fn taking_a_run_leaves_nothing_behind() {
     let mut gathering = Gathering::default();
-    gathering.took(ToolId::new("a"), Looking::File, String::new());
-    gathering.took(ToolId::new("b"), Looking::Pattern, String::new());
+    gathering.took(ToolId::new("a"), Looking::File, line(""));
+    gathering.took(ToolId::new("b"), Looking::Pattern, line(""));
 
     let taken = gathering.taken();
 
@@ -171,8 +177,8 @@ fn taking_a_run_leaves_nothing_behind() {
 #[test]
 fn a_run_hands_back_its_calls_in_the_order_they_were_made() {
     let mut gathering = Gathering::default();
-    gathering.took(ToolId::new("a"), Looking::File, String::new());
-    gathering.took(ToolId::new("b"), Looking::Pattern, String::new());
+    gathering.took(ToolId::new("a"), Looking::File, line(""));
+    gathering.took(ToolId::new("b"), Looking::Pattern, line(""));
 
     assert_eq!(gathering.calls(), [ToolId::new("a"), ToolId::new("b")]);
 }
@@ -183,10 +189,10 @@ fn a_run_folds_once_it_holds_two() {
     let mut gathering = Gathering::default();
     assert!(!gathering.folds());
 
-    gathering.took(ToolId::new("a"), Looking::File, String::new());
+    gathering.took(ToolId::new("a"), Looking::File, line(""));
     assert!(!gathering.folds());
 
-    gathering.took(ToolId::new("b"), Looking::File, String::new());
+    gathering.took(ToolId::new("b"), Looking::File, line(""));
     assert!(gathering.folds());
 }
 

@@ -430,6 +430,16 @@
             "full"
           ],
           "type": "string"
+        },
+        "transcriptColours": {
+          "default": "calm",
+          "description": "How many of the theme's colours the transcript spends: calm on code, paths and links, balanced on versions and a call's path or address too, rich on headings, lists, quotes and figures as well",
+          "enum": [
+            "calm",
+            "balanced",
+            "rich"
+          ],
+          "type": "string"
         }
       },
       "type": "object"

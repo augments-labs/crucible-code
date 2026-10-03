@@ -45,7 +45,11 @@ fn landing(output: ToolOutput) -> Landing {
     let call = call("edit", "{}");
     let heading = long_heading();
     kept.calling(call.id.clone(), heading.clone());
-    returned(&mut renderer, &heading, style).expect("the call line to draw");
+    returned(
+        &mut renderer,
+        &Called::new(heading, crucible_tools::Argument::Path),
+        style,
+    ).expect("the call line to draw");
 
     let actual = renderer.lines();
     let above = renderer.tail(TALL).len();

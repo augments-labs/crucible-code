@@ -574,7 +574,7 @@ impl Tool for Bash {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, COMMAND)
+        summary::field(NAME, args, COMMAND, crucible_tools::Argument::Command)
     }
 
     fn backgroundable(&self, args: &ToolArgs) -> bool {

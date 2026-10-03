@@ -138,7 +138,7 @@ impl Tool for ToolSearch {
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
-        summary::field(NAME, args, QUERY)
+        summary::field(NAME, args, QUERY, crucible_tools::Argument::Other)
     }
 
     fn run<'a>(
