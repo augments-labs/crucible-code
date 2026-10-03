@@ -1129,7 +1129,7 @@ impl Turn<'_, '_> {
                 {
                     self.turning.queueing(
                         self.held.queued.waiting_all(),
-                        renderer.columns(),
+                        renderer.transcript_columns(),
                         self.terms.style(),
                     );
                 }
@@ -1532,7 +1532,11 @@ fn take<T: Terminal>(
     // queue is read, so a line typed during the last turn is still waiting when
     // this one is about making room for it. Read before the first frame, so the
     // panel naming what is coming is right on the frame it first appears in.
-    turning.queueing(held.queued.waiting_all(), renderer.columns(), terms.style());
+    turning.queueing(
+        held.queued.waiting_all(),
+        renderer.transcript_columns(),
+        terms.style(),
+    );
 
     attaching::refresh_store(held, importing(conversation.session()));
     let working = sent(
