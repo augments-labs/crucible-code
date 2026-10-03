@@ -89,6 +89,8 @@ surface below, and updates every one it reaches in the same change.
   it has one.
 - A refusal that means "come back later" is classified by the provider module
   that owns the wire, and is never retried as if it were about now.
+- A new screen or panel works in both `output.screen` modes, or says why it is
+  fullscreen only.
 
 ## Dependencies
 
