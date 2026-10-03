@@ -59,7 +59,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 29] {
+fn all() -> [Slot; 30] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -92,6 +92,7 @@ fn all() -> [Slot; 29] {
             Slot::Name => 26,
             Slot::Operator => 27,
             Slot::Code => 28,
+            Slot::Bold => 29,
         }
     }
 
@@ -125,6 +126,7 @@ fn all() -> [Slot; 29] {
         Slot::Name,
         Slot::Operator,
         Slot::Code,
+        Slot::Bold,
     ];
 
     for (index, slot) in slots.into_iter().enumerate() {
@@ -449,10 +451,9 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
     // the reader's own foreground and Quiet is their theme's answer to "subdued
     // on this ground", which is the one judgement worth deferring to. Cut is
     // whichever of those two the pointer has made it, so it has no hue of its
-    // own at either end. The other
-    // three are that same foreground with an attribute on it -- weight, a
-    // slant, and a line through it -- so what they are legible against is
-    // whatever Plain was. A link is not among them: it wears the accent under
+    // own at either end. Emphasis, Struck, Doing and Bold are that same
+    // foreground with an attribute on it -- a slant, a line through it, and
+    // weight -- so what they are legible against is whatever Plain was. A link is not among them: it wears the accent under
     // its line, and is checked with the hues. The band takes a ground and writes no ink
     // at all, so the words on it stay theirs — its mark is the one slot here
     // that does carry a hue and is checked with the band instead. The six code
@@ -490,6 +491,7 @@ fn the_slots_without_a_hue_are_the_ones_that_meant_not_to_have_one() {
             Slot::Number,
             Slot::Name,
             Slot::Operator,
+            Slot::Bold,
         ]
     );
 }
@@ -663,6 +665,31 @@ fn the_mark_on_the_band_carries_its_ground_and_its_accent_in_one_sequence() {
 
         assert_ne!(ground, Sets::Nothing, "{theme:?}: {slot:?} took no ground");
         assert_eq!(ink, accent, "{theme:?}: {slot:?} changed the accent");
+    }
+}
+
+#[test]
+fn bold_is_weight_and_no_colour_in_every_theme_and_at_every_rung() {
+    // What a row of the transcript is read for -- a heading, a raised phrase,
+    // a tool's name -- is weight rather than colour, so the one byte that says
+    // so is the same in every table and on every terminal, and no theme spends
+    // a hue on it: `ansi` included, since there is nothing here to spell in
+    // the sixteen or out of them.
+    for theme in THEMES {
+        for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
+            for ground in [None, Some((0, 0, 0)), Some((255, 255, 255))] {
+                assert_eq!(
+                    wearing(depth, theme, ground).open(Slot::Bold).as_str(),
+                    "\x1b[1m",
+                    "{theme:?} at {depth:?} on {ground:?}"
+                );
+            }
+        }
+        assert_eq!(
+            wearing(Depth::Off, theme, None).open(Slot::Bold).as_str(),
+            "",
+            "{theme:?} with colour off"
+        );
     }
 }
 

@@ -65,10 +65,10 @@
 //! the terminal's own theme has made, so it is the one colour worth deferring
 //! to rather than computing.
 //!
-//! Two slots carry an attribute and no hue at all, which is the same deferral
-//! read the other way: weight and a line through the text are the reader's own
-//! foreground, moved, and a foreground that is already legible on their ground
-//! is still legible bolder. A terminal that draws neither loses the emphasis
+//! The slots that carry an attribute and no hue at all are the same deferral
+//! read the other way: weight, a slant and a line through the text are the
+//! reader's own foreground, moved, and a foreground that is already legible on
+//! their ground is still legible bolder. A terminal that draws neither loses the emphasis
 //! and keeps the words, which is why nothing is ever said by weight alone.
 //!
 //! A diff is one of three kinds of thing that take the ground, and it takes it
@@ -126,6 +126,14 @@ pub enum Slot {
     Accent,
     /// The accent, emphasised: the product's name, and a command's name.
     Strong,
+    /// The reader's own foreground, bold: what a row of the transcript is read
+    /// for — a heading, a phrase raised in what a model says, a table's header,
+    /// a tool's name, the figures in a count.
+    ///
+    /// Weight and no hue, so a reply full of headings and a run of calls does
+    /// not read in the theme's colour, which the transcript keeps for code and
+    /// links.
+    Bold,
     /// Contrasting text on the exact accent as a ground under the pointer.
     ///
     /// The ground is the same accent [`Slot::Accent`] uses as ink at rest. The
@@ -753,7 +761,10 @@ impl Slot {
             // foreground, emphasised. There is no ladder to climb because there
             // is no colour to spend -- an attribute is the same byte on a
             // terminal with sixteen colours and on one with sixteen million.
-            Self::Doing => Ink {
+            // What a transcript row is read for takes the same byte for the
+            // same reason, and is a slot of its own because it means something
+            // else: a task under way is not a heading.
+            Self::Doing | Self::Bold => Ink {
                 exact: "\x1b[1m",
                 indexed: "\x1b[1m",
                 basic: "\x1b[1m",
