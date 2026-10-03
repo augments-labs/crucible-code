@@ -76,8 +76,12 @@
 //! read the other way: weight, a slant and a line through the text are the
 //! reader's own foreground, moved, and a foreground that is already legible on
 //! their ground is still legible bolder. A terminal that draws neither loses
-//! the emphasis and keeps the words, which is why nothing is ever said by
-//! weight alone.
+//! the emphasis and keeps the words. Most of what they mark is also a mark or
+//! a position — a heading is a row of its own, a tool's name leads its call —
+//! but with colour on, a phrase a reply raised is told from its sentence by
+//! weight alone, since the theme's colour is kept for code and links: a
+//! terminal without bold reads it as prose. With colour off the markers it was
+//! raised with are still there, so nothing is said by colour alone.
 //!
 //! A diff is one of three kinds of thing that take the ground, and it takes it
 //! the only way that is safe: a slot painting a ground paints its ink in the same
@@ -126,8 +130,8 @@ pub enum Slot {
     /// The reader's own foreground. Most of what is drawn is this.
     Plain,
     /// The one thing on a line the eye should land on: a release heading's
-    /// mark, the selected row's caret, the live prompt's mark, a key that opens something, and
-    /// the rule that opens a panel. A frame around a question is drawn in it
+    /// mark, the selected row's caret, the live prompt's mark, a key that
+    /// opens something, and the rule that opens a panel. A frame around a question is drawn in it
     /// too, with an edge each side of every row inside; the edges are the
     /// frame, and the row's one accent is counted between them. The prompt
     /// box's own border is [`Slot::Quiet`]; see `Prompt::BORDER`.
@@ -1222,8 +1226,9 @@ impl Palette {
     #[must_use]
     pub fn wearing(self, theme: Theme) -> Self {
         // The blend off the ground is fixed, but the rung it is spelled at is
-        // the table's, so it is settled again — by the same function the environment settles them with, so
-        // moving the picker's mark cannot reach a state resolving never could.
+        // the table's, so it is settled again — by the same function the
+        // environment settles it with, so moving the picker's mark cannot reach
+        // a state resolving never could.
         // `depth` is the terminal's own answer throughout and is never narrowed
         // in place: a table that spends less does not make the next one spend
         // less too.
