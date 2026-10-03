@@ -170,7 +170,7 @@ impl Table {
 
         // The header is the row that says what the others are, so it is raised
         // whatever its own cells were written as.
-        laid.row(header, Some(Slot::Strong), say);
+        laid.row(header, Some(Slot::Bold), say);
         laid.rule(say);
         for cells in rows.iter().skip(1) {
             laid.row(cells, None, say);

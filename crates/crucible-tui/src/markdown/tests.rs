@@ -1,4 +1,5 @@
 use super::*;
+use crate::color::{Palette, Theme};
 use crate::width;
 
 /// A window wide enough that nothing here is laid out against its edge.
@@ -49,7 +50,7 @@ fn the_marker_is_dropped_and_the_run_it_covered_wears_the_slot() {
     let said = whole("a **loud** word");
 
     assert_eq!(drawn(&said), "a loud word");
-    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Strong, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Bold, Slot::Plain]);
 }
 
 #[test]
@@ -60,11 +61,11 @@ fn one_marker_is_emphasis_and_two_are_weight() {
     );
     assert_eq!(
         slots(&whole("a **loud** word")),
-        vec![Slot::Plain, Slot::Strong, Slot::Plain]
+        vec![Slot::Plain, Slot::Bold, Slot::Plain]
     );
     assert_eq!(
         slots(&whole("a ***both*** word")),
-        vec![Slot::Plain, Slot::Strong, Slot::Plain],
+        vec![Slot::Plain, Slot::Bold, Slot::Plain],
         "three markers are both, and weight is the louder"
     );
 }
@@ -76,7 +77,7 @@ fn the_two_are_told_apart_inside_one_line() {
     assert_eq!(drawn(&said), "this and that");
     assert_eq!(
         slots(&said),
-        vec![Slot::Emphasis, Slot::Plain, Slot::Strong]
+        vec![Slot::Emphasis, Slot::Plain, Slot::Bold]
     );
 }
 
@@ -85,7 +86,7 @@ fn a_heading_loses_its_hashes_and_keeps_its_words() {
     let said = whole("### What it costs\nthe paragraph under it");
 
     assert_eq!(drawn(&said), "What it costs\nthe paragraph under it");
-    assert_eq!(slots(&said), vec![Slot::Strong, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Bold, Slot::Plain]);
 }
 
 #[test]
@@ -205,7 +206,7 @@ fn two_underscores_around_a_word_are_weight() {
     let said = whole("it is __yours__ now");
 
     assert_eq!(drawn(&said), "it is yours now");
-    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Strong, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Plain, Slot::Bold, Slot::Plain]);
 }
 
 #[test]
@@ -218,7 +219,7 @@ fn a_marker_that_never_closes_costs_its_own_paragraph_and_no_more() {
     );
     assert_eq!(
         slots(&said),
-        vec![Slot::Strong, Slot::Plain, Slot::Strong, Slot::Plain]
+        vec![Slot::Bold, Slot::Plain, Slot::Bold, Slot::Plain]
     );
 }
 
@@ -239,7 +240,7 @@ fn a_marker_split_across_two_deltas_is_still_one_marker() {
 
     assert_eq!(drawn(&first), "a ");
     assert_eq!(drawn(&second), "loud word");
-    assert_eq!(slots(&second), vec![Slot::Strong, Slot::Plain]);
+    assert_eq!(slots(&second), vec![Slot::Bold, Slot::Plain]);
 }
 
 #[test]
@@ -734,7 +735,7 @@ fn a_wrapped_header_cell_is_the_header_on_every_line_of_it() {
     let said = narrowed("| a | one two |\n| --- | --- |\n| b | c |\n\n", 9);
     let header: Vec<&str> = said
         .iter()
-        .filter(|(slot, text)| *slot == Slot::Strong && !text.trim().is_empty())
+        .filter(|(slot, text)| *slot == Slot::Bold && !text.trim().is_empty())
         .map(|(_, text)| text.as_str())
         .collect();
 
@@ -793,9 +794,9 @@ fn the_header_is_raised_and_the_bars_are_quiet() {
     assert_eq!(
         slots(&said),
         vec![
-            Slot::Strong,
+            Slot::Bold,
             Slot::Quiet,
-            Slot::Strong,
+            Slot::Bold,
             Slot::Plain,
             Slot::Quiet,
             Slot::Plain,
@@ -1160,7 +1161,7 @@ fn emphasis_that_opened_on_one_line_closes_on_the_next() {
     assert_eq!(drawn(&said), "a phrase over\ntwo lines and prose\n");
     assert_eq!(
         slots(&said),
-        vec![Slot::Strong, Slot::Plain, Slot::Strong, Slot::Plain]
+        vec![Slot::Bold, Slot::Plain, Slot::Bold, Slot::Plain]
     );
 }
 
@@ -1169,7 +1170,7 @@ fn emphasis_nobody_closed_ends_with_the_paragraph() {
     let said = ended("**opened and left open\n\na new paragraph\n");
 
     assert_eq!(drawn(&said), "opened and left open\n\na new paragraph\n");
-    assert_eq!(slots(&said), vec![Slot::Strong, Slot::Plain]);
+    assert_eq!(slots(&said), vec![Slot::Bold, Slot::Plain]);
 }
 
 #[test]
@@ -1181,7 +1182,7 @@ fn emphasis_nobody_closed_ends_where_the_next_block_starts() {
         slots(&said),
         vec![
             Slot::Quiet,
-            Slot::Strong,
+            Slot::Bold,
             Slot::Plain,
             Slot::Quiet,
             Slot::Plain
@@ -1420,6 +1421,49 @@ fn a_heading_is_still_a_heading_and_not_a_number() {
 
     assert_eq!(wrote(&said), "487 of them\n");
     assert!(points(&said).is_empty());
+}
+
+#[test]
+fn a_reply_spends_the_theme_colour_on_code_and_links_alone() {
+    // Headings, raised phrases and a table's header are weight in the reader's
+    // own foreground; the theme's colour is kept for what the reader copies or
+    // follows.
+    let said = whole(
+        "# Fixed\n\nSee **the note**, `wait_for_index` and \
+         [the issue](https://example.com/1).\n\n\
+         | file | lines |\n| --- | --- |\n| main.rs | 42 |\n\n",
+    );
+    let slot_of = |wanted: &str| {
+        said.iter()
+            .find(|(_, text)| text.trim() == wanted)
+            .map(|(slot, _)| *slot)
+    };
+
+    assert_eq!(slot_of("Fixed"), Some(Slot::Bold), "a heading: {said:?}");
+    assert_eq!(slot_of("the note"), Some(Slot::Bold), "bold: {said:?}");
+    assert_eq!(slot_of("file"), Some(Slot::Bold), "a header cell: {said:?}");
+    assert_eq!(slot_of("lines"), Some(Slot::Bold), "a header cell: {said:?}");
+    assert_eq!(slot_of("wait_for_index"), Some(Slot::Code), "{said:?}");
+    assert_eq!(slot_of("the issue"), Some(Slot::Link), "{said:?}");
+    assert!(
+        said.iter().all(|(slot, _)| *slot != Slot::Strong),
+        "the accent, bold, in a reply: {said:?}"
+    );
+
+    // And the two that keep it still wear the accent's ink.
+    for theme in [Theme::Dark, Theme::Light, Theme::ColourblindDark] {
+        let palette = Palette::resolve(true, theme, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let accent = palette.open(Slot::Accent);
+        let accent = accent.as_str().trim_start_matches("\x1b[");
+
+        assert_eq!(palette.open(Slot::Code).as_str(), format!("\x1b[{accent}"));
+        assert_eq!(
+            palette.open(Slot::Link).as_str(),
+            format!("\x1b[4;{accent}")
+        );
+    }
 }
 
 #[test]
