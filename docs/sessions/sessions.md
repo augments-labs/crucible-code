@@ -274,11 +274,28 @@ cd ~/code/website && crucible --resume 019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1
 Where the window is too narrow for that on one row, it is broken after the `&&`,
 where a shell reads on to the next line, so pasting both rows runs it. In any
 window at least 56 columns wide the id is whole on its row; a directory too long
-for its row loses its front, marked `…`. On
-Windows the directory is written whole rather than under `~`, in double quotes
-where it needs them, which cmd and PowerShell both read. A directory whose name
-holds `%`, `$` or a backtick is written for PowerShell, with those escaped so
-nothing in the name is expanded; cmd finds no such directory and runs nothing.
+for its row loses its front, marked `…`.
+
+On Windows no one line runs the same in cmd and in PowerShell: Windows
+PowerShell 5.1 refuses `&&`, cmd's `cd` does not change drive, and PowerShell's
+`cd` reads `[` and `]` in a name as a wildcard. So each shell gets its own
+command, and the resume is a command of its own that you run next in either.
+Each label is a row above its command, so a command row copies whole with
+nothing else on it:
+
+```text
+cmd
+pushd D:\code\website
+PowerShell
+Set-Location -LiteralPath D:\code\website
+then
+crucible --resume 019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1
+```
+
+The directory is written whole rather than under `~`, and quoted where it needs
+it: in double quotes for cmd and single quotes for PowerShell, so nothing in its
+name is expanded. cmd expands `%NAME%` even inside quotes, so a directory whose
+name holds `%` gets only the PowerShell rows.
 
 The preview reads a bounded message tail and uses the live transcript's message
 renderer. It omits supplemental diff bodies and compaction notices; selecting

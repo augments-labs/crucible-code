@@ -20,7 +20,9 @@
 //! key; the index is read again only after a rename, to show what it now
 //! holds. A session from another directory is never picked up here, since it is
 //! bound to the directory it was recorded in: Enter on one says the command
-//! that resumes it there instead.
+//! that resumes it there instead. Windows is told it as a command for cmd and
+//! one for PowerShell, because no one line runs the same in both;
+//! `windows_said` says why.
 //!
 //! Picking one up leaves nothing behind. The session being left is closed
 //! here, which is the last chance to say that its log stopped being written,
@@ -441,58 +443,66 @@ fn commanded(path: &Path, home: Option<&Path>) -> String {
     posix_quoted(&homed(path, home))
 }
 
-/// The directory a `cd` is handed, in the spelling the shell it is pasted
-/// into reads back as that directory: whole, because cmd reads `~` as a
-/// directory of that name rather than the home directory.
+/// The directory Windows is told to change to, before each shell's row quotes
+/// it: whole, because cmd reads `~` as a directory of that name rather than
+/// the home directory.
 #[cfg(windows)]
 fn commanded(path: &Path, _home: Option<&Path>) -> String {
-    windows_quoted(&homed(path, None))
+    homed(path, None)
 }
 
-/// `place` as PowerShell reads it back as the same directory, and cmd too
-/// wherever one line can say it to both.
+/// `place` as cmd reads it back as the same directory, or nothing where cmd
+/// cannot be handed it.
 ///
-/// Left bare where every character is one neither treats specially, which is
-/// most directories, and otherwise in double quotes, the one quoting the two
-/// share. A double quote cannot be in a Windows name and is the one character
-/// that would end the quoting in both, so it is not written. Inside the quotes
-/// PowerShell still expands `$name` and reads a backtick as an escape, so both
-/// are escaped with a backtick; and cmd still expands `%NAME%`, into text that
-/// can itself end the quoting, so no `%` is written: `$([char]37)` has
-/// PowerShell build it back. No line keeps all three literal in both shells,
-/// so a directory holding one is written for PowerShell, the shell Windows
-/// opens by default and the one Crucible installs from; cmd is then handed a
-/// directory that does not exist, and its `&&` runs nothing.
+/// Left bare where every character is one cmd neither acts on nor splits at,
+/// and otherwise in double quotes, inside which cmd acts on nothing but `%`
+/// (and `!`, only where delayed expansion was turned on, which it is not by
+/// default). A double quote cannot be in a Windows name and would end the
+/// quoting, so it is not written. `%NAME%` is expanded even inside the quotes
+/// and no quoting stops that, so a directory holding a `%` gets no cmd row.
 ///
-/// Written for every platform, though only Windows calls it, so that what it
+/// Built on every platform, though only Windows says it, so that what it
 /// writes is tested wherever the tests run.
-#[cfg_attr(
-    all(not(windows), not(test)),
-    expect(dead_code, reason = "only Windows writes its directories this way")
-)]
-fn windows_quoted(place: &str) -> String {
+fn cmd_quoted(place: &str) -> Option<String> {
     let place: String = place.chars().filter(|&c| c != '"').collect();
+    if place.contains('%') {
+        return None;
+    }
     let bare = !place.is_empty()
         && place
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "_@+=,.-:\\".contains(c));
+            .all(|c| c.is_ascii_alphanumeric() || "_@+.-:\\".contains(c));
+    Some(if bare { place } else { format!("\"{place}\"") })
+}
+
+/// `place` as PowerShell reads it back as the same directory, handed to
+/// `-LiteralPath`, which reads no wildcard in it.
+///
+/// Left bare where every character is one PowerShell does nothing with, and
+/// otherwise in single quotes, inside which nothing is expanded or escaped.
+/// PowerShell ends single quotes at a typographic one as well as at `'`, so
+/// each of those is doubled too, which it reads back as one.
+///
+/// Built on every platform, though only Windows says it, so that what it
+/// writes is tested wherever the tests run.
+fn powershell_quoted(place: &str) -> String {
+    let bare = !place.is_empty()
+        && place
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_.-:\\".contains(c));
     if bare {
-        return place;
+        return place.to_owned();
     }
 
     let mut written = String::with_capacity(place.len() + 2);
-    written.push('"');
+    written.push('\'');
     for c in place.chars() {
-        match c {
-            '$' | '`' => {
-                written.push('`');
-                written.push(c);
-            }
-            '%' => written.push_str("$([char]37)"),
-            _ => written.push(c),
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}') {
+            written.push(c);
         }
+        written.push(c);
     }
-    written.push('"');
+    written.push('\'');
     written
 }
 
@@ -534,37 +544,98 @@ fn posix_quoted(place: &str) -> String {
 /// picks it up in its own directory, a row at a time across `columns`.
 ///
 /// Said rather than done, because a session stays bound to the directory it
-/// was recorded in — every path it holds is that checkout's. One row where it
-/// fits; otherwise broken after the `&&`, where a shell reads on to the next
-/// line, so a copy of both rows still runs. This never shortens the id,
-/// because a command with part of an id resumes nothing; a window under 56
-/// columns still clips the row it is drawn on, which is the picker's to say.
-/// Where even the `cd` row is too wide, it is the directory that gives way,
-/// from its front, so the end that names the project stays — and the cut is
-/// marked, because a directory with its front missing is not one to run.
+/// was recorded in — every path it holds is that checkout's. This never
+/// shortens the id, because a command with part of an id resumes nothing;
+/// where a row is too wide, it is the directory that gives way, from its
+/// front, so the end that names the project stays — and the cut is marked,
+/// because a directory with its front missing is not one to run.
 fn elsewhere(
     session: &Recorded,
     home: Option<&Path>,
     columns: usize,
     glyphs: Glyphs,
 ) -> Vec<String> {
-    let room = columns.saturating_sub(2);
     let place = commanded(session.workspace(), home);
     let resume = format!("crucible --resume {}", session.id().as_str());
+    if cfg!(windows) {
+        windows_said(&place, &resume, columns, glyphs)
+    } else {
+        posix_said(&place, &resume, columns, glyphs)
+    }
+}
 
+/// The command a POSIX shell is told, `place` already quoted for it.
+///
+/// One row where it fits; otherwise broken after the `&&`, where a shell reads
+/// on to the next line, so a copy of both rows still runs. A window under 56
+/// columns still clips the row it is drawn on, which is the picker's to say.
+fn posix_said(place: &str, resume: &str, columns: usize, glyphs: Glyphs) -> Vec<String> {
+    let room = columns.saturating_sub(2);
     let whole = format!("cd {place} && {resume}");
     if wide(&whole) <= room {
         return vec![whole];
     }
 
-    let fits = room.saturating_sub(wide("cd  &&"));
-    let place = if wide(&place) <= fits {
-        place
-    } else {
-        let mark = glyphs.ellipsis();
-        format!("{mark}{}", ending(&place, fits.saturating_sub(wide(mark))))
-    };
-    vec![format!("cd {place} &&"), resume]
+    let place = cut(place, room.saturating_sub(wide("cd  &&")), glyphs);
+    vec![format!("cd {place} &&"), resume.to_owned()]
+}
+
+/// What Windows is told: a command changing to `place` for cmd, one for
+/// PowerShell, and the command both then run, each under its label.
+///
+/// No one line is read the same by cmd and by either PowerShell. Windows
+/// PowerShell 5.1, the one Windows ships, refuses `&&`, and cmd does not end a
+/// command at `;`. cmd's `cd` stays on the current drive unless given `/d`,
+/// which PowerShell's `cd` refuses, and PowerShell's `cd` reads `[` and `]` in
+/// a name as a wildcard unless told `-LiteralPath`, which cmd has no word for.
+/// So each shell gets its own way in — `pushd`, which changes drive and maps
+/// a network share, and `Set-Location -LiteralPath` — and the resume is its
+/// own row, said once, rather than joined to either by a separator one of
+/// them would refuse. A directory cmd cannot be handed gets no cmd row.
+///
+/// Each label is a row of its own above its command, at every width, so a
+/// command row holds the command alone and a copy of it carries nothing else
+/// into the shell. The rows are as flush as POSIX's, and the id is whole on
+/// its row in any window at least 56 columns wide.
+///
+/// Built on every platform, though only Windows says it, so that what it
+/// writes is tested wherever the tests run.
+fn windows_said(place: &str, resume: &str, columns: usize, glyphs: Glyphs) -> Vec<String> {
+    let room = columns.saturating_sub(2);
+    let mut rows = Vec::with_capacity(6);
+    if let Some(quoted) = cmd_quoted(place) {
+        rows.push("cmd".to_owned());
+        rows.push(entered("pushd ", &quoted, room, glyphs));
+    }
+    rows.push("PowerShell".to_owned());
+    rows.push(entered(
+        "Set-Location -LiteralPath ",
+        &powershell_quoted(place),
+        room,
+        glyphs,
+    ));
+    rows.push("then".to_owned());
+    rows.push(resume.to_owned());
+    rows
+}
+
+/// `verb` and the directory it changes to, the directory cut to fit `room`.
+fn entered(verb: &str, quoted: &str, room: usize, glyphs: Glyphs) -> String {
+    let fits = room.saturating_sub(wide(verb));
+    format!("{verb}{}", cut(quoted, fits, glyphs))
+}
+
+/// `place` whole where it is at most `columns` wide, and otherwise its longest
+/// end that is, behind a mark saying its front was cut.
+fn cut(place: &str, columns: usize, glyphs: Glyphs) -> String {
+    if wide(place) <= columns {
+        return place.to_owned();
+    }
+    let mark = glyphs.ellipsis();
+    format!(
+        "{mark}{}",
+        ending(place, columns.saturating_sub(wide(mark)))
+    )
 }
 
 /// The longest end of `text` at most `columns` wide.
