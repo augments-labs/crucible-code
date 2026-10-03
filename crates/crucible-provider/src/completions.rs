@@ -6,7 +6,8 @@
 //! the vendors that serve this wire is a [`Dialect`]: what the provider is
 //! called, the addresses the vendor serves, the headers it asks for beside the
 //! credential, how it counts what a response cost, how it spells a rung of
-//! effort, and what its prompt cache is known to do.
+//! effort, what its prompt cache is known to do, and where its plan says how
+//! much of its limits is used.
 //!
 //! A second vendor on this wire is a dialect and nothing else: a type that
 //! implements [`Dialect`], and a name for `Chat` over it.
@@ -26,10 +27,11 @@ pub(crate) mod wire;
 
 use std::fmt;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use crucible_credentials::{Credential, Outgoing};
 use crucible_models::{
-    Cost, Delta, DeltaStream, Effort, FastForm, PromptCacheCapabilities, PromptCacheRoute,
+    Asked, Cost, Delta, DeltaStream, Effort, FastForm, PromptCacheCapabilities, PromptCacheRoute,
     Provider, ProviderError, Request,
 };
 use crucible_runtime::{BoxFuture, Cancel};
@@ -40,6 +42,7 @@ use serde_json::Value;
 
 use crate::endpoint::Endpoint;
 use crate::refusal::{Own, refused_worded};
+use crate::responses::{Usage, asking};
 use crate::stream::Response;
 use crate::transport::Transport;
 
@@ -158,6 +161,15 @@ pub trait Dialect: Send + Sync + 'static {
         let _ = reason;
         None
     }
+
+    /// Where the plan behind a credential sent to `endpoint`, one of
+    /// [`Self::ADDRESSES`], says how much of its limits is used, and how its
+    /// answer is read. None, by default: an address with no such source is
+    /// never asked.
+    fn usage_source(endpoint: &Endpoint) -> Option<Usage> {
+        let _ = endpoint;
+        None
+    }
 }
 
 /// What a model's reasoning is to the vendor that wrote it.
@@ -212,8 +224,8 @@ pub(crate) fn automatic(
 
 /// A Chat Completions provider, speaking `D`'s dialect.
 pub struct Chat<D: Dialect> {
-    credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
+    credential: Arc<dyn Credential>,
+    transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     credential_scope: CredentialScopeId,
     dialect: PhantomData<D>,
@@ -254,8 +266,8 @@ impl<D: Dialect> Chat<D> {
     ) -> Self {
         let credential_scope = credential.scope();
         Self {
-            credential,
-            transport,
+            credential: credential.into(),
+            transport: transport.into(),
             endpoint,
             credential_scope,
             dialect: PhantomData,
@@ -392,6 +404,22 @@ impl<D: Dialect> Provider for Chat<D> {
                 wire::Completions::<D>::for_request(&request, self.keeping(&request)),
             )) as Box<dyn DeltaStream>)
         })
+    }
+
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        // Only the vendor's own addresses are asked: a gateway's address is
+        // not where the vendor keeps a plan.
+        if !self.vendor() {
+            return None;
+        }
+        let usage = D::usage_source(&self.endpoint)?;
+        Some(Box::pin(asking::ask(
+            D::NAME,
+            usage,
+            Arc::clone(&self.credential),
+            Arc::clone(&self.transport),
+            D::headers,
+        )))
     }
 }
 

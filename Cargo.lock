@@ -595,6 +595,7 @@ dependencies = [
  "crucible-tools",
  "crucible-types",
  "hyper",
+ "jiff",
  "serde_json",
  "thiserror",
  "tokio",

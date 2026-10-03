@@ -1,0 +1,13 @@
+{
+  "usage": { "limit": 2000, "used": 1500, "name": "Weekly limit", "reset_time": "2026-10-05T09:00:00Z" },
+  "limits": [
+    {
+      "detail": { "limit": 1500, "used": 412, "reset_time": "2026-10-03T15:40:00Z" },
+      "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" }
+    },
+    {
+      "detail": { "limit": "9000", "remaining": "9000" },
+      "window": { "duration": 7, "timeUnit": "TIME_UNIT_DAY" }
+    }
+  ]
+}

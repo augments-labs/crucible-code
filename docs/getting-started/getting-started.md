@@ -1003,11 +1003,14 @@ keeps, `more limits not reported` follows the last one drawn.
 The panel opens at once with what crucible already holds, from the last
 response or the last answer, and with the ChatGPT sign-in it then asks ChatGPT
 for every limit on the account, saying `asking openai…` as the block's last row
-until the answer comes and the block is drawn again. The Usage tab of
+until the answer comes and the block is drawn again. A Kimi Code sign-in or key
+asks Kimi the same way, saying `asking moonshot…`, for its 5-hour, weekly and
+monthly limits, whichever the plan has. The Usage tab of
 `/settings` asks the same way when you turn to it. It asks at most once a
 minute, never on its own, and not at all until you have agreed to what is sent
-to OpenAI; a sign-in ChatGPT refuses there is not asked again that session, and
-any other failure leaves what was shown. An API key or any other sign-in says
+to that vendor; a credential the vendor refuses there is not asked again that
+session, and any other failure leaves what was shown. Any other key or sign-in,
+a key of MoonshotAI's open platform among them, says
 `limits not reported`. A window at 100% whose reset is still ahead ends the next
 turn before it is sent, with a notice naming the window and its reset, when the
 window is one of the plan's own or is in the group of the model you are using;
