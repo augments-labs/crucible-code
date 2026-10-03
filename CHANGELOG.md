@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.sh` installs exactly what it verified.** A local `--archive` is
+  copied once and that copy is both hashed and unpacked, and curl no longer
+  reads your `~/.curlrc`, which could change where a release is fetched from.
+
 ## [0.45.0] - 2026-10-03
 
 **`/context`, `/usage` and `/settings` show where the window, the session and

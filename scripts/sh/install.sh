@@ -262,16 +262,18 @@ end_step() {
 on_exit='end_step $?; rm -rf -- "$work"'
 trap "$on_exit" EXIT
 
+# `-q` comes first in every curl call, so a ~/.curlrc cannot change where a
+# release is fetched from or how; only an argument in that place turns it off.
 download() {
     local url=$1 output=$2
     if ((fancy)); then
         # The response headers, flushed as they arrive, are where the bar
         # learns the size; curl's own complaint becomes the step's reason.
-        curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+        curl -q --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
             --dump-header "$output.headers" --output "$output" "$url" \
             2>"$work/curl-error"
     else
-        curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+        curl -q --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
             --output "$output" "$url"
     fi
 }
@@ -292,7 +294,7 @@ if [[ -z $archive ]]; then
         exit 1
     }
     if [[ -z $version ]]; then
-        latest=$(curl --proto '=https' --tlsv1.2 --fail --location --silent \
+        latest=$(curl -q --proto '=https' --tlsv1.2 --fail --location --silent \
             --show-error --head --output /dev/null --write-out '%{url_effective}' \
             "$RELEASES/latest")
         version=${latest##*/}
@@ -362,6 +364,15 @@ fi
 step_begin 'verify checksum'
 [[ -f $archive && -f $checksums ]] ||
     fail 1 'archive or checksum file does not exist'
+# A local archive is copied into the private work directory first, and that
+# copy is what is hashed and unpacked: the original could change between the
+# two reads. A downloaded archive is already there.
+if [[ $archive != "$work"/* ]]; then
+    mkdir -- "$work/local"
+    cp -- "$archive" "$work/local/$(basename "$archive")" ||
+        fail 1 'the archive could not be copied for verification'
+    archive=$work/local/$(basename "$archive")
+fi
 
 expected=$(awk -v name="$(basename "$archive")" '
     ($2 == name || $2 == "*" name) && $1 ~ /^[0-9A-Fa-f]+$/ { print tolower($1) }
