@@ -28,7 +28,10 @@
 #
 # The previous binary comes from the local tree: --prior-binary names one, or
 # the drill builds the tag in a scratch worktree of this repository and removes
-# it on the way out. The drill fetches nothing. It reads no real session or
+# it on the way out. The candidate is built from this tree each run, so a
+# binary left in target/debug by an older checkout never stands in for it, and
+# one named with --candidate-binary must report the workspace version or the
+# drill refuses it. The drill fetches nothing. It reads no real session or
 # credential file — every home is a scratch directory with the update check
 # off, the key variables unset, and no model selected, so no turn is ever taken
 # and no provider is ever called.
@@ -70,7 +73,7 @@ while (($#)); do
         fi
         ;;
     -h | --help)
-        sed -n '2,34p' "$0"
+        sed -n '2,37p' "$0"
         exit 0
         ;;
     *)
@@ -126,20 +129,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The candidate is always built from this tree, never taken as whatever is left
+# in target/debug: a binary from an older checkout would otherwise stand in for
+# the tree and pass. Cargo rebuilds nothing when the binary is current, so a
+# caller that has just built it pays only the check.
 if [[ -z $candidate ]]; then
-    if ! candidate=$(binary_at "$PWD/target/debug"); then
-        echo '==> candidate build'
-        cargo build --locked --bin crucible
-        candidate=$(binary_at "$PWD/target/debug") || {
-            echo 'rollback-drill: the candidate build left no binary' >&2
-            exit 2
-        }
-    fi
+    echo '==> candidate build'
+    cargo build --locked --bin crucible
+    candidate=$(binary_at "$PWD/target/debug") || {
+        echo 'rollback-drill: the candidate build left no binary' >&2
+        exit 2
+    }
 fi
 [[ -x $candidate ]] || {
     echo "rollback-drill: no executable at $candidate" >&2
     exit 2
 }
+# A candidate named with --candidate-binary is held to the same tree: the
+# version it reports must be the workspace version.
+workspace_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+candidate_version=$("$candidate" --version 2>/dev/null | tr -d '\r') || true
+if [[ -z $workspace_version || $candidate_version != "crucible $workspace_version" ]]; then
+    echo "rollback-drill: the candidate reports '$candidate_version', not the workspace version $workspace_version; build it from this tree" >&2
+    exit 2
+fi
 
 if [[ -z $prior ]]; then
     if ! git rev-parse --verify "$PRIOR_TAG^{commit}" >/dev/null 2>&1; then
