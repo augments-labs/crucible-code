@@ -411,12 +411,19 @@ stops at each such result rather than passing it.
 Between
 turns the view takes the place of the box; while a turn runs it stands under
 the tail. Results cut after it opened are there the next time it is opened.
-The footer reads `esc to close`, or `esc to close · ↑↓ to see more` where
-there is more.
+In native mode the key is the way to a cut result, and an offer above a
+`session resumed` or `new session` divider belongs to a session no longer
+open. The footer reads `esc to close`; where there is more it reads
+`esc to close · ↑↓ pgup pgdn to see more`, and where there is more than one
+result it goes on ` · ←→ result 2 of 7`, counting the result at the top of
+the view with the newest as 1. In a window too narrow for all of it, it loses
+whole parts from the right, and never `esc to close`.
 
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd>, <kbd>↓</kbd>, wheel | An arrow moves a row up or down; a wheel notch moves as many rows as it moves the transcript, six unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise. At either end, a notch the view cannot use scrolls the transcript. |
+| <kbd>PgUp</kbd>, <kbd>PgDn</kbd> | Moves by the rows the view shows, less one, so the row that was at one edge is at the other. |
+| <kbd>→</kbd>, <kbd>←</kbd> | <kbd>→</kbd> puts the top of the next older result at the top of the view, and <kbd>←</kbd> the next newer. At the oldest or the newest it does nothing. |
 | <kbd>Ctrl+O</kbd>, <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Closes it. |
 | Anything else | Nothing, <kbd>Enter</kbd> included. |
 

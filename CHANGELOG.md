@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Ctrl+O results view moves a page at a time and from one result to
+  the next.** <kbd>PgUp</kbd> and <kbd>PgDn</kbd> move by the rows it shows
+  less one, and <kbd>→</kbd> and <kbd>←</kbd> put the next older or newer
+  result at its top, in both screen modes. The footer names the keys and says
+  which result is at the top, as in `result 2 of 7`.
+
 ### Fixed
 
 - **In native mode `/resume` and `/clear` no longer draw a second welcome
