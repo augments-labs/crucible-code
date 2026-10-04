@@ -536,6 +536,24 @@
       "sha256": "efdc0e31738207489d0c2746d9815668752b122fe714744c716fb48551d068d0"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode.snap",
+      "case": "a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Two plus two is four.\")",
+        "Watched::native(\"native-answered\", 80, 24, &vendor)"
+      ],
+      "sha256": "62c4b786f5416eed5f2d53b3d311cc0a0af729f76876d4c786ac5dd4f621f613"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_wheel_or_click_report_changes_nothing_in_native_mode.snap",
+      "case": "a_wheel_or_click_report_changes_nothing_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Two plus two is four.\")",
+        "Watched::native(\"native-reported\", 80, 24, &vendor)"
+      ],
+      "sha256": "62c4b786f5416eed5f2d53b3d311cc0a0af729f76876d4c786ac5dd4f621f613"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",
       "case": "a_version_that_is_no_release_is_refused_naming_the_newest",
       "opened": [
