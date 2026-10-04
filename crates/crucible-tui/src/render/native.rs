@@ -149,9 +149,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// What a session resumed or cleared is given here in place of the opening
     /// card the full screen draws again: the session above stays in the
-    /// scrollback, and a second card under it would read as a second launch. One blank row
-    /// parts the divider from what is above it, and the divider parts what
-    /// follows, which asks for no blank row of its own.
+    /// scrollback, and a second card under it would read as a second launch.
+    /// One blank row parts the divider from what is above it, and the divider
+    /// parts what follows, which asks for no blank row of its own: neither
+    /// [`Renderer::apart`] nor an empty [`Renderer::commit`] puts one under it.
     ///
     /// # Errors
     ///

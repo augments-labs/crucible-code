@@ -561,7 +561,7 @@
         "Vendor::answering(\"Done.\")",
         "Watched::native(\"native-clear-ascii\", 80, 24, &vendor)"
       ],
-      "sha256": "6065c419464d583400252716b6734d20cfcc424244bce8f6aef1fcbb9bf57da5"
+      "sha256": "3b4bd5bb2428230cba97faea0c8a0808f6f7faa57d1a9e96c3ab7ce888d1a4cd"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_of_a_silent_session_writes_no_divider_in_native_mode.snap",
@@ -579,7 +579,7 @@
         "Vendor::answering(\"Done.\")",
         "Watched::native(\"native-clear\", 80, 24, &vendor)"
       ],
-      "sha256": "1fb66c4124971304f5aee099dea39a71b284af7c4b4b83fbce5f43367fb75003"
+      "sha256": "01230767dc4846392ca9c7f25614755d6c746ae633526fc6891f79161adaca0c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_divider_is_clipped_at_16_columns_in_native_mode.snap",

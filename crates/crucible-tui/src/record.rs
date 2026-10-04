@@ -563,6 +563,15 @@ impl Record {
         }
     }
 
+    /// Whether the last line is one [`Self::parts`] marked, with nothing open
+    /// after it.
+    ///
+    /// Asked even once that line has gone out and been let go of: the count
+    /// of lines goes on including it, so it is still the last.
+    pub(crate) fn divided(&self) -> bool {
+        !self.open && self.parting.is_some() && self.parting == self.lines().checked_sub(1)
+    }
+
     /// Whether a finished line is a row of nothing.
     fn blank(line: &Line) -> bool {
         match line {

@@ -2,17 +2,17 @@
 source: tests/whole_screen/native.rs
 expression: window.picture()
 ---
-80x24 cursor 7,4 scrollback 22
+80x24 cursor 6,4 scrollback 22
 |> /clear                                                                        |
 |                                                                                |
 |-- new session -----------------------------------------------------------------|
-|                                                                                |
 |                                                                                |
 |                                                                100% window left|
 |+------------------------------------------------------------------------------+|
 || >                                                                            ||
 |+------------------------------------------------------------------------------+|
 |ask mode on (shift+tab to cycle)                       anthropic - claude-test-1|
+|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

@@ -976,3 +976,35 @@ fn a_native_divider_has_one_blank_row_above_it_and_none_below_however_the_transc
         );
     }
 }
+
+#[test]
+fn a_blank_line_committed_under_a_native_divider_is_not_written() {
+    // A command's answer ends with a blank line that parts it from what is
+    // said next. When the answer is a divider, the divider already does that,
+    // and a blank row under it would part the new session from its own start.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.commit("the last answer").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.commit("").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    let under: Vec<&str> = all
+        .iter()
+        .skip_while(|row| **row != divider)
+        .take(2)
+        .map(String::as_str)
+        .collect();
+    assert_eq!(under, [divider.as_str(), "what follows"], "{all:#?}");
+}

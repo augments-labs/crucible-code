@@ -1096,10 +1096,17 @@ impl<T: Terminal> Renderer<T> {
     /// escape bytes by the same rules streamed output is, because it arrived
     /// the same way.
     ///
+    /// An empty line straight under a divider ([`Renderer::divides`]) is not
+    /// taken: the divider is already the row that parts what follows, and a
+    /// blank one under it would part the new session from its own start.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn commit(&mut self, line: &str) -> Result<(), TerminalError> {
+        if line.is_empty() && self.record.divided() {
+            return Ok(());
+        }
         self.take(Slot::Plain, line)?;
         // The newline is what ends the line; without it the next thing written
         // would continue this one.
