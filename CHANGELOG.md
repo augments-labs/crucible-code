@@ -23,6 +23,13 @@ change in any release with no deprecation period.
   session` divider row, and the launch's warnings are not written again. A
   `/clear` in a session that has said nothing writes only `nothing had been
   said`.
+- **In native mode a panel takes at most half the window.** `/model`,
+  `/theme`, `/resume`, `/settings`, the `/` list and the Ctrl+O results view
+  stand in at most half the window's rows, or the least they can be drawn in
+  where that is more, instead of the whole of it, so opening one pushes at
+  most the rows it takes above the box into the terminal's scrollback. Closing
+  one draws the box again directly under the last transcript row, and a
+  resize while one is open leaves no row of it in the scrollback.
 
 ## [0.45.2] - 2026-10-03
 
