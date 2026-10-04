@@ -32,6 +32,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 mod fast;
+mod native;
 mod providers;
 mod reaching;
 mod screen;

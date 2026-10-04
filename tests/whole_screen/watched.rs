@@ -230,6 +230,9 @@ struct TerminalFixture<'a> {
     columns: u16,
     rows: u16,
     reply: Option<&'a [u8]>,
+    /// Whether the launch asked for native mode, and so draws in this
+    /// terminal's own buffer rather than on a screen of its own.
+    native: bool,
 }
 
 impl TerminalFixture<'_> {
@@ -269,6 +272,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: Some(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?1;2c"),
+                native: false,
             },
             None,
         )
@@ -294,6 +298,38 @@ impl Watched {
     /// address a request goes to was a constant.
     pub(crate) fn answering(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
         Self::started(case, columns, rows, Some(vendor), true)
+    }
+
+    /// The same again, in native mode: crucible drawing at the foot of the
+    /// terminal's own buffer rather than on a screen of its own.
+    ///
+    /// The terminal it is given is the one that keeps a scrollback and
+    /// rewraps, since a native frame moves relatively and lets finished rows
+    /// scroll off the top; a fullscreen one would refuse the first frame. A
+    /// case started this way proves it ran in native mode with
+    /// [`Self::assert_never_alternate`] and not with its rows, which look the
+    /// same on either screen until something scrolls.
+    pub(crate) fn native(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
+        let document = format!(
+            "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+             \"output\": {{\"screen\": \"native\"}},\n  \
+             \"providers\": {{\n    \"anthropic\": {{\n      \
+             \"model\": \"{MODEL}\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+            vendor.address()
+        );
+
+        Self::configured_with_terminal(
+            case,
+            &document,
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: true,
+            },
+            None,
+        )
     }
 
     /// The same again, on a terminal crucible writes colour to.
@@ -448,6 +484,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
+                native: false,
             },
             None,
         )
@@ -463,6 +500,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
+                native: false,
             },
             Some(launch),
         )
@@ -516,11 +554,17 @@ impl Watched {
         let reading = near.try_clone().expect("a second handle on the terminal");
         std::thread::spawn(move || read(reading, &sender));
 
+        let (columns, rows) = (terminal.columns as usize, terminal.rows as usize);
+        let screen = if terminal.native {
+            Screen::native(columns, rows)
+        } else {
+            Screen::new(columns, rows)
+        };
         let mut window = Self {
             terminal: near,
             child,
             bytes,
-            screen: Screen::new(terminal.columns as usize, terminal.rows as usize),
+            screen,
             light_seen: false,
             dark_seen: false,
             scratch,
@@ -560,6 +604,22 @@ impl Watched {
             .write_all(keys.as_bytes())
             .expect("keys go to the terminal");
         self.settle(&format!("{keys:?} was typed"), None);
+    }
+
+    /// Writes `report` — a wheel notch, a click — as a terminal would send it,
+    /// and waits one quiet period for whatever crucible does with it, which may
+    /// rightly be nothing.
+    ///
+    /// [`Self::types`] waits for a byte to come back, because every key is
+    /// drawn for. A report crucible asked for no mode to receive is not, so a
+    /// step that insisted on one would time out proving the thing it meant to
+    /// check; a case that wants to know the screen did not change compares the
+    /// picture before with the picture after.
+    pub(crate) fn reports(&mut self, report: &str) {
+        self.terminal
+            .write_all(report.as_bytes())
+            .expect("a report goes to the terminal");
+        self.settle_for(&format!("{report:?} was reported"), Awaited::Nothing);
     }
 
     /// Clicks the left button on the zero-based cell and reads until `wanted`
@@ -904,6 +964,27 @@ impl Watched {
         self.screen.picture()
     }
 
+    /// The rows that scrolled off the top of a native window, oldest first,
+    /// drawn the way [`Self::picture`] draws its rows: what a reader could
+    /// scroll back to, read on from by the picture.
+    pub(crate) fn scrollback(&self) -> String {
+        self.screen.scrollback()
+    }
+
+    /// Fails when crucible entered the alternate screen.
+    ///
+    /// Every native case calls this, because it is what proves the case ran
+    /// in native mode: a fullscreen launch enters the alternate screen before
+    /// its first frame, and a native one never does, while the rows of a short
+    /// session look the same on either.
+    pub(crate) fn assert_never_alternate(&self) {
+        assert!(
+            !self.screen.entered_alternate(),
+            "crucible entered the alternate screen, so this was not native mode\n{}",
+            self.picture()
+        );
+    }
+
     /// crucible's own home for this case, where what a command wrote down
     /// lands.
     ///
@@ -959,6 +1040,11 @@ impl Watched {
     /// says which one it was, rather than going on to compare a half-drawn
     /// screen against a picture and blaming the renderer for the difference.
     fn settle(&mut self, step: &str, wanted: Option<&str>) {
+        self.settle_for(step, wanted.map_or(Awaited::AnyByte, Awaited::Mark));
+    }
+
+    /// [`Self::settle`], saying outright what a quiet screen has to show.
+    fn settle_for(&mut self, step: &str, awaited: Awaited<'_>) {
         let deadline = Instant::now() + CEILING;
         let mut arrived = false;
 
@@ -968,7 +1054,7 @@ impl Watched {
                     self.feed(&bytes);
                     arrived = true;
                 }
-                Err(RecvTimeoutError::Timeout) if self.ready(arrived, wanted) => break,
+                Err(RecvTimeoutError::Timeout) if self.ready(arrived, awaited) => break,
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     panic!(
@@ -981,7 +1067,10 @@ impl Watched {
             assert!(
                 Instant::now() < deadline,
                 "the screen never settled after {step}, in {CEILING:?}{}\n{}",
-                wanted.map_or(String::new(), |mark| format!(" — no {mark:?} on it")),
+                match awaited {
+                    Awaited::Mark(mark) => format!(" — no {mark:?} on it"),
+                    Awaited::AnyByte | Awaited::Nothing => String::new(),
+                },
                 self.picture()
             );
         }
@@ -1005,9 +1094,26 @@ impl Watched {
     }
 
     /// Whether a quiet screen is one worth looking at yet.
-    fn ready(&self, arrived: bool, wanted: Option<&str>) -> bool {
-        wanted.map_or(arrived, |mark| self.picture().contains(mark))
+    fn ready(&self, arrived: bool, awaited: Awaited<'_>) -> bool {
+        match awaited {
+            Awaited::AnyByte => arrived,
+            Awaited::Mark(mark) => self.picture().contains(mark),
+            Awaited::Nothing => true,
+        }
     }
+}
+
+/// What a quiet screen has to show before a step is over.
+#[derive(Debug, Clone, Copy)]
+enum Awaited<'a> {
+    /// A byte since the step began: what every key gets, since every key is
+    /// drawn for.
+    AnyByte,
+    /// This text on screen, for a step drawn in several frames with work
+    /// between them.
+    Mark(&'a str),
+    /// Nothing at all, for input crucible may rightly draw nothing for.
+    Nothing,
 }
 
 /// The face at the front of the working row in `picture`, where there is one.

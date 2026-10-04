@@ -42,14 +42,18 @@ import sys
 MANIFEST = "scripts/screen-baseline.json"
 SUITE = "tests/whole_screen"
 CAPTURES = os.path.join(SUITE, "snapshots")
-CASES = os.path.join(SUITE, "main.rs")
+CASES = [os.path.join(SUITE, "main.rs"), os.path.join(SUITE, "native.rs")]
 
-# The harness, and not the cases. `main.rs` holds every case body, so hashing it
-# would put a new case in conflict with every accepted picture for no reason a
-# reader could act on; what a case asserts is already bound one case at a time
-# in `scripts/required-cases.json`. These three are the interpreter: they turn a
-# pseudo-terminal into the text below, and a change in them can make an
-# unchanged picture mean something else.
+# The module a capture's name carries between the crate's and the case's own,
+# for the cases that live in a module of the suite rather than in `main.rs`.
+NATIVE = "native__"
+
+# The harness, and not the cases. `main.rs` and `native.rs` hold every case
+# body, so hashing them would put a new case in conflict with every accepted
+# picture for no reason a reader could act on; what a case asserts is already
+# bound one case at a time in `scripts/required-cases.json`. These three are the
+# interpreter: they turn a pseudo-terminal into the text below, and a change in
+# them can make an unchanged picture mean something else.
 HARNESS = [
     os.path.join(SUITE, "screen.rs"),
     os.path.join(SUITE, "vendor.rs"),
@@ -113,6 +117,20 @@ def constructions(body):
     return found
 
 
+def case_named(file):
+    """The case the capture `file` is named after.
+
+    A capture carries the crate's name, then the module's where the case lives
+    in one, then the case's own name, joined by double underscores; the first
+    two are taken off.
+    """
+    name = file[: -len(".snap")]
+    name = name.split("__", 1)[1] if "__" in name else name
+    if name.startswith(NATIVE):
+        name = name[len(NATIVE) :]
+    return name
+
+
 def owner(name, cases):
     """The case that draws the capture called `name`.
 
@@ -141,16 +159,17 @@ def owner(name, cases):
 
 def observed():
     """What the tree says, in the shape the manifest records."""
-    lines = open(CASES, encoding="utf-8").read().splitlines()
-    cases = functions(lines)
+    cases = {}
+    for path in CASES:
+        lines = open(path, encoding="utf-8").read().splitlines()
+        for name, bodies in functions(lines).items():
+            cases.setdefault(name, []).extend(bodies)
     captures = []
     unowned = []
     for file in sorted(os.listdir(CAPTURES)):
         if not file.endswith(".snap"):
             continue
-        name = file[: -len(".snap")]
-        name = name.split("__", 1)[1] if "__" in name else name
-        case, body = owner(name, cases)
+        case, body = owner(case_named(file), cases)
         if case is None:
             unowned.append(file)
             continue
@@ -184,7 +203,7 @@ def check():
     harness, captures, unowned = observed()
     failed = 0
     for file in unowned:
-        print(f"    FAIL {file} belongs to no case in {CASES}; name its case")
+        print(f"    FAIL {file} belongs to no case in {' or '.join(CASES)}; name its case")
         failed = 1
 
     for path, recorded in manifest["harness"].items():
@@ -232,7 +251,7 @@ def check():
 def record():
     harness, captures, unowned = observed()
     for file in unowned:
-        print(f"    FAIL {file} belongs to no case in {CASES}; name its case")
+        print(f"    FAIL {file} belongs to no case in {' or '.join(CASES)}; name its case")
     if unowned:
         return 1
     with open(MANIFEST, "w", encoding="utf-8") as out:
@@ -266,6 +285,13 @@ def self_test():
     expected = ['Vendor::answering("hello")', 'Watched::open( "a-case", 80, 24, )']
     if found != expected:
         print(f"    FAIL the reader keyed the case as {found}")
+        return 1
+    named = [
+        case_named("whole_screen__a_drawn_case.snap"),
+        case_named("whole_screen__native__a_drawn_case.snap"),
+    ]
+    if named != ["a_drawn_case", "a_drawn_case"]:
+        print(f"    FAIL the reader named the captures' cases {named}")
         return 1
     return 0
 
