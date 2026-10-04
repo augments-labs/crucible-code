@@ -360,12 +360,14 @@ fn echoed(opened: &[&str], at: usize, keys: &str) -> bool {
         .is_some_and(|row| row.trim_end_matches(['|', ' ']) == format!("|› {command}"))
 }
 
-/// The rows of the window from the box's top border down: the box, its
-/// status row and whatever the region leaves under them.
+/// The rows of the window the box takes: the `window left` row the prompt
+/// draws over its top border, the box, its status row and whatever the
+/// region leaves under them. The blank row above them is the list's, not the
+/// box's.
 fn box_rows(picture: &str) -> usize {
     let rows = drawn(picture);
     rows.iter()
-        .position(|row| row.starts_with("|╭"))
+        .position(|row| row.contains("% window left"))
         .map_or(0, |at| rows.len() - at)
 }
 
