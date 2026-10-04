@@ -140,6 +140,16 @@ pub enum Pressed {
     Up,
     /// The down arrow: on one row through it.
     Down,
+    /// Page Up: back a window's worth through whatever is standing that is
+    /// taller than its rows.
+    ///
+    /// Its own variant rather than a run of [`Pressed::Up`], because how many
+    /// rows a page is depends on the window of the thing standing, which only
+    /// the thing standing knows. Everything with no window to page reads it as
+    /// a key it has no use for.
+    PageUp,
+    /// Page Down: on a window's worth through it.
+    PageDown,
     /// The wheel turned one notch. `back` is towards the top of the session.
     ///
     /// Its own variant rather than an arrow, because the two mean different
@@ -548,6 +558,10 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // the caller that knows whether there is a row to move to.
         KeyCode::Up => Pressed::Up,
         KeyCode::Down => Pressed::Down,
+        // And the same a window's worth at a time, for whatever is standing
+        // with more rows than it shows. The line has no page to move by.
+        KeyCode::PageUp => Pressed::PageUp,
+        KeyCode::PageDown => Pressed::PageDown,
 
         KeyCode::Char(typed) => Pressed::Key(Key::Char(typed)),
 
@@ -741,6 +755,15 @@ mod tests {
         // reader's — it is the one holding both.
         assert_eq!(meaning(press(KeyCode::Up)), Pressed::Up);
         assert_eq!(meaning(press(KeyCode::Down)), Pressed::Down);
+    }
+
+    #[test]
+    fn page_up_and_page_down_are_read() {
+        // A window over more rows than it shows is walked a page at a time as
+        // well as a row, and how many rows a page is belongs to the window, so
+        // the key arrives as itself rather than as a run of arrows.
+        assert_eq!(meaning(press(KeyCode::PageUp)), Pressed::PageUp);
+        assert_eq!(meaning(press(KeyCode::PageDown)), Pressed::PageDown);
     }
 
     #[test]

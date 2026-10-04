@@ -705,6 +705,8 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
+        | Pressed::PageUp
+        | Pressed::PageDown
         | Pressed::Ignored => Moved::Still,
     }
 }

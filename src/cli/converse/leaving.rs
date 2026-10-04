@@ -252,6 +252,8 @@ impl Leaving {
                 | Pressed::Dragged { .. }
                 | Pressed::Hovered { .. }
                 | Pressed::Released { .. }
+                | Pressed::PageUp
+                | Pressed::PageDown
                 | Pressed::Ignored => Moved::Still,
             };
         }
@@ -336,6 +338,8 @@ impl Leaving {
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }
             | Pressed::Released { .. }
+            | Pressed::PageUp
+            | Pressed::PageDown
             | Pressed::Ignored => Moved::Still,
         }
     }

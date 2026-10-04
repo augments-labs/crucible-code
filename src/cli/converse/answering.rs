@@ -176,6 +176,8 @@ pub(super) fn heard(arrived: Pressed) -> Heard {
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
+        | Pressed::PageUp
+        | Pressed::PageDown
         | Pressed::Ignored => Heard::Ignored,
     }
 }
