@@ -699,16 +699,15 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         Pressed::Key(Key::Right) => {
             let next = topmost(view)
                 .checked_add(1)
-                .and_then(|at| view.starts.get(at))
-                .map(|start| (*start).min(view.end))
+                .and_then(|at| heading(view, at))
+                .map(|top| top.min(view.end))
                 .filter(|next| *next > view.from);
             region::step(&mut view.from, next)
         }
         Pressed::Key(Key::Left) => {
             let next = topmost(view)
                 .checked_sub(1)
-                .and_then(|at| view.starts.get(at))
-                .copied()
+                .and_then(|at| heading(view, at))
                 .filter(|next| *next < view.from);
             region::step(&mut view.from, next)
         }
@@ -760,6 +759,18 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
 /// sight, and a row at least, so a window of one row still moves.
 fn paged(view: &View) -> usize {
     view.page.saturating_sub(1).max(1)
+}
+
+/// The row the call's line of result `at` is on: where it begins, past the
+/// blank that parts it from the one above. That is the row the newest result's
+/// call stands on when the view opens, so a step puts each one where the first
+/// was rather than under a blank.
+///
+/// A step onto a result not read back yet stops at the blank instead, as a
+/// step down by any other key does, and the layout reads it back from there.
+fn heading(view: &View, at: usize) -> Option<usize> {
+    let start = view.starts.get(at)?;
+    Some(start.saturating_add(usize::from(at > 0)))
 }
 
 /// Which result is at the top of the window: the last to begin at or above it.

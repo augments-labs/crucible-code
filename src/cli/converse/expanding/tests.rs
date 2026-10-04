@@ -410,13 +410,14 @@ fn page_down_moves_the_view_by_its_rows_less_one() {
 
 /// Three results of two lines each, newest first: `Bash(three)` from row 0,
 /// `Bash(two)` from row 4 and `Bash(one)` from row 9, counting the blank above
-/// each but the first. Fourteen rows against the six a ten-row window shows.
+/// each but the first, so their calls' lines are rows 0, 5 and 10. Fourteen
+/// rows against the six a ten-row window shows.
 fn three() -> Kept {
     cut(&["Bash(one)", "Bash(two)", "Bash(three)"])
 }
 
-/// The call's line at the top of the window, under the rule and its blank and
-/// the blank that parts the result there from the one above.
+/// The first call's line in the window, under the rule and its blank and any
+/// blank that parts the result there from the one above.
 fn heading(rows: &[String]) -> Option<&str> {
     rows.get(2..)
         .unwrap_or_default()
@@ -435,9 +436,12 @@ fn right_puts_the_next_older_result_at_the_top() {
         Some("Bash(three)")
     );
 
+    // Its call's line on the first row of the window, where the newest
+    // result's stands when the view opens, rather than the blank above it.
     assert!(standing.against(Pressed::Key(Key::Right), 3));
-    assert_eq!(opened(&mut standing).from, 4);
-    assert_eq!(heading(&frame(&kept, &mut standing, 10)), Some("Bash(two)"));
+    assert_eq!(opened(&mut standing).from, 5);
+    let rows = frame(&kept, &mut standing, 10);
+    assert_eq!(rows.get(2).map(|row| row.trim_end()), Some("Bash(two)"));
 
     // From part way into a result too: the step is to the next result's top,
     // not by a result's worth of rows.
