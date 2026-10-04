@@ -84,6 +84,13 @@ pub(super) struct View {
     /// Where the window was open when the last frame was drawn, which is how
     /// a frame knows which way the window moved since.
     was: usize,
+    /// How many rows of results the window showed, as of the last frame
+    /// drawn: what a page is, less the one row a page keeps in sight.
+    page: usize,
+    /// Where each result begins, counting the blank that parts it from the
+    /// one above, as of the last frame drawn: where a step to the next or
+    /// the last result puts the top of the window.
+    starts: Vec<usize>,
     /// What it is a window over.
     over: Over,
     /// What the window reaches of the results the store let go of, read back
@@ -104,6 +111,8 @@ impl View {
             from: 0,
             end: 0,
             was: 0,
+            page: 0,
+            starts: Vec::new(),
             over,
             back: Vec::new(),
             refused: None,
@@ -306,12 +315,15 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     if entries.is_empty() {
         return Vec::new();
     }
-    let heights = reaching(kept, view, &entries, columns, rows);
+    let heights = reaching(kept, view, &entries, columns, rows)
+        .unwrap_or_else(|| heights(&entries, &view.back, columns));
 
     let View {
         from,
         end,
         was,
+        page,
+        starts: begun,
         back,
         ..
     } = view;
@@ -322,22 +334,21 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     };
 
     // Written before the rows are asked for, so the key pressed against this
-    // picture is clamped to what this picture could reach. Where results were
-    // let go of, the rows are counted already, and a result not read back yet
+    // picture is clamped to what this picture could reach, pages by what it
+    // showed and steps to where its results begin. A result not read back yet
     // is a few rows until it is: the last of them could sit under the end of
     // the window and never be reached, so the window may go down as far as its
     // top, which is where the view reads it.
-    *end = match heights {
-        Some(heights) => {
-            let total: usize = heights.iter().sum();
-            total
-                .saturating_sub(Expanded::seen(rows))
-                .max(unread(&entries, back, &heights))
-        }
-        None => expanded.end(columns, rows),
-    };
+    let total: usize = heights.iter().sum();
+    *end = total
+        .saturating_sub(Expanded::seen(rows))
+        .max(unread(&entries, back, &heights));
     *from = (*from).min(*end);
     *was = *from;
+    *page = Expanded::seen(rows);
+    *begun = starts(&heights);
+    // Where the last of them ends, which no step goes to.
+    begun.pop();
 
     expanded.within(columns, rows, glyphs)
 }
@@ -666,6 +677,42 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
             region::step(&mut view.from, next)
         }
 
+        // A page is the rows the window shows less one, so the row that was at
+        // the foot is at the top afterwards and the reader keeps their place.
+        // A page down onto a result not read back yet stops at its top, as an
+        // arrow does: the layout that reads it back is where that is decided.
+        Pressed::PageUp => {
+            let next = Some(view.from.saturating_sub(paged(view))).filter(|next| *next < view.from);
+            region::step(&mut view.from, next)
+        }
+        Pressed::PageDown => {
+            let next = Some(view.from.saturating_add(paged(view)).min(view.end))
+                .filter(|next| *next > view.from);
+            region::step(&mut view.from, next)
+        }
+
+        // From one result to the next older or newer, whatever the window was
+        // part way through: the top of that result at the top of the window,
+        // or as near it as the window may go. Newest is first, so older is
+        // down the view. At the oldest or the newest there is nowhere to step,
+        // and the key moves nothing.
+        Pressed::Key(Key::Right) => {
+            let next = topmost(view)
+                .checked_add(1)
+                .and_then(|at| view.starts.get(at))
+                .map(|start| (*start).min(view.end))
+                .filter(|next| *next > view.from);
+            region::step(&mut view.from, next)
+        }
+        Pressed::Key(Key::Left) => {
+            let next = topmost(view)
+                .checked_sub(1)
+                .and_then(|at| view.starts.get(at))
+                .copied()
+                .filter(|next| *next < view.from);
+            region::step(&mut view.from, next)
+        }
+
         // Ctrl+O closes what Ctrl+O opened, which is the whole of what the rows
         // offering it say the key does. Esc is the way out of whatever is
         // standing everywhere else in a session — including out of a view
@@ -705,10 +752,23 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
-        | Pressed::PageUp
-        | Pressed::PageDown
         | Pressed::Ignored => Moved::Still,
     }
+}
+
+/// How far a page moves the window: the rows it showed less the one kept in
+/// sight, and a row at least, so a window of one row still moves.
+fn paged(view: &View) -> usize {
+    view.page.saturating_sub(1).max(1)
+}
+
+/// Which result is at the top of the window: the last to begin at or above it.
+fn topmost(view: &View) -> usize {
+    view.starts
+        .iter()
+        .filter(|start| **start <= view.from)
+        .count()
+        .saturating_sub(1)
 }
 
 #[cfg(test)]

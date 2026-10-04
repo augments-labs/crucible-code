@@ -12,6 +12,8 @@ fn standing(from: usize, end: usize) -> View {
         from,
         end,
         was: 0,
+        page: 0,
+        starts: Vec::new(),
         over: Over::Everything(0),
         back: Vec::new(),
         refused: None,
@@ -365,6 +367,168 @@ fn a_resize_owes_the_next_frame() {
 
     assert_eq!(moving(Pressed::Resized, &mut open), Moved::Redraw);
     assert_eq!(open, standing(3, 20));
+}
+
+/// The rows of the view over `kept` at 80 columns and `rows` rows, as text.
+fn frame(kept: &Kept, standing: &mut Standing, rows: usize) -> Vec<String> {
+    laying(kept, opened(standing), Glyphs::Unicode, 80, rows)
+        .iter()
+        .map(Row::text)
+        .collect()
+}
+
+#[test]
+fn page_down_moves_the_view_by_its_rows_less_one() {
+    // Twenty-four rows of window show twenty of results, so a page keeps the
+    // last of them in sight at the top of the next: the reader never has to
+    // find their place again after the jump.
+    let held = overflowing();
+    let mut standing = Standing::default();
+    standing.open(&held);
+    frame(&held, &mut standing, 24);
+
+    assert!(standing.against(Pressed::PageDown, 3));
+    assert_eq!(opened(&mut standing).from, 19);
+    frame(&held, &mut standing, 24);
+    assert!(standing.against(Pressed::PageDown, 3));
+    assert_eq!(opened(&mut standing).from, 38);
+
+    // And back the same way, as far as the top and no further.
+    assert!(standing.against(Pressed::PageUp, 3));
+    assert_eq!(opened(&mut standing).from, 19);
+    opened(&mut standing).from = 7;
+    assert!(standing.against(Pressed::PageUp, 3));
+    assert_eq!(opened(&mut standing).from, 0);
+    assert!(!standing.against(Pressed::PageUp, 3));
+
+    // At the end it moves nothing either, and owes no frame.
+    let end = opened(&mut standing).end;
+    opened(&mut standing).from = end;
+    assert!(!standing.against(Pressed::PageDown, 3));
+    assert_eq!(opened(&mut standing).from, end);
+}
+
+/// Three results of two lines each, newest first: `Bash(three)` from row 0,
+/// `Bash(two)` from row 4 and `Bash(one)` from row 9, counting the blank above
+/// each but the first. Fourteen rows against the six a ten-row window shows.
+fn three() -> Kept {
+    cut(&["Bash(one)", "Bash(two)", "Bash(three)"])
+}
+
+/// The call's line at the top of the window, under the rule and its blank and
+/// the blank that parts the result there from the one above.
+fn heading(rows: &[String]) -> Option<&str> {
+    rows.get(2..)
+        .unwrap_or_default()
+        .iter()
+        .map(|row| row.trim_end())
+        .find(|row| !row.is_empty())
+}
+
+#[test]
+fn right_puts_the_next_older_result_at_the_top() {
+    let kept = three();
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    assert_eq!(
+        heading(&frame(&kept, &mut standing, 10)),
+        Some("Bash(three)")
+    );
+
+    assert!(standing.against(Pressed::Key(Key::Right), 3));
+    assert_eq!(opened(&mut standing).from, 4);
+    assert_eq!(heading(&frame(&kept, &mut standing, 10)), Some("Bash(two)"));
+
+    // From part way into a result too: the step is to the next result's top,
+    // not by a result's worth of rows.
+    opened(&mut standing).from = 6;
+    frame(&kept, &mut standing, 10);
+    assert!(standing.against(Pressed::Key(Key::Right), 3));
+    // The oldest result's top is past the furthest the window may go, so the
+    // window goes as far as it may.
+    assert_eq!(opened(&mut standing).from, 8);
+
+    // And at the oldest it moves nothing, and owes no frame.
+    frame(&kept, &mut standing, 10);
+    assert!(!standing.against(Pressed::Key(Key::Right), 3));
+    assert_eq!(opened(&mut standing).from, 8);
+}
+
+#[test]
+fn left_at_the_newest_result_moves_nothing() {
+    let kept = three();
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    frame(&kept, &mut standing, 10);
+
+    assert!(standing.against(Pressed::Key(Key::Right), 3));
+    frame(&kept, &mut standing, 10);
+    assert!(standing.against(Pressed::Key(Key::Left), 3));
+    assert_eq!(opened(&mut standing).from, 0);
+    assert_eq!(
+        heading(&frame(&kept, &mut standing, 10)),
+        Some("Bash(three)")
+    );
+
+    // The newest is at the top: nothing is newer, so nothing moves and no
+    // frame is owed. Part way into it as well.
+    assert!(!standing.against(Pressed::Key(Key::Left), 3));
+    opened(&mut standing).from = 2;
+    frame(&kept, &mut standing, 10);
+    assert!(!standing.against(Pressed::Key(Key::Left), 3));
+    assert_eq!(opened(&mut standing).from, 2);
+}
+
+#[test]
+fn a_step_stops_at_a_result_still_being_read_back() {
+    // Forty results, most of them let go of by the store. Each step puts the
+    // next older one at the top of the window, read back from the log rather
+    // than standing as the line that says it will be: a step never passes a
+    // result nobody has been shown.
+    let kept = forty(false);
+    assert!(kept.older().count() > 0, "nothing was let go of");
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    frame(&kept, &mut standing, 40);
+
+    for step in 1..40 {
+        assert!(
+            standing.against(Pressed::Key(Key::Right), 3),
+            "step {step} moved nothing"
+        );
+        let rows = frame(&kept, &mut standing, 40);
+        let at = 39 - step;
+        assert_eq!(
+            heading(&rows),
+            Some(format!("Bash({at})").as_str()),
+            "step {step}: {rows:?}"
+        );
+        let first = format!("call-{at:03} line 0001");
+        assert!(
+            rows.iter().any(|row| row.contains(&first)),
+            "step {step}: {rows:?}"
+        );
+        assert!(read_back(opened(&mut standing)) <= BEYOND);
+    }
+}
+
+#[test]
+fn the_footer_counts_the_result_at_the_top() {
+    let kept = three();
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let rows = frame(&kept, &mut standing, 10);
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ result 1 of 3")
+    );
+
+    assert!(standing.against(Pressed::Key(Key::Right), 3));
+    let rows = frame(&kept, &mut standing, 10);
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ result 2 of 3")
+    );
 }
 
 #[test]
