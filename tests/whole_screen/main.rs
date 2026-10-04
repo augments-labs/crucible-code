@@ -2576,6 +2576,73 @@ fn expanded_results_use_the_configured_wheel_speed() {
     }
 }
 
+/// Three files of thirty numbered lines each, too long for the row a read of
+/// one is cut to, read `alpha` first and `gamma` last: the results view stands
+/// `gamma` at the top and `alpha` at the foot.
+fn three_files(window: &Watched) {
+    for name in ["alpha", "beta", "gamma"] {
+        let mut text = String::new();
+        for at in 1..=30 {
+            writeln!(text, "{name} line {at:02}").expect("a String takes a line");
+        }
+        std::fs::write(window.workspace().join(format!("{name}.txt")), text)
+            .expect("the file is written into the workspace");
+    }
+}
+
+/// The calls that read them, one turn's worth each.
+fn reading_three() -> Vec<Vec<(&'static str, String)>> {
+    ["alpha", "beta", "gamma"]
+        .iter()
+        .map(|name| vec![("read", format!(r#"{{"path":"{name}.txt"}}"#))])
+        .collect()
+}
+
+#[test]
+fn ctrl_o_pages_and_steps_through_cut_results() {
+    // A page moves by the rows the view shows less one, and the arrows across
+    // move from the top of one result to the top of the next. The footer says
+    // which result is at the top, counting the newest as the first.
+    let vendor = Vendor::calling_batches(&reading_three(), "All three are read.");
+    let config = serde_json::to_string_pretty(&serde_json::json!({
+        "updates": {"check":"never"},
+        "permissions": {"allow":["read(*)"]},
+        "providers": {"anthropic": {"model":"claude-sonnet-4-6", "baseUrl": vendor.address()}}
+    }))
+    .unwrap();
+    let mut window = Watched::configured("results-paged", 80, 24, &config, true);
+    three_files(&window);
+    window.types_until("read all three\r", "All three are read.");
+
+    window.types_until("\x0f", "result 1 of 3");
+    let opened = window.picture();
+    assert!(opened.contains("gamma line 01"), "{opened}");
+    assert!(
+        opened.contains("esc to close · ↑↓ pgup pgdn to see more · ←→ result 1 of 3"),
+        "{opened}"
+    );
+    insta::assert_snapshot!("ctrl_o_results_opened", opened);
+
+    window.types("\x1b[6~");
+    let paged = window.picture();
+    assert!(!paged.contains("gamma line 01"), "{paged}");
+    insta::assert_snapshot!("ctrl_o_results_paged_down", paged);
+    window.types("\x1b[5~");
+    assert_eq!(window.picture(), opened);
+
+    window.types_until("\x1b[C", "result 2 of 3");
+    let stepped = window.picture();
+    assert!(stepped.contains("beta line 01"), "{stepped}");
+    insta::assert_snapshot!("ctrl_o_results_stepped_older", stepped);
+    window.types_until("\x1b[D", "result 1 of 3");
+    assert_eq!(window.picture(), opened);
+
+    window.types("\x1b");
+    let closed = window.picture();
+    assert!(!closed.contains("pgup pgdn"), "{closed}");
+    assert!(closed.contains("All three are read."), "{closed}");
+}
+
 #[test]
 fn compact_tool_activity_and_its_group_expand_in_the_real_terminal() {
     let script = format!(

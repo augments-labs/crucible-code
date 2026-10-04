@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: paged
+---
+80x24 cursor 23,0 scrolled 0
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|    18 gamma line 18                                                            |
+|    19 gamma line 19                                                            |
+|    20 gamma line 20                                                            |
+|    21 gamma line 21                                                            |
+|    22 gamma line 22                                                            |
+|    23 gamma line 23                                                            |
+|    24 gamma line 24                                                            |
+|    25 gamma line 25                                                            |
+|    26 gamma line 26                                                            |
+|    27 gamma line 27                                                            |
+|    28 gamma line 28                                                            |
+|    29 gamma line 29                                                            |
+|    30 gamma line 30                                                            |
+|                                                                                |
+|Read(beta.txt)                                                                  |
+|                                                                                |
+|     1 beta line 01                                                             |
+|     2 beta line 02                                                             |
+|     3 beta line 03                                                             |
+|     4 beta line 04                                                             |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ result 1 of 3                      |

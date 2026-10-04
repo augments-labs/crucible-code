@@ -131,7 +131,7 @@ fn the_arrows_are_named_only_where_there_is_something_left_to_see() {
     );
     assert_eq!(
         rows.last().map(String::as_str),
-        Some("esc to close · ↑↓ to see more")
+        Some("esc to close · ↑↓ pgup pgdn to see more")
     );
 }
 
@@ -366,4 +366,48 @@ fn a_list_is_as_long_as_its_results_laid_out_one_at_a_time_and_the_blanks_betwee
             );
         }
     }
+}
+
+/// Seven results of ten lines each, the window opened at the top of the
+/// second: twelve rows down, past the first one's call, the blank under it and
+/// its ten lines.
+fn seven_from_the_second(columns: usize) -> Option<String> {
+    let texts: Vec<String> = (0..7).map(|_| counted(10)).collect();
+    let shown: Vec<Shown<'_>> = texts
+        .iter()
+        .map(|text| Shown {
+            called: "Read(one)",
+            text,
+        })
+        .collect();
+    let rows = art(
+        &Expanded {
+            shown: &shown,
+            from: 12,
+        },
+        columns,
+        10,
+    );
+    rows.last().cloned()
+}
+
+#[test]
+fn the_footer_at_80_columns_names_the_page_keys_and_the_result_at_the_top() {
+    assert_eq!(
+        seven_from_the_second(80).as_deref(),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ result 2 of 7")
+    );
+}
+
+#[test]
+fn the_footer_at_40_columns_loses_the_result_count_whole() {
+    assert_eq!(
+        seven_from_the_second(40).as_deref(),
+        Some("esc to close · ↑↓ pgup pgdn to see more")
+    );
+}
+
+#[test]
+fn the_footer_at_20_columns_keeps_only_the_way_out() {
+    assert_eq!(seven_from_the_second(20).as_deref(), Some("esc to close"));
 }

@@ -330,6 +330,33 @@
       "sha256": "7d083cbdcb7098b5696a2adc29eac620281b5c615b1cff80858fc079a25d532c"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_results_opened.snap",
+      "case": "ctrl_o_pages_and_steps_through_cut_results",
+      "opened": [
+        "Vendor::calling_batches(&reading_three(), \"All three are read.\")",
+        "Watched::configured(\"results-paged\", 80, 24, &config, true)"
+      ],
+      "sha256": "cb05c03ba488216a75f375a98eae14a4d91f9edf34f10666bb70db20479e9c46"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_results_paged_down.snap",
+      "case": "ctrl_o_pages_and_steps_through_cut_results",
+      "opened": [
+        "Vendor::calling_batches(&reading_three(), \"All three are read.\")",
+        "Watched::configured(\"results-paged\", 80, 24, &config, true)"
+      ],
+      "sha256": "7e661ad96e772b711433d28a00584877d9b24db9bb68701d3d1bc1fb2a3f65fa"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_results_stepped_older.snap",
+      "case": "ctrl_o_pages_and_steps_through_cut_results",
+      "opened": [
+        "Vendor::calling_batches(&reading_three(), \"All three are read.\")",
+        "Watched::configured(\"results-paged\", 80, 24, &config, true)"
+      ],
+      "sha256": "35f9e996605b7fae592710668774c5fe547cde3a3fb6740739f50d9a2e22a61b"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_w_adds_this_repositorys_other_checkouts.snap",
       "case": "ctrl_w_adds_this_repositorys_other_checkouts",
       "opened": [
@@ -580,6 +607,15 @@
         "Watched::native(\"native-clear\", 80, 24, &vendor)"
       ],
       "sha256": "01230767dc4846392ca9c7f25614755d6c746ae633526fc6891f79161adaca0c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_o_stands_at_the_foot_and_escape_leaves_no_row_of_it_in_native_mode.snap",
+      "case": "ctrl_o_stands_at_the_foot_and_escape_leaves_no_row_of_it_in_native_mode",
+      "opened": [
+        "Vendor::calling_batches(&crate::reading_three(), \"All three are read.\")",
+        "Watched::native(\"native-results\", 80, 24, &vendor)"
+      ],
+      "sha256": "8f7e952dd3f7fd840c0e765a6f0ca232db5d41e37818a3237d311b278507552c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_divider_is_clipped_at_16_columns_in_native_mode.snap",
