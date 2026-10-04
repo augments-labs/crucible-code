@@ -554,6 +554,50 @@
       "sha256": "62c4b786f5416eed5f2d53b3d311cc0a0af729f76876d4c786ac5dd4f621f613"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_divider_is_drawn_in_ascii_glyphs_in_native_mode.snap",
+      "case": "clear_divider_is_drawn_in_ascii_glyphs_in_native_mode",
+      "opened": [
+        "Watched::native` writes its own configuration, so the glyph set is // changed the way a reader changes it mid-session: through `/settings`, // which draws with the new set from that moment. let vendor = Vendor::answering(\"Done.\")",
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-clear-ascii\", 80, 24, &vendor)"
+      ],
+      "sha256": "3b4bd5bb2428230cba97faea0c8a0808f6f7faa57d1a9e96c3ab7ce888d1a4cd"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_of_a_silent_session_writes_no_divider_in_native_mode.snap",
+      "case": "clear_of_a_silent_session_writes_no_divider_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-clear-silent\", 80, 24, &vendor)"
+      ],
+      "sha256": "0262b549fe27a46194970dcfa657e4e25bfa94d154ba23b1cd2b978d7fc36c72"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_writes_one_divider_and_no_second_card_in_native_mode.snap",
+      "case": "clear_writes_one_divider_and_no_second_card_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-clear\", 80, 24, &vendor)"
+      ],
+      "sha256": "01230767dc4846392ca9c7f25614755d6c746ae633526fc6891f79161adaca0c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_divider_is_clipped_at_16_columns_in_native_mode.snap",
+      "case": "resume_divider_is_clipped_at_16_columns_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"The first thing this session said.\")"
+      ],
+      "sha256": "c4751b555a367d4ae2513d8c5403d490843f703dcc81aea84a6bacb67707bc00"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_writes_one_divider_and_no_second_card_in_native_mode.snap",
+      "case": "resume_writes_one_divider_and_no_second_card_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"The first thing this session said.\")"
+      ],
+      "sha256": "31ae9dc29075b3866be7f69ed62366d18f2ce8be148cafcd7707cc19382e19b0"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",
       "case": "a_version_that_is_no_release_is_refused_naming_the_newest",
       "opened": [

@@ -42,9 +42,11 @@ everything it drew is already in your own scrollback.
 The same is true with [`output.screen`](../configuration/configuration.md) set
 to `native`, which borrows no screen: each finished line is written once into
 your terminal's scrollback as the session goes, and only the part still
-changing at the foot is drawn again. `/clear` and `/resume` cannot take back
-what the terminal already holds, so the earlier transcript stays in its
-scrollback above the new one.
+changing at the foot is drawn again. `/clear` and `/resume`, which on the full
+screen empty it and draw the opening card again, cannot take back what the
+terminal already holds here, so the earlier transcript stays in its scrollback
+and the new one starts under a single divider row, `new session` or `session
+resumed`, with no second card.
 
 ## Moving through the transcript
 

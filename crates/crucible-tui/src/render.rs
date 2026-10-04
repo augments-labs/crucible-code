@@ -1096,10 +1096,17 @@ impl<T: Terminal> Renderer<T> {
     /// escape bytes by the same rules streamed output is, because it arrived
     /// the same way.
     ///
+    /// An empty line straight under a divider ([`Renderer::divides`]) is not
+    /// taken: the divider is already the row that parts what follows, and a
+    /// blank one under it would part the new session from its own start.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn commit(&mut self, line: &str) -> Result<(), TerminalError> {
+        if line.is_empty() && self.record.divided() {
+            return Ok(());
+        }
         self.take(Slot::Plain, line)?;
         // The newline is what ends the line; without it the next thing written
         // would continue this one.
@@ -1531,6 +1538,11 @@ impl<T: Terminal> Renderer<T> {
     /// conversation, and putting it under what was there would leave a reader
     /// scrolling back through two of them, joined at a point nothing marks.
     ///
+    /// In native mode what was there stays in the terminal's scrollback, which
+    /// nothing written can take back, so the next block is parted from the
+    /// last row that went out there rather than from nothing, and
+    /// [`Renderer::divides`] is what marks the point.
+    ///
     /// The record's numbering carries on past the lines it drops, so a number
     /// some other part of the program is holding names the line it named and
     /// names nothing once that line has gone.
@@ -1540,7 +1552,10 @@ impl<T: Terminal> Renderer<T> {
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn empties(&mut self) -> Result<(), TerminalError> {
         self.native_empties()?;
-        self.record.empties();
+        match self.native {
+            Some(_) => self.record.empties_under(),
+            None => self.record.empties(),
+        }
         self.standing.clear();
         self.prompt_target = None;
         self.pointed_changed = false;

@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: "without_id(&window, &id)"
+---
+16x24 cursor 13,2 scrollback 73
+|› /resume       |
+|  ##############|
+|  ##############|
+|  ########      |
+|                |
+|── session r… ──|
+|› say something |
+|                |
+|The first thing |
+|this session    |
+|said.           |
+|                |
+|                |
+|›               |
+| 99% window left|
+|                |
+|                |
+|                |
+|                |
+|                |
+|                |
+|                |
+|                |
+|                |

@@ -930,3 +930,81 @@ fn a_native_renderer_says_it_is_native_and_a_new_one_is_fullscreen() {
         ScreenMode::Fullscreen
     );
 }
+
+#[test]
+fn a_native_divider_has_one_blank_row_above_it_and_none_below_however_the_transcript_ended() {
+    // Emptying a native transcript takes nothing back from the terminal, so
+    // what the divider is parted from is whatever went out last: a row of
+    // words, or a row of nothing that a block before it already left. Either
+    // way one blank row stands above the divider, and the block that follows
+    // it asks for none, because the divider is what parts them.
+    for (case, ending) in [
+        ("words", &["the last answer"][..]),
+        ("blank", &["the last answer", ""][..]),
+    ] {
+        let window = Window::new(40, 10);
+        let mut render = native(&window);
+        for line in ending {
+            render.commit(line).unwrap();
+        }
+        stands(&mut render);
+        render.seal().unwrap();
+
+        render.empties().unwrap();
+        render.divides("new session").unwrap();
+        render.apart().unwrap();
+        render.commit("what follows").unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let all = window.all();
+        let at = all
+            .iter()
+            .position(|row| row.starts_with("── new session ─"))
+            .unwrap_or_else(|| panic!("{case}: no divider in {all:#?}"));
+        let divider = format!("── new session {}", "─".repeat(40 - 15));
+        let around: Vec<&str> = all
+            .iter()
+            .skip(at.saturating_sub(2))
+            .take(4)
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            around,
+            ["the last answer", "", divider.as_str(), "what follows"],
+            "{case}: {all:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_blank_line_committed_under_a_native_divider_is_not_written() {
+    // A command's answer ends with a blank line that parts it from what is
+    // said next. When the answer is a divider, the divider already does that,
+    // and a blank row under it would part the new session from its own start.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.commit("the last answer").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.commit("").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    let under: Vec<&str> = all
+        .iter()
+        .skip_while(|row| **row != divider)
+        .take(2)
+        .map(String::as_str)
+        .collect();
+    assert_eq!(under, [divider.as_str(), "what follows"], "{all:#?}");
+}

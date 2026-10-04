@@ -248,6 +248,12 @@ pub(crate) struct Record {
     /// would take every block after that for the first of the session, and
     /// part none of them from the one above.
     parted_before: bool,
+    /// The line, by its number counted from the first of the session, that
+    /// parts what is above it from what follows although it is not blank.
+    ///
+    /// A divider: a block that follows it asks for a blank row and is given
+    /// none, because the divider is already the space between them.
+    parting: Option<usize>,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -285,6 +291,7 @@ impl Record {
             landmarks: VecDeque::new(),
             landed: None,
             parted_before: true,
+            parting: None,
             open: false,
         }
     }
@@ -459,7 +466,7 @@ impl Record {
     fn drop_oldest(&mut self) {
         if let Some(line) = self.lines.pop_front() {
             self.weight = self.weight.saturating_sub(line.weight());
-            self.parted_before = Self::blank(&line);
+            self.parted_before = Self::blank(&line) || self.parting == Some(self.gone);
         }
         let tall = self.tall.pop_front().unwrap_or(0);
         self.before = self.ends.pop_front().unwrap_or(self.before);
@@ -538,13 +545,31 @@ impl Record {
     /// each want space around them get one row between them rather than two.
     /// A record nobody has written to is parted: there is nothing above to be
     /// parted from. One holding nothing because it let go of everything it had
-    /// ends in whatever it let go of last, which is still above.
+    /// ends in whatever it let go of last, which is still above. A line marked
+    /// by [`Self::parts`] parts as a blank one does.
     pub(crate) fn parted(&self) -> bool {
         match self.lines.back() {
             None => self.parted_before,
             Some(Line::Flowed(_)) if self.open => false,
-            Some(line) => Self::blank(line),
+            Some(line) => Self::blank(line) || self.parting == self.lines().checked_sub(1),
         }
+    }
+
+    /// Marks the last line as one that parts what follows it from what is
+    /// above, as a blank line would.
+    pub(crate) fn parts(&mut self) {
+        if !self.lines.is_empty() {
+            self.parting = Some(self.lines() - 1);
+        }
+    }
+
+    /// Whether the last line is one [`Self::parts`] marked, with nothing open
+    /// after it.
+    ///
+    /// Asked even once that line has gone out and been let go of: the count
+    /// of lines goes on including it, so it is still the last.
+    pub(crate) fn divided(&self) -> bool {
+        !self.open && self.parting.is_some() && self.parting == self.lines().checked_sub(1)
     }
 
     /// Whether a finished line is a row of nothing.
@@ -587,6 +612,18 @@ impl Record {
         self.opening = None;
         self.open = false;
         self.parted_before = true;
+    }
+
+    /// Drop every line as [`Self::empties`] does, where what was said is still
+    /// above what replaces it.
+    ///
+    /// What emptying means in the terminal's own buffer, which keeps what went
+    /// out: the next block is parted from the last row written there, not from
+    /// nothing, so whether that row was blank is kept.
+    pub(crate) fn empties_under(&mut self) {
+        let parted = self.parted();
+        self.empties();
+        self.parted_before = parted;
     }
 
     /// How many lines the session has taken, including those since dropped.

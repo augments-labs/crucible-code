@@ -19,6 +19,11 @@
 //! [`Renderer::subordinate`]) does nothing, as it does to any line the record
 //! has dropped.
 //!
+//! Emptying the transcript takes nothing back either: the session a resume or a
+//! clear leaves stays in the scrollback, under the card the launch drew. What
+//! replaces it goes under one divider row ([`Renderer::divides`]) rather than
+//! under a second card, which would read as a second launch.
+//!
 //! A resize redraws the region and nothing else. How far back its top now is
 //! cannot be asked of the terminal, so it is worked out from how wide each row
 //! of the region was against the new width, counted as a terminal that rewraps
@@ -33,6 +38,9 @@ use std::fmt::Write as _;
 
 use super::Renderer;
 use super::frame::{BEGIN_SYNC, END_SYNC, HIDE, SHOW};
+use crate::color::Slot;
+use crate::glyphs::Glyphs;
+use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
 use crate::width;
 
@@ -135,6 +143,26 @@ impl<T: Terminal> Renderer<T> {
         }
         self.record.end();
         self.framed(Writes::Everything)
+    }
+
+    /// Marks where the transcript just emptied gives way to what replaces it.
+    ///
+    /// What a session resumed or cleared is given here in place of the opening
+    /// card the full screen draws again: the session above stays in the
+    /// scrollback, and a second card under it would read as a second launch.
+    /// One blank row parts the divider from what is above it, and the divider
+    /// parts what follows, which asks for no blank row of its own: neither
+    /// [`Renderer::apart`] nor an empty [`Renderer::commit`] puts one under it.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn divides(&mut self, label: &str) -> Result<(), TerminalError> {
+        self.apart()?;
+        let divider = divider(label, self.transcript_columns(), self.glyphs);
+        self.present(&[divider])?;
+        self.record.parts();
+        Ok(())
     }
 
     /// Closes the region for good: everything held is written out, nothing
@@ -320,6 +348,31 @@ impl<T: Terminal> Renderer<T> {
         native.frame = out;
         written
     }
+}
+
+/// One row in the quiet colour: two rule cells, the label between spaces, and
+/// rule cells to the last of `columns`.
+///
+/// The rule cell is the one the compaction record is ruled in. A label that
+/// would leave fewer than two rule cells after it is clipped, with the glyph
+/// set's ellipsis, and a width with no room for any of it is ruled across.
+fn divider(label: &str, columns: usize, glyphs: Glyphs) -> Row {
+    let rule = glyphs.horizontal();
+    // Two rule cells and a space either side of the label.
+    let room = columns.saturating_sub(6);
+    let label = if width::columns(label) <= room {
+        label.to_owned()
+    } else {
+        let ellipsis = glyphs.ellipsis();
+        let kept = width::clip(label, room.saturating_sub(width::columns(ellipsis)));
+        format!("{kept}{ellipsis}")
+    };
+    let wide = width::columns(&label);
+    if room == 0 || wide > room {
+        return Row::new().then(Slot::Quiet, rule.repeat(columns));
+    }
+    let after = rule.repeat(columns - 4 - wide);
+    Row::new().then(Slot::Quiet, format!("{rule}{rule} {label} {after}"))
 }
 
 /// The region closed on the way out, unwinding included, so a session that
