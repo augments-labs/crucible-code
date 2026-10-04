@@ -23,6 +23,18 @@
 //! whole of a session is the other half of it, since a process that owns its
 //! screen has no reason to push a row off the top of one.
 //!
+//! A native launch owns no screen. It draws a live region at the foot of the
+//! terminal's own buffer, moving relatively and letting finished rows scroll
+//! into the scrollback, so the screen opened for one applies the three
+//! sequences that mode is made of — erase below, cursor up, cursor to column —
+//! the way a terminal does, keeps the rows pushed off the top as a scrollback
+//! the case can read, and rewraps everything it holds when the window changes
+//! width, which is what the renderer's own count of how far back its region is
+//! assumes of the terminal. Each is still refused on a fullscreen launch, where
+//! a frame that moved relatively is one the renderer never composed. Entering
+//! the alternate screen is remembered in both, because a native case proves it
+//! ran in native mode by that and not by its rows.
+//!
 //! Holding is only recorded here rather than acted on. What a real terminal
 //! does with it is show one picture instead of two, which is invisible to a
 //! screen assembled from every byte that arrived — so the picture is the same
@@ -54,9 +66,21 @@ const RETURN: u8 = b'\r';
 /// The bytes that can end a control sequence and say what it was.
 const ENDS: std::ops::RangeInclusive<char> = '\u{40}'..='\u{7e}';
 
+/// Which of crucible's two screens a launch asked for, and so which sequences
+/// the renderer has promised to confine itself to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// The alternate screen, every row of it addressed by name.
+    Fullscreen,
+    /// The terminal's own buffer, drawn relatively at its foot.
+    Native,
+}
+
 /// A screen, and everything crucible did to it.
 #[derive(Debug)]
 pub(crate) struct Screen {
+    /// Which screen this is.
+    mode: Mode,
     /// How wide the terminal is.
     columns: usize,
     /// How tall it is.
@@ -64,17 +88,28 @@ pub(crate) struct Screen {
     /// What is on it, one row per line of the window, each as wide as what was
     /// written on it rather than as wide as the window.
     grid: Vec<Vec<char>>,
+    /// Whether each row of the window is the fold of a wider line, running on
+    /// into the row under it — which only a resize of a native screen makes,
+    /// and which the next resize needs so as to join the pieces again.
+    ran_on: Vec<bool>,
     /// Which row the cursor is on, counted from the top of the window.
     row: usize,
     /// How many columns across it is.
     column: usize,
-    /// How many rows have been pushed off the top of the window, which is the
-    /// one thing that happened that the picture below cannot show.
+    /// How many rows have been pushed off the top of a fullscreen window, which
+    /// is the one thing that happened that the picture below cannot show.
     ///
     /// It is expected to stay at nought: a process that owns its screen writes
     /// at the position it means and has no reason to make the window move under
     /// what it drew.
     scrolled: usize,
+    /// The rows pushed off the top of a native window, oldest first: what a
+    /// reader would find on scrolling back.
+    scrollback: Vec<Vec<char>>,
+    /// Whether each row of the scrollback ran on into the one under it.
+    ran_on_back: Vec<bool>,
+    /// Whether the session entered the alternate screen.
+    alternate: bool,
     /// What crucible did that it does not promise to do, in the order it was
     /// first done, each said once.
     refused: Vec<String>,
@@ -113,20 +148,54 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MASK: char = '#';
 
 impl Screen {
-    /// An empty screen of that size.
+    /// An empty screen of that size, for a fullscreen launch.
     pub(crate) fn new(columns: usize, rows: usize) -> Self {
+        Self::opened(Mode::Fullscreen, columns, rows)
+    }
+
+    /// An empty screen of that size, for a native launch.
+    pub(crate) fn native(columns: usize, rows: usize) -> Self {
+        Self::opened(Mode::Native, columns, rows)
+    }
+
+    fn opened(mode: Mode, columns: usize, rows: usize) -> Self {
         Self {
+            mode,
             columns,
             rows,
             grid: vec![Vec::new(); rows],
+            ran_on: vec![false; rows],
             row: 0,
             column: 0,
             scrolled: 0,
+            scrollback: Vec::new(),
+            ran_on_back: Vec::new(),
+            alternate: false,
             refused: Vec::new(),
             commanded: Vec::new(),
             holding: false,
             pending: Vec::new(),
         }
+    }
+
+    /// The rows pushed off the top of the window, oldest first, drawn the way
+    /// [`picture`](Self::picture) draws its rows so the two read on from each
+    /// other: everything a reader could scroll back to, then the window.
+    ///
+    /// Empty on a fullscreen screen, where a row pushed off the top is counted
+    /// in the picture's header instead, since nothing there should be making
+    /// one.
+    pub(crate) fn scrollback(&self) -> String {
+        self.framed(&self.scrollback)
+    }
+
+    /// Whether the session entered the alternate screen.
+    ///
+    /// A fullscreen launch does this first of all and a native one never does,
+    /// so it is the one byte that says which screen a session was drawn on —
+    /// rows look the same in both until something scrolls.
+    pub(crate) fn entered_alternate(&self) -> bool {
+        self.alternate
     }
 
     /// Takes bytes as they came off the terminal.
@@ -145,17 +214,30 @@ impl Screen {
 
     /// Changes the size of the window under what is already drawn.
     ///
-    /// Rows are kept and clipped rather than reflowed, which is what xterm does
-    /// and what leaves the picture rectangular; a row drawn legally at the old
-    /// width is not charged for the new one, because the check that matters
-    /// happens where the row is written. A window that lost rows loses them off
-    /// the top, so what was at the foot of it stays at the foot.
+    /// On a fullscreen screen, rows are kept and clipped rather than reflowed,
+    /// which is what xterm does and what leaves the picture rectangular; a row
+    /// drawn legally at the old width is not charged for the new one, because
+    /// the check that matters happens where the row is written. A window that
+    /// lost rows loses them off the top, so what was at the foot of it stays at
+    /// the foot.
     ///
     /// None of that is scrolling. A window that got shorter has fewer rows to
     /// show, which is the reader's doing and says nothing about what crucible
     /// wrote — and the count exists to catch a frame reaching past the bottom
     /// of a screen this process owns.
+    ///
+    /// A native screen rewraps instead, as most terminals now do and as the
+    /// native renderer assumes when it works out how far back the top of its
+    /// region is: see [`Self::rewrap`].
     pub(crate) fn resize(&mut self, columns: usize, rows: usize) {
+        match self.mode {
+            Mode::Fullscreen => self.clip(columns, rows),
+            Mode::Native => self.rewrap(columns, rows),
+        }
+    }
+
+    /// Clips every row to the new width and the window to the new height.
+    fn clip(&mut self, columns: usize, rows: usize) {
         for row in &mut self.grid {
             row.truncate(columns);
         }
@@ -165,11 +247,91 @@ impl Screen {
             self.row = self.row.saturating_sub(1);
         }
         self.grid.resize(rows, Vec::new());
+        self.ran_on = vec![false; rows];
 
         self.columns = columns;
         self.rows = rows;
         self.column = self.column.min(columns);
         self.row = self.row.min(rows.saturating_sub(1));
+    }
+
+    /// Folds everything the terminal holds to the new width, the way a reader
+    /// dragging the corner of a rewrapping terminal would see it.
+    ///
+    /// Rows that ran on into each other are one line again, and each line is
+    /// folded at the new width. The cursor keeps its place in the line it was
+    /// on; nothing empty below it is kept; and the window is the foot of what
+    /// is left, the rest above it being scrollback.
+    fn rewrap(&mut self, columns: usize, rows: usize) {
+        let was = self.columns;
+        let cursor = self.scrollback.len() + self.row;
+        let back = self.scrollback.drain(..).zip(self.ran_on_back.drain(..));
+        let held: Vec<(Vec<char>, bool)> = back
+            .chain(self.grid.drain(..).zip(self.ran_on.drain(..)))
+            .collect();
+
+        // Rows back into lines, with where in its line the cursor was.
+        let mut lines: Vec<Vec<char>> = Vec::new();
+        let mut line = Vec::new();
+        let mut caret = (0, 0);
+        for (index, (mut row, ran_on)) in held.into_iter().enumerate() {
+            if index == cursor {
+                caret = (lines.len(), line.len() + self.column);
+            }
+            if ran_on {
+                row.resize(was, ' ');
+                line.extend(row);
+            } else {
+                line.extend(row);
+                lines.push(std::mem::take(&mut line));
+            }
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        while lines.len() > caret.0 + 1 && lines.last().is_some_and(Vec::is_empty) {
+            lines.pop();
+        }
+
+        // And lines into rows at the new width.
+        let width = columns.max(1);
+        let mut folded: Vec<(Vec<char>, bool)> = Vec::new();
+        let mut at = (0, 0);
+        for (index, line) in lines.into_iter().enumerate() {
+            let first = folded.len();
+            let pieces: Vec<Vec<char>> = if line.is_empty() {
+                vec![Vec::new()]
+            } else {
+                line.chunks(width).map(<[char]>::to_vec).collect()
+            };
+            let count = pieces.len();
+            for (piece, row) in pieces.into_iter().enumerate() {
+                folded.push((row, piece + 1 < count));
+            }
+            if index == caret.0 {
+                at = (first + caret.1 / width, caret.1 % width);
+                while folded.len() <= at.0 {
+                    folded.push((Vec::new(), false));
+                }
+            }
+        }
+
+        let top = folded.len().saturating_sub(rows);
+        let window = folded.split_off(top);
+        for (row, ran_on) in folded {
+            self.scrollback.push(row);
+            self.ran_on_back.push(ran_on);
+        }
+        for (row, ran_on) in window {
+            self.grid.push(row);
+            self.ran_on.push(ran_on);
+        }
+        self.grid.resize(rows, Vec::new());
+        self.ran_on.resize(rows, false);
+        self.row = at.0.saturating_sub(top);
+        self.column = at.1;
+        self.columns = columns;
+        self.rows = rows;
     }
 
     /// What crucible did that it does not promise to do.
@@ -205,12 +367,35 @@ impl Screen {
     /// re-accept — which is how a picture stops being read and becomes a file
     /// that gets a yes. [`MASK`] is what stands there instead, one per character.
     pub(crate) fn picture(&self) -> String {
-        let mut lines = vec![format!(
-            "{}x{} cursor {},{} scrolled {}",
-            self.columns, self.rows, self.row, self.column, self.scrolled
-        )];
+        let header = match self.mode {
+            Mode::Fullscreen => format!(
+                "{}x{} cursor {},{} scrolled {}",
+                self.columns, self.rows, self.row, self.column, self.scrolled
+            ),
+            Mode::Native => format!(
+                "{}x{} cursor {},{} scrollback {}",
+                self.columns,
+                self.rows,
+                self.row,
+                self.column,
+                self.scrollback.len()
+            ),
+        };
 
-        for row in &self.grid {
+        let rows = self.framed(&self.grid);
+        if rows.is_empty() {
+            header
+        } else {
+            format!("{header}\n{rows}")
+        }
+    }
+
+    /// `rows` as the lines of a picture: each padded to the full width, closed
+    /// with a bar, and with this build's version masked out.
+    fn framed(&self, rows: &[Vec<char>]) -> String {
+        let mut lines = Vec::with_capacity(rows.len());
+
+        for row in rows {
             let mut line: String = row.iter().collect();
             for _ in row.len()..self.columns {
                 line.push(' ');
@@ -307,14 +492,27 @@ impl Screen {
     }
 
     /// Steps the cursor down a row, scrolling the window when there is none.
+    ///
+    /// The row pushed off the top is kept on a native screen, where scrolling
+    /// is how a finished row reaches the reader's scrollback, and counted on a
+    /// fullscreen one, where nothing should be making the window move.
     fn down(&mut self) {
         self.row += 1;
 
         if self.row >= self.rows {
-            self.grid.remove(0);
+            let top = self.grid.remove(0);
+            let ran_on = self.ran_on.remove(0);
             self.grid.push(Vec::new());
+            self.ran_on.push(false);
             self.row = self.rows.saturating_sub(1);
-            self.scrolled += 1;
+
+            match self.mode {
+                Mode::Fullscreen => self.scrolled += 1,
+                Mode::Native => {
+                    self.scrollback.push(top);
+                    self.ran_on_back.push(ran_on);
+                }
+            }
         }
     }
 
@@ -323,6 +521,35 @@ impl Screen {
         if let Some(row) = self.grid.get_mut(self.row) {
             row.truncate(self.column);
         }
+        if let Some(ran_on) = self.ran_on.get_mut(self.row) {
+            *ran_on = false;
+        }
+    }
+
+    /// Erases from the cursor to the end of the screen: the rest of this row
+    /// and every row under it.
+    fn erase_below(&mut self) {
+        self.erase_row();
+        for row in self.grid.iter_mut().skip(self.row + 1) {
+            row.clear();
+        }
+        for ran_on in self.ran_on.iter_mut().skip(self.row + 1) {
+            *ran_on = false;
+        }
+    }
+
+    /// Moves the cursor up `params` rows, one when none is given, and stops at
+    /// the top of the window as a terminal does.
+    fn up(&mut self, params: &str) {
+        let count = params.parse::<usize>().unwrap_or(1).max(1);
+        self.row = self.row.saturating_sub(count);
+    }
+
+    /// Puts the cursor in column `params`, counted from one, and no further
+    /// right than the last column the window has.
+    fn across(&mut self, params: &str) {
+        let count = params.parse::<usize>().unwrap_or(1).max(1);
+        self.column = (count - 1).min(self.columns.saturating_sub(1));
     }
 
     /// Reads one escape sequence and returns what follows it.
@@ -363,8 +590,23 @@ impl Screen {
     /// The whole set the renderer promises: park at a named cell, erase the
     /// rest of a row, colour, the two that hold a frame until all of it has
     /// arrived, the modes crucible borrows from the terminal — the screen it
-    /// draws on among them — and the one question it asks.
+    /// draws on among them — and the one question it asks. A native launch
+    /// adds the three its frames are made of: erase to the end of the screen,
+    /// cursor up and cursor to a column.
     fn act(&mut self, params: &str, ends: char) {
+        if params == "?1049" && ends == 'h' {
+            self.alternate = true;
+        }
+
+        if self.mode == Mode::Native {
+            match (params, ends) {
+                ("" | "0", 'J') => return self.erase_below(),
+                (_, 'A') => return self.up(params),
+                (_, 'G') => return self.across(params),
+                _ => {}
+            }
+        }
+
         match (params, ends) {
             // Colour, the modes crucible borrows from the terminal, and the
             // device-attributes question it asks once at startup. None of them
@@ -687,5 +929,161 @@ mod tests {
         screen.feed(b"one\ntwo");
 
         assert_eq!(screen.refusals(), ["ended a row with a bare newline"]);
+    }
+
+    /// The rows of `picture`, edges and header off.
+    fn rows(picture: &str) -> Vec<String> {
+        picture
+            .lines()
+            .skip(1)
+            .map(|line| line.trim_matches('|').to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn erase_below_on_a_native_screen_clears_from_the_cursor_to_the_foot() {
+        // The sequence every native frame opens with: back to the top of the
+        // region, then everything from there to the foot of the screen goes,
+        // the rest of the row the cursor is on included. What stands above the
+        // cursor is the reader's and is not touched.
+        let mut screen = Screen::native(8, 4);
+        screen.feed(b"one\r\ntwo\r\nthree\r\nfour");
+        screen.feed(b"\r\x1b[2At\x1b[J");
+
+        assert_eq!(
+            rows(&screen.picture()),
+            ["one     ", "t       ", "        ", "        "]
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn cursor_up_on_a_native_screen_climbs_and_stops_at_the_top() {
+        // A terminal clamps a climb past its top row, and the native renderer
+        // leans on that: how far back the region's top is after a resize is
+        // worked out rather than read, so a count that lands high is one the
+        // terminal is trusted to stop.
+        let mut screen = Screen::native(8, 4);
+        screen.feed(b"one\r\ntwo");
+        screen.feed(b"\x1b[5AX");
+
+        assert_eq!(
+            rows(&screen.picture()),
+            ["oneX    ", "two     ", "        ", "        "]
+        );
+        assert!(
+            screen.picture().starts_with("8x4 cursor 0,4"),
+            "{}",
+            screen.picture()
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn cursor_to_column_on_a_native_screen_lands_there() {
+        // Counted from one, the way the terminal counts, and clamped to the
+        // last column the window has.
+        let mut screen = Screen::native(8, 4);
+        screen.feed(b"one two\x1b[3Gx\x1b[99G!");
+
+        assert_eq!(
+            rows(&screen.picture()).first().map(String::as_str),
+            Some("onx two!")
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn the_three_native_sequences_are_still_refused_on_a_fullscreen_screen() {
+        // The full screen names every row it writes, so a frame that moved
+        // relatively or erased wholesale is one it never composed — and a
+        // screen that applied either would be agreeing with the claim it is
+        // here to check.
+        let mut screen = Screen::new(8, 4);
+        screen.feed(b"\x1b[J\x1b[1A\x1b[1G");
+
+        assert_eq!(
+            screen.refusals(),
+            ["wrote ESC[J", "wrote ESC[1A", "wrote ESC[1G"]
+        );
+    }
+
+    #[test]
+    fn a_row_scrolled_off_a_native_screen_is_in_its_scrollback() {
+        // In the terminal's own buffer a row pushed off the top is kept, and
+        // what a reader could scroll back to is half of what a native case
+        // asserts on: a row written once is a row found once in the scrollback
+        // and the window together.
+        let mut screen = Screen::native(8, 2);
+        screen.feed(b"one\r\ntwo\r\nthree");
+
+        assert_eq!(screen.scrollback(), "|one     |");
+        assert_eq!(rows(&screen.picture()), ["two     ", "three   "]);
+        assert!(
+            screen.picture().starts_with("8x2 cursor 1,5 scrollback 1"),
+            "{}",
+            screen.picture()
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_native_screen_narrowed_rewraps_what_it_holds_and_widened_joins_it_again() {
+        // A terminal that rewraps folds each line at the new width and joins
+        // the pieces again when the window widens, which is what the native
+        // renderer counts on when it works out where the region's top went.
+        let mut screen = Screen::native(8, 4);
+        screen.feed(b"abcdefgh\r\nij\r\n");
+
+        screen.resize(4, 4);
+        assert_eq!(rows(&screen.picture()), ["abcd", "efgh", "ij  ", "    "]);
+        assert!(
+            screen.picture().starts_with("4x4 cursor 3,0 scrollback 0"),
+            "{}",
+            screen.picture()
+        );
+
+        screen.resize(8, 4);
+        assert_eq!(
+            rows(&screen.picture()),
+            ["abcdefgh", "ij      ", "        ", "        "]
+        );
+        assert!(
+            screen.picture().starts_with("8x4 cursor 2,0 scrollback 0"),
+            "{}",
+            screen.picture()
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_native_screen_narrowed_past_its_height_scrolls_the_top_rows_back() {
+        // Rows that no longer fit go into the scrollback, and the cursor keeps
+        // its place in the line it was on.
+        let mut screen = Screen::native(8, 3);
+        screen.feed(b"abcdefgh\r\nij\r\nk");
+
+        screen.resize(4, 3);
+
+        assert_eq!(screen.scrollback(), "|abcd|");
+        assert_eq!(rows(&screen.picture()), ["efgh", "ij  ", "k   "]);
+        assert!(
+            screen.picture().starts_with("4x3 cursor 2,1 scrollback 1"),
+            "{}",
+            screen.picture()
+        );
+    }
+
+    #[test]
+    fn entering_the_alternate_screen_is_remembered() {
+        // The one thing that says a session took the full screen rather than
+        // the reader's buffer, kept so a native case can ask.
+        let mut screen = Screen::native(8, 4);
+        assert!(!screen.entered_alternate());
+
+        screen.feed(b"\x1b[?1049h");
+
+        assert!(screen.entered_alternate());
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
     }
 }
