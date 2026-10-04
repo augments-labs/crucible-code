@@ -267,3 +267,54 @@ fn clear_divider_is_drawn_in_ascii_glyphs_in_native_mode() {
     assert!(read.contains(&format!("-- {STARTED} -")), "{read}");
     insta::assert_snapshot!(window.picture());
 }
+
+#[test]
+fn ctrl_o_stands_at_the_foot_and_escape_leaves_no_row_of_it_in_native_mode() {
+    // The view is the way to a cut result in native mode, where the transcript
+    // is the terminal's own and nothing in it can be clicked open. It stands
+    // at the foot with the same keys as fullscreen, and is taken back when it
+    // closes: a row of it left in the scrollback would be a result written
+    // into the record a second time, which is the thing standing it avoids.
+    let vendor = Vendor::calling_batches(&crate::reading_three(), "All three are read.");
+    let mut window = Watched::native("native-results", 80, 24, &vendor);
+    crate::three_files(&window);
+    window.types_until("read all three\r", "All three are read.");
+
+    window.types_until("\x0f", "result 1 of 3");
+    let opened = window.picture();
+    assert_eq!(
+        opened.lines().last().map(str::trim_end),
+        Some("|esc to close · ↑↓ pgup pgdn to see more · ←→ result 1 of 3                      |"),
+        "{opened}"
+    );
+    assert!(opened.contains("gamma line 02"), "{opened}");
+    insta::assert_snapshot!(opened);
+
+    window.types("\x1b[6~");
+    window.types_until("\x1b[C", "result 2 of 3");
+    assert!(
+        window.picture().contains("beta line 01"),
+        "{}",
+        window.picture()
+    );
+
+    window.types_until("\x1b", "ask mode on");
+
+    window.assert_never_alternate();
+    let read = everything(&window);
+    for row in [
+        "pgup pgdn",
+        "result 2 of 3",
+        "gamma line 02",
+        "beta line 02",
+    ] {
+        assert!(!read.contains(row), "{row:?} was left behind:\n{read}");
+    }
+    assert!(
+        !read.contains(&"─".repeat(80)),
+        "the view's rule was left behind:\n{read}"
+    );
+    for row in ["All three are read.", "1 gamma line 01 (+29 lines"] {
+        assert_eq!(read.matches(row).count(), 1, "{row:?}:\n{read}");
+    }
+}

@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: stepped
+---
+80x24 cursor 23,0 scrolled 0
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Read(beta.txt)                                                                  |
+|                                                                                |
+|     1 beta line 01                                                             |
+|     2 beta line 02                                                             |
+|     3 beta line 03                                                             |
+|     4 beta line 04                                                             |
+|     5 beta line 05                                                             |
+|     6 beta line 06                                                             |
+|     7 beta line 07                                                             |
+|     8 beta line 08                                                             |
+|     9 beta line 09                                                             |
+|    10 beta line 10                                                             |
+|    11 beta line 11                                                             |
+|    12 beta line 12                                                             |
+|    13 beta line 13                                                             |
+|    14 beta line 14                                                             |
+|    15 beta line 15                                                             |
+|    16 beta line 16                                                             |
+|    17 beta line 17                                                             |
+|    18 beta line 18                                                             |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ result 2 of 3                      |
