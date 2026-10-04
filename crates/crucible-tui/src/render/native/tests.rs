@@ -932,6 +932,18 @@ fn a_native_renderer_says_it_is_native_and_a_new_one_is_fullscreen() {
 }
 
 #[test]
+fn a_native_panel_gets_half_the_window_rounded_down_and_a_fullscreen_one_the_whole() {
+    // What stands in place of the box in native mode is held to half the
+    // window, so that what it stands over is still on screen rather than
+    // pushed into a scrollback that closing the panel cannot take back. The
+    // full screen owns every row and gives the whole window, as before.
+    assert_eq!(native(&Window::new(80, 24)).room(), 12);
+    assert_eq!(native(&Window::new(80, 23)).room(), 11);
+    assert_eq!(native(&Window::new(80, 1)).room(), 0);
+    assert_eq!(Renderer::new(Window::new(80, 24)).room(), 24);
+}
+
+#[test]
 fn a_native_divider_has_one_blank_row_above_it_and_none_below_however_the_transcript_ended() {
     // Emptying a native transcript takes nothing back from the terminal, so
     // what the divider is parted from is whatever went out last: a row of

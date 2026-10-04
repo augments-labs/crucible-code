@@ -1,0 +1,21 @@
+---
+source: tests/whole_screen/native.rs
+expression: shorter
+---
+80x16 cursor 15,0 scrollback 38
+|fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
+|quick brown fox jumps over the lazy dog. done.                                  |
+|                                                                                |
+|› /settings                                                                     |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Settings     Status   ‹ Config ›   Usage                                        |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ / to search                                                                  │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› Theme                                                                     auto|
+|  ↓ 17 more                                                                     |
+|                                                                                |
+|↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

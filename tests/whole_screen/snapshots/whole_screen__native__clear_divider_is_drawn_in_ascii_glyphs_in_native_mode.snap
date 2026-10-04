@@ -2,7 +2,19 @@
 source: tests/whole_screen/native.rs
 expression: window.picture()
 ---
-80x24 cursor 6,4 scrollback 22
+80x24 cursor 18,4 scrollback 10
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› say something                                                                 |
+|                                                                                |
+|Done.                                                                           |
+|                                                                                |
+|› /settings                                                                     |
+|+ Glyphs set to ascii                                                           |
+|                                                                                |
 |> /clear                                                                        |
 |                                                                                |
 |-- new session -----------------------------------------------------------------|
@@ -12,18 +24,6 @@ expression: window.picture()
 || >                                                                            ||
 |+------------------------------------------------------------------------------+|
 |ask mode on (shift+tab to cycle)                       anthropic - claude-test-1|
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

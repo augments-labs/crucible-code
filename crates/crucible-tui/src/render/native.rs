@@ -24,6 +24,13 @@
 //! replaces it goes under one divider row ([`Renderer::divides`]) rather than
 //! under a second card, which would read as a second launch.
 //!
+//! What stands over or in place of the box is held to half the window here
+//! ([`Renderer::room`]), because a transcript row it takes is let go of into
+//! the terminal's scrollback, and taking the panel down again brings none of
+//! them back: the box is drawn again directly under the last row still held.
+//! A panel that cannot be drawn in half the window stands at the least it can
+//! be drawn in, and the rows that costs stay in the scrollback.
+//!
 //! A resize redraws the region and nothing else. How far back its top now is
 //! cannot be asked of the terminal, so it is worked out from how wide each row
 //! of the region was against the new width, counted as a terminal that rewraps

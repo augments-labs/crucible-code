@@ -424,8 +424,9 @@ pub(super) fn under<T: Terminal>(
 
     // One row is left to the transcript whatever stands here, and it is the row
     // the turn goes on writing into: a list that asked for the whole window
-    // would leave what is being said now nowhere at all to appear.
-    let room = renderer.rows().saturating_sub(1);
+    // would leave what is being said now nowhere at all to appear. How much what
+    // stands here may have is the renderer's to say, as it is between turns.
+    let room = renderer.room().saturating_sub(1);
     let columns = renderer.columns();
 
     // The row that says the turn is running stays directly over the view's rule,

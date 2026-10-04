@@ -318,3 +318,311 @@ fn ctrl_o_stands_at_the_foot_and_escape_leaves_no_row_of_it_in_native_mode() {
         assert_eq!(read.matches(row).count(), 1, "{row:?}:\n{read}");
     }
 }
+
+/// The rows of a picture or a scrollback, without the header a picture opens
+/// with.
+fn drawn(picture: &str) -> Vec<&str> {
+    picture
+        .lines()
+        .filter(|line| line.starts_with('|'))
+        .collect()
+}
+
+/// How many rows at the top of `opened` are the transcript's: the longest run
+/// of them that stood, in that order, somewhere in `before`, and under it the
+/// row echoing a command `keys` sent, which the transcript wrote as the
+/// command went and keeps once the panel is gone.
+///
+/// A panel's first row is a rule, a title or a list entry, none of which the
+/// transcript wrote, so the run ends where the panel begins.
+fn transcript_rows(before: &str, opened: &str, keys: &str) -> usize {
+    let before = drawn(before);
+    let opened = drawn(opened);
+    let kept = (1..=opened.len())
+        .rev()
+        .find(|&count| {
+            opened
+                .get(..count)
+                .is_some_and(|top| before.windows(count).any(|run| run == top))
+        })
+        .unwrap_or(0);
+    kept + usize::from(echoed(&opened, kept, keys))
+}
+
+/// Whether the row of `opened` at `at` echoes the command `keys` sent: `› `
+/// and the command, which only keys ending in Enter leave behind.
+fn echoed(opened: &[&str], at: usize, keys: &str) -> bool {
+    let Some(command) = keys.strip_suffix('\r') else {
+        return false;
+    };
+    opened
+        .get(at)
+        .is_some_and(|row| row.trim_end_matches(['|', ' ']) == format!("|› {command}"))
+}
+
+/// The rows of the window from the box's top border down: the box, its
+/// status row and whatever the region leaves under them.
+fn box_rows(picture: &str) -> usize {
+    let rows = drawn(picture);
+    rows.iter()
+        .position(|row| row.starts_with("|╭"))
+        .map_or(0, |at| rows.len() - at)
+}
+
+/// What a panel opened over a full window took, read against the window as it
+/// was before it opened.
+struct Stood {
+    /// The window's rows that are still the transcript's.
+    transcript: usize,
+    /// The window's rows under them: the panel, or the list and the box.
+    under: usize,
+    /// How many rows the panel pushed into the scrollback: what the terminal
+    /// was handed while the panel opened, less the one the command's echo
+    /// took for itself.
+    pushed: usize,
+    /// The rows of the panel: every row of the window the transcript never
+    /// wrote, blank ones aside.
+    rows: Vec<String>,
+}
+
+/// Reads [`Stood`] off `window` with a panel `keys` opened.
+fn stood(window: &Watched, before: &str, back_before: &str, keys: &str) -> Stood {
+    let opened = window.picture();
+    let transcript = transcript_rows(before, &opened, keys);
+    let echo = usize::from(echoed(&drawn(&opened), transcript - 1, keys));
+    let written: Vec<&str> = drawn(before)
+        .into_iter()
+        .chain(drawn(back_before))
+        .collect();
+    let rows = drawn(&opened)
+        .into_iter()
+        .skip(transcript)
+        .filter(|row| !row.trim_matches(|c| c == '|' || c == ' ').is_empty())
+        .filter(|row| !written.contains(row))
+        .map(str::to_owned)
+        .collect();
+    Stood {
+        transcript,
+        under: drawn(&opened).len() - transcript,
+        pushed: drawn(&window.scrollback()).len() - drawn(back_before).len() - echo,
+        rows,
+    }
+}
+
+/// Fails where a row the panel drew can still be scrolled back to.
+fn left_nothing(window: &Watched, panel: &[String]) {
+    let back = window.scrollback();
+    for row in panel {
+        assert!(
+            !back.contains(row.as_str()),
+            "{row:?} was left behind:\n{back}"
+        );
+    }
+}
+
+/// A native window at 80x24 filled by an answer taller than it.
+fn filled(case: &str, vendor: &Vendor) -> Watched {
+    let mut window = Watched::native(case, 80, 24, vendor);
+    window.types_until("say something\r", crate::ANSWER_END);
+    assert!(
+        !window.scrollback().is_empty(),
+        "the window is not full:\n{}",
+        window.picture()
+    );
+    window
+}
+
+/// Opens a panel with `keys` over a full window, checks it against the cap
+/// from `mockups.md` §3, closes it with Esc and checks nothing of it stayed.
+///
+/// `height` is what the panel may take: half the window, or its smallest
+/// drawable height where that is more.
+fn capped(window: &mut Watched, keys: &str, opens: &str, height: usize) -> String {
+    let before = window.picture();
+    let back_before = window.scrollback();
+
+    window.types_until(keys, opens);
+    let opened = window.picture();
+    let Stood {
+        transcript,
+        under,
+        pushed,
+        rows,
+    } = stood(window, &before, &back_before, keys);
+    assert!(
+        under <= height,
+        "{under} rows under the transcript:\n{opened}"
+    );
+    assert!(
+        transcript >= 24 - height,
+        "{transcript} rows of the transcript:\n{opened}"
+    );
+    assert!(
+        pushed <= under.saturating_sub(box_rows(&before)),
+        "{pushed} rows pushed into the scrollback:\n{opened}"
+    );
+
+    window.types_until("\x1b", "ask mode on");
+    window.assert_never_alternate();
+    left_nothing(window, &rows);
+    opened
+}
+
+#[test]
+fn settings_takes_at_most_half_the_window_in_native_mode() {
+    let vendor = Vendor::answering(&crate::a_long_answer());
+    let mut window = filled("native-cap-settings", &vendor);
+    let opened = capped(&mut window, "/settings\r", "esc to close", 12);
+    insta::assert_snapshot!(opened);
+}
+
+#[test]
+fn theme_takes_at_most_half_the_window_in_native_mode() {
+    // The theme picture's smallest drawable height at 80 columns is 19: the
+    // specimen stands under the list there, so the panel stands at that height
+    // rather than at the cap.
+    let vendor = Vendor::answering(&crate::a_long_answer());
+    let mut window = filled("native-cap-theme", &vendor);
+    let opened = capped(&mut window, "/theme\r", "Theme", 19);
+    insta::assert_snapshot!(opened);
+}
+
+#[test]
+fn model_takes_at_most_half_the_window_in_native_mode() {
+    // The shelf's smallest drawable height is 15, so it stands at that height
+    // rather than at the cap.
+    let vendor = Vendor::answering(&crate::a_long_answer());
+    let mut window = filled("native-cap-model", &vendor);
+    let opened = capped(&mut window, "/model\r", "Search", 15);
+    insta::assert_snapshot!(opened);
+}
+
+#[test]
+fn resume_takes_at_most_half_the_window_in_native_mode() {
+    let vendor = Vendor::answering(&crate::a_long_answer());
+    let mut first = Watched::native("native-cap-resume", 80, 24, &vendor);
+    first.types_until("say something\r", crate::ANSWER_END);
+    first.ends_on("TERM");
+
+    let mut window = filled("native-cap-resume", &vendor);
+    let opened = capped(&mut window, "/resume\r", "a session, or a branch", 12);
+    insta::assert_snapshot!(opened);
+}
+
+#[test]
+fn ctrl_o_takes_at_most_half_the_window_in_native_mode() {
+    let vendor = Vendor::calling_batches(&crate::reading_three(), "All three are read.");
+    let mut window = Watched::native("native-cap-results", 80, 24, &vendor);
+    crate::three_files(&window);
+    window.types_until("read all three\r", "All three are read.");
+    assert!(!window.scrollback().is_empty(), "{}", window.picture());
+
+    let opened = capped(&mut window, "\x0f", "result 1 of 3", 12);
+    assert!(opened.contains("pgup pgdn to see more"), "{opened}");
+    insta::assert_snapshot!(opened);
+}
+
+#[test]
+fn slash_list_takes_at_most_half_the_window_in_native_mode() {
+    // The list stands above the box with one blank row between them, so the
+    // cap is on the three together, and the list is closed by taking the `/`
+    // back rather than with Esc.
+    let vendor = Vendor::answering(&crate::a_long_answer());
+    let mut window = filled("native-cap-slash", &vendor);
+    let before = window.picture();
+    let back_before = window.scrollback();
+
+    window.types("/");
+    let opened = window.picture();
+    let Stood {
+        transcript,
+        under,
+        pushed,
+        rows,
+    } = stood(&window, &before, &back_before, "/");
+    let list = under - box_rows(&opened) - 1;
+    assert!(list > 0, "{opened}");
+    assert!(under <= 12, "{under} rows under the transcript:\n{opened}");
+    assert!(
+        transcript >= 12,
+        "{transcript} rows of the transcript:\n{opened}"
+    );
+    assert!(
+        pushed <= list + 1,
+        "{pushed} rows pushed into the scrollback:\n{opened}"
+    );
+    assert!(opened.contains(" more"), "{opened}");
+
+    window.types("\x7f");
+    assert!(
+        !window.picture().contains("/settings"),
+        "{}",
+        window.picture()
+    );
+    window.assert_never_alternate();
+    left_nothing(&window, &rows);
+    insta::assert_snapshot!(opened);
+}
+
+/// Fails where a row of the `/settings` panel, at either width it was drawn
+/// at, can be scrolled back to: its tab row, its footer, or its rule, the one
+/// row made of nothing but `─`.
+fn settings_left_nothing(window: &Watched) {
+    let back = window.scrollback();
+    for text in ["esc to close", "Config", "Usage"] {
+        assert!(!back.contains(text), "{text:?} was left behind:\n{back}");
+    }
+    let rule = drawn(&back).into_iter().find(|row| {
+        let inside = row.trim_matches(|c| c == '|' || c == ' ');
+        !inside.is_empty() && inside.chars().all(|c| c == '─')
+    });
+    assert!(rule.is_none(), "{rule:?} was left behind:\n{back}");
+}
+
+#[test]
+fn a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode() {
+    let vendor = Vendor::answering(&crate::a_long_answer());
+    let mut window = filled("native-cap-resized", &vendor);
+    let before = window.picture();
+    let back_before = window.scrollback();
+    window.types_until("/settings\r", "esc to close");
+    let rows = stood(&window, &before, &back_before, "/settings\r").rows;
+
+    // Shorter: the cap would be 8, and the panel's smallest drawable height is
+    // 12, so it stands at 12 of the 16 rows.
+    window.resize(80, 16);
+    let shorter = window.picture();
+    assert!(shorter.contains("esc to close"), "{shorter}");
+    assert_eq!(
+        16 - transcript_rows(&before, &shorter, "/settings\r"),
+        12,
+        "{shorter}"
+    );
+    left_nothing(&window, &rows);
+    insta::assert_snapshot!("a_resize_with_a_panel_open_80x16", shorter);
+
+    // Narrower and tall again: the rows fold at the new width and the panel is
+    // capped as it was at 80x24, except that its footer folds into two rows at
+    // 60 columns, so its smallest drawable height there is 13 and it stands at
+    // that. The region's redraw leaves the rows under its new foot blank, so
+    // the panel is measured from its rule to its last written row.
+    window.resize(60, 24);
+    let narrower = window.picture();
+    assert!(narrower.contains("esc to close"), "{narrower}");
+    let rows = drawn(&narrower);
+    let rule = rows
+        .iter()
+        .position(|row| row.starts_with(&format!("|{}", "─".repeat(60))))
+        .unwrap_or(0);
+    let footer = rows
+        .iter()
+        .rposition(|row| row.contains("esc to close"))
+        .unwrap_or(0);
+    assert!(footer + 1 - rule <= 13, "{narrower}");
+    settings_left_nothing(&window);
+    insta::assert_snapshot!("a_resize_with_a_panel_open_60x24", narrower);
+
+    window.types_until("\x1b", "ask mode on");
+    window.assert_never_alternate();
+    settings_left_nothing(&window);
+}
