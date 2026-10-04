@@ -38,7 +38,9 @@
 //! is emptied and the session picked up replaces it, under the opening card and
 //! exactly as a launch would have drawn it — and what was held behind the rows
 //! of the old one is dropped with them, because a key that opens what is behind
-//! a row nobody can see is worse than a row that offers nothing.
+//! a row nobody can see is worse than a row that offers nothing. In native mode
+//! the old transcript stays in the terminal's scrollback, so the session picked
+//! up goes under it and a divider rather than under a second card.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -50,7 +52,7 @@ use crucible_app::client::{Performed, Resumed};
 use crucible_client_api::Command;
 use crucible_session::{Glimpse, Pruned, Reach, Recorded, Roots, glimpse, recent, retitle};
 use crucible_tui::{
-    Editor, Glyphs, Kept, Key, Picker, Pressed, Renderer, Row, Slot, Terminal, clip,
+    Editor, Glyphs, Kept, Key, Picker, Pressed, Renderer, Row, ScreenMode, Slot, Terminal, clip,
     columns as wide,
 };
 use crucible_types::{Compacting, SessionId};
@@ -244,7 +246,9 @@ fn picking<T: Terminal>(
     // follows is a different conversation rather than the next thing that
     // happened in that one. Left standing, the two would be joined at a point
     // nothing marks, and a reader scrolling back would walk out of the session
-    // they picked up and into one they left without being told.
+    // they picked up and into one they left without being told. In native
+    // mode it does stand, in the terminal's scrollback, which nothing written
+    // can take back; the divider below is what marks the point.
     //
     // What was held of the old session's results goes with the rows that offered
     // them: the offers are no longer on screen, and a key opening what is behind
@@ -253,12 +257,18 @@ fn picking<T: Terminal>(
     renderer.empties()?;
 
     // All three of these are what a session picked up on the command line
-    // gets, in the same order and for the same reason: the card at the top,
-    // what it already said under the card, and what it costs to carry are
-    // facts about the session rather than about which way reached it — so a
-    // reader scrolling back after a `/resume` finds exactly the screen a
-    // launch would have drawn.
-    held.opening.commit(renderer)?;
+    // gets, in the same order and for the same reason: the head of it, what it
+    // already said under that, and what it costs to carry are facts about the
+    // session rather than about which way reached it. On the full screen the
+    // head is the card, so a reader scrolling back after a `/resume` finds
+    // exactly the screen a launch would have drawn. The terminal's own buffer
+    // keeps the session just left and the card the launch drew above it, and
+    // a second card under them would read as a second launch, so there the
+    // head is one divider saying where the session picked up begins.
+    match renderer.screen() {
+        ScreenMode::Fullscreen => held.opening.commit(renderer)?,
+        ScreenMode::Native => renderer.divides("session resumed")?,
+    }
     let pruned = conversation.session().take_pruned();
     let against = replaying::Replay::of(conversation.runner(), terms, &pruned);
     super::super::replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;

@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **In native mode `/resume` and `/clear` no longer draw a second welcome
+  card.** The session that follows starts under one `session resumed` or `new
+  session` divider row, and the launch's warnings are not written again. A
+  `/clear` in a session that has said nothing writes only `nothing had been
+  said`.
+
 ## [0.45.2] - 2026-10-03
 
 **Ctrl+B backgrounds a running command from the moment it starts again, and
