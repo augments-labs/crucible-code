@@ -71,14 +71,35 @@ change in any release with no deprecation period.
   stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
   its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
   blank row parts one plan window from the next.
-- **`/compact` with no model answers under the line that asked.** The warning
-  used to stand apart, two rows down, unlike every other command's reply.
+- **Every one-line `/compact` reply answers under the line that asked.** The
+  no-model warning, `nothing was sent`, `! stopped` and the note that there was
+  nothing worth replacing used to stand apart, two rows down, unlike every other
+  command's reply.
 - **The welcome card and `/resume` agree on an empty directory.** Under
   `Recent sessions` the card said `No recent sessions` where `/resume` said
   `no earlier session for this workspace`; both now say the second.
 - **`/release-notes` closed with Esc leaves the spacing other panels do.**
   It left one blank row fewer above the box, and so did a resize that closed
   it.
+- **`/context` stands in a short window.** In a window shorter than its panel
+  it was printed into the transcript instead, and in native mode it could
+  take more than half the window; it now stands in the room it is given and
+  scrolls with ↑ and ↓.
+- **Wrapped text holding a control character no longer runs past the
+  window's edge.** An error or a reply can carry a character a terminal would
+  act on, which crucible draws as a space; wrapping counted it as nothing, so
+  the row came out a column wider than the window and the terminal cut or
+  wrapped it. Wrapping now counts that space, and a tab, drawn as one space,
+  as one column rather than up to eight.
+- **A click beside a row of the `Still running` list no longer opens it.** In
+  fullscreen a click or a resting pointer on a list standing over the box
+  counts on the cells the row drew, so the blank after a command on its row
+  marks, opens and lights nothing.
+- **A command piped in at a terminal hangs its reply's mark on the reply's
+  first row.** A reply that opened with a line such as `! fly is not a mode`
+  was written on the `ask ›` row and the `⎿` mark went on the line under it;
+  the reply now starts on its own row under the prompt, marked, as other
+  replies are.
 - **In native mode the box stays at the foot of the window after a turn.**
   What a turn showed under the answer pushed transcript rows into the
   terminal's scrollback, and once it ended the box was drawn directly under

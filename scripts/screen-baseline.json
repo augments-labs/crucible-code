@@ -1,8 +1,8 @@
 {
   "harness": {
-    "tests/whole_screen/screen.rs": "9bdb6e42012c5fbd7213420e7e8a3bbc5ae9b9241afa8ad718d4f62727722f7e",
+    "tests/whole_screen/screen.rs": "b2431ae0e10cf95a981b95fb6ec84167fe2099ae1fb68c1778578bd78cdd30ca",
     "tests/whole_screen/vendor.rs": "34f9d6bbec72850a23e2c252f03bd859e3d9dce87eb156e8f1350f71fdecbb1c",
-    "tests/whole_screen/watched.rs": "fcf174e0278b1e312ed82485c8d33beae07a1568dbfa340d7ee5df1d0d694d10"
+    "tests/whole_screen/watched.rs": "bbbf6a00f68720a8907268785b8e0821ef697e62b3da78770fdcff98f490171d"
   },
   "captures": [
     {
@@ -17,19 +17,26 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_a_cut_result_opens_it.snap",
       "case": "a_click_on_a_cut_result_opens_it",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_batches(&reading, \"The file is read.\")",
+        "Watched::configured(case, 80, 24, &config, true)"
+      ],
       "sha256": "091c83b94de22c207e274222e4fab8a5d6e33a9693f7353d1f11267f296d8cc7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks.snap",
       "case": "a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "177a776cb24b1c98aed572525132a401d60b281f97729fd5d0b29b7350894bfa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_the_count_opens_the_list_while_a_turn_is_still_running.snap",
       "case": "a_click_on_the_count_opens_the_list_while_a_turn_is_still_running",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"click-count-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "836dac6f440cfee2a652efd56585d2c611f98f0e19fa438a729ba67f9266488a"
@@ -37,13 +44,17 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it.snap",
       "case": "a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "d6971c539388152a69b8d90fb7f1b0828bb14450942d6169b91ad1d6b593231f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_command_that_cannot_run_mid_turn_says_so_on_a_panel.snap",
       "case": "a_command_that_cannot_run_mid_turn_says_so_on_a_panel",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"refuse-command-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "74344846d6cf2e812347cad11ceef931ab6072607406e3a7e2a7b5b14ffcc3bf"
@@ -101,6 +112,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_mistyped_command_mid_turn_is_refused_on_the_panel_and_not_queued.snap",
       "case": "a_mistyped_command_mid_turn_is_refused_on_the_panel_and_not_queued",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"mistyped-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "d08c07bbf23583cb829f70471324879d45bd2961427da6a757b49bebaa34762a"
@@ -109,6 +121,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_model_picked_mid_turn_is_confirmed_then_held.snap",
       "case": "a_model_picked_mid_turn_is_confirmed_then_held",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"model-mid-turn\", 100, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "90551ccfbc52965d79a4b8ba23df03d5a294b6c97988cc919866b5756aa4b1d5"
@@ -167,6 +180,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under.snap",
       "case": "a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"mode-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "fd669e58d9b6ca88bdc3e523299ec8d57b7f7e945b1b3751e5d408096406fe7c"
@@ -174,13 +188,19 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
       "case": "a_single_waiting_prompt_is_told_the_key_that_opens_the_queue",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
+      ],
       "sha256": "5de7deef9616b5250c31d5a68b62d51b7f9b46fc9e1a1e4d6238a08f34bb3733"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window.snap",
       "case": "a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
+      ],
       "sha256": "a7fe2d4c45969e0e5337173451d6c519bf8642722212b23196aadcee47e6cd8d"
     },
     {
@@ -195,6 +215,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
       "case": "a_slash_typed_mid_turn_opens_the_command_list",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "8c6ebf96549b781e5a4ed373cbfe28b88e42d3e2376aae5d3ff3c7aab0d25e73"
@@ -308,16 +329,29 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_long_80.snap",
       "case": "context_stands_over_a_long_session_with_what_the_prompt_line_says_is_left",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "ea3f2cbf2b6e808d4e549d0f4024c29fa21e84d8d2f6ea1c3c3600ee47498d0c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_mid_turn_80.snap",
       "case": "context_stands_over_a_running_turn_with_the_figures_it_last_carried",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"context-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "73c8d291c6c1108b770cf13117fe8641ad39a85b9cb0c573bd0919f08eff0a9e"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__context_short_40.snap",
+      "case": "context_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"context-short-40\", 40, 12, &vendor)"
+      ],
+      "sha256": "f2b744d8a3b0dd8daa6ffc4ba3b3ab3d388adf63668f56bdb3f61a6434715d38"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_a_shows_every_project_and_says_where_each_session_is.snap",
@@ -339,6 +373,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_b_opens_the_running_list_during_a_turn.snap",
       "case": "ctrl_b_opens_the_running_list_during_a_turn",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"ctrl-b-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "836dac6f440cfee2a652efd56585d2c611f98f0e19fa438a729ba67f9266488a"
@@ -398,6 +433,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__esc_mid_turn_closes_the_command_list_and_the_turn_runs_on.snap",
       "case": "esc_mid_turn_closes_the_command_list_and_the_turn_runs_on",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"list-closed-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "26862a4fffa4efdf53af933b1c56e5ed89ffb7ff380d8d89fcc254833df2dd76"
@@ -409,7 +445,7 @@
         "Vendor::recapping_after(&[\"one answer\", \"two answer\", \"three answer\"], &notes, None)",
         "Watched::compacting(\"compact-stopped\", 80, 24, &vendor)"
       ],
-      "sha256": "52959e3e892c7a29976d6cc300cbf15b3805915697e7f23fd7f7c6a88985b7f8"
+      "sha256": "c3ab18f224c8ccc9e8190744e6f9d2c142813ca3899e0fa9a80c7322117abdd9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__every_way_a_terminal_spells_a_newline_grows_the_box_and_sends_nothing.snap",
@@ -423,6 +459,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__exit_mid_turn_is_refused_with_its_reason.snap",
       "case": "exit_mid_turn_is_refused_with_its_reason",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"exit-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "e615f68e9e47dc759edc8f0ea158712f764f6900603914e502165c61009167cc"
@@ -574,13 +611,17 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_40.snap",
       "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
-      "opened": [],
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
+      ],
       "sha256": "842e0e46b000c0526743620c05d9e0a2a121c6913a8b27f5eed1d7eb0781c6f0"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_80.snap",
       "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
-      "opened": [],
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
+      ],
       "sha256": "eb7acc34cafccdf168f9a78a3ece1dfa348e93213a9afca833bd18caee97d158"
     },
     {
@@ -597,7 +638,8 @@
       "case": "a_one_row_reply_carries_its_mark_in_native_mode",
       "opened": [
         "Vendor::answering(\"Done.\")",
-        "Watched::native(\"native-reply-one-row\", 80, 24, &vendor)"
+        "Watched::native(\"native-reply-one-row\", 80, 24, &vendor)",
+        "Watched::configured(case, columns, rows, &document, true)"
       ],
       "sha256": "9803033c1cb04cf0587b74c0019c9e4037dbc5a7103852be7814ff4d381ad5d4"
     },
@@ -606,7 +648,8 @@
       "case": "a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mode",
       "opened": [
         "Vendor::answering(\"Hello.\")",
-        "Watched::native(\"native-reply-tall\", 80, 24, &vendor)"
+        "Watched::native(\"native-reply-tall\", 80, 24, &vendor)",
+        "Watched::configured(case, columns, rows, &document, true)"
       ],
       "sha256": "447c34b645e9eabf9be78862ec2f030c027bc4061575d33e76b86db44c952f40"
     },
@@ -615,7 +658,8 @@
       "case": "a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode",
       "opened": [
         "Vendor::answering(\"Done.\")",
-        "Watched::native(\"native-reply-wrapped\", 24, 24, &vendor)"
+        "Watched::native(\"native-reply-wrapped\", 24, 24, &vendor)",
+        "Watched::configured(case, columns, rows, &document, true)"
       ],
       "sha256": "ff9e774ebceed3cff6e0df1b41919264da9d5ae6327af04948d6bdbbcfd2faf6"
     },
@@ -632,7 +676,8 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_60x24.snap",
       "case": "a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode",
       "opened": [
-        "Vendor::answering(&crate::a_long_answer())"
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "a5bcb85af729244787871f6032d3240a083606023ec6e7ddb7adeab574dc6345"
     },
@@ -640,7 +685,8 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_80x16.snap",
       "case": "a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode",
       "opened": [
-        "Vendor::answering(&crate::a_long_answer())"
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "58326499502bcbae6cd1986db7794fc71e10daf9ee8eb7fefbc5506f4735fb69"
     },
@@ -675,7 +721,6 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_divider_is_drawn_in_ascii_glyphs_in_native_mode.snap",
       "case": "clear_divider_is_drawn_in_ascii_glyphs_in_native_mode",
       "opened": [
-        "Watched::native` writes its own configuration, so the glyph set is // changed the way a reader changes it mid-session: through `/settings`, // which draws with the new set from that moment. let vendor = Vendor::answering(\"Done.\")",
         "Vendor::answering(\"Done.\")",
         "Watched::native(\"native-clear-ascii\", 80, 24, &vendor)"
       ],
@@ -729,7 +774,8 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__model_takes_at_most_half_the_window_in_native_mode.snap",
       "case": "model_takes_at_most_half_the_window_in_native_mode",
       "opened": [
-        "Vendor::answering(&crate::a_long_answer())"
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "88d99c7f628b779414ec634b39928afb253d340d38fc392cbec6fe0b33008ba2"
     },
@@ -737,7 +783,9 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_divider_is_clipped_at_16_columns_in_native_mode.snap",
       "case": "resume_divider_is_clipped_at_16_columns_in_native_mode",
       "opened": [
-        "Vendor::answering(\"The first thing this session said.\")"
+        "Vendor::answering(\"The first thing this session said.\")",
+        "Watched::native(case, 80, 24, vendor)",
+        "Watched::native(case, columns.max(80), 24, vendor)"
       ],
       "sha256": "c4751b555a367d4ae2513d8c5403d490843f703dcc81aea84a6bacb67707bc00"
     },
@@ -746,7 +794,8 @@
       "case": "resume_takes_at_most_half_the_window_in_native_mode",
       "opened": [
         "Vendor::answering(&crate::a_long_answer())",
-        "Watched::native(\"native-cap-resume\", 80, 24, &vendor)"
+        "Watched::native(\"native-cap-resume\", 80, 24, &vendor)",
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "5b81282663b7568bbd3eceb6b4059f94c4390d25921b0b67b98b39b178905aee"
     },
@@ -754,7 +803,9 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_writes_one_divider_and_no_second_card_in_native_mode.snap",
       "case": "resume_writes_one_divider_and_no_second_card_in_native_mode",
       "opened": [
-        "Vendor::answering(\"The first thing this session said.\")"
+        "Vendor::answering(\"The first thing this session said.\")",
+        "Watched::native(case, 80, 24, vendor)",
+        "Watched::native(case, columns.max(80), 24, vendor)"
       ],
       "sha256": "31ae9dc29075b3866be7f69ed62366d18f2ce8be148cafcd7707cc19382e19b0"
     },
@@ -762,7 +813,8 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_takes_at_most_half_the_window_in_native_mode.snap",
       "case": "settings_takes_at_most_half_the_window_in_native_mode",
       "opened": [
-        "Vendor::answering(&crate::a_long_answer())"
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "41b4d8649b35a436d7a4072e39fabb0b595dda24c3f589f88ce4285b0d76af27"
     },
@@ -770,7 +822,8 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__slash_list_takes_at_most_half_the_window_in_native_mode.snap",
       "case": "slash_list_takes_at_most_half_the_window_in_native_mode",
       "opened": [
-        "Vendor::answering(&crate::a_long_answer())"
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "9205d57e607dc5674ecad336c072de7812638886d829908a8be612e87a4b4e6c"
     },
@@ -778,7 +831,8 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__theme_takes_at_most_half_the_window_in_native_mode.snap",
       "case": "theme_takes_at_most_half_the_window_in_native_mode",
       "opened": [
-        "Vendor::answering(&crate::a_long_answer())"
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "9f31399eaa76bb79289f5eb13012fd8be945a6b1ef1a67693793ab6e64534bb8"
     },
@@ -903,6 +957,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_mid_turn_are_refused_on_the_panel.snap",
       "case": "release_notes_mid_turn_are_refused_on_the_panel",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"release-notes-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "bce6242020ea0eac24160b5ffd53bd17b742c798b11c075791fd7e6f3fb88b32"
@@ -926,25 +981,37 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_at_rest_at_40.snap",
       "case": "the_scroll_rail_at_rest_grows_the_current_prompt_s_mark",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "91681fe4113d6332019f74d122ef2eb3555ec4eeb551f596c9e0cecb084039ca"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_at_rest_at_80.snap",
       "case": "the_scroll_rail_at_rest_grows_the_current_prompt_s_mark",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "5364baeea29f35c922d3317425ab4606fc6a1b7a48fc8f7f5d1724cae31c3ba8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_hovered_at_40.snap",
       "case": "a_pointer_on_the_scroll_rail_grows_the_mark_under_it",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "ba7105aef25be814b795a247ee4fa2c4d0f36e5a1fc1b6a9b804352d3ce2402e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_hovered_at_80.snap",
       "case": "a_pointer_on_the_scroll_rail_grows_the_mark_under_it",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "a349a646c877f0728ac9bdc55648b3b85fb6c67f7795e6613685aaa9ff6a4ad1"
     },
     {
@@ -1073,13 +1140,19 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_names_the_keys_that_work_on_a_waiting_prompt.snap",
       "case": "the_open_queue_names_the_keys_that_work_on_a_waiting_prompt",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
+      ],
       "sha256": "84faf2cbe4ec48abf54f5f2d5ee7f78ddb39f5620acc1362c05107d9433210ce"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_wraps_its_keys_in_a_narrow_window.snap",
       "case": "the_open_queue_wraps_its_keys_in_a_narrow_window",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
+      ],
       "sha256": "60abf62dc90b3bbee2c63be4403f81106a7f729d949deaba517fb15306194892"
     },
     {
@@ -1119,7 +1192,10 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window.snap",
       "case": "the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "71f9803684b924e52ab24980ced818a08a5a0af0efa7d8cd596033b366d06c50"
     },
     {
@@ -1144,6 +1220,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_mid_turn_80.snap",
       "case": "usage_stands_over_a_running_turn_with_the_figures_it_last_posted",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"usage-mid-turn\", 80, 30, &vendor, \"bash(*)\")"
       ],
       "sha256": "7fb0dfd7e38b753bff945f6ac12a846870a87b0bdafac7680957d5b844602a8c"

@@ -359,6 +359,8 @@ struct Seen {
     is_terminal: bool,
     /// How many of the next size queries fail.
     unsizable: usize,
+    /// The size the terminal reports, where that is not the size it draws at.
+    reports: Option<Size>,
 }
 
 /// A terminal with a scrollback, for a renderer to own and a test to read.
@@ -372,6 +374,7 @@ impl Window {
             emulator: Emulator::new(columns, rows),
             is_terminal: true,
             unsizable: 0,
+            reports: None,
         })))
     }
 
@@ -379,6 +382,13 @@ impl Window {
     /// not say does.
     fn loses_size(&self, times: usize) {
         self.0.borrow_mut().unsizable = times;
+    }
+
+    /// Makes every size query answer `size`, whatever the window draws at: a
+    /// pty nobody told its size reports none, while the display behind it has
+    /// rows all the same.
+    fn reports(&self, size: Size) {
+        self.0.borrow_mut().reports = Some(size);
     }
 
     fn redirected(columns: usize, rows: usize) -> Self {
@@ -431,10 +441,10 @@ impl Terminal for Window {
                 "the window would not say",
             )));
         }
-        Ok(Size {
+        Ok(seen.reports.unwrap_or(Size {
             columns: seen.emulator.columns,
             rows: seen.emulator.rows,
-        })
+        }))
     }
 
     fn write(&mut self, text: &str) -> Result<(), TerminalError> {
@@ -1177,6 +1187,67 @@ fn a_blank_line_committed_under_a_native_divider_is_not_written() {
         .map(String::as_str)
         .collect();
     assert_eq!(under, [divider.as_str(), "what follows"], "{all:#?}");
+}
+
+#[test]
+fn a_native_divider_let_go_in_the_frame_that_draws_it_still_parts_what_follows() {
+    // Emptying the transcript takes the box down, so when the divider is drawn
+    // the transcript band is the whole window, and the one window with no row
+    // for it is one that reports no rows at all: a pty nobody told its size
+    // says so, while the display behind it has rows. There every line goes
+    // out to the scrollback in the frame that first draws it, the divider
+    // included, and the mark that parts what follows from it has to be on it
+    // by then, or the block after it is given the blank row the divider was
+    // meant to stand in for.
+    let window = Window::new(40, 10);
+    window.reports(Size {
+        columns: 40,
+        rows: 0,
+    });
+    let mut render = native(&window);
+    render.commit("> /clear").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    let at = all
+        .iter()
+        .position(|row| row.as_str() == "> /clear")
+        .unwrap_or_else(|| panic!("nothing asked: {all:#?}"));
+    let after: Vec<&str> = all.iter().skip(at).take(4).map(String::as_str).collect();
+    assert_eq!(
+        after,
+        ["> /clear", "", divider.as_str(), "what follows"],
+        "{all:#?}"
+    );
+}
+
+#[test]
+fn a_redirected_native_divider_is_written_plain_once_and_parts_what_follows() {
+    // Where output is redirected nothing is framed, so the divider is written
+    // through as plain text the moment it is laid, as every other row is, and
+    // the mark that spares the block after it a blank row holds there too.
+    let window = Window::redirected(40, 10);
+    let mut render = native(&window);
+    render.commit("> /clear").unwrap();
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    assert_eq!(
+        window.written(),
+        format!("> /clear\n\n{divider}\nwhat follows\n")
+    );
 }
 
 /// Every row of `rows` from the one that reads `asked` through the first that

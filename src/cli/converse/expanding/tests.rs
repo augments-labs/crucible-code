@@ -11,6 +11,7 @@ fn standing(from: usize, end: usize) -> View {
     View {
         from,
         end,
+        laid: end,
         was: 0,
         page: 0,
         starts: Vec::new(),
@@ -532,6 +533,51 @@ fn the_footer_counts_the_result_at_the_top() {
     assert_eq!(
         rows.last().map(String::as_str),
         Some("esc to close · ↑↓ pgup pgdn to see more · ←→ result 2 of 3")
+    );
+}
+
+#[test]
+fn a_step_goes_from_the_result_the_footer_counts_when_the_oldest_is_not_read_back_yet() {
+    // Twenty-one results as long as a recorded result can be, so the store
+    // lets go of the oldest alone, and a log that has not placed it yet. The
+    // window may go down as far as that result's top, which is past the rows
+    // there are to lay, so the frame is drawn from the furthest down it opens
+    // on rows: the footer counts from there, and so must the step after it.
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(Late::default())));
+    for at in 0..21 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.finished(&call, said(call.as_str()).into(), at);
+    }
+    assert_eq!(
+        kept.older().count(),
+        1,
+        "the store let go of other than one"
+    );
+
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let mut rows = frame(&kept, &mut standing, 40);
+    for _ in 0..21 {
+        if !standing.against(Pressed::Key(Key::Right), 3) {
+            break;
+        }
+        rows = frame(&kept, &mut standing, 40);
+    }
+    assert!(rows.iter().any(|row| row.contains(LATER)), "{rows:?}");
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ result 20 of 21")
+    );
+
+    // Result 20 is at the top, so a step back puts result 19 there.
+    assert!(standing.against(Pressed::Key(Key::Left), 3));
+    let rows = frame(&kept, &mut standing, 40);
+    assert_eq!(heading(&rows), Some("Bash(2)"), "{rows:?}");
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ result 19 of 21")
     );
 }
 

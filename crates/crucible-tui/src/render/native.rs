@@ -184,15 +184,29 @@ impl<T: Terminal> Renderer<T> {
     /// parts what follows, which asks for no blank row of its own: neither
     /// [`Renderer::apart`] nor an empty [`Renderer::commit`] puts one under it.
     ///
+    /// The divider is marked as parting before the frame that draws it, not
+    /// after: a window with no transcript row lets every line go in the frame
+    /// that first draws it, and a mark hung after that frame would find the
+    /// divider gone and mark nothing.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn divides(&mut self, label: &str) -> Result<(), TerminalError> {
         self.apart()?;
         let divider = divider(label, self.transcript_columns(), self.glyphs);
-        self.present(&[divider])?;
+        if !self.terminal.is_terminal() {
+            // Nothing is framed where output is redirected, so nothing goes
+            // out before it is marked, and the plain copy a redirected run is
+            // owed is [`Renderer::present`]'s to write.
+            self.present(&[divider])?;
+            self.record.parts();
+            return Ok(());
+        }
+        self.record.end();
+        self.record.lay([divider]);
         self.record.parts();
-        Ok(())
+        self.draw()
     }
 
     /// Closes the region for good: everything held is written out, nothing
