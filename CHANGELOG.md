@@ -60,7 +60,9 @@ change in any release with no deprecation period.
   terminal, and the step's row is drawn as usual.
 - **`/cache` keeps its indent in a narrow window.** Lines that wrapped
   started again at the left edge, out from under the reply's mark; they now
-  wrap inside it, as `/context` and `/usage` do.
+  wrap inside it, as `/context` and `/usage` do. So does the line `/model`,
+  `/login` and `/logout` add when retiring the cache left resources behind or
+  stopped the switch.
 - **Esc closes the command list.** Between turns it used to do nothing, and
   during a turn it stopped the turn and left the list standing. It now closes
   the list in both, keeping the line, as it already closes the Ctrl+O view
