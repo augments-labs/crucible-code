@@ -393,6 +393,19 @@ fn a_slash_opens_the_command_list_above_the_box() {
 }
 
 #[test]
+fn esc_closes_the_command_list_and_keeps_the_line() {
+    // The list is the thing in front of the reader, so Esc backs out of it the
+    // way it backs out of every other thing standing. What it stood over comes
+    // back, and the `/` stays in the box for the next key to go on from.
+    let mut window = Watched::open("commands-closed", 80, 24);
+
+    window.types("/");
+    window.types_until("\x1b", "Warning: No models available");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
     // The first case here that takes a turn. What it watches is the handover:
     // the answer joins the transcript, and the box is drawn again underneath in
@@ -872,6 +885,25 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
     window.types_and_catches("/", "more");
 
     insta::assert_snapshot!(on_the_first_beat(&window.picture()));
+}
+
+#[test]
+fn esc_mid_turn_closes_the_command_list_and_the_turn_runs_on() {
+    // The list stands over a running turn, and it is the thing in front of the
+    // reader rather than the turn: Esc closes it, as it closes the Ctrl+O view
+    // and the queue, and the turn goes on behind it. The answer the list stood
+    // over is what comes back.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("list-closed-mid-turn", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/", "more");
+    window.types_and_catches("\x1b", HELD_ANSWER);
+
+    let picture = window.picture();
+    assert!(!picture.contains("interrupting"), "{picture}");
+    assert!(picture.contains("esc to interrupt"), "{picture}");
+    insta::assert_snapshot!(on_the_first_beat(&picture));
 }
 
 #[test]
