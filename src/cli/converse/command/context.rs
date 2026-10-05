@@ -17,8 +17,9 @@
 //! The panel stands in the room the window gives it. Where it is taller, it
 //! shows as much of the body as the room leaves under the rule and over the
 //! footer, with a row saying how many more are below; ↑ and ↓ scroll it, and
-//! the footer says so. It is printed rather than stood only where even the
-//! rule, the blank rows, the footer and a row of the body have no room.
+//! the footer says so. It is printed rather than stood only where the whole
+//! of it does not fit and even the rule, the blank rows, the footer, a row of
+//! the body and the row under it saying how many more are below have no room.
 //!
 //! It reads and changes nothing, so it stands over a running turn too, with
 //! the figures that turn last reported, which include anything it has
@@ -45,7 +46,8 @@ const ROOMY: usize = 42;
 const CHROME: usize = 4;
 
 /// Asks for the breakdown of the next request and stands it, or prints it
-/// where no keys can close a panel or not even a row of it has room to stand.
+/// where no keys can close a panel, or where the whole of it does not fit and
+/// not even a row of its body and the row under it have room to stand.
 ///
 /// # Errors
 ///
@@ -71,8 +73,8 @@ pub(super) fn run<T: Terminal>(
 }
 
 /// Stands the panel over a running turn, with the figures of the last
-/// request it built, or prints them where not even a row of it has room to
-/// stand.
+/// request it built, or prints them where the whole of it does not fit and
+/// not even a row of its body and the row under it have room to stand.
 ///
 /// # Errors
 ///
