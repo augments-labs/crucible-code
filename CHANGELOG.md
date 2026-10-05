@@ -70,6 +70,8 @@ change in any release with no deprecation period.
   stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
   its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
   blank row parts one plan window from the next.
+- **`/compact` with no model answers under the line that asked.** The warning
+  used to stand apart, two rows down, unlike every other command's reply.
 - **`/clear` and `/resume` draw the welcome card with the glyphs chosen in
   `/settings`.** After the Glyphs row was set to `ascii` in a running session,
   the card a fullscreen `/clear` or `/resume` put back was still drawn in
