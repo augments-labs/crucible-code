@@ -1024,6 +1024,27 @@ fn moded<T: Terminal>(
 /// the mark, one column in either glyph set, and the space after it.
 const HUNG: usize = 2;
 
+/// Where an answer's rows stand once it is drawn, which is how wide each may
+/// be laid out.
+#[derive(Clone, Copy)]
+enum Laid {
+    /// Hung under the line that asked, [`HUNG`] columns in.
+    Hung,
+    /// At the left edge: a pick made over a turn and applied as it ends has
+    /// no line of its own to be hung under.
+    Flush,
+}
+
+impl Laid {
+    /// How wide a row standing here may be.
+    fn columns<T: Terminal>(self, renderer: &Renderer<T>) -> usize {
+        match self {
+            Self::Hung => renderer.transcript_columns().saturating_sub(HUNG),
+            Self::Flush => renderer.transcript_columns(),
+        }
+    }
+}
+
 /// Says one thing back, quietly, wrapped to the window it is said in.
 ///
 /// What `/login` and `/logout` answer with when there is one thing to say: a
@@ -1034,7 +1055,12 @@ const HUNG: usize = 2;
 /// rows are hung after they are laid, and a row folded to the whole width is
 /// [`HUNG`] columns too wide once it is.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
-    let rows: Vec<Row> = fold(said, renderer.transcript_columns().saturating_sub(HUNG))
+    say_at(renderer, Laid::Hung, said)
+}
+
+/// Says one thing back, quietly, folded to where it will stand.
+fn say_at<T: Terminal>(renderer: &mut Renderer<T>, laid: Laid, said: &str) -> Result<(), Fatal> {
+    let rows: Vec<Row> = fold(said, laid.columns(renderer))
         .into_iter()
         .map(|part| Row::new().then(Slot::Quiet, part))
         .collect();

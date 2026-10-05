@@ -1332,12 +1332,14 @@ fn taken<T: Terminal>(
                 &format!("login successful; /model switches to {}", named.name),
             );
         }
-        LoggedIn::CacheHeld(problem) => return super::cache::held(renderer, &problem),
+        LoggedIn::CacheHeld(problem) => {
+            return super::cache::held(renderer, super::Laid::Hung, &problem);
+        }
         LoggedIn::Serving {
             retained,
             unwritten,
         } => {
-            super::cache::retained(renderer, retained)?;
+            super::cache::retained(renderer, super::Laid::Hung, retained)?;
             unwritten
         }
     };
