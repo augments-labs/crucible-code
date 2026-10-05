@@ -354,6 +354,16 @@ impl Screen {
         self.holding
     }
 
+    /// Whether `wanted` is on a frame that has finished being written.
+    ///
+    /// A read of the terminal can end anywhere, inside a frame as easily as
+    /// between two, and a real terminal goes on showing the frame before until
+    /// the held one is closed. Text from a frame still being held is what this
+    /// picture has and that terminal does not show yet.
+    pub(crate) fn shows(&self, wanted: &str) -> bool {
+        !self.holding && self.picture().contains(wanted)
+    }
+
     /// The screen, as a picture with the size and the cursor above it.
     ///
     /// Every row is padded to the full width and closed with a bar, so a
@@ -908,6 +918,21 @@ mod tests {
 
         screen.feed(b"\x1b[?2026l");
         assert!(!screen.is_holding());
+    }
+
+    #[test]
+    fn text_in_a_frame_still_being_written_is_not_yet_shown() {
+        // A read can end inside a frame: the box's top edge has arrived and its
+        // bottom edge has not. A real terminal shows the frame before until the
+        // closing sequence, so a step waiting for the top edge must not take
+        // the screen until the rest of that frame is on it too.
+        let mut screen = Screen::new(12, 4);
+        screen.feed(b"\x1b[?2026h\x1b[1;1H\x1b[K+- 1 queued");
+
+        assert!(!screen.shows("1 queued"), "{}", screen.picture());
+
+        screen.feed(b"\x1b[2;1H\x1b[K+----------\x1b[?2026l");
+        assert!(screen.shows("1 queued"), "{}", screen.picture());
     }
 
     #[test]
