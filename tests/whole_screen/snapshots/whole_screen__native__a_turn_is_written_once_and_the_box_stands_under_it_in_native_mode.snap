@@ -5,7 +5,7 @@ expression: picture
 ---
 80x24 cursor 21,4 scrollback 2
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
-|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
