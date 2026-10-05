@@ -137,8 +137,8 @@ impl Vendor {
         Self::serving(vec![asking(tool, input, ONE), holding(text)])
     }
 
-    /// Starts one whose only answer is `text`, with the message left open
-    /// behind it.
+    /// Starts one whose only answer is `text`, with the message held open
+    /// behind it for [`HOLDING`] keep-alives and then closed.
     ///
     /// For a case about a turn that is ended from outside while its answer is
     /// on screen and nothing has said the answer is over: what such a turn
