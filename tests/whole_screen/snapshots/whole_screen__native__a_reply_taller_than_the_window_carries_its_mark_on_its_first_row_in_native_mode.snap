@@ -5,7 +5,7 @@ expression: "crate::timeless(&everything(&window))"
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
-|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
