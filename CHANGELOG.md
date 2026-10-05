@@ -72,8 +72,10 @@ change in any release with no deprecation period.
   stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
   its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
   blank row parts one plan window from the next.
-- **`/compact` with no model answers under the line that asked.** The warning
-  used to stand apart, two rows down, unlike every other command's reply.
+- **Every one-line `/compact` reply answers under the line that asked.** The
+  no-model warning, `nothing was sent`, `! stopped` and the note that there was
+  nothing worth replacing used to stand apart, two rows down, unlike every other
+  command's reply.
 - **The welcome card and `/resume` agree on an empty directory.** Under
   `Recent sessions` the card said `No recent sessions` where `/resume` said
   `no earlier session for this workspace`; both now say the second.
@@ -98,7 +100,8 @@ change in any release with no deprecation period.
   first row.** A reply that opened with a line such as `! fly is not a mode`
   was written on the `ask ›` row and the `⎿` mark went on the line under it;
   the reply now starts on its own row under the prompt, marked, as other
-  replies are.
+  replies are. A `/release-notes` answer, a release or a refusal, starts on
+  its own row too, set apart as when it is typed.
 
 ## [0.45.2] - 2026-10-03
 

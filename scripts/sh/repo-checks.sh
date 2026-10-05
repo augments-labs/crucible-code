@@ -372,7 +372,7 @@ section "whole-screen cases reach /login rows by name"
 # of the suite is read, since a case in any of them can walk the same way; the
 # check measured nothing when none of them types /login.
 screens=(tests/whole_screen/*.rs)
-if ((${#screens[@]} == 0)) || ! grep -q '"/login' "${screens[@]}"; then
+if ((${#screens[@]} == 0)) || ! grep -qE '(types_until|types)\("/login' "${screens[@]}"; then
     printf '    FAIL no file under tests/whole_screen types /login; this check measured nothing\n'
     failed=1
 else

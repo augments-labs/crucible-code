@@ -14,7 +14,9 @@ use crate::cli::sample::Sample;
 use crucible_app::Conversation;
 use crucible_app::providers::Providers;
 
-use super::{Asked, Effort, Selected, answered, applied, in_force, keys, offered, taken, titled};
+use super::{
+    Asked, Effort, Laid, Selected, answered, applied, in_force, keys, offered, taken, titled,
+};
 
 /// The built-in providers, as one generation the rows are read off.
 fn catalogue() -> Providers {
@@ -235,7 +237,7 @@ fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
     taken(
         anthropic,
         ("claude-haiku-4-5", None),
-        &mut renderer,
+        (&mut renderer, Laid::Hung),
         &mut conversation,
         &terms,
     )
@@ -435,7 +437,7 @@ fn a_model_named_with_a_rung_in_force_is_answered_with_that_rung() {
     taken(
         row("anthropic", "claude-sonnet-5").provider,
         ("claude-sonnet-5", None),
-        &mut renderer,
+        (&mut renderer, Laid::Hung),
         &mut conversation,
         &terms,
     )
@@ -755,4 +757,41 @@ fn a_narrow_window_with_no_shelf_folds_a_line_rather_than_cut_its_note() {
         .join(" ");
     assert!(said.contains("muse-spark-1.3-contributor"), "{said}");
     assert_eq!(said.matches("trains").count(), 2, "{said}");
+}
+
+#[test]
+fn a_pick_applied_as_a_turn_ends_folds_its_refusal_at_the_whole_window() {
+    // Nothing is hung under a line that asked: the pick was made over the
+    // turn, and what it says is drawn from the left edge. Folded short of a
+    // mark that is not there, the first row would end a word early, on
+    // "support"; folded at the window's forty columns, it carries "max".
+    let sample = Sample::new("model-applied-flush");
+    let terms = keeping(&sample);
+    let mut conversation = conversing(Some("anthropic"), "old", Some(99), Some(Effort::Max));
+    let mut renderer = Renderer::new(Recording::new(40, 40));
+    let google = row("google", "gemini-3.8-flash");
+
+    super::apply(
+        &mut renderer,
+        &mut conversation,
+        &terms,
+        google.provider,
+        "gemini-3.8-flash",
+    )
+    .expect("the refusal to be said");
+
+    let rows = renderer.terminal().picture().rows();
+    let opened = rows
+        .iter()
+        .position(|row| row.starts_with("! gemini-3.8-flash"))
+        .unwrap_or_else(|| panic!("no refusal in {rows:#?}"));
+    assert_eq!(
+        rows.get(opened..opened + 2).unwrap_or_default(),
+        [
+            "! gemini-3.8-flash does not support max",
+            "effort; choose a supported rung in",
+        ],
+        "{rows:#?}"
+    );
+    assert_eq!(conversation.runner().model(), "old");
 }

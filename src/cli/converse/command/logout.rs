@@ -202,9 +202,11 @@ fn forgetting<T: Terminal>(
         other => return say(renderer, &astray(&other)),
     };
     let (retained, status) = match logged_out {
-        LoggedOut::CacheHeld(problem) => return super::cache::held(renderer, &problem),
+        LoggedOut::CacheHeld(problem) => {
+            return super::cache::held(renderer, super::Laid::Hung, &problem);
+        }
         LoggedOut::Unforgotten { retained, problem } => {
-            super::cache::retained(renderer, retained)?;
+            super::cache::retained(renderer, super::Laid::Hung, retained)?;
             return say(renderer, &format!("! {problem}"));
         }
         LoggedOut::Kept => (Retained::default(), KEPT.to_owned()),
@@ -213,7 +215,7 @@ fn forgetting<T: Terminal>(
             (retained, "the active session is now signed out".to_owned())
         }
     };
-    super::cache::retained(renderer, retained)?;
+    super::cache::retained(renderer, super::Laid::Hung, retained)?;
 
     let columns = renderer.transcript_columns();
     let said = format!("removed the stored credential for {}", named.name);

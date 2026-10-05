@@ -41,7 +41,7 @@ use crucible_app::providers::{
 };
 use crucible_app::startup::served;
 
-use super::{Asked, Terms, about, say};
+use super::{Asked, Laid, Terms, about, say, say_at};
 
 mod narrowing;
 
@@ -395,7 +395,14 @@ fn named<T: Terminal>(
     // Dropped for the same reason `apply` drops it: `/model provider/name`
     // names one thing and takes it or says why not, and there is no second half
     // waiting behind this one.
-    taken(provider, (&model, None), renderer, conversation, terms).map(drop)
+    taken(
+        provider,
+        (&model, None),
+        (renderer, Laid::Hung),
+        conversation,
+        terms,
+    )
+    .map(drop)
 }
 
 /// The keys, under the panes they work on, long and short.
@@ -655,7 +662,7 @@ fn applied<T: Terminal>(
     if !taken(
         selected.provider,
         (selected.model.name, effort),
-        renderer,
+        (renderer, Laid::Hung),
         conversation,
         terms,
     )? {
@@ -685,7 +692,8 @@ fn applied<T: Terminal>(
 ///
 /// The same applying as `taken`, named for the caller that has a provider and a
 /// model rather than a row off the panel: a pick made while the runner was on
-/// the worker is applied through here as that turn ends.
+/// the worker is applied through here as that turn ends. What it says stands
+/// at the left edge, since nothing here is hung under a line that asked.
 pub(super) fn apply<T: Terminal>(
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
@@ -696,7 +704,14 @@ pub(super) fn apply<T: Terminal>(
     // The answer is dropped rather than passed on: there is no rung behind this
     // caller to stop, and the line saying what went wrong has already been
     // drawn by the time it comes back.
-    taken(selected, (name, None), renderer, conversation, terms).map(drop)
+    taken(
+        selected,
+        (name, None),
+        (renderer, Laid::Flush),
+        conversation,
+        terms,
+    )
+    .map(drop)
 }
 
 /// Whether the model is the one the next turn will be asked for.
@@ -707,11 +722,12 @@ pub(super) fn apply<T: Terminal>(
 /// between a model taken and a model refused, and only the caller knows what it
 /// was about to do next.
 /// The model and optional explicit rung travel together; an absent rung keeps
-/// the effort already selected by the session.
+/// the effort already selected by the session. The renderer travels with how
+/// its rows are laid: hung under the line that asked, or at the left edge.
 fn taken<T: Terminal>(
     selected: Served,
     (name, effort): (&str, Option<Effort>),
-    renderer: &mut Renderer<T>,
+    (renderer, laid): (&mut Renderer<T>, Laid),
     conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<bool, Fatal> {
@@ -727,20 +743,21 @@ fn taken<T: Terminal>(
         // A word no front end may name a model by: empty, or longer than any
         // vendor's. Said rather than sent, and nothing is applied.
         (Err(refusal), _) | (_, Err(refusal)) => {
-            return say(renderer, &format!("! {refusal}")).map(|()| false);
+            return say_at(renderer, laid, &format!("! {refusal}")).map(|()| false);
         }
     };
     let switched = match terms.perform(conversation, asked) {
         Performed::Model(switched) => switched,
-        other => return say(renderer, &astray(&other)).map(|()| false),
+        other => return say_at(renderer, laid, &astray(&other)).map(|()| false),
     };
     let unwritten = match switched {
         // The picker may supply a compatible rung together with the model; a
         // typed model name cannot silently carry xhigh/max into Gemini's
         // narrower ladder.
         Switched::Unsupported(effort) => {
-            say(
+            say_at(
                 renderer,
+                laid,
                 &format!(
                     "! {name} does not support {} effort; choose a supported rung in /model or change /effort before switching",
                     effort.as_str()
@@ -750,13 +767,13 @@ fn taken<T: Terminal>(
         }
         Switched::Unreachable(problem) => return refused(renderer, &problem).map(|()| false),
         Switched::CacheHeld(problem) => {
-            return super::cache::held(renderer, &problem).map(|()| false);
+            return super::cache::held(renderer, laid, &problem).map(|()| false);
         }
         Switched::Taken {
             retained,
             unwritten,
         } => {
-            super::cache::retained(renderer, retained)?;
+            super::cache::retained(renderer, laid, retained)?;
             unwritten
         }
     };

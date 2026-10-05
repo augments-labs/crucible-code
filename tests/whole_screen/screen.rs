@@ -54,10 +54,12 @@
 //! under it the way a terminal would have. A window never drawn for is
 //! reported by the case when the screen goes quiet.
 //!
-//! Holding is only recorded here rather than acted on. What a real terminal
-//! does with it is show one picture instead of two, which is invisible to a
-//! screen assembled from every byte that arrived — so the picture is the same
-//! either way, and what this checks is that the two halves of it are paired.
+//! Holding changes no cell here. What a real terminal does with it is show one
+//! picture instead of two, which a screen assembled from every byte that
+//! arrived cannot do — so the picture is the same either way, and what this
+//! checks is that the two halves of it are paired. What it does change is when
+//! a case may read: [`Screen::shows`] answers only between frames, because a
+//! read that ends inside one would otherwise see what no terminal ever showed.
 //!
 //! Columns are counted in characters here rather than from a width table.
 //! Everything these cases put on screen — ASCII, box drawing, the block glyphs
@@ -493,6 +495,16 @@ impl Screen {
     /// arrives.
     pub(crate) fn is_holding(&self) -> bool {
         self.holding || self.collecting.is_some()
+    }
+
+    /// Whether `wanted` is on a frame that has finished being written.
+    ///
+    /// A read of the terminal can end anywhere, inside a frame as easily as
+    /// between two, and a real terminal goes on showing the frame before until
+    /// the held one is closed. Text from a frame still being held is what this
+    /// picture has and that terminal does not show yet.
+    pub(crate) fn shows(&self, wanted: &str) -> bool {
+        !self.holding && self.picture().contains(wanted)
     }
 
     /// The screen, as a picture with the size and the cursor above it.
@@ -1049,6 +1061,21 @@ mod tests {
 
         screen.feed(b"\x1b[?2026l");
         assert!(!screen.is_holding());
+    }
+
+    #[test]
+    fn text_in_a_frame_still_being_written_is_not_yet_shown() {
+        // A read can end inside a frame: the box's top edge has arrived and its
+        // bottom edge has not. A real terminal shows the frame before until the
+        // closing sequence, so a step waiting for the top edge must not take
+        // the screen until the rest of that frame is on it too.
+        let mut screen = Screen::new(12, 4);
+        screen.feed(b"\x1b[?2026h\x1b[1;1H\x1b[K+- 1 queued");
+
+        assert!(!screen.shows("1 queued"), "{}", screen.picture());
+
+        screen.feed(b"\x1b[2;1H\x1b[K+----------\x1b[?2026l");
+        assert!(screen.shows("1 queued"), "{}", screen.picture());
     }
 
     #[test]
