@@ -65,6 +65,11 @@ change in any release with no deprecation period.
   during a turn it stopped the turn and left the list standing. It now closes
   the list in both, keeping the line, as it already closes the Ctrl+O view
   and the queue.
+- **`/usage` stands in a narrow window.** With plan limits it was taller than
+  a 40-column window and was printed into the transcript instead; it now
+  stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
+  its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
+  blank row parts one plan window from the next.
 - **`/compact` with no model answers under the line that asked.** The warning
   used to stand apart, two rows down, unlike every other command's reply.
 
