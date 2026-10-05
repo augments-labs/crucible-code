@@ -84,6 +84,12 @@ change in any release with no deprecation period.
   it was printed into the transcript instead, and in native mode it could
   take more than half the window; it now stands in the room it is given and
   scrolls with ↑ and ↓.
+- **Wrapped text holding a control character no longer runs past the
+  window's edge.** An error or a reply can carry a character a terminal would
+  act on, which crucible draws as a space; wrapping counted it as nothing, so
+  the row came out a column wider than the window and the terminal cut or
+  wrapped it. Wrapping now counts that space, and a tab, drawn as one space,
+  as one column rather than up to eight.
 
 ## [0.45.2] - 2026-10-03
 
