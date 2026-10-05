@@ -50,6 +50,8 @@ change in any release with no deprecation period.
   character, so the indent before it and the blank after it on the same row
   open and light nothing. The count of commands left running under the box
   answers on its own words in the same way, not on the mode beside it.
+- **The `/resume` heading says when it is cut.** A directory too long for
+  the window now ends in `…` rather than stopping mid-name.
 - **`/cache` keeps its indent in a narrow window.** Lines that wrapped
   started again at the left edge, out from under the reply's mark; they now
   wrap inside it, as `/context` and `/usage` do.

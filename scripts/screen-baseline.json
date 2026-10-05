@@ -333,7 +333,7 @@
       "opened": [
         "Watched::launched( \"reach-branch\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "7d083cbdcb7098b5696a2adc29eac620281b5c615b1cff80858fc079a25d532c"
+      "sha256": "9499fd4890d828c5f3f6673fd0d5b000709c6e139beb6fd6c12bace20e359ee6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_b_opens_the_running_list_during_a_turn.snap",
@@ -732,7 +732,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(\"native-cap-resume\", 80, 24, &vendor)"
       ],
-      "sha256": "4d3b865f08477d582a430406d532c7fca5c0693faf5abc0728b837893548b755"
+      "sha256": "5b81282663b7568bbd3eceb6b4059f94c4390d25921b0b67b98b39b178905aee"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_writes_one_divider_and_no_second_card_in_native_mode.snap",
@@ -1081,7 +1081,7 @@
       "opened": [
         "Watched::launched( \"reach-here\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "87098c172d1b5ebe3dfd94fc65a04cb28df1c4afd72b77bf22990159098dc0d8"
+      "sha256": "84644a970e90da3297ccd329c2f8768d04760bab0e1573bb0ec1fac3a18fc96f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_same_session_in_a_narrow_window_is_the_same_screen_at_its_width.snap",

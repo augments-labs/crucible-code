@@ -435,7 +435,7 @@ fn entry(
 /// nothing but a mark saying something was dropped has dropped everything. One
 /// string rather than two spans, because two spans of one slot are two escape
 /// sequences handed to the terminal for one run of colour.
-fn shortened(text: &str, room: usize, glyphs: Glyphs) -> Cow<'_, str> {
+pub(crate) fn shortened(text: &str, room: usize, glyphs: Glyphs) -> Cow<'_, str> {
     if wide(text) <= room {
         return Cow::Borrowed(text);
     }
