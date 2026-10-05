@@ -422,15 +422,23 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     insta::assert_snapshot!(window.picture());
 }
 
-/// Where the count of what is still running lands, as a row of the window the
-/// click below is aimed at. The picture carries its size and cursor on a
-/// header line, so a line of it is one further down than the row it shows.
-fn count_row(picture: &str) -> usize {
-    picture
+/// Where the count of what is still running lands, as the row of the window
+/// and the first cell of it the click below is aimed at: the count is the door,
+/// and the mode before it on the same row is not. The picture carries its size
+/// and cursor on a header line, so a line of it is one further down than the
+/// row it shows, and it frames each row in a bar.
+fn count_cell(picture: &str) -> (usize, usize) {
+    let (line, row) = picture
         .lines()
-        .position(|line| line.contains("1 command"))
-        .expect("the count row under the box")
-        - 1
+        .enumerate()
+        .find(|(_, line)| line.contains("1 command"))
+        .expect("the count row under the box");
+    let row = row.strip_prefix('|').unwrap_or(row);
+    let before = row.find("1 command").expect("the count on its row");
+    (
+        line - 1,
+        crucible_tui::columns(row.get(..before).unwrap_or_default()),
+    )
 }
 
 #[test]
@@ -458,11 +466,11 @@ fn a_click_on_the_count_opens_the_list_while_a_turn_is_still_running() {
     // box names the row to click. A narrow window, so the model's name is the
     // fact that gives way rather than the count.
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    let at = count_row(&window.picture());
+    let (at, column) = count_cell(&window.picture());
 
     // Caught by its heading rather than waited out to a still screen: the
     // spinner of a turn that is still running keeps the screen beating.
-    window.clicks_catching(at, 0, "Still running");
+    window.clicks_catching(at, column, "Still running");
 
     insta::assert_snapshot!(window.picture());
 }
@@ -2849,8 +2857,8 @@ fn a_termination_sent_while_the_list_stands_over_an_answer_is_not_kept_waiting()
     let mut window = Watched::allowing("terminated-listing", 60, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", "still arriving");
-    let at = count_row(&window.picture());
-    window.clicks_catching(at, 0, "Still running");
+    let (at, column) = count_cell(&window.picture());
+    window.clicks_catching(at, column, "Still running");
     let (ended, wrote) = window.ends_on("TERM");
 
     assert_eq!(ended.signal(), Some(15), "{ended:?}");

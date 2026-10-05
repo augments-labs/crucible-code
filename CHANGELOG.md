@@ -48,7 +48,8 @@ change in any release with no deprecation period.
 - **A click beside a cut result no longer opens it.** In fullscreen a click or
   a resting pointer counts on a result's own text, from its mark to its last
   character, so the indent before it and the blank after it on the same row
-  open and light nothing.
+  open and light nothing. The count of commands left running under the box
+  answers on its own words in the same way, not on the mode beside it.
 
 ## [0.45.2] - 2026-10-03
 

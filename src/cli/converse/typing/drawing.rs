@@ -265,8 +265,9 @@ pub(super) enum Landed {
     Record(usize),
     /// The line being typed, which now has the cursor where the pointer was.
     Line,
-    /// The row under the box naming what is still running, which is the one thing
-    /// on it that is an offer rather than a fact.
+    /// The count on the row under the box naming what is still running, which
+    /// is the one thing on it that is an offer rather than a fact, pressed on a
+    /// cell the count drew.
     Counted,
     /// The border, a blank row or a blank cell of the record's, the shell's
     /// own output from before crucible started — or a terminal that would not
@@ -318,11 +319,15 @@ pub(super) fn landed<T: Terminal>(
     );
 
     // Asked of the box, because which row the count came out on is the box's own
-    // arithmetic at this width. The column is not asked about: the row is the
-    // affordance, and nothing else on it is one, so a click anywhere along it
-    // means the one thing it could mean.
+    // arithmetic at this width, and of the renderer which cells of it the
+    // count took: the mode and the model beside it on the row are facts, and a
+    // click on them or on a blank between means nothing.
     if prompt.counting(renderer.columns(), row) {
-        return Landed::Counted;
+        return if renderer.cells(at.row).contains(&at.column) {
+            Landed::Counted
+        } else {
+            Landed::Nothing
+        };
     }
 
     // A line and a column within it, which is what the box's arithmetic knows:

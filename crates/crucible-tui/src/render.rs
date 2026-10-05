@@ -246,12 +246,15 @@ pub struct Renderer<T: Terminal> {
     record: Record,
     /// The rows at the foot of the window that are not the transcript.
     standing: Standing,
-    /// The row of the prompt that offers an action while the box is standing.
+    /// The row of the prompt that offers an action while the box is standing,
+    /// and the cells of it the offer takes.
     ///
     /// Relative to the prompt band. The renderer owns the absolute placement,
     /// so this is enough for it to decide whether a motion crossed the offer
-    /// without teaching it what the row means.
-    prompt_target: Option<usize>,
+    /// without teaching it what the row means. The cells are the ones the
+    /// caller drew pointed ([`door`]): the rest of the row says facts beside
+    /// the offer, and a pointer there is over none.
+    prompt_target: Option<(usize, Range<usize>)>,
     /// Whether a pointer transition is waiting for the prompt to be replaced.
     pointed_changed: bool,
     /// The size the record is folded for and the bands are shared out over.
@@ -916,13 +919,15 @@ impl<T: Terminal> Renderer<T> {
         (bands.transcript.start + head.start)..(bands.transcript.start + foot.end)
     }
 
-    /// Whether the pointer is over the prompt row the caller marked pointable.
+    /// Whether the pointer is over the offer on the prompt row the caller
+    /// marked pointable: on that row, and on a cell of it the offer took.
     fn prompt_pointed(&self) -> bool {
-        let (Some((row, _)), Some(target)) = (self.pointing, self.prompt_target) else {
+        let (Some((row, column)), Some((target, door))) = (self.pointing, &self.prompt_target)
+        else {
             return false;
         };
 
-        matches!(self.aimed(row), Some(Aimed::Boxed(at)) if at == target)
+        door.contains(&column) && self.aimed(row) == Some(Aimed::Boxed(*target))
     }
 
     /// Drops whatever is selected, because the picture under it is about to
@@ -1338,7 +1343,8 @@ impl<T: Terminal> Renderer<T> {
         self.standing.ran = (!turn.is_empty()).then_some(palette);
         self.standing.prompted = Some(prompt.caret);
         self.standing.turned = None;
-        self.prompt_target = prompt.pointed.map(|(at, _)| at);
+        let columns = self.size.columns;
+        self.prompt_target = prompt.pointed.map(|(at, row)| (at, door(row, columns)));
 
         if self.prompt_pointed()
             && let Some((at, row)) = prompt.pointed
@@ -1916,12 +1922,21 @@ impl<T: Terminal> Renderer<T> {
     /// nothing. Read from the row the band shows, folded and clipped as the
     /// frame draws it, so what answers is what is on screen.
     ///
+    /// The prompt row the caller marked pointable answers with the cells of
+    /// its offer alone: what it says beside the offer is a fact, not a door.
+    ///
     /// Empty in native mode, where no press arrives, and for any row but a
-    /// transcript row.
+    /// transcript row or that one.
     #[must_use]
     pub fn cells(&self, at: usize) -> Range<usize> {
         if self.native.is_some() {
             return 0..0;
+        }
+
+        if let Some((target, door)) = &self.prompt_target
+            && self.aimed(at) == Some(Aimed::Boxed(*target))
+        {
+            return door.clone();
         }
 
         let bands = self.bands();
@@ -2147,6 +2162,22 @@ fn drawn(row: &Row, room: usize) -> Range<usize> {
     let said = width::clip(&text, room).trim_end_matches(' ');
     let indent = said.len() - said.trim_start_matches(' ').len();
     indent..width::columns(said)
+}
+
+/// The cells of `row` its [`Slot::Pointed`] runs take when it is given `room`
+/// of them: the offer on a pointable row, from its first such cell to its last.
+/// Empty for a row that offers nothing.
+fn door(row: &Row, room: usize) -> Range<usize> {
+    let mut column = 0;
+    let mut door: Option<Range<usize>> = None;
+    for (slot, text) in row.clipped(room).spans() {
+        let end = column + width::columns(text);
+        if slot == Slot::Pointed {
+            door = Some(door.map_or(column..end, |door| door.start..end));
+        }
+        column = end;
+    }
+    door.unwrap_or(0..0)
 }
 
 /// Paints `rows` into buffers the caller keeps between frames.

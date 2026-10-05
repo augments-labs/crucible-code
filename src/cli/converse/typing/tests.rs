@@ -1444,8 +1444,10 @@ fn a_large_paste_is_shown_compactly_but_copied_expanded() {
     assert_eq!(copied.terminal().written(), expected.terminal().written());
 }
 
-#[test]
-fn clicking_the_visible_command_count_reaches_the_background_command_door() {
+/// A window with two commands running counted under the box, what the row
+/// under it says, the window row the count is on and the cells of that row
+/// that name the count.
+fn counted() -> (Renderer<Recording>, Says, usize, std::ops::Range<usize>) {
     let mut renderer = roomy();
     let editor = Editor::new();
     let says = Says {
@@ -1483,18 +1485,37 @@ fn clicking_the_visible_command_count_reaches_the_background_command_door() {
         .find(|row| renderer.aimed(*row) == Some(Aimed::Boxed(relative)))
         .expect("the command row in the window");
 
-    assert!(matches!(
-        landed(
-            &renderer,
-            &mut Editor::new(),
-            &says,
-            Pointed {
-                row: absolute,
-                column: 0,
-            },
-        ),
-        Landed::Counted
-    ));
+    let picture = renderer.terminal().picture();
+    let said = picture.row(absolute);
+    let before = said
+        .find("2 commands")
+        .expect("the count on the command row");
+    let start = crucible_tui::columns(said.get(..before).unwrap_or_default());
+    let cells = start..start + crucible_tui::columns("2 commands");
+    (renderer, says, absolute, cells)
+}
+
+#[test]
+fn clicking_the_visible_command_count_reaches_the_background_command_door() {
+    let (renderer, says, absolute, cells) = counted();
+
+    for column in [cells.start, cells.end - 1] {
+        assert!(
+            matches!(
+                landed(
+                    &renderer,
+                    &mut Editor::new(),
+                    &says,
+                    Pointed {
+                        row: absolute,
+                        column,
+                    },
+                ),
+                Landed::Counted
+            ),
+            "cell {column} of the count did not reach the door"
+        );
+    }
     assert!(!matches!(
         landed(
             &renderer,
@@ -1502,11 +1523,38 @@ fn clicking_the_visible_command_count_reaches_the_background_command_door() {
             &says,
             Pointed {
                 row: absolute.saturating_sub(1),
-                column: 0,
+                column: cells.start,
             },
         ),
         Landed::Counted
     ));
+}
+
+#[test]
+fn a_click_on_the_command_row_beside_the_count_opens_nothing() {
+    // The mode before the count and the blank after it are facts on the same
+    // row, not the door.
+    let (renderer, says, absolute, cells) = counted();
+    assert!(cells.start > 0, "the count is the first thing on its row");
+
+    for column in [0, cells.start - 1, cells.end] {
+        assert!(
+            matches!(
+                landed(
+                    &renderer,
+                    &mut Editor::new(),
+                    &says,
+                    Pointed {
+                        row: absolute,
+                        column,
+                    },
+                ),
+                Landed::Nothing
+            ),
+            "cell {column} of {:?} reached the door",
+            renderer.terminal().picture().row(absolute)
+        );
+    }
 }
 
 // A click opens a cut result only on the cells its row drew.
