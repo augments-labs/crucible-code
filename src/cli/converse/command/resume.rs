@@ -52,8 +52,8 @@ use crucible_app::client::{Performed, Resumed};
 use crucible_client_api::Command;
 use crucible_session::{Glimpse, Pruned, Reach, Recorded, Roots, glimpse, recent, retitle};
 use crucible_tui::{
-    Editor, Glyphs, Kept, Key, Picker, Pressed, Renderer, Row, ScreenMode, Slot, Terminal, clip,
-    columns as wide,
+    Editor, Glyphs, Kept, Key, Picker, Pressed, Renderer, Row, ScreenMode, Slot, Terminal, Welcome,
+    clip, columns as wide,
 };
 use crucible_types::{Compacting, SessionId};
 use crucible_workspace::Workspace;
@@ -113,8 +113,9 @@ const TAKES: &str = "Enter to resume · Esc to cancel";
 /// would be cut.
 const SHOWS: &str = "Enter to see how to resume · Esc to cancel";
 
-/// What a workspace nothing was ever recorded in says.
-const NEVER: &str = "no earlier session for this workspace";
+/// What a workspace nothing was ever recorded in says: the welcome card's
+/// words, so the two say it the same way.
+const NEVER: &str = Welcome::NO_EARLIER_SESSION;
 
 /// What the heading names the sessions of every directory as, under Ctrl+A.
 const EVERYWHERE: &str = "all projects";

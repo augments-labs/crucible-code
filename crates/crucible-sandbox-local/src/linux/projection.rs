@@ -167,6 +167,23 @@ pub(super) struct Projection {
     transaction: transaction::Transaction,
 }
 
+/// A projection dropped without [`Projection::cleanup`], as a stop whose
+/// cleanup failed leaves it, removes its stage journal last all the same. Its
+/// fields drop the stage before the journal, and the stage's own removal takes
+/// entries in whatever order the directory lists them: a journal unlinked
+/// before the roots leaves what an admission can only refuse as damage. When
+/// the rest cannot be removed, the stage is kept whole for the reconcile its
+/// journal answers.
+impl Drop for Projection {
+    fn drop(&mut self) {
+        if !self.stage.retained()
+            && transaction::clear_stage_before_journal(self.stage.root()).is_err()
+        {
+            self.stage.retain();
+        }
+    }
+}
+
 /// Leave for one projection to publish now.
 ///
 /// Holds this user's publication lock for as long as it lives, where the
@@ -1962,6 +1979,58 @@ mod tests {
             projected.receiver.is_none(),
             "the scan's thread was left to a later stop"
         );
+    }
+
+    /// A projection dropped without its cleanup, as a stop whose cleanup
+    /// failed leaves it, still removes its journal last. While anything else
+    /// of the stage stays, so does the journal, and an admission reads the
+    /// stage from it rather than refusing roots it finds with no journal.
+    #[test]
+    fn a_projection_dropped_with_roots_it_cannot_remove_keeps_its_journal() -> io::Result<()> {
+        let sample = crate::sample::Sample::new("sandbox-projection-dropped-uncleaned");
+        let rule = crucible_sandbox::SandboxFilesystemRule::new(
+            sample.root(),
+            SandboxFilesystemAccess::ReadOnly,
+            crucible_sandbox::SandboxFilesystemProvenance::Workspace,
+        )
+        .map_err(io::Error::other)?;
+        let policy = crucible_sandbox::SandboxPolicy::new(
+            true,
+            [rule],
+            sample.root(),
+            crucible_sandbox::SandboxNetworkPolicy::Closed,
+            crucible_sandbox::SandboxResourceLimits::default(),
+        )
+        .map_err(io::Error::other)?;
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            crucible_types::Ancestry::new(),
+            crucible_types::ToolId::new("projection-dropped-uncleaned"),
+            policy,
+            crucible_sandbox::SandboxManifest::empty(),
+        );
+        let view = super::super::command::prepare(&request).map_err(io::Error::other)?;
+        let projection = Projection::prepare(&request, &view, None).map_err(io::Error::other)?;
+        let stage = projection.stage.root().to_path_buf();
+        // Another test's admission would refuse this stage while it is held
+        // part-removed, so admissions wait until it is gone.
+        let admissions = transaction::RegistryLease::acquire(&request).map_err(io::Error::other)?;
+        let blocked = stage.join("roots").join("blocked");
+        std::fs::create_dir(&blocked)?;
+        std::fs::write(blocked.join("kept"), "")?;
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o500))?;
+
+        drop(projection);
+        let journal_kept = stage.join("transaction.wal").exists();
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::remove_dir_all(&stage)?;
+        drop(admissions);
+
+        assert!(
+            journal_kept,
+            "the journal went before the roots it describes"
+        );
+        Ok(())
     }
 
     #[test]

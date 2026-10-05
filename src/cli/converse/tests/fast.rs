@@ -201,8 +201,14 @@ fn fast_turned_on_is_what_the_next_request_asks_at() {
     let (written, speeds) = fasting(Fastened::new(FIELD), "/fast on\nhello\n/fast off\nagain\n");
 
     assert!(written.contains("openai · gpt-6-sol · fast"), "{written}");
-    // Standard is the label with no speed part, not a speed of its own.
-    assert!(written.contains("⎿ openai · gpt-6-sol,"), "{written}");
+    // Standard is the label with no speed part, not a speed of its own. It is
+    // the reply's second row, so it stands indented under the mark.
+    let rows = crucible_tui::Picture::of(&written, 200, 400).rows();
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with("  openai · gpt-6-sol,")),
+        "{rows:#?}"
+    );
     assert!(!written.contains("· standard"), "{written}");
     assert_eq!(speeds, [Speed::Fast, Speed::Standard]);
 }

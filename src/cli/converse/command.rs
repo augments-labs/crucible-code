@@ -790,6 +790,15 @@ pub(super) fn run<T: Terminal>(
         return Ok(Ran::Leave);
     }
 
+    // Down a pipe the line that asked was read after a prompt mark nothing
+    // ended, so that row is still open. It is ended first, before any answer,
+    // or one that commits its first line would write it after `ask › `, and a
+    // mark would be hung on the line below. Only on a screen: redirected
+    // output carries no mark, and its bytes stay as they were.
+    if renderer.is_terminal() {
+        renderer.present(&[])?;
+    }
+
     // The one answer not hung off the line that asked: a timeline has a rail
     // of its own down the left, and a thousand rows indented under a mark
     // would be a second one beside it. One release and the refusals are set
@@ -824,7 +833,14 @@ pub(super) fn run<T: Terminal>(
     renderer.hangs(terms.style().glyphs());
     let making = answer(wanted, renderer, conversation, held, terms)?;
     renderer.subordinate(start, terms.style().glyphs())?;
-    renderer.commit("")?;
+    // A typed `/compact` has said nothing yet: what follows its line is known
+    // only once the compaction has run, and the loop that ran it writes it —
+    // a one-line reply hung under the line with the blank after it, or the
+    // record with the blank it asks for on its way in. Written here, the blank
+    // would stand between the line and its reply.
+    if !matches!(making, Some(Compacting::Asked)) {
+        renderer.commit("")?;
+    }
 
     Ok(making.map_or(Ran::Again, Ran::Room))
 }
@@ -1008,6 +1024,27 @@ fn moded<T: Terminal>(
 /// the mark, one column in either glyph set, and the space after it.
 const HUNG: usize = 2;
 
+/// Where an answer's rows stand once it is drawn, which is how wide each may
+/// be laid out.
+#[derive(Clone, Copy)]
+enum Laid {
+    /// Hung under the line that asked, [`HUNG`] columns in.
+    Hung,
+    /// At the left edge: a pick made over a turn and applied as it ends has
+    /// no line of its own to be hung under.
+    Flush,
+}
+
+impl Laid {
+    /// How wide a row standing here may be.
+    fn columns<T: Terminal>(self, renderer: &Renderer<T>) -> usize {
+        match self {
+            Self::Hung => renderer.transcript_columns().saturating_sub(HUNG),
+            Self::Flush => renderer.transcript_columns(),
+        }
+    }
+}
+
 /// Says one thing back, quietly, wrapped to the window it is said in.
 ///
 /// What `/login` and `/logout` answer with when there is one thing to say: a
@@ -1018,7 +1055,12 @@ const HUNG: usize = 2;
 /// rows are hung after they are laid, and a row folded to the whole width is
 /// [`HUNG`] columns too wide once it is.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
-    let rows: Vec<Row> = fold(said, renderer.transcript_columns().saturating_sub(HUNG))
+    say_at(renderer, Laid::Hung, said)
+}
+
+/// Says one thing back, quietly, folded to where it will stand.
+fn say_at<T: Terminal>(renderer: &mut Renderer<T>, laid: Laid, said: &str) -> Result<(), Fatal> {
+    let rows: Vec<Row> = fold(said, laid.columns(renderer))
         .into_iter()
         .map(|part| Row::new().then(Slot::Quiet, part))
         .collect();

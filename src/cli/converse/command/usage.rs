@@ -46,7 +46,8 @@
 //! shows as much of the body as the room leaves under the rule and over the
 //! footer, with a row saying how many more are below; ↑ and ↓ scroll it, and
 //! the footer says so. It is printed rather than stood only where even the
-//! rule, the blank rows, the footer and a row of the body have no room.
+//! rule, the blank rows, the footer and a row of the body have no room, or,
+//! for a body taller than the room, a row of it with the row under it.
 //!
 //! Over a running turn it stands with the figures that turn last reported and
 //! asks nothing: the turn has the conversation.
@@ -243,7 +244,8 @@ impl Clock {
 }
 
 /// Asks for what the session has used and stands it, or prints it where no
-/// keys can close a panel or not even a row of it has room to stand.
+/// keys can close a panel or not even a row of it has room to stand, with the
+/// row saying how many more where the body is taller than the room.
 ///
 /// # Errors
 ///

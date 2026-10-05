@@ -4,7 +4,7 @@ expression: window.picture()
 ---
 80x24 cursor 21,68 scrolled 0
 |│                                                                             ││|
-|│ No recent sessions                                                          ││|
+|│ No earlier session for this workspace                                       ││|
 |│                                                                             ││|
 |│ ─────────────────────────────────────────────────────────────────────────── ││|
 |│                                                                             │┃|
