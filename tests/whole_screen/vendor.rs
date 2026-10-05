@@ -62,7 +62,8 @@ const PINGING: Duration = Duration::from_millis(250);
 ///
 /// Enough at [`PINGING`] to outlast the steps a case takes after that, and no
 /// more: the thread stops the moment crucible is gone, because the write it is
-/// on fails and `answer` returns.
+/// on fails and `answer` returns. A case that waits them out sees the turn end
+/// the way a whole answer ends.
 const HOLDING: usize = 40;
 
 /// What a case with one call in it names that call.
@@ -298,15 +299,20 @@ fn stream(text: &str) -> Vec<String> {
     events
 }
 
-/// The same events, with the message left open behind them.
+/// The same events, with the message held open behind them and then closed.
 ///
 /// Keep-alives rather than silence: they are what the API itself sends through
 /// a quiet stretch, crucible draws nothing for one, and a connection with bytes
 /// still moving on it is not one anything on either end mistakes for a stall.
+/// Closed after them as [`stream`] closes it, because a stream that just stops
+/// is one crucible reports as cut short, and no case here is about that.
 fn holding(text: &str) -> Vec<String> {
     let mut events = opening(text);
 
     events.extend((0..HOLDING).map(|_| PINGED.to_owned()));
+    events.push(ENDED.to_owned());
+    events.push(stopped("end_turn"));
+    events.push(STOPPED.to_owned());
 
     events
 }
