@@ -599,7 +599,7 @@ offer where the box was, newest first, each under the line of the call it
 answers. A result no longer held in memory is read back from the session log
 when the view reaches it; one the log cannot give back says
 `! this result could not be read back from the session log` in its place.
-↑ and ↓ move a row up or down; the mouse
+<kbd>↑</kbd> and <kbd>↓</kbd> move a row up or down; the mouse
 wheel uses `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` (six rows per notch by default).
 <kbd>PgUp</kbd> and <kbd>PgDn</kbd> move by the rows the view shows, less one.
 <kbd>→</kbd> and <kbd>←</kbd> put the next older or newer result at the top of the view.
