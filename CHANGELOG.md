@@ -61,6 +61,9 @@ change in any release with no deprecation period.
 - **`/cache` keeps its indent in a narrow window.** Lines that wrapped
   started again at the left edge, out from under the reply's mark; they now
   wrap inside it, as `/context` and `/usage` do.
+- **`/release-notes` closed with Esc leaves the spacing other panels do.**
+  It left one blank row fewer above the box, and so did a resize that closed
+  it.
 
 ## [0.45.2] - 2026-10-03
 
