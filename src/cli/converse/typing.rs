@@ -880,7 +880,9 @@ fn working<T: Terminal>(
         history: footing.history,
     };
     let boxed = boxing(renderer, editor, says, bordering, style);
-    let room = renderer.rows().saturating_sub(boxed.rows.len());
+    // What may stand under the transcript is the renderer's to say, the box
+    // counted in: the turn's rows and the list share what it leaves.
+    let room = renderer.room().saturating_sub(boxed.rows.len());
 
     // The list a `/`-started line has open stands directly above the box, over
     // the running row and plan, as it does at the prompt: a list is what the

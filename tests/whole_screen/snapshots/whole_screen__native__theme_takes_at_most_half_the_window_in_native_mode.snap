@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: opened
+---
+80x24 cursor 23,0 scrollback 37
+|over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown |
+|fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
+|quick brown fox jumps over the lazy dog. done.                                  |
+|                                                                                |
+|› /theme                                                                        |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|› interface     code   (← → )                                                   |
+|                                                                                |
+|Theme                                                                           |
+|                                                                                |
+|› auto                                                                          |
+|  follow the terminal's own background                                          |
+|  · 5 more                                                                      |
+|                                                                                |
+| 31   fn summarize(users: &[User]) -> String {                                  |
+| 32 -     let active = users.len();                                             |
+| 32 +     let active = users.iter().filter(alive).count();                      |
+| 33       format!("{active} active") // the answer                              |
+| 34   }                                                                         |
+|                                                                                |
+|1337                                                                            |
+|                                                                                |
+|enter takes it · esc puts back the one in force                                 |

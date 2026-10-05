@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: opened
+---
+80x24 cursor 12,10 scrollback 33
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
+|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. |
+|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the |
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps|
+|over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown |
+|fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
+|quick brown fox jumps over the lazy dog. done.                                  |
+|                                                                                |
+|› /model                                                                        |
+|Model                                             now  anthropic · claude-test-1|
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ Search    a model, or a vendor                                               │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|╭─────────────────────┬────────────────────────────────────────────────────────╮|
+|│  Providers          │  Models                                       42 of 42 │|
+|├─────────────────────┼────────────────────────────────────────────────────────┤|
+|│ › All            42 │   · 42 more                                            │|
+|╰─────────────────────┴────────────────────────────────────────────────────────╯|
+|                                                                                |
+|  Effort   ‹ low ›  medium   high   xhigh   max                                 |
+|                                                                                |
+|  tab pane · ↑↓ model · ←→ effort · enter takes both · esc to cancel            |

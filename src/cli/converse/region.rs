@@ -197,7 +197,7 @@ fn standing<T: Terminal, S>(
     loop {
         while_waiting(renderer)?;
         if changed {
-            let (rows, caret) = laid(state, renderer.columns(), renderer.room());
+            let (rows, caret) = fitted(renderer, state, &mut laid);
             // Asked per frame rather than taken once, because one caller
             // changes it between frames: `/theme` draws its specimen in
             // whatever the mark is standing on, which is the whole of how a
@@ -318,6 +318,31 @@ fn pointing<T: Terminal>(renderer: &Renderer<T>) -> Option<(usize, usize)> {
     }
 }
 
+/// Lays the component out in the room the renderer gives what stands over the
+/// box, or, where it cannot be drawn in that, in the least it can be drawn in.
+///
+/// The room is the renderer's answer and not a component's: the whole window
+/// on the full screen, and a share of it in native mode, where a row given up
+/// goes into the terminal's scrollback for good. A component gives nothing
+/// back rather than a picture cut short, so one the share cannot hold is laid
+/// out again a row taller each time until it stands — the smallest height it
+/// draws itself at, found without the component naming it. On the full screen
+/// the room is the window and the second layout never runs.
+fn fitted<S>(
+    renderer: &Renderer<impl Terminal>,
+    state: &mut S,
+    laid: &mut impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+) -> (Vec<Row>, Option<Caret>) {
+    let columns = renderer.columns();
+    let mut room = renderer.room();
+    let mut drawn = laid(state, columns, room);
+    while drawn.0.is_empty() && room < renderer.rows() {
+        room += 1;
+        drawn = laid(state, columns, room);
+    }
+    drawn
+}
+
 /// Draws `rows` where the box was, and says whether there was room for them.
 ///
 /// A component gives up rows rather than overflowing the width, and its last
@@ -326,8 +351,10 @@ fn pointing<T: Terminal>(renderer: &Renderer<T>) -> Option<(usize, usize)> {
 ///
 /// The box is taken off first and the rows stand in the band above it. A
 /// component here is not a prompt, so the share a prompt is held to is not
-/// its — a list of themes may take the window it needs, and there is nothing
-/// underneath it for that to push off the screen.
+/// its: on the full screen a list of themes may take the window it needs, and
+/// there is nothing underneath it for that to push off the screen. In native
+/// mode there is — the terminal's scrollback — and what it may take is
+/// [`Renderer::room`]'s to say, by way of [`fitted`].
 ///
 /// The cursor is parked where `caret` says, and on the last row it drew where
 /// that is `None`. Nothing here hides it — this program never does — and the
@@ -342,7 +369,7 @@ fn drawn<T: Terminal>(
     let Some(last) = rows
         .len()
         .checked_sub(1)
-        .filter(|_| rows.len() <= renderer.room())
+        .filter(|_| rows.len() <= renderer.rows())
     else {
         return Ok(false);
     };

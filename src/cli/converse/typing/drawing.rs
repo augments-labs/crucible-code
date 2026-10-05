@@ -70,10 +70,13 @@ pub(in crate::cli::converse) fn around<'a>(
 /// that share is a rule about how much of the screen a long prompt may take
 /// from what it is answering. Everything above it — the list, the plan, and
 /// the lines a used-up plan held — goes into the band above, which has no
-/// share: a list is what the reader is looking at while it is open, so the
-/// transcript is what gives way to it rather than the box being pushed off the
-/// screen. Both bands reach the renderer together so the prompt, status and map
-/// control come from one frame.
+/// share of its own: a list is what the reader is looking at while it is open,
+/// so the transcript is what gives way to it rather than the box being pushed
+/// off the screen. How much of the window the two may take together is the
+/// renderer's to say ([`Renderer::room`]): the whole of it on the full screen,
+/// half in native mode, where a transcript row given up is gone for good. Both
+/// bands reach the renderer together so the prompt, status and map control
+/// come from one frame.
 pub(in crate::cli::converse) fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
@@ -87,8 +90,9 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
     let boxed = boxing(renderer, editor, around.says, bordering, style);
 
     // What is left for a list once the box and the blank row that keeps it off
-    // the box have taken theirs.
-    let room = renderer.rows().saturating_sub(boxed.rows.len() + 1);
+    // the box have taken theirs, of what the renderer lets stand under the
+    // transcript at all.
+    let room = renderer.room().saturating_sub(boxed.rows.len() + 1);
     let over = over(around, renderer.columns(), room, style);
 
     let pointed = boxed.pointed.as_ref().map(|(at, row)| (*at, row));

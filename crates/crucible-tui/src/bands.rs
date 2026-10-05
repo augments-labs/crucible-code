@@ -30,9 +30,11 @@ use std::ops::Range;
 /// not this module's.
 ///
 /// It bounds the box and nothing else. A list or a plan standing over the box
-/// is the turn band's, which has no share and takes what it asks for — this
-/// number is a rule about how much screen a prompt being written may take from
-/// what it is a reply to, and a list is neither.
+/// is the turn band's, which has no share here and takes what it asks for —
+/// this number is a rule about how much screen a prompt being written may take
+/// from what it is a reply to, and a list is neither. What a turn band may ask
+/// for is settled before it gets here, by [`crate::Renderer::room`]: the whole
+/// window on the full screen, and half of it in native mode.
 const SHARE: usize = 2;
 
 /// How many rows each band that asks for a number would like.

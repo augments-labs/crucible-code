@@ -563,6 +563,22 @@
       "sha256": "efdc0e31738207489d0c2746d9815668752b122fe714744c716fb48551d068d0"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_60x24.snap",
+      "case": "a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())"
+      ],
+      "sha256": "d3acd63c5bb3dadde7150ed09a89ae481a240c7aca0c0440a20645238922a9e1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_80x16.snap",
+      "case": "a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())"
+      ],
+      "sha256": "58326499502bcbae6cd1986db7794fc71e10daf9ee8eb7fefbc5506f4735fb69"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode.snap",
       "case": "a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode",
       "opened": [
@@ -588,7 +604,7 @@
         "Vendor::answering(\"Done.\")",
         "Watched::native(\"native-clear-ascii\", 80, 24, &vendor)"
       ],
-      "sha256": "3b4bd5bb2428230cba97faea0c8a0808f6f7faa57d1a9e96c3ab7ce888d1a4cd"
+      "sha256": "4b12a8e0843eba289a2c54e3dc3e000315a99e0d0882e8dfdc8005ecdceb9168"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_of_a_silent_session_writes_no_divider_in_native_mode.snap",
@@ -615,7 +631,24 @@
         "Vendor::calling_batches(&crate::reading_three(), \"All three are read.\")",
         "Watched::native(\"native-results\", 80, 24, &vendor)"
       ],
-      "sha256": "8f7e952dd3f7fd840c0e765a6f0ca232db5d41e37818a3237d311b278507552c"
+      "sha256": "b5c5629ee43bf1b4246c0de407dd41a0c9432e3b3e73d1a5fcfc4123afb67349"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_o_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "ctrl_o_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::calling_batches(&crate::reading_three(), \"All three are read.\")",
+        "Watched::native(\"native-cap-results\", 80, 24, &vendor)"
+      ],
+      "sha256": "b5c5629ee43bf1b4246c0de407dd41a0c9432e3b3e73d1a5fcfc4123afb67349"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__model_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "model_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())"
+      ],
+      "sha256": "88d99c7f628b779414ec634b39928afb253d340d38fc392cbec6fe0b33008ba2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_divider_is_clipped_at_16_columns_in_native_mode.snap",
@@ -626,12 +659,45 @@
       "sha256": "c4751b555a367d4ae2513d8c5403d490843f703dcc81aea84a6bacb67707bc00"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "resume_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(\"native-cap-resume\", 80, 24, &vendor)"
+      ],
+      "sha256": "4d3b865f08477d582a430406d532c7fca5c0693faf5abc0728b837893548b755"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_writes_one_divider_and_no_second_card_in_native_mode.snap",
       "case": "resume_writes_one_divider_and_no_second_card_in_native_mode",
       "opened": [
         "Vendor::answering(\"The first thing this session said.\")"
       ],
       "sha256": "31ae9dc29075b3866be7f69ed62366d18f2ce8be148cafcd7707cc19382e19b0"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "settings_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())"
+      ],
+      "sha256": "41b4d8649b35a436d7a4072e39fabb0b595dda24c3f589f88ce4285b0d76af27"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__slash_list_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "slash_list_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())"
+      ],
+      "sha256": "9205d57e607dc5674ecad336c072de7812638886d829908a8be612e87a4b4e6c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__theme_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "theme_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())"
+      ],
+      "sha256": "9f31399eaa76bb79289f5eb13012fd8be945a6b1ef1a67693793ab6e64534bb8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",
