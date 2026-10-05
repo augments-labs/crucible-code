@@ -331,7 +331,10 @@ mod tests {
 
         // A directory nobody has worked in. The heading stays either way: its
         // absence would be a different thing than its emptiness.
-        assert!(screen.contains("No recent sessions"), "{screen}");
+        assert!(
+            screen.contains("No earlier session for this workspace"),
+            "{screen}"
+        );
     }
 
     #[test]
@@ -359,7 +362,10 @@ mod tests {
 
         assert!(screen.contains("count the columns in the tail"), "{screen}");
         assert!(screen.contains("just now"), "{screen}");
-        assert!(!screen.contains("No recent sessions"), "{screen}");
+        assert!(
+            !screen.contains("No earlier session for this workspace"),
+            "{screen}"
+        );
     }
 
     #[test]
