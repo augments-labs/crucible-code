@@ -660,8 +660,9 @@ appearing instead of two minutes of empty screen.
 
 Nothing is folded away. Clicking the line opens every result in the run at once,
 in the same view a single result opens in, each under the call it answers, so
-the run costs one row and keeps all of it. Only the cells where its text is drawn
-light up under the pointer, because only those cells are the door.
+the run costs one row and keeps all of it. The line lights up under the pointer
+from its mark to its last character, because those cells are the door; the
+blank after it on the same row is not.
 
 While the run is still going the counters are in the present
 (`Searching for 1 pattern, reading 4 files`), on its own row over the box, above
