@@ -909,5 +909,8 @@ fn a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode() {
         "{said:#?}"
     );
     assert_eq!(said.join(" "), SEVENTY_EIGHT, "{all}");
+    // A held turn that runs out of keep-alives ends as an answer ends, so
+    // nothing on screen reports a stream cut short.
+    assert!(!all.contains("the response ended before"), "{all}");
     insta::assert_snapshot!(window.picture());
 }
