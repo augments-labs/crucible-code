@@ -29,7 +29,9 @@ jobs:
   platforms:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # The macOS Intel job runs 12 to 19 minutes and has gone past 20 under
+    # load. The limit is there to catch a hang, not to time the suite.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
