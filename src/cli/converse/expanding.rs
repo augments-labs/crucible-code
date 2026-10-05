@@ -85,7 +85,7 @@ pub(super) struct View {
     /// drawn: less than `end` where the window may go on only to reach a
     /// result not read back yet. Asked for further down than this, the frame
     /// is drawn from here, so this is where the result at its top is counted
-    /// from, by the footer and by a step alike.
+    /// from, by the footer and by a step alike, and where a press back goes.
     laid: usize,
     /// Where the window was open when the last frame was drawn, which is how
     /// a frame knows which way the window moved since.
@@ -676,8 +676,10 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         // over more text than its rows hold, and that is exactly the thing a
         // reader turning a wheel is pointing at. At either end it moves nothing,
         // and the loop that reads this takes that as the transcript's turn.
+        // Back goes from the row the frame is drawn from, which is above where
+        // the window stands while the oldest result is not read back yet.
         Pressed::Up | Pressed::Scrolled { back: true } => {
-            let next = view.from.checked_sub(1);
+            let next = drawn(view).checked_sub(1);
             region::step(&mut view.from, next)
         }
         Pressed::Down | Pressed::Scrolled { back: false } => {
@@ -690,7 +692,8 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         // A page down onto a result not read back yet stops at its top, as an
         // arrow does: the layout that reads it back is where that is decided.
         Pressed::PageUp => {
-            let next = Some(view.from.saturating_sub(paged(view))).filter(|next| *next < view.from);
+            let top = drawn(view);
+            let next = Some(top.saturating_sub(paged(view))).filter(|next| *next < top);
             region::step(&mut view.from, next)
         }
         Pressed::PageDown => {
@@ -781,13 +784,19 @@ fn heading(view: &View, at: usize) -> Option<usize> {
     Some(start.saturating_add(usize::from(at > 0)))
 }
 
+/// The row the frame is drawn from: where the window stands, or the furthest
+/// down it opens on rows while the result past them is not read back yet.
+fn drawn(view: &View) -> usize {
+    view.from.min(view.laid)
+}
+
 /// Which result is at the top of the window: the last to begin at or above it.
 ///
 /// The top of the window as it is drawn rather than as far as it was asked to
 /// go, which past the rows there are to lay is further down: counted from
 /// there, the footer would name one result and a step go from another.
 fn topmost(view: &View) -> usize {
-    let top = view.from.min(view.laid);
+    let top = drawn(view);
     view.starts
         .iter()
         .filter(|start| **start <= top)

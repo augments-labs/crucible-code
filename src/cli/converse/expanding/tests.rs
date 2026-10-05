@@ -582,6 +582,55 @@ fn a_step_goes_from_the_result_the_footer_counts_when_the_oldest_is_not_read_bac
 }
 
 #[test]
+fn a_press_back_moves_the_picture_when_the_oldest_is_not_read_back_yet() {
+    // As above: the window has gone further down than the rows there are to
+    // lay, so the frame is drawn from higher up than the window stands. A
+    // press back goes from where it is drawn, so the picture moves at once,
+    // and by its own distance rather than by what is left of it.
+    const WHEEL: usize = 3;
+    for arrived in [
+        Pressed::Up,
+        Pressed::Scrolled { back: true },
+        Pressed::PageUp,
+    ] {
+        let mut kept = Kept::default();
+        kept.logging(Some(Box::new(Late::default())));
+        for at in 0..21 {
+            let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+            kept.calling(call.clone(), format!("Bash({at})"));
+            kept.finished(&call, said(call.as_str()).into(), at);
+        }
+
+        let mut standing = Standing::default();
+        standing.open(&kept);
+        let mut rows = frame(&kept, &mut standing, 40);
+        for _ in 0..21 {
+            if !standing.against(Pressed::Key(Key::Right), 3) {
+                break;
+            }
+            rows = frame(&kept, &mut standing, 40);
+        }
+        assert!(rows.iter().any(|row| row.contains(LATER)), "{rows:?}");
+        let view = opened(&mut standing);
+        assert!(
+            view.from > view.laid,
+            "the window is not past the rows laid"
+        );
+        let distance = match arrived {
+            Pressed::PageUp => view.page - 1,
+            Pressed::Scrolled { .. } => WHEEL,
+            _ => 1,
+        };
+        let moved_to = view.laid - distance;
+
+        assert!(standing.against(arrived.clone(), WHEEL), "{arrived:?}");
+        assert_eq!(opened(&mut standing).from, moved_to, "{arrived:?}");
+        let after = frame(&kept, &mut standing, 40);
+        assert_ne!(after, rows, "{arrived:?} redrew the same picture");
+    }
+}
+
+#[test]
 fn nothing_else_moves_it() {
     let ignored = [
         Pressed::Cycle,
