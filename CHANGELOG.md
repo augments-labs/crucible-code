@@ -37,8 +37,7 @@ change in any release with no deprecation period.
   `/theme`, `/resume`, `/settings`, the `/` list and the Ctrl+O results view
   stand in at most half the window's rows, or the least they can be drawn in
   where that is more, instead of the whole of it, so opening one pushes at
-  most the rows it takes above the box into the terminal's scrollback. Closing
-  one draws the box again directly under the last transcript row, and a
+  most the rows it takes above the box into the terminal's scrollback. A
   resize while one is open leaves no row of it in the scrollback.
 - **In native mode a command's reply keeps its mark when it is taller than
   the window.** A reply such as `/cache` in a short window went out to the
@@ -111,6 +110,14 @@ change in any release with no deprecation period.
   the reply now starts on its own row under the prompt, marked, as other
   replies are. A `/release-notes` answer, a release or a refusal, starts on
   its own row too, set apart as when it is typed.
+  replies are.
+- **In native mode the box stays at the foot of the window after a turn.**
+  What a turn showed under the answer pushed transcript rows into the
+  terminal's scrollback, and once it ended the box was drawn directly under
+  the answer, with the rows it had stood in left blank beneath it. The part of
+  the window drawn again now keeps the height it grew to, so the box stays at
+  the foot and the rows the turn stood in are blank between the transcript
+  and the box; a panel closing leaves the box at the foot the same way.
 - **`/compact` with no model answers under the line that asked.** The warning
   used to stand apart, two rows down, unlike every other command's reply.
 - **`/clear` and `/resume` draw the welcome card with the glyphs chosen in

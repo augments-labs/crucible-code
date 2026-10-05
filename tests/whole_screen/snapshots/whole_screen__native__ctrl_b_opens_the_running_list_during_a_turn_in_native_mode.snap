@@ -1,8 +1,9 @@
 ---
 source: tests/whole_screen/native.rs
+assertion_line: 661
 expression: window.picture()
 ---
-60x24 cursor 22,0 scrollback 9
+60x24 cursor 23,0 scrollback 9
 |│ ──────────────────────────────────────────────────────── │|
 |│                                                          │|
 |│ Tips                                                     │|
@@ -18,6 +19,7 @@ expression: window.picture()
 |● Bash(sleep 30)                                            |
 |  ⎿ (no output yet) (+2 lines · ctrl+o to expand)           |
 |                                                            |
+|                                                            |
 |It is started. That is all.                                 |
 |────────────────────────────────────────────────────────────|
 |                                                            |
@@ -26,4 +28,3 @@ expression: window.picture()
 |› 1. Bash(sleep 30)   0s · 0 lines · 0 B                    |
 |                                                            |
 |esc to close · enter shows it · x stops it                  |
-|                                                            |

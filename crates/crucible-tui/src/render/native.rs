@@ -36,9 +36,19 @@
 //! What stands over or in place of the box is held to half the window here
 //! ([`Renderer::room`]), because a transcript row it takes is let go of into
 //! the terminal's scrollback, and taking the panel down again brings none of
-//! them back: the box is drawn again directly under the last row still held.
-//! A panel that cannot be drawn in half the window stands at the least it can
-//! be drawn in, and the rows that costs stay in the scrollback.
+//! them back. A panel that cannot be drawn in half the window stands at the
+//! least it can be drawn in, and the rows that costs stay in the scrollback.
+//!
+//! The region keeps its height from one frame to the next. What a turn shows,
+//! or a panel, grows it, and the rows it grows over scroll into the terminal's
+//! scrollback; when the turn ends or the panel closes, a frame drawing fewer
+//! rows than the last one stood in pads the difference with blank rows at the
+//! region's top, so that the box stays at the foot instead of climbing to
+//! where the region ends and leaving the rows it stood in blank under it. The
+//! height kept is never more than the window's, since a window made shorter
+//! cannot have kept it all. A frame that closes the region — a resume, a
+//! clear, or leaving — writes no region and keeps no height, so the next one,
+//! where there is one, starts again from only what it has to show.
 //!
 //! A resize redraws the region and nothing else, and every frame asks the
 //! window's size before it is drawn, so that one drawn while an answer is
@@ -72,7 +82,8 @@ pub(super) struct Native {
     /// One past the last line the session has sealed: lines before it go out
     /// to the scrollback at the next frame.
     sealed: usize,
-    /// The display width of each row of the region last drawn, top first.
+    /// The display width of each row of the region last drawn, top first; a
+    /// blank row padding its top is a width of nothing.
     widths: Vec<usize>,
     /// The row of the region the cursor was left on, counted from its top.
     parked: usize,
@@ -315,16 +326,25 @@ impl<T: Terminal> Renderer<T> {
         out.push_str(ERASE_BELOW);
 
         self.record.hangs_through(through);
-        let mut emitted = false;
+        let mut emitted = 0;
         for line in first..through {
             for row in self.record.folded(line) {
                 row.clipped(columns).paint_into(&self.palette, &mut out);
                 out.push_str("\r\n");
-                emitted = true;
+                emitted += 1;
             }
         }
         self.record.lets_go(through);
 
+        // The rows the last region stood in, counted as the rewind counts
+        // them, and never more than the window: a window made shorter since
+        // cannot have kept them all.
+        let stood = native
+            .widths
+            .iter()
+            .map(|width| width.div_ceil(columns).max(1))
+            .sum::<usize>()
+            .min(self.size.rows);
         let region = out.len();
         native.widths.clear();
         let mut parked = 0;
@@ -332,6 +352,23 @@ impl<T: Terminal> Renderer<T> {
         if writes == Writes::Live {
             let showing = self.record.view(room);
             let shown = showing.len();
+            let turn = self.standing.turn.iter().take(bands.turn.len());
+            let turned = turn.len();
+            let prompt = self.standing.prompt.iter().take(bands.prompt.len());
+            let prompted = prompt.len();
+
+            // What this frame writes falls short of the rows the last one
+            // stood in: the rest is blank rows at the top of the region, so
+            // that what stands at the foot stays there. Rows the region grew
+            // over went into the scrollback, and giving the height back would
+            // not bring them back.
+            let pad = stood.saturating_sub(emitted + shown + turned + prompted);
+            for _ in 0..pad {
+                if !native.widths.is_empty() {
+                    out.push_str("\r\n");
+                }
+                native.widths.push(0);
+            }
             for row in showing {
                 if !native.widths.is_empty() {
                     out.push_str("\r\n");
@@ -344,10 +381,6 @@ impl<T: Terminal> Renderer<T> {
                 native.widths.push(row.columns());
                 row.paint_into(&self.palette, &mut out);
             }
-            let turn = self.standing.turn.iter().take(bands.turn.len());
-            let turned = turn.len();
-            let prompt = self.standing.prompt.iter().take(bands.prompt.len());
-            let prompted = prompt.len();
             for painted in turn.chain(prompt) {
                 if !native.widths.is_empty() {
                     out.push_str("\r\n");
@@ -362,14 +395,14 @@ impl<T: Terminal> Renderer<T> {
                     .standing
                     .prompted
                     .filter(|_| prompted > 0)
-                    .map(|caret| (shown + turned + caret.row, caret.column))
+                    .map(|caret| (pad + shown + turned + caret.row, caret.column))
                     .or_else(|| {
                         self.standing
                             .turned
                             .filter(|_| turned > 0)
-                            .map(|caret| (shown + caret.row, caret.column))
+                            .map(|caret| (pad + shown + caret.row, caret.column))
                     })
-                    .unwrap_or((shown + turned, 0));
+                    .unwrap_or((pad + shown + turned, 0));
                 parked = row.min(rows - 1);
                 column = at.min(columns - 1);
                 let back = rows - 1 - parked;
@@ -384,7 +417,7 @@ impl<T: Terminal> Renderer<T> {
         // A frame that would leave the screen as it is costs nothing: a turn
         // is a great many frames in which only the clock moved.
         let unchanged = writes == Writes::Live
-            && !emitted
+            && emitted == 0
             && rewound.is_none()
             && out.get(region..live) == Some(native.shown.as_str());
         if unchanged {

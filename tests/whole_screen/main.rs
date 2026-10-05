@@ -3480,7 +3480,8 @@ fn context_closed(screen: &str, vendor: &Vendor) -> Vec<String> {
 
 /// What `/release-notes` closed by `close` leaves under its line, beside what
 /// `/context` closed by escape leaves, on each of `screens`; each screen's
-/// picture follows, for the message of a case that finds them apart.
+/// picture follows, for the message of a case that finds them apart. In
+/// native mode a run of blank rows counts as one.
 fn closed_as_context_is(
     case: &str,
     screens: &[&str],
@@ -3491,7 +3492,7 @@ fn closed_as_context_is(
     let mut pictures = String::new();
     for &screen in screens {
         let vendor = Vendor::answering("Hello.");
-        wanted.push(context_closed(screen, &vendor));
+        let mut context = context_closed(screen, &vendor);
 
         let mut window = on_screen(screen, &format!("{case}-{screen}"), &vendor);
         window.types_until("/release-notes\r", "enter opens it");
@@ -3501,7 +3502,18 @@ fn closed_as_context_is(
         }
         let picture = window.picture();
         assert!(!picture.contains("enter opens it"), "{screen}\n{picture}");
-        seen.push(under_echo(&picture, "/release-notes"));
+        let mut notes = under_echo(&picture, "/release-notes");
+        if screen == "native" {
+            // The native region keeps the height its tallest frame gave it, so
+            // the blank rows under a closed panel's line count how tall that
+            // panel stood. What holds is that they are blank down to the box,
+            // so one stands for the run.
+            for rows in [&mut context, &mut notes] {
+                rows.dedup_by(|row, above| row.is_empty() && above.is_empty());
+            }
+        }
+        wanted.push(context);
+        seen.push(notes);
         let _ = writeln!(pictures, "{screen}\n{picture}");
     }
     (seen, wanted, pictures)
