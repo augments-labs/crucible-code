@@ -740,13 +740,13 @@ fn a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode() {
 
 #[test]
 fn a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mode() {
-    // Six rows leave `/usage` no room to stand, so it prints, and most of what
+    // Five rows leave `/usage` no room to stand, so it prints, and most of what
     // it prints has gone out to the scrollback before the command ends. The
     // fullscreen window is made tall again afterwards, which lays out nothing
     // again, so that the whole of its reply is on screen to read.
     let vendor = Vendor::answering("Hello.");
     let mut window = Watched::native("native-reply-tall", 80, 24, &vendor);
-    window.resize(80, 6);
+    window.resize(80, 5);
     window.types_until("/usage\r", "limits not reported");
     let native = reply(
         &crate::timeless(&everything(&window)),
@@ -755,7 +755,7 @@ fn a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mo
     );
 
     let mut other = fullscreen("native-reply-tall-fullscreen", 80, 24, &vendor);
-    other.resize(80, 6);
+    other.resize(80, 5);
     other.types_until("/usage\r", "limits not reported");
     other.resize(80, 24);
     let full = reply(
@@ -765,7 +765,7 @@ fn a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mo
     );
 
     window.assert_never_alternate();
-    assert!(native.len() > 6, "{native:#?}");
+    assert!(native.len() > 5, "{native:#?}");
     assert!(
         native.first().is_some_and(|row| row.starts_with("⎿ Usage")),
         "{native:#?}"
