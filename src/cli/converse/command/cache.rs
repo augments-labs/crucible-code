@@ -186,10 +186,13 @@ pub(super) fn retained<T: Terminal>(
     retained: Retained,
 ) -> Result<(), Fatal> {
     if retained.any() {
-        renderer.commit(&format!(
-            "! cache retirement retained {} ambiguous and {} orphaned resource(s)",
-            retained.ambiguous, retained.orphaned,
-        ))?;
+        reply(
+            renderer,
+            &format!(
+                "! cache retirement retained {} ambiguous and {} orphaned resource(s)",
+                retained.ambiguous, retained.orphaned,
+            ),
+        )?;
     }
     Ok(())
 }
@@ -199,8 +202,7 @@ pub(super) fn held<T: Terminal>(
     renderer: &mut Renderer<T>,
     problem: &PromptCacheResourceError,
 ) -> Result<(), Fatal> {
-    renderer.commit(&format!("! cache retirement: {problem}"))?;
-    Ok(())
+    reply(renderer, &format!("! cache retirement: {problem}"))
 }
 
 /// Writes one line of the reply, folded short of the mark it is hung under.
@@ -225,6 +227,7 @@ fn number(value: Option<u64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crucible_tui::{Glyphs, Recording, ScreenMode};
     use crucible_types::PromptCacheResourceState;
 
     #[test]
@@ -232,5 +235,135 @@ mod tests {
         assert_eq!(number(None), "unknown");
         assert_eq!(number(Some(0)), "0");
         assert_ne!(PromptCacheResourceState::Ready.as_str(), "[redacted]");
+    }
+
+    /// The rows a window forty columns wide drawn in `mode` shows once `said`
+    /// has written its line, hung as a command's reply is hung.
+    ///
+    /// Native mode's rows are read from the last frame it drew, which redraws
+    /// the whole region: nothing here waits for a key, so nothing has been
+    /// sealed into the scrollback above it.
+    fn hung(
+        mode: ScreenMode,
+        said: impl FnOnce(&mut Renderer<Recording>) -> Result<(), Fatal>,
+    ) -> Vec<String> {
+        let mut renderer = Renderer::drawing(Recording::new(40, 40), mode);
+        let start = renderer.lines();
+        renderer.hangs(Glyphs::Unicode);
+        said(&mut renderer).expect("the line to be written");
+        renderer
+            .subordinate(start, Glyphs::Unicode)
+            .expect("the reply to be hung");
+
+        match mode {
+            ScreenMode::Fullscreen => renderer.terminal().picture().rows(),
+            ScreenMode::Native => last_frame(renderer.terminal().written()),
+        }
+    }
+
+    /// The rows the last native frame wrote, top first: what follows the
+    /// erase that opens it, with every control sequence read past.
+    fn last_frame(written: &str) -> Vec<String> {
+        let drawn = written.rsplit("\x1b[J").next().unwrap_or_default();
+        let mut text = String::new();
+        let mut left = drawn.chars();
+        while let Some(character) = left.next() {
+            if character != '\x1b' {
+                text.push(character);
+                continue;
+            }
+            if left.next() == Some('[') {
+                for byte in left.by_ref() {
+                    if ('@'..='~').contains(&byte) {
+                        break;
+                    }
+                }
+            }
+        }
+        text.split("\r\n")
+            .map(|row| row.trim_end().to_owned())
+            .collect()
+    }
+
+    /// The reply's rows, from the one carrying the mark to the first blank.
+    fn reply_rows(mode: ScreenMode, rows: &[String]) -> Vec<String> {
+        let opened = rows
+            .iter()
+            .position(|row| row.starts_with(Glyphs::Unicode.hangs()))
+            .unwrap_or_else(|| panic!("{mode:?}: nothing was hung in {rows:#?}"));
+        rows.iter()
+            .skip(opened)
+            .take_while(|row| !row.is_empty())
+            .cloned()
+            .collect()
+    }
+
+    /// The line `/model`, `/login` and `/logout` say when retiring the cache
+    /// ahead of a switch left resources behind, in a window too narrow for it.
+    ///
+    /// Folded at the window's forty columns, the first row would end on
+    /// "ambiguous", one column past what is left beside the mark; folded short
+    /// of the mark, it ends a word earlier and the rest wraps under the mark.
+    fn retained_keeps_its_indent(mode: ScreenMode) {
+        let rows = hung(mode, |renderer| {
+            retained(
+                renderer,
+                Retained {
+                    ambiguous: 3,
+                    orphaned: 2,
+                },
+            )
+        });
+
+        assert_eq!(
+            reply_rows(mode, &rows),
+            [
+                "⎿ ! cache retirement retained 3",
+                "  ambiguous and 2 orphaned resource(s)",
+            ],
+            "{mode:?}: in {rows:#?}"
+        );
+    }
+
+    /// The line `/model`, `/login` and `/logout` say when an identity switch
+    /// stopped because the cache could not be retired, in a window too narrow
+    /// for it.
+    ///
+    /// Folded at forty columns, the second row would carry "deadline" as well;
+    /// folded short of the mark, that word wraps onto a third row of its own.
+    fn held_keeps_its_indent(mode: ScreenMode) {
+        let rows = hung(mode, |renderer| {
+            held(renderer, &PromptCacheResourceError::Deadline)
+        });
+
+        assert_eq!(
+            reply_rows(mode, &rows),
+            [
+                "⎿ ! cache retirement: prompt-cache",
+                "  resource operation reached its",
+                "  deadline",
+            ],
+            "{mode:?}: in {rows:#?}"
+        );
+    }
+
+    #[test]
+    fn retained_resources_keep_the_indent_where_the_line_wraps() {
+        retained_keeps_its_indent(ScreenMode::Fullscreen);
+    }
+
+    #[test]
+    fn retained_resources_keep_the_indent_where_the_line_wraps_in_native_mode() {
+        retained_keeps_its_indent(ScreenMode::Native);
+    }
+
+    #[test]
+    fn a_held_retirement_keeps_the_indent_where_the_line_wraps() {
+        held_keeps_its_indent(ScreenMode::Fullscreen);
+    }
+
+    #[test]
+    fn a_held_retirement_keeps_the_indent_where_the_line_wraps_in_native_mode() {
+        held_keeps_its_indent(ScreenMode::Native);
     }
 }
