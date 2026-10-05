@@ -2074,8 +2074,8 @@ fn within(mut line: String, width: usize, glyphs: Glyphs) -> String {
 /// count, so a control character in text that arrived from somewhere else is
 /// the one thing that could take that decision away: a newline in a tool's
 /// arguments is a second row nobody wrote. A space rather than nothing because
-/// that is what the row will show — [`cut`] and [`fold`] drop what a terminal
-/// will not draw, and this has already decided to draw something.
+/// that is what the row will show — [`cut`] drops what a terminal will not
+/// draw, and this has already decided to draw something.
 pub(crate) fn flattened(text: impl fmt::Display) -> String {
     text.to_string()
         .trim()
