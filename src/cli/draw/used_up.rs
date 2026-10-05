@@ -3,16 +3,18 @@
 //! One block, standing where the turn's last row would: a head saying the
 //! limit is reached, which window and when it resets, and under it what became
 //! of the turn and what to do next. Every word is this program's. The reset is
-//! the reader's own wall clock, read the way `/usage` reads one, and a reset
-//! the vendor did not report is said to be not reported rather than guessed.
+//! the reader's own wall clock with its date, read the way `/usage` reads one,
+//! and a reset the vendor did not report is said to be not reported rather
+//! than guessed.
 //!
 //! It says "before sending" only where nothing was sent, and "refused the
 //! request" only where the vendor said no: a reader on a flaky network is owed
 //! the difference between the two.
 //!
 //! Where the head does not fit on one row, the window and the reset stand on
-//! the row under it, and the prose loses its first sentence: what is left is
-//! the part a narrow reader can act on.
+//! the row under it, or on a row each where the two do not fit on one, and the
+//! prose loses its first sentence: what is left is the part a narrow reader can
+//! act on.
 
 use std::time::SystemTime;
 
@@ -37,7 +39,7 @@ pub(crate) fn rows(
 ) -> Vec<Row> {
     let title = format!("{} Usage limit reached", glyphs.stopped());
     let reset = resets_at.and_then(|at| clock.reset_by(at));
-    let detail = window
+    let parts = window
         .map(Window::named)
         .into_iter()
         .chain(Some(
@@ -45,8 +47,8 @@ pub(crate) fn rows(
                 .clone()
                 .unwrap_or_else(|| "resets: not reported".to_owned()),
         ))
-        .collect::<Vec<_>>()
-        .join(&format!(" {} ", glyphs.dot()));
+        .collect::<Vec<_>>();
+    let detail = parts.join(&format!(" {} ", glyphs.dot()));
     let next = if reset.is_some() {
         "Nothing was lost; send a prompt after the reset to continue."
     } else {
@@ -69,7 +71,15 @@ pub(crate) fn rows(
     }
 
     let mut rows = folded(Slot::Strong, &title, HEAD, width);
-    rows.extend(folded(Slot::Quiet, &detail, UNDER, width));
+    // The window and the reset on a row each where the two do not fit on one,
+    // so a fold never parts a reset's date from its time.
+    if 2 * UNDER + columns(&detail) <= width {
+        rows.extend(folded(Slot::Quiet, &detail, UNDER, width));
+    } else {
+        for part in &parts {
+            rows.extend(folded(Slot::Quiet, part, UNDER, width));
+        }
+    }
     rows.extend(folded(Slot::Quiet, next, UNDER, width));
     rows
 }
@@ -138,7 +148,7 @@ mod tests {
                 Glyphs::Unicode,
             ),
             [
-                "  ■ Usage limit reached · weekly window · resets Mon 09:00",
+                "  ■ Usage limit reached · weekly window · resets 5 Oct 09:00",
                 "    The turn stopped before sending. Nothing was lost; send a prompt after",
                 "    the reset to continue.",
             ]
@@ -169,7 +179,8 @@ mod tests {
             ),
             [
                 "  ■ Usage limit reached",
-                "    weekly window · resets Mon 09:00",
+                "    weekly window",
+                "    resets 5 Oct 09:00",
                 "    Nothing was lost; send a prompt",
                 "    after the reset to continue.",
             ]
@@ -200,7 +211,7 @@ mod tests {
                 Glyphs::Unicode,
             ),
             [
-                "  ■ Usage limit reached · 5-hour window · resets Mon 09:00",
+                "  ■ Usage limit reached · 5-hour window · resets 5 Oct 09:00",
                 "    The vendor refused the request. Nothing was lost; send a prompt after",
                 "    the reset to continue.",
             ]
@@ -219,7 +230,7 @@ mod tests {
 
         assert_eq!(
             shown.first().map(String::as_str),
-            Some("  # Usage limit reached - weekly window - resets Mon 09:00")
+            Some("  # Usage limit reached - weekly window - resets 5 Oct 09:00")
         );
         assert!(shown.iter().all(|row| row.is_ascii()), "{shown:?}");
     }
@@ -240,10 +251,17 @@ mod tests {
         };
         let past = UNIX_EPOCH + Duration::from_secs(MONDAY - 7 * 24 * 3600);
         let now = UNIX_EPOCH + Duration::from_secs(NOW.unsigned_abs());
+        let later_today = now + Duration::from_hours(3);
 
         assert_eq!(
             head(&east, monday()).as_deref(),
-            Some("  ■ Usage limit reached · weekly window · resets Mon 11:00")
+            Some("  ■ Usage limit reached · weekly window · resets 5 Oct 11:00")
+        );
+        // Dated even later today, as `/usage` draws it, so the two never name
+        // one reset two ways.
+        assert_eq!(
+            head(&utc(), later_today).as_deref(),
+            Some("  ■ Usage limit reached · weekly window · resets 2 Oct 15:00")
         );
         for reached in [past, now] {
             assert_eq!(
@@ -275,7 +293,7 @@ mod tests {
             .map(|(_, text)| text)
             .collect();
         assert_eq!(strong, "■ Usage limit reached");
-        assert_eq!(quiet, " · weekly window · resets Mon 09:00");
+        assert_eq!(quiet, " · weekly window · resets 5 Oct 09:00");
         assert!(!under.is_empty());
         for row in under {
             assert!(

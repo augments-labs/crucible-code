@@ -62,7 +62,6 @@ use crucible_app::providers::{CredentialSource, credential_source, in_use, offer
 use crucible_app::startup::ProviderAuth;
 use crucible_client_api::{self as api, Cost, Limit, Reading, Window};
 use crucible_tui::{Bar, Fill, Glyphs, Part, Pressed, Renderer, Row, Slot, Terminal};
-use jiff::civil::Date;
 use jiff::tz::TimeZone;
 use jiff::{Timestamp, Zoned};
 
@@ -187,10 +186,12 @@ impl Clock {
     }
 
     /// The phrase a turn stopped on a used-up plan names its reset with:
-    /// `resets Mon 09:00` for one still to come, and `resets soon` for one the
-    /// clock has reached. The stop happened against a reset still ahead, so
-    /// one behind the clock now says the plan is about to be usable again
-    /// rather than that it already is. `None` where the time cannot be read.
+    /// `resets 5 Oct 09:00` for one still to come, dated as [`Self::resets`]
+    /// dates it so the notice and the panel name one reset one way, and
+    /// `resets soon` for one the clock has reached. The stop happened against
+    /// a reset still ahead, so one behind the clock now says the plan is about
+    /// to be usable again rather than that it already is. `None` where the
+    /// time cannot be read.
     pub(crate) fn reset_by(&self, at: SystemTime) -> Option<String> {
         let Ok(since) = at.duration_since(UNIX_EPOCH) else {
             return Some("resets soon".to_owned());
@@ -199,22 +200,7 @@ impl Clock {
         if i64::try_from(at).is_ok_and(|at| at <= self.now.as_second()) {
             return Some("resets soon".to_owned());
         }
-        self.reads(at).map(|read| format!("resets {read}"))
-    }
-
-    /// When a window starts again, as a wall clock reads it: the time alone
-    /// today, with the weekday within the week, and with the date beyond or
-    /// before.
-    fn reads(&self, at: u64) -> Option<String> {
-        let at = self.zoned(at)?;
-        let today: Date = self.now.to_zoned(self.zone.clone()).date();
-        let days = today.until(at.date()).ok()?.get_days();
-        let shape = match days {
-            0 => "%H:%M",
-            1..=6 => "%a %H:%M",
-            _ => DATED,
-        };
-        Some(self.read(&at, shape))
+        self.dated(at).map(|read| format!("resets {read}"))
     }
 
     /// When a window starts again, as a wall clock reads it, with its date
