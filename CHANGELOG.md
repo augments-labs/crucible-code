@@ -72,6 +72,9 @@ change in any release with no deprecation period.
   blank row parts one plan window from the next.
 - **`/compact` with no model answers under the line that asked.** The warning
   used to stand apart, two rows down, unlike every other command's reply.
+- **The welcome card and `/resume` agree on an empty directory.** Under
+  `Recent sessions` the card said `No recent sessions` where `/resume` said
+  `no earlier session for this workspace`; both now say the second.
 - **`/release-notes` closed with Esc leaves the spacing other panels do.**
   It left one blank row fewer above the box, and so did a resize that closed
   it.
