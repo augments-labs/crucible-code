@@ -39,14 +39,16 @@
 //! them back. A panel that cannot be drawn in half the window stands at the
 //! least it can be drawn in, and the rows that costs stay in the scrollback.
 //!
-//! The region never gives height back. What a turn shows, or a panel, grows
-//! it, and the rows it grows over scroll into the terminal's scrollback; when
-//! the turn ends or the panel closes, a frame drawing fewer rows than the last
-//! one stood in pads the difference with blank rows at the region's top, so
-//! that the box stays at the foot instead of climbing to where the region
-//! ends and leaving the rows it stood in blank under it. The height kept is
-//! never more than the window's, since a window made shorter cannot have kept
-//! it all.
+//! The region keeps its height from one frame to the next. What a turn shows,
+//! or a panel, grows it, and the rows it grows over scroll into the terminal's
+//! scrollback; when the turn ends or the panel closes, a frame drawing fewer
+//! rows than the last one stood in pads the difference with blank rows at the
+//! region's top, so that the box stays at the foot instead of climbing to
+//! where the region ends and leaving the rows it stood in blank under it. The
+//! height kept is never more than the window's, since a window made shorter
+//! cannot have kept it all. A frame that closes the region — a resume, a
+//! clear, or leaving — writes no region and keeps no height, so the next one,
+//! where there is one, starts again from only what it has to show.
 //!
 //! A resize redraws the region and nothing else, and every frame asks the
 //! window's size before it is drawn, so that one drawn while an answer is
