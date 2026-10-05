@@ -393,6 +393,19 @@ fn a_slash_opens_the_command_list_above_the_box() {
 }
 
 #[test]
+fn esc_closes_the_command_list_and_keeps_the_line() {
+    // The list is the thing in front of the reader, so Esc backs out of it the
+    // way it backs out of every other thing standing. What it stood over comes
+    // back, and the `/` stays in the box for the next key to go on from.
+    let mut window = Watched::open("commands-closed", 80, 24);
+
+    window.types("/");
+    window.types_until("\x1b", "Warning: No models available");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn an_answer_is_committed_above_a_box_that_is_still_where_it_was() {
     // The first case here that takes a turn. What it watches is the handover:
     // the answer joins the transcript, and the box is drawn again underneath in
@@ -872,6 +885,25 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
     window.types_and_catches("/", "more");
 
     insta::assert_snapshot!(on_the_first_beat(&window.picture()));
+}
+
+#[test]
+fn esc_mid_turn_closes_the_command_list_and_the_turn_runs_on() {
+    // The list stands over a running turn, and it is the thing in front of the
+    // reader rather than the turn: Esc closes it, as it closes the Ctrl+O view
+    // and the queue, and the turn goes on behind it. The answer the list stood
+    // over is what comes back.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("list-closed-mid-turn", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/", "more");
+    window.types_and_catches("\x1b", HELD_ANSWER);
+
+    let picture = window.picture();
+    assert!(!picture.contains("interrupting"), "{picture}");
+    assert!(picture.contains("esc to interrupt"), "{picture}");
+    insta::assert_snapshot!(on_the_first_beat(&picture));
 }
 
 #[test]
@@ -4454,6 +4486,75 @@ fn usage_stands_over_a_running_turn_with_the_figures_it_last_posted() {
     // nothing before it.
     assert!(picture.contains("0 in · 4 out"), "{picture}");
     insta::assert_snapshot!("usage_mid_turn_80", timeless(&on_the_first_beat(&picture)));
+}
+
+/// The footer `/usage` stands with where it is taller than its room.
+const USAGE_SCROLLS: &str = "esc to close · ↑↓ to see more";
+
+/// The rows `/usage` stands in on `picture`: from its rule to its footer.
+fn usage_rows(picture: &str) -> usize {
+    let rows: Vec<&str> = picture.lines().filter(|row| row.starts_with('|')).collect();
+    let rule = rows
+        .iter()
+        .position(|row| row.trim_matches('|').chars().all(|cell| cell == '─'))
+        .unwrap_or_else(|| panic!("no rule over the panel:\n{picture}"));
+    let footer = rows
+        .iter()
+        .position(|row| row.contains("esc to close"))
+        .unwrap_or_else(|| panic!("no footer under the panel:\n{picture}"));
+    footer + 1 - rule
+}
+
+#[test]
+fn usage_taller_than_the_window_stands_and_scrolls_with_the_arrows() {
+    // A 40x16 window is shorter than the panel's 20 rows at 40 columns, as a
+    // 40x24 one is with two plan windows reported: the panel stands in the
+    // window's rows with its body cut short, and the arrows move the body.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("usage-short-40", 40, 16, &vendor);
+    window.types_until("say hello\r", "Hello.");
+    window.types_until("/usage\r", "Usage · anthropic");
+
+    let stood = window.picture();
+    assert!(stood.contains(USAGE_SCROLLS), "{stood}");
+    assert!(stood.contains("↓ 5 more"), "{stood}");
+    assert_eq!(usage_rows(&stood), 16, "{stood}");
+    insta::assert_snapshot!("usage_short_40", timeless(&stood));
+
+    window.types_until("\x1b[B", "↓ 4 more");
+    let scrolled = window.picture();
+    assert!(!scrolled.contains("Usage · anthropic"), "{scrolled}");
+    assert_eq!(usage_rows(&scrolled), 16, "{scrolled}");
+    insta::assert_snapshot!("usage_short_40_scrolled", timeless(&scrolled));
+
+    window.types_until("\x1b[A", "Usage · anthropic");
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn usage_taller_than_half_the_window_stands_in_half_and_scrolls_in_native_mode() {
+    // Native mode gives a panel half the window, 12 rows of 24, and the
+    // panel's 20 rows at 40 columns are cut to them rather than taking 20.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("usage-native-40", 40, 24, &vendor);
+    window.types_until("say hello\r", "Hello.");
+    window.types_until("/usage\r", "Usage · anthropic");
+
+    let stood = window.picture();
+    assert!(stood.contains(USAGE_SCROLLS), "{stood}");
+    assert_eq!(usage_rows(&stood), 12, "{stood}");
+
+    window.types_until("\x1b[B", "↓ 8 more");
+    let scrolled = window.picture();
+    assert!(!scrolled.contains("Usage · anthropic"), "{scrolled}");
+    assert_eq!(usage_rows(&scrolled), 12, "{scrolled}");
+
+    window.types_until("\x1b", "ask mode on");
+    window.assert_never_alternate();
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
 }
 
 // `/settings`: what is in force, the settings a menu can change, and the

@@ -387,6 +387,22 @@
       "sha256": "55ec76b878be4a06e3845ed8b37939cc669d7ad63ba02475c5cf0f99735a3f57"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__esc_closes_the_command_list_and_keeps_the_line.snap",
+      "case": "esc_closes_the_command_list_and_keeps_the_line",
+      "opened": [
+        "Watched::open(\"commands-closed\", 80, 24)"
+      ],
+      "sha256": "9fbc005de1218f0a4ff05cdcd1624970772f94732bd8d466ccb9f9f2e1c55140"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__esc_mid_turn_closes_the_command_list_and_the_turn_runs_on.snap",
+      "case": "esc_mid_turn_closes_the_command_list_and_the_turn_runs_on",
+      "opened": [
+        "Watched::allowing(\"list-closed-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "26862a4fffa4efdf53af933b1c56e5ed89ffb7ff380d8d89fcc254833df2dd76"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__escape_while_room_is_being_made_stops_it_and_replaces_nothing.snap",
       "case": "escape_while_room_is_being_made_stops_it_and_replaces_nothing",
       "opened": [
@@ -592,7 +608,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::native(\"native-reply-tall\", 80, 24, &vendor)"
       ],
-      "sha256": "1e0e7bb24bdf91ba7a5739f4b5e76f6feeaeac75babb719253ddb9f3a7d8456c"
+      "sha256": "3eb45f2f8d8e7743f3472d1117209e6f689c67a3aa44589f4cbf5fa6229e3d94"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode.snap",
@@ -1131,6 +1147,24 @@
         "Watched::allowing(\"usage-mid-turn\", 80, 30, &vendor, \"bash(*)\")"
       ],
       "sha256": "7fb0dfd7e38b753bff945f6ac12a846870a87b0bdafac7680957d5b844602a8c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_short_40.snap",
+      "case": "usage_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"usage-short-40\", 40, 16, &vendor)"
+      ],
+      "sha256": "97d6ca9e8ac6eacbd04a0c51ab5aa14b5a04dff52d4850e2f17c951ded3e6c70"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_short_40_scrolled.snap",
+      "case": "usage_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"usage-short-40\", 40, 16, &vendor)"
+      ],
+      "sha256": "9818c2abcaa88c4d0ed14779737df6381d7be7d45057bb1deb423d616e5a755f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_40_ascii.snap",

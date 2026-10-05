@@ -190,6 +190,23 @@ fn stopped() -> api::Usage {
     }
 }
 
+/// The panel's rows at `columns` where the whole of it stands: a rule, the
+/// body, and how to close it.
+// What is drawn, whose plan is being asked, and how wide, in which glyphs and
+// against which clock, are independent inputs, as for `body`.
+#[allow(clippy::too_many_arguments)]
+fn panel(
+    heading: &str,
+    usage: &api::Usage,
+    asking: Option<&str>,
+    columns: usize,
+    glyphs: Glyphs,
+    clock: &Clock,
+) -> Vec<Row> {
+    let rows = body(heading, usage, asking, columns, glyphs, clock);
+    framed(rows, columns, glyphs, "esc to close".to_owned())
+}
+
 fn art(rows: &[Row]) -> Vec<String> {
     rows.iter().map(Row::text).collect()
 }
@@ -237,7 +254,7 @@ fn usage_with_a_weekly_window_is_the_mockup_at_80_columns() {
             "",
             "Plan limits",
             &window,
-            "                   resets Mon 09:00",
+            "                   resets 26 Oct 09:00",
             "",
             "esc to close",
         ]
@@ -266,9 +283,11 @@ fn usage_stands_every_reported_window_in_the_fixed_order() {
         [
             "Plan limits".to_owned(),
             format!("  5-hour window    {}  12% used", bar(6, 49)),
-            "                   resets 15:40".to_owned(),
+            "                   resets 22 Oct 15:40".to_owned(),
+            String::new(),
             format!("  Weekly window    {}  31% used", bar(15, 49)),
-            "                   resets Mon 09:00".to_owned(),
+            "                   resets 26 Oct 09:00".to_owned(),
+            String::new(),
             format!("  Monthly window   {}   9% used", bar(4, 49)),
             "                   resets 1 Nov 09:00".to_owned(),
         ]
@@ -348,7 +367,7 @@ fn usage_at_40_columns_stands_each_label_over_or_before_a_narrower_value() {
             "Plan limits",
             "  Weekly window",
             &window,
-            "  resets Mon 09:00",
+            "  resets 26 Oct 09:00",
             "",
             "esc to close",
         ]
@@ -512,21 +531,24 @@ fn a_reset_already_past_says_the_window_started_again_since_the_reading() {
     let last_monday = MONDAY - 7 * 86_400;
     assert_eq!(
         clock().resets(earlier_today).as_deref(),
-        Some("reset 09:00, since passed")
+        Some("reset 22 Oct 09:00, since passed")
     );
     assert_eq!(
         clock().resets(last_monday).as_deref(),
         Some("reset 19 Oct 09:00, since passed")
     );
-    // One still to come reads as it did.
-    assert_eq!(clock().resets(TODAY).as_deref(), Some("resets 15:40"));
+    // One still to come is dated the same way, later today too.
+    assert_eq!(
+        clock().resets(TODAY).as_deref(),
+        Some("resets 22 Oct 15:40")
+    );
     let guessed = Clock {
         guessed: true,
         ..clock()
     };
     assert_eq!(
         guessed.resets(earlier_today).as_deref(),
-        Some("reset 09:00 UTC, since passed")
+        Some("reset 22 Oct 09:00 UTC, since passed")
     );
 
     // The figure stays what the vendor reported, and the line fits the
@@ -735,13 +757,14 @@ fn usage_draws_a_model_group_under_the_plan_wide_windows_as_the_mockup_does() {
         [
             "Plan limits".to_owned(),
             format!("  Weekly window    {}  31% used", bar(15, 49)),
-            "                   resets Mon 09:00".to_owned(),
+            "                   resets 26 Oct 09:00".to_owned(),
             String::new(),
             "  GPT-5.3-Codex-Spark".to_owned(),
             format!("  5-hour window    {}  12% used", bar(6, 49)),
-            "                   resets 15:40".to_owned(),
+            "                   resets 22 Oct 15:40".to_owned(),
+            String::new(),
             format!("  Weekly window    {}   4% used", bar(2, 49)),
-            "                   resets Mon 09:00".to_owned(),
+            "                   resets 26 Oct 09:00".to_owned(),
         ]
     );
     let name = rows
@@ -761,15 +784,16 @@ fn usage_at_40_columns_stands_a_model_group_under_the_plan_wide_windows() {
             "Plan limits".to_owned(),
             "  Weekly window".to_owned(),
             format!("  {}  31% used", bar(8, 26)),
-            "  resets Mon 09:00".to_owned(),
+            "  resets 26 Oct 09:00".to_owned(),
             String::new(),
             "  GPT-5.3-Codex-Spark".to_owned(),
             "  5-hour window".to_owned(),
             format!("  {}  12% used", bar(3, 26)),
-            "  resets 15:40".to_owned(),
+            "  resets 22 Oct 15:40".to_owned(),
+            String::new(),
             "  Weekly window".to_owned(),
             format!("  {}   4% used", bar(1, 26)),
-            "  resets Mon 09:00".to_owned(),
+            "  resets 26 Oct 09:00".to_owned(),
         ]
     );
 }
@@ -786,11 +810,12 @@ fn usage_counts_widen_the_figure_column_and_unlimited_has_no_bar() {
             "Plan limits".to_owned(),
             "  MiniMax-M2.7".to_owned(),
             format!("  5-hour window    {}  412 of 1,500 used", bar(11, 40)),
-            "                   resets 15:40".to_owned(),
+            "                   resets 22 Oct 15:40".to_owned(),
             String::new(),
             "  speech-2.8-hd".to_owned(),
             format!("  5-hour window    {}    0 of 9,000 used", bar(0, 40)),
-            "                   resets 15:40".to_owned(),
+            "                   resets 22 Oct 15:40".to_owned(),
+            String::new(),
             "  Weekly window    unlimited".to_owned(),
         ]
     );
@@ -805,12 +830,13 @@ fn usage_counts_widen_the_figure_column_and_unlimited_has_no_bar() {
             "  MiniMax-M2.7".to_owned(),
             "  5-hour window".to_owned(),
             format!("  {}  412 of 1,500 used", bar(5, 17)),
-            "  resets 15:40".to_owned(),
+            "  resets 22 Oct 15:40".to_owned(),
             String::new(),
             "  speech-2.8-hd".to_owned(),
             "  5-hour window".to_owned(),
             format!("  {}    0 of 9,000 used", bar(0, 17)),
-            "  resets 15:40".to_owned(),
+            "  resets 22 Oct 15:40".to_owned(),
+            String::new(),
             "  Weekly window".to_owned(),
             "  unlimited".to_owned(),
         ]
@@ -824,7 +850,7 @@ fn usage_while_asking_says_so_last_in_the_block() {
             80,
             vec![
                 format!("  Weekly window    {}  31% used", bar(15, 49)),
-                "                   resets Mon 09:00".to_owned(),
+                "                   resets 26 Oct 09:00".to_owned(),
             ],
         ),
         (
@@ -832,7 +858,7 @@ fn usage_while_asking_says_so_last_in_the_block() {
             vec![
                 "  Weekly window".to_owned(),
                 format!("  {}  31% used", bar(8, 26)),
-                "  resets Mon 09:00".to_owned(),
+                "  resets 26 Oct 09:00".to_owned(),
             ],
         ),
     ] {
@@ -1068,4 +1094,160 @@ fn usage_closed_with_the_question_out_answers_it_and_the_next_opening_asks_nothi
         "{:#?}",
         journal.noted()
     );
+}
+
+#[test]
+fn usage_parts_each_plan_window_from_the_next_with_a_blank_row() {
+    // A window is two rows beside its label and three under it; a blank row
+    // between one window's reset and the next window's name keeps either
+    // from reading as part of the other, in a group as across groups.
+    for (columns, usage, blanks) in [
+        (80, every_window(), vec![3, 6]),
+        (40, every_window(), vec![4, 8]),
+        (80, with_a_group(), vec![3, 7]),
+        (40, with_a_group(), vec![4, 9]),
+    ] {
+        let rows = plan_limits(&body("", &usage, None, columns, Glyphs::Unicode, &clock()));
+        let blank: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.is_empty())
+            .map(|(at, _)| at)
+            .collect();
+        assert_eq!(blank, blanks, "at {columns}: {rows:#?}");
+    }
+}
+
+#[test]
+fn usage_shows_every_reset_with_its_date_a_reset_later_today_among_them() {
+    // The same day, the same week, and beyond it all say the day and month.
+    assert_eq!(
+        clock().resets(TODAY).as_deref(),
+        Some("resets 22 Oct 15:40")
+    );
+    assert_eq!(
+        clock().resets(MONDAY).as_deref(),
+        Some("resets 26 Oct 09:00")
+    );
+    assert_eq!(
+        clock().resets(NOVEMBER).as_deref(),
+        Some("resets 1 Nov 09:00")
+    );
+    let earlier_today = TODAY - 6 * 3_600 - 40 * 60;
+    assert_eq!(
+        clock().resets(earlier_today).as_deref(),
+        Some("reset 22 Oct 09:00, since passed")
+    );
+    for columns in [40, 80] {
+        let rows = plan_limits(&body(
+            "",
+            &every_window(),
+            None,
+            columns,
+            Glyphs::Unicode,
+            &clock(),
+        ));
+        assert!(
+            rows.iter()
+                .any(|row| row.trim_start() == "resets 22 Oct 15:40"),
+            "at {columns}: {rows:#?}"
+        );
+    }
+}
+
+/// The session with two plan windows, the five-hour and the weekly.
+fn two_windows() -> api::Usage {
+    api::Usage {
+        limits: plan(vec![
+            limit(Window::FiveHour, 12, TODAY),
+            limit(Window::Weekly, 31, MONDAY),
+        ]),
+        ..weekly()
+    }
+}
+
+#[test]
+fn usage_taller_than_its_room_stands_in_it_and_scrolls_with_the_arrows() {
+    let terms = plain();
+    let mut shown = Shown::of(&terms, None, two_windows());
+    shown.clock = clock();
+    // At 40 columns the body is 22 rows, and with the rule, the blank rows
+    // and the footer the panel would be 26: a 24-row window holds 19 of them
+    // and a row saying how many more are below.
+    let stood = art(&shown.laid(40, 24, Glyphs::Unicode));
+    assert_eq!(stood.len(), 24, "{stood:#?}");
+    assert_eq!(
+        stood.first().map(String::as_str),
+        Some("─".repeat(40).as_str())
+    );
+    assert_eq!(
+        stood.get(2).map(String::as_str),
+        Some("Usage"),
+        "{stood:#?}"
+    );
+    assert_eq!(
+        stood.get(21).map(String::as_str),
+        Some("  ↓ 3 more"),
+        "{stood:#?}"
+    );
+    assert_eq!(
+        stood.last().map(String::as_str),
+        Some("esc to close · ↑↓ to see more")
+    );
+
+    assert_eq!(shown.pressed(&Pressed::Up), Moved::Still);
+    assert_eq!(shown.pressed(&Pressed::Down), Moved::Redraw);
+    let scrolled = art(&shown.laid(40, 24, Glyphs::Unicode));
+    assert_eq!(scrolled.len(), 24, "{scrolled:#?}");
+    assert!(!scrolled.iter().any(|row| row == "Usage"), "{scrolled:#?}");
+    assert_eq!(
+        scrolled.get(21).map(String::as_str),
+        Some("  ↓ 2 more"),
+        "{scrolled:#?}"
+    );
+
+    // At the foot the last window's reset stands over the footer, and ↓ is
+    // spent.
+    assert_eq!(shown.pressed(&Pressed::Down), Moved::Redraw);
+    assert_eq!(shown.pressed(&Pressed::Down), Moved::Redraw);
+    assert_eq!(shown.pressed(&Pressed::Down), Moved::Still);
+    let foot = art(&shown.laid(40, 24, Glyphs::Unicode));
+    assert!(
+        !foot.iter().any(|row| row.trim_start().starts_with('↓')),
+        "{foot:#?}"
+    );
+    assert_eq!(
+        foot.iter().rev().nth(2).map(|row| row.trim_start()),
+        Some("resets 26 Oct 09:00"),
+        "{foot:#?}"
+    );
+    assert_eq!(shown.pressed(&Pressed::Up), Moved::Redraw);
+    assert_eq!(shown.pressed(&Pressed::Escape), Moved::Left);
+
+    // Where the whole panel fits, it stands whole and says only how to close.
+    let whole = art(&shown.laid(40, 26, Glyphs::Unicode));
+    assert_eq!(whole.len(), 26, "{whole:#?}");
+    assert_eq!(
+        whole.get(2).map(String::as_str),
+        Some("Usage"),
+        "{whole:#?}"
+    );
+    assert_eq!(whole.last().map(String::as_str), Some("esc to close"));
+
+    // In ASCII the arrows and the dot are drawn as the font has them.
+    let ascii = art(&shown.laid(40, 24, Glyphs::Ascii));
+    assert_eq!(
+        ascii.last().map(String::as_str),
+        Some("esc to close - ^v to see more")
+    );
+
+    // Where even the rule, the blank rows, the footer and a row of the body
+    // with the row under it have no room, nothing stands, and the caller
+    // prints.
+    for room in [0, 4, 5] {
+        assert!(
+            shown.laid(40, room, Glyphs::Unicode).is_empty(),
+            "at {room}"
+        );
+    }
 }
