@@ -22,7 +22,9 @@ constructor — and so which theme and which permissions — the window was open
 with, and the `Vendor::` call says what it was answered with. A capture taken
 at a different width, on a different theme or against a different script is a
 different observation wearing the same name, and the recorded call text is what
-notices.
+notices. Comments are taken out before a case is read, so rewording one moves
+no key, and a call to a function of the case's own file is followed into it,
+so a window a helper opens is keyed as the case's own.
 
 Accepting a redrawn screen is an edit here as well as to the picture, and the
 reviewer is agreeing that the screen should look different — not that the suite
@@ -61,7 +63,18 @@ HARNESS = [
 ]
 
 OPENING = re.compile(r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*[(<]")
-KEYED = re.compile(r"\b(?:Watched|Vendor)::")
+# A keyed call, or a call by bare name to what may be a function of the same
+# file: a method (`.name(`), a path (`::name(`), a macro (`name!(`) and a
+# function's own signature (`fn name(`) are not.
+CALLED = re.compile(r"\b(?:Watched|Vendor)::|(?<![\w.:])(?<!fn )(?P<helper>[a-z_][A-Za-z0-9_]*)\s*\(")
+# A string or character literal, stepped over whole when comments are taken out.
+LITERAL = re.compile(
+    r'b?r(?P<hashes>#*)"(?:.|\n)*?"(?P=hashes)'
+    r'|b?"(?:\\.|[^"\\])*"'
+    r"|b?'(?:\\(?:u\{[0-9A-Fa-f]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'",
+    re.DOTALL,
+)
+IDENTIFIER = re.compile(r"\w")
 
 
 def slashed(path):
@@ -94,16 +107,68 @@ def functions(lines):
     return found
 
 
-def constructions(body):
+def uncommented(lines):
+    """`lines` with every comment taken out, and each line kept where it was.
+
+    A comment is prose about the case, not the case: a call it names opens no
+    window, and rewording it must not move a key. Strings are stepped over
+    whole, so a `//` inside one is text and not the start of a comment.
+    """
+    text = "\n".join(lines)
+    kept = []
+    index = 0
+    while index < len(text):
+        rest = text[index:]
+        if rest.startswith("//"):
+            end = text.find("\n", index)
+            index = len(text) if end < 0 else end
+            continue
+        if rest.startswith("/*"):
+            depth = 0
+            while index < len(text):
+                if text.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif text.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                    if depth == 0:
+                        break
+                else:
+                    if text[index] == "\n":
+                        kept.append("\n")
+                    index += 1
+            continue
+        literal = LITERAL.match(text, index)
+        if literal and (index == 0 or not IDENTIFIER.match(text[index - 1])):
+            kept.append(literal.group(0))
+            index = literal.end()
+            continue
+        kept.append(text[index])
+        index += 1
+    return [line.rstrip() for line in "".join(kept).split("\n")]
+
+
+def constructions(body, helpers=None, within=()):
     """Every `Watched::`/`Vendor::` call in `body`, on one line each.
 
     A call is taken from its type name to the parenthesis that closes it, so a
     width rustfmt happened to wrap onto its own line still reads as part of the
-    call it belongs to.
+    call it belongs to. A call to one of `helpers`, the functions of the file
+    `body` is in, is followed into that function, so a window a helper opens is
+    keyed as the case's own; `within` is the helpers already being read, which
+    a helper that calls itself back is not read through again.
     """
     text = "\n".join(body)
+    helpers = helpers or {}
     found = []
-    for match in KEYED.finditer(text):
+    for match in CALLED.finditer(text):
+        name = match.group("helper")
+        if name is not None:
+            bodies = helpers.get(name, [])
+            if len(bodies) == 1 and name not in within:
+                found.extend(constructions(bodies[0], helpers, within + (name,)))
+            continue
         start = match.start()
         depth = 0
         for index in range(start, len(text)):
@@ -160,10 +225,16 @@ def owner(name, cases):
 def observed():
     """What the tree says, in the shape the manifest records."""
     cases = {}
+    # The functions of the file each case is in, which its calls are followed
+    # into. A call by path, such as `crate::helper()`, is not followed, so what
+    # a helper in the other file opens is not in the key of the case calling it.
+    helpers = {}
     for path in CASES:
-        lines = open(path, encoding="utf-8").read().splitlines()
-        for name, bodies in functions(lines).items():
+        lines = uncommented(open(path, encoding="utf-8").read().splitlines())
+        found = functions(lines)
+        for name, bodies in found.items():
             cases.setdefault(name, []).extend(bodies)
+            helpers[name] = found
     captures = []
     unowned = []
     for file in sorted(os.listdir(CAPTURES)):
@@ -178,7 +249,7 @@ def observed():
             {
                 "capture": slashed(path),
                 "case": case,
-                "opened": constructions(body),
+                "opened": constructions(body, helpers[case], (case,)),
                 "sha256": digest(open(path, encoding="utf-8").read()),
             }
         )
@@ -285,6 +356,35 @@ def self_test():
     expected = ['Vendor::answering("hello")', 'Watched::open( "a-case", 80, 24, )']
     if found != expected:
         print(f"    FAIL the reader keyed the case as {found}")
+        return 1
+    commented = [
+        "fn a_commented_case() {",
+        "    // `Watched::native` writes its own configuration, so the set is",
+        "    // changed (through `/settings`) mid-session.",
+        "    /* Vendor::answering(\"not this\") */",
+        '    let vendor = Vendor::answering("see https://example.test/a");',
+        "    let mut window = opened(&vendor);",
+        "}",
+        "",
+        "fn opened(vendor: &Vendor) -> Watched {",
+        '    let theme = "a // not a comment";',
+        '    Watched::open("a-helper", 40, 10, vendor).again(opened_again())',
+        "}",
+        "",
+        "fn opened_again() -> Watched {",
+        "    opened(&Vendor::silent())",
+        "}",
+    ]
+    lines = uncommented(commented)
+    helpers = functions(lines)
+    found = constructions(helpers["a_commented_case"][0], helpers)
+    expected = [
+        'Vendor::answering("see https://example.test/a")',
+        'Watched::open("a-helper", 40, 10, vendor)',
+        "Vendor::silent()",
+    ]
+    if found != expected:
+        print(f"    FAIL the reader keyed the commented case as {found}")
         return 1
     named = [
         case_named("whole_screen__a_drawn_case.snap"),
