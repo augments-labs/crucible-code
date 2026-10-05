@@ -513,15 +513,15 @@ fn usage_spans_and_counts_read_to_three_figures() {
 fn usage_reset_times_are_the_reader_wall_clock() {
     // Two hours east of UTC, 09:00 UTC on a Monday is 11:00 there.
     let east = Clock::at(NOW, TimeZone::fixed(Offset::constant(2)));
-    assert_eq!(east.reads(MONDAY).as_deref(), Some("Mon 11:00"));
-    assert_eq!(east.reads(TODAY).as_deref(), Some("17:40"));
+    assert_eq!(east.dated(MONDAY).as_deref(), Some("26 Oct 11:00"));
+    assert_eq!(east.dated(TODAY).as_deref(), Some("22 Oct 17:40"));
 
     // A machine whose zone could not be read is shown UTC, and says so.
     let guessed = Clock {
         guessed: true,
         ..clock()
     };
-    assert_eq!(guessed.reads(TODAY).as_deref(), Some("15:40 UTC"));
+    assert_eq!(guessed.dated(TODAY).as_deref(), Some("22 Oct 15:40 UTC"));
 }
 
 #[test]

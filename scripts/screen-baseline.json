@@ -1,7 +1,7 @@
 {
   "harness": {
     "tests/whole_screen/screen.rs": "b2431ae0e10cf95a981b95fb6ec84167fe2099ae1fb68c1778578bd78cdd30ca",
-    "tests/whole_screen/vendor.rs": "34f9d6bbec72850a23e2c252f03bd859e3d9dce87eb156e8f1350f71fdecbb1c",
+    "tests/whole_screen/vendor.rs": "aa9c2a759b0c5d6a3434650ad0643d8188769664337dee7602362aba67cbefca",
     "tests/whole_screen/watched.rs": "bbbf6a00f68720a8907268785b8e0821ef697e62b3da78770fdcff98f490171d"
   },
   "captures": [
@@ -697,7 +697,7 @@
         "Vendor::holding(SEVENTY_EIGHT)",
         "Watched::native(\"native-sealed-after-narrowing\", 80, 24, &vendor)"
       ],
-      "sha256": "5383ca2dc09ffa70e66841e4f401c3f798356655f6f19509ad5f07c07712df86"
+      "sha256": "609a1c2d6a6e62843a5c84db09ae91e6291b703e29397525e64627336bd41453"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode.snap",
@@ -785,7 +785,7 @@
       "opened": [
         "Vendor::answering(\"The first thing this session said.\")",
         "Watched::native(case, 80, 24, vendor)",
-        "Watched::native(case, columns.max(80), 24, vendor)"
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "c4751b555a367d4ae2513d8c5403d490843f703dcc81aea84a6bacb67707bc00"
     },
@@ -805,9 +805,18 @@
       "opened": [
         "Vendor::answering(\"The first thing this session said.\")",
         "Watched::native(case, 80, 24, vendor)",
-        "Watched::native(case, columns.max(80), 24, vendor)"
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "31ae9dc29075b3866be7f69ed62366d18f2ce8be148cafcd7707cc19382e19b0"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_scrolls_inside_its_room_in_native_mode.snap",
+      "case": "settings_scrolls_inside_its_room_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "f2490344ed47865b27d3a752ed9594b638d5ba741f719cbd8830c42fba7d10e3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_takes_at_most_half_the_window_in_native_mode.snap",

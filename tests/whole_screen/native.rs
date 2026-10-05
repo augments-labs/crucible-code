@@ -493,6 +493,49 @@ fn settings_takes_at_most_half_the_window_in_native_mode() {
 }
 
 #[test]
+fn settings_scrolls_inside_its_room_in_native_mode() {
+    // Capped at half of 24 rows, the Config tab has room for one of its rows,
+    // so a step down past it has to move the list inside the panel: the panel
+    // growing to show the next row would push the transcript off the top.
+    let vendor = Vendor::answering(&crate::a_long_answer());
+    let mut window = filled("native-cap-settings-scrolled", &vendor);
+    let before = window.picture();
+    let back_before = window.scrollback();
+    window.types_until("/settings\r", "esc to close");
+    let opened = window.picture();
+    assert!(opened.contains("› Theme"), "{opened}");
+    assert!(opened.contains("↓ 17 more"), "{opened}");
+
+    window.types_until("\x1b[B", "› Syntax theme");
+    let scrolled = window.picture();
+    let Stood {
+        transcript,
+        under,
+        pushed,
+        rows,
+    } = stood(&window, &before, &back_before, "/settings\r");
+    assert!(
+        under <= 12,
+        "{under} rows under the transcript:\n{scrolled}"
+    );
+    assert!(
+        transcript >= 12,
+        "{transcript} rows of the transcript:\n{scrolled}"
+    );
+    assert!(
+        pushed <= under.saturating_sub(box_rows(&before)),
+        "{pushed} rows pushed into the scrollback:\n{scrolled}"
+    );
+    assert!(!scrolled.contains("› Theme"), "{scrolled}");
+    assert!(scrolled.contains("↓ 16 more"), "{scrolled}");
+
+    window.types_until("\x1b", "ask mode on");
+    window.assert_never_alternate();
+    left_nothing(&window, &rows);
+    insta::assert_snapshot!(scrolled);
+}
+
+#[test]
 fn theme_takes_at_most_half_the_window_in_native_mode() {
     // The theme picture's smallest drawable height at 80 columns is 19: the
     // specimen stands under the list there, so the panel stands at that height
@@ -866,5 +909,8 @@ fn a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode() {
         "{said:#?}"
     );
     assert_eq!(said.join(" "), SEVENTY_EIGHT, "{all}");
+    // A held turn that runs out of keep-alives ends as an answer ends, so
+    // nothing on screen reports a stream cut short.
+    assert!(!all.contains("the response ended before"), "{all}");
     insta::assert_snapshot!(window.picture());
 }

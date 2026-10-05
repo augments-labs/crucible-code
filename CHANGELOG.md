@@ -23,6 +23,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **↑ and the wheel in the Ctrl+O results view move it at once.** Where
+  the oldest result was not read back from the session log yet, the window
+  could stand further down than the rows it shows, and a press back walked
+  that distance first with nothing on screen changing. It now goes back from
+  the row the view is drawn from.
 - **In native mode `/resume` and `/clear` no longer draw a second welcome
   card.** The session that follows starts under one `session resumed` or `new
   session` divider row, and the launch's warnings are not written again. A
@@ -76,6 +81,10 @@ change in any release with no deprecation period.
   no-model warning, `nothing was sent`, `! stopped` and the note that there was
   nothing worth replacing used to stand apart, two rows down, unlike every other
   command's reply.
+  blank row parts one plan window from the next. The notice a turn stops on
+  when a plan is used up names its reset the same way.
+- **`/compact` with no model answers under the line that asked.** The warning
+  used to stand apart, two rows down, unlike every other command's reply.
 - **The welcome card and `/resume` agree on an empty directory.** Under
   `Recent sessions` the card said `No recent sessions` where `/resume` said
   `no earlier session for this workspace`; both now say the second.

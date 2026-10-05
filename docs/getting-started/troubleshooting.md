@@ -285,7 +285,7 @@ the third, and the last is a stop crucible could not name, so asking again is
 what there is to try. `! stopped` is a turn you ended with <kbd>Esc</kbd>. See
 [when an answer stops early](getting-started.md#when-an-answer-stops-early).
 
-### `■ Usage limit reached · weekly window · resets Mon 09:00`
+### `■ Usage limit reached · weekly window · resets 5 Oct 09:00`
 
 The plan behind the ChatGPT sign-in, a Kimi Code sign-in or key, or a MiniMax
 Token Plan key, is
