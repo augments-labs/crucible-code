@@ -262,12 +262,14 @@ fn picking<T: Terminal>(
     // already said under that, and what it costs to carry are facts about the
     // session rather than about which way reached it. On the full screen the
     // head is the card, so a reader scrolling back after a `/resume` finds
-    // exactly the screen a launch would have drawn. The terminal's own buffer
-    // keeps the session just left and the card the launch drew above it, and
-    // a second card under them would read as a second launch, so there the
-    // head is one divider saying where the session picked up begins.
+    // exactly the screen a launch would have drawn, in the glyph set the
+    // session draws with now rather than the one it launched with. The
+    // terminal's own buffer keeps the session just left and the card the
+    // launch drew above it, and a second card under them would read as a
+    // second launch, so there the head is one divider saying where the
+    // session picked up begins.
     match renderer.screen() {
-        ScreenMode::Fullscreen => held.opening.commit(renderer)?,
+        ScreenMode::Fullscreen => held.opening.drawing(terms.style()).commit(renderer)?,
         ScreenMode::Native => renderer.divides("session resumed")?,
     }
     let pruned = conversation.session().take_pruned();

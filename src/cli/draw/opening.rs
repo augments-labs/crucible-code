@@ -47,8 +47,9 @@ pub(crate) struct Opening<'a> {
 /// were opened, and the width it is drawn against is only known one call
 /// further on, in the loop that owns the renderer. Between the two it is
 /// facts — a clock read once, so four recent sessions are four ages measured
-/// from one now. Cloned once, on the way into the record, so that what lays the
-/// card out is still there when the window changes size under it.
+/// from one now. A clone goes into the record, so that what lays the card out
+/// is still there when the window changes size under it; a card put back later
+/// is first copied with the style then in force, by [`Standing::drawing`].
 #[derive(Clone)]
 pub(crate) struct Standing {
     /// The directory being worked in, already shortened for drawing.
@@ -98,6 +99,20 @@ impl Standing {
             trouble: opening.trouble.map(str::to_owned),
             unasked: opening.model.is_none().then(|| opening.unasked.to_owned()),
             style: opening.style,
+        }
+    }
+
+    /// The same card, drawn with `style` rather than the one in force when its
+    /// facts were read.
+    ///
+    /// The facts never change after launch, but what they are drawn with can:
+    /// the glyph set is a setting a running session changes, and a card put
+    /// back after that change is drawn in the set chosen, as everything else
+    /// drawn from then on is.
+    pub(crate) fn drawing(&self, style: Style) -> Self {
+        Self {
+            style,
+            ..self.clone()
         }
     }
 
@@ -183,8 +198,9 @@ impl Standing {
     /// box: it scrolls with whatever is said after it. What goes over is a
     /// clone rather than the rows it makes, which is what lets the card be laid
     /// out for the window there is rather than the one there was — the facts it
-    /// draws from were read once and never change again, so the only thing that
-    /// can be out of date about it is the width.
+    /// draws from were read once and never change again, so what can be out of
+    /// date about it is the width, and the style it is drawn with, which a
+    /// caller putting the card back later settles with [`Standing::drawing`].
     ///
     /// # Errors
     ///
