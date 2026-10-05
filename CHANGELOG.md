@@ -80,6 +80,10 @@ change in any release with no deprecation period.
 - **`/release-notes` closed with Esc leaves the spacing other panels do.**
   It left one blank row fewer above the box, and so did a resize that closed
   it.
+- **`/context` stands in a short window.** In a window shorter than its panel
+  it was printed into the transcript instead, and in native mode it could
+  take more than half the window; it now stands in the room it is given and
+  scrolls with ↑ and ↓.
 
 ## [0.45.2] - 2026-10-03
 
