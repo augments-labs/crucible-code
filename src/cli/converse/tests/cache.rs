@@ -3,6 +3,9 @@
 //!
 //! Each provider is the one the registry builds from a key in its variable,
 //! over a transport that sends nothing, so the test reaches no vendor.
+//!
+//! In a window too narrow for its lines, the answer wraps under the mark it
+//! is hung from, on either screen.
 
 use crucible_app::providers::{NOTHING_TO_ASK, offered, providers};
 use crucible_app::startup::{self, ProviderAuth};
@@ -12,6 +15,8 @@ use crucible_config::Settings;
 use crucible_models::Provider;
 use crucible_provider::HttpTurns;
 use crucible_runner::Runner;
+
+use crate::cli::converse::command;
 
 use super::*;
 
@@ -169,4 +174,125 @@ fn cache_answers_for_minimax() {
         "MiniMax-M3",
         "https://platform.minimax.io/docs/api-reference/text-prompt-caching",
     );
+}
+
+/// The rows a window forty columns wide drawn in `mode` shows once `/cache` has
+/// been sent from the box and answered.
+///
+/// The line goes in the way the box leaves it, as one responsive prompt row,
+/// because that is the row the answer hangs from on a run somebody is typing
+/// at. Native mode's rows are read from the last frame it drew, which redraws
+/// the whole region: nothing here waits for a key, so nothing has been sealed
+/// into the scrollback above it.
+fn answered(mode: ScreenMode) -> Vec<String> {
+    let terms = plain();
+    let opening = opening();
+    let mut input = std::io::empty();
+    let mut held = Held::new(
+        terms.plan.clone(),
+        terms.sending.get(),
+        Answers {
+            input: &mut input,
+            keys: false,
+        },
+        &opening,
+    );
+    let mut conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![]), Tools::new(), session)
+    });
+    let mut renderer = Renderer::drawing(Recording::new(40, 40), mode);
+    let style = terms.style();
+
+    renderer
+        .responsive(
+            "/cache".len(),
+            Box::new(move |columns| {
+                crucible_tui::Prompt::committed(
+                    "/cache",
+                    columns,
+                    style.glyphs(),
+                    style.palette().bands(),
+                )
+            }),
+        )
+        .expect("the prompt row to be committed");
+    let wanted = command::wanted(&terms.commands.snapshot(), "/cache").expect("a command");
+    command::run(wanted, &mut renderer, &mut conversation, &mut held, &terms)
+        .expect("the command to be answered");
+
+    match mode {
+        ScreenMode::Fullscreen => renderer.terminal().picture().rows(),
+        ScreenMode::Native => last_frame(renderer.terminal().written()),
+    }
+}
+
+/// The rows the last native frame wrote, top first: what follows the erase
+/// that opens it, with every control sequence read past.
+fn last_frame(written: &str) -> Vec<String> {
+    let drawn = written.rsplit("\x1b[J").next().unwrap_or_default();
+    let mut text = String::new();
+    let mut left = drawn.chars();
+    while let Some(character) = left.next() {
+        if character != '\x1b' {
+            text.push(character);
+            continue;
+        }
+        if left.next() == Some('[') {
+            for byte in left.by_ref() {
+                if ('@'..='~').contains(&byte) {
+                    break;
+                }
+            }
+        }
+    }
+    text.split("\r\n")
+        .map(|row| row.trim_end().to_owned())
+        .collect()
+}
+
+/// Every row of `/cache`'s reply, in a window forty columns wide drawn in
+/// `mode`, after the first is hung under the mark.
+///
+/// Forty columns is narrower than the policy line and the line about the last
+/// attempt, so both run over. A row they ran over onto that starts back at the
+/// left edge reads as a line of its own under the command, rather than as part
+/// of the answer to it.
+fn keeps_its_indent(mode: ScreenMode) {
+    let hangs = plain().style().glyphs().hangs();
+    let rows = answered(mode);
+    let asked = rows
+        .iter()
+        .position(|row| row.contains("/cache"))
+        .unwrap_or_else(|| panic!("{mode:?}: /cache was never shown in {rows:#?}"));
+    let reply: Vec<&String> = rows
+        .iter()
+        .skip(asked + 1)
+        .take_while(|row| !row.is_empty())
+        .collect();
+
+    assert!(
+        reply.len() > 4,
+        "{mode:?}: four lines are said, so fewer rows means nothing wrapped, in {rows:#?}"
+    );
+    let (first, rest) = reply.split_first().expect("a reply");
+    assert!(
+        first.starts_with(&format!("{hangs} cache policy:")),
+        "{mode:?}: the reply opened with {first:?}, in {rows:#?}"
+    );
+    for row in rest {
+        assert!(
+            row.starts_with("  ") && !row.starts_with("   "),
+            "{mode:?}: {row:?} is not hung under the mark, in {rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn cache_keeps_its_indent_where_its_lines_wrap() {
+    keeps_its_indent(ScreenMode::Fullscreen);
+}
+
+#[test]
+fn cache_keeps_its_indent_where_its_lines_wrap_in_native_mode() {
+    keeps_its_indent(ScreenMode::Native);
 }
