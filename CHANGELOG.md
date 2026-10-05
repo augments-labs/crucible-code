@@ -74,8 +74,8 @@ change in any release with no deprecation period.
   used to stand apart, two rows down, unlike every other command's reply.
 - **A click beside a row of the `Still running` list no longer opens it.** In
   fullscreen a click or a resting pointer on a list standing over the box
-  counts on the row's own text, so the blank after a command on its row marks,
-  opens and lights nothing.
+  counts on the cells the row drew, so the blank after a command on its row
+  marks, opens and lights nothing.
 
 ## [0.45.2] - 2026-10-03
 
