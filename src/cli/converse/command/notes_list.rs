@@ -3,9 +3,10 @@
 //! The eight newest releases and a last row that reveals the rest, in columns
 //! of version, date and how many entries the release holds, with the running
 //! version tagged. Enter on a release puts it into the transcript the way
-//! `/release-notes <version>` does, and escape writes nothing. Enter on the
-//! last row opens every release in place, the mark staying on the row that was
-//! ninth, with the counts of what lies above and below the rows shown.
+//! `/release-notes <version>` does, and escape writes only the blank row any
+//! panel closed by escape leaves under its line. Enter on the last row opens
+//! every release in place, the mark staying on the row that was ninth, with
+//! the counts of what lies above and below the rows shown.
 //!
 //! What a release is, and how its entries are counted, are [`super::notes`]'s,
 //! which is the one place that knows how the changelog is written; this reads
@@ -22,7 +23,7 @@
 //!
 //! A window with no room for the list when it is first drawn is given what
 //! `/release-notes all` prints instead. One that loses the room after the list
-//! was drawn, by a resize, ends it as escape does and writes nothing: the
+//! was drawn, by a resize, ends it as escape does and writes nothing more: the
 //! reader was walking it, and the whole changelog is not what they asked for.
 
 use crucible_tui::{Glyphs, Key, Pressed, Renderer, Row, Slot, Terminal, clip, columns, fold};
@@ -71,8 +72,11 @@ const ENTRIES: &str = "entries";
 /// stand the list in from the first, and what is owed is the command's other
 /// answer.
 ///
-/// Escape writes nothing. The command's own row is already in the transcript,
-/// and a row saying the list was dropped would be the only thing under it.
+/// Escape writes only the blank row every other panel closed by escape leaves
+/// under the line that opened it, so the box stands as far below the command
+/// as it does below theirs. The command's own row is already in the
+/// transcript, and a row saying the list was dropped would be the only thing
+/// under it.
 ///
 /// # Errors
 ///
@@ -99,9 +103,19 @@ pub(super) fn run<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Res
             }
             Ok(true)
         }
-        Ended::Left => Ok(true),
-        // Drawn once, then no room: walked, and nothing is owed.
-        Ended::Cramped => Ok(listing.shown),
+        Ended::Left => {
+            renderer.commit("")?;
+            Ok(true)
+        }
+        // Drawn once, then no room: walked, and nothing is owed but the blank
+        // row escape leaves. Never drawn, and the caller prints the changelog
+        // and the blank row after it.
+        Ended::Cramped => {
+            if listing.shown {
+                renderer.commit("")?;
+            }
+            Ok(listing.shown)
+        }
     }
 }
 
