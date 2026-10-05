@@ -3355,19 +3355,10 @@ fn release_notes_list_escape_leaves_the_transcript_as_it_was() {
     ] {
         assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
     }
-    // The command's own row is the one thing written, so the rows under it
-    // are the box and nothing else.
-    let lines = trimmed(&picture);
-    let echo = lines
-        .iter()
-        .position(|line| line.starts_with("\u{203a} /release-notes"))
-        .unwrap_or_else(|| panic!("no echo at\n{picture}"));
-    let under = lines.get(echo + 1..).unwrap_or_default();
-    assert!(
-        under.iter().take_while(|line| line.is_empty()).count() + 3
-            >= under.len().saturating_sub(2),
-        "{picture}"
-    );
+    // The command's own row and the blank row under it are all that is
+    // written, so the rows down to the box are blank.
+    let under = under_echo(&picture, "/release-notes");
+    assert!(under.iter().all(String::is_empty), "{picture}");
 }
 
 #[test]
@@ -3384,6 +3375,106 @@ fn release_notes_list_a_resize_that_leaves_no_room_closes_it_and_prints_nothing(
         assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
     }
     assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+}
+
+/// The rows between the last line that typed `command` and the top of the box
+/// under it, trimmed, and less the scroll rail's cell at the end of each, which
+/// stands where the transcript is longer than the window and is not the row's.
+fn under_echo(picture: &str, command: &str) -> Vec<String> {
+    let lines = trimmed(picture);
+    let echo = lines
+        .iter()
+        .rposition(|line| line.starts_with(&format!("\u{203a} {command}")))
+        .unwrap_or_else(|| panic!("no {command} at\n{picture}"));
+    let under = lines.get(echo + 1..).unwrap_or_default();
+    let top = under
+        .iter()
+        .position(|line| line.starts_with('\u{256d}'))
+        .unwrap_or_else(|| panic!("no box under {command} at\n{picture}"));
+    under
+        .get(..top)
+        .unwrap_or_default()
+        .iter()
+        .map(|row| {
+            row.trim_end_matches(['\u{2502}', '\u{2503}', '\u{2022}', '\u{25cf}'])
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// A window of 80 by 24 on `screen`, `fullscreen` or `native`, answered by
+/// `vendor`.
+fn on_screen(screen: &str, case: &str, vendor: &Vendor) -> Watched {
+    if screen == "native" {
+        Watched::native(case, 80, 24, vendor)
+    } else {
+        Watched::answering(case, 80, 24, vendor)
+    }
+}
+
+/// What `/context` closed by escape leaves under its line on `screen`: the
+/// spacing every panel closed that way leaves.
+fn context_closed(screen: &str, vendor: &Vendor) -> Vec<String> {
+    let mut window = on_screen(screen, &format!("context-closed-{screen}"), vendor);
+    window.types_until("/context\r", "esc to close");
+    window.types_until("\x1b", "ask mode on");
+    under_echo(&window.picture(), "/context")
+}
+
+/// What `/release-notes` closed by `close` leaves under its line, beside what
+/// `/context` closed by escape leaves, on each of `screens`; each screen's
+/// picture follows, for the message of a case that finds them apart.
+fn closed_as_context_is(
+    case: &str,
+    screens: &[&str],
+    close: impl Fn(&mut Watched),
+) -> (Vec<Vec<String>>, Vec<Vec<String>>, String) {
+    let mut seen = Vec::new();
+    let mut wanted = Vec::new();
+    let mut pictures = String::new();
+    for &screen in screens {
+        let vendor = Vendor::answering("Hello.");
+        wanted.push(context_closed(screen, &vendor));
+
+        let mut window = on_screen(screen, &format!("{case}-{screen}"), &vendor);
+        window.types_until("/release-notes\r", "enter opens it");
+        close(&mut window);
+        if screen == "native" {
+            window.assert_never_alternate();
+        }
+        let picture = window.picture();
+        assert!(!picture.contains("enter opens it"), "{screen}\n{picture}");
+        seen.push(under_echo(&picture, "/release-notes"));
+        let _ = writeln!(pictures, "{screen}\n{picture}");
+    }
+    (seen, wanted, pictures)
+}
+
+#[test]
+fn release_notes_list_escape_leaves_the_rows_any_other_panel_does() {
+    let (seen, wanted, pictures) = closed_as_context_is(
+        "release-notes-escape",
+        &["fullscreen", "native"],
+        |window| {
+            window.types_until("\x1b", "ask mode on");
+        },
+    );
+    assert_eq!(seen, wanted, "{pictures}");
+}
+
+#[test]
+fn release_notes_list_closed_by_a_resize_leaves_the_rows_any_other_panel_does() {
+    // Drawn, then a window with no room for it: the list ends as escape ends
+    // it, and leaves what escape leaves. On the full screen only: in native
+    // mode the rows a window gives up as it shrinks are the terminal's, and
+    // what it hands back as it grows again is not this case's to count.
+    let (seen, wanted, pictures) =
+        closed_as_context_is("release-notes-cramped", &["fullscreen"], |window| {
+            window.resize(80, 6);
+            window.resize(80, 24);
+        });
+    assert_eq!(seen, wanted, "{pictures}");
 }
 
 #[test]
