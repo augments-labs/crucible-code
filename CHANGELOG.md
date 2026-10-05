@@ -75,6 +75,9 @@ change in any release with no deprecation period.
 - **The welcome card and `/resume` agree on an empty directory.** Under
   `Recent sessions` the card said `No recent sessions` where `/resume` said
   `no earlier session for this workspace`; both now say the second.
+- **`/release-notes` closed with Esc leaves the spacing other panels do.**
+  It left one blank row fewer above the box, and so did a resize that closed
+  it.
 
 ## [0.45.2] - 2026-10-03
 
