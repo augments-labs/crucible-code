@@ -143,8 +143,8 @@ that row you can act on:
 <kbd>Ctrl</kbd>+<kbd>B</kbd> at the prompt lists them where the box was: the same
 key that put one down, which is how every other key here works. While a turn
 runs it lists the commands left running too when the turn has no command of its
-own to leave in the background, and where the turn has one, the key leaves it
-running instead. Each row says how
+own to leave in the background and one or more are left running; where the turn
+has one, the key leaves it running instead. Each row says how
 long it has been running, how many lines it has printed and how much:
 
 ```
