@@ -2213,7 +2213,7 @@ fn the_prompt_a_rail_click_lands_on_stays_current_across_a_resize_that_relays_th
     let mut drawn = Drawn::new(60, 10);
     drawn.rails(true);
     drawn
-        .opens(Box::new(|columns| {
+        .opens(Box::new(|columns, _| {
             let rows = if columns < 55 { 4 } else { 1 };
             (0..rows)
                 .map(|row| Row::plain(format!("card {row}")))
