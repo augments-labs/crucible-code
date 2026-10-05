@@ -263,12 +263,13 @@ fn standing<T: Terminal, S>(
         // A click is reported against the whole window, and a component thinks
         // in the rows it drew. The renderer is what knows both, so the click is
         // rewritten to a row of the region here, and one that landed anywhere
-        // else — the transcript above, a band nothing is standing in — is
-        // nothing this component is asked about.
+        // else — the transcript above, a band nothing is standing in, a blank
+        // cell beside what a row drew — is nothing this component is asked
+        // about.
         let arrived = match arrived {
-            Pressed::Clicked { row, column } => match renderer.aimed(row) {
-                Some(Aimed::Stood(row)) => Pressed::Clicked { row, column },
-                _ => continue,
+            Pressed::Clicked { row, column } => match stood(renderer, row, column) {
+                Some(row) => Pressed::Clicked { row, column },
+                None => continue,
             },
             other => other,
         };
@@ -309,11 +310,22 @@ fn standing<T: Terminal, S>(
 /// so a component can read it against the rows it laid out without knowing
 /// which band of the window they went into. `None` for a pointer resting
 /// anywhere else -- the transcript above, the head, a band nothing is standing
-/// in -- which a component reads as *nothing of mine is under it*.
+/// in, a blank cell beside what a row drew -- which a component reads as
+/// *nothing of mine is under it*.
 fn pointing<T: Terminal>(renderer: &Renderer<T>) -> Option<(usize, usize)> {
     let (row, column) = renderer.pointer()?;
+    stood(renderer, row, column).map(|row| (row, column))
+}
+
+/// The row of what is standing that window cell `row`, `column` is on, counted
+/// from the first row it answered with, where that cell is one the row drew.
+///
+/// One answer for the click and the pointer, so what a component lights and
+/// what a click takes are the same cells. Which cells a row drew is
+/// [`Renderer::cells`]'s, measured as the frame drew them.
+fn stood<T: Terminal>(renderer: &Renderer<T>, row: usize, column: usize) -> Option<usize> {
     match renderer.aimed(row) {
-        Some(Aimed::Stood(row)) => Some((row, column)),
+        Some(Aimed::Stood(stood)) if renderer.cells(row).contains(&column) => Some(stood),
         _ => None,
     }
 }
@@ -421,4 +433,48 @@ pub(super) fn wheeled(
         }
     }
     moved
+}
+
+#[cfg(test)]
+mod tests {
+    use crucible_tui::{Aimed, Palette, Pressed, Recording, Renderer, Row};
+
+    use super::pointing;
+
+    /// A window with one short row standing where the box was, and the window
+    /// row it stands on.
+    fn short_row() -> (Renderer<Recording>, usize) {
+        let mut renderer = Renderer::new(Recording::new(40, 10));
+        renderer
+            .under(&[Row::plain("  › first")], None, Palette::plain())
+            .unwrap();
+        let at = (0..renderer.rows())
+            .find(|row| renderer.aimed(*row) == Some(Aimed::Stood(0)))
+            .expect("the row standing over the box");
+        (renderer, at)
+    }
+
+    #[test]
+    fn a_pointer_beside_a_standing_row_rests_on_nothing_of_it() {
+        let (mut renderer, at) = short_row();
+
+        for column in [0, 1, 9, 39] {
+            renderer.took(Pressed::Hovered { row: at, column }).unwrap();
+            assert_eq!(
+                pointing(&renderer),
+                None,
+                "blank cell {column} of the row is under the pointer"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pointer_on_a_standing_row_s_own_cells_rests_on_it() {
+        let (mut renderer, at) = short_row();
+
+        for column in [2, 4, 8] {
+            renderer.took(Pressed::Hovered { row: at, column }).unwrap();
+            assert_eq!(pointing(&renderer), Some((0, column)));
+        }
+    }
 }

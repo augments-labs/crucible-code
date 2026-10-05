@@ -449,7 +449,7 @@ echo '==> a spinner that cannot act on its stop signal does not hold its step'
 # spinner's frame pause, and only that one, for longer than the whole step list
 # takes; every other wait goes to the real sleep. The pause is held away from
 # the terminal, so `script` is not kept open by what the spinner leaves behind.
-held_for=20
+held_for=120
 real_sleep=$(command -v sleep)
 held_tools=$scratch/held-tools
 mkdir -p "$held_tools"
