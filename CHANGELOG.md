@@ -98,8 +98,8 @@ change in any release with no deprecation period.
   first row.** A reply that opened with a line such as `! fly is not a mode`
   was written on the `ask ›` row and the `⎿` mark went on the line under it;
   the reply now starts on its own row under the prompt, marked, as other
-  replies are. A `/release-notes` refusal, which carries no mark, starts on
-  its own row too.
+  replies are. A `/release-notes` answer, a release or a refusal, starts on
+  its own row too, set apart as when it is typed.
 
 ## [0.45.2] - 2026-10-03
 

@@ -1045,34 +1045,38 @@ fn a_reply_to_a_piped_line_hangs_its_mark_on_its_own_first_row() {
 }
 
 #[test]
-fn a_release_notes_refusal_to_a_piped_line_stands_on_its_own_row() {
-    // `/release-notes` is answered before the row the prompt mark was left on
-    // is ended for the other commands, so a refusal it committed went out on
-    // that row, after `ask › `, as if it had been typed. Set apart by one
-    // blank row, as it is under a line typed at the keyboard.
+fn a_release_notes_answer_to_a_piped_line_stands_on_its_own_row() {
+    // `/release-notes` was answered before the row the prompt mark was left on
+    // was ended for the other commands, so a release or a refusal it committed
+    // went out on that row, after `ask › `, as if it had been typed. Set apart
+    // by one blank row, as it is under a line typed at the keyboard.
     for mode in [ScreenMode::Fullscreen, ScreenMode::Native] {
-        let rows = piped(mode, "/release-notes 0.0.0\n");
-        let at = rows
-            .iter()
-            .position(|row| row.contains("! no release 0.0.0"))
-            .unwrap_or_else(|| panic!("{mode:?}: the refusal was never shown in {rows:#?}"));
+        for (line, opening) in [
+            ("/release-notes 0.0.0\n", "! no release 0.0.0"),
+            ("/release-notes 0.41.1\n", "◆ 0.41.1 · 2026-09-14"),
+        ] {
+            let rows = piped(mode, line);
+            let at = rows
+                .iter()
+                .position(|row| row.contains(opening))
+                .unwrap_or_else(|| panic!("{mode:?} {line:?}: never shown in {rows:#?}"));
 
-        assert!(
-            rows.get(at)
-                .is_some_and(|row| row.starts_with("! no release 0.0.0")),
-            "{mode:?}: the refusal does not open its row: {rows:#?}"
-        );
-        assert!(
-            at.checked_sub(1)
-                .and_then(|above| rows.get(above))
-                .is_some_and(String::is_empty),
-            "{mode:?}: the refusal is not set apart: {rows:#?}"
-        );
-        assert!(
-            at.checked_sub(2)
-                .and_then(|above| rows.get(above))
-                .is_some_and(|row| row.starts_with("ask") && !row.contains("no release")),
-            "{mode:?}: the refusal is not under the line that asked: {rows:#?}"
-        );
+            assert!(
+                rows.get(at).is_some_and(|row| row.starts_with(opening)),
+                "{mode:?} {line:?}: the answer does not open its row: {rows:#?}"
+            );
+            assert!(
+                at.checked_sub(1)
+                    .and_then(|above| rows.get(above))
+                    .is_some_and(String::is_empty),
+                "{mode:?} {line:?}: the answer is not set apart: {rows:#?}"
+            );
+            assert!(
+                at.checked_sub(2)
+                    .and_then(|above| rows.get(above))
+                    .is_some_and(|row| row.starts_with("ask") && !row.contains(opening)),
+                "{mode:?} {line:?}: the answer is not under the line that asked: {rows:#?}"
+            );
+        }
     }
 }
