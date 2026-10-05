@@ -35,6 +35,25 @@
 //! the alternate screen is remembered in both, because a native case proves it
 //! ran in native mode by that and not by its rows.
 //!
+//! A new size is told to the screen at the point in crucible's output where
+//! the window took it, and takes effect one frame later at most. Crucible reads
+//! the window's size before composing each frame, so what can still arrive
+//! laid out for the old size is bounded: the rest of the frame open at that
+//! point, whose first half was read already, or else one whole frame composed
+//! before the size changed and written after it. That much is drawn at the old
+//! size. The frame after it was composed with the new size known, and is held
+//! to the new size whatever it was drawn for: it is tried on the window at the
+//! new size, and drawn there if it breaks no promise, which is how the window
+//! takes the size; one that breaks a promise is drawn there all the same, and
+//! refused where it is written. Two things this does not tell apart. A frame
+//! let through at the old size may have been the one drawn for the new one,
+//! when it fits the old window too, which costs the check one frame and
+//! nothing else, since the next is held to the new size. And a frame drawn for
+//! the old size whose every row fits the new window is taken as drawn for it,
+//! because nothing in the stream says otherwise; the window is then rewrapped
+//! under it the way a terminal would have. A window never drawn for is
+//! reported by the case when the screen goes quiet.
+//!
 //! Holding changes no cell here. What a real terminal does with it is show one
 //! picture instead of two, which a screen assembled from every byte that
 //! arrived cannot do — so the picture is the same either way, and what this
@@ -65,6 +84,12 @@ const TERMINATOR: &str = "\x1b\\";
 /// The first half of a row ending, and a whole instruction on its own.
 const RETURN: u8 = b'\r';
 
+/// What opens a frame: the request to hold the screen until the frame ends.
+const BEGIN_SYNC: &str = "\x1b[?2026h";
+
+/// What ends one: the request to show what was held.
+const END_SYNC: &str = "\x1b[?2026l";
+
 /// The bytes that can end a control sequence and say what it was.
 const ENDS: std::ops::RangeInclusive<char> = '\u{40}'..='\u{7e}';
 
@@ -79,7 +104,7 @@ enum Mode {
 }
 
 /// A screen, and everything crucible did to it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Screen {
     /// Which screen this is.
     mode: Mode,
@@ -133,6 +158,24 @@ pub(crate) struct Screen {
     /// and half a character decodes to a replacement one column wider than the
     /// character it stands for. Both invent failures that nothing did.
     pending: Vec<u8>,
+    /// The size the window took that crucible has not drawn for yet.
+    awaiting: Option<Awaiting>,
+    /// The frame being read whole, while a size is awaited, to see whether it
+    /// is the first drawn for it.
+    collecting: Option<String>,
+}
+
+/// A size the window took, and what may still arrive laid out for the old one.
+#[derive(Debug, Clone, Copy)]
+struct Awaiting {
+    columns: usize,
+    rows: usize,
+    /// Whether one whole frame laid out for the old size may still arrive:
+    /// true when no frame was open at the point the window took the size,
+    /// since the one composed before it would be whole; false when one was,
+    /// since the rest of that frame is the one, and the next was composed with
+    /// the new size known.
+    spare: bool,
 }
 
 /// The version this build draws on its opening screen.
@@ -177,6 +220,8 @@ impl Screen {
             commanded: Vec::new(),
             holding: false,
             pending: Vec::new(),
+            awaiting: None,
+            collecting: None,
         }
     }
 
@@ -207,14 +252,109 @@ impl Screen {
         self.pending = data.split_off(readable(&data));
 
         match std::str::from_utf8(&data) {
-            Ok(text) => self.draw(text),
+            Ok(text) => self.take(text),
             // Not a truncation — `readable` has already held one of those back
             // — so these are bytes that are not text at all.
             Err(_) => self.refuse("wrote bytes that are not text".to_owned()),
         }
     }
 
-    /// Changes the size of the window under what is already drawn.
+    /// Changes the size of the window, at this point in what crucible wrote:
+    /// what is fed next and was laid out for the old size is drawn at it, up
+    /// to the bound [`Self::take`] states, and the window takes the size at
+    /// the frame after that.
+    pub(crate) fn resize(&mut self, columns: usize, rows: usize) {
+        self.awaiting = Some(Awaiting {
+            columns,
+            rows,
+            spare: !self.is_holding(),
+        });
+    }
+
+    /// The size the window took that crucible has not drawn for yet.
+    pub(crate) fn awaiting(&self) -> Option<(usize, usize)> {
+        self.awaiting
+            .map(|awaiting| (awaiting.columns, awaiting.rows))
+    }
+
+    /// Takes text that arrived whole.
+    ///
+    /// Drawn as it comes, except while a new size waits for crucible to draw
+    /// for it. A frame is laid out for the size crucible read before composing
+    /// it, so the frame open when the window changed finishes at the old size,
+    /// and each frame after it is read whole first: see [`Self::arrived`] for
+    /// which one more may be drawn at the old size and why the one after it is
+    /// held to the new one. Bytes outside any frame are drawn at the size the
+    /// screen has.
+    fn take(&mut self, text: &str) {
+        let mut rest = text;
+
+        while !rest.is_empty() {
+            if self.awaiting.is_none() {
+                self.draw(rest);
+                return;
+            }
+
+            if let Some(frame) = self.collecting.as_mut() {
+                let Some(at) = rest.find(END_SYNC) else {
+                    frame.push_str(rest);
+                    return;
+                };
+                let end = at + END_SYNC.len();
+                frame.push_str(rest.get(..end).unwrap_or_default());
+                rest = rest.get(end..).unwrap_or_default();
+                let frame = self.collecting.take().unwrap_or_default();
+                self.arrived(&frame);
+            } else {
+                let Some(at) = rest.find(BEGIN_SYNC) else {
+                    self.draw(rest);
+                    return;
+                };
+                self.draw(rest.get(..at).unwrap_or_default());
+                self.collecting = Some(String::new());
+                rest = rest.get(at..).unwrap_or_default();
+            }
+        }
+    }
+
+    /// Draws a whole frame that arrived while a new size was awaited.
+    ///
+    /// Tried on a copy of the screen at the new size first: a frame that
+    /// breaks no promise there is taken as drawn for it, and the copy becomes
+    /// the screen. One that does is drawn at the old size if one such frame
+    /// may still arrive — composed before the window changed and written
+    /// after it, which crucible's reading the size before each frame allows
+    /// once, and only when no frame was open at the change — and otherwise
+    /// drawn on the window at the new size, where the rows it wrote past the
+    /// width are refused.
+    fn arrived(&mut self, frame: &str) {
+        let Some(awaiting) = self.awaiting else {
+            return self.draw(frame);
+        };
+
+        let mut trial = self.clone();
+        trial.refused.clear();
+        trial.fit(awaiting.columns, awaiting.rows);
+        trial.draw(frame);
+
+        if trial.refused.is_empty() {
+            trial.refused = std::mem::take(&mut self.refused);
+            trial.awaiting = None;
+            *self = trial;
+        } else if awaiting.spare {
+            self.awaiting = Some(Awaiting {
+                spare: false,
+                ..awaiting
+            });
+            self.draw(frame);
+        } else {
+            self.awaiting = None;
+            self.fit(awaiting.columns, awaiting.rows);
+            self.draw(frame);
+        }
+    }
+
+    /// Puts the window at a size, under what is already drawn.
     ///
     /// On a fullscreen screen, rows are kept and clipped rather than reflowed,
     /// which is what xterm does and what leaves the picture rectangular; a row
@@ -231,7 +371,7 @@ impl Screen {
     /// A native screen rewraps instead, as most terminals now do and as the
     /// native renderer assumes when it works out how far back the top of its
     /// region is: see [`Self::rewrap`].
-    pub(crate) fn resize(&mut self, columns: usize, rows: usize) {
+    fn fit(&mut self, columns: usize, rows: usize) {
         match self.mode {
             Mode::Fullscreen => self.clip(columns, rows),
             Mode::Native => self.rewrap(columns, rows),
@@ -351,9 +491,10 @@ impl Screen {
     /// True on a quiet screen means a frame asked the terminal to wait for the
     /// rest of it and never said the rest had arrived — which on a real one is
     /// a picture that stops changing until the terminal's own timeout gives up
-    /// on the frame.
+    /// on the frame. A frame being read whole is one of those until its end
+    /// arrives.
     pub(crate) fn is_holding(&self) -> bool {
-        self.holding
+        self.holding || self.collecting.is_some()
     }
 
     /// Whether `wanted` is on a frame that has finished being written.
@@ -967,6 +1108,112 @@ mod tests {
             .collect()
     }
 
+    /// A whole frame laid out for eight columns, as the native renderer
+    /// writes one: back to the region's top, erase below, two rows, park.
+    const EIGHT_WIDE: &[u8] = b"\x1b[?2026h\r\x1b[Jeight ch\r\nlast row\x1b[1A\x1b[1G\x1b[?2026l";
+
+    #[test]
+    fn one_frame_drawn_for_the_old_width_is_let_through_after_a_resize_and_a_second_is_refused() {
+        // Crucible reads the window's size before composing each frame, so
+        // after the size changed between two frames, one more frame can have
+        // been laid out for the old width: composed before the change and
+        // written after it. That frame is drawn for the old width. The one
+        // after it was composed after crucible had the size, and is held to
+        // the new width whether or not crucible drew for it.
+        let mut screen = Screen::native(8, 4);
+        screen.feed(EIGHT_WIDE);
+        screen.resize(6, 4);
+        screen.feed(EIGHT_WIDE);
+
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+        assert!(screen.picture().starts_with("8x4 "), "{}", screen.picture());
+        assert_eq!(screen.awaiting(), Some((6, 4)));
+
+        screen.feed(EIGHT_WIDE);
+
+        assert_eq!(
+            screen.refusals(),
+            [
+                "wrote row 0 out to column 8 on a screen 6 columns wide",
+                "wrote row 1 out to column 8 on a screen 6 columns wide"
+            ],
+            "{}",
+            screen.picture()
+        );
+    }
+
+    #[test]
+    fn the_tail_of_the_frame_open_at_a_resize_is_let_through_and_the_next_frame_is_not() {
+        // A frame reaches the terminal in more than one write, so the window
+        // can change with half of one read. The rest of it was laid out for
+        // the old width and finishes at it; the frame after it was composed
+        // once crucible had the size, and is held to the new width.
+        let mut screen = Screen::native(8, 4);
+        screen.feed(b"\x1b[?2026h\r\x1b[Jeight ch\r\n");
+        screen.resize(6, 4);
+        screen.feed(b"last row\x1b[1A\x1b[1G\x1b[?2026l");
+
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+        assert!(screen.picture().starts_with("8x4 "), "{}", screen.picture());
+        assert_eq!(screen.awaiting(), Some((6, 4)));
+
+        screen.feed(EIGHT_WIDE);
+
+        assert_eq!(
+            screen.refusals(),
+            [
+                "wrote row 0 out to column 8 on a screen 6 columns wide",
+                "wrote row 1 out to column 8 on a screen 6 columns wide"
+            ],
+            "{}",
+            screen.picture()
+        );
+    }
+
+    #[test]
+    fn the_first_frame_that_fits_the_new_window_takes_it_and_holds_what_follows_to_it() {
+        // The frame crucible draws for the new size is drawn on the window at
+        // that size — rewrapped under it, as a terminal would have — and a
+        // frame at the old width after it is refused where it is written.
+        let mut screen = Screen::native(8, 4);
+        screen.feed(EIGHT_WIDE);
+        screen.resize(6, 4);
+        screen.feed(b"\x1b[?2026h\r\x1b[Jsix ch\r\nsix ch\x1b[1A\x1b[1G\x1b[?2026l");
+
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+        assert_eq!(screen.awaiting(), None);
+        assert_eq!(
+            rows(&screen.picture()),
+            ["six ch", "six ch", "      ", "      "],
+            "{}",
+            screen.picture()
+        );
+
+        screen.feed(b"\x1b[?2026h\r\x1b[Jeight ch\x1b[1G\x1b[?2026l");
+
+        assert_eq!(
+            screen.refusals(),
+            ["wrote row 0 out to column 8 on a screen 6 columns wide"]
+        );
+    }
+
+    #[test]
+    fn a_frame_being_read_whole_counts_as_held() {
+        // The frame is held back from the picture until its end says which
+        // width it was drawn for, so a quiet screen with half of one is a frame
+        // still held, the same as one whose closing sequence never came.
+        let mut screen = Screen::native(8, 4);
+        screen.resize(6, 4);
+        screen.feed(b"\x1b[?2026h\r\x1b[Jsix ch");
+
+        assert!(screen.is_holding());
+
+        screen.feed(b"\x1b[1G\x1b[?2026l");
+
+        assert!(!screen.is_holding());
+        assert_eq!(screen.awaiting(), None);
+    }
+
     #[test]
     fn erase_below_on_a_native_screen_clears_from_the_cursor_to_the_foot() {
         // The sequence every native frame opens with: back to the top of the
@@ -1059,10 +1306,11 @@ mod tests {
         // A terminal that rewraps folds each line at the new width and joins
         // the pieces again when the window widens, which is what the native
         // renderer counts on when it works out where the region's top went.
+        // `fit` is the fold itself, which a frame drawn for the size applies.
         let mut screen = Screen::native(8, 4);
         screen.feed(b"abcdefgh\r\nij\r\n");
 
-        screen.resize(4, 4);
+        screen.fit(4, 4);
         assert_eq!(rows(&screen.picture()), ["abcd", "efgh", "ij  ", "    "]);
         assert!(
             screen.picture().starts_with("4x4 cursor 3,0 scrollback 0"),
@@ -1070,7 +1318,7 @@ mod tests {
             screen.picture()
         );
 
-        screen.resize(8, 4);
+        screen.fit(8, 4);
         assert_eq!(
             rows(&screen.picture()),
             ["abcdefgh", "ij      ", "        ", "        "]
@@ -1090,7 +1338,7 @@ mod tests {
         let mut screen = Screen::native(8, 3);
         screen.feed(b"abcdefgh\r\nij\r\nk");
 
-        screen.resize(4, 3);
+        screen.fit(4, 3);
 
         assert_eq!(screen.scrollback(), "|abcd|");
         assert_eq!(rows(&screen.picture()), ["efgh", "ij  ", "k   "]);
