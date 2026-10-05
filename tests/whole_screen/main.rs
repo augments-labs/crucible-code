@@ -3375,6 +3375,7 @@ fn release_notes_list_a_resize_that_leaves_no_room_closes_it_and_prints_nothing(
 /// The rows between the last line that typed `command` and the top of the box
 /// under it, trimmed, and less the scroll rail's cell at the end of each, which
 /// stands where the transcript is longer than the window and is not the row's.
+/// Takes off at most one rail cell at the end of each row.
 fn under_echo(picture: &str, command: &str) -> Vec<String> {
     let lines = trimmed(picture);
     let echo = lines
@@ -3391,11 +3392,23 @@ fn under_echo(picture: &str, command: &str) -> Vec<String> {
         .unwrap_or_default()
         .iter()
         .map(|row| {
-            row.trim_end_matches(['\u{2502}', '\u{2503}', '\u{2022}', '\u{25cf}'])
+            row.strip_suffix(['\u{2502}', '\u{2503}', '\u{2022}', '\u{25cf}'])
+                .unwrap_or(row)
                 .trim_end()
                 .to_owned()
         })
         .collect()
+}
+
+#[test]
+fn under_echo_strips_only_one_trailing_rail_cell() {
+    let picture = "80×24\n\
+        |› /x │\n\
+        |content ends •│\n\
+        |marked here ●┃\n\
+        |╭─ box top|";
+    let result = under_echo(picture, "/x");
+    assert_eq!(result, vec!["content ends •", "marked here ●"]);
 }
 
 /// A window of 80 by 24 on `screen`, `fullscreen` or `native`, answered by
