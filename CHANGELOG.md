@@ -60,7 +60,9 @@ change in any release with no deprecation period.
   terminal, and the step's row is drawn as usual.
 - **`/cache` keeps its indent in a narrow window.** Lines that wrapped
   started again at the left edge, out from under the reply's mark; they now
-  wrap inside it, as `/context` and `/usage` do.
+  wrap inside it, as `/context` and `/usage` do. So does the line `/model`,
+  `/login` and `/logout` add when retiring the cache left resources behind or
+  stopped the switch.
 - **Esc closes the command list.** Between turns it used to do nothing, and
   during a turn it stopped the turn and left the list standing. It now closes
   the list in both, keeping the line, as it already closes the Ctrl+O view
@@ -69,6 +71,11 @@ change in any release with no deprecation period.
   a 40-column window and was printed into the transcript instead; it now
   stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
   its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
+  blank row parts one plan window from the next.
+- **Every one-line `/compact` reply answers under the line that asked.** The
+  no-model warning, `nothing was sent`, `! stopped` and the note that there was
+  nothing worth replacing used to stand apart, two rows down, unlike every other
+  command's reply.
   blank row parts one plan window from the next. The notice a turn stops on
   when a plan is used up names its reset the same way.
 - **`/compact` with no model answers under the line that asked.** The warning
@@ -79,6 +86,25 @@ change in any release with no deprecation period.
 - **`/release-notes` closed with Esc leaves the spacing other panels do.**
   It left one blank row fewer above the box, and so did a resize that closed
   it.
+- **`/context` stands in a short window.** In a window shorter than its panel
+  it was printed into the transcript instead, and in native mode it could
+  take more than half the window; it now stands in the room it is given and
+  scrolls with ↑ and ↓.
+- **Wrapped text holding a control character no longer runs past the
+  window's edge.** An error or a reply can carry a character a terminal would
+  act on, which crucible draws as a space; wrapping counted it as nothing, so
+  the row came out a column wider than the window and the terminal cut or
+  wrapped it. Wrapping now counts that space, and a tab, drawn as one space,
+  as one column rather than up to eight.
+- **A click beside a row of the `Still running` list no longer opens it.** In
+  fullscreen a click or a resting pointer on a list standing over the box
+  counts on the cells the row drew, so the blank after a command on its row
+  marks, opens and lights nothing.
+- **A command piped in at a terminal hangs its reply's mark on the reply's
+  first row.** A reply that opened with a line such as `! fly is not a mode`
+  was written on the `ask ›` row and the `⎿` mark went on the line under it;
+  the reply now starts on its own row under the prompt, marked, as other
+  replies are.
 
 ## [0.45.2] - 2026-10-03
 

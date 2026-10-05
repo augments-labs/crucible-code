@@ -820,11 +820,27 @@ pub(super) fn run<T: Terminal>(
     // The mark is hung before the answer is written as well as after: in
     // native mode a row goes out once, and an answer that waits for a key or
     // is taller than the window has rows out before it ends.
+    //
+    // Down a pipe the line that asked was read after a prompt mark nothing
+    // ended, so that row is still open. It is ended first, or an answer that
+    // commits its first line would write it after `ask › ` and the mark would
+    // be hung on the line below. Only on a screen: redirected output carries
+    // no mark, and its bytes stay as they were.
+    if renderer.is_terminal() {
+        renderer.present(&[])?;
+    }
     let start = renderer.lines();
     renderer.hangs(terms.style().glyphs());
     let making = answer(wanted, renderer, conversation, held, terms)?;
     renderer.subordinate(start, terms.style().glyphs())?;
-    renderer.commit("")?;
+    // A typed `/compact` has said nothing yet: what follows its line is known
+    // only once the compaction has run, and the loop that ran it writes it —
+    // a one-line reply hung under the line with the blank after it, or the
+    // record with the blank it asks for on its way in. Written here, the blank
+    // would stand between the line and its reply.
+    if !matches!(making, Some(Compacting::Asked)) {
+        renderer.commit("")?;
+    }
 
     Ok(making.map_or(Ran::Again, Ran::Room))
 }

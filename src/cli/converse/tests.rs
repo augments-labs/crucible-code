@@ -414,6 +414,87 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
     );
 }
 
+/// The rows `/compact` leaves at a terminal in `mode` in a session with a model
+/// to ask and nothing said yet, so the compaction runs and replaces nothing.
+///
+/// Native mode's rows are read from the last frame it drew, which redraws the
+/// whole region: what follows the last erase, with every control sequence
+/// read past.
+fn compacted_with_nothing_to_replace(mode: ScreenMode) -> Vec<String> {
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    });
+    let mut renderer = Renderer::drawing(Recording::new(80, 24), mode);
+    let mut input = Cursor::new(b"/compact\n".to_vec());
+
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to carry on past the reply");
+
+    match mode {
+        ScreenMode::Fullscreen => renderer.terminal().picture().rows(),
+        ScreenMode::Native => {
+            let written = renderer.terminal().written();
+            let drawn = written.rsplit("\x1b[J").next().unwrap_or_default();
+            let mut text = String::new();
+            let mut left = drawn.chars();
+            while let Some(character) = left.next() {
+                if character != '\x1b' {
+                    text.push(character);
+                    continue;
+                }
+                if left.next() == Some('[') {
+                    for byte in left.by_ref() {
+                        if ('@'..='~').contains(&byte) {
+                            break;
+                        }
+                    }
+                }
+            }
+            text.split("\r\n")
+                .map(|row| row.trim_end().to_owned())
+                .collect()
+        }
+    }
+}
+
+#[test]
+fn compact_that_replaces_nothing_hangs_its_reply_directly_under_the_line_that_asked() {
+    // The line `/compact` was typed on is counted before the work is taken and
+    // the reply is hung from it once the outcome is known. A row written in
+    // between, while the work runs, would take the mark and leave the reply
+    // standing under something else, so this drives `/compact` through the
+    // loop rather than the renderer alone.
+    let hangs = plain().style().glyphs().hangs();
+
+    for mode in [ScreenMode::Fullscreen, ScreenMode::Native] {
+        let rows = compacted_with_nothing_to_replace(mode);
+        let asked = rows
+            .iter()
+            .position(|row| row.starts_with("ask"))
+            .unwrap_or_else(|| panic!("{mode:?}: no line asked in {rows:#?}"));
+
+        assert_eq!(
+            rows.get(asked + 1).map(String::as_str),
+            Some(format!("{hangs} there is nothing behind this turn worth replacing yet").as_str()),
+            "{mode:?}: the reply is not hung directly under the line that asked: {rows:#?}"
+        );
+        assert_eq!(
+            rows.get(asked + 2).map(String::as_str),
+            Some(""),
+            "{mode:?}: not one blank row after the reply: {rows:#?}"
+        );
+    }
+}
+
 #[test]
 fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     // `/theme` changes the table the whole interface is drawn in. A loop that
