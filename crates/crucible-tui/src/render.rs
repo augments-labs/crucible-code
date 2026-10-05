@@ -171,10 +171,16 @@ pub enum Aimed {
 /// beside their painted copy: they read as the transcript's last rows, so the
 /// scroll rail stands beside them too, and its cell there changes from one
 /// frame to the next as the transcript's does.
+///
+/// Of every row of the first slot, the cells it drew are kept as well, which
+/// is all a press needs of it: the painted copy cannot say where its text ends,
+/// and a second unpainted copy of a list would be kept only to be measured.
 #[derive(Debug, Default)]
 struct Standing {
     /// What a running turn is showing, and anything else standing over the box.
     turn: Vec<String>,
+    /// The cells each row of `turn` drew, as [`Renderer::cells`] answers for it.
+    drew: Vec<Range<usize>>,
     /// The first rows of `turn`, unpainted, where a running turn put them
     /// there: the turn's own rows, laid out at the transcript's width. Empty
     /// between turns and under anything else standing there.
@@ -193,6 +199,7 @@ impl Standing {
     /// Forget both, for a window whose size has changed underneath them.
     fn clear(&mut self) {
         self.turn.clear();
+        self.drew.clear();
         self.running.clear();
         self.ran = None;
         self.turned = None;
@@ -1336,6 +1343,14 @@ impl<T: Terminal> Renderer<T> {
             &mut self.standing.turn,
         );
         let folds = self.folds();
+        // The turn's own rows at the width the rail leaves them, as the frame
+        // draws them; what stands under them at the window's.
+        self.standing.drew.clear();
+        self.standing.drew.extend(
+            turn.iter()
+                .map(|row| drawn(row, folds))
+                .chain(over.iter().map(|row| drawn(row, self.size.columns))),
+        );
         self.standing.running.clear();
         self.standing
             .running
@@ -1393,6 +1408,10 @@ impl<T: Terminal> Renderer<T> {
         }
 
         paint(rows, &palette, self.size.columns, &mut self.standing.turn);
+        self.standing.drew.clear();
+        self.standing
+            .drew
+            .extend(rows.iter().map(|row| drawn(row, self.size.columns)));
         self.standing.running.clear();
         self.standing.ran = None;
         self.standing.turned = caret;
@@ -1922,11 +1941,14 @@ impl<T: Terminal> Renderer<T> {
     /// nothing. Read from the row the band shows, folded and clipped as the
     /// frame draws it, so what answers is what is on screen.
     ///
+    /// A row standing over the box answers the same way, at the width it was
+    /// drawn at, so a list's row is the list's only as far as its text goes.
+    ///
     /// The prompt row the caller marked pointable answers with the cells of
     /// its offer alone: what it says beside the offer is a fact, not a door.
     ///
     /// Empty in native mode, where no press arrives, and for any row but a
-    /// transcript row or that one.
+    /// transcript row, a row standing over the box, or that one.
     #[must_use]
     pub fn cells(&self, at: usize) -> Range<usize> {
         if self.native.is_some() {
@@ -1940,6 +1962,14 @@ impl<T: Terminal> Renderer<T> {
         }
 
         let bands = self.bands();
+        if bands.turn.contains(&at) {
+            return self
+                .standing
+                .drew
+                .get(at - bands.turn.start)
+                .cloned()
+                .unwrap_or(0..0);
+        }
         if !bands.transcript.contains(&at) {
             return 0..0;
         }

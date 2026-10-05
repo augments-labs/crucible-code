@@ -804,6 +804,33 @@ fn a_click_on_what_a_turn_is_showing_is_a_row_of_that() {
     assert_eq!(drawn.aimed(9), Some(Aimed::Stood(0)));
 }
 
+#[test]
+fn a_row_standing_over_the_box_counts_only_the_cells_it_drew() {
+    // A list's row is the list's only as far as it drew: the indent before
+    // its mark and the blank after its last character are the window's, the
+    // same as on a row of the transcript. A wide character is two cells.
+    let mut drawn = Drawn::new(40, 10);
+    let (rows, caret) = boxed();
+    drawn.live(&rows, caret, Palette::plain()).unwrap();
+    drawn
+        .under(
+            &[
+                Row::plain("  › first"),
+                Row::plain("    ‹日本›"),
+                Row::new(),
+            ],
+            None,
+            Palette::plain(),
+        )
+        .unwrap();
+    let top = drawn.bands().turn.start;
+
+    assert_eq!(drawn.aimed(top), Some(Aimed::Stood(0)));
+    assert_eq!(drawn.cells(top), 2..9);
+    assert_eq!(drawn.cells(top + 1), 4..10);
+    assert_eq!(drawn.cells(top + 2), 0..0, "a blank row draws nothing");
+}
+
 // Colour, and the markers it replaces.
 
 #[test]
