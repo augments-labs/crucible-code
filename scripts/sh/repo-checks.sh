@@ -368,17 +368,19 @@ section "whole-screen cases reach /login rows by name"
 # A case that walks to a /login row by pressing Down a counted number of times
 # lands on another row the moment one is added above it, and still passes if
 # that row opens the same screen. Each case reaches a row by what it says,
-# through the one helper that does, so a row added moves no case.
-screens=tests/whole_screen/main.rs
-if ! grep -q '/login' "$screens"; then
-    printf '    FAIL %s types no /login; this check measured nothing\n' "$screens"
+# through the one helper that does, so a row added moves no case. Every file
+# of the suite is read, since a case in any of them can walk the same way; the
+# check measured nothing when none of them types /login.
+screens=(tests/whole_screen/*.rs)
+if ((${#screens[@]} == 0)) || ! grep -q '"/login' "${screens[@]}"; then
+    printf '    FAIL no file under tests/whole_screen types /login; this check measured nothing\n'
     failed=1
 else
     counted=$(awk '
-        /^fn |^    fn / { login = 0 }
+        FNR == 1 || /^fn |^    fn / { login = 0 }
         /\/login/ { login = 1 }
         login && (/\\x1b\[B.*\\x1b\[B/ || /\\x1b\[B"\.repeat/) { print FILENAME ":" FNR ": " $0 }
-    ' "$screens")
+    ' "${screens[@]}")
     if [[ -n "$counted" ]]; then
         printf '%s\n' "$counted"
         printf '    FAIL the lines above walk to a /login row by counting Down keys; use takes()\n'
