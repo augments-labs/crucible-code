@@ -23,7 +23,7 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **↑, the wheel and PgUp in the Ctrl+O results view move it at once.** Where
+- **↑ and the wheel in the Ctrl+O results view move it at once.** Where
   the oldest result was not read back from the session log yet, the window
   could stand further down than the rows it shows, and a press back walked
   that distance first with nothing on screen changing. It now goes back from
