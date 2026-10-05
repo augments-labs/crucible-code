@@ -58,6 +58,8 @@ change in any release with no deprecation period.
   spinner that had not acted on the signal that ends it. A spinner still there
   a second after it is told to stop is now killed, with nothing written to the
   terminal, and the step's row is drawn as usual.
+- **`/compact` with no model answers under the line that asked.** The warning
+  used to stand apart, two rows down, unlike every other command's reply.
 
 ## [0.45.2] - 2026-10-03
 
