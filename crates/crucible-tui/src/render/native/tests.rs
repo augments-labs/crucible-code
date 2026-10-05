@@ -1020,3 +1020,127 @@ fn a_blank_line_committed_under_a_native_divider_is_not_written() {
         .collect();
     assert_eq!(under, [divider.as_str(), "what follows"], "{all:#?}");
 }
+
+/// Every row of `rows` from the one that reads `asked` through the first that
+/// is blank, without that blank.
+fn under<'a>(rows: &'a [String], asked: &str) -> Vec<&'a str> {
+    rows.iter()
+        .skip_while(|row| *row != asked)
+        .skip(1)
+        .take_while(|row| !row.is_empty())
+        .map(String::as_str)
+        .collect()
+}
+
+#[test]
+fn a_native_reply_that_leaves_the_region_before_its_command_ends_goes_out_marked() {
+    // A command whose reply is taller than the region: most of it goes out to
+    // the scrollback while the command is still writing, and a key wait in the
+    // middle seals the rest written so far. Each row is written once, so each
+    // has to go out already carrying the mark or the indent under it.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    render.commit("> /usage").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let start = render.lines();
+    render.hangs(Glyphs::Unicode);
+    for at in 0..10 {
+        render.commit(&format!("row {at}")).unwrap();
+        stands(&mut render);
+    }
+    render.seal().unwrap();
+    for at in 10..12 {
+        render.commit(&format!("row {at}")).unwrap();
+    }
+    render.subordinate(start, Glyphs::Unicode).unwrap();
+    render.commit("").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let mut wanted = vec!["⎿ row 0".to_owned()];
+    wanted.extend((1..12).map(|at| format!("  row {at}")));
+    assert_eq!(under(&all, "> /usage"), wanted, "{all:#?}");
+    for at in 0..12 {
+        assert_eq!(
+            all.iter()
+                .filter(|row| row.ends_with(&format!("row {at}")))
+                .count(),
+            1,
+            "row {at} was not written exactly once: {all:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_reply_written_after_the_last_key_wait_is_marked_before_it_goes_out() {
+    // How `/compact` answers the line that asked: its reply is drawn once the
+    // work is over, and the mark is hung before the session next waits for a
+    // key, so nothing of it has gone out unmarked.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.commit("> /compact").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let start = render.lines();
+    render.commit("nothing to compact").unwrap();
+    render.subordinate(start, Glyphs::Unicode).unwrap();
+    render.commit("").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    assert_eq!(
+        under(&all, "> /compact"),
+        ["⎿ nothing to compact"],
+        "{all:#?}"
+    );
+    assert_eq!(window.rows_saying("nothing to compact"), 1, "{all:#?}");
+}
+
+#[test]
+fn a_native_mark_waiting_when_the_transcript_empties_is_dropped() {
+    // What the full screen does with a reply that emptied the transcript is
+    // hang nothing at all, because what the mark would hang from has gone.
+    // Here what was written before the emptying stays in the scrollback, and
+    // neither it nor the divider nor anything under the divider takes a mark.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.commit("> /clear").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let start = render.lines();
+    render.hangs(Glyphs::Unicode);
+    render.commit("! the session file is gone").unwrap();
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.subordinate(start, Glyphs::Unicode).unwrap();
+    render.commit("").unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    let at = all
+        .iter()
+        .position(|row| row.as_str() == "> /clear")
+        .unwrap_or_else(|| panic!("nothing asked: {all:#?}"));
+    let after: Vec<&str> = all.iter().skip(at).take(5).map(String::as_str).collect();
+    assert_eq!(
+        after,
+        [
+            "> /clear",
+            "! the session file is gone",
+            "",
+            divider.as_str(),
+            "what follows"
+        ],
+        "{all:#?}"
+    );
+}

@@ -113,6 +113,23 @@ impl Subordinate {
     }
 }
 
+/// A mark hung on what is written from a line on, before it is written.
+///
+/// Native mode writes a line out once, and a reply can leave the live region
+/// before the command writing it ends. What it is to be hung under is known
+/// before the reply starts, so each of its lines is marked as it goes out and
+/// [`Record::subordinate`] marks the rest.
+#[derive(Debug)]
+struct Hanging {
+    /// The line the reply starts at, as [`Record::lines`] numbers it.
+    from: usize,
+    /// The first line not marked yet.
+    next: usize,
+    mark: Box<str>,
+    /// Whether the mark itself is still to be given, rather than the indent.
+    first: bool,
+}
+
 impl Line {
     /// Its share of the record's retained-memory ceiling.
     fn weight(&self) -> usize {
@@ -254,6 +271,9 @@ pub(crate) struct Record {
     /// A divider: a block that follows it asks for a blank row and is given
     /// none, because the divider is already the space between them.
     parting: Option<usize>,
+    /// The mark a reply still being written is hung under, from
+    /// [`Self::hangs`] until [`Self::subordinate`] or [`Self::unhangs`].
+    hanging: Option<Hanging>,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -293,6 +313,7 @@ impl Record {
             parted_before: true,
             parting: None,
             open: false,
+            hanging: None,
         }
     }
 
@@ -642,57 +663,120 @@ impl Record {
     /// rather than a list of unrelated results. If the beginning spilled or the
     /// command replaced the transcript, nothing is changed: the retained rows no
     /// longer identify one complete answer block.
+    ///
+    /// Where [`Self::hangs`] was told of `from` before the output began, the
+    /// lines it has already marked are left as they are and the rest are
+    /// marked after them.
     pub(crate) fn subordinate(&mut self, from: usize, mark: &str) {
         self.end();
-        if from < self.gone || from >= self.lines() || mark.is_empty() {
+        let (next, mut first) = self
+            .hanging
+            .take()
+            .filter(|hanging| hanging.from == from)
+            .map_or((from, true), |hanging| (hanging.next, hanging.first));
+        if next < self.gone || next >= self.lines() || mark.is_empty() {
             return;
         }
+        self.mark(next..self.lines(), mark, &mut first);
+    }
 
+    /// Hangs what is written from here on under `mark`, before it is written.
+    ///
+    /// For a reply that may leave the record before it ends: each line of it
+    /// is marked as [`Self::hangs_through`] lets it go, and
+    /// [`Self::subordinate`], given the line this started at, marks the rest.
+    /// Emptying the record forgets it.
+    pub(crate) fn hangs(&mut self, mark: &str) {
+        let from = self.lines();
+        self.hanging = (!mark.is_empty()).then(|| Hanging {
+            from,
+            next: from,
+            mark: mark.into(),
+            first: true,
+        });
+    }
+
+    /// Forgets the mark [`Self::hangs`] hung, marking nothing more under it.
+    pub(crate) fn unhangs(&mut self) {
+        self.hanging = None;
+    }
+
+    /// Marks the lines of a hung reply before `through`, which are about to
+    /// be let go of.
+    ///
+    /// Nothing where no reply is hung, and the mark is forgotten where lines
+    /// of the reply have already gone unmarked, as [`Self::subordinate`]
+    /// forgets a block whose beginning spilled.
+    pub(crate) fn hangs_through(&mut self, through: usize) {
+        let Some(mut hanging) = self.hanging.take() else {
+            return;
+        };
+        if hanging.next < self.gone {
+            return;
+        }
+        let through = through.min(self.lines());
+        if hanging.next < through {
+            let mark = std::mem::take(&mut hanging.mark);
+            self.mark(hanging.next..through, &mark, &mut hanging.first);
+            hanging.mark = mark;
+            hanging.next = through;
+        }
+        self.hanging = Some(hanging);
+    }
+
+    /// Puts `mark` on the first row of `lines` still owed it while `first`,
+    /// and its indent on every other row; lines of the opening are skipped.
+    fn mark(&mut self, lines: Range<usize>, mark: &str, first: &mut bool) {
         let opening = self
             .opening
             .as_ref()
             .map(|opening| opening.from..opening.from + opening.lines);
-        let from = from - self.gone;
         let subordinate = Subordinate {
             mark: mark.into(),
             opening: crate::width::columns(mark),
             marks_first: true,
             keeps_first: false,
         };
-        let mut first = true;
+        let gone = self.gone;
 
-        for (at, line) in self.lines.iter_mut().enumerate().skip(from) {
+        for (at, line) in self
+            .lines
+            .iter_mut()
+            .enumerate()
+            .skip(lines.start - gone)
+            .take(lines.len())
+        {
             if opening
                 .as_ref()
-                .is_some_and(|opening| opening.contains(&(self.gone + at)))
+                .is_some_and(|opening| opening.contains(&(gone + at)))
             {
                 continue;
             }
             match line {
                 Line::Flowed(row) | Line::Set(row) => {
-                    if first && row.starts_structural() {
-                        first = false;
+                    if *first && row.starts_structural() {
+                        *first = false;
                     } else {
-                        row.prepend(subordinate.row(&mut first));
+                        row.prepend(subordinate.row(first));
                     }
                 }
                 Line::Responsive { rows, prefix, .. } => {
-                    if first && rows.first().is_some_and(Row::starts_structural) {
-                        first = false;
+                    if *first && rows.first().is_some_and(Row::starts_structural) {
+                        *first = false;
                         let mut retained = subordinate.clone();
                         retained.marks_first = false;
                         retained.keeps_first = true;
                         for row in rows.iter_mut().skip(1) {
-                            row.prepend(subordinate.row(&mut first));
+                            row.prepend(subordinate.row(first));
                         }
                         *prefix = Some(retained);
                         continue;
                     }
                     let mut retained = subordinate.clone();
-                    retained.marks_first = first && !rows.is_empty();
+                    retained.marks_first = *first && !rows.is_empty();
                     retained.keeps_first = false;
                     for row in rows {
-                        row.prepend(subordinate.row(&mut first));
+                        row.prepend(subordinate.row(first));
                     }
                     *prefix = Some(retained);
                 }

@@ -1558,10 +1558,14 @@ impl<T: Terminal> Renderer<T> {
     /// some other part of the program is holding names the line it named and
     /// names nothing once that line has gone.
     ///
+    /// A reply hung by [`Renderer::hangs`] is let go of unmarked, as the full
+    /// screen marks nothing of a reply that emptied the transcript.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn empties(&mut self) -> Result<(), TerminalError> {
+        self.record.unhangs();
         self.native_empties()?;
         match self.native {
             Some(_) => self.record.empties_under(),
@@ -1799,6 +1803,22 @@ impl<T: Terminal> Renderer<T> {
 
         self.record.amend(at, edit);
         self.draw()
+    }
+
+    /// Hangs what is written from here on under `glyphs.hangs()`, for
+    /// [`Renderer::subordinate`] to finish once it has all been written.
+    ///
+    /// Told before a reply starts rather than after it ends, because in native
+    /// mode a row is written once, and a reply that leaves the live region
+    /// before its command ends has to leave it carrying its mark. Each line
+    /// goes out marked, and [`Renderer::subordinate`], given the line this
+    /// started at, marks whatever is still held. The full screen marks nothing
+    /// before that. Emptying the transcript forgets it, and where output is
+    /// redirected nothing is marked at all.
+    pub fn hangs(&mut self, glyphs: Glyphs) {
+        if self.terminal.is_terminal() {
+            self.record.hangs(glyphs.hangs());
+        }
     }
 
     /// Hangs every transcript row written since `from` under one result mark.

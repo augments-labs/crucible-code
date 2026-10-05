@@ -816,7 +816,12 @@ pub(super) fn run<T: Terminal>(
     // the two would leave the mark pointing at nothing. The blank goes after,
     // where the next block starts — the box below is already parted from it,
     // and the next thing said belongs under the pair rather than in it.
+    //
+    // The mark is hung before the answer is written as well as after: in
+    // native mode a row goes out once, and an answer that waits for a key or
+    // is taller than the window has rows out before it ends.
     let start = renderer.lines();
+    renderer.hangs(terms.style().glyphs());
     let making = answer(wanted, renderer, conversation, held, terms)?;
     renderer.subordinate(start, terms.style().glyphs())?;
     renderer.commit("")?;

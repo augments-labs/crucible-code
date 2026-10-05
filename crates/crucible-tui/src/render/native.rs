@@ -10,14 +10,21 @@
 //! here lands on whatever the shell had put there.
 //!
 //! A line goes out once. It leaves the live region when it is sealed — at the
-//! moment the session next waits for a key, which is after a reply has had
-//! the mark hung on it and before anyone could read it half-finished — or
-//! sooner, when the region could no longer show it, and the record lets go of
-//! it as it is written: the terminal is what keeps it now, and keeping it here
-//! too would be a second copy of the session that nothing draws again. So an
-//! edit to a line that has gone out ([`Renderer::amend`],
+//! moment the session next waits for a key, before anyone could read it
+//! half-finished — or sooner, when the region could no longer show it, and the
+//! record lets go of it as it is written: the terminal is what keeps it now,
+//! and keeping it here too would be a second copy of the session that nothing
+//! draws again. So an edit to a line that has gone out ([`Renderer::amend`],
 //! [`Renderer::subordinate`]) does nothing, as it does to any line the record
 //! has dropped.
+//!
+//! Which is why a command's reply is hung under its mark before it is
+//! written ([`Renderer::hangs`]): a reply can wait for a key, or be taller
+//! than the region, and either sends rows of it out before the command ends.
+//! Each line of it goes out carrying the mark or the indent the full screen
+//! gives it, and [`Renderer::subordinate`] marks the lines still held when it
+//! ends. A reply that empties the transcript is let go of unmarked, as the
+//! full screen marks none of it.
 //!
 //! Emptying the transcript takes nothing back either: the session a resume or a
 //! clear leaves stays in the scrollback, under the card the launch drew. What
@@ -261,6 +268,7 @@ impl<T: Terminal> Renderer<T> {
         }
         out.push_str(ERASE_BELOW);
 
+        self.record.hangs_through(through);
         let mut emitted = false;
         for line in first..through {
             for row in self.record.folded(line) {
