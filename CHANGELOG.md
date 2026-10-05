@@ -36,7 +36,7 @@ change in any release with no deprecation period.
   one draws the box again directly under the last transcript row, and a
   resize while one is open leaves no row of it in the scrollback.
 - **In native mode a command's reply keeps its mark when it is taller than
-  the window.** A reply such as `/usage` in a short window went out to the
+  the window.** A reply such as `/cache` in a short window went out to the
   scrollback without the `⎿` mark and the indent under it; every row of it now
   carries them, as in fullscreen.
 - **In native mode a resize while an answer is arriving leaves no second copy
@@ -74,6 +74,12 @@ change in any release with no deprecation period.
   blank row parts one plan window from the next.
 - **`/compact` with no model answers under the line that asked.** The warning
   used to stand apart, two rows down, unlike every other command's reply.
+- **The welcome card and `/resume` agree on an empty directory.** Under
+  `Recent sessions` the card said `No recent sessions` where `/resume` said
+  `no earlier session for this workspace`; both now say the second.
+- **`/release-notes` closed with Esc leaves the spacing other panels do.**
+  It left one blank row fewer above the box, and so did a resize that closed
+  it.
 
 ## [0.45.2] - 2026-10-03
 

@@ -926,7 +926,14 @@ fn answerable(conversation: &Conversation) -> bool {
     conversation.missing().is_none()
 }
 
-/// Says that a prompt or `/compact` has nobody to ask, where [`answerable`] said so.
+/// Says that what was asked has nobody to ask, where [`answerable`] said
+/// so: a prompt typed at the box or queued, `/compact` down a pipe (at a
+/// terminal the command says it itself), and room asked for with no model
+/// to make a recap, a picked-up session's or the application's refusal.
+///
+/// At a terminal it draws the warning. Down a pipe it fails instead: there
+/// is nobody to type `/model`, so carrying on reads every remaining line
+/// and answers none of them.
 ///
 /// `/model` is what changes this answer, so it is said again here rather than
 /// only under the welcome the session opened with: by now that has scrolled
