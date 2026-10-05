@@ -1143,6 +1143,30 @@ fn ctrl_o_does_what_the_row_offering_it_says_while_the_turn_is_still_running() {
 }
 
 #[test]
+fn ctrl_b_opens_the_running_list_when_the_turn_has_nothing_to_background() {
+    // A turn with no call to leave running still has the key, and the list
+    // the count under the box opens is what it is left meaning. Native mode
+    // asks for no mouse, so without this the list had no door there at all
+    // while a turn ran.
+    assert_eq!(backgrounding(false, 1), Backgrounding::Listed);
+    assert_eq!(backgrounding(false, 3), Backgrounding::Listed);
+}
+
+#[test]
+fn ctrl_b_backgrounds_when_the_turn_can() {
+    // The key's first meaning wins whatever else is running: the command the
+    // turn is waiting on is the one the row offering the key names.
+    assert_eq!(backgrounding(true, 0), Backgrounding::Asked);
+    assert_eq!(backgrounding(true, 2), Backgrounding::Asked);
+}
+
+#[test]
+fn ctrl_b_does_nothing_with_nothing_running_and_nothing_to_background() {
+    // An empty list would open only to close again, so nothing is stood.
+    assert_eq!(backgrounding(false, 0), Backgrounding::Nothing);
+}
+
+#[test]
 fn the_row_under_a_running_turn_keeps_the_mode_cycle_hint() {
     // Shift+Tab now works on this side while the runner is away, and Esc is
     // already named on the working row above. The status row therefore stays

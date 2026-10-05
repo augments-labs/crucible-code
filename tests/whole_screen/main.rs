@@ -468,6 +468,24 @@ fn a_click_on_the_count_opens_the_list_while_a_turn_is_still_running() {
 }
 
 #[test]
+fn ctrl_b_opens_the_running_list_during_a_turn() {
+    // The key beside the click above. The model backgrounded its own command,
+    // so the turn is waiting on no call it could leave running, and Ctrl+B has
+    // nothing to background: it opens the list the count opens, by the same
+    // call, so the same list stands over the same rows.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("ctrl-b-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+
+    // Caught by its heading rather than waited out, for the reason the click
+    // gives: the spinner of a turn still running keeps the screen beating.
+    window.types_and_catches("\x02", "Still running");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn escape_cancels_a_real_pty_turn_and_returns_to_the_prompt() {
     let vendor = Vendor::answering(&"still arriving ".repeat(96));
     let mut window = Watched::answering("escape-cancels-turn", 80, 24, &vendor);

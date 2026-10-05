@@ -628,3 +628,26 @@ fn a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mo
     window.assert_never_alternate();
     settings_left_nothing(&window);
 }
+
+#[test]
+fn ctrl_b_opens_the_running_list_during_a_turn_in_native_mode() {
+    // Native mode asks for no mouse, so the click on the count that opens the
+    // `Still running` list in fullscreen is no door here, and before Ctrl+B
+    // opened it a running turn left the list out of reach. The model
+    // backgrounds its own command, so the turn has nothing for the key to
+    // background, and the list is what it opens.
+    //
+    // A native launch carries no rule for the call, so the call is asked
+    // about and allowed once.
+    let vendor = crate::a_turn_still_running();
+    let mut window = Watched::native("native-ctrl-b-mid-turn", 60, 24, &vendor);
+    window.types_until("start it\r", "Do you want to proceed?");
+    window.types_and_catches("\r", crate::HELD_LAST_WORD);
+
+    // Caught by its heading: the spinner of a turn still running keeps the
+    // screen beating.
+    window.types_and_catches("\x02", "Still running");
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}

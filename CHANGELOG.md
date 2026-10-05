@@ -15,6 +15,11 @@ change in any release with no deprecation period.
   less one, and <kbd>→</kbd> and <kbd>←</kbd> put the next older or newer
   result at its top, in both screen modes. The footer names the keys and says
   which result is at the top, as in `result 2 of 7`.
+- **Ctrl+B opens the `Still running` list while a turn runs.** Where the turn
+  has no command to leave in the background and one or more commands are left
+  running, the key stands the list a click on their count stands, in both
+  screen modes. Native mode asks for no clicks, so this is the way to the list
+  there during a turn.
 
 ### Fixed
 

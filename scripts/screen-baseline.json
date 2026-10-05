@@ -330,6 +330,14 @@
       "sha256": "7d083cbdcb7098b5696a2adc29eac620281b5c615b1cff80858fc079a25d532c"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_b_opens_the_running_list_during_a_turn.snap",
+      "case": "ctrl_b_opens_the_running_list_during_a_turn",
+      "opened": [
+        "Watched::allowing(\"ctrl-b-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "836dac6f440cfee2a652efd56585d2c611f98f0e19fa438a729ba67f9266488a"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_results_opened.snap",
       "case": "ctrl_o_pages_and_steps_through_cut_results",
       "opened": [
@@ -623,6 +631,14 @@
         "Watched::native(\"native-clear\", 80, 24, &vendor)"
       ],
       "sha256": "01230767dc4846392ca9c7f25614755d6c746ae633526fc6891f79161adaca0c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_b_opens_the_running_list_during_a_turn_in_native_mode.snap",
+      "case": "ctrl_b_opens_the_running_list_during_a_turn_in_native_mode",
+      "opened": [
+        "Watched::native(\"native-ctrl-b-mid-turn\", 60, 24, &vendor)"
+      ],
+      "sha256": "f57afc29b15d480d4b6479d3d207999b93cdc6032c4e91aed3eaf2909e2343ef"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_o_stands_at_the_foot_and_escape_leaves_no_row_of_it_in_native_mode.snap",

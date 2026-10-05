@@ -383,7 +383,8 @@ const BEAT: Duration = Duration::from_millis(250);
 ///
 /// Stood here rather than handed back to the loop above, unlike the view of what
 /// the transcript cut: that key means the same thing while a turn runs, and this
-/// one means something else there entirely.
+/// one means backgrounding there first, and the list only where the turn has
+/// nothing to background — see [`backgrounding`].
 fn stood<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
@@ -1100,7 +1101,17 @@ pub(super) fn during<T: Terminal>(
         }
 
         match meant(arrived) {
-            Meant::Background if turning.can_background() => background.ask(),
+            // The command the turn is waiting on first, then the list the count
+            // under the box opens, by the call the click on it makes.
+            Meant::Background => {
+                match backgrounding(turning.can_background(), background.count()) {
+                    Backgrounding::Asked => background.ask(),
+                    Backgrounding::Listed => {
+                        moved |= stood(renderer, style, listing, background, &terms.ending)?;
+                    }
+                    Backgrounding::Nothing => {}
+                }
+            }
             // Taken back and re-wrapped above, before the view could have been
             // handed the same press. What is left to say is that the picture no
             // longer matches, which is what the redraw below reads.
@@ -1293,9 +1304,10 @@ pub(super) fn during<T: Terminal>(
                 }
                 Landed::Line => moved = true,
                 // The count is the one door on that row, and it is the door it
-                // is between turns: the key cannot open the list here — it
-                // means backgrounding the command the turn is waiting on — so
-                // the click is the way the list is reached while a turn runs.
+                // is between turns. The key reaches the list here only while
+                // the turn has nothing to background, because backgrounding
+                // comes first, so the click is the door that is always open
+                // while a turn runs.
                 Landed::Counted => {
                     moved |= stood(renderer, style, listing, background, &terms.ending)?;
                 }
@@ -1320,7 +1332,7 @@ pub(super) fn during<T: Terminal>(
                 );
             }
 
-            Meant::Background | Meant::Ignored => {}
+            Meant::Ignored => {}
         }
     }
 
@@ -1545,7 +1557,8 @@ enum Meant {
     /// the turn that is still writing it.
     Expand,
     /// Ctrl+B: the command the turn is waiting on is to be left running, and the
-    /// turn is to go on without it.
+    /// turn is to go on without it — or, where it is waiting on none, the list
+    /// of what is already running, as [`backgrounding`] decides.
     ///
     /// Asked of the registry rather than done in the loop that reads the key. The
     /// command is being waited on by the worker thread, so what this side can do
@@ -1665,6 +1678,37 @@ fn meant(arrived: Pressed) -> Meant {
     }
 }
 
+/// What Ctrl+B comes to while a turn is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backgrounding {
+    /// The command the turn is waiting on is asked to be left running.
+    Asked,
+    /// The list of what is still running, stood as a click on its count stands it.
+    Listed,
+    /// Nothing: there is nothing to leave running and nothing to list.
+    Nothing,
+}
+
+/// Reads Ctrl+B against the turn it was pressed under.
+///
+/// The key's own meaning first: a command the turn is waiting on is left
+/// running. Only a turn with nothing to leave running gives the key back to
+/// the list it opens between turns, and only while there is something on it —
+/// which is what lets a terminal that reports no clicks reach that list while
+/// a turn runs.
+///
+/// Apart from the loop for the reason [`meant`] is: the loop cannot be driven
+/// from a test, and this much of the deciding can be.
+fn backgrounding(can_background: bool, running: usize) -> Backgrounding {
+    if can_background {
+        Backgrounding::Asked
+    } else if running > 0 {
+        Backgrounding::Listed
+    } else {
+        Backgrounding::Nothing
+    }
+}
+
 /// What can change while one turn is running.
 pub(super) struct During<'a> {
     pub(super) editor: &'a mut Editor,
@@ -1706,8 +1750,9 @@ pub(super) struct During<'a> {
     /// that opened it to the arrow that walks it.
     pub(super) opened_list: &'a mut Opened,
     /// The list of what is still running, which a click on the count under the
-    /// box stands — the same door the key is at the prompt, kept across the
-    /// looks at the channel a turn is one of.
+    /// box stands, and Ctrl+B where the turn has nothing to background — the
+    /// same door the key is at the prompt, kept across the looks at the channel
+    /// a turn is one of.
     pub(super) listing: &'a mut Leaving,
     /// Mutable for the one fact on it that moves while the turn does: a
     /// command left running can begin or end between two of this loop's looks
