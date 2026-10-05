@@ -178,13 +178,19 @@ fn cache_answers_for_minimax() {
 
 /// The rows a window forty columns wide drawn in `mode` shows once `/cache` has
 /// been sent from the box and answered.
+fn answered(mode: ScreenMode) -> Vec<String> {
+    answered_in(mode, 40)
+}
+
+/// The rows a window `columns` wide drawn in `mode` shows once `/cache` has
+/// been sent from the box and answered.
 ///
 /// The line goes in the way the box leaves it, as one responsive prompt row,
 /// because that is the row the answer hangs from on a run somebody is typing
 /// at. Native mode's rows are read from the last frame it drew, which redraws
 /// the whole region: nothing here waits for a key, so nothing has been sealed
 /// into the scrollback above it.
-fn answered(mode: ScreenMode) -> Vec<String> {
+fn answered_in(mode: ScreenMode, columns: usize) -> Vec<String> {
     let terms = plain();
     let opening = opening();
     let mut input = std::io::empty();
@@ -200,7 +206,7 @@ fn answered(mode: ScreenMode) -> Vec<String> {
     let mut conversation = paired(Arc::new(Session::nowhere()), |session| {
         scripted(Script::new(vec![]), Tools::new(), session)
     });
-    let mut renderer = Renderer::drawing(Recording::new(40, 40), mode);
+    let mut renderer = Renderer::drawing(Recording::new(columns, 40), mode);
     let style = terms.style();
 
     renderer
@@ -250,6 +256,32 @@ fn last_frame(written: &str) -> Vec<String> {
         .collect()
 }
 
+/// The rows of `/cache`'s reply among `rows`: those under the row that asked,
+/// down to the first blank one.
+fn reply_in(mode: ScreenMode, rows: &[String]) -> Vec<&String> {
+    let asked = rows
+        .iter()
+        .position(|row| row.contains("/cache"))
+        .unwrap_or_else(|| panic!("{mode:?}: /cache was never shown in {rows:#?}"));
+    rows.iter()
+        .skip(asked + 1)
+        .take_while(|row| !row.is_empty())
+        .collect()
+}
+
+/// The words of a reply, its rows joined, with the mark its first row is hung
+/// from read past. The two columns the rest are hung by are whitespace.
+fn words<'a>(reply: &[&'a String], hangs: &str) -> Vec<&'a str> {
+    let (first, rest) = reply.split_first().expect("a reply");
+    let first = first
+        .strip_prefix(&format!("{hangs} "))
+        .expect("a reply hung from the mark");
+    std::iter::once(first)
+        .chain(rest.iter().map(|row| row.as_str()))
+        .flat_map(str::split_whitespace)
+        .collect()
+}
+
 /// Every row of `/cache`'s reply, in a window forty columns wide drawn in
 /// `mode`, after the first is hung under the mark.
 ///
@@ -260,15 +292,7 @@ fn last_frame(written: &str) -> Vec<String> {
 fn keeps_its_indent(mode: ScreenMode) {
     let hangs = plain().style().glyphs().hangs();
     let rows = answered(mode);
-    let asked = rows
-        .iter()
-        .position(|row| row.contains("/cache"))
-        .unwrap_or_else(|| panic!("{mode:?}: /cache was never shown in {rows:#?}"));
-    let reply: Vec<&String> = rows
-        .iter()
-        .skip(asked + 1)
-        .take_while(|row| !row.is_empty())
-        .collect();
+    let reply = reply_in(mode, &rows);
 
     assert!(
         reply.len() > 4,
@@ -285,6 +309,16 @@ fn keeps_its_indent(mode: ScreenMode) {
             "{mode:?}: {row:?} is not hung under the mark, in {rows:#?}"
         );
     }
+
+    // The screen clips a row folded too wide for the mark rather than folding
+    // it again, so a narrow reply must say every word a window wide enough for
+    // every line says, in order.
+    let wide = answered_in(mode, 200);
+    assert_eq!(
+        words(&reply, hangs),
+        words(&reply_in(mode, &wide), hangs),
+        "{mode:?}: the reply lost words at forty columns, in {rows:#?}"
+    );
 }
 
 #[test]
