@@ -190,16 +190,20 @@ pub fn clip(text: &str, columns: usize) -> &str {
 /// The same walk, answering in offsets rather than in slices, because a row of
 /// spans has to cut each span at the break and a `&str` cannot say where it was
 /// taken from. Whitespace at a break is dropped as [`fold`] drops it, so these
-/// ranges are the rows and not a partition of `text`. Measured as [`fold`] is,
-/// by what a row will draw.
+/// ranges are the rows and not a partition of `text`.
+///
+/// Measured and broken as [`fold`] is, by what a row will draw: a tab or a
+/// control character a row shows as a space costs that space's column, may
+/// stand where a row breaks, and is not left at either end of one.
 pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
     let mut rows = Vec::new();
     if columns == 0 {
         return rows;
     }
 
-    let mut rest = text.trim();
-    let mut base = text.len() - text.trim_start().len();
+    let whole = trimmed(text);
+    let mut base = whole.start;
+    let mut rest = &text[whole];
 
     while !rest.is_empty() {
         let Some(over) = walk(rest, columns, row::drawn).1 else {
@@ -217,22 +221,77 @@ pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
         // the break. Failing that the row is one long word and the cut stands.
         // Never zero: a character wider than the whole row would take no bytes
         // off the front and this would not end.
-        let at = if rest[over..].starts_with(char::is_whitespace) {
+        let mut space = None;
+        let mut stopped_on_a_gap = false;
+        for (at, _, drawn) in shown(rest) {
+            if at >= over {
+                stopped_on_a_gap = blank(drawn);
+                break;
+            }
+            if at > 0 && drawn == Some(' ') {
+                space = Some(at);
+            }
+        }
+        let at = if stopped_on_a_gap {
             over
         } else {
-            match rest[..over].rfind(' ') {
-                Some(space) if space > 0 => space,
-                _ => over.max(step(rest)),
-            }
+            space.unwrap_or_else(|| over.max(step(rest)))
         };
 
-        rows.push(base..base + rest[..at].trim_end().len());
-        let after = rest[at..].trim_start();
-        base += rest.len() - after.len();
-        rest = after;
+        rows.push(base..base + trimmed(&rest[..at]).end);
+        let after = at + leading(&rest[at..]);
+        base += after;
+        rest = &rest[after..];
     }
 
     rows
+}
+
+/// Each character of `text`, where it starts, and what a row draws for it:
+/// `None` for a character a row drops, a sequence's own among them.
+///
+/// Asked from the start of `text` with a machine of its own, as [`walk`] asks
+/// and as a row cleans each piece it is given.
+fn shown(text: &str) -> impl Iterator<Item = (usize, char, Option<char>)> + '_ {
+    let mut escapes = Escapes::default();
+    text.char_indices().map(move |(at, character)| {
+        let drawn = if escapes.holds(character) {
+            None
+        } else {
+            row::drawn(character)
+        };
+        (at, character, drawn)
+    })
+}
+
+/// Whether what a row draws is blank: a gap a row may break at and trims.
+fn blank(drawn: Option<char>) -> bool {
+    drawn.is_some_and(char::is_whitespace)
+}
+
+/// Where in `text` the first character a row does not draw as blank starts.
+///
+/// Stops there rather than walking the rest, which is every row still to
+/// come.
+fn leading(text: &str) -> usize {
+    shown(text)
+        .find(|(_, _, drawn)| !blank(*drawn))
+        .map_or(text.len(), |(at, _, _)| at)
+}
+
+/// Where `text` starts and ends once what a row draws as blank at either end
+/// is left off.
+fn trimmed(text: &str) -> Range<usize> {
+    let mut start = None;
+    let mut end = 0;
+    for (at, character, drawn) in shown(text) {
+        if !blank(drawn) {
+            start.get_or_insert(at);
+            end = at + character.len_utf8();
+        }
+    }
+    let start = start.unwrap_or(text.len());
+    start..end.max(start)
 }
 
 /// Where to wrap editable text without discarding any source.
@@ -296,7 +355,8 @@ pub(crate) fn wraps(text: &str, columns: usize) -> Vec<Range<usize>> {
 /// Measured as the [`crate::Row`] each piece is made into draws it, which is
 /// where a piece is cleaned: a control character that arrived in the text
 /// costs the column of the space the row shows for it, and a tab costs one
-/// rather than reaching the next stop.
+/// rather than reaching the next stop. Either is a space a row may break at,
+/// as it is once the row has cleaned it.
 #[must_use]
 pub fn fold(text: &str, columns: usize) -> Vec<&str> {
     folds(text, columns)
@@ -465,6 +525,39 @@ mod tests {
         // A row draws a tab as one space, so counting it to the next stop
         // breaks a row that fits and leaves its columns empty.
         assert_eq!(fold("a\tb c", 4), ["a\tb", "c"]);
+    }
+
+    #[test]
+    fn a_fold_breaks_where_the_row_it_becomes_would_break() {
+        // A tab or a control character is a space once it is a row, so it is
+        // a place to break as much as the column it costs. Broken only at a
+        // real space, the first of these cut "every" in half where the row's
+        // own fold keeps every word whole.
+        let cases = [("tab\tat\tevery\tword", 7), ("x\u{7f}yzwv x\u{7f}y", 9)];
+        let folded: Vec<Vec<String>> = cases
+            .iter()
+            .map(|(text, columns)| {
+                fold(text, *columns)
+                    .into_iter()
+                    .map(|row| crate::Row::plain(row).text())
+                    .collect()
+            })
+            .collect();
+        let rows: Vec<Vec<String>> = cases
+            .iter()
+            .map(|(text, columns)| {
+                crate::Row::plain(*text)
+                    .fold(*columns)
+                    .iter()
+                    .map(crate::Row::text)
+                    .collect()
+            })
+            .collect();
+        assert_eq!(folded, rows);
+        assert_eq!(
+            fold("tab\tat\tevery\tword", 7),
+            ["tab\tat", "every", "word"]
+        );
     }
 
     #[test]
