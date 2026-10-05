@@ -58,6 +58,9 @@ change in any release with no deprecation period.
   spinner that had not acted on the signal that ends it. A spinner still there
   a second after it is told to stop is now killed, with nothing written to the
   terminal, and the step's row is drawn as usual.
+- **`/cache` keeps its indent in a narrow window.** Lines that wrapped
+  started again at the left edge, out from under the reply's mark; they now
+  wrap inside it, as `/context` and `/usage` do.
 - **`/usage` stands in a narrow window.** With plan limits it was taller than
   a 40-column window and was printed into the transcript instead; it now
   stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
