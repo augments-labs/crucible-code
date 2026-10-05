@@ -759,6 +759,14 @@
       "sha256": "31ae9dc29075b3866be7f69ed62366d18f2ce8be148cafcd7707cc19382e19b0"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_scrolls_inside_its_room_in_native_mode.snap",
+      "case": "settings_scrolls_inside_its_room_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())"
+      ],
+      "sha256": "f2490344ed47865b27d3a752ed9594b638d5ba741f719cbd8830c42fba7d10e3"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_takes_at_most_half_the_window_in_native_mode.snap",
       "case": "settings_takes_at_most_half_the_window_in_native_mode",
       "opened": [
