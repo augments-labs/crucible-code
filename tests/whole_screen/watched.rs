@@ -882,7 +882,10 @@ impl Watched {
     /// Changes the size of the window, the way dragging its corner would.
     ///
     /// The kernel is what tells crucible: setting the size on the near side of
-    /// the pair raises `SIGWINCH` in the session on the far side of it.
+    /// the pair raises `SIGWINCH` in the session on the far side of it. The
+    /// screen takes the size at the first frame crucible draws for it, since
+    /// a frame on its way was drawn for the old one; and a settled screen is
+    /// one crucible has drawn for, which [`Self::settle_for`] holds it to.
     pub(crate) fn resize(&mut self, columns: u16, rows: u16) {
         termios::tcsetwinsize(&self.terminal, size(columns, rows)).expect("a new window size");
         self.screen.resize(columns as usize, rows as usize);
@@ -1091,6 +1094,18 @@ impl Watched {
             "crucible held the screen for a frame it never finished, {step}\n{}",
             self.picture()
         );
+
+        // And one that has drawn for the window it has: a size the window
+        // took is held back until crucible draws a frame that fits it, so a
+        // quiet screen still waiting for one is a resize crucible never drew
+        // for — which no picture shows, since the picture is still the old
+        // window.
+        if let Some((columns, rows)) = self.screen.awaiting() {
+            panic!(
+                "crucible went quiet without drawing for the window at {columns}x{rows}, {step}\n{}",
+                self.picture()
+            );
+        }
     }
 
     /// Whether a quiet screen is one worth looking at yet.
