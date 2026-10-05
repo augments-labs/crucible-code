@@ -418,7 +418,7 @@
         "Vendor::recapping_after(&[\"one answer\", \"two answer\", \"three answer\"], &notes, None)",
         "Watched::compacting(\"compact-stopped\", 80, 24, &vendor)"
       ],
-      "sha256": "52959e3e892c7a29976d6cc300cbf15b3805915697e7f23fd7f7c6a88985b7f8"
+      "sha256": "c3ab18f224c8ccc9e8190744e6f9d2c142813ca3899e0fa9a80c7322117abdd9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__every_way_a_terminal_spells_a_newline_grows_the_box_and_sends_nothing.snap",
