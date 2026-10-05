@@ -39,6 +39,12 @@ change in any release with no deprecation period.
   the window.** A reply such as `/usage` in a short window went out to the
   scrollback without the `⎿` mark and the indent under it; every row of it now
   carries them, as in fullscreen.
+- **In native mode a resize while an answer is arriving leaves no second copy
+  of its rows.** A frame drawn between the window changing size and the
+  report of it being read was drawn at the old width, so the terminal wrapped
+  it and the next frame left the wrapped rows standing above the region.
+  Every frame now asks the window's size first and is drawn for the size it
+  has.
 
 ## [0.45.2] - 2026-10-03
 

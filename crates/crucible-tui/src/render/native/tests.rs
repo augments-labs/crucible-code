@@ -682,6 +682,47 @@ fn a_native_narrowing_keeps_the_finished_rows_that_still_fit_on_screen() {
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
 
+#[test]
+fn a_native_frame_drawn_before_the_resize_is_reported_takes_the_new_width() {
+    // The kernel narrows the window before the press reporting it is read,
+    // and an answer still arriving draws frames in between. Replayed into a
+    // terminal that wraps what is written past its edge: a frame drawn at the
+    // old width wraps, the next rewinds over the rows it counted rather than
+    // the rows the terminal made of them, and what it did not reach stays
+    // above the region as a second copy.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render
+        .stream("alfa bravo charlie delta echo foxtrot golf ")
+        .unwrap();
+    window.take();
+
+    window.resize(20);
+    render.stream("hotel ").unwrap();
+    render.stream("india ").unwrap();
+    render.resized().unwrap();
+    stands(&mut render);
+
+    let after = window.take();
+    assert!(
+        !after.contains("> asked"),
+        "a frame wrote a finished row again: {after:?}"
+    );
+    for word in ["alfa", "delta", "golf", "hotel", "india"] {
+        assert_eq!(window.rows_saying(word), 1, "{word}: {:#?}", window.all());
+    }
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+    assert!(
+        window.all().iter().all(|row| row.chars().count() <= 20),
+        "a row was written wider than the window: {:#?}",
+        window.all()
+    );
+}
+
 /// A palette that writes every hue it has, so a row's colours are on the
 /// record as well as its words.
 fn colourful() -> Palette {
