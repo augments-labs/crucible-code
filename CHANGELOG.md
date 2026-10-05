@@ -61,6 +61,10 @@ change in any release with no deprecation period.
 - **`/cache` keeps its indent in a narrow window.** Lines that wrapped
   started again at the left edge, out from under the reply's mark; they now
   wrap inside it, as `/context` and `/usage` do.
+- **Esc closes the command list.** Between turns it used to do nothing, and
+  during a turn it stopped the turn and left the list standing. It now closes
+  the list in both, keeping the line, as it already closes the Ctrl+O view
+  and the queue.
 - **The welcome card and `/resume` agree on an empty directory.** Under
   `Recent sessions` the card said `No recent sessions` where `/resume` said
   `no earlier session for this workspace`; both now say the second.
