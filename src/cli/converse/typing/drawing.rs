@@ -259,16 +259,19 @@ pub(super) struct Pointed {
 /// the same as one that landed on the line: the first owes no frame, and the
 /// second has already moved the cursor to where the pointer was.
 pub(super) enum Landed {
-    /// This row of the record, which is above the box entirely. What was cut is
-    /// held by the loop that owns the transcript, so the answer is there.
+    /// This row of the record, which is above the box entirely, pressed on a
+    /// cell the row drew. What was cut is held by the loop that owns the
+    /// transcript, so the answer is there.
     Record(usize),
     /// The line being typed, which now has the cursor where the pointer was.
     Line,
-    /// The row under the box naming what is still running, which is the one thing
-    /// on it that is an offer rather than a fact.
+    /// The count on the row under the box naming what is still running, which
+    /// is the one thing on it that is an offer rather than a fact, pressed on a
+    /// cell the count drew.
     Counted,
-    /// The border, a blank row, the shell's own output from before crucible
-    /// started — or a terminal that would not say where its cursor is.
+    /// The border, a blank row or a blank cell of the record's, the shell's
+    /// own output from before crucible started — or a terminal that would not
+    /// say where its cursor is.
     Nothing,
 }
 
@@ -287,11 +290,16 @@ pub(super) fn landed<T: Terminal>(
     at: Pointed,
 ) -> Landed {
     let row = match renderer.aimed(at.row) {
-        Some(Aimed::Line(line)) => return Landed::Record(line),
+        // A line of the record only on a cell its row drew: the indent under
+        // the call and the blank after the last character are no part of it.
+        Some(Aimed::Line(line)) if renderer.cells(at.row).contains(&at.column) => {
+            return Landed::Record(line);
+        }
         Some(Aimed::Boxed(row)) => row,
         // A list or a plan standing over the box. Answered where it is drawn,
-        // by the loop that opened it, and not here.
-        Some(Aimed::Stood(_)) | None => return Landed::Nothing,
+        // by the loop that opened it, and not here. And a blank cell of a line
+        // of the record, which is the window's.
+        Some(Aimed::Stood(_) | Aimed::Line(_)) | None => return Landed::Nothing,
     };
 
     // Laid out with no place in the history, because the label the border
@@ -311,11 +319,15 @@ pub(super) fn landed<T: Terminal>(
     );
 
     // Asked of the box, because which row the count came out on is the box's own
-    // arithmetic at this width. The column is not asked about: the row is the
-    // affordance, and nothing else on it is one, so a click anywhere along it
-    // means the one thing it could mean.
+    // arithmetic at this width, and of the renderer which cells of it the
+    // count took: the mode and the model beside it on the row are facts, and a
+    // click on them or on a blank between means nothing.
     if prompt.counting(renderer.columns(), row) {
-        return Landed::Counted;
+        return if renderer.cells(at.row).contains(&at.column) {
+            Landed::Counted
+        } else {
+            Landed::Nothing
+        };
     }
 
     // A line and a column within it, which is what the box's arithmetic knows:

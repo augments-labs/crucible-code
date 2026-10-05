@@ -553,7 +553,7 @@ fn a_resize_drops_a_stale_prompt_hover_target_until_replacement_reflows_it() {
             colourful(),
         )
         .unwrap();
-    assert_eq!(drawn.prompt_target, Some(1));
+    assert_eq!(drawn.prompt_target, Some((1, 0..10)));
     assert!(drawn.prompt_pointed());
 }
 
@@ -1485,6 +1485,201 @@ fn a_cut_result_that_moved_out_from_under_a_still_pointer_goes_quiet_again() {
     assert!(frame.contains(&quietly("alpha")), "{frame:?}");
 }
 
+// What the pointer lights is a result's own cells, not the row it is on.
+
+/// A result row laid the way a turn lays one: hung off the call under a
+/// corner, the words it was cut to, then the offer to open the rest.
+fn hung(said: &str, offer: &str) -> Row {
+    Row::new()
+        .then(Slot::Plain, "  ")
+        .then_structural(Slot::Quiet, "⎿")
+        .then(Slot::Quiet, " ")
+        .then(Slot::Cut, said)
+        .then(Slot::Quiet, offer)
+}
+
+/// Whether the frame `drawn` wrote last lit `said`: written, and not in the
+/// quiet a result rests in.
+fn lit(drawn: &mut Drawn, said: &str) -> bool {
+    let frame = drawn.take();
+    frame.contains(said) && !frame.contains(&quietly(said))
+}
+
+#[test]
+fn a_pointer_right_of_a_cut_result_lights_nothing() {
+    // The row ends where its last character does, and a wide one is two cells:
+    // "  ⎿ alpha 漢" draws twelve, so the twelfth lights and the cell after it,
+    // blank to the end of the window, is no part of the result.
+    let mut drawn = Drawn::new(40, 8);
+    drawn.wears(colourful());
+    drawn.present(&[hung("alpha 漢", "")]).unwrap();
+    drawn.take();
+
+    drawn.took(Pressed::Hovered { row: 0, column: 12 }).unwrap();
+    assert!(drawn.take().is_empty(), "a blank cell lit the result");
+    drawn.took(Pressed::Hovered { row: 0, column: 30 }).unwrap();
+    assert!(drawn.take().is_empty(), "a blank cell lit the result");
+
+    drawn.took(Pressed::Hovered { row: 0, column: 11 }).unwrap();
+    assert!(
+        lit(&mut drawn, "alpha 漢"),
+        "its last cell did not light it"
+    );
+}
+
+#[test]
+fn a_pointer_left_of_a_cut_result_lights_nothing() {
+    // The corner is the first cell the row drew; the two before it are the
+    // indent under the call, and blank.
+    let mut drawn = Drawn::new(40, 8);
+    drawn.wears(colourful());
+    drawn.present(&[hung("alpha", "")]).unwrap();
+    drawn.take();
+
+    for column in [0, 1] {
+        drawn.took(Pressed::Hovered { row: 0, column }).unwrap();
+        assert!(
+            drawn.take().is_empty(),
+            "blank cell {column} lit the result"
+        );
+    }
+
+    drawn.took(Pressed::Hovered { row: 0, column: 2 }).unwrap();
+    assert!(lit(&mut drawn, "alpha"), "the corner did not light it");
+}
+
+#[test]
+fn a_pointer_on_the_offer_lights_the_result() {
+    // The offer is drawn by the result's row, so it is the result's to light.
+    let offer = " (+3 lines · ctrl+o to expand)";
+    let mut drawn = Drawn::new(60, 8);
+    drawn.wears(colourful());
+    drawn.present(&[hung("alpha", offer)]).unwrap();
+    drawn.take();
+
+    let on = width::columns("  ⎿ alpha (+3 lines · ctrl+o");
+    drawn.took(Pressed::Hovered { row: 0, column: on }).unwrap();
+    assert!(
+        lit(&mut drawn, "alpha"),
+        "the offer did not light the result"
+    );
+}
+
+#[test]
+fn a_pointer_on_the_second_row_of_a_wrapped_result_lights_it_only_on_its_drawn_cells() {
+    // A result wrapped under a mark is indented on the rows after the first,
+    // and shorter than the first: the indent is blank, and so is every cell
+    // past the row's own last character, however far the row above reaches.
+    let mut drawn = Drawn::new(40, 8);
+    drawn.wears(colourful());
+    drawn
+        .present(&[
+            Row::new()
+                .then(Slot::Plain, "● ")
+                .then(Slot::Cut, "Read 3 files, searched for"),
+            Row::plain("  ").then(Slot::Cut, "2 patterns"),
+        ])
+        .unwrap();
+    drawn.take();
+
+    for column in [0, 1, 12, 20] {
+        drawn.took(Pressed::Hovered { row: 1, column }).unwrap();
+        assert!(
+            drawn.take().is_empty(),
+            "blank cell {column} lit the result"
+        );
+    }
+
+    drawn.took(Pressed::Hovered { row: 1, column: 2 }).unwrap();
+    let frame = drawn.take();
+    for said in ["Read 3 files, searched for", "2 patterns"] {
+        assert!(frame.contains(said), "{said}: {frame:?}");
+        assert!(!frame.contains(&quietly(said)), "{said}: {frame:?}");
+    }
+}
+
+// What the pointer lights on the row under the box is the count's own cells.
+
+/// A pointable row saying the mode before the count, the way the row under the
+/// box says them, drawn in its resting state, and the window row it is on.
+fn counting() -> (Drawn, usize) {
+    let mut drawn = Drawn::new(60, 10);
+    drawn.wears(colourful());
+    let prompt = vec![
+        Row::plain("prompt"),
+        Row::new()
+            .then(Slot::Plain, "ask mode")
+            .then(Slot::Quiet, " · ")
+            .then(Slot::Accent, "2 commands"),
+    ];
+    let pointed = Row::new()
+        .then(Slot::Plain, "ask mode")
+        .then(Slot::Quiet, " · ")
+        .then(Slot::Pointed, "2 commands");
+    drawn
+        .replace(
+            PromptRows {
+                rows: &prompt,
+                caret: Caret::default(),
+                pointed: Some((1, &pointed)),
+            },
+            &[],
+            colourful(),
+        )
+        .unwrap();
+    drawn.take();
+    let at = drawn.bands().prompt.start + 1;
+    (drawn, at)
+}
+
+#[test]
+fn the_count_s_cells_are_the_words_naming_it() {
+    let (drawn, at) = counting();
+    assert_eq!(drawn.cells(at), 11..21);
+    assert_eq!(drawn.cells(at - 1), 0..0, "a row of the box with no door");
+}
+
+#[test]
+fn a_pointer_beside_the_count_lights_nothing() {
+    let (mut drawn, at) = counting();
+
+    for column in [0, 10, 21, 59] {
+        drawn.took(Pressed::Hovered { row: at, column }).unwrap();
+        assert!(
+            !drawn.pointed_changed(),
+            "blank or mode cell {column} lit the count"
+        );
+    }
+
+    drawn
+        .took(Pressed::Hovered {
+            row: at,
+            column: 11,
+        })
+        .unwrap();
+    assert!(drawn.pointed_changed(), "the count's own cell lit nothing");
+    drawn
+        .took(Pressed::Hovered {
+            row: at,
+            column: 20,
+        })
+        .unwrap();
+    assert!(
+        !drawn.pointed_changed(),
+        "motion inside the count asked for a frame"
+    );
+    drawn
+        .took(Pressed::Hovered {
+            row: at,
+            column: 21,
+        })
+        .unwrap();
+    assert!(
+        drawn.pointed_changed(),
+        "leaving the count was not reported"
+    );
+}
+
 // The scroll rail.
 
 /// A renderer with the rail on, on a window sixty columns wide and ten rows
@@ -2224,11 +2419,13 @@ fn a_rail_over_a_transcript_that_fits_is_blank() {
 
 #[test]
 fn a_blank_rail_names_no_cut_result_and_with_the_rail_off_the_column_does() {
+    // A result as wide as the window, so the last column is one it drew once
+    // the rail is off and the rail's once it is on.
     for rails in [true, false] {
         let mut drawn = Drawn::new(40, 8);
         drawn.rails(rails);
         drawn.wears(colourful());
-        drawn.present(&[cut("cut")]).unwrap();
+        drawn.present(&[cut(&"x".repeat(40))]).unwrap();
         drawn.take();
 
         drawn.took(Pressed::Hovered { row: 0, column: 39 }).unwrap();

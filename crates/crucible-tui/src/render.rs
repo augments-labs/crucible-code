@@ -246,12 +246,15 @@ pub struct Renderer<T: Terminal> {
     record: Record,
     /// The rows at the foot of the window that are not the transcript.
     standing: Standing,
-    /// The row of the prompt that offers an action while the box is standing.
+    /// The row of the prompt that offers an action while the box is standing,
+    /// and the cells of it the offer takes.
     ///
     /// Relative to the prompt band. The renderer owns the absolute placement,
     /// so this is enough for it to decide whether a motion crossed the offer
-    /// without teaching it what the row means.
-    prompt_target: Option<usize>,
+    /// without teaching it what the row means. The cells are the ones the
+    /// caller drew pointed ([`door`]): the rest of the row says facts beside
+    /// the offer, and a pointer there is over none.
+    prompt_target: Option<(usize, Range<usize>)>,
     /// Whether a pointer transition is waiting for the prompt to be replaced.
     pointed_changed: bool,
     /// The size the record is folded for and the bands are shared out over.
@@ -853,7 +856,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The rows showing the result the transcript cut short that the pointer is
-    /// resting on. Empty where it is resting on nothing of the kind.
+    /// resting on. Empty where it is resting on nothing of the kind, which
+    /// includes a cell of the row the result did not draw ([`Self::cells`]).
     ///
     /// Every row of that one result and no row of any other, because what a
     /// pointer asks is what *this* opens: the light and the click have to name
@@ -867,17 +871,11 @@ impl<T: Terminal> Renderer<T> {
         let bands = self.bands();
         let nothing = bands.transcript.start..bands.transcript.start;
 
-        let Some((row, _)) = self.pointing else {
+        let Some((row, column)) = self.pointing else {
             return nothing;
         };
 
         if !bands.transcript.contains(&row) {
-            return nothing;
-        }
-
-        // The rail is the band's furniture, not a line of it: a pointer
-        // resting there is over no result.
-        if self.pointing.map(|(_, column)| column) == self.rail_column() {
             return nothing;
         }
 
@@ -887,6 +885,13 @@ impl<T: Terminal> Renderer<T> {
         };
 
         if !self.record.wears(line, Slot::Cut) {
+            return nothing;
+        }
+
+        // A row is a result only as far as it drew: the indent before it, the
+        // blank after it and the rail beside it are the window's, and a pointer
+        // resting there is over no result.
+        if !self.cells(row).contains(&column) {
             return nothing;
         }
 
@@ -914,13 +919,15 @@ impl<T: Terminal> Renderer<T> {
         (bands.transcript.start + head.start)..(bands.transcript.start + foot.end)
     }
 
-    /// Whether the pointer is over the prompt row the caller marked pointable.
+    /// Whether the pointer is over the offer on the prompt row the caller
+    /// marked pointable: on that row, and on a cell of it the offer took.
     fn prompt_pointed(&self) -> bool {
-        let (Some((row, _)), Some(target)) = (self.pointing, self.prompt_target) else {
+        let (Some((row, column)), Some((target, door))) = (self.pointing, &self.prompt_target)
+        else {
             return false;
         };
 
-        matches!(self.aimed(row), Some(Aimed::Boxed(at)) if at == target)
+        door.contains(&column) && self.aimed(row) == Some(Aimed::Boxed(*target))
     }
 
     /// Drops whatever is selected, because the picture under it is about to
@@ -1336,7 +1343,8 @@ impl<T: Terminal> Renderer<T> {
         self.standing.ran = (!turn.is_empty()).then_some(palette);
         self.standing.prompted = Some(prompt.caret);
         self.standing.turned = None;
-        self.prompt_target = prompt.pointed.map(|(at, _)| at);
+        let columns = self.size.columns;
+        self.prompt_target = prompt.pointed.map(|(at, row)| (at, door(row, columns)));
 
         if self.prompt_pointed()
             && let Some((at, row)) = prompt.pointed
@@ -1861,7 +1869,7 @@ impl<T: Terminal> Renderer<T> {
 
     /// What is under window row `at`.
     ///
-    /// The whole of what a click means. On a screen this process owns, the
+    /// What a click means, row by row. On a screen this process owns, the
     /// answer needs nothing from the terminal: the bands say which region the
     /// row is in and the record says which line is on it, so there is no round
     /// trip to ask where the cursor happens to be.
@@ -1873,6 +1881,9 @@ impl<T: Terminal> Renderer<T> {
     /// the first of them: the offer to open the result was made on that one,
     /// and a reader pointing at the second row of a sentence is pointing at the
     /// sentence.
+    ///
+    /// The row only: which of its cells the row drew is [`Self::cells`], and a
+    /// press on any other cell of it lands on nothing.
     #[must_use]
     pub fn aimed(&self, at: usize) -> Option<Aimed> {
         // A window row names nothing here: the region moves with the
@@ -1900,6 +1911,43 @@ impl<T: Terminal> Renderer<T> {
         }
 
         None
+    }
+
+    /// The cells of window row `at` that a click or a resting pointer counts
+    /// on: from the first cell the row drew to its last, in terminal cells.
+    ///
+    /// [`Self::aimed`] says what a row is; this says how much of it is that.
+    /// The indent before a row's first mark and the blank after its last
+    /// character are the window's, not the row's, so a press there lands on
+    /// nothing. Read from the row the band shows, folded and clipped as the
+    /// frame draws it, so what answers is what is on screen.
+    ///
+    /// The prompt row the caller marked pointable answers with the cells of
+    /// its offer alone: what it says beside the offer is a fact, not a door.
+    ///
+    /// Empty in native mode, where no press arrives, and for any row but a
+    /// transcript row or that one.
+    #[must_use]
+    pub fn cells(&self, at: usize) -> Range<usize> {
+        if self.native.is_some() {
+            return 0..0;
+        }
+
+        if let Some((target, door)) = &self.prompt_target
+            && self.aimed(at) == Some(Aimed::Boxed(*target))
+        {
+            return door.clone();
+        }
+
+        let bands = self.bands();
+        if !bands.transcript.contains(&at) {
+            return 0..0;
+        }
+
+        let top = self.record.top_row(bands.transcript.len());
+        self.record
+            .row_at(top + (at - bands.transcript.start))
+            .map_or(0..0, |row| drawn(&row, self.folds()))
     }
 
     /// How the window is shared out, given what is standing in it.
@@ -2104,6 +2152,32 @@ impl<T: Terminal> Taking<'_, T> {
             None => Ok(()),
         }
     }
+}
+
+/// The cells `row` draws when it is given `room` of them: from its first
+/// character that is not a blank to the end of its last, a wide character
+/// counting as two.
+fn drawn(row: &Row, room: usize) -> Range<usize> {
+    let text = row.text();
+    let said = width::clip(&text, room).trim_end_matches(' ');
+    let indent = said.len() - said.trim_start_matches(' ').len();
+    indent..width::columns(said)
+}
+
+/// The cells of `row` its [`Slot::Pointed`] runs take when it is given `room`
+/// of them: the offer on a pointable row, from its first such cell to its last.
+/// Empty for a row that offers nothing.
+fn door(row: &Row, room: usize) -> Range<usize> {
+    let mut column = 0;
+    let mut door: Option<Range<usize>> = None;
+    for (slot, text) in row.clipped(room).spans() {
+        let end = column + width::columns(text);
+        if slot == Slot::Pointed {
+            door = Some(door.map_or(column..end, |door| door.start..end));
+        }
+        column = end;
+    }
+    door.unwrap_or(0..0)
 }
 
 /// Paints `rows` into buffers the caller keeps between frames.

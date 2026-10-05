@@ -15,6 +15,12 @@
       "sha256": "f2dc66bb59889116ebee1c69d63c51c12886a9353f092731fa1944d1f47b43ad"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_a_cut_result_opens_it.snap",
+      "case": "a_click_on_a_cut_result_opens_it",
+      "opened": [],
+      "sha256": "091c83b94de22c207e274222e4fab8a5d6e33a9693f7353d1f11267f296d8cc7"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks.snap",
       "case": "a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks",
       "opened": [],

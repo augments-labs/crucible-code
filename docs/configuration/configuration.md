@@ -641,7 +641,9 @@ The mouse is not among these keys. crucible holds it for the whole session: the
 wheel scrolls the transcript, a click puts the cursor where you point or opens a
 result the transcript cut short, resting the pointer on one of those results
 lights the one you are on, and a drag selects what it covers and puts it on your
-clipboard when you let go.
+clipboard when you let go. A click or a resting pointer counts on the result's
+own text, from its mark to its last character: the blank cells beside it on the
+same row are not the result.
 
 Hold **Shift** while you drag and the selection is your terminal's own again.
 Every terminal keeps Shift as the way past a program holding the pointer, which
