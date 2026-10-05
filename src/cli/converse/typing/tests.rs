@@ -1509,6 +1509,150 @@ fn clicking_the_visible_command_count_reaches_the_background_command_door() {
     ));
 }
 
+// A click opens a cut result only on the cells its row drew.
+
+/// A window with one result the transcript cut short on it, drawn and held
+/// the way a turn draws and holds one, and the window row that offers it.
+fn cut_short() -> (Renderer<Recording>, Kept, usize) {
+    let mut renderer = roomy();
+    let mut kept = Kept::default();
+    crate::cli::draw::came_back(
+        &mut renderer,
+        &mut kept,
+        &crucible_types::ToolId::new("read"),
+        crate::cli::draw::Shown::live(crucible_tools::ToolOutput::ok(
+            "first line\nsecond line\nthird line\nfourth line",
+        )),
+        Style::plain(),
+    )
+    .expect("the result to draw");
+
+    let offering = (0..renderer.rows())
+        .find(|row| {
+            renderer
+                .terminal()
+                .picture()
+                .row(*row)
+                .contains("ctrl+o to expand")
+        })
+        .expect("the row that offers the result");
+    (renderer, kept, offering)
+}
+
+/// What a click at `row` and `column` lands on, between turns.
+fn clicked_at(renderer: &Renderer<Recording>, row: usize, column: usize) -> Landed {
+    landed(
+        renderer,
+        &mut Editor::new(),
+        &settled(Mode::Ask),
+        Pointed { row, column },
+    )
+}
+
+/// The cells window row `at` drew, read off the picture: from its first
+/// character that is not a blank to the end of its last.
+fn drawn_cells(renderer: &Renderer<Recording>, at: usize) -> std::ops::Range<usize> {
+    let picture = renderer.terminal().picture();
+    let said = picture.row(at);
+    let blank = said.len() - said.trim_start().len();
+    blank..crucible_tui::columns(said)
+}
+
+#[test]
+fn a_click_right_of_a_cut_result_opens_nothing() {
+    let (renderer, _, offering) = cut_short();
+    let drawn = drawn_cells(&renderer, offering);
+
+    for column in [drawn.end, renderer.columns() - 1] {
+        assert!(
+            matches!(clicked_at(&renderer, offering, column), Landed::Nothing),
+            "blank cell {column} of {:?} opened the result",
+            renderer.terminal().picture().row(offering)
+        );
+    }
+}
+
+#[test]
+fn a_click_left_of_a_cut_result_opens_nothing() {
+    let (renderer, _, offering) = cut_short();
+    let drawn = drawn_cells(&renderer, offering);
+    assert!(drawn.start > 0, "the result is not indented under its call");
+
+    for column in 0..drawn.start {
+        assert!(
+            matches!(clicked_at(&renderer, offering, column), Landed::Nothing),
+            "blank cell {column} of {:?} opened the result",
+            renderer.terminal().picture().row(offering)
+        );
+    }
+}
+
+#[test]
+fn a_click_on_the_offer_opens_the_result() {
+    let (renderer, kept, offering) = cut_short();
+    let said = renderer.terminal().picture().row(offering).to_owned();
+    let offer = said.find("ctrl+o").expect("the offer on its row");
+    let drawn = drawn_cells(&renderer, offering);
+
+    for column in [
+        drawn.start,
+        crucible_tui::columns(&said[..offer]),
+        drawn.end - 1,
+    ] {
+        assert!(
+            matches!(
+                clicked_at(&renderer, offering, column),
+                Landed::Record(at) if kept.offered(at)
+            ),
+            "cell {column} of {said:?} did not open the result"
+        );
+    }
+}
+
+#[test]
+fn a_click_on_the_second_row_of_a_wrapped_result_opens_it_only_on_its_drawn_cells() {
+    // Laid as a run of calls is laid: a mark, then words that wrap at the
+    // window and hang under it, so the second row is indented and shorter than
+    // the first.
+    let mut renderer = drawing();
+    let offered = crate::cli::draw::gathered(
+        &mut renderer,
+        "Read 3 files, searched for 2 patterns",
+        Style::plain(),
+    )
+    .expect("the run to draw");
+
+    let second = (0..renderer.rows())
+        .find(|row| renderer.terminal().picture().row(*row).contains("patterns"))
+        .expect("the second row of the run");
+    assert!(
+        matches!(renderer.aimed(second - 1), Some(Aimed::Line(at)) if at == offered),
+        "the run did not wrap: {:?}",
+        renderer.terminal().picture().said()
+    );
+    let drawn = drawn_cells(&renderer, second);
+    let above = drawn_cells(&renderer, second - 1);
+    assert!(
+        drawn.start > 0 && drawn.end < above.end,
+        "{drawn:?} under {above:?}"
+    );
+
+    for column in (0..drawn.start).chain(drawn.end..above.end) {
+        assert!(
+            matches!(clicked_at(&renderer, second, column), Landed::Nothing),
+            "blank cell {column} of {:?} opened the result",
+            renderer.terminal().picture().row(second)
+        );
+    }
+    for column in drawn {
+        assert!(
+            matches!(clicked_at(&renderer, second, column), Landed::Record(at) if at == offered),
+            "cell {column} of {:?} did not open the result",
+            renderer.terminal().picture().row(second)
+        );
+    }
+}
+
 #[test]
 fn a_hidden_leading_command_is_committed_and_sent_but_not_selected_locally() {
     let source = format!("/help {}", "x".repeat(1_001));

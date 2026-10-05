@@ -2661,6 +2661,73 @@ fn ctrl_o_pages_and_steps_through_cut_results() {
     assert!(closed.contains("All three are read."), "{closed}");
 }
 
+/// A window whose transcript holds one read the transcript cut short, and
+/// the row and the drawn cells of the line that offers it.
+///
+/// The picture carries its size on a header line and frames each row in
+/// bars, and the last column of the transcript's rows is the scroll rail's:
+/// the cells are read from what is left.
+fn one_cut_read(case: &str) -> (Watched, usize, std::ops::Range<usize>) {
+    let reading = vec![vec![("read", r#"{"path":"alpha.txt"}"#.to_owned())]];
+    let vendor = Vendor::calling_batches(&reading, "The file is read.");
+    let config = serde_json::to_string_pretty(&serde_json::json!({
+        "updates": {"check":"never"},
+        "permissions": {"allow":["read(*)"]},
+        "providers": {"anthropic": {"model":"claude-sonnet-4-6", "baseUrl": vendor.address()}}
+    }))
+    .expect("the configuration is written as JSON");
+    let mut window = Watched::configured(case, 80, 24, &config, true);
+    three_files(&window);
+    window.types_until("read alpha\r", "The file is read.");
+
+    let picture = window.picture();
+    let (line, row) = picture
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("ctrl+o to expand"))
+        .unwrap_or_else(|| panic!("no row offers the result:\n{picture}"));
+    let row = row.strip_prefix('|').unwrap_or(row);
+    let row = row.strip_suffix('|').unwrap_or(row);
+    let transcript: String = row.chars().take(79).collect();
+    let said = transcript.trim_end();
+    let blank = said.len() - said.trim_start().len();
+    let cells = blank..crucible_tui::columns(said);
+    (window, line - 1, cells)
+}
+
+#[test]
+fn a_click_beside_a_cut_result_opens_nothing() {
+    // The row is the result's only as far as it drew: the indent under the
+    // call and the blank after the offer are the window's.
+    let (mut window, at, cells) = one_cut_read("click-beside-cut");
+    let before = window.picture();
+
+    for column in [0, cells.start - 1, cells.end, 78] {
+        let (x, y) = (column + 1, at + 1);
+        window.reports(&format!("\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m"));
+        let after = window.picture();
+        assert!(
+            !after.contains("esc to close"),
+            "a click on blank cell {column} opened the result:\n{after}"
+        );
+        assert_eq!(
+            after, before,
+            "a click on blank cell {column} moved the screen"
+        );
+    }
+}
+
+#[test]
+fn a_click_on_a_cut_result_opens_it() {
+    let (mut window, at, cells) = one_cut_read("click-on-cut");
+
+    window.clicks(at, cells.start);
+    let opened = window.picture();
+    assert!(opened.contains("esc to close"), "{opened}");
+    assert!(opened.contains("alpha line 02"), "{opened}");
+    insta::assert_snapshot!("a_click_on_a_cut_result_opens_it", opened);
+}
+
 #[test]
 fn compact_tool_activity_and_its_group_expand_in_the_real_terminal() {
     let script = format!(

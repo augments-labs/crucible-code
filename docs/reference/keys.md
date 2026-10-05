@@ -146,9 +146,9 @@ queue](#the-queue).
 | Action | What it does |
 | --- | --- |
 | Wheel | Scrolls the transcript, six rows a notch unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise, from 3 to 30. Sending a prompt takes you back to the foot. |
-| Pointer over a cut result | Lights it, every row of it. |
+| Pointer over a cut result | Lights it, every row of it, while the pointer is on the result's own text rather than a blank cell beside it. |
 | Pointer over the scroll rail | Lights the track and its marks, and draws the mark under the pointer larger. |
-| Click on a cut result | Stands that one result, in the view <kbd>Ctrl+O</kbd> stands them all in. |
+| Click on a cut result | Stands that one result, in the view <kbd>Ctrl+O</kbd> stands them all in. The click counts on the result's own text; a blank cell beside it on the row opens nothing. |
 | Drag | Selects the rows you cover, anywhere in the window, and letting go copies them. At the top or the foot the transcript scrolls under the pointer, and the wheel scrolls it while the button is still down. Resizing lets go of the selection. |
 | Click on the scroll rail | Off the thumb, moves the transcript so the thumb is centred where you clicked, or as near as the rail's ends allow; a click on a prompt's mark lands on that prompt. A click on the thumb takes hold of it without moving it. |
 | Drag on the scroll rail | Scrolls the transcript with the pointer, holding the thumb where you took it; at the foot it follows the newest line again. |
