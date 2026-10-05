@@ -94,6 +94,11 @@ change in any release with no deprecation period.
   fullscreen a click or a resting pointer on a list standing over the box
   counts on the cells the row drew, so the blank after a command on its row
   marks, opens and lights nothing.
+- **A command piped in at a terminal hangs its reply's mark on the reply's
+  first row.** A reply that opened with a line such as `! fly is not a mode`
+  was written on the `ask ›` row and the `⎿` mark went on the line under it;
+  the reply now starts on its own row under the prompt, marked, as other
+  replies are.
 
 ## [0.45.2] - 2026-10-03
 
