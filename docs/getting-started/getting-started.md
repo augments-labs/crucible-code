@@ -601,6 +601,8 @@ when the view reaches it; one the log cannot give back says
 `! this result could not be read back from the session log` in its place.
 Arrow keys move one row at a time; the mouse
 wheel uses `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` (six rows per notch by default).
+<kbd>PgUp</kbd> and <kbd>PgDn</kbd> move by the rows the view shows, less one.
+<kbd>→</kbd> and <kbd>←</kbd> put the next older or newer result at the top of the view.
 Long headings and output lines wrap here so their ends remain readable.
 <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
 it: the box comes back with the line you were typing still in it, and nothing is
