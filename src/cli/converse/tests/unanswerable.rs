@@ -511,3 +511,123 @@ fn a_resumed_compaction_with_no_model_sends_nothing_and_says_what_is_missing() {
     let written = renderer.terminal().written();
     assert!(written.contains("No model selected"), "{written}");
 }
+
+/// The rows `/compact` leaves at a terminal in `mode`, 40 columns wide, in a
+/// session with a provider chosen and no model: from the line that asked to
+/// the next one, blank rows kept.
+///
+/// Native mode's frames are written as rows parted by line ends rather than
+/// parked at window rows, so its last frame is read as it was written: what
+/// follows the last erase, with every control sequence taken out.
+fn compacted_with_no_model(mode: ScreenMode) -> Vec<String> {
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        Runner::new(
+            Box::new(Script::new(Vec::new())),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: String::new().into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
+    let mut renderer = Renderer::drawing(Recording::new(40, 24), mode);
+    let mut input = Cursor::new(b"/compact\n".to_vec());
+
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to carry on past the warning");
+
+    let rows = match mode {
+        ScreenMode::Fullscreen => renderer.terminal().picture().rows(),
+        ScreenMode::Native => {
+            let written = renderer.terminal().written();
+            let last = written.rsplit("\x1b[J").next().unwrap_or_default();
+            let mut plain = String::new();
+            let mut left = last.chars();
+            while let Some(character) = left.next() {
+                if character == '\x1b' {
+                    left.by_ref()
+                        .skip(1)
+                        .find(|byte| ('@'..='~').contains(byte));
+                } else {
+                    plain.push(character);
+                }
+            }
+            plain
+                .split("\r\n")
+                .map(|row| row.trim_end().to_owned())
+                .collect()
+        }
+    };
+    let asked = rows
+        .iter()
+        .position(|row| row.starts_with("ask"))
+        .unwrap_or_else(|| panic!("no line asked in {rows:#?}"));
+    let next = asked
+        + 1
+        + rows
+            .iter()
+            .skip(asked + 1)
+            .position(|row| row.starts_with("ask"))
+            .unwrap_or_else(|| panic!("no second line in {rows:#?}"));
+    rows.get(asked..=next).unwrap_or_default().to_vec()
+}
+
+#[test]
+fn compact_with_no_model_answers_under_the_line_that_asked_in_both_screen_modes() {
+    // Every other command's reply hangs under the line that asked, with one
+    // blank row after it. This one used to stand two rows down, with no mark,
+    // reading as something said on its own rather than as `/compact`'s answer.
+    let hangs = plain().style().glyphs().hangs();
+
+    for mode in [ScreenMode::Fullscreen, ScreenMode::Native] {
+        let rows = compacted_with_no_model(mode);
+        let reply = rows.get(1..rows.len() - 2).unwrap_or_default();
+
+        assert!(
+            reply
+                .first()
+                .is_some_and(|row| row.starts_with(&format!("{hangs} Warning:"))),
+            "{mode:?}: the reply is not hung under the line that asked: {rows:#?}"
+        );
+        assert!(
+            reply.iter().skip(1).all(|row| row.starts_with("  ")),
+            "{mode:?}: a row of the reply lost its indent: {rows:#?}"
+        );
+        assert!(
+            rows.iter().all(|row| row.chars().count() <= 40),
+            "{mode:?}: a row is wider than the window: {rows:#?}"
+        );
+        let words: Vec<&str> = reply
+            .iter()
+            .flat_map(|row| row.split_whitespace())
+            .skip(1)
+            .collect();
+        assert_eq!(
+            words.join(" "),
+            crucible_app::providers::NO_MODEL_CHOSEN,
+            "{mode:?}: {rows:#?}"
+        );
+        assert_eq!(
+            rows.get(rows.len() - 2).map(String::as_str),
+            Some(""),
+            "{mode:?}: not one blank row after the reply: {rows:#?}"
+        );
+    }
+}
