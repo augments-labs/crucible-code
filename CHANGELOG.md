@@ -50,6 +50,10 @@ change in any release with no deprecation period.
   character, so the indent before it and the blank after it on the same row
   open and light nothing. The count of commands left running under the box
   answers on its own words in the same way, not on the mode beside it.
+- **Esc closes the command list.** Between turns it used to do nothing, and
+  during a turn it stopped the turn and left the list standing. It now closes
+  the list in both, keeping the line, as it already closes the Ctrl+O view
+  and the queue.
 
 ## [0.45.2] - 2026-10-03
 
