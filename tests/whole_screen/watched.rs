@@ -662,7 +662,7 @@ impl Watched {
     /// waits on: the thing it is watching is the thing that keeps bytes
     /// arriving, so the quiet it waits for never comes and the step fails at
     /// [`CEILING`] with the picture it wanted on it. This reads frames as they
-    /// land and stops at the first one carrying `wanted`.
+    /// land and stops at the first finished one carrying `wanted`.
     ///
     /// It terminates for the same reason `settle` does — every pass either
     /// takes bytes off a stream a stopped process cannot add to, or waits
@@ -855,11 +855,13 @@ impl Watched {
         );
     }
 
-    /// Reads frames until `wanted` is on screen.
+    /// Reads frames until `wanted` is on screen in a frame that has finished
+    /// being written, as [`Screen::shows`] has it: a read that ends inside a
+    /// frame would otherwise hand a case half a box.
     pub(crate) fn catches(&mut self, step: &str, wanted: &str) {
         let deadline = Instant::now() + CEILING;
 
-        while !self.picture().contains(wanted) {
+        while !self.screen.shows(wanted) {
             match self.bytes.recv_timeout(QUIET) {
                 Ok(bytes) => self.feed(&bytes),
                 Err(RecvTimeoutError::Timeout) => {}
@@ -873,7 +875,12 @@ impl Watched {
 
             assert!(
                 Instant::now() < deadline,
-                "no {wanted:?} was ever drawn after {step}, in {CEILING:?}\n{}",
+                "no {wanted:?} was ever drawn after {step}, in {CEILING:?}{}\n{}",
+                if self.screen.is_holding() {
+                    " — the frame it is in was never finished"
+                } else {
+                    ""
+                },
                 self.picture()
             );
         }
