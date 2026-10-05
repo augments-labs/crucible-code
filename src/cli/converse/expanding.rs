@@ -81,6 +81,12 @@ pub(super) struct View {
     from: usize,
     /// The furthest down it may go, as of the last frame drawn.
     end: usize,
+    /// The furthest down the window opens on rows, as of the last frame
+    /// drawn: less than `end` where the window may go on only to reach a
+    /// result not read back yet. Asked for further down than this, the frame
+    /// is drawn from here, so this is where the result at its top is counted
+    /// from, by the footer and by a step alike.
+    laid: usize,
     /// Where the window was open when the last frame was drawn, which is how
     /// a frame knows which way the window moved since.
     was: usize,
@@ -110,6 +116,7 @@ impl View {
         Self {
             from: 0,
             end: 0,
+            laid: 0,
             was: 0,
             page: 0,
             starts: Vec::new(),
@@ -322,6 +329,7 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     let View {
         from,
         end,
+        laid,
         was,
         page,
         starts: begun,
@@ -341,9 +349,8 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     // the window and never be reached, so the window may go down as far as its
     // top, which is where the view reads it.
     let total: usize = heights.iter().sum();
-    *end = total
-        .saturating_sub(Expanded::seen(rows))
-        .max(unread(&entries, back, &heights));
+    *laid = total.saturating_sub(Expanded::seen(rows));
+    *end = (*laid).max(unread(&entries, back, &heights));
     *from = (*from).min(*end);
     *was = *from;
     *page = Expanded::seen(rows);
@@ -775,10 +782,15 @@ fn heading(view: &View, at: usize) -> Option<usize> {
 }
 
 /// Which result is at the top of the window: the last to begin at or above it.
+///
+/// The top of the window as it is drawn rather than as far as it was asked to
+/// go, which past the rows there are to lay is further down: counted from
+/// there, the footer would name one result and a step go from another.
 fn topmost(view: &View) -> usize {
+    let top = view.from.min(view.laid);
     view.starts
         .iter()
-        .filter(|start| **start <= view.from)
+        .filter(|start| **start <= top)
         .count()
         .saturating_sub(1)
 }
