@@ -176,21 +176,27 @@ spin() {
 # Ends the spinner. It exits on TERM within its frame, so the wait is short;
 # but bash runs a trap only once the frame's `sleep` returns, and on macOS a
 # spinner was seen looping two minutes after its TERM while the step waited for
-# it. So a spinner still there after a second is killed, and the shell's report
-# of a job ended by a signal is kept off the terminal. The pause here is not
+# it. So a spinner still there after a second is killed. The pause here is not
 # the frame's `sleep 0.1`, which lets a test hold one and not the other.
+#
+# A spinner the TERM reaches before its trap is set dies of the signal, and a
+# bash that reports a job ended by a signal (3.2 does, for TERM as well) writes
+# the report on its own standard error at whichever command of this function
+# it is at when it notices: on macOS that was the pause, and the report reached
+# the terminal above the step's row. The redirection on the function's body is
+# in force for all of it, so the report goes nowhere whichever command that is.
 stop_spinner() {
     [[ -n $spinner ]] || return 0
-    kill "$spinner" 2>/dev/null || true
+    kill "$spinner" || true
     local tries=0
-    while kill -0 "$spinner" 2>/dev/null && ((tries < 20)); do
+    while kill -0 "$spinner" && ((tries < 20)); do
         sleep 0.05
         tries=$((tries + 1))
     done
-    kill -KILL "$spinner" 2>/dev/null || true
-    wait "$spinner" 2>/dev/null || true
+    kill -KILL "$spinner" || true
+    wait "$spinner" || true
     spinner=
-}
+} 2>/dev/null
 
 # A terminal is narrow when the download's row, the widest a run draws, could
 # not hold its detail beside its label.
