@@ -61,6 +61,10 @@ change in any release with no deprecation period.
 - **`/cache` keeps its indent in a narrow window.** Lines that wrapped
   started again at the left edge, out from under the reply's mark; they now
   wrap inside it, as `/context` and `/usage` do.
+- **`/clear` draws its welcome card with the glyphs chosen in `/settings`.**
+  After the Glyphs row was set to `ascii` in a running session, the card a
+  fullscreen `/clear` put back was still drawn in box-drawing characters; it
+  now uses the set in force, as every row drawn after the change does.
 
 ## [0.45.2] - 2026-10-03
 

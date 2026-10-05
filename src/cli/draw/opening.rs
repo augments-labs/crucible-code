@@ -101,6 +101,20 @@ impl Standing {
         }
     }
 
+    /// The same card, drawn with `style` rather than the one in force when its
+    /// facts were read.
+    ///
+    /// The facts never change after launch, but what they are drawn with can:
+    /// the glyph set is a setting a running session changes, and a card put
+    /// back after that change is drawn in the set chosen, as everything else
+    /// drawn from then on is.
+    pub(crate) fn drawing(&self, style: Style) -> Self {
+        Self {
+            style,
+            ..self.clone()
+        }
+    }
+
     /// The whole opening, drawn for a terminal `columns` wide.
     ///
     /// The root is drawn because every tool path is relative to it, and a user
@@ -183,8 +197,9 @@ impl Standing {
     /// box: it scrolls with whatever is said after it. What goes over is a
     /// clone rather than the rows it makes, which is what lets the card be laid
     /// out for the window there is rather than the one there was — the facts it
-    /// draws from were read once and never change again, so the only thing that
-    /// can be out of date about it is the width.
+    /// draws from were read once and never change again, so what can be out of
+    /// date about it is the width, and the style it is drawn with, which a
+    /// caller putting the card back later settles with [`Standing::drawing`].
     ///
     /// # Errors
     ///

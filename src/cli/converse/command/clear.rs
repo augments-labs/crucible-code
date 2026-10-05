@@ -54,7 +54,7 @@ pub(super) fn run<T: Terminal>(
             held.images.clear();
             renderer.empties()?;
             match renderer.screen() {
-                ScreenMode::Fullscreen => held.opening.commit(renderer)?,
+                ScreenMode::Fullscreen => held.opening.drawing(terms.style()).commit(renderer)?,
                 // No divider and no card: no session ended here to be parted
                 // from the one that follows, and the launch's card is still
                 // in the scrollback above.
@@ -120,11 +120,13 @@ pub(super) fn run<T: Terminal>(
     // fresh start is the whole of what says one happened. The card's facts
     // were read at launch, so its list of recent sessions does not yet name
     // the one just left — the price of a card that never disagrees with the
-    // one the launch drew. In native mode the launch's card is still in the
+    // one the launch drew. What it is drawn with is the session's now rather
+    // than the launch's: a glyph set chosen since then is the one every row
+    // drawn after it uses. In native mode the launch's card is still in the
     // scrollback above what was said, and a second one would read as a second
     // launch, so one divider says where the new session starts instead.
     match renderer.screen() {
-        ScreenMode::Fullscreen => held.opening.commit(renderer)?,
+        ScreenMode::Fullscreen => held.opening.drawing(terms.style()).commit(renderer)?,
         ScreenMode::Native => renderer.divides("new session")?,
     }
     Ok(())
