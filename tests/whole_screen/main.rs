@@ -511,6 +511,49 @@ fn ctrl_b_opens_the_running_list_during_a_turn() {
     insta::assert_snapshot!(window.picture());
 }
 
+/// The row of the window `said` is written on, and where its drawn cells end.
+///
+/// The picture carries its size on a header line and frames each row in bars,
+/// so a line of it is one further down than the row it shows.
+fn row_ending(picture: &str, said: &str) -> (usize, usize) {
+    let (line, row) = picture
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains(said))
+        .unwrap_or_else(|| panic!("no row says {said}:\n{picture}"));
+    let row = row.strip_prefix('|').unwrap_or(row);
+    let row = row.strip_suffix('|').unwrap_or(row);
+    (line - 1, crucible_tui::columns(row.trim_end()))
+}
+
+#[test]
+fn a_click_beside_a_running_command_opens_nothing() {
+    // A row of the list is the command's only as far as it drew: the blank
+    // after the facts on it is the window's. The row is marked already, so a
+    // click that counted there would stand what the command has printed.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("click-beside-running", 60, 24, &vendor, "bash(*)");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("\x02", "Still running");
+
+    let before = window.picture();
+    let (at, end) = row_ending(&before, "› 1. Bash(sleep 30)");
+    for column in [end, 59] {
+        let (x, y) = (column + 1, at + 1);
+        window.reports(&format!("\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m"));
+        let after = window.picture();
+        assert_eq!(
+            after, before,
+            "a click on blank cell {column} of the command's row moved the screen"
+        );
+    }
+
+    // The same row's own text still opens it, so the clicks above were heard.
+    window.clicks(at, 2);
+    let opened = window.picture();
+    assert!(!opened.contains("enter shows it"), "{opened}");
+}
+
 #[test]
 fn escape_cancels_a_real_pty_turn_and_returns_to_the_prompt() {
     let vendor = Vendor::answering(&"still arriving ".repeat(96));

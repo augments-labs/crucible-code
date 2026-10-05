@@ -26,7 +26,9 @@ this page is the list. Slash commands are not keys: they are listed under
   own selection.
 - With `output.screen` set to `native` the mouse is not reported at all, and
   the wheel, a drag and a click are your terminal's.
-- A click outside the rows of whatever is standing over the box is ignored.
+- A click outside the rows of whatever is standing over the box is ignored,
+  and so is a click on a blank cell beside what one of its rows drew; the
+  pointer lights nothing there either.
   The wheel over a panel that is not a window over more text than it shows
   scrolls the transcript underneath it; over one that is, it walks the panel,
   and a notch the panel has no use for at either end goes to the transcript.
@@ -400,7 +402,7 @@ in fullscreen.
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. |
 | <kbd>Enter</kbd> | Shows what the marked command has printed so far. |
 | <kbd>x</kbd> | Stops it, with no confirmation. If the stop fails the panel says `Stop failed; x retries`. |
-| Click | Marks the row under the pointer, and a click on the marked row shows it. |
+| Click | Marks the row under the pointer, and a click on the marked row shows it. The click counts on the row's own text; the blank after it marks nothing. |
 | <kbd>Esc</kbd>, <kbd>Ctrl+B</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Closes the list. |
 | Wheel | Scrolls the transcript. |
 
