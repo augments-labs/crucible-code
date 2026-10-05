@@ -785,7 +785,7 @@
       "opened": [
         "Vendor::answering(\"The first thing this session said.\")",
         "Watched::native(case, 80, 24, vendor)",
-        "Watched::native(case, columns.max(80), 24, vendor)"
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "c4751b555a367d4ae2513d8c5403d490843f703dcc81aea84a6bacb67707bc00"
     },
@@ -805,7 +805,7 @@
       "opened": [
         "Vendor::answering(\"The first thing this session said.\")",
         "Watched::native(case, 80, 24, vendor)",
-        "Watched::native(case, columns.max(80), 24, vendor)"
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "31ae9dc29075b3866be7f69ed62366d18f2ce8be148cafcd7707cc19382e19b0"
     },
@@ -813,7 +813,8 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_scrolls_inside_its_room_in_native_mode.snap",
       "case": "settings_scrolls_inside_its_room_in_native_mode",
       "opened": [
-        "Vendor::answering(&crate::a_long_answer())"
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "f2490344ed47865b27d3a752ed9594b638d5ba741f719cbd8830c42fba7d10e3"
     },
