@@ -44,7 +44,6 @@ fn standing(sample: &Sample) -> Standing {
             workspace: &sample.workspace(),
             sessions: &[],
             update: None,
-            style: Style::plain(),
         },
         std::time::SystemTime::now(),
     )

@@ -269,7 +269,7 @@ fn picking<T: Terminal>(
     // second launch, so there the head is one divider saying where the
     // session picked up begins.
     match renderer.screen() {
-        ScreenMode::Fullscreen => held.opening.drawing(terms.style()).commit(renderer)?,
+        ScreenMode::Fullscreen => held.opening.commit(renderer)?,
         ScreenMode::Native => renderer.divides("session resumed")?,
     }
     let pruned = conversation.session().take_pruned();

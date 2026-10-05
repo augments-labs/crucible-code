@@ -506,7 +506,7 @@ fn a_native_frame_never_names_a_screen_row() {
     let mut render = native(&window);
 
     render
-        .opens(Box::new(|_| vec![row("crucible"), row("the opening")]))
+        .opens(Box::new(|_, _| vec![row("crucible"), row("the opening")]))
         .unwrap();
     stands(&mut render);
     render.commit("> hello").unwrap();
@@ -882,7 +882,7 @@ fn three_turns(render: &mut Renderer<Window>) {
     ];
     render.wears(colourful());
     render
-        .opens(Box::new(|_| vec![row("crucible"), row("the opening")]))
+        .opens(Box::new(|_, _| vec![row("crucible"), row("the opening")]))
         .unwrap();
     stands(render);
     render.seal().unwrap();
