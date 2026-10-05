@@ -23,6 +23,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **↑ and the wheel in the Ctrl+O results view move it at once.** Where
+  the oldest result was not read back from the session log yet, the window
+  could stand further down than the rows it shows, and a press back walked
+  that distance first with nothing on screen changing. It now goes back from
+  the row the view is drawn from.
 - **In native mode `/resume` and `/clear` no longer draw a second welcome
   card.** The session that follows starts under one `session resumed` or `new
   session` divider row, and the launch's warnings are not written again. A
@@ -99,6 +104,8 @@ change in any release with no deprecation period.
   first row.** A reply that opened with a line such as `! fly is not a mode`
   was written on the `ask ›` row and the `⎿` mark went on the line under it;
   the reply now starts on its own row under the prompt, marked, as other
+  replies are. A `/release-notes` answer, a release or a refusal, starts on
+  its own row too, set apart as when it is typed.
   replies are.
 - **In native mode the box stays at the foot of the window after a turn.**
   What a turn showed under the answer pushed transcript rows into the

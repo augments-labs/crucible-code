@@ -401,10 +401,20 @@ struct Stood {
 }
 
 /// Reads [`Stood`] off `window` with a panel `keys` opened.
+///
+/// Fails, showing the window, where the panel took every row of it: no row of
+/// the transcript is left to stand the echo under, and the picture is what
+/// says which panel grew.
 fn stood(window: &Watched, before: &str, back_before: &str, keys: &str) -> Stood {
     let opened = window.picture();
     let transcript = transcript_rows(before, &opened, keys);
-    let echo = usize::from(echoed(&drawn(&opened), transcript - 1, keys));
+    let Some(last) = transcript.checked_sub(1) else {
+        panic!(
+            "the panel took all {} rows of the window and left none of the transcript's:\n{opened}",
+            drawn(&opened).len()
+        );
+    };
+    let echo = usize::from(echoed(&drawn(&opened), last, keys));
     let written: Vec<&str> = drawn(before)
         .into_iter()
         .chain(drawn(back_before))
