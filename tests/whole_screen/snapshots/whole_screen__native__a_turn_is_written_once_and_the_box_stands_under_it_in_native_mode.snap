@@ -1,8 +1,9 @@
 ---
 source: tests/whole_screen/native.rs
-expression: window.picture()
+assertion_line: 52
+expression: picture
 ---
-80x24 cursor 19,4 scrollback 2
+80x24 cursor 21,4 scrollback 2
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
@@ -20,10 +21,10 @@ expression: window.picture()
 |                                                                                |
 |Two plus two is four.                                                           |
 |                                                                                |
+|                                                                                |
+|                                                                                |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                                                |
-|                                                                                |

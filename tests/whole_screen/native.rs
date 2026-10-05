@@ -30,7 +30,9 @@ fn a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode() {
     // go out to the terminal once each, and the box is drawn again under them
     // rather than at a row of its own. A terminal that was sent the turn twice
     // would show it twice somewhere a reader could scroll to, which is why the
-    // count is taken over the scrollback and the window together.
+    // count is taken over the scrollback and the window together. The box
+    // stands at the foot: the region grew while the turn ran, and keeps the
+    // height it grew to once the turn is over.
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Watched::native("native-answered", 80, 24, &vendor);
 
@@ -40,7 +42,14 @@ fn a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode() {
     let read = everything(&window);
     assert_eq!(read.matches("what is 2+2").count(), 1, "{read}");
     assert_eq!(read.matches("Two plus two is four.").count(), 1, "{read}");
-    insta::assert_snapshot!(window.picture());
+    let picture = window.picture();
+    assert!(
+        drawn(&picture)
+            .last()
+            .is_some_and(|row| row.contains("ask mode on")),
+        "the box does not stand at the foot:\n{picture}"
+    );
+    insta::assert_snapshot!(picture);
 }
 
 #[test]

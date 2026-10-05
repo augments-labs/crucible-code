@@ -573,6 +573,59 @@ fn a_finished_native_row_is_written_exactly_once_across_later_frames() {
 }
 
 #[test]
+fn a_native_region_that_grew_in_a_turn_keeps_its_height_so_the_box_stays_at_the_foot() {
+    // A turn grows the region: the line asked and the answer stand in it with
+    // the spinner under them, and the growth pushes the rows above into the
+    // scrollback. When the turn ends the answer is sealed out and the spinner
+    // goes, and what the region still has to show is shorter than the rows it
+    // stood in. The rows it pushed out cannot come back, so the region keeps
+    // its height, padded with blank rows at its top, and the box stands at
+    // the foot where the turn left it rather than two rows above blank ones.
+    let window = Window::new(40, 8);
+    let mut render = native(&window);
+    for at in 0..5 {
+        render.commit(&format!("said {at}")).unwrap();
+    }
+    stands(&mut render);
+    render.seal().unwrap();
+
+    render.commit("> asked").unwrap();
+    render.stream("an answer").unwrap();
+    render
+        .under(&[row("* thinking")], None, Palette::plain())
+        .unwrap();
+    stands(&mut render);
+    assert_eq!(
+        window.scrollback(),
+        ["said 0", "said 1", "said 2"],
+        "the turn did not grow the region: {:#?}",
+        window.all()
+    );
+    render.settle().unwrap();
+    render.under(&[], None, Palette::plain()).unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    assert_eq!(
+        window.screen(),
+        [
+            "said 3",
+            "said 4",
+            "> asked",
+            "an answer",
+            "",
+            "+--box--+",
+            "| > typed",
+            "+-------+",
+        ],
+        "{:#?}",
+        window.all()
+    );
+    assert_eq!(window.caret(), (6, 4));
+    assert_eq!(window.scrollback(), ["said 0", "said 1", "said 2"]);
+}
+
+#[test]
 fn a_native_panel_opened_and_closed_leaves_no_rows_behind() {
     let window = Window::new(40, 8);
     let mut render = native(&window);

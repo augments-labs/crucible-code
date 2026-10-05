@@ -1,8 +1,9 @@
 ---
 source: tests/whole_screen/native.rs
+assertion_line: 747
 expression: window.picture()
 ---
-24x24 cursor 10,4 scrollback 0
+24x24 cursor 15,4 scrollback 0
 |CRUCIBLE                |
 |/…/workspace            |
 |                        |
@@ -11,16 +12,16 @@ expression: window.picture()
 |  signed in             |
 |                        |
 |                        |
+|                        |
+|                        |
+|                        |
+|                        |
+|                        |
 |        100% window left|
 |╭──────────────────────╮|
 |│ ›                    │|
 |╰──────────────────────╯|
 |ask mode on             |
-|                        |
-|                        |
-|                        |
-|                        |
-|                        |
 |                        |
 |                        |
 |                        |
