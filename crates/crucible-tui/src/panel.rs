@@ -429,12 +429,13 @@ fn entry(
 /// `text` in at most `room` columns, ending in the ellipsis where it did not
 /// fit.
 ///
-/// For prose about a name rather than for the name itself: half a description
-/// with nothing to say it was cut reads as the whole of it. Where the room is
-/// too narrow for even the ellipsis the text is simply cut, since a row that is
-/// nothing but a mark saying something was dropped has dropped everything. One
-/// string rather than two spans, because two spans of one slot are two escape
-/// sequences handed to the terminal for one run of colour.
+/// For prose about a name rather than for the name itself, and headings: half a
+/// description or heading with nothing to say it was cut reads as the whole of
+/// it. Where the room is too narrow for even the ellipsis the text is simply
+/// cut, since a row that is nothing but a mark saying something was dropped has
+/// dropped everything. One string rather than two spans, because two spans of
+/// one slot are two escape sequences handed to the terminal for one run of
+/// colour.
 pub(crate) fn shortened(text: &str, room: usize, glyphs: Glyphs) -> Cow<'_, str> {
     if wide(text) <= room {
         return Cow::Borrowed(text);
