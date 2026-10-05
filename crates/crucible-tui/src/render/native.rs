@@ -18,13 +18,15 @@
 //! [`Renderer::subordinate`]) does nothing, as it does to any line the record
 //! has dropped.
 //!
-//! Which is why a command's reply is hung under its mark before it is
-//! written ([`Renderer::hangs`]): a reply can wait for a key, or be taller
-//! than the region, and either sends rows of it out before the command ends.
-//! Each line of it goes out carrying the mark or the indent the full screen
-//! gives it, and [`Renderer::subordinate`] marks the lines still held when it
-//! ends. A reply that empties the transcript is let go of unmarked, as the
-//! full screen marks none of it.
+//! Which is why a reply that can wait for a key, or outgrow the region, is
+//! hung under its mark before it is written ([`Renderer::hangs`]): either
+//! sends rows of it out before the command ends. Each line of it goes out
+//! carrying the mark or the indent the full screen gives it, and
+//! [`Renderer::subordinate`] marks the lines still held when it ends. A
+//! one-line reply written after the last key wait is marked by
+//! [`Renderer::subordinate`] alone, before the next wait seals it. A reply
+//! that empties the transcript is let go of unmarked, as the full screen marks
+//! none of it.
 //!
 //! Emptying the transcript takes nothing back either: the session a resume or a
 //! clear leaves stays in the scrollback, under the card the launch drew. What
