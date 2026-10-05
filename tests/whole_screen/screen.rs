@@ -35,10 +35,12 @@
 //! the alternate screen is remembered in both, because a native case proves it
 //! ran in native mode by that and not by its rows.
 //!
-//! Holding is only recorded here rather than acted on. What a real terminal
-//! does with it is show one picture instead of two, which is invisible to a
-//! screen assembled from every byte that arrived — so the picture is the same
-//! either way, and what this checks is that the two halves of it are paired.
+//! Holding changes no cell here. What a real terminal does with it is show one
+//! picture instead of two, which a screen assembled from every byte that
+//! arrived cannot do — so the picture is the same either way, and what this
+//! checks is that the two halves of it are paired. What it does change is when
+//! a case may read: [`Screen::shows`] answers only between frames, because a
+//! read that ends inside one would otherwise see what no terminal ever showed.
 //!
 //! Columns are counted in characters here rather than from a width table.
 //! Everything these cases put on screen — ASCII, box drawing, the block glyphs
