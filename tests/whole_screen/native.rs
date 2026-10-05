@@ -211,7 +211,7 @@ fn clear_writes_one_divider_and_no_second_card_in_native_mode() {
     let launched = warnings(&everything(&window));
     window.types_until("say something\r", "Done.");
 
-    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/clear\r", &format!("── {STARTED} ─"));
 
     window.assert_never_alternate();
     let read = everything(&window);
@@ -256,7 +256,7 @@ fn clear_divider_is_drawn_in_ascii_glyphs_in_native_mode() {
     window.types_until("\x1b", "> Theme");
     window.types_until("\x1b", "ask mode on");
 
-    window.types_until("/clear\r", "ask mode on");
+    window.types_until("/clear\r", &format!("-- {STARTED} -"));
 
     window.assert_never_alternate();
     let read = everything(&window);
