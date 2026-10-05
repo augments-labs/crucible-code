@@ -47,8 +47,9 @@ pub(crate) struct Opening<'a> {
 /// were opened, and the width it is drawn against is only known one call
 /// further on, in the loop that owns the renderer. Between the two it is
 /// facts — a clock read once, so four recent sessions are four ages measured
-/// from one now. Cloned once, on the way into the record, so that what lays the
-/// card out is still there when the window changes size under it.
+/// from one now. A clone goes into the record, so that what lays the card out
+/// is still there when the window changes size under it; a card put back later
+/// is first copied with the style then in force, by [`Standing::drawing`].
 #[derive(Clone)]
 pub(crate) struct Standing {
     /// The directory being worked in, already shortened for drawing.
