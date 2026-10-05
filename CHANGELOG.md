@@ -36,7 +36,7 @@ change in any release with no deprecation period.
   one draws the box again directly under the last transcript row, and a
   resize while one is open leaves no row of it in the scrollback.
 - **In native mode a command's reply keeps its mark when it is taller than
-  the window.** A reply such as `/usage` in a short window went out to the
+  the window.** A reply such as `/cache` in a short window went out to the
   scrollback without the `⎿` mark and the indent under it; every row of it now
   carries them, as in fullscreen.
 - **In native mode a resize while an answer is arriving leaves no second copy
