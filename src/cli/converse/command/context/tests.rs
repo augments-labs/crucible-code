@@ -32,6 +32,17 @@ fn unmeasured() -> api::Context {
     }
 }
 
+/// The panel's rows at `columns` where the whole of it stands: a rule, the
+/// body, and how to close it.
+fn panel(context: &api::Context, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    framed(
+        body(context, columns, glyphs),
+        columns,
+        glyphs,
+        "esc to close".to_owned(),
+    )
+}
+
 fn art(rows: &[Row]) -> Vec<String> {
     rows.iter().map(Row::text).collect()
 }
@@ -275,4 +286,94 @@ fn context_follows_the_colour_rule() {
             });
         }
     }
+}
+
+#[test]
+fn context_taller_than_its_room_stands_in_it_and_scrolls_with_the_arrows() {
+    let mut scrolled = Scrolled::default();
+    // The body is 11 rows, and with the rule, the blank rows and the footer
+    // the panel would be 15: a 12-row room holds 7 of them and a row saying
+    // how many more are below.
+    let stood = art(&scrolled.laid(&spent(), 40, 12, Glyphs::Unicode));
+    assert_eq!(stood.len(), 12, "{stood:#?}");
+    assert_eq!(
+        stood.first().map(String::as_str),
+        Some("─".repeat(40).as_str())
+    );
+    assert!(
+        stood
+            .get(2)
+            .is_some_and(|row| row.starts_with("Context · gpt-6-sol")),
+        "{stood:#?}"
+    );
+    assert_eq!(
+        stood.get(9).map(String::as_str),
+        Some("  ↓ 4 more"),
+        "{stood:#?}"
+    );
+    assert_eq!(
+        stood.last().map(String::as_str),
+        Some("esc to close · ↑↓ to see more")
+    );
+
+    assert_eq!(scrolled.pressed(&Pressed::Up), Moved::Still);
+    assert_eq!(scrolled.pressed(&Pressed::Down), Moved::Redraw);
+    let moved = art(&scrolled.laid(&spent(), 40, 12, Glyphs::Unicode));
+    assert_eq!(moved.len(), 12, "{moved:#?}");
+    assert!(
+        !moved.iter().any(|row| row.starts_with("Context")),
+        "{moved:#?}"
+    );
+    assert_eq!(
+        moved.get(9).map(String::as_str),
+        Some("  ↓ 3 more"),
+        "{moved:#?}"
+    );
+
+    // At the foot the free row stands over the footer, and ↓ is spent.
+    for _ in 0..3 {
+        assert_eq!(scrolled.pressed(&Pressed::Down), Moved::Redraw);
+    }
+    assert_eq!(scrolled.pressed(&Pressed::Down), Moved::Still);
+    let foot = art(&scrolled.laid(&spent(), 40, 12, Glyphs::Unicode));
+    assert!(
+        !foot.iter().any(|row| row.trim_start().starts_with('↓')),
+        "{foot:#?}"
+    );
+    assert!(
+        foot.iter()
+            .rev()
+            .nth(2)
+            .is_some_and(|row| row.contains(" free ")),
+        "{foot:#?}"
+    );
+    assert_eq!(scrolled.pressed(&Pressed::Up), Moved::Redraw);
+    assert_eq!(scrolled.pressed(&Pressed::Escape), Moved::Left);
+
+    // Where the whole panel fits, it stands whole and says only how to close.
+    for (context, rows) in [(spent(), 15), (unmeasured(), 12)] {
+        let whole = art(&scrolled.laid(&context, 40, rows, Glyphs::Unicode));
+        assert_eq!(whole, art(&panel(&context, 40, Glyphs::Unicode)));
+        assert_eq!(whole.last().map(String::as_str), Some("esc to close"));
+    }
+
+    // In ASCII the arrows and the dot are drawn as the font has them.
+    let ascii = art(&scrolled.laid(&spent(), 40, 12, Glyphs::Ascii));
+    assert_eq!(
+        ascii.last().map(String::as_str),
+        Some("esc to close - ^v to see more")
+    );
+
+    // Where even the rule, the blank rows, the footer and a row of the body
+    // with the row under it have no room, nothing stands, and the caller
+    // prints.
+    for room in [0, 4, 5] {
+        assert!(
+            scrolled
+                .laid(&spent(), 40, room, Glyphs::Unicode)
+                .is_empty(),
+            "at {room}"
+        );
+    }
+    assert_eq!(scrolled.laid(&spent(), 40, 6, Glyphs::Unicode).len(), 6);
 }

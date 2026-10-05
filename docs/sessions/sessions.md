@@ -46,7 +46,8 @@ changing at the foot is drawn again. `/clear` and `/resume`, which on the full
 screen empty it and draw the opening card again, cannot take back what the
 terminal already holds here, so the earlier transcript stays in its scrollback
 and the new one starts under a single divider row, `new session` or `session
-resumed`, with no second card.
+resumed`, with no second card. A `/clear` before anything has been said writes
+no divider, only `nothing had been said`, since no session ended there.
 
 ## Moving through the transcript
 
