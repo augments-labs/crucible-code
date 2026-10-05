@@ -320,6 +320,15 @@
       "sha256": "73c8d291c6c1108b770cf13117fe8641ad39a85b9cb0c573bd0919f08eff0a9e"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__context_short_40.snap",
+      "case": "context_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"context-short-40\", 40, 12, &vendor)"
+      ],
+      "sha256": "f2b744d8a3b0dd8daa6ffc4ba3b3ab3d388adf63668f56bdb3f61a6434715d38"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_a_shows_every_project_and_says_where_each_session_is.snap",
       "case": "ctrl_a_shows_every_project_and_says_where_each_session_is",
       "opened": [

@@ -4415,6 +4415,58 @@ fn context_stands_over_a_running_turn_with_the_figures_it_last_carried() {
     insta::assert_snapshot!("context_mid_turn_80", on_the_first_beat(&picture));
 }
 
+#[test]
+fn context_taller_than_the_window_stands_and_scrolls_with_the_arrows() {
+    // A 40x12 window is shorter than the panel's 15 rows: the panel stands in
+    // the window's rows with its body cut short, and the arrows move the body.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("context-short-40", 40, 12, &vendor);
+    window.types_until("/context\r", "Context · ");
+
+    let stood = window.picture();
+    assert!(stood.contains(PANEL_SCROLLS), "{stood}");
+    assert!(stood.contains("↓ 4 more"), "{stood}");
+    assert_eq!(stood_rows(&stood), 12, "{stood}");
+    insta::assert_snapshot!("context_short_40", stood);
+
+    window.types_until("\x1b[B", "↓ 3 more");
+    let scrolled = window.picture();
+    assert!(!scrolled.contains("Context · "), "{scrolled}");
+    assert_eq!(stood_rows(&scrolled), 12, "{scrolled}");
+
+    window.types_until("\x1b[A", "Context · ");
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn context_taller_than_half_the_window_stands_in_half_and_scrolls_in_native_mode() {
+    // Native mode gives a panel half the window. The panel's 15 rows at 40
+    // columns are cut to the 12 of a 24-row window rather than taking 15, and
+    // to the 7 of a 14-row window rather than being printed.
+    for (rows, below) in [(24, 4), (14, 9)] {
+        let vendor = Vendor::answering("Hello.");
+        let mut window = Watched::native(&format!("context-native-40x{rows}"), 40, rows, &vendor);
+        window.types_until("/context\r", "Context · ");
+
+        let stood = window.picture();
+        assert!(stood.contains(PANEL_SCROLLS), "{stood}");
+        assert!(stood.contains(&format!("↓ {below} more")), "{stood}");
+        assert_eq!(stood_rows(&stood), usize::from(rows / 2), "{stood}");
+
+        window.types_until("\x1b[B", &format!("↓ {} more", below - 1));
+        let scrolled = window.picture();
+        assert!(!scrolled.contains("Context · "), "{scrolled}");
+        assert_eq!(stood_rows(&scrolled), usize::from(rows / 2), "{scrolled}");
+
+        window.types_until("\x1b", "ask mode on");
+        window.assert_never_alternate();
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
 // `/usage`: what the session has used, and the plan windows its vendor reported.
 
 /// `picture` with the two figures `/usage` reads off the wall clock written as
@@ -4488,11 +4540,13 @@ fn usage_stands_over_a_running_turn_with_the_figures_it_last_posted() {
     insta::assert_snapshot!("usage_mid_turn_80", timeless(&on_the_first_beat(&picture)));
 }
 
-/// The footer `/usage` stands with where it is taller than its room.
-const USAGE_SCROLLS: &str = "esc to close · ↑↓ to see more";
+/// The footer `/usage` and `/context` stand with where they are taller than
+/// their room.
+const PANEL_SCROLLS: &str = "esc to close · ↑↓ to see more";
 
-/// The rows `/usage` stands in on `picture`: from its rule to its footer.
-fn usage_rows(picture: &str) -> usize {
+/// The rows a panel such as `/usage` stands in on `picture`: from its rule to
+/// its footer.
+fn stood_rows(picture: &str) -> usize {
     let rows: Vec<&str> = picture.lines().filter(|row| row.starts_with('|')).collect();
     let rule = rows
         .iter()
@@ -4516,15 +4570,15 @@ fn usage_taller_than_the_window_stands_and_scrolls_with_the_arrows() {
     window.types_until("/usage\r", "Usage · anthropic");
 
     let stood = window.picture();
-    assert!(stood.contains(USAGE_SCROLLS), "{stood}");
+    assert!(stood.contains(PANEL_SCROLLS), "{stood}");
     assert!(stood.contains("↓ 5 more"), "{stood}");
-    assert_eq!(usage_rows(&stood), 16, "{stood}");
+    assert_eq!(stood_rows(&stood), 16, "{stood}");
     insta::assert_snapshot!("usage_short_40", timeless(&stood));
 
     window.types_until("\x1b[B", "↓ 4 more");
     let scrolled = window.picture();
     assert!(!scrolled.contains("Usage · anthropic"), "{scrolled}");
-    assert_eq!(usage_rows(&scrolled), 16, "{scrolled}");
+    assert_eq!(stood_rows(&scrolled), 16, "{scrolled}");
     insta::assert_snapshot!("usage_short_40_scrolled", timeless(&scrolled));
 
     window.types_until("\x1b[A", "Usage · anthropic");
@@ -4543,13 +4597,13 @@ fn usage_taller_than_half_the_window_stands_in_half_and_scrolls_in_native_mode()
     window.types_until("/usage\r", "Usage · anthropic");
 
     let stood = window.picture();
-    assert!(stood.contains(USAGE_SCROLLS), "{stood}");
-    assert_eq!(usage_rows(&stood), 12, "{stood}");
+    assert!(stood.contains(PANEL_SCROLLS), "{stood}");
+    assert_eq!(stood_rows(&stood), 12, "{stood}");
 
     window.types_until("\x1b[B", "↓ 8 more");
     let scrolled = window.picture();
     assert!(!scrolled.contains("Usage · anthropic"), "{scrolled}");
-    assert_eq!(usage_rows(&scrolled), 12, "{scrolled}");
+    assert_eq!(stood_rows(&scrolled), 12, "{scrolled}");
 
     window.types_until("\x1b", "ask mode on");
     window.assert_never_alternate();

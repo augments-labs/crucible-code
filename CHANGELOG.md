@@ -72,6 +72,10 @@ change in any release with no deprecation period.
   blank row parts one plan window from the next.
 - **`/compact` with no model answers under the line that asked.** The warning
   used to stand apart, two rows down, unlike every other command's reply.
+- **`/context` stands in a short window.** In a window shorter than its panel
+  it was printed into the transcript instead, and in native mode it could
+  take more than half the window; it now stands in the room it is given and
+  scrolls with ↑ and ↓.
 
 ## [0.45.2] - 2026-10-03
 
