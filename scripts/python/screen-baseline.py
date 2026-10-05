@@ -226,7 +226,8 @@ def observed():
     """What the tree says, in the shape the manifest records."""
     cases = {}
     # The functions of the file each case is in, which its calls are followed
-    # into: a helper in the other file is not one a case of this file can call.
+    # into. A call by path, such as `crate::helper()`, is not followed, so what
+    # a helper in the other file opens is not in the key of the case calling it.
     helpers = {}
     for path in CASES:
         lines = uncommented(open(path, encoding="utf-8").read().splitlines())
