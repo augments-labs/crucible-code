@@ -857,12 +857,29 @@ fn answer<T: Terminal>(
             ..
         } => renderer.present(&listing(&terms.commands.snapshot(), columns, glyphs))?,
 
-        // Nothing is drawn for it here. What it asks for is run above, where a
-        // request is run, and everything a reader sees of one comes from there.
+        // Nothing is drawn for it here when there is somebody to ask. What it
+        // asks for is run above, where a request is run, and everything a
+        // reader sees of one comes from there.
+        //
+        // With nobody to ask, at a terminal, the warning a prompt gets is this
+        // command's reply, hung under the line that asked as every other
+        // reply is: bold, as the welcome says it, and wrapped short of the
+        // mark. Down a pipe it is still asked for, so the loop above can end
+        // the run on it rather than say it and carry on.
         Wanted::Known {
             command: Command::Compact,
             ..
-        } => return Ok(Some(Compacting::Asked)),
+        } => {
+            if super::answerable(conversation) || !renderer.is_terminal() {
+                return Ok(Some(Compacting::Asked));
+            }
+            let said = terms.unasked(conversation.serving());
+            let rows: Vec<Row> = fold(said, columns.saturating_sub(HUNG))
+                .into_iter()
+                .map(|part| Row::new().then(Slot::Strong, part))
+                .collect();
+            renderer.present(&rows)?;
+        }
 
         Wanted::Known {
             command: Command::Model,
