@@ -72,6 +72,11 @@ change in any release with no deprecation period.
   blank row parts one plan window from the next.
 - **`/compact` with no model answers under the line that asked.** The warning
   used to stand apart, two rows down, unlike every other command's reply.
+- **A command piped in at a terminal hangs its reply's mark on the reply's
+  first row.** A reply that opened with a line such as `! fly is not a mode`
+  was written on the `ask ›` row and the `⎿` mark went on the line under it;
+  the reply now starts on its own row under the prompt, marked, as other
+  replies are.
 
 ## [0.45.2] - 2026-10-03
 
