@@ -157,20 +157,24 @@ fn without_id(window: &Watched, id: &str) -> String {
 /// clear would write a divider of its own. The second is given the first's
 /// case name, which is what gives it the same home; the first is handed back
 /// beside it so that its directory outlives the second run.
-fn ended_then_relaunched(case: &str, columns: u16, vendor: &Vendor) -> (Watched, Watched, String) {
+///
+/// Both open at 80 by 24. A case that wants a narrower window resizes the
+/// second once it is up: one opened at sixteen columns never draws the line
+/// that says it has settled.
+fn ended_then_relaunched(case: &str, vendor: &Vendor) -> (Watched, Watched, String) {
     let mut first = Watched::native(case, 80, 24, vendor);
     first.types_until("say something\r", "The first thing");
     first.ends_on("TERM");
     let id = recorded_id(&first);
 
-    let second = Watched::native(case, columns.max(80), 24, vendor);
+    let second = Watched::native(case, 80, 24, vendor);
     (first, second, id)
 }
 
 #[test]
 fn resume_writes_one_divider_and_no_second_card_in_native_mode() {
     let vendor = Vendor::answering("The first thing this session said.");
-    let (_first, mut window, id) = ended_then_relaunched("native-resume", 80, &vendor);
+    let (_first, mut window, id) = ended_then_relaunched("native-resume", &vendor);
     let launched = warnings(&everything(&window));
 
     window.types_until(&format!("/resume {id}\r"), "The first thing");
@@ -189,7 +193,7 @@ fn resume_divider_is_clipped_at_16_columns_in_native_mode() {
     // Sixteen columns is narrower than the twenty-one the label and two rule
     // cells each side of it need, and than the seventeen of the other label.
     let vendor = Vendor::answering("The first thing this session said.");
-    let (_first, mut window, id) = ended_then_relaunched("native-resume-narrow", 16, &vendor);
+    let (_first, mut window, id) = ended_then_relaunched("native-resume-narrow", &vendor);
     let launched = warnings(&everything(&window));
     window.resize(16, 24);
 
