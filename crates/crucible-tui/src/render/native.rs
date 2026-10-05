@@ -236,13 +236,22 @@ impl<T: Terminal> Renderer<T> {
     /// the region as a second copy. So a size the press has not yet reported
     /// is taken here, and the frame is drawn for the window as it is now; the
     /// press, when it comes, finds nothing left to do.
+    ///
+    /// A query that fails says nothing about the window. It is not a resize,
+    /// and the frame is drawn for the size already known, as it would have
+    /// been before the query was asked here.
     fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {
-        if self.native.is_some() && self.terminal.size().unwrap_or(Size::FALLBACK) != self.size {
-            // Lays the region out at the new size and draws it, through this
-            // function again with the sizes now agreeing. The frame that
-            // closes the region still goes out after it.
+        if self.native.is_some() && self.terminal.size().is_ok_and(|size| size != self.size) {
+            // `resized` asks the size again and takes what it reads, as it
+            // does for the press: it lays the region out and draws it,
+            // through this function again, when that differs from the size
+            // known, and does nothing when it does not. A live frame it drew
+            // is whole, so nothing follows it; one it did not draw is drawn
+            // below for the size known. A frame that closes the region goes
+            // out either way.
+            let known = self.size;
             self.resized()?;
-            if writes == Writes::Live {
+            if writes == Writes::Live && self.size != known {
                 return Ok(());
             }
         }

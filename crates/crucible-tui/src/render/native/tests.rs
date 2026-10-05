@@ -357,6 +357,8 @@ struct Seen {
     written: String,
     emulator: Emulator,
     is_terminal: bool,
+    /// How many of the next size queries fail.
+    unsizable: usize,
 }
 
 /// A terminal with a scrollback, for a renderer to own and a test to read.
@@ -369,7 +371,14 @@ impl Window {
             written: String::new(),
             emulator: Emulator::new(columns, rows),
             is_terminal: true,
+            unsizable: 0,
         })))
+    }
+
+    /// Makes the next `times` size queries fail, as a terminal that would
+    /// not say does.
+    fn loses_size(&self, times: usize) {
+        self.0.borrow_mut().unsizable = times;
     }
 
     fn redirected(columns: usize, rows: usize) -> Self {
@@ -415,7 +424,13 @@ impl Window {
 
 impl Terminal for Window {
     fn size(&self) -> Result<Size, TerminalError> {
-        let seen = self.0.borrow();
+        let mut seen = self.0.borrow_mut();
+        if seen.unsizable > 0 {
+            seen.unsizable = seen.unsizable.saturating_sub(1);
+            return Err(TerminalError::Io(std::io::Error::other(
+                "the window would not say",
+            )));
+        }
         Ok(Size {
             columns: seen.emulator.columns,
             rows: seen.emulator.rows,
@@ -721,6 +736,55 @@ fn a_native_frame_drawn_before_the_resize_is_reported_takes_the_new_width() {
         "a row was written wider than the window: {:#?}",
         window.all()
     );
+}
+
+#[test]
+fn a_native_frame_whose_size_query_fails_is_drawn_at_the_size_already_known() {
+    // A size query that fails says nothing about the window: it is neither a
+    // resize to the fallback size nor a reason to hold the frame back. The
+    // frame goes out for the window as it was last known, whether the query
+    // fails once, between the frame asking and the resize asking again, or
+    // for good.
+    let window = Window::new(100, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render.stream("alfa bravo charlie delta ").unwrap();
+    window.take();
+
+    window.loses_size(1);
+    render.stream("echo ").unwrap();
+    assert!(
+        window.take().contains("echo"),
+        "the frame was held back: {:#?}",
+        window.all()
+    );
+
+    window.loses_size(usize::MAX);
+    render
+        .stream("foxtrot golf hotel india juliett kilo lima mike november oscar")
+        .unwrap();
+    stands(&mut render);
+
+    let said: Vec<String> = window
+        .all()
+        .into_iter()
+        .filter(|row| row.contains("alfa") || row.contains("oscar"))
+        .collect();
+    assert_eq!(
+        said.len(),
+        1,
+        "the row was folded for a window of eighty: {:#?}",
+        window.all()
+    );
+    assert!(
+        said.iter().all(|row| row.chars().count() > 80),
+        "the row was folded for a window of eighty: {:#?}",
+        window.all()
+    );
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
 
 /// A palette that writes every hue it has, so a row's colours are on the
