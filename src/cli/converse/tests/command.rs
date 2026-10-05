@@ -19,7 +19,7 @@ use crucible_models::Delta;
 use crucible_runner::Tools;
 use crucible_session::Session;
 use crucible_tools::{Mode, Permission, Revealed, Rules};
-use crucible_tui::{Prompt, Recording, Renderer};
+use crucible_tui::{Prompt, Recording, Renderer, ScreenMode};
 use crucible_types::{Message, StopReason, ToolId};
 use crucible_workspace::Workspace;
 
@@ -960,6 +960,86 @@ fn a_command_answer_hangs_directly_under_the_line_that_asked() {
         assert!(
             answer.trim_start().starts_with(hangs),
             "{command} was answered with {answer:?}, in {rows:#?}"
+        );
+    }
+}
+
+/// The rows `typed` leaves down a pipe in `mode`, read from the window in
+/// fullscreen and from the last frame drawn in native mode, which redraws the
+/// whole region: nothing here waits for a key, so nothing has been sealed into
+/// the scrollback above it.
+fn piped(mode: ScreenMode, typed: &str) -> Vec<String> {
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(Script::new(vec![]), Tools::new(), session)
+    });
+    let mut renderer = Renderer::drawing(Recording::new(80, 24), mode);
+    let mut input = Cursor::new(typed.as_bytes().to_vec());
+
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
+
+    match mode {
+        ScreenMode::Fullscreen => renderer.terminal().picture().rows(),
+        ScreenMode::Native => {
+            let written = renderer.terminal().written();
+            let last = written.rsplit("\x1b[J").next().unwrap_or_default();
+            let mut text = String::new();
+            let mut left = last.chars();
+            while let Some(character) = left.next() {
+                if character == '\x1b' {
+                    left.by_ref()
+                        .skip(1)
+                        .find(|byte| ('@'..='~').contains(byte));
+                } else {
+                    text.push(character);
+                }
+            }
+            text.split("\r\n")
+                .map(|row| row.trim_end().to_owned())
+                .collect()
+        }
+    }
+}
+
+#[test]
+fn a_reply_to_a_piped_line_hangs_its_mark_on_its_own_first_row() {
+    // Down a pipe nothing ends the row the prompt mark was left on, so a reply
+    // whose first line is committed went out on that row, after `ask › `, and
+    // the mark was hung on the line below it: the second line of the answer
+    // read as the start of it, and the first as something typed.
+    let hangs = plain().style().glyphs().hangs();
+
+    for mode in [ScreenMode::Fullscreen, ScreenMode::Native] {
+        let rows = piped(mode, "/mode fly\n");
+        let at = rows
+            .iter()
+            .position(|row| row.contains("! fly is not a mode"))
+            .unwrap_or_else(|| panic!("{mode:?}: the refusal was never shown in {rows:#?}"));
+
+        assert!(
+            rows.get(at)
+                .is_some_and(|row| row.starts_with(&format!("{hangs} ! fly is not a mode"))),
+            "{mode:?}: the reply's first row is not the one hung: {rows:#?}"
+        );
+        assert!(
+            at.checked_sub(1)
+                .and_then(|above| rows.get(above))
+                .is_some_and(|row| row.starts_with("ask") && !row.contains("fly")),
+            "{mode:?}: the reply is not under the line that asked: {rows:#?}"
+        );
+        assert!(
+            rows.get(at + 1)
+                .is_some_and(|row| row.starts_with("  ask") && !row.contains(hangs)),
+            "{mode:?}: the reply's second row is not indented under the first: {rows:#?}"
         );
     }
 }
