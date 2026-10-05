@@ -13,12 +13,18 @@
 //! and reaches no screen. A format character that would reorder or hide the
 //! text around it is [`unshown`], and costs nothing and reaches no screen
 //! either.
+//!
+//! What a [`crate::Row`] shows in place of a character that is not text is
+//! [`crate::row`]'s to say, and a row of prose is laid out before it is
+//! cleaned, so [`fold`] measures by that rule rather than by the tail's: a
+//! control character the tail drops is a space in a row, and costs its column.
 
 use std::ops::Range;
 
 use unicode_width::UnicodeWidthChar;
 
 use crate::escape::Escapes;
+use crate::row;
 
 /// How far a tab advances, matching what terminals do.
 const TAB_STOP: usize = 8;
@@ -162,7 +168,7 @@ pub(crate) fn along(column: usize, character: char, base: Option<char>) -> Optio
 /// is one row.
 #[must_use]
 pub fn cut(text: &str, columns: usize) -> Option<usize> {
-    walk(text, columns).1
+    walk(text, columns, Some).1
 }
 
 /// `text` with at most `columns` display columns of it kept.
@@ -184,7 +190,8 @@ pub fn clip(text: &str, columns: usize) -> &str {
 /// The same walk, answering in offsets rather than in slices, because a row of
 /// spans has to cut each span at the break and a `&str` cannot say where it was
 /// taken from. Whitespace at a break is dropped as [`fold`] drops it, so these
-/// ranges are the rows and not a partition of `text`.
+/// ranges are the rows and not a partition of `text`. Measured as [`fold`] is,
+/// by what a row will draw.
 pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
     let mut rows = Vec::new();
     if columns == 0 {
@@ -195,7 +202,7 @@ pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
     let mut base = text.len() - text.trim_start().len();
 
     while !rest.is_empty() {
-        let Some(over) = cut(rest, columns) else {
+        let Some(over) = walk(rest, columns, row::drawn).1 else {
             rows.push(base..base + rest.len());
             break;
         };
@@ -285,6 +292,11 @@ pub(crate) fn wraps(text: &str, columns: usize) -> Vec<Range<usize>> {
 /// A word too long for a row is cut rather than left to overflow, which is what
 /// keeps every row back no wider than asked for however narrow the terminal is.
 /// Borrowed rather than allocated: the rows are pieces of `text`.
+///
+/// Measured as the [`crate::Row`] each piece is made into draws it, which is
+/// where a piece is cleaned: a control character that arrived in the text
+/// costs the column of the space the row shows for it, and a tab costs one
+/// rather than reaching the next stop.
 #[must_use]
 pub fn fold(text: &str, columns: usize) -> Vec<&str> {
     folds(text, columns)
@@ -312,7 +324,7 @@ fn step(text: &str) -> usize {
 /// it as well as before.
 #[must_use]
 pub fn columns(text: &str) -> usize {
-    walk(text, usize::MAX).0
+    walk(text, usize::MAX, Some).0
 }
 
 /// The one walk both questions are answered from: how many columns were
@@ -320,7 +332,12 @@ pub fn columns(text: &str) -> usize {
 ///
 /// The count is the whole row's only when nothing was cut, which is the only
 /// case that asks for it — a caller passing a real ceiling wants the offset.
-fn walk(text: &str, ceiling: usize) -> (usize, Option<usize>) {
+///
+/// Each character outside a sequence, other than the newline that ends the
+/// row, is measured as `shown` says it will reach the screen: as itself for
+/// what the tail is sent, and as [`row::drawn`] for the text a [`crate::Row`]
+/// is about to clean, which is the one rule both read.
+fn walk(text: &str, ceiling: usize, shown: fn(char) -> Option<char>) -> (usize, Option<usize>) {
     let mut column = 0;
     // The last character counted and where it starts, so a selector that will
     // not fit can take its base down with it.
@@ -337,6 +354,10 @@ fn walk(text: &str, ceiling: usize) -> (usize, Option<usize>) {
         if character == '\n' {
             return (column, Some(offset));
         }
+
+        let Some(character) = shown(character) else {
+            continue;
+        };
 
         let base = last.map(|(_, character)| character);
         let Some(step) = along(column, character, base) else {
@@ -423,6 +444,27 @@ mod tests {
         // reason a reader can see.
         assert_eq!(fold("ab cd ef", 5), vec!["ab cd", "ef"]);
         assert_eq!(fold("one two three", 7), vec!["one two", "three"]);
+    }
+
+    #[test]
+    fn a_folded_row_is_drawn_no_wider_than_it_was_folded_to() {
+        // What arrived from a tool or a provider can hold a control character,
+        // and a row draws one as a space. Counted as nothing, the first of
+        // these is five columns by the fold's count and six on screen: one
+        // past the edge, where the terminal clips it or wraps it itself.
+        for text in ["ab\u{7}cde", "a\u{1}b\u{1}c\u{1}d\u{1}e", "x\u{7f}yzwv"] {
+            for row in fold(text, 5) {
+                let drawn = crate::Row::plain(row).columns();
+                assert!(drawn <= 5, "{row:?} of {text:?} draws {drawn} columns");
+            }
+        }
+    }
+
+    #[test]
+    fn a_tab_in_a_fold_costs_the_one_column_a_row_draws_it_in() {
+        // A row draws a tab as one space, so counting it to the next stop
+        // breaks a row that fits and leaves its columns empty.
+        assert_eq!(fold("a\tb c", 4), ["a\tb", "c"]);
     }
 
     #[test]

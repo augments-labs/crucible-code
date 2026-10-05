@@ -72,6 +72,12 @@ change in any release with no deprecation period.
   blank row parts one plan window from the next.
 - **`/compact` with no model answers under the line that asked.** The warning
   used to stand apart, two rows down, unlike every other command's reply.
+- **Wrapped text holding a control character no longer runs past the
+  window's edge.** An error or a reply can carry a character a terminal would
+  act on, which crucible draws as a space; wrapping counted it as nothing, so
+  the row came out a column wider than the window and the terminal cut or
+  wrapped it. Wrapping now counts that space, and a tab, drawn as one space,
+  as one column rather than up to eight.
 
 ## [0.45.2] - 2026-10-03
 
