@@ -36,21 +36,34 @@ use crate::width;
 /// cursor or rings the terminal is not text. A format character is dropped
 /// outright, as [`width::unshown`] says why, and as a limit's name drops it.
 fn words(text: String) -> String {
-    if !text.contains(|character: char| character.is_control() || width::unshown(character)) {
+    if !text.contains(|character: char| drawn(character) != Some(character)) {
         return text;
     }
 
     let mut escapes = Escapes::default();
     text.chars()
-        .filter(|character| !escapes.holds(*character) && !width::unshown(*character))
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
+        .filter(|character| !escapes.holds(*character))
+        .filter_map(drawn)
         .collect()
+}
+
+/// What a span shows in place of `character`, once [`Escapes`] has taken
+/// whatever belongs to a sequence: nothing for a format character, a space
+/// for any other control character, and otherwise the character itself.
+///
+/// The rule [`words`] cleans by, one character at a time, so that
+/// [`width::fold`] can measure text that has not been cleaned yet as the row
+/// it is about to become will draw it. A fold that counted a control
+/// character as nothing would lay a row a column narrower than its space
+/// makes it on screen.
+pub(crate) fn drawn(character: char) -> Option<char> {
+    if width::unshown(character) {
+        None
+    } else if character.is_control() {
+        Some(' ')
+    } else {
+        Some(character)
+    }
 }
 
 /// A run of text that is all one slot.

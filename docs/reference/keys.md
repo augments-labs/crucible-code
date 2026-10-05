@@ -26,7 +26,9 @@ this page is the list. Slash commands are not keys: they are listed under
   own selection.
 - With `output.screen` set to `native` the mouse is not reported at all, and
   the wheel, a drag and a click are your terminal's.
-- A click outside the rows of whatever is standing over the box is ignored.
+- A click outside the rows of whatever is standing over the box is ignored,
+  and so is a click on a blank cell beside what one of its rows drew; the
+  pointer lights nothing there either.
   The wheel over a panel that is not a window over more text than it shows
   scrolls the transcript underneath it; over one that is, it walks the panel,
   and a notch the panel has no use for at either end goes to the transcript.
@@ -140,8 +142,8 @@ wheel. These differ:
 
 While the <kbd>Ctrl+O</kbd> view, the queue or the command list stands over a
 running turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its
-keys are under [Results cut short](#results-cut-short) and [The
-queue](#the-queue).
+keys are under [Results cut short](#results-cut-short), [The command
+list](#the-command-list) and [The queue](#the-queue).
 
 ## Reading the conversation
 
@@ -277,7 +279,9 @@ turn runs, the speed taken is asked for once the turn ends.
 ### `/context`
 
 <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
-redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
+redraws it; <kbd>↑</kbd> and <kbd>↓</kbd> scroll it where it is taller than the
+window, and the footer then reads `esc to close · ↑↓ to see more`.
+<kbd>Enter</kbd> and every other key do nothing. Typed while a turn
 runs, it stands over the turn with the figures that turn last reported, which
 include anything it has recorded since its last request.
 
@@ -398,7 +402,7 @@ in fullscreen.
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. |
 | <kbd>Enter</kbd> | Shows what the marked command has printed so far. |
 | <kbd>x</kbd> | Stops it, with no confirmation. If the stop fails the panel says `Stop failed; x retries`. |
-| Click | Marks the row under the pointer, and a click on the marked row shows it. |
+| Click | Marks the row under the pointer, and a click on the marked row shows it. The click counts on the row's own text; the blank after it marks nothing. |
 | <kbd>Esc</kbd>, <kbd>Ctrl+B</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Closes the list. |
 | Wheel | Scrolls the transcript. |
 

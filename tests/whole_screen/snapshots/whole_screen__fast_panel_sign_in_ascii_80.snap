@@ -3,7 +3,7 @@ source: tests/whole_screen/main.rs
 expression: picture
 ---
 80x24 cursor 23,0 scrolled 0
-|| No recent sessions                                                          |||
+|| No earlier session for this workspace                                       |||
 ||                                                                             |||
 || --------------------------------------------------------------------------- |||
 ||                                                                             |||
