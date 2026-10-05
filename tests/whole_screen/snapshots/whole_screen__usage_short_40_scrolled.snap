@@ -1,0 +1,21 @@
+---
+source: tests/whole_screen/main.rs
+expression: timeless(&scrolled)
+---
+40x16 cursor 15,0 scrolled 0
+|────────────────────────────────────────|
+|                                        |
+|                                        |
+|Session                                 |
+|  Total cost     not priced             |
+|  API time       Ns                     |
+|  Wall time      Ns                     |
+|  Lines changed  +0 −0                  |
+|  Tokens         0 in · 4 out           |
+|                 0 cache read           |
+|                 0 cache write          |
+|                                        |
+|Context                                 |
+|  ↓ 4 more                              |
+|                                        |
+|esc to close · ↑↓ to see more           |

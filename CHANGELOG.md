@@ -50,6 +50,11 @@ change in any release with no deprecation period.
   character, so the indent before it and the blank after it on the same row
   open and light nothing. The count of commands left running under the box
   answers on its own words in the same way, not on the mode beside it.
+- **`/usage` stands in a narrow window.** With plan limits it was taller than
+  a 40-column window and was printed into the transcript instead; it now
+  stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
+  its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
+  blank row parts one plan window from the next.
 
 ## [0.45.2] - 2026-10-03
 
