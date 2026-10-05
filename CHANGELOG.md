@@ -70,6 +70,8 @@ change in any release with no deprecation period.
   stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
   its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
   blank row parts one plan window from the next.
+- **`/compact` with no model answers under the line that asked.** The warning
+  used to stand apart, two rows down, unlike every other command's reply.
 - **The welcome card and `/resume` agree on an empty directory.** Under
   `Recent sessions` the card said `No recent sessions` where `/resume` said
   `no earlier session for this workspace`; both now say the second.
