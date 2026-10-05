@@ -598,6 +598,15 @@
       "sha256": "4d4f70fe00087e6ffb199cc7b0e7222253dd4458e44aea4dce614fa830af99c2"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_while_an_answer_streams_leaves_no_ghost_row_in_native_mode.snap",
+      "case": "a_resize_while_an_answer_streams_leaves_no_ghost_row_in_native_mode",
+      "opened": [
+        "Vendor::answering_each(&[NARROWED_UNDER, WIDENED_UNDER])",
+        "Watched::native(\"native-resized-mid-answer\", 80, 24, &vendor)"
+      ],
+      "sha256": "c6179fa1e7ba903646074ce1aad755a4c4a78450a7453f21f7b10368a6aabb8a"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_60x24.snap",
       "case": "a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode",
       "opened": [
@@ -612,6 +621,15 @@
         "Vendor::answering(&crate::a_long_answer())"
       ],
       "sha256": "58326499502bcbae6cd1986db7794fc71e10daf9ee8eb7fefbc5506f4735fb69"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode.snap",
+      "case": "a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode",
+      "opened": [
+        "Vendor::holding(SEVENTY_EIGHT)",
+        "Watched::native(\"native-sealed-after-narrowing\", 80, 24, &vendor)"
+      ],
+      "sha256": "5383ca2dc09ffa70e66841e4f401c3f798356655f6f19509ad5f07c07712df86"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode.snap",

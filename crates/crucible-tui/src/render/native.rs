@@ -40,8 +40,11 @@
 //! A panel that cannot be drawn in half the window stands at the least it can
 //! be drawn in, and the rows that costs stay in the scrollback.
 //!
-//! A resize redraws the region and nothing else. How far back its top now is
-//! cannot be asked of the terminal, so it is worked out from how wide each row
+//! A resize redraws the region and nothing else, and every frame asks the
+//! window's size before it is drawn, so that one drawn while an answer is
+//! arriving goes out at the width the window already has rather than the one
+//! the press reporting the change will name. How far back the region's top now
+//! is cannot be asked of the terminal, so it is worked out from how wide each row
 //! of the region was against the new width, counted as a terminal that rewraps
 //! would count it. On one that does not, narrowing counts high, and the erase
 //! that opens the next frame takes finished rows just above the region off the
@@ -224,7 +227,34 @@ impl<T: Terminal> Renderer<T> {
 
     /// Writes one frame, taking the state it keeps out of `self` while it
     /// does.
+    ///
+    /// The window's size is asked for first. The press that reports a resize
+    /// is read between frames, and an answer still arriving draws frames
+    /// until it is: a frame drawn at the old width is wrapped by the
+    /// terminal, the next rewinds over the rows it counted rather than the
+    /// rows the terminal made of them, and what it did not reach stays above
+    /// the region as a second copy. So a size the press has not yet reported
+    /// is taken here, and the frame is drawn for the window as it is now; the
+    /// press, when it comes, finds nothing left to do.
+    ///
+    /// A query that fails says nothing about the window. It is not a resize,
+    /// and the frame is drawn for the size already known, as it would have
+    /// been before the query was asked here.
     fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {
+        if self.native.is_some() && self.terminal.size().is_ok_and(|size| size != self.size) {
+            // `resized` asks the size again and takes what it reads, as it
+            // does for the press: it lays the region out and draws it,
+            // through this function again, when that differs from the size
+            // known, and does nothing when it does not. A live frame it drew
+            // is whole, so nothing follows it; one it did not draw is drawn
+            // below for the size known. A frame that closes the region goes
+            // out either way.
+            let known = self.size;
+            self.resized()?;
+            if writes == Writes::Live && self.size != known {
+                return Ok(());
+            }
+        }
         let Some(mut native) = self.native.take() else {
             return Ok(());
         };

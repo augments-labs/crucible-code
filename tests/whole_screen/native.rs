@@ -773,3 +773,84 @@ fn a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mo
     assert_eq!(native, full);
     insta::assert_snapshot!(crate::timeless(&everything(&window)));
 }
+
+/// The answer the window is narrowed under, one word of every row of it
+/// standing in no other row, so that a count of the word is a count of the row.
+const NARROWED_UNDER: &str = "Row alfa opens an answer the window is narrowed under \
+    while it is still arriving. Row bravo follows it, as wide as the row above it, \
+    so that both fold again at sixty. Row charlie is the third, worded so that no \
+    word of it stands in any other row. Row delta is the fourth, and the window may \
+    well be narrow by the time it lands. Row foxtrot is the fifth, long enough that \
+    the resize has somewhere to fall. Row golf closes the first answer, and the box \
+    is drawn again under it at sixty.";
+
+/// The answer the window is widened under again, worded the same way.
+const WIDENED_UNDER: &str = "Row hotel opens the second answer, the one the window \
+    is widened under again. Row india follows it at sixty columns, folded by the \
+    renderer and not by the terminal. Row juliett is the third of the second, and \
+    reads the same at either width. Row kilo is the fourth, and the window may well \
+    be wide again by the time it lands. Row lima is the fifth, long enough that this \
+    resize has somewhere to fall too. Row mike closes the second answer, and the box \
+    is drawn again under it at eighty.";
+
+/// The one word of each row of [`NARROWED_UNDER`] and [`WIDENED_UNDER`].
+const ROW_WORDS: [&str; 12] = [
+    "alfa", "bravo", "charlie", "delta", "foxtrot", "golf", "hotel", "india", "juliett", "kilo",
+    "lima", "mike",
+];
+
+#[test]
+fn a_resize_while_an_answer_streams_leaves_no_ghost_row_in_native_mode() {
+    // A resize is taken while the answer is still arriving: the window is
+    // narrowed as soon as the first row of one answer is on screen, and
+    // widened again as soon as the first row of the next is. The harness
+    // settles a resize on a quiet screen, and a streaming answer is never
+    // quiet until it ends, so the two resizes fall in two answers rather than
+    // one. Each answer is short enough that, rewrapped at sixty columns, the
+    // region still fits the window: what is read is the renderer's own
+    // reckoning of how far back its region now starts, not what a terminal
+    // does with a region taller than the window.
+    let vendor = Vendor::answering_each(&[NARROWED_UNDER, WIDENED_UNDER]);
+    let mut window = Watched::native("native-resized-mid-answer", 80, 24, &vendor);
+
+    window.types_and_catches("say the first\r", "alfa");
+    window.resize(60, 24);
+    window.types_and_catches("say the second\r", "hotel");
+    window.resize(80, 24);
+
+    window.assert_never_alternate();
+    let all = everything(&window);
+    for word in ROW_WORDS {
+        assert_eq!(all.matches(word).count(), 1, "{word:?} in\n{all}");
+    }
+    insta::assert_snapshot!(window.picture());
+}
+
+/// Seventy-eight cells: one row at eighty columns, and two once folded at forty.
+const SEVENTY_EIGHT: &str =
+    "This row is seventy-eight cells wide: one row at eighty and two rows at forty.";
+
+#[test]
+fn a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode() {
+    // The answer is whole and the turn is held open behind it, so the row is
+    // still in the region when the window narrows. The resize settles only
+    // once the turn ends, which is what seals the row: it goes out after the
+    // narrowing, at the width the window has by then.
+    let vendor = Vendor::holding(SEVENTY_EIGHT);
+    let mut window = Watched::native("native-sealed-after-narrowing", 80, 24, &vendor);
+    window.types_and_catches("say it\r", "forty.");
+    window.resize(40, 24);
+
+    window.assert_never_alternate();
+    let all = everything(&window);
+    let said: Vec<String> = reply(&all, "say it", "forty.")
+        .into_iter()
+        .filter(|row| !row.is_empty())
+        .collect();
+    assert!(
+        said.iter().all(|row| row.chars().count() <= 40),
+        "{said:#?}"
+    );
+    assert_eq!(said.join(" "), SEVENTY_EIGHT, "{all}");
+    insta::assert_snapshot!(window.picture());
+}
