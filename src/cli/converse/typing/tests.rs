@@ -1069,6 +1069,42 @@ fn the_row_return_would_run_is_the_marked_one_in_the_list_on_screen() {
 }
 
 #[test]
+fn esc_closes_the_command_list_and_leaves_the_line_as_it_was_typed() {
+    // Between turns. The list is standing, so Esc backs out of it; what was
+    // typed is the reader's and stays. With the list gone, return takes the
+    // line as typed rather than a row nobody can see any more.
+    let mut renderer = drawing();
+    let mut editor = typed("/resu");
+    let mut open = listing("/resu");
+
+    assert!(open.close(), "an open list said there was nothing to close");
+    assert!(!open.is_open(), "the list is still open after Esc");
+    assert_eq!(editor.projection().text(), "/resu");
+
+    let asked = said(
+        &mut renderer,
+        &mut editor,
+        &open,
+        &mut unwalked(),
+        Style::plain(),
+    )
+    .expect("the line to be taken");
+    assert!(matches!(asked, Asked::Said(said) if said.said == "/resu"));
+}
+
+#[test]
+fn esc_mid_turn_closes_an_open_list_and_only_then_reaches_the_turn() {
+    // During a turn. A list standing over it takes the first Esc, so the turn
+    // runs on; with nothing left to close, the next one is the turn's.
+    let mut open = listing("/");
+
+    assert!(open.close(), "an open list said there was nothing to close");
+    assert!(!open.is_open(), "the list is still open after Esc");
+    assert!(!open.close(), "a closed list said it closed again");
+    assert_eq!(meant(Pressed::Escape), Meant::Interrupt);
+}
+
+#[test]
 fn esc_is_what_stops_a_turn_and_ctrl_c_is_the_line_s_own_in_both_loops() {
     // The two halves of one change. Esc was a key with nothing to act on while
     // a turn ran, which is what made it the free slot; Ctrl-C was caught here
