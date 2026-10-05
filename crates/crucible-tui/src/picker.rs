@@ -22,6 +22,7 @@
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
+use crate::panel::shortened;
 use crate::render::Caret;
 use crate::row::Row;
 use crate::width::{clip, columns as wide, windowed};
@@ -198,7 +199,10 @@ impl Picker<'_> {
         rows.extend(self.searched(columns, glyphs, under));
         let mut heading = Row::new();
         heading.push(Slot::Plain, " ");
-        heading.push(Slot::Quiet, clip(self.heading, columns.saturating_sub(2)));
+        heading.push(
+            Slot::Quiet,
+            shortened(self.heading, columns.saturating_sub(2), glyphs),
+        );
         rows.push(heading.clipped(columns));
         rows.push(Row::new());
         rows.push(self.edged(columns, glyphs, glyphs.top()));
