@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: scrolled
+---
+80x24 cursor 23,0 scrollback 30
+|quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy|
+|dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over|
+|the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox  |
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
+|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. |
+|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the |
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps|
+|over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown |
+|fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
+|quick brown fox jumps over the lazy dog. done.                                  |
+|                                                                                |
+|› /settings                                                                     |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Settings     Status   ‹ Config ›   Usage                                        |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ / to search                                                                  │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› Syntax theme                                                  Monokai Extended|
+|  ↓ 16 more                                                                     |
+|                                                                                |
+|↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

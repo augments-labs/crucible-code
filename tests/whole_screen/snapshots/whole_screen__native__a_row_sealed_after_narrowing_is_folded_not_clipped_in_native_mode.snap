@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/native.rs
-assertion_line: 864
 expression: window.picture()
 ---
 40x24 cursor 21,4 scrollback 22
@@ -16,8 +15,8 @@ expression: window.picture()
 |This row is seventy-eight cells wide:   |
 |one row at eighty and two rows at forty.|
 |                                        |
-|anthropic: the response ended before the|
-|model finished                          |
+|                                        |
+|                                        |
 |                                        |
 |                                        |
 |                                        |
