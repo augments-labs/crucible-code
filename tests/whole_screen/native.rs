@@ -651,3 +651,125 @@ fn ctrl_b_opens_the_running_list_during_a_turn_in_native_mode() {
     window.assert_never_alternate();
     insta::assert_snapshot!(window.picture());
 }
+
+// A command's reply in native mode. Fullscreen hangs it under the line that
+// asked, with the mark on its first row and its text column kept on the rest,
+// and a native reply is held to that. A row goes out to the scrollback once and
+// cannot be marked after, so a reply that leaves the region before its command
+// ends has to leave it already marked.
+
+/// A fullscreen window configured as [`Watched::native`] configures one, with
+/// the scroll rail off, so its transcript is as wide as the native one.
+fn fullscreen(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Watched {
+    let document = format!(
+        "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+         \"output\": {{\"scrollRail\": false}},\n  \
+         \"providers\": {{\n    \"anthropic\": {{\n      \
+         \"model\": \"claude-test-1\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+        vendor.address()
+    );
+    Watched::configured(case, columns, rows, &document, true)
+}
+
+/// The reply to `command` in `read`: the rows under the one that echoes it,
+/// through the first that says `last`, without the edges or trailing blanks.
+fn reply(read: &str, command: &str, last: &str) -> Vec<String> {
+    let echo = format!("› {command}");
+    let rows: Vec<&str> = drawn(read)
+        .into_iter()
+        .map(|row| row.trim_matches('|').trim_end())
+        .collect();
+    let at = rows
+        .iter()
+        .position(|row| *row == echo)
+        .unwrap_or_else(|| panic!("no row reads {echo}:\n{read}"));
+    let mut said = Vec::new();
+    for row in rows.into_iter().skip(at + 1) {
+        said.push(row.to_owned());
+        if row.contains(last) {
+            return said;
+        }
+    }
+    panic!("no row under {echo} says {last:?}:\n{read}")
+}
+
+/// Opens `/login` and leaves it with Esc at its first panel.
+fn leaves_login(window: &mut Watched) {
+    window.types_until("/login\r", "esc to cancel");
+    window.types_until("\x1b", "signed in");
+}
+
+#[test]
+fn a_one_row_reply_carries_its_mark_in_native_mode() {
+    // The reply follows the panel's key wait, which seals what is above it.
+    let vendor = Vendor::answering("Done.");
+    let mut window = Watched::native("native-reply-one-row", 80, 24, &vendor);
+    leaves_login(&mut window);
+    let native = reply(&everything(&window), "/login", "signed in");
+    let mut other = fullscreen("native-reply-one-row-fullscreen", 80, 24, &vendor);
+    leaves_login(&mut other);
+    let full = reply(&other.picture(), "/login", "signed in");
+
+    window.assert_never_alternate();
+    let all = everything(&window);
+    assert_eq!(all.matches("signed in").count(), 1, "{all}");
+    assert_eq!(native, ["⎿ cancelled, nothing signed in"]);
+    assert_eq!(native, full);
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode() {
+    // Thirty cells with its mark, so two rows at 24 columns: the mark on the
+    // first and the text column it opens kept on the second.
+    let vendor = Vendor::answering("Done.");
+    let mut window = Watched::native("native-reply-wrapped", 24, 24, &vendor);
+    leaves_login(&mut window);
+    let native = reply(&everything(&window), "/login", "signed in");
+    let mut other = fullscreen("native-reply-wrapped-fullscreen", 24, 24, &vendor);
+    leaves_login(&mut other);
+    let full = reply(&other.picture(), "/login", "signed in");
+
+    window.assert_never_alternate();
+    let all = everything(&window);
+    assert_eq!(all.matches("signed in").count(), 1, "{all}");
+    assert_eq!(native, ["⎿ cancelled, nothing", "  signed in"]);
+    assert_eq!(native, full);
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mode() {
+    // Six rows leave `/usage` no room to stand, so it prints, and most of what
+    // it prints has gone out to the scrollback before the command ends. The
+    // fullscreen window is made tall again afterwards, which lays out nothing
+    // again, so that the whole of its reply is on screen to read.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-reply-tall", 80, 24, &vendor);
+    window.resize(80, 6);
+    window.types_until("/usage\r", "limits not reported");
+    let native = reply(
+        &crate::timeless(&everything(&window)),
+        "/usage",
+        "limits not reported",
+    );
+
+    let mut other = fullscreen("native-reply-tall-fullscreen", 80, 24, &vendor);
+    other.resize(80, 6);
+    other.types_until("/usage\r", "limits not reported");
+    other.resize(80, 24);
+    let full = reply(
+        &crate::timeless(&other.picture()),
+        "/usage",
+        "limits not reported",
+    );
+
+    window.assert_never_alternate();
+    assert!(native.len() > 6, "{native:#?}");
+    assert!(
+        native.first().is_some_and(|row| row.starts_with("⎿ Usage")),
+        "{native:#?}"
+    );
+    assert_eq!(native, full);
+    insta::assert_snapshot!(crate::timeless(&everything(&window)));
+}

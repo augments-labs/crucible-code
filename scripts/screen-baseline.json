@@ -571,6 +571,33 @@
       "sha256": "efdc0e31738207489d0c2746d9815668752b122fe714744c716fb48551d068d0"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_one_row_reply_carries_its_mark_in_native_mode.snap",
+      "case": "a_one_row_reply_carries_its_mark_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-reply-one-row\", 80, 24, &vendor)"
+      ],
+      "sha256": "a4cdcaccf1fb3541a8b4f4f38b2bab92f0b999dda3607e65317f44b46abba6ad"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mode.snap",
+      "case": "a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::native(\"native-reply-tall\", 80, 24, &vendor)"
+      ],
+      "sha256": "1e0e7bb24bdf91ba7a5739f4b5e76f6feeaeac75babb719253ddb9f3a7d8456c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode.snap",
+      "case": "a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-reply-wrapped\", 24, 24, &vendor)"
+      ],
+      "sha256": "4d4f70fe00087e6ffb199cc7b0e7222253dd4458e44aea4dce614fa830af99c2"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_60x24.snap",
       "case": "a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode",
       "opened": [
