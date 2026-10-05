@@ -177,7 +177,10 @@ fn a_directory_nobody_has_worked_in_still_says_so_under_the_heading() {
     let drawn = drawn(&welcome(&[]), 80, Glyphs::Unicode);
 
     assert!(drawn.contains("Recent sessions"), "{drawn}");
-    assert!(drawn.contains("No recent sessions"), "{drawn}");
+    assert!(
+        drawn.contains("No earlier session for this workspace"),
+        "{drawn}"
+    );
     assert!(!drawn.contains("/resume"), "{drawn}");
 }
 
