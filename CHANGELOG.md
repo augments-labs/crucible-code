@@ -50,6 +50,17 @@ change in any release with no deprecation period.
   character, so the indent before it and the blank after it on the same row
   open and light nothing. The count of commands left running under the box
   answers on its own words in the same way, not on the mode beside it.
+- **The `/resume` heading says when it is cut.** A directory too long for
+  the window now ends in `…` rather than stopping mid-name.
+- **The installer no longer hangs on a step whose spinner outlives its stop
+  signal.** On macOS the step list was seen stuck on `detect platform`, still
+  spinning two minutes later, because the installer waited without bound for a
+  spinner that had not acted on the signal that ends it. A spinner still there
+  a second after it is told to stop is now killed, with nothing written to the
+  terminal, and the step's row is drawn as usual.
+- **`/cache` keeps its indent in a narrow window.** Lines that wrapped
+  started again at the left edge, out from under the reply's mark; they now
+  wrap inside it, as `/context` and `/usage` do.
 - **Esc closes the command list.** Between turns it used to do nothing, and
   during a turn it stopped the turn and left the list standing. It now closes
   the list in both, keeping the line, as it already closes the Ctrl+O view
