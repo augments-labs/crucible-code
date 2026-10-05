@@ -19,7 +19,8 @@
 //! the same in [`ask`] as in [`during`], because a key that meant one thing
 //! between turns and another during one would have to be relearned at exactly
 //! the moment there is something to lose. Esc belongs to whatever is standing:
-//! nothing, between turns, and the turn itself while one runs.
+//! the command list a `/`-started line has open, in either loop; otherwise
+//! nothing between turns, and the turn itself while one runs.
 //!
 //! It is one of the two places the mode changes — `/mode` is the other — which
 //! is why the runner is a parameter here. The mode is a fact about the session
@@ -628,6 +629,11 @@ pub(crate) fn ask<T: Terminal>(
             // key is one of the rest below.
             Pressed::Queue if queued.waiting_count() > 0 => return Ok(Asked::Queue),
 
+            // The command list a `/`-started line has open is standing, and Esc
+            // backs out of it; the line stays as it was typed. With no list
+            // open, nothing is standing and the key is one of the rest below.
+            Pressed::Escape => open.close() || offered.is_some(),
+
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
             // and has just been taken back. Ctrl+Q among them, where nothing is
@@ -639,8 +645,7 @@ pub(crate) fn ask<T: Terminal>(
             // reason of all: nothing is standing, so there are no regions.
             // Named all the same — a variant nothing decides about is one that
             // will arrive undecided the day something changes.
-            Pressed::Escape
-            | Pressed::Explain
+            Pressed::Explain
             | Pressed::Queue
             | Pressed::Tab
             | Pressed::Rename
@@ -974,9 +979,10 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// then the line stays in the box and the row under it says why.
 ///
 /// The keys that mean something here are the ones that still do. Return
-/// finishes a line, Esc asks the turn to stop, Ctrl+O stands the whole of what
-/// the results so far were cut down to, a click on a row that offered to expand
-/// stands that one result, Ctrl+T opens the whole of the plan above the box or
+/// finishes a line, Esc closes the command list where one is open and otherwise
+/// asks the turn to stop, Ctrl+O stands the whole of what the results so far
+/// were cut down to, a click on a row that offered to expand stands that one
+/// result, Ctrl+T opens the whole of the plan above the box or
 /// bounds it again, Ctrl-C is the line's own — in raw mode the terminal sends it
 /// rather than raising a signal, so it reaches the editor here exactly as it
 /// does at the prompt — and the rest edit the line. While that view stands it
@@ -1097,6 +1103,14 @@ pub(super) fn during<T: Terminal>(
                 renderer.notched(back)?;
             }
 
+            continue;
+        }
+
+        // And the command list, which stands over the turn as they do and so
+        // takes Esc before the turn sees it. It shares the rest of the keyboard
+        // with the line, so only that key is read here.
+        if arrived == Pressed::Escape && opened_list.close() {
+            moved = true;
             continue;
         }
 
@@ -1611,7 +1625,9 @@ fn meant(arrived: Pressed) -> Meant {
 
         // Esc means back out of the thing in front of you everywhere else in a
         // session — a login, a secret, a list being picked from — and while a
-        // turn is running the turn is the thing in front of you.
+        // turn is running the turn is the thing in front of you. Whatever
+        // stands over it instead — the view, the queue, the command list — is
+        // handed the key before it reaches here.
         Pressed::Escape => Meant::Interrupt,
 
         Pressed::Key(Key::Char(first)) => Meant::Typing(first),
@@ -1935,6 +1951,17 @@ impl Opened {
     /// reader is choosing a command from.
     pub(super) fn is_open(&self) -> bool {
         !self.shown.is_empty()
+    }
+
+    /// Closes the list, and says whether there was one to close.
+    ///
+    /// What Esc does to it in both loops. The line is left as it was typed,
+    /// so return then takes the line rather than a row no longer on screen,
+    /// and the next edit filters the list open again from what the line says.
+    pub(super) fn close(&mut self) -> bool {
+        let was = self.is_open();
+        *self = Self::default();
+        was
     }
 
     /// What return runs, or `None` where there is no list and the line is what

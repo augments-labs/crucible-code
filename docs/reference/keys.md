@@ -97,7 +97,8 @@ it](../getting-started/getting-started.md#run-it) tells the longer story.
 While the box holds one word starting with `/`, the commands whose names begin
 with it stand in a list above the box, and a bare `/` shows all of them.
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list and <kbd>Enter</kbd> runs the
-marked command rather than the word as typed. Where there is no room for the
+marked command rather than the word as typed. <kbd>Esc</kbd> closes it and
+keeps the line; typing reopens it. Where there is no room for the
 whole of it, it shows as many commands as fit and ends on a row saying how
 many more there are, `↓ 2 more`; once <kbd>↓</kbd> walks the mark past the
 last one shown, the list moves with it and a `↑ N more` row stands over it.
@@ -114,7 +115,8 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
 | <kbd>Ctrl+Q</kbd> | Stands the prompts left queued behind a turn that stopped on a used-up plan. See [The queue](#the-queue). Nothing while none are waiting. |
-| <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
+| <kbd>Esc</kbd> | Closes the command list, keeping the line. Nothing otherwise. |
+| <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
 
 ## While a turn runs
@@ -126,7 +128,7 @@ wheel. These differ:
 
 | Key | What it does |
 | --- | --- |
-| <kbd>Esc</kbd> | Asks the turn to stop. The row above the box reads `interrupting` until it has. A search or a walk stopped this way answers with what it found: see [Stopping one](../tools/searching.md#stopping-one). |
+| <kbd>Esc</kbd> | Closes the command list where one is open. Otherwise asks the turn to stop. The row above the box reads `interrupting` until it has. A search or a walk stopped this way answers with what it found: see [Stopping one](../tools/searching.md#stopping-one). |
 | <kbd>Enter</kbd> | Queues the prompt for the running turn. Up to 64 prompts and 1 MiB of text can wait; past either bound the prompt stays in the box and the row says `typed-ahead prompts are limited to 64 lines and 1 MiB`. A prompt that is a command is run or refused instead: see [A command typed while a turn runs](../getting-started/getting-started.md#a-command-typed-while-a-turn-runs). |
 | <kbd>Shift-Tab</kbd> | Steps the mode for the turn that starts next, and the row under the box says which. The running turn keeps the mode it began under. |
 | <kbd>Ctrl+C</kbd> | Clears the box. When it is already empty it offers to leave as at the prompt, and the second press within two seconds stops the turn and ends the session. |
@@ -136,8 +138,8 @@ wheel. These differ:
 | <kbd>Ctrl+O</kbd> | Stands the cut results under the tail of the answer, which goes on arriving above them. |
 | <kbd>Ctrl+E</kbd>, <kbd>Tab</kbd> | Nothing. |
 
-While the <kbd>Ctrl+O</kbd> view or the queue stands over a running turn it
-has the keyboard: <kbd>Esc</kbd> closes it rather than stopping the turn. Its
+While the <kbd>Ctrl+O</kbd> view, the queue or the command list stands over a
+running turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its
 keys are under [Results cut short](#results-cut-short) and [The
 queue](#the-queue).
 
