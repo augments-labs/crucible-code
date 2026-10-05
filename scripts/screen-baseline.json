@@ -392,7 +392,7 @@
       "opened": [
         "Watched::open(\"commands-closed\", 80, 24)"
       ],
-      "sha256": "9fbc005de1218f0a4ff05cdcd1624970772f94732bd8d466ccb9f9f2e1c55140"
+      "sha256": "a329ad50aa3595ffe19ac640370305ccf5bd806548883caef8642b1b35dc9f88"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__esc_mid_turn_closes_the_command_list_and_the_turn_runs_on.snap",
@@ -608,7 +608,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::native(\"native-reply-tall\", 80, 24, &vendor)"
       ],
-      "sha256": "3e009f2dd604937766c2de7d98c80abf9692724c16325446e1a11158ba4d98de"
+      "sha256": "447c34b645e9eabf9be78862ec2f030c027bc4061575d33e76b86db44c952f40"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode.snap",
@@ -1147,6 +1147,24 @@
         "Watched::allowing(\"usage-mid-turn\", 80, 30, &vendor, \"bash(*)\")"
       ],
       "sha256": "7fb0dfd7e38b753bff945f6ac12a846870a87b0bdafac7680957d5b844602a8c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_short_40.snap",
+      "case": "usage_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"usage-short-40\", 40, 16, &vendor)"
+      ],
+      "sha256": "97d6ca9e8ac6eacbd04a0c51ab5aa14b5a04dff52d4850e2f17c951ded3e6c70"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_short_40_scrolled.snap",
+      "case": "usage_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"usage-short-40\", 40, 16, &vendor)"
+      ],
+      "sha256": "9818c2abcaa88c4d0ed14779737df6381d7be7d45057bb1deb423d616e5a755f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_40_ascii.snap",
