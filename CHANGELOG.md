@@ -50,6 +50,12 @@ change in any release with no deprecation period.
   character, so the indent before it and the blank after it on the same row
   open and light nothing. The count of commands left running under the box
   answers on its own words in the same way, not on the mode beside it.
+- **The installer no longer hangs on a step whose spinner outlives its stop
+  signal.** On macOS the step list was seen stuck on `detect platform`, still
+  spinning two minutes later, because the installer waited without bound for a
+  spinner that had not acted on the signal that ends it. A spinner still there
+  a second after it is told to stop is now killed, with nothing written to the
+  terminal, and the step's row is drawn as usual.
 
 ## [0.45.2] - 2026-10-03
 

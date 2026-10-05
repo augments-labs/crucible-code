@@ -173,9 +173,21 @@ spin() {
     done
 }
 
+# Ends the spinner. It exits on TERM within its frame, so the wait is short;
+# but bash runs a trap only once the frame's `sleep` returns, and on macOS a
+# spinner was seen looping two minutes after its TERM while the step waited for
+# it. So a spinner still there after a second is killed, and the shell's report
+# of a job ended by a signal is kept off the terminal. The pause here is not
+# the frame's `sleep 0.1`, which lets a test hold one and not the other.
 stop_spinner() {
     [[ -n $spinner ]] || return 0
     kill "$spinner" 2>/dev/null || true
+    local tries=0
+    while kill -0 "$spinner" 2>/dev/null && ((tries < 20)); do
+        sleep 0.05
+        tries=$((tries + 1))
+    done
+    kill -KILL "$spinner" 2>/dev/null || true
     wait "$spinner" 2>/dev/null || true
     spinner=
 }
