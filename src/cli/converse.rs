@@ -760,7 +760,9 @@ pub(crate) fn converse<T: Terminal>(
                 Ran::Again => continue,
                 Ran::Leave => break,
                 // Asked as a prompt is, before the question about a vendor
-                // a recap with nobody to ask would never reach.
+                // a recap with nobody to ask would never reach. Only down a
+                // pipe: at a terminal the command said the warning itself, as
+                // its reply under the line that asked, and asked for nothing.
                 Ran::Room(Compacting::Asked) if !answerable(&conversation) => {
                     unanswered(&conversation, renderer, terms)?;
                     continue;
