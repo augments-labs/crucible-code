@@ -193,8 +193,10 @@ pub fn clip(text: &str, columns: usize) -> &str {
 /// ranges are the rows and not a partition of `text`.
 ///
 /// Measured and broken as [`fold`] is, by what a row will draw: a tab or a
-/// control character a row shows as a space costs that space's column, may
-/// stand where a row breaks, and is not left at either end of one.
+/// control character a row shows as a space costs that space's column and may
+/// stand where a row breaks. It is not left at either end of a row unless a
+/// sequence or format character, which a row drops, stands between it and that
+/// end.
 pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
     let mut rows = Vec::new();
     if columns == 0 {
@@ -280,7 +282,9 @@ fn leading(text: &str) -> usize {
 }
 
 /// Where `text` starts and ends once what a row draws as blank at either end
-/// is left off.
+/// is left off. A sequence or format character counts as an end here though a
+/// row drops it, so a tab or control character drawn as a space is not left at
+/// either end unless one of those stands between it and that end.
 fn trimmed(text: &str) -> Range<usize> {
     let mut start = None;
     let mut end = 0;
@@ -394,10 +398,10 @@ pub fn columns(text: &str) -> usize {
 /// case that asks for it — a caller passing a real ceiling wants the offset.
 ///
 /// Each character outside a sequence, other than the newline that ends the
-/// row, is measured as `shown` says it will reach the screen: as itself for
+/// row, is measured as `drawn_as` says it will reach the screen: as itself for
 /// what the tail is sent, and as [`row::drawn`] for the text a [`crate::Row`]
 /// is about to clean, which is the one rule both read.
-fn walk(text: &str, ceiling: usize, shown: fn(char) -> Option<char>) -> (usize, Option<usize>) {
+fn walk(text: &str, ceiling: usize, drawn_as: fn(char) -> Option<char>) -> (usize, Option<usize>) {
     let mut column = 0;
     // The last character counted and where it starts, so a selector that will
     // not fit can take its base down with it.
@@ -415,7 +419,7 @@ fn walk(text: &str, ceiling: usize, shown: fn(char) -> Option<char>) -> (usize, 
             return (column, Some(offset));
         }
 
-        let Some(character) = shown(character) else {
+        let Some(character) = drawn_as(character) else {
             continue;
         };
 
