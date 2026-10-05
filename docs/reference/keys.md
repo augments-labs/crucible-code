@@ -140,8 +140,8 @@ wheel. These differ:
 
 While the <kbd>Ctrl+O</kbd> view, the queue or the command list stands over a
 running turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its
-keys are under [Results cut short](#results-cut-short) and [The
-queue](#the-queue).
+keys are under [Results cut short](#results-cut-short), [The command
+list](#the-command-list) and [The queue](#the-queue).
 
 ## Reading the conversation
 
@@ -277,7 +277,9 @@ turn runs, the speed taken is asked for once the turn ends.
 ### `/context`
 
 <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
-redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
+redraws it; <kbd>↑</kbd> and <kbd>↓</kbd> scroll it where it is taller than the
+window, and the footer then reads `esc to close · ↑↓ to see more`.
+<kbd>Enter</kbd> and every other key do nothing. Typed while a turn
 runs, it stands over the turn with the figures that turn last reported, which
 include anything it has recorded since its last request.
 

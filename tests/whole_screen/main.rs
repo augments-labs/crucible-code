@@ -18,6 +18,11 @@
 //! the screen rather than about a row — that no row is ever wider than the
 //! terminal, and that no cell outside the window is ever addressed.
 //!
+//! The [`native`] module tests native mode, where crucible draws at the foot
+//! of the terminal's own buffer and lets finished rows scroll. Every case asks
+//! whether the alternate screen was never entered. A case that asserts a line
+//! went out once reads both the scrollback and the window.
+//!
 //! Linux only, and the reason is in [`window`]: the child needs this pty as its
 //! controlling terminal or it reads the developer's window size instead of this
 //! one, and claiming a controlling terminal without `unsafe` means handing the
@@ -3350,19 +3355,10 @@ fn release_notes_list_escape_leaves_the_transcript_as_it_was() {
     ] {
         assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
     }
-    // The command's own row is the one thing written, so the rows under it
-    // are the box and nothing else.
-    let lines = trimmed(&picture);
-    let echo = lines
-        .iter()
-        .position(|line| line.starts_with("\u{203a} /release-notes"))
-        .unwrap_or_else(|| panic!("no echo at\n{picture}"));
-    let under = lines.get(echo + 1..).unwrap_or_default();
-    assert!(
-        under.iter().take_while(|line| line.is_empty()).count() + 3
-            >= under.len().saturating_sub(2),
-        "{picture}"
-    );
+    // The command's own row and the blank row under it are all that is
+    // written, so the rows down to the box are blank.
+    let under = under_echo(&picture, "/release-notes");
+    assert!(under.iter().all(String::is_empty), "{picture}");
 }
 
 #[test]
@@ -3379,6 +3375,106 @@ fn release_notes_list_a_resize_that_leaves_no_room_closes_it_and_prints_nothing(
         assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
     }
     assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+}
+
+/// The rows between the last line that typed `command` and the top of the box
+/// under it, trimmed, and less the scroll rail's cell at the end of each, which
+/// stands where the transcript is longer than the window and is not the row's.
+fn under_echo(picture: &str, command: &str) -> Vec<String> {
+    let lines = trimmed(picture);
+    let echo = lines
+        .iter()
+        .rposition(|line| line.starts_with(&format!("\u{203a} {command}")))
+        .unwrap_or_else(|| panic!("no {command} at\n{picture}"));
+    let under = lines.get(echo + 1..).unwrap_or_default();
+    let top = under
+        .iter()
+        .position(|line| line.starts_with('\u{256d}'))
+        .unwrap_or_else(|| panic!("no box under {command} at\n{picture}"));
+    under
+        .get(..top)
+        .unwrap_or_default()
+        .iter()
+        .map(|row| {
+            row.trim_end_matches(['\u{2502}', '\u{2503}', '\u{2022}', '\u{25cf}'])
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// A window of 80 by 24 on `screen`, `fullscreen` or `native`, answered by
+/// `vendor`.
+fn on_screen(screen: &str, case: &str, vendor: &Vendor) -> Watched {
+    if screen == "native" {
+        Watched::native(case, 80, 24, vendor)
+    } else {
+        Watched::answering(case, 80, 24, vendor)
+    }
+}
+
+/// What `/context` closed by escape leaves under its line on `screen`: the
+/// spacing every panel closed that way leaves.
+fn context_closed(screen: &str, vendor: &Vendor) -> Vec<String> {
+    let mut window = on_screen(screen, &format!("context-closed-{screen}"), vendor);
+    window.types_until("/context\r", "esc to close");
+    window.types_until("\x1b", "ask mode on");
+    under_echo(&window.picture(), "/context")
+}
+
+/// What `/release-notes` closed by `close` leaves under its line, beside what
+/// `/context` closed by escape leaves, on each of `screens`; each screen's
+/// picture follows, for the message of a case that finds them apart.
+fn closed_as_context_is(
+    case: &str,
+    screens: &[&str],
+    close: impl Fn(&mut Watched),
+) -> (Vec<Vec<String>>, Vec<Vec<String>>, String) {
+    let mut seen = Vec::new();
+    let mut wanted = Vec::new();
+    let mut pictures = String::new();
+    for &screen in screens {
+        let vendor = Vendor::answering("Hello.");
+        wanted.push(context_closed(screen, &vendor));
+
+        let mut window = on_screen(screen, &format!("{case}-{screen}"), &vendor);
+        window.types_until("/release-notes\r", "enter opens it");
+        close(&mut window);
+        if screen == "native" {
+            window.assert_never_alternate();
+        }
+        let picture = window.picture();
+        assert!(!picture.contains("enter opens it"), "{screen}\n{picture}");
+        seen.push(under_echo(&picture, "/release-notes"));
+        let _ = writeln!(pictures, "{screen}\n{picture}");
+    }
+    (seen, wanted, pictures)
+}
+
+#[test]
+fn release_notes_list_escape_leaves_the_rows_any_other_panel_does() {
+    let (seen, wanted, pictures) = closed_as_context_is(
+        "release-notes-escape",
+        &["fullscreen", "native"],
+        |window| {
+            window.types_until("\x1b", "ask mode on");
+        },
+    );
+    assert_eq!(seen, wanted, "{pictures}");
+}
+
+#[test]
+fn release_notes_list_closed_by_a_resize_leaves_the_rows_any_other_panel_does() {
+    // Drawn, then a window with no room for it: the list ends as escape ends
+    // it, and leaves what escape leaves. On the full screen only: in native
+    // mode the rows a window gives up as it shrinks are the terminal's, and
+    // what it hands back as it grows again is not this case's to count.
+    let (seen, wanted, pictures) =
+        closed_as_context_is("release-notes-cramped", &["fullscreen"], |window| {
+            window.resize(80, 6);
+            window.resize(80, 24);
+        });
+    assert_eq!(seen, wanted, "{pictures}");
 }
 
 #[test]
@@ -4415,6 +4511,58 @@ fn context_stands_over_a_running_turn_with_the_figures_it_last_carried() {
     insta::assert_snapshot!("context_mid_turn_80", on_the_first_beat(&picture));
 }
 
+#[test]
+fn context_taller_than_the_window_stands_and_scrolls_with_the_arrows() {
+    // A 40x12 window is shorter than the panel's 15 rows: the panel stands in
+    // the window's rows with its body cut short, and the arrows move the body.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("context-short-40", 40, 12, &vendor);
+    window.types_until("/context\r", "Context · ");
+
+    let stood = window.picture();
+    assert!(stood.contains(PANEL_SCROLLS), "{stood}");
+    assert!(stood.contains("↓ 4 more"), "{stood}");
+    assert_eq!(stood_rows(&stood), 12, "{stood}");
+    insta::assert_snapshot!("context_short_40", stood);
+
+    window.types_until("\x1b[B", "↓ 3 more");
+    let scrolled = window.picture();
+    assert!(!scrolled.contains("Context · "), "{scrolled}");
+    assert_eq!(stood_rows(&scrolled), 12, "{scrolled}");
+
+    window.types_until("\x1b[A", "Context · ");
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn context_taller_than_half_the_window_stands_in_half_and_scrolls_in_native_mode() {
+    // Native mode gives a panel half the window. The panel's 15 rows at 40
+    // columns are cut to the 12 of a 24-row window rather than taking 15, and
+    // to the 7 of a 14-row window rather than being printed.
+    for (rows, below) in [(24, 4), (14, 9)] {
+        let vendor = Vendor::answering("Hello.");
+        let mut window = Watched::native(&format!("context-native-40x{rows}"), 40, rows, &vendor);
+        window.types_until("/context\r", "Context · ");
+
+        let stood = window.picture();
+        assert!(stood.contains(PANEL_SCROLLS), "{stood}");
+        assert!(stood.contains(&format!("↓ {below} more")), "{stood}");
+        assert_eq!(stood_rows(&stood), usize::from(rows / 2), "{stood}");
+
+        window.types_until("\x1b[B", &format!("↓ {} more", below - 1));
+        let scrolled = window.picture();
+        assert!(!scrolled.contains("Context · "), "{scrolled}");
+        assert_eq!(stood_rows(&scrolled), usize::from(rows / 2), "{scrolled}");
+
+        window.types_until("\x1b", "ask mode on");
+        window.assert_never_alternate();
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
 // `/usage`: what the session has used, and the plan windows its vendor reported.
 
 /// `picture` with the two figures `/usage` reads off the wall clock written as
@@ -4488,11 +4636,13 @@ fn usage_stands_over_a_running_turn_with_the_figures_it_last_posted() {
     insta::assert_snapshot!("usage_mid_turn_80", timeless(&on_the_first_beat(&picture)));
 }
 
-/// The footer `/usage` stands with where it is taller than its room.
-const USAGE_SCROLLS: &str = "esc to close · ↑↓ to see more";
+/// The footer `/usage` and `/context` stand with where they are taller than
+/// their room.
+const PANEL_SCROLLS: &str = "esc to close · ↑↓ to see more";
 
-/// The rows `/usage` stands in on `picture`: from its rule to its footer.
-fn usage_rows(picture: &str) -> usize {
+/// The rows a panel such as `/usage` stands in on `picture`: from its rule to
+/// its footer.
+fn stood_rows(picture: &str) -> usize {
     let rows: Vec<&str> = picture.lines().filter(|row| row.starts_with('|')).collect();
     let rule = rows
         .iter()
@@ -4516,15 +4666,15 @@ fn usage_taller_than_the_window_stands_and_scrolls_with_the_arrows() {
     window.types_until("/usage\r", "Usage · anthropic");
 
     let stood = window.picture();
-    assert!(stood.contains(USAGE_SCROLLS), "{stood}");
+    assert!(stood.contains(PANEL_SCROLLS), "{stood}");
     assert!(stood.contains("↓ 5 more"), "{stood}");
-    assert_eq!(usage_rows(&stood), 16, "{stood}");
+    assert_eq!(stood_rows(&stood), 16, "{stood}");
     insta::assert_snapshot!("usage_short_40", timeless(&stood));
 
     window.types_until("\x1b[B", "↓ 4 more");
     let scrolled = window.picture();
     assert!(!scrolled.contains("Usage · anthropic"), "{scrolled}");
-    assert_eq!(usage_rows(&scrolled), 16, "{scrolled}");
+    assert_eq!(stood_rows(&scrolled), 16, "{scrolled}");
     insta::assert_snapshot!("usage_short_40_scrolled", timeless(&scrolled));
 
     window.types_until("\x1b[A", "Usage · anthropic");
@@ -4543,13 +4693,13 @@ fn usage_taller_than_half_the_window_stands_in_half_and_scrolls_in_native_mode()
     window.types_until("/usage\r", "Usage · anthropic");
 
     let stood = window.picture();
-    assert!(stood.contains(USAGE_SCROLLS), "{stood}");
-    assert_eq!(usage_rows(&stood), 12, "{stood}");
+    assert!(stood.contains(PANEL_SCROLLS), "{stood}");
+    assert_eq!(stood_rows(&stood), 12, "{stood}");
 
     window.types_until("\x1b[B", "↓ 8 more");
     let scrolled = window.picture();
     assert!(!scrolled.contains("Usage · anthropic"), "{scrolled}");
-    assert_eq!(usage_rows(&scrolled), 12, "{scrolled}");
+    assert_eq!(stood_rows(&scrolled), 12, "{scrolled}");
 
     window.types_until("\x1b", "ask mode on");
     window.assert_never_alternate();
