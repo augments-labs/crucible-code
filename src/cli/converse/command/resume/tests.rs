@@ -1720,3 +1720,43 @@ fn a_rename_reads_back_every_directory_for_the_keys_to_narrow_again() {
     assert_eq!(shown_under(&listed, all, &here), ["away", "renamed"]);
     assert_eq!(shown_under(&listed, Scope::default(), &here), ["renamed"]);
 }
+
+#[test]
+fn the_card_a_resume_puts_back_is_drawn_with_the_glyphs_in_force_now() {
+    // The card's facts were read at launch, but the characters it is drawn
+    // with are the session's: somebody who switched to ascii because their
+    // font has no box drawing would otherwise find the session they picked up
+    // headed by the one set they cannot read.
+    let sample = Sample::new("resume-draws-with-the-glyphs-now");
+    let earlier = recorded(&sample, "what was asked before");
+    let id = named(&earlier);
+    drop(earlier);
+
+    let terms = terms(&sample);
+    // What the settings panel's Glyphs row does to a running session.
+    terms
+        .style
+        .set(terms.style().drawing(crucible_tui::Glyphs::Ascii));
+
+    let session = Arc::new(Session::nowhere());
+    let mut conversation = over(&session);
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    renderer.draws(crucible_tui::Glyphs::Ascii);
+    let mut input = std::io::empty();
+    // Read at launch, when the session drew in unicode.
+    let opening = standing(&sample);
+
+    run(
+        &id,
+        &mut renderer,
+        &mut conversation,
+        &mut lent(&mut input, &opening),
+        &terms,
+    )
+    .expect("the terminal to be written");
+
+    let picture = renderer.terminal().picture().rows().join("\n");
+    assert!(picture.contains("Tips"), "{picture}");
+    assert!(picture.contains("what was asked before"), "{picture}");
+    assert!(picture.is_ascii(), "{picture}");
+}
