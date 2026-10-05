@@ -1,0 +1,17 @@
+---
+source: tests/whole_screen/main.rs
+expression: stood
+---
+40x12 cursor 11,0 scrolled 0
+|────────────────────────────────────────|
+|                                        |
+|Context · claude-test-1 · 200k window   |
+|                                        |
+|███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+|                                        |
+|█ system prompt          1.0k   0.5%    |
+|█ project instructions      0     0%    |
+|█ tool schemas           3.8k   1.9%    |
+|  ↓ 4 more                              |
+|                                        |
+|esc to close · ↑↓ to see more           |

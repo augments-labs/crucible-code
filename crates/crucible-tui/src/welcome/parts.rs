@@ -14,10 +14,25 @@ use crate::glyphs::{Glyphs, WORDMARK};
 /// The heading over what happened in this directory before.
 const SESSIONS: &str = "Recent sessions";
 
-/// What that heading has under it in a directory nobody has worked in. The
-/// heading itself stays: its absence would be a different thing than its
+impl Welcome<'_> {
+    /// What a directory nobody has worked in says, in the words `/resume` uses
+    /// on its empty list and the docs quote.
+    ///
+    /// Held here, once, so the card and `/resume` cannot word one fact two
+    /// ways. The card begins it with a capital, as its other rows begin.
+    pub const NO_EARLIER_SESSION: &'static str = "no earlier session for this workspace";
+}
+
+/// What the sessions heading has under it in a directory nobody has worked in.
+/// The heading itself stays: its absence would be a different thing than its
 /// emptiness, and only one of the two is worth reading.
-const NONE_YET: &str = "No recent sessions";
+fn none_yet() -> String {
+    let mut letters = Welcome::NO_EARLIER_SESSION.chars();
+    letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default()
+}
 
 /// How to reach the sessions that did not fit.
 const MORE: &str = "/resume for more";
@@ -110,7 +125,7 @@ fn sessions(welcome: &Welcome<'_>, columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let mut rows = vec![Row::new().then(Slot::Strong, SESSIONS), Row::new()];
 
     if welcome.sessions.is_empty() {
-        rows.push(Row::new().then(Slot::Quiet, NONE_YET));
+        rows.push(Row::new().then(Slot::Quiet, none_yet()));
         return rows;
     }
 

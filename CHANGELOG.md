@@ -36,7 +36,7 @@ change in any release with no deprecation period.
   one draws the box again directly under the last transcript row, and a
   resize while one is open leaves no row of it in the scrollback.
 - **In native mode a command's reply keeps its mark when it is taller than
-  the window.** A reply such as `/usage` in a short window went out to the
+  the window.** A reply such as `/cache` in a short window went out to the
   scrollback without the `⎿` mark and the indent under it; every row of it now
   carries them, as in fullscreen.
 - **In native mode a resize while an answer is arriving leaves no second copy
@@ -60,7 +60,9 @@ change in any release with no deprecation period.
   terminal, and the step's row is drawn as usual.
 - **`/cache` keeps its indent in a narrow window.** Lines that wrapped
   started again at the left edge, out from under the reply's mark; they now
-  wrap inside it, as `/context` and `/usage` do.
+  wrap inside it, as `/context` and `/usage` do. So does the line `/model`,
+  `/login` and `/logout` add when retiring the cache left resources behind or
+  stopped the switch.
 - **Esc closes the command list.** Between turns it used to do nothing, and
   during a turn it stopped the turn and left the list standing. It now closes
   the list in both, keeping the line, as it already closes the Ctrl+O view
@@ -72,6 +74,26 @@ change in any release with no deprecation period.
   blank row parts one plan window from the next.
 - **`/compact` with no model answers under the line that asked.** The warning
   used to stand apart, two rows down, unlike every other command's reply.
+- **The welcome card and `/resume` agree on an empty directory.** Under
+  `Recent sessions` the card said `No recent sessions` where `/resume` said
+  `no earlier session for this workspace`; both now say the second.
+- **`/release-notes` closed with Esc leaves the spacing other panels do.**
+  It left one blank row fewer above the box, and so did a resize that closed
+  it.
+- **`/context` stands in a short window.** In a window shorter than its panel
+  it was printed into the transcript instead, and in native mode it could
+  take more than half the window; it now stands in the room it is given and
+  scrolls with ↑ and ↓.
+- **Wrapped text holding a control character no longer runs past the
+  window's edge.** An error or a reply can carry a character a terminal would
+  act on, which crucible draws as a space; wrapping counted it as nothing, so
+  the row came out a column wider than the window and the terminal cut or
+  wrapped it. Wrapping now counts that space, and a tab, drawn as one space,
+  as one column rather than up to eight.
+- **A click beside a row of the `Still running` list no longer opens it.** In
+  fullscreen a click or a resting pointer on a list standing over the box
+  counts on the cells the row drew, so the blank after a command on its row
+  marks, opens and lights nothing.
 
 ## [0.45.2] - 2026-10-03
 
