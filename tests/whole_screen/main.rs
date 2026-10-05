@@ -18,6 +18,11 @@
 //! the screen rather than about a row — that no row is ever wider than the
 //! terminal, and that no cell outside the window is ever addressed.
 //!
+//! The [`native`] module tests native mode, where crucible draws at the foot
+//! of the terminal's own buffer and lets finished rows scroll. Every case asks
+//! whether the alternate screen was never entered. A case that asserts a line
+//! went out once reads both the scrollback and the window.
+//!
 //! Linux only, and the reason is in [`window`]: the child needs this pty as its
 //! controlling terminal or it reads the developer's window size instead of this
 //! one, and claiming a controlling terminal without `unsafe` means handing the

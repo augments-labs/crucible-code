@@ -35,7 +35,7 @@ change in any release with no deprecation period.
   most the rows it takes above the box into the terminal's scrollback. A
   resize while one is open leaves no row of it in the scrollback.
 - **In native mode a command's reply keeps its mark when it is taller than
-  the window.** A reply such as `/usage` in a short window went out to the
+  the window.** A reply such as `/cache` in a short window went out to the
   scrollback without the `⎿` mark and the indent under it; every row of it now
   carries them, as in fullscreen.
 - **In native mode a resize while an answer is arriving leaves no second copy
@@ -59,7 +59,9 @@ change in any release with no deprecation period.
   terminal, and the step's row is drawn as usual.
 - **`/cache` keeps its indent in a narrow window.** Lines that wrapped
   started again at the left edge, out from under the reply's mark; they now
-  wrap inside it, as `/context` and `/usage` do.
+  wrap inside it, as `/context` and `/usage` do. So does the line `/model`,
+  `/login` and `/logout` add when retiring the cache left resources behind or
+  stopped the switch.
 - **Esc closes the command list.** Between turns it used to do nothing, and
   during a turn it stopped the turn and left the list standing. It now closes
   the list in both, keeping the line, as it already closes the Ctrl+O view
