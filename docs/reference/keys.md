@@ -140,8 +140,8 @@ wheel. These differ:
 
 While the <kbd>Ctrl+O</kbd> view, the queue or the command list stands over a
 running turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its
-keys are under [Results cut short](#results-cut-short) and [The
-queue](#the-queue).
+keys are under [Results cut short](#results-cut-short), [The command
+list](#the-command-list) and [The queue](#the-queue).
 
 ## Reading the conversation
 
