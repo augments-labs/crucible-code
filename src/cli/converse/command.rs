@@ -790,6 +790,15 @@ pub(super) fn run<T: Terminal>(
         return Ok(Ran::Leave);
     }
 
+    // Down a pipe the line that asked was read after a prompt mark nothing
+    // ended, so that row is still open. It is ended first, before any answer,
+    // or one that commits its first line would write it after `ask › `, and a
+    // mark would be hung on the line below. Only on a screen: redirected
+    // output carries no mark, and its bytes stay as they were.
+    if renderer.is_terminal() {
+        renderer.present(&[])?;
+    }
+
     // The one answer not hung off the line that asked: a timeline has a rail
     // of its own down the left, and a thousand rows indented under a mark
     // would be a second one beside it. One release and the refusals are set
@@ -820,15 +829,6 @@ pub(super) fn run<T: Terminal>(
     // The mark is hung before the answer is written as well as after: in
     // native mode a row goes out once, and an answer that waits for a key or
     // is taller than the window has rows out before it ends.
-    //
-    // Down a pipe the line that asked was read after a prompt mark nothing
-    // ended, so that row is still open. It is ended first, or an answer that
-    // commits its first line would write it after `ask › ` and the mark would
-    // be hung on the line below. Only on a screen: redirected output carries
-    // no mark, and its bytes stay as they were.
-    if renderer.is_terminal() {
-        renderer.present(&[])?;
-    }
     let start = renderer.lines();
     renderer.hangs(terms.style().glyphs());
     let making = answer(wanted, renderer, conversation, held, terms)?;
