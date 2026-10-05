@@ -1,8 +1,9 @@
 ---
 source: tests/whole_screen/native.rs
+assertion_line: 727
 expression: window.picture()
 ---
-80x24 cursor 16,4 scrollback 5
+80x24 cursor 21,4 scrollback 5
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
@@ -17,13 +18,13 @@ expression: window.picture()
 |⎿ cancelled, nothing signed in                                                  |
 |                                                                                |
 |                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
 |                                                                100% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
