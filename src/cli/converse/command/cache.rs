@@ -10,7 +10,7 @@ use crucible_types::PromptCacheResourceError;
 use crate::cli::Fatal;
 use crate::cli::client::astray;
 
-use super::{HUNG, Terms};
+use super::{Laid, Terms};
 
 /// Shows cache state, or performs one explicit bounded cleanup pass.
 pub(super) fn run<T: Terminal>(
@@ -183,11 +183,13 @@ fn cleanup<T: Terminal>(
 /// conversation's; this is only the sentence.
 pub(super) fn retained<T: Terminal>(
     renderer: &mut Renderer<T>,
+    laid: Laid,
     retained: Retained,
 ) -> Result<(), Fatal> {
     if retained.any() {
-        reply(
+        reply_at(
             renderer,
+            laid,
             &format!(
                 "! cache retirement retained {} ambiguous and {} orphaned resource(s)",
                 retained.ambiguous, retained.orphaned,
@@ -200,19 +202,26 @@ pub(super) fn retained<T: Terminal>(
 /// Says that an identity switch stopped because the cache could not be retired.
 pub(super) fn held<T: Terminal>(
     renderer: &mut Renderer<T>,
+    laid: Laid,
     problem: &PromptCacheResourceError,
 ) -> Result<(), Fatal> {
-    reply(renderer, &format!("! cache retirement: {problem}"))
+    reply_at(renderer, laid, &format!("! cache retirement: {problem}"))
 }
 
 /// Writes one line of the reply, folded short of the mark it is hung under.
 ///
 /// The reply is hung under the line that asked once it is written, and a line
 /// left to the window to fold runs over onto rows back at the left edge, out
-/// from under the mark. So each line is laid out here, [`HUNG`] columns short
-/// of the window, as `/context` and `/usage` lay out theirs.
+/// from under the mark. So each line is laid out here, short of the window by
+/// the mark, as `/context` and `/usage` lay out theirs.
 fn reply<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
-    let rows: Vec<Row> = fold(said, renderer.transcript_columns().saturating_sub(HUNG))
+    reply_at(renderer, Laid::Hung, said)
+}
+
+/// Writes one line, folded to where it will stand: hung, or at the left edge
+/// for a `/model` pick applied as the turn it was made over ends.
+fn reply_at<T: Terminal>(renderer: &mut Renderer<T>, laid: Laid, said: &str) -> Result<(), Fatal> {
+    let rows: Vec<Row> = fold(said, laid.columns(renderer))
         .into_iter()
         .map(Row::plain)
         .collect();
@@ -308,6 +317,7 @@ mod tests {
         let rows = hung(mode, |renderer| {
             retained(
                 renderer,
+                Laid::Hung,
                 Retained {
                     ambiguous: 3,
                     orphaned: 2,
@@ -333,7 +343,7 @@ mod tests {
     /// folded short of the mark, that word wraps onto a third row of its own.
     fn held_keeps_its_indent(mode: ScreenMode) {
         let rows = hung(mode, |renderer| {
-            held(renderer, &PromptCacheResourceError::Deadline)
+            held(renderer, Laid::Hung, &PromptCacheResourceError::Deadline)
         });
 
         assert_eq!(
@@ -344,6 +354,37 @@ mod tests {
                 "  deadline",
             ],
             "{mode:?}: in {rows:#?}"
+        );
+    }
+
+    /// The same line said where nothing is hung, as for a `/model` pick
+    /// applied once the turn it was made over ends: folded at the window's
+    /// forty columns, the first row carries "ambiguous".
+    #[test]
+    fn retained_resources_said_at_the_left_edge_fold_at_the_whole_window() {
+        let mut renderer = Renderer::drawing(Recording::new(40, 40), ScreenMode::Fullscreen);
+        retained(
+            &mut renderer,
+            Laid::Flush,
+            Retained {
+                ambiguous: 3,
+                orphaned: 2,
+            },
+        )
+        .expect("the line to be written");
+
+        let rows = renderer.terminal().picture().rows();
+        let opened = rows
+            .iter()
+            .position(|row| row.starts_with("! cache retirement"))
+            .unwrap_or_else(|| panic!("nothing was said in {rows:#?}"));
+        assert_eq!(
+            rows.get(opened..opened + 2).unwrap_or_default(),
+            [
+                "! cache retirement retained 3 ambiguous",
+                "and 2 orphaned resource(s)",
+            ],
+            "{rows:#?}"
         );
     }
 
