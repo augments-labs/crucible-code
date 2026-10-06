@@ -12,8 +12,10 @@
 //!
 //! The directories above the prefix are not examined. Whoever may change one
 //! of them may already replace the `crucible` link in the directory the
-//! installer was given, which is what the user runs, so holding them to the
-//! rule would protect nothing it does not already lose.
+//! installer was given, which is what the user runs, and a prefix they put in
+//! its place is refused on its first entry unless root or the user made it.
+//! What holding them to the rule would still catch is a swap to another tree
+//! root or the user made, which it leaves to the receipt's hashes.
 //!
 //! The layout's links are read rather than followed. `current` must say
 //! exactly `releases/<version>`, so it cannot reach out of the prefix, and a

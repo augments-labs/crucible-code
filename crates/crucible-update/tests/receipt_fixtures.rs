@@ -1,7 +1,7 @@
 //! The receipt read by both of its readers, which must agree.
 //!
-//! The installer that writes the receipt is shell, and reads it back on an
-//! upgrade, while crucible reads it on its own. Each receipt under
+//! The installer that will write the receipt is shell, and will read it back
+//! on an upgrade, while crucible reads it on its own. Each receipt under
 //! `tests/fixtures/installer/receipts/` is given to the shell reader beside
 //! them, under `/bin/sh` and `LC_ALL=C`, and to [`Receipt::parse`]. Both must
 //! accept the ones in `accepted/` with the same values, byte for byte, and

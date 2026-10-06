@@ -20,8 +20,8 @@
 //! cannot pair it with another release's broker. The receipt is written once
 //! the unit's executables are in place, and names the unit's installation,
 //! platform, prefix and release and the SHA-256 of each executable it holds.
-//! This module reads that layout; the installer that writes it is a later
-//! change, and holds itself to the same shape.
+//! This module reads that layout, and the installer is to write it and hold
+//! itself to the same shape.
 //!
 //! A receipt is evidence to check, not a list of paths to follow. Nothing
 //! here opens a path the receipt names: the layout is found from where the

@@ -1,7 +1,7 @@
 //! Release discovery, the cached release check and the installed release's
 //! receipt.
 //!
-//! This crate owns two deliberately separate operations. [`UpdateCrateReleaseCheck::cached`]
+//! This crate owns two deliberately separate release-check operations. [`UpdateCrateReleaseCheck::cached`]
 //! reads the small answer left by an earlier check and is safe on the startup
 //! path: it opens no socket and starts no runtime work. [`UpdateCrateReleaseCheck::refresh`]
 //! is the separate caller intent that may ask GitHub for a newer release; it

@@ -42,26 +42,35 @@ crucible_receipt_read() {
     receipt_broker=
     receipt_line=0
 
-    receipt_size=$(wc -c <"$receipt_file") || return 1
+    if ! receipt_size=$(wc -c <"$receipt_file"); then
+        crucible_receipt_refuse 'the receipt could not be measured'
+        return 1
+    fi
     if [ "$((receipt_size))" -gt 8192 ]; then
         crucible_receipt_refuse 'the receipt is larger than 8192 bytes'
         return 1
     fi
     # A pipeline's status is its last command's, so a `tr` that fails adds a
     # byte of its own to what is counted rather than going unseen.
-    receipt_controls=$(
+    if ! receipt_controls=$(
         { LC_ALL=C tr -d '\n\040-\176\200-\377' <"$receipt_file" || printf x; } | wc -c
-    ) || return 1
+    ); then
+        crucible_receipt_refuse 'the receipt could not be checked for control characters'
+        return 1
+    fi
     if [ "$((receipt_controls))" -ne 0 ]; then
         crucible_receipt_refuse 'the receipt holds a control character or could not be read'
         return 1
     fi
-    # The `x` keeps the newline from being stripped, and is missing only when
-    # `tail` failed.
+    # The `x` keeps the newline from being stripped. A `tail` that fails
+    # leaves it out, and the substitution's status then refuses.
     receipt_newline='
 x'
     if [ "$((receipt_size))" -gt 0 ]; then
-        receipt_last=$(tail -c 1 <"$receipt_file" && printf x) || return 1
+        if ! receipt_last=$(tail -c 1 <"$receipt_file" && printf x); then
+            crucible_receipt_refuse 'the end of the receipt could not be read'
+            return 1
+        fi
         if [ "$receipt_last" != "$receipt_newline" ]; then
             crucible_receipt_refuse 'the last line of the receipt does not end'
             return 1

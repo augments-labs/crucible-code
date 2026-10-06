@@ -308,6 +308,11 @@ fn the_owner_an_install_is_held_to_is_the_user_running_crucible() {
 
 #[test]
 fn an_install_somebody_else_made_is_refused_on_its_first_entry() {
+    if me() == 0 {
+        // A tree root made is trusted by every user, so root holds entries
+        // it has handed to somebody else instead, below.
+        return;
+    }
     let install = Install::new("foreign");
 
     // The install is this user's, so to a process another user runs it is
@@ -322,6 +327,10 @@ fn an_install_somebody_else_made_is_refused_on_its_first_entry() {
 
 #[test]
 fn an_install_reached_through_a_link_to_another_tree_is_held_to_that_tree() {
+    if me() == 0 {
+        // As above: a tree root made is nobody else's to refuse.
+        return;
+    }
     let install = Install::new("redirected");
     let elsewhere = install.dir.join("elsewhere");
     directory(&elsewhere);
@@ -341,7 +350,7 @@ fn an_install_reached_through_a_link_to_another_tree_is_held_to_that_tree() {
 fn each_entry_handed_to_somebody_else_is_refused_when_root_runs() {
     if me() != 0 {
         // Only root can hand an entry to another user; an ordinary run holds
-        // the whole install to an owner it is not, above.
+        // the whole install to an owner it is not, above, which root cannot.
         return;
     }
     for (entry, place) in places() {
