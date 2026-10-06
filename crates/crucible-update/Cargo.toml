@@ -24,6 +24,9 @@ crucible-runtime.workspace = true
 crucible-types.workspace = true
 # GitHub's release answer is JSON, parsed once after its bounded body read.
 serde_json.workspace = true
+# The receipt records each executable's SHA-256, and std has no hash of that
+# kind; the layout is taken only when the files hash to what it records.
+sha2.workspace = true
 # The cleanup result has one typed error for the application to report.
 thiserror.workspace = true
 # The runtime handle, task ownership and the request/body clock. This crate
