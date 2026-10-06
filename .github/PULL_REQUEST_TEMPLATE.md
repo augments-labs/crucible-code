@@ -114,9 +114,9 @@ run it. -->
       updated where this change made a sentence false.
 - [ ] Nothing shipped under `src/`, `crates/`, `docs/` or `schema/` carries an
       internal planning identifier or a harness path.
-- [ ] `CHANGELOG.md`, the affected user documentation, the first-run README
-      surface and contributor setup were updated in this same change, or
-      nothing user-visible moved.
+- [ ] The `changelog.d/` entry, the affected user documentation, the
+      first-run README surface and contributor setup were updated in this
+      same change, or nothing user-visible moved.
 
 ## New dependency (required only if this PR adds or widens one)
 

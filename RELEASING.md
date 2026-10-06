@@ -71,11 +71,18 @@ same way afterwards.
    looks — both are decisions to make in the open, by editing the limit in the
    probe with the reason written next to it, so the next person inherits a
    number somebody chose.
-4. **The changelog is real.** Move everything under `Unreleased` into a new
-   version section with today's date, and add the comparison link. Written for
-   someone deciding whether to upgrade, not generated from commit subjects.
-   Open the section with a summary above its first `###` list: a bold lead and
-   at most three sentences saying what the release changes for that person.
+4. **The changelog is real.** Each change since the last release left its
+   entry in a file of its own under `changelog.d/`, and `CHANGELOG.md` is
+   edited by this commit alone.
+   `python3 scripts/python/changelog-entries.py assemble --version X --date D`
+   writes the version section with today's date from those files and deletes
+   them; it refuses, changing nothing, when there is none, an entry or
+   `Unreleased` breaks the rules `check` holds them to, or the section
+   exists. Then read the lists it wrote and add the comparison link. Written
+   for someone deciding whether to upgrade, not generated from commit
+   subjects. Open the section with a summary above its first `###` list: a
+   bold lead and at most three sentences saying what the release changes for
+   that person.
    The release page shows that summary, the comparison link and a link to the
    changelog, and
    `scripts/python/release-notes.py <version>` prints it as it will appear.
@@ -136,10 +143,11 @@ new language workflows become peers. The ruleset has no bypass and therefore
 applies to the release change too.
 
 ```bash
-# 1. Bump the single version, and update the changelog in the same commit.
+# 1. Bump the single version, and build the changelog section in the same commit.
 git switch dev && git pull
 git switch -c release/v0.0.1
-$EDITOR Cargo.toml CHANGELOG.md
+python3 scripts/python/changelog-entries.py assemble --version 0.0.1 --date "$(date -u +%F)"
+$EDITOR Cargo.toml CHANGELOG.md   # the version, the summary and the comparison links
 cargo build                     # refresh Cargo.lock with the new version
 
 scripts/sh/check.sh
@@ -319,8 +327,8 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    somebody is running. That is why the schema's own description says the format
    is unstable for the whole 0.x line — an editor is a hint, and the program is
    the authority.
-3. Open a fresh `Unreleased` section in the changelog, on `dev`, once the
-   merge back has landed.
+3. Leave `Unreleased` empty: `assemble` wrote the section beneath it, and
+   the next change on `dev` writes its entry under `changelog.d/`.
 4. Point the rollback drill at the release just published, on `dev`: the tag
    in `scripts/sh/rollback-drill.sh`, which its self-test and CI read, and the
    sentence in `docs/building/building.md` that names it. The drill proves the
@@ -370,6 +378,6 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
 Yank is not available for a binary distribution, so:
 
 1. Mark the GitHub Release as a pre-release so it stops being "latest".
-2. Add a `### Removed` note to the changelog saying what was wrong and which
-   version supersedes it.
+2. Add a `### Removed` entry under `changelog.d/` saying what was wrong and
+   which version supersedes it; the replacement's section carries it.
 3. Ship the replacement the same day if the defect risks data or credentials.
