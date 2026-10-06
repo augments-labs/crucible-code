@@ -75,15 +75,12 @@ change in any release with no deprecation period.
   a 40-column window and was printed into the transcript instead; it now
   stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
   its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
-  blank row parts one plan window from the next.
+  blank row parts one plan window from the next. The notice a turn stops on
+  when a plan is used up names its reset the same way.
 - **Every one-line `/compact` reply answers under the line that asked.** The
   no-model warning, `nothing was sent`, `! stopped` and the note that there was
   nothing worth replacing used to stand apart, two rows down, unlike every other
   command's reply.
-  blank row parts one plan window from the next. The notice a turn stops on
-  when a plan is used up names its reset the same way.
-- **`/compact` with no model answers under the line that asked.** The warning
-  used to stand apart, two rows down, unlike every other command's reply.
 - **The welcome card and `/resume` agree on an empty directory.** Under
   `Recent sessions` the card said `No recent sessions` where `/resume` said
   `no earlier session for this workspace`; both now say the second.
@@ -110,7 +107,6 @@ change in any release with no deprecation period.
   the reply now starts on its own row under the prompt, marked, as other
   replies are. A `/release-notes` answer, a release or a refusal, starts on
   its own row too, set apart as when it is typed.
-  replies are.
 - **In native mode the box stays at the foot of the window after a turn.**
   What a turn showed under the answer pushed transcript rows into the
   terminal's scrollback, and once it ended the box was drawn directly under
