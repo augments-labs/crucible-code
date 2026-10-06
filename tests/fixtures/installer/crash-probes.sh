@@ -9,8 +9,9 @@
 # every call, killed just before it and again just after it returns. After each
 # kill, `<dir>/crucible` must still be one complete release, the one before or
 # the one being installed, with a receipt that describes it, and the next
-# install must finish the job. Two more probes kill an install that holds the
-# lock and run two installs at once.
+# install must finish the job. Three more probes kill an install that holds the
+# lock, run two installs at once, and read the modes of a release made under
+# umask 000.
 #
 # Each probe prints `ok` or every kill point it failed at, and the script exits
 # 1 when any failed. Archives, installs and whatever a killed install leaves
@@ -325,5 +326,44 @@ else
     fi
 fi
 report 'concurrent installs serialize on the lock' ${serial[@]+"${serial[@]}"}
+
+echo '==> a release is private to the installer until its receipt is written'
+# Under umask 000 a file or directory made without a mode is open to every local
+# user, so the directory being staged must stay closed to group and others from
+# the moment it exists until the receipt in it is final. The install is stopped
+# just after the receipt is made final, and the finished release is read too.
+private=()
+fresh
+receipted=$(grep -n -m 1 -E '^[0-9]+ chmod 644 .*/receipt$' "$scratch/calls" | cut -d: -f1) || true
+if [[ -z $receipted ]]; then
+    private+=('no install set the mode of a receipt')
+else
+    status=0
+    (umask 000 && probed "$installing" "$receipted" kill-after "$scratch/killed.out") || status=$?
+    staged=$(find "$dest/.crucible-install/releases" -maxdepth 1 -name '.incoming.*' | head -n 1)
+    if ((status != 137)); then
+        private+=("the install ran on to exit $status")
+    elif [[ -z $staged ]] || [[ ! -f $staged/receipt ]]; then
+        private+=('no staged release held a receipt when the install was stopped')
+    else
+        mode=$(ls -ld -- "$staged")
+        [[ ${mode:4:6} == ------ ]] ||
+            private+=("the directory being staged was ${mode%% *} once its receipt was written")
+    fi
+fi
+fresh
+if ! (umask 000 && plain "$installing" "$scratch/private.out"); then
+    private+=("an install under umask 000 failed: $(tr '\n' ' ' <"$scratch/private.out")")
+else
+    for entry in "$dest/.crucible-install/releases/$installing:drwxr-xr-x" \
+        "$dest/.crucible-install/releases/$installing/crucible:-rwxr-xr-x" \
+        "$dest/.crucible-install/releases/$installing/crucible-sandbox-broker:-rwxr-xr-x" \
+        "$dest/.crucible-install/releases/$installing/receipt:-rw-r--r--"; do
+        mode=$(ls -ld -- "${entry%:*}")
+        [[ ${mode:0:10} == "${entry##*:}" ]] ||
+            private+=("${entry%:*} ended ${mode%% *}, not ${entry##*:}")
+    done
+fi
+report 'the staged release is closed to others until its receipt is final' ${private[@]+"${private[@]}"}
 
 ((failures == 0))

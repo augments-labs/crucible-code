@@ -504,6 +504,26 @@ wait "$holder" 2>/dev/null || :
 }
 assert_layout "$held" "$version"
 
+echo '==> a lock held by a process that is no install ends with a way out'
+# A pid that a stopped install left in the lock may now belong to any process,
+# so the wait ends, as long as any wait does, and the message says what to do.
+reused=$scratch/reused
+install_from "$asset" "$reused" >/dev/null
+sleep 90 &
+bystander=$!
+status=0
+ln -s "$bystander@$(uname -n)" "$reused/.crucible-install/lock"
+refused 'a lock named for a process that is no install' \
+    "if no install is running, remove it and run the install again" install_from "$asset" "$reused" ||
+    status=$?
+kill "$bystander" 2>/dev/null || :
+wait "$bystander" 2>/dev/null || :
+((status == 0)) || exit 1
+[[ -L $reused/.crucible-install/lock ]]
+rm -f -- "$reused/.crucible-install/lock"
+install_from "$asset" "$reused" >/dev/null
+assert_layout "$reused" "$version"
+
 echo '==> an archive unpacked below a name with a backslash is still verified'
 slashed=$scratch/'back\slash'
 mkdir -p "$slashed"

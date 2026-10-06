@@ -140,8 +140,9 @@ new one active and complete, and running the same install again finishes it.
 One install runs at a time. While it does, it holds `.crucible-install/lock`,
 and a second install waits for it, giving up after about a minute. An install
 that was killed can leave the lock behind, and the next one then refuses and
-names it; once no install is running, remove the lock and run the install
-again.
+names it, at once or, when another program now has the number of the install
+that held it, after that minute. Once no install is running, remove the lock and
+run the install again.
 
 Installing a version that is already there uses its directory again when it
 holds the same build, and refuses, changing nothing, when it holds a different

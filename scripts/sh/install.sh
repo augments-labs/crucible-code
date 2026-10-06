@@ -815,7 +815,7 @@ take_lock() {
         fi
         tries=$((tries + 1))
         ((tries < 300)) ||
-            fail 1 "another install, ${owner:-unknown}, still holds $lock after a minute"
+            fail 1 "another install, ${owner:-unknown}, still holds $lock after a minute; if no install is running, remove it and run the install again"
         sleep 0.2
     done
     locked=1
@@ -878,8 +878,9 @@ stage_unit() {
         [[ $installation =~ ^[$hex]{32}$ ]] ||
             fail 1 'no installation identifier could be read from /dev/urandom'
     fi
+    # mktemp makes it owner-only, and it stays so until the receipt is final,
+    # since a umask of 002 or 000 would let others write what is made in it.
     staging=$(mktemp -d "$releases/.incoming.XXXXXX")
-    chmod 755 "$staging"
     install -m 755 "$binary" "$staging/crucible"
     [[ -z $broker ]] || install -m 755 "$broker" "$staging/crucible-sandbox-broker"
     if ! said=$("$staging/crucible" --version) || [[ $said != "crucible $version" ]]; then
@@ -888,6 +889,7 @@ stage_unit() {
         fail 1 "$problem"
     fi
     write_receipt "$staging"
+    chmod 755 "$staging"
     if [[ -n $broker ]]; then
         flush "$staging/crucible" "$staging/crucible-sandbox-broker" "$staging/receipt" "$staging"
     else
