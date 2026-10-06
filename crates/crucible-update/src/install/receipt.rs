@@ -92,7 +92,7 @@ pub struct Receipt {
 /// somebody's home, and the line and key say where to look.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReceiptError {
-    /// More than [`MAX_BYTES`] were offered.
+    /// More bytes were offered than a receipt may hold.
     #[error("the receipt is larger than {MAX_BYTES} bytes")]
     TooLarge,
     /// A byte below 32 other than a newline, or 127, appears.
