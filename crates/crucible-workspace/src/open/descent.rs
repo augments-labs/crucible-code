@@ -40,6 +40,12 @@ const MADE: Mode = Mode::RUSR
     .union(Mode::ROTH)
     .union(Mode::WOTH);
 
+/// What the preparation file of a replacement of an existing file is made as.
+///
+/// The original's mode is applied only after the content is written, and the
+/// original may be private, so until then no one but the owner may open it.
+const PRIVATE: Mode = Mode::RUSR.union(Mode::WUSR);
+
 /// What a directory crucible creates is asked for as, before the umask.
 const MADE_DIRECTORY: Mode = Mode::RUSR
     .union(Mode::WUSR)
@@ -157,8 +163,8 @@ pub(super) fn replaced(
     write: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> Result<(), PathError> {
     let (at, leaf) = parent(path)?;
-    let (temporary, mut file) = temporary(path, &at)?;
     let existed = permissions.is_some();
+    let (temporary, mut file) = temporary(path, &at, if existed { PRIVATE } else { MADE })?;
 
     let prepared = write(&mut file)
         .and_then(|()| match permissions {
@@ -229,7 +235,7 @@ pub(super) fn replaced(
 }
 
 /// A fresh file in the destination directory, under a name nothing reads.
-fn temporary(path: &WorkspacePath, at: &File) -> Result<(OsString, File), PathError> {
+fn temporary(path: &WorkspacePath, at: &File, mode: Mode) -> Result<(OsString, File), PathError> {
     for _ in 0..128 {
         let number = NEXT.fetch_add(1, Ordering::Relaxed);
         let name = OsString::from(format!(".crucible-writing-{}-{number}", std::process::id()));
@@ -237,7 +243,7 @@ fn temporary(path: &WorkspacePath, at: &File) -> Result<(OsString, File), PathEr
             at,
             &name,
             OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
-            MADE,
+            mode,
         ) {
             Ok(file) => return Ok((name, File::from(file))),
             Err(Errno::EXIST) => {}
@@ -301,3 +307,6 @@ fn refused(path: &WorkspacePath, errno: Errno) -> PathError {
         other => path.unopened(other.into()),
     }
 }
+
+#[cfg(test)]
+mod tests;
