@@ -1589,7 +1589,9 @@ impl Ending {
         #[cfg(test)]
         bounded::hold_final_check(self.sandbox);
         // The handoff check above is not the boundary: seal every output read
-        // before publication; a seal timeout discards rather than publishing.
+        // before publication, once the readers have had their bounded while to
+        // reach their pipes' ends; a read still in flight past the bound
+        // discards rather than publishing.
         match self.output_boundary.seal() {
             Ok(true) => {
                 drop(admission);

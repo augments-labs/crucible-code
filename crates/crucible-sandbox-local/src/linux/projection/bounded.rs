@@ -174,19 +174,27 @@ pub(crate) fn hold_final_check(sandbox: crucible_types::SandboxId) {
         .recv();
 }
 
-/// The collector gives an ended command's output readers this long to reach
-/// their pipes' ends. The publication boundary uses the same bound, so a
-/// reader that cannot be sealed cannot hold publication open indefinitely.
+/// How long an ended command's output readers are given to reach their pipes'
+/// ends before the seal, and then how long a read in flight is given to
+/// finish after it. Each wait is bounded by this, so a reader that neither
+/// drains nor lets go cannot hold publication open indefinitely.
 const OUTPUT_READER_SEAL: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// The output-read boundary shared by a command's readers and its ending.
 ///
-/// A read is counted while it holds a permit. Sealing first refuses new reads,
-/// then waits for the permits already in flight. The output reader can record
-/// the hard-limit result before its permit is released; after the seal no
-/// reader can record a violation before publication begins. The underlying
-/// stream remains the one that accounts bytes; this boundary shares its
-/// `Limited` result with the ending so the two cannot disagree at publication.
+/// A reader is open from the moment its stream is taken until it reads the
+/// stream's end or is dropped, and a read is counted while it holds a permit.
+/// Sealing first gives the open readers [`OUTPUT_READER_SEAL`] to reach their
+/// ends, because a command that has ended can leave most of what it wrote
+/// still in its pipe, and refusing reads at once would cut that off. It then
+/// refuses new reads and waits for the permits already in flight. The output
+/// reader can record the hard-limit result before its permit is released;
+/// after the seal no reader can record a violation before publication begins.
+/// A reader still open at the seal has its next read refused with an error
+/// rather than told the stream ended, so what it lost reads as incomplete.
+/// The underlying stream remains the one that accounts bytes; this boundary
+/// shares its `Limited` result with the ending so the two cannot disagree at
+/// publication.
 #[derive(Default)]
 pub(super) struct OutputBoundary {
     state: Mutex<OutputBoundaryState>,
@@ -196,6 +204,7 @@ pub(super) struct OutputBoundary {
 #[derive(Default)]
 struct OutputBoundaryState {
     sealed: bool,
+    open: usize,
     readers: usize,
     limited: bool,
 }
@@ -205,6 +214,25 @@ struct OutputPermit {
 }
 
 impl OutputBoundary {
+    fn open(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.open = state.open.saturating_add(1);
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.open = state.open.saturating_sub(1);
+        if state.open == 0 {
+            self.idle.notify_all();
+        }
+    }
+
     fn begin_read(self: &Arc<Self>) -> Option<OutputPermit> {
         let mut state = self
             .state
@@ -245,6 +273,18 @@ impl OutputBoundary {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let drained = std::time::Instant::now() + OUTPUT_READER_SEAL;
+        while state.open != 0 {
+            let remaining = drained.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            state = self
+                .idle
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
         state.sealed = true;
         let deadline = std::time::Instant::now() + OUTPUT_READER_SEAL;
         while state.readers != 0 {
@@ -278,11 +318,47 @@ impl Drop for OutputPermit {
 pub(super) struct PublicationOutput {
     inner: Box<dyn SandboxOutput>,
     boundary: Arc<OutputBoundary>,
+    /// Whether the stream's end has been read, which closes this reader.
+    ended: bool,
 }
 
 impl PublicationOutput {
     pub(super) fn new(inner: Box<dyn SandboxOutput>, boundary: Arc<OutputBoundary>) -> Self {
-        Self { inner, boundary }
+        boundary.open();
+        Self {
+            inner,
+            boundary,
+            ended: false,
+        }
+    }
+
+    /// What a read refused by the seal answers: the end for a reader that
+    /// already read it, and otherwise an error, since the stream may still
+    /// hold output this reader will never be given.
+    fn sealed(&self) -> io::Result<SandboxRead> {
+        if self.ended {
+            Ok(SandboxRead::End)
+        } else {
+            Err(io::Error::other(
+                "the command's output was cut short when its ending sealed it",
+            ))
+        }
+    }
+
+    fn reached(&mut self, read: SandboxRead) -> SandboxRead {
+        if matches!(read, SandboxRead::End) && !self.ended {
+            self.ended = true;
+            self.boundary.close();
+        }
+        self.boundary.record(read)
+    }
+}
+
+impl Drop for PublicationOutput {
+    fn drop(&mut self) {
+        if !self.ended {
+            self.boundary.close();
+        }
     }
 }
 
@@ -300,10 +376,10 @@ impl SandboxOutput for PublicationOutput {
             return Ok(SandboxRead::Pending);
         }
         let Some(_permit) = self.boundary.begin_read() else {
-            return Ok(SandboxRead::End);
+            return self.sealed();
         };
         let read = self.inner.read_ready(buffer)?;
-        Ok(self.boundary.record(read))
+        Ok(self.reached(read))
     }
 
     fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<SandboxRead>> {
@@ -312,10 +388,10 @@ impl SandboxOutput for PublicationOutput {
                 return Ok(SandboxRead::Bytes(0));
             }
             let Some(_permit) = self.boundary.begin_read() else {
-                return Ok(SandboxRead::End);
+                return self.sealed();
             };
             let read = self.inner.read(buffer).await?;
-            Ok(self.boundary.record(read))
+            Ok(self.reached(read))
         })
     }
 }

@@ -84,23 +84,25 @@ pub(super) fn finish(mut process: Box<dyn SandboxProcess>) -> (ExitStatus, Vec<u
     (status.expect("status"), output, errors)
 }
 
+/// Takes everything `stream` has ready, the way a reader draining it does: an
+/// ended command's ending waits only a bounded while for its readers to reach
+/// the end before it seals what is left.
 fn read_ready(stream: &mut Option<Box<dyn SandboxOutput>>, bytes: &mut Vec<u8>) {
-    let Some(output) = stream else {
-        return;
-    };
-    let mut buffer = [0_u8; 512];
-    match output.read_ready(&mut buffer).expect("read output") {
-        SandboxRead::Bytes(read) => {
-            bytes.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+    while let Some(output) = stream {
+        let mut buffer = [0_u8; 512];
+        match output.read_ready(&mut buffer).expect("read output") {
+            SandboxRead::Bytes(read) => {
+                bytes.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+            }
+            SandboxRead::Limited {
+                retained,
+                discarded: _,
+            } => {
+                bytes.extend_from_slice(buffer.get(..retained).expect("reported bytes"));
+            }
+            SandboxRead::Pending => return,
+            SandboxRead::End => *stream = None,
         }
-        SandboxRead::Limited {
-            retained,
-            discarded: _,
-        } => {
-            bytes.extend_from_slice(buffer.get(..retained).expect("reported bytes"));
-        }
-        SandboxRead::Pending => {}
-        SandboxRead::End => *stream = None,
     }
 }
 
