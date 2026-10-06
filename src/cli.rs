@@ -861,7 +861,6 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
             workspace: &workspace,
             sessions: &sessions,
             update: update.as_ref(),
-            style: terms.style(),
         },
     )?;
 

@@ -54,7 +54,7 @@ pub(super) fn run<T: Terminal>(
             held.images.clear();
             renderer.empties()?;
             match renderer.screen() {
-                ScreenMode::Fullscreen => held.opening.drawing(terms.style()).commit(renderer)?,
+                ScreenMode::Fullscreen => held.opening.commit(renderer)?,
                 // No divider and no card: no session ended here to be parted
                 // from the one that follows, and the launch's card is still
                 // in the scrollback above.
@@ -126,7 +126,7 @@ pub(super) fn run<T: Terminal>(
     // scrollback above what was said, and a second one would read as a second
     // launch, so one divider says where the new session starts instead.
     match renderer.screen() {
-        ScreenMode::Fullscreen => held.opening.drawing(terms.style()).commit(renderer)?,
+        ScreenMode::Fullscreen => held.opening.commit(renderer)?,
         ScreenMode::Native => renderer.divides("new session")?,
     }
     Ok(())

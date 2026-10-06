@@ -966,7 +966,8 @@ impl<T: Terminal> Renderer<T> {
     /// thing here that puts a character of its own in place of one the model
     /// wrote. The reader is told rather than replaced, since a change can
     /// arrive between two deltas of one answer and the scan has to go on where
-    /// it was; rows already written keep the characters they were drawn with.
+    /// it was; rows already written keep the characters they were drawn with,
+    /// except the opening, which the next resize lays out again in this set.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
@@ -1047,7 +1048,7 @@ impl<T: Terminal> Renderer<T> {
         // scrollbar is the rail.
         self.rails = on && self.native.is_none();
         self.grip = None;
-        self.record.resized(self.folds());
+        self.record.resized(self.folds(), self.glyphs);
         self.unselects();
         self.painted.forget();
     }
@@ -1219,19 +1220,24 @@ impl<T: Terminal> Renderer<T> {
     /// session, so what laid it is still here to lay it again — and it is what
     /// a reader is looking at when they take the corner of a fresh window and
     /// pull. Each width it is handed is [`Self::transcript_columns`], as for
-    /// [`Self::present`].
+    /// [`Self::present`], and each glyph set the one [`Self::draws`] last
+    /// named, so a card laid out again after the reader changed it is drawn
+    /// in the set they chose.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn opens(&mut self, lay: Box<dyn Fn(usize) -> Vec<Row>>) -> Result<(), TerminalError> {
+    pub fn opens(
+        &mut self,
+        lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
+    ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
             // Nothing will resize a file, so holding what could draw it again
             // would be holding it for an event that cannot arrive.
-            return self.present(&lay(self.transcript_columns()));
+            return self.present(&lay(self.transcript_columns(), self.glyphs));
         }
 
-        self.record.opens(lay);
+        self.record.opens(self.glyphs, lay);
         self.draw()
     }
 
@@ -1555,7 +1561,7 @@ impl<T: Terminal> Renderer<T> {
 
         self.native_resize(size);
         self.size = size;
-        self.record.resized(self.folds());
+        self.record.resized(self.folds(), self.glyphs);
         self.standing.clear();
         self.prompt_target = None;
         self.pointed_changed = false;

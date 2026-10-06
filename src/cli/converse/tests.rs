@@ -42,7 +42,6 @@ pub(crate) fn opening() -> draw::opening::Standing {
             workspace: &workspace,
             sessions: &[],
             update: None,
-            style: Style::plain(),
         },
         std::time::SystemTime::now(),
     )

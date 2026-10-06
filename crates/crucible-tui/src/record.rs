@@ -30,7 +30,8 @@
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
 //! and a resize replaces those lines with the same card drawn for the window
-//! there is now.
+//! there is now, in the glyph set in force now: a reader who changed it since
+//! launch is not handed the card back in the characters they turned away from.
 
 use std::fmt;
 
@@ -38,6 +39,7 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 use crate::color::Slot;
+use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::scroll_rail::Place;
 
@@ -164,8 +166,9 @@ struct Opening {
     from: usize,
     /// How many lines it laid, at the width they were laid at.
     lines: usize,
-    /// What laid them, kept for as long as they are held.
-    lay: Box<dyn Fn(usize) -> Vec<Row>>,
+    /// What laid them, kept for as long as they are held, and handed the
+    /// width and the glyph set each time it lays them.
+    lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
 }
 
 impl fmt::Debug for Opening {
@@ -365,24 +368,25 @@ impl Record {
         }
     }
 
-    /// Lay down the opening, keeping what laid it.
+    /// Lay down the opening in `glyphs`, keeping what laid it.
     ///
     /// The one block a resize draws again — see the prose at the top of this
     /// file for why this one and nothing else.
-    pub(crate) fn opens(&mut self, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
+    pub(crate) fn opens(&mut self, glyphs: Glyphs, lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>) {
         self.end();
         let from = self.gone + self.lines.len();
-        let laid = lay(self.columns);
+        let laid = lay(self.columns, glyphs);
         let lines = laid.len();
         self.lay(laid);
         self.opening = Some(Opening { from, lines, lay });
     }
 
-    /// Draw the opening again for `columns`, in the lines it already holds.
+    /// Draw the opening again for `columns` in `glyphs`, in the lines it
+    /// already holds.
     ///
     /// Before the heights are worked out again rather than after: this changes
     /// which lines there are, and [`Self::resized`] is what measures them.
-    fn relay(&mut self, columns: usize) {
+    fn relay(&mut self, columns: usize, glyphs: Glyphs) {
         let Some(opening) = self.opening.take() else {
             return;
         };
@@ -395,7 +399,7 @@ impl Record {
         }
 
         let at = opening.from - self.gone;
-        let laid = (opening.lay)(columns);
+        let laid = (opening.lay)(columns, glyphs);
         let lines = laid.len();
 
         for _ in 0..opening.lines {
@@ -1240,17 +1244,18 @@ impl Record {
         self.following = true;
     }
 
-    /// Lay the record out for a window of a different width.
+    /// Lay the record out for a window of a different width, with the opening
+    /// drawn again in `glyphs`.
     ///
     /// Every height is wrong at once, so every height is worked out again —
     /// and the spot keeps its line and loses its offset into it, because the
     /// row that was third of five in a line is not the third of two.
-    pub(crate) fn resized(&mut self, columns: usize) {
+    pub(crate) fn resized(&mut self, columns: usize, glyphs: Glyphs) {
         if columns == self.columns {
             return;
         }
         self.columns = columns;
-        self.relay(columns);
+        self.relay(columns, glyphs);
         self.relay_responsive(columns);
         self.rows = 0;
         self.before = 0;
@@ -1391,8 +1396,8 @@ mod tests {
 
     /// A source that lays one row per column of the window, so what width it
     /// was called at can be read straight off what it laid.
-    fn ruler() -> Box<dyn Fn(usize) -> Vec<Row>> {
-        Box::new(|columns| {
+    fn ruler() -> Box<dyn Fn(usize, Glyphs) -> Vec<Row>> {
+        Box::new(|columns, _| {
             (0..columns)
                 .map(|row| Row::new().then(Slot::Plain, format!("{row}")))
                 .collect()
@@ -1450,7 +1455,7 @@ mod tests {
         let after = record.landmarks.front().copied().expect("a landmark");
         assert_eq!(after, 1, "one responsive block is one logical line");
 
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
 
         assert_eq!(record.landmarks.front().copied(), Some(after));
         assert_eq!(record.start_of(after), Some(3));
@@ -1479,7 +1484,7 @@ mod tests {
     #[test]
     fn a_record_that_was_emptied_has_nothing_left_of_what_it_held() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         record.write(Slot::Plain, "said\n", None);
 
         record.empties();
@@ -1489,7 +1494,7 @@ mod tests {
         // The card goes with the lines and does not come back: what a resize
         // lays out again is an opening whose lines are still held, and these
         // are not.
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
         assert!(said(&record, 8).is_empty());
     }
 
@@ -1545,7 +1550,7 @@ mod tests {
         record.subordinate(from, "⎿");
 
         assert_eq!(said(&record, 8), ["⎿ failed at 8", "  details"]);
-        record.resized(12);
+        record.resized(12, Glyphs::Unicode);
         assert_eq!(said(&record, 8), ["⎿ failed at 12", "  details"]);
     }
 
@@ -1584,7 +1589,7 @@ mod tests {
         record.subordinate(from, "⎿");
 
         assert_eq!(said(&record, 8), ["⎿ at 8", "  after"]);
-        record.resized(12);
+        record.resized(12, Glyphs::Unicode);
         assert_eq!(said(&record, 8), ["⎿ at 12", "  after"]);
     }
 
@@ -1630,10 +1635,10 @@ mod tests {
     #[test]
     fn the_opening_is_laid_out_again_when_the_window_changes() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         record.write(Slot::Plain, "after\n", None);
 
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
 
         let laid: Vec<String> = record.lines.iter().map(measured).collect();
         assert_eq!(laid, ["0", "1", "2", "3", "4", "after"]);
@@ -1642,7 +1647,7 @@ mod tests {
     #[test]
     fn a_card_that_changes_height_leaves_the_reader_on_the_line_they_were_on() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         for line in 0..6 {
             record.write(Slot::Plain, &format!("said {line}\n"), None);
         }
@@ -1658,7 +1663,7 @@ mod tests {
         // record means two lines further down than it did. Wide enough that
         // what is under the card still folds to one row apiece, because that
         // is the other half of a resize and is not what this is about.
-        record.resized(6);
+        record.resized(6, Glyphs::Unicode);
 
         assert_eq!(said(&record, 4), reading);
     }
@@ -1666,12 +1671,12 @@ mod tests {
     #[test]
     fn a_card_that_changes_height_keeps_prompt_landmarks_on_their_prompts() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         record.landmark();
         record.write(Slot::Plain, "the prompt\n", None);
         let before = record.landmarks.front().copied().expect("a landmark");
 
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
 
         let after = record.landmarks.front().copied().expect("the landmark");
         assert_eq!(after, before - 3);
@@ -1681,7 +1686,7 @@ mod tests {
     #[test]
     fn a_reader_inside_a_card_that_was_laid_out_again_is_left_at_the_top_of_it() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         for line in 0..6 {
             record.write(Slot::Plain, &format!("said {line}\n"), None);
         }
@@ -1693,7 +1698,7 @@ mod tests {
         record.scroll(-6, 4);
         assert_eq!(said(&record, 1), ["4"]);
 
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
 
         assert_eq!(said(&record, 1), ["0"]);
     }
@@ -1921,7 +1926,7 @@ mod tests {
         // that was fourth of five in a line is not the fourth of two.
         assert!(record.top.into > 0);
 
-        record.resized(18);
+        record.resized(18, Glyphs::Unicode);
 
         assert_eq!(record.top.line, was);
         assert_eq!(record.top.into, 0);

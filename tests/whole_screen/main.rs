@@ -2145,6 +2145,33 @@ fn a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width() {
 }
 
 #[test]
+fn a_resize_after_the_glyphs_change_lays_the_opening_out_in_the_new_set() {
+    // The opening is laid out again on a resize, and what it is laid out in is
+    // the glyph set in force then: a reader who turned to ascii because their
+    // font lacks the box characters would otherwise get the card back in the
+    // very characters they turned away from. Tall enough that the whole card,
+    // stacked at the narrower width, is still on screen to be read.
+    let mut window = Watched::open("relaid-glyphs", 80, 40);
+    window.types_until("/settings\r", "esc to close");
+    window.types_until("/glyphs", "Glyphs");
+    window.types_until("\r\r", "ascii");
+    window.types_until("\x1b", "> Theme");
+    window.types_until("\x1b", "Glyphs set to ascii");
+
+    window.resize(52, 40);
+
+    let picture = window.picture();
+    let top = picture
+        .lines()
+        .find(|row| row.contains(" crucible v"))
+        .unwrap_or_else(|| panic!("the card's top edge:\n{picture}"));
+    assert!(top.starts_with("|+- crucible v"), "{picture}");
+    for unicode in ['╭', '╮', '╰', '╯', '│', '─'] {
+        assert!(!picture.contains(unicode), "{unicode}:\n{picture}");
+    }
+}
+
+#[test]
 fn the_session_picker_stands_over_the_whole_window() {
     // The picker in the binary rather than in a component test: the words a
     // reader is actually handed, the two panes, and the row of keys under
