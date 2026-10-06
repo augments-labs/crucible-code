@@ -11,11 +11,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crucible_client_api as api;
 use crucible_client_api::{
     Capabilities, Capability, ErrorCode, Model, Name, Percent, Problem, Progress, Snapshot, Stop,
-    Text,
+    SummaryKind, Text,
 };
 use crucible_models::{Effort, Served, Speed};
 use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
-use crucible_tools::Mode;
+use crucible_tools::{Argument, Mode};
 use crucible_types::{
     CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
 };
@@ -85,6 +85,7 @@ pub fn progress(
             call: Text::cut(call.id.as_str()),
             tool: Text::cut(&call.name),
             summary: Text::cut(summary.as_str()),
+            summary_kind: summary_kind(summary.argument()),
         },
         Event::ToolFinished { call, output, .. } => Progress::ToolFinished {
             call: Text::cut(call.as_str()),
@@ -126,6 +127,19 @@ pub fn progress(
         | Event::Unread { .. }
         | Event::Steered { .. } => return None,
     })
+}
+
+/// What kind of thing a call's summary names, in the contract's words.
+///
+/// Written out by hand, so a kind the tools add is one the contract decides on
+/// before this compiles.
+const fn summary_kind(argument: Argument) -> SummaryKind {
+    match argument {
+        Argument::Path => SummaryKind::Path,
+        Argument::Address => SummaryKind::Address,
+        Argument::Command => SummaryKind::Command,
+        Argument::Other => SummaryKind::Other,
+    }
 }
 
 /// What a client is told of a turn that ended on `error`.

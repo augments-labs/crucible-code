@@ -21,9 +21,10 @@ impl Version {
     /// number would refuse or misread: a field added that must be there, one
     /// renamed, moved or taken away, or a word added that a build speaking the
     /// old number would refuse as malformed, as the second revision added the
-    /// `plan_limit` code. A test holds the number and what the frames are made
-    /// of together, so that one cannot move without the other being looked at.
-    pub const CURRENT: Self = Self(2);
+    /// `plan_limit` code and the third the `summary_kind` a requested call
+    /// carries. A test holds the number and what the frames are made of
+    /// together, so that one cannot move without the other being looked at.
+    pub const CURRENT: Self = Self(3);
 
     /// The revision numbered `number`, spoken or not.
     #[must_use]
