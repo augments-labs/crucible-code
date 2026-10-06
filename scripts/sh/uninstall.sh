@@ -104,11 +104,17 @@ if ((fancy)); then
     [[ $columns =~ ^[0-9]+$ ]] && ((columns >= 20)) || columns=80
 fi
 
-# A step's mark and label, then its detail beside the label, or under it when
-# the row has no room for it.
+# The detail of a step starts here, after the indent, the mark and the label.
+detail_column=$((2 + ${#done_mark} + 1 + 20))
+# Decided once, before the first row, from every detail the run draws: when one
+# has no room beside its label, every detail goes under its step, so the list
+# reads as one column, as the installer's does.
+narrow=0
+
+# A step's mark and label, then its detail beside the label, or under it.
 row() {
     printf '  %s%s%s %s' "$green" "$done_mark" "$plain" "$1"
-    if ((2 + ${#done_mark} + 1 + 20 + ${#2} <= columns)); then
+    if ((!narrow)); then
         printf '%*s%s%s%s\n' $((20 - ${#1})) '' "$dim" "$2" "$plain"
     else
         printf '\n    %s%s%s\n' "$dim" "$2" "$plain"
@@ -169,6 +175,16 @@ if ((fancy)); then
     2) what="${names[0]} and ${names[1]}" ;;
     *) what="${names[0]}, ${names[1]} and ${names[2]}" ;;
     esac
+    # The second row names the data directory: purged when it existed, or kept.
+    data_detail=
+    if ((!purge)); then
+        data_detail=$(shown "$data_home")
+    elif [[ -n $purge_target ]]; then
+        data_detail=$(shown "$purge_target")
+    fi
+    for detail in "$what" "$data_detail"; do
+        ((detail_column + ${#detail} <= columns)) || narrow=1
+    done
     row remove "$what"
 fi
 

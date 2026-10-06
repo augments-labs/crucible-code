@@ -567,6 +567,24 @@ removed=$(CRUCIBLE_CODE_HOME=$scratch/look-home "$UNINSTALL" --dir "$look_bin" 2
 refuse 'piped uninstall' "$removed" "$ESC"
 expect 'piped uninstall' "$removed" 'crucible is uninstalled.'
 
+echo '==> uninstall puts every detail under its step when one does not fit beside it'
+# At 50 columns the kept data directory, `~/h`, fits beside its step and the
+# list of what was removed does not; the list still reads as one column.
+install_from "$asset" "$look_bin" >/dev/null
+removed=$(in_terminal 50 env TERM=xterm LC_ALL=C HOME="$scratch" CRUCIBLE_CODE_HOME="$scratch/h" \
+    "$UNINSTALL" --dir "$look_bin")
+expect 'a narrow uninstall' "$removed" 'status=0'
+for step in "remove"$'\r\n'"    crucible, crucible-sandbox-broker and cru" \
+    "keep"$'\r\n'"    ~/h"; do
+    expect 'a narrow uninstall' "$(visible "$removed")" "  ok $step"
+done
+# At 80 columns both fit, and both stay beside their step.
+install_from "$asset" "$look_bin" >/dev/null
+removed=$(in_terminal 80 env TERM=xterm LC_ALL=C HOME="$scratch" CRUCIBLE_CODE_HOME="$scratch/h" \
+    "$UNINSTALL" --dir "$look_bin")
+expect 'a wide uninstall' "$(visible "$removed")" "  ok keep                ~/h"
+expect 'a wide uninstall' "$(visible "$removed")" "  ok remove              crucible, crucible-sandbox-broker and cru"
+
 echo '==> uninstall preserves data by default'
 data=$scratch/home/.crucible
 mkdir -p "$data"
