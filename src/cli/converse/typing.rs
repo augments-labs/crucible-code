@@ -585,10 +585,6 @@ pub(crate) fn ask<T: Terminal>(
         // box: the key after it clears it, and still does what it does below.
         let settled = queued.settle();
 
-        // Whether this key left the box looking like anything other than what
-        // is already on screen. Answered by every arm and drawn on once, below:
-        // a key that moved nothing costs no frame, and the arms that end the
-        // call leave through their own `return` without drawing at all.
         // Ctrl+Enter is Return here. There is no turn to stop, so sending
         // everything now is sending the line, and the lines a used-up plan
         // holds wait behind it as they do for Return.
@@ -597,6 +593,10 @@ pub(crate) fn ask<T: Terminal>(
             arrived => arrived,
         };
 
+        // Whether this key left the box looking like anything other than what
+        // is already on screen. Answered by every arm and drawn on once, below:
+        // a key that moved nothing costs no frame, and the arms that end the
+        // call leave through their own `return` without drawing at all.
         let moved = match arrived {
             Pressed::Background => stood(renderer, style, &mut listing, left, &terms.ending)?,
             // Redrawn rather than re-wrapped: the box was laid out for a width
@@ -1044,10 +1044,10 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// asks the turn to stop, Ctrl+O stands the whole of what the results so far
 /// were cut down to, a click on a row that offered to expand stands that one
 /// result, Ctrl+T opens the whole of the plan above the box or
-/// bounds it again, Ctrl+Enter and Ctrl+S stop the turn to send the queue now,
-/// as [`queueing`] says, Ctrl-C is the line's own — in raw mode the terminal sends it
-/// rather than raising a signal, so it reaches the editor here exactly as it
-/// does at the prompt — and the rest edit the line. While that view stands it
+/// bounds it again, and Ctrl+Enter and Ctrl+S stop the turn to send the queue
+/// now, as [`queueing`] says. Ctrl-C is the line's own: in raw mode the
+/// terminal sends it rather than raising a signal, so it reaches the editor
+/// here exactly as it does at the prompt. The rest edit the line. While that view stands it
 /// has all of them: it takes the rows the box has, so the box is not on screen
 /// to be typed into and Esc closes the view rather than stopping the turn behind
 /// it.
@@ -1214,8 +1214,8 @@ pub(super) fn during<T: Terminal>(
             //
             // A line in the box that is no prompt is answered as Return
             // answers it — the slash that opened the list, or a command — so
-            // Ctrl+Enter on one never stops the turn to send the queue
-            // without it.
+            // Ctrl+Enter on a command runs it rather than stopping the turn
+            // and leaving it unrun.
             Meant::SendAll => {
                 if editor.text() == "/" {
                     continue;
@@ -1340,11 +1340,13 @@ pub(super) fn during<T: Terminal>(
                 // press `input.send` says finishes one. Queued first, because a
                 // turn already finishing takes nothing and the line is still
                 // owed a turn of its own; then, only if the queue took it,
-                // offered to the running turn to work in at its next pass. A
-                // line the queue refuses stays in the box and reaches nobody.
-                // Whichever happens to a taken line, it leaves the queue: the
-                // turn reports the lines it reached, and the loop that reads
-                // that drops them.
+                // offered to the running turn to work in at its next pass,
+                // unless a key that sent the queue now is holding the lines
+                // back from this turn. A line the queue refuses stays in the
+                // box and reaches nobody. A taken line the turn reaches leaves
+                // the queue: the turn reports the lines it reached, and the
+                // loop that reads that drops them. A held one waits for the
+                // next turn.
                 Typed::Submitted => {
                     // A slash command is not a line for the turn: it is answered
                     // on this thread, the way it is between turns. But the panel
@@ -1504,9 +1506,11 @@ pub(super) fn during<T: Terminal>(
 /// Moves the finished line behind the running turn, offers it to that turn, and
 /// says what the row under the box owes for it.
 ///
-/// Offered only once the queue has taken it. A refused line stays in the box,
-/// and one the turn had been offered as well would reach the agent while the
-/// reader still held it, once more for every enter against a full queue.
+/// Not offered while a key that sent the queue now holds the lines back from
+/// the turn: see [`Prompts::offer`]. Offered only once the queue has taken it.
+/// A refused line stays in the box, and one the turn had been offered as well
+/// would reach the agent while the reader still held it, once more for every
+/// enter against a full queue.
 ///
 /// The footing is drawn again here rather than on the next thing to move,
 /// because the panel over the box names exactly the line that has just gone: a
@@ -1678,7 +1682,7 @@ enum Meant {
     /// Ctrl+X: the queue's highlighted line, out of the queue.
     Remove,
     /// Ctrl+Enter: the turn stopped, and every queued line and then the box's
-    /// sent as the next one.
+    /// line sent as the next one.
     SendAll,
     /// Ctrl+S: the turn stopped, and the queue's highlighted line sent alone
     /// as the next one. Nothing where nothing is queued.

@@ -140,8 +140,9 @@ pub enum Pressed {
     /// modified key distinctly can send; one that was not sends Return, and
     /// the box reads that as the Enter it always was. Its own variant rather
     /// than a [`Key`], because what it sends is the queue the conversation
-    /// holds and the editor holds none of that. Every component with no queue
-    /// reads it as a key it has no use for, never as Enter.
+    /// holds and the editor holds none of that. Anything with no use for it
+    /// ignores it, and only the prompt between turns, where there is no turn
+    /// to stop, takes it as Enter.
     SendAll,
     /// Ctrl+S: send the highlighted prompt waiting for the turn now, alone.
     ///

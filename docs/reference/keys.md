@@ -121,7 +121,7 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
 | <kbd>Esc</kbd> | Closes the command list, keeping the line. Nothing otherwise. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
-| <kbd>Ctrl+Enter</kbd> | Sends the prompt, as <kbd>Enter</kbd> does. |
+| <kbd>Ctrl+Enter</kbd> | Does what <kbd>Enter</kbd> does. |
 | <kbd>Ctrl+S</kbd> | Sends the highlighted prompt of [the queue](#the-queue) alone, and the rest stay queued. Nothing while none are waiting. |
 | <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
@@ -465,10 +465,11 @@ the panel only adds these keys:
 | <kbd>Ctrl+Enter</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends every waiting prompt, oldest first, with the line in the box last, as the next turn. The panel goes and the box is left empty. With nothing waiting it stops the turn and sends the line in the box; with the box empty too it does nothing. A line in the box past the queue's bound stays there, the row says why, and the turn goes on; one that is a command is run or refused as <kbd>Enter</kbd> runs it. Between turns it is <kbd>Enter</kbd>. |
 | <kbd>Ctrl+S</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends the highlighted prompt alone as the next turn. The rest stay queued in order behind it, to be sent together when it ends, with the highlight on the prompt that followed; the line in the box stays in the box. Between turns it sends the highlighted prompt. Nothing while none are waiting, or once the turn has taken the highlighted one. |
 
-After either, the highlight stays where it was, on the prompt that followed,
-and the panel goes when the last prompt does. A prompt queued later goes to the
-end and leaves the highlight where it is. Neither <kbd>Ctrl+Enter</kbd> nor
-<kbd>Ctrl+S</kbd> asks first: each does in one press what <kbd>Esc</kbd>,
+After <kbd>Ctrl+E</kbd> or <kbd>Ctrl+X</kbd>, the highlight stays where it
+was, on the prompt that followed, and the panel goes when the last prompt does.
+A prompt queued later goes to the end and leaves the highlight where it is.
+
+Neither <kbd>Ctrl+Enter</kbd> nor <kbd>Ctrl+S</kbd> asks first: each does in one press what <kbd>Esc</kbd>,
 <kbd>Ctrl+E</kbd> and <kbd>Enter</kbd> already do. Otherwise nothing here holds
 the queue: the running turn takes every waiting prompt at its next step,
 whichever is highlighted, and the panel goes with them.

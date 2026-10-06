@@ -362,6 +362,27 @@ fn ctrl_s_readies_the_highlighted_line_alone_and_the_rest_wait_behind_its_turn()
 }
 
 #[test]
+fn ctrl_s_whose_line_is_deleted_before_the_turn_stops_sends_no_other_line_alone() {
+    // The stop lands when the turn next looks, and keys go on working until
+    // then. The reader who walks back to the line Ctrl+S sent and deletes it
+    // has chosen nothing to go alone, so what is left goes as any queue does,
+    // and not whichever line came up into the front.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    queue.walk(false);
+    assert!(queue.send_now(&steer));
+
+    // Up past the line that followed it to the front, where it went.
+    queue.walk(true);
+    queue.walk(true);
+    assert_eq!(queue.highlighted(), 0);
+    assert!(queue.delete(queue.offer(&steer)));
+
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
+    assert_eq!(steer.take(), vec!["third".to_owned()]);
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
 fn ctrl_s_on_the_last_line_leaves_the_highlight_on_the_new_last() {
     let (mut queue, steer) = queued(&["first", "second"]);
     queue.walk(false);
