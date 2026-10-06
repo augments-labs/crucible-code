@@ -500,6 +500,7 @@ fn unavailable(reason: &'static str) -> SandboxError {
 mod tests {
     use super::*;
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::sample::Sample;
 
@@ -638,12 +639,65 @@ mod tests {
     }
 
     /// A Bubblewrap stand-in that runs `script` for whatever it is asked.
+    ///
+    /// Written by a shell of its own rather than by this process. Tests run
+    /// on threads beside this one start processes, and a child forked while
+    /// this process had the file open for writing keeps it open until it
+    /// runs what it was started for; running the stand-in in that window
+    /// fails as a busy file.
     fn stand_in(sample: &Sample, script: &str) -> PathBuf {
         let path = sample.root().join("bwrap");
-        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).expect("stand-in");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .expect("stand-in mode");
+        let written = Command::new("/bin/sh")
+            .args(["-c", r#"printf '%s\n' "$1" > "$0" && chmod 755 "$0""#])
+            .arg(&path)
+            .arg(format!("#!/bin/sh\n{script}"))
+            .status()
+            .expect("stand-in");
+        assert!(written.success(), "the stand-in was not written: {written}");
         path
+    }
+
+    /// Says the work is over when it goes, however it goes: a thread the
+    /// test is scoped over is joined before a failure is reported.
+    struct Ending<'a>(&'a AtomicBool);
+
+    impl Drop for Ending<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn a_stand_in_runs_while_another_thread_is_starting_processes() {
+        // The tests beside these start processes of their own while a
+        // stand-in is being written, and a child forked while it was still
+        // open for writing made running it fail as busy.
+        let over = AtomicBool::new(false);
+        let answered: Vec<_> = thread::scope(|scope| {
+            scope.spawn(|| {
+                while !over.load(Ordering::Relaxed) {
+                    let _ = Command::new("true").status();
+                }
+            });
+            let _ending = Ending(&over);
+            (0..200)
+                .map(|_| {
+                    let sample = Sample::new("sandbox-bwrap-busy");
+                    version(&stand_in(&sample, "echo 'bubblewrap 0.11.1'")).ok()
+                })
+                .collect()
+        });
+
+        let refused = answered
+            .iter()
+            .filter(|answer| answer.as_deref() != Some("bubblewrap 0.11.1"))
+            .count();
+        assert_eq!(
+            refused,
+            0,
+            "of {} stand-ins, {refused} could not be run",
+            answered.len()
+        );
     }
 
     fn version_refusal(script: &str) -> String {
