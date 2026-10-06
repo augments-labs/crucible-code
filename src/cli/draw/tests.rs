@@ -2266,6 +2266,119 @@ fn the_transcript_follows_the_colour_rule() {
     crate::cli::colour_rule::holds("transcript", &rows, |_| false);
 }
 
+#[test]
+fn the_welcome_card_holds_the_colour_rule_at_every_width() {
+    use crucible_tui::{Recent, Welcome};
+
+    let four = [
+        Recent {
+            title: "a search that stops partway",
+            when: "2h ago",
+        },
+        Recent {
+            title: "rule replacement on windows",
+            when: "yesterday",
+        },
+        Recent {
+            title: "column counting in the tail",
+            when: "3d ago",
+        },
+        Recent {
+            title: "the oldest one, never shown",
+            when: "1w ago",
+        },
+    ];
+    // None, which says there is nothing earlier; three, which fill the
+    // column; and one more than that, which adds the way to the rest.
+    let histories: [&[Recent<'_>]; 3] = [&[], &four[..3], &four];
+
+    // Each form the card takes, by how many edges stand on its second row:
+    // none when it is bare, two around one column, three around two.
+    let mut forms = std::collections::BTreeSet::new();
+
+    for window in [40, 79, 80, 120] {
+        for rail in [true, false] {
+            // Laid where the screen lays it: at the transcript's width, which
+            // the rail takes a column of.
+            let mut renderer = Renderer::new(Recording::new(window, 24));
+            renderer.rails(rail);
+            let columns = renderer.transcript_columns();
+
+            for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                for sessions in histories {
+                    let welcome = Welcome {
+                        version: "v0.46.0",
+                        root: "~/code/crucible-code",
+                        sessions,
+                    };
+                    let rows = welcome.rows(columns, glyphs);
+                    let edges = rows.get(1).map_or(0, |row| {
+                        row.spans()
+                            .filter(|(slot, text)| {
+                                *slot == Slot::Accent && *text == glyphs.vertical()
+                            })
+                            .count()
+                    });
+                    forms.insert((columns, edges));
+
+                    // Nothing lit inside the frame but a tip's key, one to a
+                    // row, and the title and version in the slots they have
+                    // always had.
+                    let counts: Vec<usize> = rows
+                        .iter()
+                        .map(crate::cli::colour_rule::card_accents)
+                        .collect();
+                    let keyed = if edges == 0 { 0 } else { 4 };
+                    assert_eq!(
+                        (
+                            counts.iter().filter(|count| **count == 1).count(),
+                            counts.iter().filter(|count| **count > 1).count(),
+                        ),
+                        (keyed, 0),
+                        "{counts:?} at {columns} in {glyphs:?}"
+                    );
+                    if edges > 0 {
+                        let top: Vec<(Slot, &str)> = rows
+                            .first()
+                            .map(|row| row.spans().collect())
+                            .unwrap_or_default();
+                        assert!(
+                            top.contains(&(Slot::Strong, "crucible"))
+                                && top.contains(&(Slot::Quiet, "v0.46.0")),
+                            "{top:?}"
+                        );
+                    }
+
+                    crate::cli::colour_rule::holds_card(
+                        &format!(
+                            "the welcome card at {columns} of {window} in {glyphs:?} \
+                             with {} sessions",
+                            sessions.len()
+                        ),
+                        &rows,
+                    );
+                }
+            }
+        }
+    }
+
+    // Bare at 40 either way, one column at 79 and at 80 with the rail, two at
+    // 80 without it and at 120 either way.
+    assert_eq!(
+        forms.into_iter().collect::<Vec<_>>(),
+        [
+            (39, 0),
+            (40, 0),
+            (78, 2),
+            (79, 2),
+            (80, 3),
+            (119, 3),
+            (120, 3)
+        ],
+        "the widths drew every form the card takes"
+    );
+}
+
 /// The slot of every span of [`ruled_turn`] in colour whose text, trimmed, is
 /// `wanted`, in the order they are drawn.
 fn ruled_slots(wanted: &str) -> Vec<Slot> {
