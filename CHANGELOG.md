@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.45.3] - 2026-10-06
+
+**Native mode keeps the box at the foot of the window and stops leaving
+stray copies in the scrollback, and a click opens a result only on its own
+text.**
+In native mode `/resume`, `/clear`, a panel and a resize no longer write a
+second welcome card, a second copy of rows or a whole window into the
+terminal's scrollback. The Ctrl+O results view moves a page or a result at a
+time, and Ctrl+B opens the `Still running` list while a turn runs.
+
 ### Changed
 
 - **The Ctrl+O results view moves a page at a time and from one result to
@@ -5074,7 +5084,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.3...HEAD
+[0.45.3]: https://github.com/augments-labs/crucible-code/compare/v0.45.2...v0.45.3
 [0.45.2]: https://github.com/augments-labs/crucible-code/compare/v0.45.1...v0.45.2
 [0.45.1]: https://github.com/augments-labs/crucible-code/compare/v0.45.0...v0.45.1
 [0.45.0]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...v0.45.0
