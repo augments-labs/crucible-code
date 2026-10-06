@@ -233,6 +233,7 @@ fn creating_under_a_directory_that_does_not_exist_is_rejected() {
     assert!(matches!(err, PathError::Missing { .. }), "got {err:?}");
 }
 
+#[cfg(not(windows))]
 #[test]
 fn a_parent_component_below_a_missing_directory_has_no_intended_target() {
     let f = Fixture::new("intended-parent");
@@ -242,6 +243,26 @@ fn a_parent_component_below_a_missing_directory_has_no_intended_target() {
             .intended("missing/../.crucible/config.json")
             .is_none()
     );
+}
+
+// Win32 applies `..` to the text, so `missing\..` is the folder that holds
+// `missing` whether or not `missing` is there, and the write reaches the file
+// beyond it. The name policy settles has to be that one.
+#[cfg(windows)]
+#[test]
+fn a_parent_component_below_a_missing_directory_on_windows_intends_the_file_the_write_reaches() {
+    let f = Fixture::new("intended-parent-win32");
+    let root = f.workspace.root().to_path_buf();
+    fs::create_dir_all(root.join(".crucible")).unwrap();
+    let requested = "missing/../.crucible/config.json";
+
+    let reached = f.workspace.creatable(requested).unwrap();
+
+    assert_eq!(
+        f.workspace.intended(requested).as_deref(),
+        Some(reached.as_path())
+    );
+    assert_eq!(reached.as_path(), root.join(r".crucible\config.json"));
 }
 
 #[test]
