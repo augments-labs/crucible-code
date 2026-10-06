@@ -26,6 +26,7 @@ mod fake;
 mod freed;
 mod gathering;
 mod kept;
+mod opening;
 mod panicked;
 #[cfg(test)]
 mod sample;
@@ -814,6 +815,15 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // runs, and a session with no forge behind it simply draws what it drew
     // before.
     renderer.counts(counting::forge(workspace.root()));
+
+    // And the checkout a link to a path is read against, so `src/main.rs:12` in
+    // the answer opens the file rather than asking a terminal to open a word.
+    // Read here for the reason the forge is, and beside it the one fact about
+    // the terminal that decides how the line is spelled.
+    renderer.reads_paths(Some(opening::files(
+        workspace.root(),
+        from("TERMINAL_EMULATOR").as_deref(),
+    )));
 
     // And how far one notch of the wheel moves the transcript. Read here rather
     // than where the wheel is answered, because it is answered on the render

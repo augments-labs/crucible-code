@@ -27,6 +27,7 @@
 //! does, both bounded, and changes a slot and never a character.
 
 use crate::color::Slot;
+use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 
@@ -331,6 +332,12 @@ pub struct Markdown {
     /// delta, because unlike the room this cannot change while a message is
     /// arriving: the checkout is the one it was when the session opened.
     forge: Option<Forge>,
+    /// The checkout a link to a path is read against, where the session knows
+    /// one.
+    ///
+    /// Held for the reason the forge is: the checkout is the one the session
+    /// opened in. Without it a path is handed on as it was written.
+    files: Option<Files>,
     /// A backslash is standing, waiting to see what it was put in front of.
     ///
     /// Held rather than written, because what it does is decided by the next
@@ -430,6 +437,13 @@ impl Markdown {
     #[must_use]
     pub fn counting(mut self, forge: Option<Forge>) -> Self {
         self.forge = forge;
+        self
+    }
+
+    /// The same reader, pointing a link to a path at the file in `files`.
+    #[must_use]
+    pub fn opening(mut self, files: Option<Files>) -> Self {
+        self.files = files;
         self
     }
 
@@ -1170,9 +1184,12 @@ impl Markdown {
     /// as a sentence, and the address is the row's to hand to a terminal that
     /// opens links -- which is how a reader reaches it, the same way they
     /// reach one on any page. A link with no words is its address, since that
-    /// is the one thing there is to show. Nothing here is ever written as
-    /// anything but text: an address is bytes a model chose, and the rule this
-    /// file opens with is that none of them leaves as an instruction.
+    /// is the one thing there is to show. A link to a path is handed on as the
+    /// file it names in the checkout, which is the one form of it a terminal
+    /// can open; its words stay what the answer wrote. Nothing here is ever
+    /// written as anything but text: an address is bytes a model chose, and
+    /// the rule this file opens with is that none of them leaves as an
+    /// instruction.
     fn wrote_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         self.pay(say);
 
@@ -1183,7 +1200,9 @@ impl Markdown {
             &link.label
         };
 
-        say(Slot::Link, words, (!target.is_empty()).then_some(target));
+        let file = self.files.as_ref().and_then(|files| files.address(target));
+        let address = file.as_deref().unwrap_or(target);
+        say(Slot::Link, words, (!address.is_empty()).then_some(address));
         self.previous = words.chars().next_back().unwrap_or(')');
     }
 

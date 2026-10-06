@@ -2,10 +2,11 @@
 
 msrv = "1.97.1"
 
-# Provider names are proper nouns, not identifiers, so `doc_markdown` must not
-# push them into backticks — `OpenAI` in a sentence reads as a type that does
-# not exist. `..` keeps clippy's own list rather than replacing it.
-doc-valid-idents = ["OpenAI", "SchemaStore", ".."]
+# Provider and product names are proper nouns, not identifiers, so
+# `doc_markdown` must not push them into backticks — `OpenAI` in a sentence
+# reads as a type that does not exist. `..` keeps clippy's own list rather than
+# replacing it.
+doc-valid-idents = ["OpenAI", "SchemaStore", "JetBrains", ".."]
 
 # A cap on sheer size rather than a judgement about structure: a function this
 # long is one nobody can read, whatever it is doing. Shape is argued in review

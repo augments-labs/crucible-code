@@ -36,6 +36,7 @@ use crate::bands::{Bands, Wants};
 use crate::clipboard;
 use crate::color::{Palette, Slot};
 use crate::escape::Escapes;
+use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
@@ -292,6 +293,9 @@ pub struct Renderer<T: Terminal> {
     /// away and made again between messages, and which checkout this is does
     /// not change while the session runs.
     forge: Option<Forge>,
+    /// The checkout the transcript's links to paths are read against, held
+    /// here for the reason the forge is.
+    files: Option<Files>,
     /// Whether an answer is still arriving.
     ///
     /// Set by the first piece of one and put down by [`Renderer::settle`],
@@ -406,6 +410,7 @@ impl<T: Terminal> Renderer<T> {
             escapes: Escapes::default(),
             markdown: Markdown::default(),
             forge: None,
+            files: None,
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
@@ -986,10 +991,22 @@ impl<T: Terminal> Renderer<T> {
         self.markdown = self.reader();
     }
 
-    /// A reader for the next message, drawing and counting the way this
-    /// renderer was told to.
+    /// Tells this renderer which checkout a link to a path in the answer is
+    /// read against, and how the terminal reads its line.
+    ///
+    /// Said once, at startup, for the reason [`Renderer::counts`] is. `None`
+    /// hands a path on as it was written.
+    pub fn reads_paths(&mut self, files: Option<Files>) {
+        self.files = files;
+        self.markdown = self.reader();
+    }
+
+    /// A reader for the next message, drawing, counting and opening the way
+    /// this renderer was told to.
     fn reader(&self) -> Markdown {
-        Markdown::new(self.glyphs).counting(self.forge.clone())
+        Markdown::new(self.glyphs)
+            .counting(self.forge.clone())
+            .opening(self.files.clone())
     }
 
     /// Marks the next record line as the start of a prompt.

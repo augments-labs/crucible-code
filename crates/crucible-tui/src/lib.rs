@@ -40,6 +40,7 @@ mod dump;
 mod editor;
 mod escape;
 mod expanded;
+mod files;
 #[cfg(test)]
 mod fits;
 pub mod forge;
@@ -77,6 +78,7 @@ pub use bar::{Bar, Fill, Part};
 pub use color::{Design, Palette, Sequence, Slot, Theme, Worn};
 pub use editor::{Editor, Key, Projection, Sending, Typed};
 pub use expanded::{Expanded, Shown};
+pub use files::{Files, Line};
 pub use forge::Forge;
 pub use glyphs::Glyphs;
 pub use ground::{Ground, is_light};
