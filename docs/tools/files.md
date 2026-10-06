@@ -236,6 +236,12 @@ A path whose parent directories are missing gets them, one checked level at a
 time, on Linux, macOS and FreeBSD. On Windows the parent directory has to be
 there already.
 
+A `..` in the path is followed the way the filesystem follows it, through any
+symbolic link before it, and the question and your rules see the file it leads
+to. A `..` after a name that is not an
+existing directory is refused before anything is made, since where it leads
+depends on what the write itself would create: name the file without it.
+
 The answer is `created src/main.rs, 41 lines` or `replaced src/main.rs, 41
 lines`. The file is put down the same way `edit` puts one down: written beside
 its destination and renamed over it, so it is either the old file or the new one.

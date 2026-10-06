@@ -256,6 +256,77 @@ fn a_parent_component_below_a_missing_directory_cannot_intend_an_escape() {
 }
 
 #[test]
+fn a_parent_component_after_a_directory_that_is_there_intends_the_file_it_leads_to() {
+    let f = Fixture::new("intended-parent-present");
+
+    let intended = f.workspace.intended("sub/../new.txt");
+
+    assert_eq!(intended, Some(f.workspace.root().join("new.txt")));
+}
+
+#[test]
+fn a_parent_component_after_a_directory_that_is_there_cannot_intend_an_escape() {
+    let f = Fixture::new("intended-parent-present-escape");
+
+    assert!(f.workspace.intended("sub/../../outside/new.txt").is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_parent_component_after_a_link_intends_the_file_beside_where_it_leads() {
+    let f = Fixture::new("intended-parent-link");
+    let root = f.workspace.root().to_path_buf();
+    fs::create_dir_all(root.join("sub/deeper")).unwrap();
+    symlink_directory(root.join("sub/deeper"), root.join("link"));
+
+    let intended = f.workspace.intended("link/../new.txt");
+
+    assert_eq!(intended, Some(root.join("sub/new.txt")));
+}
+
+// Win32 takes `..` out of the text before it follows a link, so on Windows
+// the file a write reaches through `link\..` is beside `link` itself, and the
+// name policy settles has to be that one too.
+#[cfg(windows)]
+#[test]
+fn a_parent_component_after_a_link_on_windows_intends_the_file_the_write_reaches() {
+    let f = Fixture::new("intended-parent-link-win32");
+    let root = f.workspace.root().to_path_buf();
+    fs::create_dir_all(root.join("sub/deeper")).unwrap();
+    symlink_directory(root.join("sub/deeper"), root.join("link"));
+    let plain = root
+        .to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .to_owned();
+    let absolute = format!(r"{plain}\link\..\new.txt");
+
+    for requested in ["link/../new.txt", absolute.as_str()] {
+        let reached = f.workspace.creatable(requested).unwrap();
+
+        assert_eq!(
+            f.workspace.intended(requested).as_deref(),
+            Some(reached.as_path()),
+            "{requested}"
+        );
+        assert_eq!(reached.as_path(), root.join("new.txt"), "{requested}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_verbatim_path_with_a_parent_component_has_no_intended_target() {
+    let f = Fixture::new("intended-verbatim-parent");
+    let root = f.workspace.root().to_string_lossy().into_owned();
+    assert!(root.starts_with(r"\\?\"), "{root}");
+
+    assert!(
+        f.workspace
+            .intended(&format!(r"{root}\sub\..\new.txt"))
+            .is_none()
+    );
+}
+
+#[test]
 fn ordinary_names_below_a_missing_directory_keep_their_intended_target() {
     let f = Fixture::new("intended-missing");
 

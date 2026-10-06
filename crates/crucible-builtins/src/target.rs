@@ -168,3 +168,26 @@ fn found<E>(
         Err(_) => Target::unresolved(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crucible_tools::Target;
+    use crucible_types::ToolArgs;
+
+    use crate::sample::Sample;
+
+    #[test]
+    fn a_parent_component_to_an_existing_file_is_the_target_of_that_file() {
+        let sample = Sample::new("target-parent-existing");
+        sample.write("sub/kept.txt", "kept");
+        sample.write("protected.txt", "kept");
+        let workspace = sample.workspace();
+        let through = ToolArgs::new(r#"{"path":"sub/../protected.txt"}"#);
+        let direct = ToolArgs::new(r#"{"path":"protected.txt"}"#);
+
+        let target = super::existing(&workspace, "edit", &through, "path");
+
+        assert_ne!(target, Target::unresolved());
+        assert_eq!(target, super::existing(&workspace, "edit", &direct, "path"));
+    }
+}

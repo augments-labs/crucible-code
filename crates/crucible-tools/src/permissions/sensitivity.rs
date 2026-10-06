@@ -215,10 +215,11 @@ impl Target {
 
     /// The path a write intends to create, including missing directories.
     ///
-    /// Permission is decided before a write makes its parents. The nearest
-    /// existing ancestor is still resolved and checked by the workspace, so
-    /// this never trusts the model's path text; it only preserves ordinary
-    /// names below the point the filesystem could prove.
+    /// Permission is decided before a write makes its parents. The workspace
+    /// walks the path as the filesystem will, resolving every name that exists
+    /// and the `..` after it, so this never trusts the model's path text; it
+    /// only keeps the ordinary names below the point the filesystem could
+    /// prove.
     #[must_use]
     pub fn intended(workspace: &Workspace, requested: &str) -> Self {
         workspace
