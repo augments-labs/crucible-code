@@ -280,7 +280,9 @@ unicode-width = "=0.2.2"
 # stopping the pipeline it started rather than the shell at the head of it, and
 # that is `kill` on a negated process group id — which `std` has no call for
 # either. It is a separate feature, so the manifests turning it on are the list
-# of crates that may make that call.
+# of crates that may make that call. The same feature is the one answer to
+# which user a process runs as, `getuid`, which `std` lacks as well; a manifest
+# that turns it on for that alone says so beside it.
 rustix = { version = "=1.1.5", features = ["fs"] }
 
 # Compiles the bounded Linux seccomp program without hand-maintained BPF or

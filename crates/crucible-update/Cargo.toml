@@ -33,6 +33,12 @@ thiserror.workspace = true
 # never builds a runtime of its own.
 tokio = { workspace = true, features = ["rt", "time"] }
 
+[target.'cfg(unix)'.dependencies]
+# An install may be made only of root's files and those of the user running
+# crucible, and `std` cannot say who that is. `process` is turned on for
+# `getuid` alone; nothing here stops a process.
+rustix = { workspace = true, features = ["process"] }
+
 [dev-dependencies]
 # The tests use an OS-assigned loopback listener and a small multi-thread
 # runtime to observe cancellation; no external endpoint is contacted.

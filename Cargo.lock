@@ -777,6 +777,7 @@ dependencies = [
  "crucible-privacy",
  "crucible-runtime",
  "crucible-types",
+ "rustix",
  "serde_json",
  "sha2",
  "thiserror",
