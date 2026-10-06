@@ -130,15 +130,7 @@ impl Bwrap {
             ));
         }
 
-        let version = Command::new(&path)
-            .arg("--version")
-            .env_clear()
-            .output()
-            .map_err(|_| unavailable("could not query system Bubblewrap version"))?;
-        let version_text = String::from_utf8_lossy(&version.stdout);
-        let Some(version) = parse_version(&version_text) else {
-            return Err(unavailable("system Bubblewrap returned an invalid version"));
-        };
+        let version = version(&path)?;
 
         functional_probe(&path)?;
         let digest = digest(&path, metadata.len())?;
@@ -146,7 +138,7 @@ impl Bwrap {
             .map_err(|_| unavailable("invalid built-in Linux backend identity"))?;
         let identity = SandboxBackendIdentity::new(
             id,
-            version.to_owned(),
+            version,
             SandboxBackendProvenance::System,
             Some(digest),
         )
@@ -243,6 +235,67 @@ fn parse_version(version: &str) -> Option<&str> {
         && components.next().is_none()
         && number.matches('.').count() == 2;
     valid.then_some(version)
+}
+
+/// The version the Bubblewrap at `path` reports for itself.
+///
+/// A refusal carries the exit status and what the query printed, since that is
+/// the only account of why a backend that exists cannot be used.
+fn version(path: &Path) -> Result<String, SandboxError> {
+    let version = Command::new(path)
+        .arg("--version")
+        .env_clear()
+        .output()
+        .map_err(|_| unavailable("could not query system Bubblewrap version"))?;
+    if !version.status.success() {
+        return Err(SandboxError::BackendUnavailable {
+            reason: format!(
+                "system Bubblewrap --version failed ({}): {}",
+                version.status,
+                printed(&version.stderr)
+            )
+            .into(),
+        });
+    }
+    let version_text = String::from_utf8_lossy(&version.stdout);
+    let Some(version) = parse_version(&version_text) else {
+        return Err(SandboxError::BackendUnavailable {
+            reason: format!(
+                "system Bubblewrap returned an invalid version: {}",
+                printed(&version.stdout)
+            )
+            .into(),
+        });
+    };
+    Ok(version.to_owned())
+}
+
+/// Most of what a refused query printed that a reason quotes.
+const MAX_PRINTED_BYTES: usize = 200;
+
+/// What a process printed, as one line a reason can quote: control characters
+/// become spaces, the ends are trimmed, and it is cut to [`MAX_PRINTED_BYTES`]
+/// before any character that would not fit.
+fn printed(output: &[u8]) -> String {
+    let text: String = String::from_utf8_lossy(output)
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    let text = text.trim();
+    let mut end = text.len().min(MAX_PRINTED_BYTES);
+    while !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    match text.get(..end) {
+        Some("") | None => "(nothing)".to_owned(),
+        Some(cut) => cut.to_owned(),
+    }
 }
 
 fn trusted_parent_chain(path: &Path) -> bool {
@@ -581,6 +634,71 @@ mod tests {
         assert_eq!(
             parse_version(&format!("bubblewrap {}", "x".repeat(129))),
             None
+        );
+    }
+
+    /// A Bubblewrap stand-in that runs `script` for whatever it is asked.
+    fn stand_in(sample: &Sample, script: &str) -> PathBuf {
+        let path = sample.root().join("bwrap");
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).expect("stand-in");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("stand-in mode");
+        path
+    }
+
+    fn version_refusal(script: &str) -> String {
+        let sample = Sample::new("sandbox-bwrap-version");
+        match version(&stand_in(&sample, script)) {
+            Err(SandboxError::BackendUnavailable { reason }) => reason.into(),
+            other => panic!("{script:?} was not refused as unavailable: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failed_version_query_names_its_status_and_what_it_printed() {
+        assert_eq!(
+            version_refusal("echo boom >&2; exit 3"),
+            "system Bubblewrap --version failed (exit status: 3): boom"
+        );
+        assert_eq!(
+            version_refusal("exit 3"),
+            "system Bubblewrap --version failed (exit status: 3): (nothing)"
+        );
+        assert_eq!(
+            version_refusal("echo nonsense"),
+            "system Bubblewrap returned an invalid version: nonsense"
+        );
+        assert_eq!(
+            version_refusal("printf '\\377\\376'"),
+            "system Bubblewrap returned an invalid version: \u{fffd}\u{fffd}"
+        );
+        assert_eq!(
+            version_refusal("true"),
+            "system Bubblewrap returned an invalid version: (nothing)"
+        );
+        let sample = Sample::new("sandbox-bwrap-version");
+        assert_eq!(
+            version(&stand_in(&sample, "echo 'bubblewrap 0.11.1'"))
+                .ok()
+                .as_deref(),
+            Some("bubblewrap 0.11.1")
+        );
+    }
+
+    #[test]
+    fn what_a_failed_version_query_printed_is_bounded_and_made_printable() {
+        let prefix = "system Bubblewrap --version failed (exit status: 1): ";
+        let long = version_refusal("printf '%0300d' 0 >&2; exit 1");
+        assert_eq!(long.strip_prefix(prefix), Some("0".repeat(200).as_str()));
+        // The cut falls before a character it would split, not through it.
+        let split = version_refusal(&format!(
+            "printf '{}\\303\\251' >&2; exit 1",
+            "x".repeat(199)
+        ));
+        assert_eq!(split.strip_prefix(prefix), Some("x".repeat(199).as_str()));
+        assert_eq!(
+            version_refusal("printf 'a\\tb\\033[31mc\\r\\n' >&2; exit 1").strip_prefix(prefix),
+            Some("a b [31mc")
         );
     }
 
