@@ -5,6 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 readonly INSTALL=$PWD/scripts/sh/install.sh
 readonly UNINSTALL=$PWD/scripts/sh/uninstall.sh
+readonly RECEIPT=$PWD/tests/fixtures/installer/receipt.sh
+# shellcheck source=../../tests/fixtures/installer/receipt.sh
+. "$RECEIPT"
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 # The installer prints the directory as it resolves it, and the temporary
@@ -43,6 +46,17 @@ checksum() {
     fi
 }
 
+# The SHA-256 of a file alone, as a receipt records it.
+sum_of() {
+    if command -v sha256sum >/dev/null; then
+        sha256sum "$1" | awk '{ print $1 }'
+    elif command -v shasum >/dev/null; then
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    else
+        sha256 -q "$1"
+    fi
+}
+
 # A release archive. Linux archives also carry the sandbox broker, a program
 # that only ever runs as PID 1 inside a confined command and exits 125 when
 # started any other way; the fixture broker records which release it came from.
@@ -75,16 +89,113 @@ broker_exit() {
     printf '%s\n' "$status"
 }
 
+# The release `<dir>/.crucible-install/current` names, and the unit it is.
+active_release() {
+    local link
+    link=$(readlink "$1/.crucible-install/current") || return 1
+    printf '%s\n' "${link#releases/}"
+}
+active_unit() {
+    printf '%s\n' "$1/.crucible-install/releases/$(active_release "$1")"
+}
+
+# Whether `<dir>` holds this installer's layout with `release` active: the two
+# links, the active link, and a unit whose receipt describes it and accounts
+# for every file in it.
+assert_layout() {
+    local dir=$1 release=$2 with_broker=${3:-broker} unit expected
+    unit=$dir/.crucible-install/releases/$release
+    [[ -L $dir/crucible && $(readlink "$dir/crucible") == .crucible-install/current/crucible ]]
+    [[ -L $dir/cru && $(readlink "$dir/cru") == crucible ]]
+    [[ $(active_release "$dir") == "$release" ]]
+    [[ -d $unit && ! -L $unit && -f $unit/crucible && ! -L $unit/crucible ]]
+    LC_ALL=C crucible_receipt_read "$unit/receipt"
+    [[ $receipt_prefix == "$dir/.crucible-install" && $receipt_version == "$release" ]]
+    [[ $receipt_target == "$platform-$architecture" ]]
+    [[ $receipt_crucible == "$(sum_of "$unit/crucible")" ]]
+    expected=$'crucible\nreceipt'
+    if [[ $with_broker == broker ]]; then
+        expected=$'crucible\ncrucible-sandbox-broker\nreceipt'
+        [[ $receipt_broker == "$(sum_of "$unit/crucible-sandbox-broker")" ]]
+    else
+        [[ -z $receipt_broker ]]
+    fi
+    [[ $(cd "$unit" && LC_ALL=C ls -A) == "$expected" ]]
+}
+
+# Whether an install left anything of its own behind: a staged release, a link
+# on its way to replacing `current`, or the lock.
+assert_no_leftovers() {
+    local prefix=$1/.crucible-install left
+    for left in "$prefix"/releases/.incoming.* "$prefix"/.current.* "$prefix/lock"; do
+        if [[ -e $left || -L $left ]]; then
+            printf 'an install left %s behind\n' "$left" >&2
+            return 1
+        fi
+    done
+}
+
+# A release at another version, and the install of it: `release` and
+# `install_from` read the version from the shell they run in.
+release_version() {
+    local version=$1 stem=crucible-$1-$platform-$architecture
+    shift
+    release "$@"
+}
+install_version() {
+    local version=$1 stem=crucible-$1-$platform-$architecture
+    shift
+    install_from "$@"
+}
+
+# The permission bits of a path, in octal.
+mode_of() {
+    stat -c '%a' -- "$1" 2>/dev/null || stat -f '%Lp' -- "$1"
+}
+
+# A 0.45 install, made by hand: the executable and its broker as regular files
+# in the directory, and `cru` beside them. This is the layout the uninstaller
+# removes; it refuses a `crucible` that is a link.
+flat_install() {
+    local dir=$1
+    mkdir -p "$dir"
+    cp -- "$asset/$stem/crucible" "$dir/crucible"
+    cp -- "$asset/$stem/crucible-sandbox-broker" "$dir/crucible-sandbox-broker"
+    chmod 755 "$dir/crucible" "$dir/crucible-sandbox-broker"
+    ln -sfn crucible "$dir/cru"
+}
+
+# Runs the installer expecting a refusal that says `reason`.
+refused() {
+    local label=$1 reason=$2 problem
+    shift 2
+    if problem=$("$@" 2>&1); then
+        printf 'installer accepted %s\n' "$label" >&2
+        return 1
+    fi
+    [[ $problem == *"$reason"* ]] || {
+        printf 'installer refused %s for the wrong reason: %s\n' "$label" "$problem" >&2
+        return 1
+    }
+}
+
 echo '==> verified local install and idempotent update'
 asset=$scratch/good
 release "$asset"
 destination=$scratch/bin
 install_from "$asset" "$destination"
 [[ $($destination/crucible --version) == "crucible $version" ]]
-[[ -L $destination/cru && $(readlink "$destination/cru") == crucible ]]
-[[ -f $destination/crucible-sandbox-broker && -x $destination/crucible-sandbox-broker ]]
-[[ $(broker_exit "$destination/crucible-sandbox-broker") == 125 ]]
+[[ $($destination/cru --version) == "crucible $version" ]]
+assert_layout "$destination" "$version"
+active_broker=$destination/.crucible-install/current/crucible-sandbox-broker
+[[ -x $active_broker ]]
+[[ $(broker_exit "$active_broker") == 125 ]]
+first_installation=$receipt_installation
 install_from "$asset" "$destination"
+assert_layout "$destination" "$version"
+[[ $receipt_installation == "$first_installation" ]]
+[[ $(cd "$destination/.crucible-install" && LC_ALL=C ls -A) == $'current\nreleases' ]]
+[[ $(cd "$destination/.crucible-install/releases" && LC_ALL=C ls -A) == "$version" ]]
 
 echo '==> an archive without a sandbox broker still installs the executable'
 brokerless=$scratch/brokerless
@@ -92,13 +203,65 @@ release "$brokerless" "crucible $version" none
 brokerless_bin=$scratch/brokerless-bin
 install_from "$brokerless" "$brokerless_bin"
 [[ $($brokerless_bin/crucible --version) == "crucible $version" ]]
+assert_layout "$brokerless_bin" "$version" none
 [[ ! -e $brokerless_bin/crucible-sandbox-broker ]]
 
-echo '==> dry run makes no destination'
+echo '==> dry run makes no destination and names the release directory'
 dry=$scratch/dry
-"$INSTALL" --dry-run --version "$version" --dir "$dry" \
-    --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS" >/dev/null
+said=$("$INSTALL" --dry-run --version "$version" --dir "$dry" \
+    --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
 [[ ! -e $dry ]]
+[[ $said == *"$dry/.crucible-install/releases/$version"* ]] || {
+    printf 'dry run did not name the release directory: %s\n' "$said" >&2
+    exit 1
+}
+before_dry=$(cd "$destination" && find . | LC_ALL=C sort)
+"$INSTALL" --dry-run --version "$version" --dir "$destination" \
+    --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS" >/dev/null
+[[ $(cd "$destination" && find . | LC_ALL=C sort) == "$before_dry" ]]
+
+echo '==> a version with a suffix or a leading zero is refused'
+for odd in 9.8.7-rc.1 09.8.7 9.8 9.8.7.1; do
+    refused "the version $odd" 'invalid version' "$INSTALL" --dry-run --version "$odd" \
+        --dir "$scratch/odd-version-bin" \
+        --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS"
+done
+
+echo '==> a directory with a control character in its name is refused'
+refused 'a tab in the directory' 'the installation directory is unsafe' \
+    install_from "$asset" "$scratch/tab$(printf '\t')bin"
+[[ ! -e "$scratch/tab$(printf '\t')bin" ]]
+
+echo '==> a directory with spaces in its name installs'
+spaced="$scratch/with spaces/bin"
+install_from "$asset" "$spaced" >/dev/null
+assert_layout "$spaced" "$version"
+[[ $("$spaced/cru" --version) == "crucible $version" ]]
+
+echo '==> a release is installed readable by everyone under a loose umask'
+umasked=$scratch/umasked
+(umask 002 && install_from "$asset" "$umasked" >/dev/null)
+umasked_unit=$umasked/.crucible-install/releases/$version
+for path in "$umasked/.crucible-install" "$umasked/.crucible-install/releases" "$umasked_unit" \
+    "$umasked_unit/crucible" "$umasked_unit/crucible-sandbox-broker"; do
+    [[ $(mode_of "$path") == 755 ]] || {
+        printf '%s has mode %s, not 755\n' "$path" "$(mode_of "$path")" >&2
+        exit 1
+    }
+done
+[[ $(mode_of "$umasked_unit/receipt") == 644 ]]
+
+echo '==> the installer carries the receipt reader the tests hold crucible to'
+embedded=$scratch/embedded-reader.sh
+sed -n '/^# --- receipt reader: begin ---$/,/^# --- receipt reader: end ---$/p' "$INSTALL" >"$embedded"
+[[ -s $embedded ]] || { echo 'install.sh carries no receipt reader' >&2; exit 1; }
+readers=(crucible_receipt_read crucible_receipt_value crucible_receipt_hex
+    crucible_receipt_number crucible_receipt_refuse)
+[[ $(bash -c '. "$1"; shift; declare -f "$@"' _ "$embedded" "${readers[@]}") == \
+    "$(bash -c '. "$1"; shift; declare -f "$@"' _ "$RECEIPT" "${readers[@]}")" ]] || {
+    echo 'the receipt reader in install.sh differs from tests/fixtures/installer/receipt.sh' >&2
+    exit 1
+}
 
 echo '==> install refuses root spellings and root-pointing directories'
 if "$INSTALL" --dry-run --version "$version" --dir /tmp/.. \
@@ -115,9 +278,9 @@ if "$INSTALL" --dry-run --version "$version" --dir "$scratch/root-link" \
     exit 1
 fi
 
-echo '==> a version is ASCII digits and letters under a UTF-8 locale too'
+echo '==> a version is three ASCII numbers under a UTF-8 locale too'
 # Bracket ranges follow the locale: under en_US.UTF-8, [0-9] takes an
-# Arabic-Indic digit and [A-Za-z] takes accented and other letters.
+# Arabic-Indic digit and other characters besides.
 utf8=$(locale -a 2>/dev/null | grep -ixE 'en_US\.utf-?8' | head -n 1) || true
 if [[ -n $utf8 ]]; then
     for odd in "9.8.7-$(printf '\303\251')" "$(printf '\331\241').8.7" \
@@ -170,7 +333,8 @@ cp -- "$swapped/$stem.tar.gz" "$racing/$stem.tar.gz"
 SUM
 chmod +x "$swap_tools/sha256sum"
 PATH="$swap_tools:$PATH" install_from "$racing" "$scratch/racing-bin" >/dev/null 2>&1 || true
-if grep -q 'swapped in after hashing' "$scratch/racing-bin/crucible-sandbox-broker" 2>/dev/null; then
+if grep -q 'swapped in after hashing' \
+    "$scratch/racing-bin/.crucible-install/current/crucible-sandbox-broker" 2>/dev/null; then
     echo 'installer unpacked an archive other than the one it hashed' >&2
     exit 1
 fi
@@ -207,18 +371,32 @@ fi
     exit 1
 }
 
-echo '==> a failed replacement restores the installed binary'
+echo '==> a failed update keeps the active release'
 bad_binary=$scratch/bad-binary
-release "$bad_binary" 'crucible wrong'
-if install_from "$bad_binary" "$destination" 2>/dev/null; then
-    echo 'installer accepted a binary reporting the wrong version' >&2
-    exit 1
-fi
+release_version 9.8.8 "$bad_binary" 'crucible wrong'
+refused 'a binary reporting the wrong version' 'installed binary reported' \
+    install_version 9.8.8 "$bad_binary" "$destination"
 [[ $($destination/crucible --version) == "crucible $version" ]]
-grep -q "crucible $version" "$destination/crucible-sandbox-broker" || {
-    echo 'a failed replacement left the wrong sandbox broker installed' >&2
+assert_layout "$destination" "$version"
+grep -q "crucible $version" "$destination/.crucible-install/current/crucible-sandbox-broker" || {
+    echo 'a failed update left the wrong sandbox broker active' >&2
     exit 1
 }
+[[ ! -e $destination/.crucible-install/releases/9.8.8 ]]
+assert_no_leftovers "$destination"
+
+echo '==> an update keeps the release before it and the same installation'
+later=$scratch/later
+release_version 9.8.9 "$later" 'crucible 9.8.9'
+install_version 9.8.9 "$later" "$destination" >/dev/null
+assert_layout "$destination" 9.8.9
+[[ $receipt_installation == "$first_installation" ]]
+[[ $($destination/cru --version) == 'crucible 9.8.9' ]]
+[[ -f $destination/.crucible-install/releases/$version/receipt ]]
+assert_no_leftovers "$destination"
+install_from "$asset" "$destination" >/dev/null
+assert_layout "$destination" "$version"
+[[ $receipt_installation == "$first_installation" ]]
 
 echo '==> an unrelated alias is never overwritten'
 foreign=$scratch/foreign
@@ -228,7 +406,7 @@ if install_from "$asset" "$foreign" 2>/dev/null; then
     echo 'installer overwrote an unrelated alias' >&2
     exit 1
 fi
-[[ $(cat "$foreign/cru") == mine && ! -e $foreign/crucible ]]
+[[ $(cat "$foreign/cru") == mine && ! -e $foreign/crucible && ! -e $foreign/.crucible-install ]]
 
 echo '==> a non-regular executable path is never replaced'
 occupied=$scratch/occupied
@@ -240,14 +418,127 @@ if install_from "$asset" "$occupied" 2>/dev/null; then
 fi
 [[ $(cat "$occupied/crucible/sentinel") == kept ]]
 
-echo '==> a non-regular sandbox broker path is never replaced'
-occupied_broker=$scratch/occupied-broker
-mkdir -p "$occupied_broker/crucible-sandbox-broker"
-if install_from "$asset" "$occupied_broker" 2>/dev/null; then
-    echo 'installer replaced a non-regular sandbox broker path' >&2
+echo '==> a flat install is not replaced by a versioned one'
+flat=$scratch/flat
+flat_install "$flat"
+refused 'a flat install' "which is not this installer's link" install_from "$asset" "$flat"
+[[ -f $flat/crucible && ! -L $flat/crucible && ! -e $flat/.crucible-install ]]
+
+echo '==> what stands where the layout goes is never replaced'
+# Each case puts one thing where the layout expects another, and the install
+# must refuse it and leave it as it was.
+odd=$scratch/odd-prefix
+mkdir -p "$odd"
+printf 'kept\n' >"$odd/.crucible-install"
+refused 'a file as the layout directory' 'is not a directory' install_from "$asset" "$odd"
+[[ $(cat "$odd/.crucible-install") == kept && ! -e $odd/crucible ]]
+
+odd=$scratch/odd-unit-file
+mkdir -p "$odd/.crucible-install/releases"
+chmod 755 "$odd/.crucible-install" "$odd/.crucible-install/releases"
+printf 'kept\n' >"$odd/.crucible-install/releases/$version"
+refused 'a file as the release directory' 'which is not a release directory' install_from "$asset" "$odd"
+[[ $(cat "$odd/.crucible-install/releases/$version") == kept && ! -e $odd/crucible ]]
+assert_no_leftovers "$odd"
+
+odd=$scratch/odd-unit-link
+mkdir -p "$odd/.crucible-install/releases" "$scratch/elsewhere"
+chmod 755 "$odd/.crucible-install" "$odd/.crucible-install/releases"
+ln -s "$scratch/elsewhere" "$odd/.crucible-install/releases/$version"
+refused 'a link as the release directory' 'which is not a release directory' install_from "$asset" "$odd"
+[[ -L $odd/.crucible-install/releases/$version && -z $(ls -A "$scratch/elsewhere") ]]
+
+odd=$scratch/odd-current
+mkdir -p "$odd/.crucible-install/current"
+chmod 755 "$odd/.crucible-install"
+refused 'a directory as the active link' 'is not a link' install_from "$asset" "$odd"
+[[ -d $odd/.crucible-install/current && ! -e $odd/crucible ]]
+
+echo '==> a release directory holding another build is refused and kept'
+rebuilt=$scratch/rebuilt
+release "$rebuilt"
+printf '# another build\n' >>"$rebuilt/$stem/crucible"
+tar -czf "$rebuilt/$stem.tar.gz" -C "$rebuilt" "$stem"
+(cd "$rebuilt" && checksum "$stem.tar.gz") >"$rebuilt/SHA256SUMS"
+kept_sum=$(sum_of "$destination/.crucible-install/releases/$version/crucible")
+refused 'another build of the same release' 'holds another build of crucible' \
+    install_from "$rebuilt" "$destination"
+[[ $(sum_of "$destination/.crucible-install/releases/$version/crucible") == "$kept_sum" ]]
+assert_layout "$destination" "$version"
+assert_no_leftovers "$destination"
+
+echo '==> a lock left by an install that stopped is refused by name'
+stale=$scratch/stale
+install_from "$asset" "$stale" >/dev/null
+sh -c 'exit 0' &
+dead=$!
+wait "$dead"
+ln -s "$dead@$(uname -n)" "$stale/.crucible-install/lock"
+refused 'a stale lock' "left $stale/.crucible-install/lock behind" install_from "$asset" "$stale"
+[[ -L $stale/.crucible-install/lock ]]
+rm -f -- "$stale/.crucible-install/lock"
+install_from "$asset" "$stale" >/dev/null
+assert_layout "$stale" "$version"
+
+echo '==> a lock held by a running install is waited on where ps cannot see it'
+held=$scratch/held
+install_from "$asset" "$held" >/dev/null
+sleep 60 &
+holder=$!
+ln -s "$holder@$(uname -n)" "$held/.crucible-install/lock"
+# A ps that finds nothing, as on a system without one.
+blind=$scratch/blind-ps
+mkdir -p "$blind"
+printf '#!/bin/sh\nexit 1\n' >"$blind/ps"
+chmod +x "$blind/ps"
+(sleep 2 && rm -f -- "$held/.crucible-install/lock") &
+releaser=$!
+status=0
+problem=$(PATH=$blind:$PATH install_from "$asset" "$held" 2>&1 >/dev/null) || status=$?
+wait "$releaser"
+kill "$holder" 2>/dev/null || :
+wait "$holder" 2>/dev/null || :
+((status == 0)) || {
+    printf 'installer took a live lock for a stale one: %s\n' "$problem" >&2
     exit 1
+}
+assert_layout "$held" "$version"
+
+echo '==> an archive unpacked below a name with a backslash is still verified'
+slashed=$scratch/'back\slash'
+mkdir -p "$slashed"
+status=0
+problem=$(TMPDIR=$slashed install_from "$asset" "$scratch/slashed" 2>&1 >/dev/null) || status=$?
+((status == 0)) || {
+    printf 'installer could not hash below a backslash: %s\n' "$problem" >&2
+    exit 1
+}
+assert_layout "$scratch/slashed" "$version"
+[[ -z $(ls -A "$slashed") ]]
+
+echo '==> a layout directory nobody can write to is refused at once'
+# Root writes to it regardless, so the case means something only to a user.
+if (($(id -u) != 0)); then
+    shut=$scratch/shut
+    install_from "$asset" "$shut" >/dev/null
+    chmod 555 "$shut/.crucible-install"
+    started=$SECONDS
+    status=0
+    refused 'a read-only layout directory' 'is not writable' install_from "$asset" "$shut" ||
+        status=$?
+    # Put back first, or the scratch directory could not be removed.
+    chmod 755 "$shut/.crucible-install"
+    ((status == 0)) || exit 1
+    ((SECONDS - started < 10)) || {
+        echo 'installer waited on a lock it could never take' >&2
+        exit 1
+    }
+else
+    echo '    skipped: root can write to a read-only directory'
 fi
-[[ -d $occupied_broker/crucible-sandbox-broker && ! -e $occupied_broker/crucible ]]
+
+echo '==> an interrupted install never leaves a broken release active'
+tests/fixtures/installer/crash-probes.sh "$INSTALL"
 
 echo '==> a group-writable installation directory is reported as untrusted'
 loose=$scratch/loose
@@ -258,7 +549,7 @@ warned=$(install_from "$asset" "$loose" 2>&1 >/dev/null)
     printf 'installer did not warn about a group-writable directory: %s\n' "$warned" >&2
     exit 1
 }
-[[ -x $loose/crucible-sandbox-broker ]]
+[[ -x $loose/.crucible-install/current/crucible-sandbox-broker ]]
 
 echo '==> a directory owned by another user is reported as untrusted'
 # Mapping this user to another id inside a user namespace makes every directory
@@ -272,7 +563,7 @@ if unshare -U --map-user=1001 --map-group=1001 true 2>/dev/null; then
         printf 'installer did not warn about a directory owned by another user: %s\n' "$warned" >&2
         exit 1
     }
-    [[ -x $foreign_owner/crucible-sandbox-broker ]]
+    [[ -x $foreign_owner/.crucible-install/current/crucible-sandbox-broker ]]
 else
     echo '    skipped: this host cannot map another user id into a user namespace'
 fi
@@ -543,8 +834,10 @@ if command -v setsid >/dev/null; then
     refuse 'install with no controlling terminal' "$ttyless" '/dev/tty'
     expect 'install with no controlling terminal' "$(visible "$ttyless")" 'ok install'
     expect 'install with no controlling terminal' "$ttyless" 'status=0'
+    ttyless_flat=$scratch/ttyless-flat
+    flat_install "$ttyless_flat"
     ttyless=$(in_terminal 80 setsid -w env TERM=xterm LC_ALL=C \
-        CRUCIBLE_CODE_HOME="$scratch/ttyless-home" "$UNINSTALL" --dir "$ttyless_bin")
+        CRUCIBLE_CODE_HOME="$scratch/ttyless-home" "$UNINSTALL" --dir "$ttyless_flat")
     refuse 'uninstall with no controlling terminal' "$ttyless" '/dev/tty'
     expect 'uninstall with no controlling terminal' "$(visible "$ttyless")" 'ok remove'
     expect 'uninstall with no controlling terminal' "$ttyless" 'status=0'
@@ -554,7 +847,7 @@ fi
 
 echo '==> uninstall marks its steps in a terminal and stays plain when piped'
 look_bin=$scratch/look-bin
-install_from "$asset" "$look_bin" >/dev/null
+flat_install "$look_bin"
 removed=$(in_terminal 80 env TERM=xterm LC_ALL=C CRUCIBLE_CODE_HOME="$scratch/look-home" \
     "$UNINSTALL" --dir "$look_bin")
 expect 'uninstall in a terminal' "$removed" "$ESC["
@@ -562,7 +855,7 @@ expect 'uninstall in a terminal' "$(visible "$removed")" 'ok remove'
 expect 'uninstall in a terminal' "$removed" 'crucible is uninstalled.'
 expect 'uninstall in a terminal' "$removed" 'status=0'
 [[ ! -e $look_bin/crucible ]]
-install_from "$asset" "$look_bin" >/dev/null
+flat_install "$look_bin"
 removed=$(CRUCIBLE_CODE_HOME=$scratch/look-home "$UNINSTALL" --dir "$look_bin" 2>&1)
 refuse 'piped uninstall' "$removed" "$ESC"
 expect 'piped uninstall' "$removed" 'crucible is uninstalled.'
@@ -570,7 +863,7 @@ expect 'piped uninstall' "$removed" 'crucible is uninstalled.'
 echo '==> uninstall puts every detail under its step when one does not fit beside it'
 # At 50 columns the kept data directory, `~/h`, fits beside its step and the
 # list of what was removed does not; the list still reads as one column.
-install_from "$asset" "$look_bin" >/dev/null
+flat_install "$look_bin"
 removed=$(in_terminal 50 env TERM=xterm LC_ALL=C HOME="$scratch" CRUCIBLE_CODE_HOME="$scratch/h" \
     "$UNINSTALL" --dir "$look_bin")
 expect 'a narrow uninstall' "$removed" 'status=0'
@@ -579,13 +872,15 @@ for step in "remove"$'\r\n'"    crucible, crucible-sandbox-broker and cru" \
     expect 'a narrow uninstall' "$(visible "$removed")" "  ok $step"
 done
 # At 80 columns both fit, and both stay beside their step.
-install_from "$asset" "$look_bin" >/dev/null
+flat_install "$look_bin"
 removed=$(in_terminal 80 env TERM=xterm LC_ALL=C HOME="$scratch" CRUCIBLE_CODE_HOME="$scratch/h" \
     "$UNINSTALL" --dir "$look_bin")
 expect 'a wide uninstall' "$(visible "$removed")" "  ok keep                ~/h"
 expect 'a wide uninstall' "$(visible "$removed")" "  ok remove              crucible, crucible-sandbox-broker and cru"
 
 echo '==> uninstall preserves data by default'
+destination=$scratch/flat-bin
+flat_install "$destination"
 data=$scratch/home/.crucible
 mkdir -p "$data"
 printf 'secret\n' >"$data/auth.json"
@@ -602,7 +897,7 @@ CRUCIBLE_CODE_HOME=$data "$UNINSTALL" --dir "$destination" --purge --yes >/dev/n
 [[ ! -e $data ]]
 
 echo '==> purge refuses a path that resolves to the filesystem root'
-install_from "$asset" "$destination"
+flat_install "$destination"
 if CRUCIBLE_CODE_HOME=/tmp/.. "$UNINSTALL" --dir "$destination" \
     --purge --yes 2>/dev/null; then
     echo 'uninstaller accepted a spelling of the filesystem root' >&2

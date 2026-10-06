@@ -52,17 +52,21 @@ The script requires Bash. Linux and macOS installations normally have it;
 FreeBSD keeps it in the `bash` package rather than the base system. Without
 Bash, use the manual path below. The script detects the platform, verifies
 exactly the archive it downloads
-against the release's `SHA256SUMS`, and atomically installs `crucible` plus a
-`cru` alias in `~/.local/bin`. On Linux and macOS it also installs
-`crucible-sandbox-broker` beside `crucible`; confined commands use this native
-helper, and it is trusted only when every directory above it belongs to root
-or to you and is writable by neither group nor others; the installer points out
-a directory that breaks that rule, with the `chmod` that fixes it. It
+against the release's `SHA256SUMS`, installs the release in a directory of its
+own under `~/.local/bin/.crucible-install`, and links `crucible` and a `cru`
+alias in `~/.local/bin` to it, as
+[where a release goes](#where-the-shell-installer-puts-a-release) shows. On
+Linux and macOS the release also holds `crucible-sandbox-broker` beside
+`crucible`; confined commands use this native helper, and it is trusted only
+when every directory above it belongs to root or to you and is writable by
+neither group nor others; the installer points out a directory that breaks
+that rule, with the `chmod` that fixes it. It
 never asks for `sudo` or edits a shell profile. Use `--version`, `--dir` or
 `--dry-run` when the defaults are not the ones you want. The matching
-`uninstall.sh` removes only those executables and preserves `~/.crucible`;
-deleting configuration, credentials and sessions requires the explicit
-`--purge --yes` pair. In a terminal the installer shows each step as it runs,
+`uninstall.sh` removes only the executables an installer of 0.45 or earlier
+put in the directory, and preserves `~/.crucible`; deleting configuration,
+credentials and sessions requires the explicit `--purge --yes` pair. In a
+terminal the installer shows each step as it runs,
 with a bar while the archive downloads; piped, or under `NO_COLOR` or
 `TERM=dumb`, it prints one plain line per step instead. Either way a failure
 while it detects the platform, downloads, verifies, unpacks or installs names
@@ -109,6 +113,60 @@ available separately as `crucible-sandbox-broker-<version>-windows-x86_64.exe`
 [administrator setup instructions](../security/sandboxing.md#windows-setup-maintenance)
 before enabling the sandbox. A standalone Crucible executable without its
 broker supports sessions with sandboxing disabled.
+
+### Where the shell installer puts a release
+
+`install.sh` keeps each release in a directory of its own and links to the one
+in use. In the default directory, `~/.local/bin`, that is:
+
+```text
+~/.local/bin/crucible -> .crucible-install/current/crucible
+~/.local/bin/cru -> crucible
+~/.local/bin/.crucible-install/current -> releases/<version>
+~/.local/bin/.crucible-install/releases/<version>/crucible
+~/.local/bin/.crucible-install/releases/<version>/crucible-sandbox-broker
+~/.local/bin/.crucible-install/releases/<version>/receipt
+```
+
+The broker is there on Linux and macOS only. The receipt records the
+installation's identifier, the platform, the `.crucible-install` directory,
+the version and the SHA-256 of each executable beside it. A release is put
+together in a hidden directory beside the others, its receipt written last,
+and renamed into place whole; only then is `current` switched to it, by one
+rename. An install stopped at any point, by a crash, a kill or, on Linux, a
+power loss, leaves the release that was active before it still active, or the
+new one active and complete, and running the same install again finishes it.
+
+One install runs at a time. While it does, it holds `.crucible-install/lock`,
+and a second install waits for it, giving up after about a minute. An install
+that was killed can leave the lock behind, and the next one then refuses and
+names it; once no install is running, remove the lock and run the install
+again.
+
+Installing a version that is already there uses its directory again when it
+holds the same build, and refuses, changing nothing, when it holds a different
+one. So `--version` with an earlier release still under `releases/` switches
+back to it. The installer never removes a release: earlier ones stay under
+`releases/`, and any but the one `current` names can be deleted by hand.
+
+Each directory of the layout must belong to root or to you and be writable by
+neither group nor others; the installer refuses one that is not, with the
+`chmod go-w` that fixes it. It also refuses an installation directory whose name holds a control character, and a
+version that is not three numbers with no suffix and no leading zero, so
+`--version 1.2.3-rc.1` stops at `invalid version`.
+
+On Linux each file and directory is flushed to disk before `current` switches.
+On macOS and FreeBSD `sync` only schedules the writes, so a power loss soon
+after an install can undo that install, and the release that was active
+before it is the one in use.
+
+A directory that still holds the `crucible` file an installer of 0.45 or
+earlier copied there is refused, as `refusing to replace <dir>/crucible, which
+is not this installer's link into <dir>/.crucible-install`; run `uninstall.sh`
+there first, then install again. `uninstall.sh` in turn refuses this layout,
+as `refusing to remove non-regular <dir>/crucible`; to remove it, delete
+`crucible`, `cru` and `.crucible-install` from the directory while no install
+is running.
 
 ## Build it
 
