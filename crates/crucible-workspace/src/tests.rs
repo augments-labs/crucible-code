@@ -326,6 +326,84 @@ fn a_verbatim_path_with_a_parent_component_has_no_intended_target() {
     );
 }
 
+// Win32 trims the dots and spaces that end the last name it is given, so a
+// write to `d.\new.txt` spelled in full makes its file in `d`, and the name
+// policy settles has to be that one too.
+#[cfg(windows)]
+#[test]
+fn a_name_win32_trims_intends_the_file_the_write_reaches() {
+    let f = Fixture::new("intended-trimmed-win32");
+    let root = f.workspace.root().to_path_buf();
+    fs::create_dir_all(root.join("d")).unwrap();
+    let plain = root
+        .to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .to_owned();
+
+    for requested in [
+        format!(r"{plain}\d.\new.txt"),
+        format!(r"{plain}\d \new.txt"),
+    ] {
+        let reached = f.workspace.creatable(&requested).unwrap();
+
+        assert_eq!(
+            f.workspace.intended(&requested).as_deref(),
+            Some(reached.as_path()),
+            "{requested}"
+        );
+        assert_eq!(reached.as_path(), root.join(r"d\new.txt"), "{requested}");
+    }
+}
+
+/// A workspace rooted at the directory the test runs in, which is the
+/// current directory of its drive, so a drive-relative path starts from it.
+/// Nothing is written there.
+#[cfg(windows)]
+fn rooted_at_the_current_directory() -> (Workspace, PathBuf, String) {
+    let here = std::env::current_dir().unwrap();
+    let workspace = Workspace::open(&here).unwrap();
+    let root = workspace.root().to_path_buf();
+    let drive = here.to_string_lossy().chars().next().unwrap();
+    let name = here.file_name().unwrap().to_string_lossy().into_owned();
+    (workspace, root, format!("{drive}:..\\{name}"))
+}
+
+// `C:..\x` climbs out of the drive's current directory, which is where Win32
+// starts a path that names a drive and no root.
+#[cfg(windows)]
+#[test]
+fn a_drive_relative_parent_component_intends_the_file_the_write_reaches() {
+    let (workspace, root, climbed) = rooted_at_the_current_directory();
+    let requested = format!(r"{climbed}\src\new.txt");
+
+    let reached = workspace.creatable(&requested).unwrap();
+
+    assert_eq!(
+        workspace.intended(&requested).as_deref(),
+        Some(reached.as_path())
+    );
+    assert_eq!(reached.as_path(), root.join(r"src\new.txt"));
+}
+
+// Joined onto a path, a name spelled like a drive replaces it and starts from
+// that drive's current directory, which is not the folder it was written in.
+#[cfg(windows)]
+#[test]
+fn a_name_spelled_like_a_drive_has_no_intended_target() {
+    let (workspace, root, _) = rooted_at_the_current_directory();
+    let plain = root
+        .to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .to_owned();
+    let drive = plain.chars().next().unwrap();
+
+    assert!(
+        workspace
+            .intended(&format!(r"{plain}\src\{drive}:\src\new.txt"))
+            .is_none()
+    );
+}
+
 #[test]
 fn ordinary_names_below_a_missing_directory_keep_their_intended_target() {
     let f = Fixture::new("intended-missing");
