@@ -956,9 +956,8 @@ impl Watched {
     ///
     /// No frame can say that something will never be drawn, so this watches
     /// for longer than crucible takes to draw what the key would wrongly have
-    /// done, and the cases that use it each saw that draw land inside it. It
-    /// waits for neither a byte nor quiet, since a running turn redraws on its
-    /// beat and a key that rightly does nothing draws nothing.
+    /// done. It waits for neither a byte nor quiet, since a running turn
+    /// redraws on its beat and a key that rightly does nothing draws nothing.
     pub(crate) fn never_draws(&mut self, step: &str, unwanted: &str, held: Duration) {
         let ended = Instant::now() + held;
 

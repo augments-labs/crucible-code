@@ -1307,8 +1307,8 @@ fn ctrl_s_stops_the_turn_and_sends_the_highlighted_prompt_alone() {
     );
 }
 
-/// Longer than crucible takes to draw the stop a key asks for, which the cases
-/// that wait this long for it not to be drawn each saw land well inside it.
+/// Longer than crucible takes to draw the stop a key asks for: a key broken on
+/// purpose to stop the turn had the stop drawn in under a second.
 const LONGER_THAN_A_STOP: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Ends a case whose turn a key should have left running: Esc stops it, and

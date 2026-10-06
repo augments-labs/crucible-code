@@ -2,7 +2,7 @@
   "harness": {
     "tests/whole_screen/screen.rs": "923ea6c0bfa9b63671bd937e71c3e14db9c8b24645a87302bd26e5ccd4d01cbb",
     "tests/whole_screen/vendor.rs": "c60595fde97a88e1dfb8ee46ea69ce1bdbdb2b80a191987a5278009432792011",
-    "tests/whole_screen/watched.rs": "ed5cff4d0e4e2a84d0b01133e8dcaf4bd2d70a9e14975d3696491980d00a2efc"
+    "tests/whole_screen/watched.rs": "3a3977be7fca74f88f78f99274dd1b860a4c93cc9d6db2b9f43802518ee9eb68"
   },
   "captures": [
     {
