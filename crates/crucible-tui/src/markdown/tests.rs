@@ -1273,13 +1273,15 @@ fn a_link_to_a_path_points_at_the_file_in_the_checkout() {
     // A terminal opens an address, and `src/a.rs:3` is not one until it is
     // read against the directory the session is in. The words are what the
     // answer wrote; only where they point changes.
-    let said = opened("see [a](src/a.rs:3) and [docs](https://example.test/d)");
+    let said =
+        opened("see [a](src/a.rs:3), [g](docs/My%20Guide.md) and [docs](https://example.test/d)");
 
-    assert_eq!(wrote(&said), "see a and docs");
+    assert_eq!(wrote(&said), "see a, g and docs");
     assert_eq!(
         points(&said),
         [
             ("a", "file:///repo/src/a.rs#3"),
+            ("g", "file:///repo/docs/My%20Guide.md"),
             ("docs", "https://example.test/d")
         ]
     );

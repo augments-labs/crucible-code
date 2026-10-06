@@ -58,7 +58,7 @@ impl Files {
         let root = if root.is_empty() {
             "file://".to_owned()
         } else {
-            uri(root)
+            uri(root, Spelling::Named)
         };
         Self {
             root: root.into_boxed_str(),
@@ -85,9 +85,9 @@ impl Files {
         }
 
         let mut address = if absolute(path) {
-            uri(path)
+            uri(path, Spelling::Written)
         } else {
-            format!("{}/{}", self.root, escaped(path))
+            format!("{}/{}", self.root, escaped(path, Spelling::Written))
         };
         if let Some((row, column)) = place {
             match self.line {
@@ -105,6 +105,18 @@ impl Files {
         }
         Some(address)
     }
+}
+
+/// Whose spelling a path is in, which decides what a `%` in it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spelling {
+    /// The system's, as the checkout's root is: a `%` is a character of the
+    /// name.
+    Named,
+    /// The answer's, as a link's address is: `%20` is how a space is written,
+    /// since an address ends at its first space, and a `%` not starting an
+    /// escape is a character of the name.
+    Written,
 }
 
 /// Whether `target` opens with a scheme, `https:` or `mailto:`.
@@ -178,7 +190,7 @@ fn absolute(path: &str) -> bool {
 /// A Windows root the system canonicalized arrives as `\\?\C:\repo` or
 /// `\\?\UNC\server\share`; the prefix is how the system is told to take the
 /// path as written, and is not part of where the file is.
-fn uri(path: &str) -> String {
+fn uri(path: &str, spelling: Spelling) -> String {
     let path = path.replace('\\', "/");
     let path = match path.strip_prefix("//?/") {
         Some(rest) => rest
@@ -188,21 +200,26 @@ fn uri(path: &str) -> String {
     };
     if path.starts_with("//") {
         // `file://server/share/a`: the server is the URI's host.
-        format!("file:{}", escaped(&path))
+        format!("file:{}", escaped(&path, spelling))
     } else if path.starts_with('/') {
-        format!("file://{}", escaped(&path))
+        format!("file://{}", escaped(&path, spelling))
     } else {
-        format!("file:///{}", escaped(&path))
+        format!("file:///{}", escaped(&path, spelling))
     }
 }
 
 /// `path` with every byte a URI path may not hold as it is written as a
-/// percent escape, a `%` among them: the path is a name, not an address
-/// someone escaped already.
-fn escaped(path: &str) -> String {
+/// percent escape, and a `%` among them unless `spelling` says it starts one.
+fn escaped(path: &str, spelling: Spelling) -> String {
+    let bytes = path.as_bytes();
     let mut escaped = String::with_capacity(path.len());
-    for byte in path.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~/:!$&'()*+,;=@".contains(&byte) {
+    for (at, &byte) in bytes.iter().enumerate() {
+        let starts_escape = byte == b'%'
+            && spelling == Spelling::Written
+            && bytes
+                .get(at + 1..at + 3)
+                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit));
+        if starts_escape || byte.is_ascii_alphanumeric() || b"-._~/:!$&'()*+,;=@".contains(&byte) {
             escaped.push(char::from(byte));
         } else {
             escaped.push('%');
@@ -324,8 +341,33 @@ mod tests {
     #[test]
     fn a_character_a_path_may_hold_and_an_address_may_not_is_escaped() {
         assert_eq!(
-            files(Line::Fragment).address("notes/50% é?.md").as_deref(),
-            Some("file:///home/me/my%20repo/notes/50%25%20%C3%A9%3F.md")
+            files(Line::Fragment).address("notes/50%é?.md").as_deref(),
+            Some("file:///home/me/my%20repo/notes/50%25%C3%A9%3F.md")
+        );
+    }
+
+    #[test]
+    fn a_percent_in_the_name_of_the_checkout_is_a_character_of_it() {
+        // The root comes from the system, not the answer: `%41` in it is
+        // three characters of a directory's name.
+        assert_eq!(
+            Files::new(Path::new("/home/50%41"), Line::Fragment)
+                .address("a.rs")
+                .as_deref(),
+            Some("file:///home/50%2541/a.rs")
+        );
+    }
+
+    #[test]
+    fn a_name_the_answer_escaped_already_is_not_escaped_again() {
+        // A link's address ends at its first space, so a file with one in its
+        // name only ever arrives as `%20`; escaped again it is a file named
+        // `%20`, which is not there.
+        assert_eq!(
+            files(Line::Fragment)
+                .address("docs/My%20Guide.md")
+                .as_deref(),
+            Some("file:///home/me/my%20repo/docs/My%20Guide.md")
         );
     }
 
