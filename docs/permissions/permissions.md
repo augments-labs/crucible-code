@@ -203,8 +203,8 @@ Both durations remember exactly what the question named.
 - For a file change, it is the tool **and the resolved path**. `session` on a
   `write` to `src/a.rs` stops asking about that write; another path asks again,
   and `edit` is separate too.
-- For a command, it is the tool **and the whole line exactly as it was
-  sent**, operators and spacing included. `session` on `cargo test` stops
+- For a command, it is the tool **and the whole line the question
+  showed**, operators and the spacing between words included. `session` on `cargo test` stops
   asking about `cargo test`; `cargo build`, the same program but a different
   command, asks again, and so does `make; make install` after a yes to
   `make && make install`, because the operators between commands are part of

@@ -112,8 +112,9 @@ pub struct Permission {
 /// same.
 #[derive(Debug, PartialEq, Eq, Hash)]
 enum Scope {
-    /// A command: the tool, a colon, and the line exactly as it goes to the
-    /// shell, [`Command::sent`] byte for byte.
+    /// A command: the tool, a colon, and the line the question showed,
+    /// [`Command::sent`] byte for byte, which is what goes to the shell less
+    /// any whitespace at its ends.
     ///
     /// Never the commands the line decomposes into. The operators between them
     /// are part of what was agreed to — `a && b` runs `b` only if `a` worked,
@@ -385,7 +386,8 @@ impl Permission {
     ///
     /// Spelled the way the question spelled it, which is also what stands for
     /// a persisted answer during the current session — so it may be narrower
-    /// than the durable rule minted from the same question, and never wider.
+    /// than the durable rule minted from the same question, and is wider only
+    /// in leaving out whitespace at the ends of a command line.
     /// For a file or a host the two name the same thing. For a command the
     /// question showed the line, so the line is what is remembered; the rule
     /// names the command a one-command line runs, and a longer line mints none.
