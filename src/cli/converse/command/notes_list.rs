@@ -214,6 +214,8 @@ impl<'a> Listing<'a> {
             | Pressed::PasteImage
             | Pressed::Rename
             | Pressed::All
+            | Pressed::SendAll
+            | Pressed::SendNow
             | Pressed::Clicked { .. }
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }

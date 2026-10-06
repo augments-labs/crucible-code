@@ -134,6 +134,23 @@ pub enum Pressed {
     /// where a listing has a narrower and a wider reach, and every other
     /// component reads it as a key it has no use for.
     All,
+    /// Ctrl+Enter: send everything waiting for the turn now.
+    ///
+    /// Return with control held, which only a terminal asked to spell a
+    /// modified key distinctly can send; one that was not sends Return, and
+    /// the box reads that as the Enter it always was. Its own variant rather
+    /// than a [`Key`], because what it sends is the queue the conversation
+    /// holds and the editor holds none of that. Anything with no use for it
+    /// ignores it, and only the prompt between turns, where there is no turn
+    /// to stop, takes it as Enter.
+    SendAll,
+    /// Ctrl+S: send the highlighted prompt waiting for the turn now, alone.
+    ///
+    /// The terminal's stop-output, but the line discipline that would answer
+    /// it is off while the session holds the terminal, so the letter arrives
+    /// on every terminal; it is the one "send" starts with. Like
+    /// [`Pressed::SendAll`] it means something only where prompts wait.
+    SendNow,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -487,6 +504,12 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // and it is the one "all" starts with.
         KeyCode::Char('a') if bound => Pressed::All,
 
+        // Ctrl+S is the terminal's stop-output, which the line discipline only
+        // answers while the session has not taken the terminal off it. Here it
+        // never reaches that, so the letter is free on every terminal, and it
+        // is the one "send" starts with.
+        KeyCode::Char('s') if bound => Pressed::SendNow,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -550,6 +573,10 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // why the prompt still has a newline on a terminal that declined.
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => Pressed::Key(Key::Newline),
         KeyCode::Enter if alt => Pressed::Key(Key::Newline),
+        // Return with control held, which the older encoding has no room for
+        // either: a terminal that declined `Spelling` sends it as Return, and
+        // it is read as the Enter it arrived as.
+        KeyCode::Enter if control => Pressed::SendAll,
         KeyCode::Enter => Pressed::Key(Key::Enter),
 
         // Up and down walk whatever a panel or a list is showing, so they are
@@ -671,13 +698,25 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_enter_and_ctrl_s_arrive_as_the_presses_that_send_what_waits() {
+        // Ctrl+Enter is its own press, not the Enter the bare key is, so a
+        // component with no queue can ignore it rather than take it as
+        // finished. Ctrl+S is the one that sends the highlighted prompt alone.
+        assert_eq!(meaning(control(KeyCode::Enter)), Pressed::SendAll);
+        assert_eq!(meaning(control(KeyCode::Char('s'))), Pressed::SendNow);
+        assert_eq!(meaning(alt(KeyCode::Char('s'))), Pressed::Ignored);
+    }
+
+    #[test]
     fn a_letter_held_with_shift_as_well_is_not_the_binding_control_alone_is() {
         // Ctrl+Shift+C is the copy every desktop has, and a terminal asked to
         // spell modified keys distinctly forwards it rather than answering it
         // itself. Read as Ctrl+C it interrupts the turn and then ends the
         // session, which is the worst possible reading of a key somebody
         // pressed to take a copy.
-        for letter in ['c', 'd', 'e', 'o', 't', 'b', 'x', 'y', 'w', 'u', 'k', 'j'] {
+        for letter in [
+            'c', 'd', 'e', 'o', 't', 'b', 'x', 'y', 'w', 'u', 'k', 'j', 's',
+        ] {
             assert_eq!(
                 meaning(control_shift(KeyCode::Char(letter))),
                 Pressed::Ignored,

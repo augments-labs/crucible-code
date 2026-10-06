@@ -809,6 +809,8 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::PasteImage
         | Pressed::Rename
         | Pressed::All
+        | Pressed::SendAll
+        | Pressed::SendNow
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

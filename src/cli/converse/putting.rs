@@ -563,6 +563,8 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         | Pressed::PasteImage
         | Pressed::Rename
         | Pressed::All
+        | Pressed::SendAll
+        | Pressed::SendNow
         | Pressed::Scrolled { .. }
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }

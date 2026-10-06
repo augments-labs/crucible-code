@@ -62,18 +62,29 @@ fn stopped_then<T>(
     prompts: &[&str],
     then: impl FnOnce(&Conversation, &mut Held<'_>, &Terms) -> T,
 ) -> (Stopped, T) {
-    stopped_after(name, reading, prompts, None, then)
+    stopped_after(name, reading, prompts, Besides::default(), then)
 }
 
-/// [`stopped_then`], with `after` run once the prompts have, before the queue
-/// is asked for the next turn: work that ends some other way than the stop.
+/// What [`stopped_after`] does besides sending the prompts into the stop.
+#[derive(Default)]
+struct Besides {
+    /// Done to the queue once [`QUEUED`] is in it, just before the last
+    /// prompt's turn starts: what a key pressed under that turn would find.
+    queued: Option<fn(&mut Held<'_>, &Terms)>,
+    /// Run once the prompts have, before the queue is asked for the next turn:
+    /// work that ends some other way than the stop.
+    after: Option<Work>,
+}
+
+/// [`stopped_then`], with `besides` done around the prompts.
 fn stopped_after<T>(
     name: &str,
     reading: Option<PlanWindows>,
     prompts: &[&str],
-    after: Option<Work>,
+    besides: Besides,
     then: impl FnOnce(&Conversation, &mut Held<'_>, &Terms) -> T,
 ) -> (Stopped, T) {
+    let Besides { queued, after } = besides;
     let sample = Sample::new(name);
     let session =
         Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
@@ -101,6 +112,9 @@ fn stopped_after<T>(
         if at + 1 == prompts.len() {
             let mut editor = typed(QUEUED);
             assert_eq!(held.queued.accept(&mut editor), Retained::Accepted);
+            if let Some(queued) = queued {
+                queued(&mut held, &terms);
+            }
         }
         let work = Work::Turn((*prompt).to_owned(), Box::default());
         let (back, leaving) =
@@ -185,7 +199,10 @@ fn plan_limit_hold_lets_go_once_the_next_work_ends_another_way() {
         "plan-limit-hold-lets-go",
         None,
         &["fix the build"],
-        Some(Work::Room(Compacting::Full)),
+        Besides {
+            after: Some(Work::Room(Compacting::Full)),
+            ..Besides::default()
+        },
         |_, _, _| (),
     );
 
@@ -195,6 +212,48 @@ fn plan_limit_hold_lets_go_once_the_next_work_ends_another_way() {
     );
     assert!(stopped.waiting.is_empty(), "the line is still queued");
     assert_eq!(stopped.asked, 2, "the held line never reached the vendor");
+}
+
+#[test]
+fn plan_limit_lets_go_of_a_queue_a_send_now_key_was_holding_back() {
+    // Ctrl+S holds the queue back from the turn it stops and from the line it
+    // sends alone. A used-up plan ends that turn with that line still queued,
+    // between turns, where nothing is to be held back from anything: kept
+    // held, nothing typed under the next turn the reader sends would reach it.
+    let (stopped, (offered, taken, behind)) = stopped_after(
+        "plan-limit-send-now-lets-go",
+        None,
+        &["fix the build"],
+        Besides {
+            queued: Some(|held, terms| {
+                // On offer to the turn, as a line the box queued under it is.
+                terms.steer.say(QUEUED.to_owned());
+                assert!(held.queued.send_now(&terms.steer));
+            }),
+            ..Besides::default()
+        },
+        |_, held, terms| {
+            let offered = matches!(held.queued.offer(&terms.steer), Offer::Turn(_));
+            drop(terms.steer.take());
+            let mut editor = typed("and the lint");
+            assert_eq!(held.queued.accept(&mut editor), Retained::Accepted);
+            let taken = queueing::batched(&mut held.queued, &terms.steer);
+            (offered, taken, terms.steer.take())
+        },
+    );
+
+    assert_eq!(stopped.taken, None, "the queue ran a turn");
+    assert!(offered, "the queue is still held back from the next turn");
+    assert_eq!(
+        taken.as_deref(),
+        Some(QUEUED),
+        "the next turn is not the queue taken whole"
+    );
+    assert_eq!(
+        behind,
+        vec!["and the lint".to_owned()],
+        "the line queued behind it went nowhere with it"
+    );
 }
 
 /// The idle prompt's first frame, drawn as [`typing::ask`] draws it before it

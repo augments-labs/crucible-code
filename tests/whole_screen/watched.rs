@@ -906,9 +906,18 @@ impl Watched {
     /// being written, as [`Screen::shows`] has it: a read that ends inside a
     /// frame would otherwise hand a case half a box.
     pub(crate) fn catches(&mut self, step: &str, wanted: &str) {
+        self.catches_where(step, &format!("{wanted:?}"), |picture| {
+            picture.contains(wanted)
+        });
+    }
+
+    /// The same, for a screen a piece of text cannot name: reads frames until
+    /// a finished one is a picture `drawn` holds of. `named` says what that
+    /// is when none ever was.
+    pub(crate) fn catches_where(&mut self, step: &str, named: &str, drawn: impl Fn(&str) -> bool) {
         let deadline = Instant::now() + CEILING;
 
-        while !self.screen.shows(wanted) {
+        while !self.screen.shows_where(&drawn) {
             match self.bytes.recv_timeout(QUIET) {
                 Ok(bytes) => self.feed(&bytes),
                 Err(RecvTimeoutError::Timeout) => {}
@@ -922,7 +931,7 @@ impl Watched {
 
             assert!(
                 Instant::now() < deadline,
-                "no {wanted:?} was ever drawn after {step}, in {CEILING:?}{}\n{}",
+                "no {named} was ever drawn after {step}, in {CEILING:?}{}\n{}",
                 if self.screen.is_holding() {
                     " — the frame it is in was never finished"
                 } else {
@@ -930,6 +939,48 @@ impl Watched {
                 },
                 self.picture()
             );
+        }
+    }
+
+    /// Types `keys` and holds what follows to [`Self::never_draws`].
+    pub(crate) fn types_and_never_draws(&mut self, keys: &str, unwanted: &str, held: Duration) {
+        self.terminal
+            .write_all(keys.as_bytes())
+            .expect("keys go to the terminal");
+        self.never_draws(&format!("{keys:?} was typed"), unwanted, held);
+    }
+
+    /// Reads what crucible writes for `held`, failing as soon as `unwanted` is
+    /// on screen, in a finished frame or not: what a key that should leave part
+    /// of the screen alone is held to after `step`.
+    ///
+    /// No frame can say that something will never be drawn, so this watches
+    /// for longer than crucible takes to draw what the key would wrongly have
+    /// done. It waits for neither a byte nor quiet, since a running turn
+    /// redraws on its beat and a key that rightly does nothing draws nothing.
+    pub(crate) fn never_draws(&mut self, step: &str, unwanted: &str, held: Duration) {
+        let ended = Instant::now() + held;
+
+        loop {
+            assert!(
+                !self.picture().contains(unwanted),
+                "{unwanted:?} was drawn after {step}\n{}",
+                self.picture()
+            );
+            let left = ended.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            match self.bytes.recv_timeout(left) {
+                Ok(bytes) => self.feed(&bytes),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!(
+                        "crucible left the terminal while {step}\n{}",
+                        self.picture()
+                    )
+                }
+            }
         }
     }
 
