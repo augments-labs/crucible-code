@@ -99,12 +99,12 @@ pub enum Pressed {
     /// screen, and the difference between them is that one is about the plan
     /// standing above the box and the other about a result down the transcript.
     Plan,
-    /// Ctrl+Q: show every prompt waiting behind the turn, and take one back.
+    /// Ctrl+X: delete the marked one of whatever is standing over the box.
     ///
-    /// The panel above the box names as many as fit and counts the rest; this
-    /// is the list the count is about, and the only place a queued line can be
-    /// dropped before its turn sends it.
-    Queue,
+    /// Named for the effect, because the one thing that reads it is the panel of
+    /// prompts waiting behind the turn: the mark there is the line it takes
+    /// away, and a line taken away there is never sent.
+    Remove,
     /// Ctrl+Y: put the line in the box on the reader's clipboard.
     ///
     /// A key rather than the terminal's own selection because what a drag over
@@ -460,11 +460,11 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // both spelled with.
         KeyCode::Char('b') if bound => Pressed::Background,
 
-        // And last of these. Ctrl+Q is readline's quoted-insert, which is how a
-        // control character reaches a line — this editor takes one as paste and
-        // has no use for the key, so the letter is free and it is the one the
-        // panel of waiting prompts is spelled with.
-        KeyCode::Char('q') if bound => Pressed::Queue,
+        // And last of these. Ctrl+X is a prefix in one program and cut in the
+        // next, and this editor has no use for either: nothing here edits by
+        // chords or keeps what it cuts. So the letter is free, and it is the
+        // one a mark drawn through a line has always been spelled with.
+        KeyCode::Char('x') if bound => Pressed::Remove,
 
         // And one more of the same kind. Ctrl+Y is readline's yank, which puts
         // back what a rub took out -- this editor keeps nothing it rubs, so the
@@ -677,7 +677,7 @@ mod tests {
         // itself. Read as Ctrl+C it interrupts the turn and then ends the
         // session, which is the worst possible reading of a key somebody
         // pressed to take a copy.
-        for letter in ['c', 'd', 'e', 'o', 't', 'b', 'q', 'y', 'w', 'u', 'k', 'j'] {
+        for letter in ['c', 'd', 'e', 'o', 't', 'b', 'x', 'y', 'w', 'u', 'k', 'j'] {
             assert_eq!(
                 meaning(control_shift(KeyCode::Char(letter))),
                 Pressed::Ignored,
@@ -731,7 +731,12 @@ mod tests {
         // Its neighbours in that arm, unbound and staying so. Typed as bare
         // characters they would be the letters without the modifier, which is
         // not what was pressed.
-        for letter in ['g', 'x'] {
+        assert_eq!(
+            meaning(control(KeyCode::Char('x'))),
+            Pressed::Remove,
+            "the key that deletes a waiting prompt was dropped as a modified letter"
+        );
+        for letter in ['g', 'q'] {
             assert_eq!(
                 meaning(control(KeyCode::Char(letter))),
                 Pressed::Ignored,
@@ -919,9 +924,9 @@ mod tests {
 
     #[test]
     fn a_binding_this_release_has_no_meaning_for_types_nothing() {
-        // Ctrl-X is a prefix in one program and cut in the next. Typing a bare
-        // `x` for it would be the worst of the three.
-        assert_eq!(meaning(control(KeyCode::Char('x'))), Pressed::Ignored);
+        // Ctrl-G is a bell in one program and an abort in the next. Typing a
+        // bare `g` for it would be the worst of the three.
+        assert_eq!(meaning(control(KeyCode::Char('g'))), Pressed::Ignored);
 
         // Alt is the modifier a reader is most likely to be holding for
         // something this program has never heard of — a window manager's, an

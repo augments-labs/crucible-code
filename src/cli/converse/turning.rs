@@ -75,71 +75,19 @@ use std::time::{Duration, Instant};
 
 use crucible_runner::{Breakdown, Event, Totals};
 use crucible_tools::Looking;
-use crucible_tui::{Prompt, Row, Slot, Working};
+use crucible_tui::{Row, Slot, Working};
 use crucible_types::{Compacting, PlanWindows, ToolId};
 
 use super::super::draw;
 use super::super::style::Style;
 use super::planning::Planning;
+use super::queueing::{self, Prompts};
 
 /// How the turn is asked to stop, said after the clock.
 const STOPS: &str = "esc to interrupt";
 
-/// The most queued prompts the panel names before the rest become a count.
-///
-/// Three is enough to see the next few turns coming and few enough that a full
-/// queue cannot push the box off the screen: past it, the rest are the `… +2
-/// more` row, and Ctrl+Q opens the list that holds them all.
-const NAMED: usize = 3;
-
-/// The key that opens the queue, and what it is for, as the bottom edge of the
-/// framed panel says them. The one-row count drawn where there is no room for a
-/// frame has no edge to carry them.
-///
-/// On the edge rather than in a row so that the hint costs the panel nothing:
-/// one prompt waiting is as much a queue as five, and it is the reader with one
-/// who has not yet found out it can be taken back.
-const OPENS: &str = "ctrl+q";
-/// What `OPENS` is for, in the word the bottom edge says after the key.
-const OPENS_TO: &str = "edit";
-
-/// What the hint spends on the bottom edge: the words, the space on either side
-/// of them, and the one stretch of edge that stands it off the corner.
-const HINT: usize = OPENS.len() + 1 + OPENS_TO.len() + INLAID;
-
-// A frame is drawn from `Prompt::FRAMED_AT` columns, and the hint is not cut
-// where it does not fit: it fits at the narrowest frame or this does not build.
-const _: () = assert!(Prompt::FRAMED_AT - 2 >= HINT);
-
-/// What the panel's last row says when the queue outgrew the names above it.
-///
-/// The count is what the row is for; the key that opens the rest is on the
-/// bottom edge, where it is for every queue and not only a long one.
-const MORE: &str = "more";
-
 /// The rows this puts above the box, blanks included.
 const ROWS: usize = 3;
-
-/// What the title on the top edge costs beside itself: the edge it is stood off
-/// the corner by, and the space on either side of the words.
-const INLAID: usize = 3;
-
-/// What a framed queue panel costs before a single name is in it: the blank
-/// that parts it from the row above, and its two borders.
-///
-/// A window with no room for one name past this gives the frame up for the
-/// single row that says the count, the way the box below gives its own up in a
-/// narrow window.
-const FRAME: usize = 3;
-
-/// And with a prompt waiting behind the turn, the row the panel is measured
-/// against.
-///
-/// What the panel may take is everything the working row and the footing's own
-/// last blank leave, and how much of that it uses is [`Queued::rows`]'s: a
-/// frame where one name fits inside it, and the single row that says the count
-/// where none does.
-const QUEUED: usize = ROWS + 1;
 
 /// And with a backgroundable call standing over it: the blank that parts them,
 /// the call, and the row under it offering to leave the command running.
@@ -152,11 +100,12 @@ const QUEUED: usize = ROWS + 1;
 ///
 /// The call line is what a narrow window gives up first, because it is the one
 /// of the four that a second look gets back anyway: the tool answers and the
-/// line is written into the transcript either way. The prompt waiting goes next,
-/// since it is still in the queue and its own turn will say it. Then the plan,
-/// which gives up its own rows a state at a time before it goes entirely — and
-/// it is measured before either of the other two, so those are what a window
-/// short of rows drops on its behalf. The row saying a turn is running exists
+/// line is written into the transcript either way. The queue's panel goes next,
+/// a line at a time and then entirely, since what it names is still in the
+/// queue and its own turn will say it. Then the plan, which gives up its own
+/// rows a state at a time before it goes entirely — and it is measured before
+/// either of the other two, so those are what a window short of rows drops on
+/// its behalf. The row saying a turn is running exists
 /// nowhere else and never gives way.
 const CALLING: usize = ROWS + 3;
 
@@ -295,12 +244,6 @@ pub(super) struct Turning {
     /// provider-assigned identity here so an answer can take back the line it
     /// belongs under rather than whichever request happened to arrive last.
     calling: VecDeque<Calling>,
-    /// The prompts waiting behind this turn, each already cut to a row, and how
-    /// many there are. Cut on the way in rather than on the way out for the
-    /// reason [`Turning::queueing`] gives. The whole list is kept rather than
-    /// the front one alone, because the panel names them all and the count has
-    /// to know how many it did not have room to name.
-    queued: Queued,
     /// What the footing was last drawn from, so a redraw that would draw the
     /// same rows again can be skipped. `None` before the first.
     drawn: Option<Drawn>,
@@ -354,26 +297,6 @@ fn settled(calling: Calling) -> Settled {
         said: calling.said,
         looking: calling.looking,
     }
-}
-
-/// The prompts waiting behind a turn, as the panel draws them.
-///
-/// The lines themselves, cut to a row each, and how many there are — the count
-/// is its own field because a window can be too short to name them all, and the
-/// number is then the only place that says any are waiting at all.
-///
-/// The one panel for both places a queue stands over the box: under a running
-/// turn, and at the prompt between turns while a used-up plan holds the lines
-/// it stopped in front of. Two boxes drawn by two owners would be two pictures
-/// of one queue.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(super) struct Queued {
-    /// The waiting lines, oldest first, each already cut to a row.
-    lines: Vec<String>,
-    /// How many are waiting. `lines` may be shorter: it holds as many as the
-    /// panel was asked to keep, and the difference is what a `… +2 more` row
-    /// reads.
-    count: usize,
 }
 
 /// What a running command has printed, as much of it as is shown.
@@ -576,8 +499,6 @@ struct Drawn {
     calling: Option<String>,
     /// Whether that call carries the background offer under it.
     backgroundable: bool,
-    /// The prompts named under it, where any are waiting.
-    queued: Queued,
     /// How many pieces the running command had printed, which is what stands in
     /// for the sample's rows.
     printed: u64,
@@ -608,7 +529,6 @@ impl Turning {
             completed: None,
             spent: None,
             calling: VecDeque::new(),
-            queued: Queued::default(),
             drawn: None,
             pinned_after: Duration::ZERO,
         }
@@ -638,26 +558,6 @@ impl Turning {
             pinned_after: after,
             ..self
         }
-    }
-
-    /// Takes the prompt waiting behind the turn, for the row that names it.
-    ///
-    /// Cut to the window here rather than where the row is drawn, because what
-    /// is kept is compared against the last frame's copy sixty times a second
-    /// and a prompt is bounded by the editor's ceiling rather than by a row —
-    /// that ceiling is a megabyte. What is held is a row's worth of it, which
-    /// is what the call line beside it holds too.
-    ///
-    /// Called again when the window changes, so a terminal made wider is not
-    /// left reading a line cut for a narrower one. Cutting twice costs nothing
-    /// and says the same thing: the second cut is the narrower of the two.
-    pub(super) fn queueing<'a>(
-        &mut self,
-        waiting: impl Iterator<Item = &'a str>,
-        columns: usize,
-        style: Style,
-    ) {
-        self.queued = Queued::of(waiting, columns, style);
     }
 
     /// Takes the word from one event on its way to the screen, and hands back
@@ -765,7 +665,7 @@ impl Turning {
                 self.calling.drain(..).map(settled).collect()
             }
             // A steered line is committed to the transcript by the loop that
-            // reads it, not here: this row keeps naming what is still queued.
+            // reads it, not here: the queue it leaves is that loop's to draw.
             Event::TurnStarted { .. }
             | Event::PromptCache { .. }
             | Event::Sandbox { .. }
@@ -897,11 +797,6 @@ impl Turning {
                 .standing()
                 .is_some_and(|calling| calling.backgroundable),
 
-            // And the same for the prompt waiting, which is why it was cut
-            // before it was kept: what is cloned here is a row of it rather
-            // than a megabyte of it.
-            queued: self.queued.clone(),
-
             // A number rather than the rows themselves. The rows change on every
             // piece a command prints, so comparing them would mean holding a
             // copy of the sample for the length of every frame — and a counter
@@ -939,6 +834,15 @@ impl Turning {
         // `moved` stored the 100% picture immediately before this state was
         // cleared. Invalidate it so the next beat cannot compare the no-bar
         // state to an older equal beat and leave completion standing.
+        self.drawn = None;
+    }
+
+    /// Says the last frame drawn is no longer what the footing would draw.
+    ///
+    /// For what changes the footing without changing the turn: the queue under
+    /// the working row is the loop's, and nothing [`Turning::moved`] compares
+    /// says it has a line more or one fewer.
+    pub(super) fn redraw(&mut self) {
         self.drawn = None;
     }
 
@@ -985,11 +889,6 @@ impl Turning {
     }
 
     /// The row that says the turn is running, as the footing draws it.
-    ///
-    /// Also what the open queue keeps over its rule: the view stands where the
-    /// footing was, and this is the one row of it that says the turn behind the
-    /// view is still going. Read afresh each frame, so its clock goes on
-    /// counting while the view stands.
     pub(super) fn working(&self, columns: usize, style: Style) -> Row {
         Working {
             doing: self.shown_doing().word(),
@@ -1000,41 +899,49 @@ impl Turning {
         .row(columns, style.glyphs())
     }
 
-    /// The rows to put above the box, or none where the window has no room.
+    /// The rows to put above the box, or none where the window has no room:
+    /// the turn's, laid out at the transcript's width, then those over them,
+    /// laid out at the window's.
     ///
     /// A blank either side, so the rows belong to neither the turn's own output
-    /// above them nor the box below (the blank under a framed queue box is the
-    /// exception: the frame needs no parting from the line under it, while the
-    /// one-row count keeps its blank), and a blank between the call and the row
+    /// above them nor the box below, and a blank between the call and the row
     /// under it for the same reason: the call is a thing that is happening and
-    /// the row is what is happening to the turn. The prompt waiting takes no
-    /// blank above it, because it is a second line of the row rather than a
-    /// second thing beside it. `room` is what is left of the window once the
-    /// box has taken its share: dropped whole rather than squeezed, because a
-    /// footing taller than the band it is drawn in writes into the band
-    /// underneath, and one row of turn output is worth more than a clock.
+    /// the row is what is happening to the turn. `room` is what is left of the
+    /// window once the box has taken its share: dropped whole rather than
+    /// squeezed, because a footing taller than the band it is drawn in writes
+    /// into the band underneath, and one row of turn output is worth more than
+    /// a clock.
+    ///
+    /// Where prompts are waiting, the working row stands over the queue's panel
+    /// and both stand across the whole window, the rule over the panel from
+    /// edge to edge: the row and the panel are about what comes next, not lines
+    /// of the transcript, so they take no rail. The blank over the row is still
+    /// the transcript's, and is drawn with it.
     ///
     /// The plan goes under all of it, directly over the box, and it is laid out
     /// here rather than by the caller so that the whole of that arithmetic is
     /// one function. What it stands under is the turn; what it stands over is
     /// the line being typed while the turn runs — and the panel between them
     /// says which of the plan's tasks that turn is on.
-    // Six is one over clippy's limit, and each is a distinct thing the layout
-    // is measured against: the plan, the run of lookups, the width, the dress
-    // and the rows left. Bundling two of them into a type that exists only to
-    // satisfy the count would name them once here and make every caller build
-    // it, which is more spelling of the same facts rather than less.
+    // Seven with the turn itself is two over clippy's limit, and each is a
+    // distinct thing the layout is measured against: the plan, the run of
+    // lookups, the queue, the widths, the dress and the rows left. The two
+    // widths already travel as one, because they always arrive together;
+    // bundling any other pair would make a type that exists only to satisfy
+    // the count.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn rows(
         &self,
         planning: &Planning,
         counting: &str,
-        columns: usize,
+        queued: &Prompts,
+        widths: Widths,
         style: Style,
         room: usize,
-    ) -> Vec<Row> {
+    ) -> (Vec<Row>, Vec<Row>) {
+        let Widths { columns, window } = widths;
         if room <= ROWS {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
 
         // Offered what is left once the row saying a turn is running has taken
@@ -1046,13 +953,17 @@ impl Turning {
         let mut panel = planning.rows(columns, room - ROWS - 1, style.glyphs());
         let room = room - panel.len();
 
-        // What the call has to clear is taller where the queue panel below is
+        // What the call has to clear is taller where the queue's panel below is
         // being drawn, since the two are standing in the same window. The panel
-        // is measured against what the call and the working row leave, and what
-        // it cannot fit it does not draw — a queue is still in the queue, and
-        // its own turn will say it.
-        let spare = room.saturating_sub(QUEUED);
-        let panel_rows = self.queued.rows(spare, columns, style);
+        // is measured against what the working row and the bar under it leave,
+        // with the blank over them and the one row the footing leaves the
+        // window. Its own last blank stands for the footing's where no plan is
+        // under it. What it cannot fit it does not draw — a queue is still in
+        // the queue, and its own turn will say it.
+        let spare = room
+            .saturating_sub(ROWS + 1 + usize::from(self.making.is_some()))
+            .saturating_add(usize::from(panel.is_empty()));
+        let panel_rows = queueing::panel(queued, window, spare, style);
         let calling = self.standing();
         let standing = if calling
             .is_some_and(|calling| calling.backgroundable || calling.printing.lines() > 0)
@@ -1120,33 +1031,57 @@ impl Turning {
         }
 
         rows.push(Row::new());
-        rows.push(self.working(columns, style));
+
+        // The rest stand over the transcript's band where the panel does, and
+        // in it where nothing is waiting — or where the window had no room to
+        // name anything that is.
+        let across = if panel_rows.is_empty() {
+            columns
+        } else {
+            window
+        };
+        let mut over = Vec::new();
+        let under = if panel_rows.is_empty() {
+            &mut rows
+        } else {
+            &mut over
+        };
+        under.push(self.working(across, style));
 
         // Under the word and with no blank between them, because it is a second
-        // line of the same thing rather than a second thing beside it — the
-        // rule the prompt waiting behind a turn already keeps.
+        // line of the same thing rather than a second thing beside it.
         if self.making.is_some()
-            && let Some(row) = making(self.part, columns, style)
+            && let Some(row) = making(self.part, across, style)
         {
-            rows.push(row);
+            under.push(row);
         }
 
         // The blank under the footing parts it from the line below it. The
-        // queue box is a frame of its own and needs no parting: left last, its
-        // bottom edge stands directly over the line under it. A plan under the
-        // box is a thing beside it, so that blank stays. So does the blank under
-        // the one row that only counts the queue: that is a row of the footing
-        // like the word above it, not a frame, and a frame is more than one row.
-        let boxed = panel_rows.len() > 1 && panel.is_empty();
-        rows.extend(panel_rows);
-
-        rows.append(&mut panel);
-        if !boxed {
-            rows.push(Row::new());
+        // panel ends in a blank of its own, so it needs no second one; a plan
+        // under it is a thing beside it, so that blank stays.
+        let parted = panel_rows.is_empty() || !panel.is_empty();
+        under.extend(panel_rows);
+        under.append(&mut panel);
+        if parted {
+            under.push(Row::new());
         }
 
-        rows
+        (rows, over)
     }
+}
+
+/// The two widths the rows over the box are laid out at.
+///
+/// Two because they stand in two bands: the turn's own rows read as the
+/// transcript's last rows, with the scroll rail beside them, and what stands
+/// over the transcript — the queue's panel, and the row over it — takes the
+/// whole window.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Widths {
+    /// The transcript's.
+    pub(super) columns: usize,
+    /// The window's.
+    pub(super) window: usize,
 }
 
 /// The bar under the word while room is being made, or nothing where there is
@@ -1312,192 +1247,6 @@ impl Turning {
     /// How long the turn has been running.
     fn running(&self) -> Duration {
         self.since.elapsed()
-    }
-}
-
-impl Queued {
-    /// The prompts `waiting`, cut to `columns` as the panel names them.
-    pub(super) fn of<'a>(
-        waiting: impl Iterator<Item = &'a str>,
-        columns: usize,
-        style: Style,
-    ) -> Self {
-        let glyphs = style.glyphs();
-
-        // Every line is counted; as many as the panel names are cut and kept.
-        // The difference between the two is what a `… +2 more` row reads, and
-        // the reason the count is not `lines.len()`.
-        let mut count = 0;
-        let mut lines = Vec::new();
-        for said in waiting {
-            count += 1;
-            if lines.len() < NAMED {
-                lines.push(draw::clipped(said, columns, glyphs));
-            }
-        }
-
-        Self { lines, count }
-    }
-
-    /// The panel naming the prompts waiting behind the turn, boxed.
-    ///
-    /// A frame of its own rather than a row under the word, because it is a
-    /// second region and not a second line of the working row: what is in it is
-    /// already typed and waiting, not the turn in front of it. The border takes
-    /// the colour the box below is framed in, so the two read as the same kind
-    /// of thing.
-    ///
-    /// As many lines as `spare` rows allow are named, each led by the mark a
-    /// line is typed after — they are the reader's own words, waiting — and past
-    /// that the rest are a count on the last row. The bottom edge names the key
-    /// that opens the whole queue, for one line as for many. An empty queue
-    /// draws nothing at all, and a window too short to open the frame keeps only
-    /// the one line that says anything is waiting, since that is the fact that
-    /// cannot go.
-    pub(super) fn rows(&self, spare: usize, columns: usize, style: Style) -> Vec<Row> {
-        if self.count == 0 || spare == 0 {
-            return Vec::new();
-        }
-
-        let glyphs = style.glyphs();
-        let (tl, tr) = glyphs.top();
-        let (bl, br) = glyphs.bottom();
-        let edge = glyphs.horizontal();
-        let side = glyphs.vertical();
-        let mark = glyphs.caret();
-
-        // The most names the frame has room for: the blank and the two borders
-        // take theirs, and so does the row counting what the names left out,
-        // where the names left any out at all. Largest first, because a frame
-        // holding two of five is worth more than one holding one.
-        let named = (1..=self.lines.len())
-            .rev()
-            .find(|&named| FRAME + named + usize::from(self.count > named) <= spare);
-
-        // No room for a name inside a frame, or too narrow for the box below to
-        // be drawn framed either: one line, indented under the word, says the
-        // count and no more. A queue is still a queue whether or not there is
-        // room to name it, and a border kept up here after the box gave its own
-        // up would be a frame standing over nothing.
-        let Some(named) = named.filter(|_| columns >= Prompt::FRAMED_AT) else {
-            let said = format!("{} queued", self.count);
-            let gutter = Working::gutter(glyphs);
-            return vec![
-                Row::new()
-                    .then(Slot::Plain, " ".repeat(gutter.min(columns)))
-                    .then(
-                        Slot::Quiet,
-                        draw::clipped(&said, columns.saturating_sub(gutter), glyphs),
-                    ),
-            ];
-        };
-
-        let over = self.count - named;
-
-        // What a name is given: the window less the two borders, the space
-        // inside each of them, and the mark and its own space. Taken from the
-        // box rather than counted again here, which is what holds the two
-        // borders in one column as either changes.
-        let inner = columns - Prompt::CHROME;
-        let across = columns - 2;
-
-        // The count is the one thing the top edge must say, so the title is cut
-        // to the room rather than drawn past it: a window too narrow for the
-        // whole of it still reads that there is a queue, and nothing overruns
-        // the last column into a row the terminal wraps and nothing counted.
-        //
-        // Stood off the corner by an edge and a space on each side, and those
-        // spans are drawn rather than written into the string: the words are
-        // trimmed on their way through the clip, which is right for every
-        // sentence on a row and wrong for one being inlaid into a border.
-        let title = draw::clipped(
-            format!("{} queued", self.count),
-            across.saturating_sub(INLAID + 1),
-            glyphs,
-        );
-        let fill = across.saturating_sub(INLAID + crucible_tui::columns(&title));
-
-        // A blank above the frame, because a box is a thing of its own rather
-        // than a second line of the row above it — the rule every other region
-        // in this footing is parted by, and the one the single row this panel
-        // replaced was right to go without.
-        let mut rows = vec![Row::new()];
-        rows.push(
-            Row::new()
-                .then(Prompt::BORDER, format!("{tl}{edge}"))
-                .then(Slot::Plain, " ")
-                .then(Slot::Quiet, title)
-                .then(Slot::Plain, " ")
-                .then(Prompt::BORDER, edge.repeat(fill))
-                .then(Prompt::BORDER, tr),
-        );
-
-        for said in self.lines.get(..named).unwrap_or_default() {
-            rows.push(Self::framed(
-                Row::new().then(Slot::Accent, mark),
-                Row::plain(draw::clipped(said, inner, glyphs)),
-                inner,
-                side,
-            ));
-        }
-
-        if over > 0 {
-            let said = format!("… +{over} {MORE}");
-            rows.push(Self::framed(
-                Row::new(),
-                Row::new().then(Slot::Quiet, draw::clipped(&said, inner, glyphs)),
-                inner,
-                side,
-            ));
-        }
-
-        // Stood off the corner by an edge and a space on each side, as the
-        // title is on the edge above. The key is the one accent on the row: it
-        // is the one thing on it to press.
-        rows.push(
-            Row::new()
-                .then(Prompt::BORDER, bl)
-                .then(Prompt::BORDER, edge.repeat(across - HINT))
-                .then(Slot::Plain, " ")
-                .then(Slot::Accent, OPENS)
-                .then(Slot::Plain, " ")
-                .then(Slot::Quiet, OPENS_TO)
-                .then(Slot::Plain, " ")
-                .then(Prompt::BORDER, edge)
-                .then(Prompt::BORDER, br),
-        );
-
-        rows
-    }
-
-    /// One row inside the frame: the border, the space inside it, `mark` in the
-    /// column the box keeps for one, `said` padded out to `inner`, and the
-    /// space and border on the other side.
-    ///
-    /// Drawn in the colour the box below is framed in, taken from it rather
-    /// than named again here: two frames in two colours read as two things,
-    /// and this one is the box's own queue.
-    ///
-    /// Every row is built through here rather than each at its own call, which
-    /// is what makes the right border a column the rows share rather than one
-    /// each of them arrives at. A row with nothing to put in the mark's column
-    /// passes an empty one and keeps the indent, so the names and the count
-    /// under them start together.
-    fn framed(mark: Row, said: Row, inner: usize, side: &str) -> Row {
-        let mut mark = mark;
-        mark.pad(1);
-
-        let mut said = said;
-        said.pad(inner);
-
-        Row::new()
-            .then(Prompt::BORDER, side)
-            .then(Slot::Plain, " ")
-            .join(mark)
-            .then(Slot::Plain, " ")
-            .join(said)
-            .then(Slot::Plain, " ")
-            .then(Prompt::BORDER, side)
     }
 }
 

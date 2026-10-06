@@ -648,26 +648,10 @@ pub(crate) fn converse<T: Terminal>(
         // view whichever press put it up.
         expanding::stand(renderer, style, &held.kept, &mut held.opened)?;
 
-        // And a queue opened during it, for the same reason and one of its own:
-        // the lines in it are the reader's until they close it, and the loop
-        // below would otherwise commit the first of them while they were still
-        // going over the rest.
-        queueing::stand(
-            renderer,
-            style,
-            queueing::Reading {
-                queue: &mut held.queued,
-                editor: &mut held.editor,
-                steer: &terms.steer,
-            },
-            &mut held.viewing,
-        )?;
-
         // Whatever the turn that just ended never reached is the queue's alone
         // now. The two hold the same lines while a turn runs — one to steer it,
         // one to answer once it is over — and a line left here is worked into
-        // the *next* turn as well as being that turn's own prompt. After the
-        // view above, because a queue still open is a queue still held.
+        // the *next* turn as well as being that turn's own prompt.
         drop(terms.steer.take());
 
         // Before the queue, because a prompt typed while room was being made is
@@ -714,7 +698,7 @@ pub(crate) fn converse<T: Terminal>(
             clipboard: &mut held.clipboard,
             left,
             aside: &terms.aside,
-            queued: &held.queued,
+            queued: &mut held.queued,
             keys,
         };
         let asked = typing::ask(renderer, style, between)?;
@@ -722,9 +706,7 @@ pub(crate) fn converse<T: Terminal>(
         // Answered by the state that holds what it stands over, because the loop
         // that read the key holds neither. The box comes back either way, with the
         // line still in it.
-        if held.opened.asked(&asked, &held.kept)
-            || held.viewing.asked(&asked, &held.queued, &terms.steer)
-        {
+        if held.opened.asked(&asked, &held.kept) {
             continue;
         }
 
@@ -737,7 +719,7 @@ pub(crate) fn converse<T: Terminal>(
             Asked::Ended => break,
 
             // Taken above, by the state that holds what it stands over.
-            Asked::Expand | Asked::Clicked(_) | Asked::Queue => continue,
+            Asked::Expand | Asked::Clicked(_) => continue,
 
             Asked::Untyped => {
                 match unboxed(renderer, conversation.runner(), style, held.answers.input)? {
@@ -1162,11 +1144,7 @@ impl Turn<'_, '_> {
                 if let Seen::Turn(Event::Steered { line }) = &one
                     && self.held.queued.steered(line)
                 {
-                    self.turning.queueing(
-                        self.held.queued.waiting_all(),
-                        renderer.transcript_columns(),
-                        self.terms.style(),
-                    );
+                    self.turning.redraw();
                 }
 
                 // And the line of a call whose tool has answered is written
@@ -1351,7 +1329,6 @@ impl Turn<'_, '_> {
                     planning: &mut self.held.planning,
                     kept: &mut self.held.kept,
                     opened: &mut self.held.opened,
-                    viewing: &mut self.held.viewing,
                     recalling: &mut self.held.recalling,
                     opened_list: &mut self.held.opened_list,
                     listing: &mut self.held.listing,
@@ -1564,16 +1541,6 @@ fn take<T: Terminal>(
         .using(runner.totals(), runner.plan_limits())
         .pinning(terms.pinning.get());
 
-    // A turn can start with prompts already behind it: room is made before the
-    // queue is read, so a line typed during the last turn is still waiting when
-    // this one is about making room for it. Read before the first frame, so the
-    // panel naming what is coming is right on the frame it first appears in.
-    turning.queueing(
-        held.queued.waiting_all(),
-        renderer.transcript_columns(),
-        terms.style(),
-    );
-
     attaching::refresh_store(held, importing(conversation.session()));
     let working = sent(
         &terms.runtime,
@@ -1598,6 +1565,11 @@ fn take<T: Terminal>(
                 planning: &mut held.planning,
                 counting: "",
                 opened_list: &held.opened_list,
+                // A turn can start with prompts already behind it: room is
+                // made before the queue is read, so a line typed during the
+                // last turn is still waiting when this one is about making
+                // room for it, and its panel stands from the first frame.
+                queued: &held.queued,
                 history: held.recalling.place(),
             },
             &says,
@@ -1869,14 +1841,6 @@ struct Held<'a> {
     /// The command list a line typed mid-turn has open above the box, empty
     /// while the line is a prompt.
     opened_list: typing::Opened,
-    /// Whether the queue above is standing open to be gone over, and where the
-    /// mark is down it.
-    ///
-    /// Held here for the reason beside it, and for one more: while it stands
-    /// the turn takes none of the lines it names, so a view outliving the turn
-    /// that was under it is what keeps the queue from being committed out from
-    /// under a reader who was halfway through it.
-    viewing: queueing::Standing,
     /// The list of what is still running, stood by a click on the count under
     /// the box. Held for the session like the two standings beside it: the box
     /// a turn is drawn over is the same one the click is read against, so the
@@ -1942,7 +1906,6 @@ impl<'a> Held<'a> {
             gathering: Gathering::default(),
             opened: Standing::default(),
             opened_list: typing::Opened::default(),
-            viewing: queueing::Standing::default(),
             listing: leaving::Leaving::default(),
             planning: Planning::new(plan),
             // Nothing to reach back through and nowhere to write. The session

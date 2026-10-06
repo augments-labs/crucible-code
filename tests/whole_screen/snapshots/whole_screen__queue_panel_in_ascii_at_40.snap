@@ -1,0 +1,30 @@
+---
+source: tests/whole_screen/main.rs
+assertion_line: 1097
+expression: steadied_picture(&window.picture())
+---
+40x24 cursor 21,4 scrolled 0
+|* Bash(sleep 30)                       ||
+|  + (n... (+2 lines - ctrl+o to expand)*|
+|                                       #|
+|It is started. That is all.            #|
+|                                       #|
+|| writing (0s - v 4 - esc to interrupt) |
+|----------------------------------------|
+|                                        |
+|5 queued - ctrl+enter to send all now   |
+|                                        |
+|> and add a test for the windows path   |
+|                                        |
+|  then run the whole gate               |
+|                                        |
+|  check the ascii glyphs too            |
+|                                        |
+|^v to walk - ctrl+e to edit - ctrl+x to |
+|delete - ctrl+s to send now             |
+|                                        |
+|                         99% window left|
+|+--------------------------------------+|
+|| >                                    ||
+|+--------------------------------------+|
+|ask mode on    anthropic - claude-test-1|

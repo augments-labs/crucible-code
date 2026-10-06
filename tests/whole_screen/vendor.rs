@@ -66,6 +66,11 @@ const PINGING: Duration = Duration::from_millis(250);
 /// the way a whole answer ends.
 const HOLDING: usize = 40;
 
+/// How many hold a turn open for a case that queues five prompts behind it
+/// and then works on them: forty seconds, which a loaded machine still takes
+/// every step of such a case inside.
+const HOLDING_LONG: usize = 160;
+
 /// What a case with one call in it names that call.
 const ONE: &str = "toolu_1";
 
@@ -134,7 +139,12 @@ impl Vendor {
     /// holding the message open afterwards pins the screen and still leaves the
     /// turn where the case wants it.
     pub(crate) fn calling_then_holding(tool: &str, input: &str, text: &str) -> Self {
-        Self::serving(vec![asking(tool, input, ONE), holding(text)])
+        Self::serving(vec![asking(tool, input, ONE), holding(text, HOLDING)])
+    }
+
+    /// The same, held open for [`HOLDING_LONG`] keep-alives.
+    pub(crate) fn calling_then_holding_long(tool: &str, input: &str, text: &str) -> Self {
+        Self::serving(vec![asking(tool, input, ONE), holding(text, HOLDING_LONG)])
     }
 
     /// Starts one whose only answer is `text`, with the message held open
@@ -144,7 +154,7 @@ impl Vendor {
     /// on screen and nothing has said the answer is over: what such a turn
     /// leaves behind is the whole of what the case is asking.
     pub(crate) fn holding(text: &str) -> Self {
-        Self::serving(vec![holding(text)])
+        Self::serving(vec![holding(text, HOLDING)])
     }
 
     /// Starts one that asks for each batch of `batches` at once, then answers
@@ -306,10 +316,10 @@ fn stream(text: &str) -> Vec<String> {
 /// still moving on it is not one anything on either end mistakes for a stall.
 /// Closed after them as [`stream`] closes it, because a stream that just stops
 /// is one crucible reports as cut short, and no case here is about that.
-fn holding(text: &str) -> Vec<String> {
+fn holding(text: &str, keep_alives: usize) -> Vec<String> {
     let mut events = opening(text);
 
-    events.extend((0..HOLDING).map(|_| PINGED.to_owned()));
+    events.extend((0..keep_alives).map(|_| PINGED.to_owned()));
     events.push(ENDED.to_owned());
     events.push(stopped("end_turn"));
     events.push(STOPPED.to_owned());

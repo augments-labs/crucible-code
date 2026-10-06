@@ -16,8 +16,7 @@ use crate::cli::Fatal;
 use crate::cli::style::Style;
 
 use crate::cli::converse::planning::Planning;
-use crate::cli::converse::queueing::Prompts;
-use crate::cli::converse::turning::Queued;
+use crate::cli::converse::queueing::{self, Prompts};
 
 use super::{Opened, Says, command};
 
@@ -111,11 +110,12 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
 /// reader is looking at, and shrinking it to keep a card that has already been
 /// read is the wrong way round.
 ///
-/// The lines a used-up plan held are measured last, in the box a running turn
-/// names them in, as they are measured there: what the window cannot fit of
-/// it gives way before the plan or the list does. Its frame stands directly
-/// over the box where nothing stands between them, as it does under a turn,
-/// since a frame needs no blank to part it from the border under it.
+/// The lines a used-up plan held are measured last, in the panel a running
+/// turn stands them in, as they are measured there: what the window cannot fit
+/// of it gives way before the plan or the list does. It stands under the plan
+/// and over the list, where it stands under a turn, with a blank row over its
+/// rule to keep the rule off what is above it. It closes with a blank row of
+/// its own, which keeps the box off it in place of the one owed below.
 pub(super) fn over(around: Around<'_>, columns: usize, room: usize, style: Style) -> Vec<Row> {
     let mut listed = around.open.rows(columns, room, style.glyphs());
     let opened = !listed.is_empty();
@@ -124,25 +124,24 @@ pub(super) fn over(around: Around<'_>, columns: usize, room: usize, style: Style
     // with its own, so this is only owed where there is no list -- and the box
     // is owed one either way, because a border drawn against the last line of
     // an answer reads as part of it.
-    if !opened {
+    let blank = usize::from(!opened);
+
+    let mut over = around.planning.rows(
+        columns,
+        room.saturating_sub(listed.len() + blank),
+        style.glyphs(),
+    );
+
+    let left = room.saturating_sub(listed.len() + over.len() + 1);
+    let panel = queueing::panel(around.queued, columns, left, style);
+    let paneled = !panel.is_empty();
+    if paneled {
+        over.push(Row::new());
+        over.extend(panel);
+    } else if !opened {
         listed.push(Row::new());
     }
 
-    let mut planned =
-        around
-            .planning
-            .rows(columns, room.saturating_sub(listed.len()), style.glyphs());
-
-    let mut over = Queued::of(around.queued.waiting_all(), columns, style).rows(
-        room.saturating_sub(listed.len() + planned.len()),
-        columns,
-        style,
-    );
-    if over.len() > 1 && planned.is_empty() && !opened {
-        listed.clear();
-    }
-
-    over.append(&mut planned);
     over.append(&mut listed);
     over
 }

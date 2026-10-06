@@ -60,7 +60,7 @@ use super::mode::tone;
 use super::planning::Planning;
 use super::queueing;
 use super::recalling::Recalling;
-use super::turning::Turning;
+use super::turning::{Turning, Widths};
 use super::{Prompts, Retained, Terms};
 
 mod drawing;
@@ -155,13 +155,6 @@ pub(super) enum Asked {
     /// Nothing comes out of the box for it. Nobody typed this, so the half-
     /// written line somebody left there is still there afterwards.
     Woke(String),
-    /// Ctrl+Q over the lines a used-up plan left queued: the queue is to be
-    /// stood open, and the box asked for again once it has been closed.
-    ///
-    /// Reported rather than stood here for the reason [`Asked::Expand`] is: the
-    /// view is the one a running turn opens with the same key, and the loop
-    /// above stands it in the one place both presses reach.
-    Queue,
 }
 
 /// A finished line and the local-command provenance established while typing.
@@ -195,22 +188,41 @@ fn vertical(editor: &mut Editor, key: Key) -> bool {
     editor.moves(key) && editor.press(key) == Typed::Changed
 }
 
-/// The three claims on an arrow key, answered in order.
+/// The four claims on an arrow key, answered in order.
 ///
 /// The line first, where it holds a newline and has a line to reach; then
-/// whatever list is standing over the box; then the prompts this directory has
-/// already been asked. Last of the three because it is the one that replaces
-/// the line rather than moving within it: a list still choosing and a line
-/// still being read through both have the stronger claim on the key.
+/// whatever list is standing over the box; then the queue's panel, whose
+/// highlight the arrows walk; then the prompts this directory has already been
+/// asked. History last because it is the one that replaces the line rather
+/// than moving within it: a list still choosing and a line still being read
+/// through both have the stronger claim on the key. While anything is queued
+/// the history is not reached at all: the panel's footer names the arrows as
+/// its own, and a walk that stopped at the panel's end and went on into the
+/// box would replace a line the reader never asked to lose.
 ///
 /// One function for both loops. The key means the same thing while a turn runs
 /// as it does between turns, and two copies of an order are two chances for it
 /// to stop being one order.
-fn arrowed(back: bool, editor: &mut Editor, open: &mut Opened, recalling: &mut Recalling) -> bool {
+fn arrowed(
+    back: bool,
+    editor: &mut Editor,
+    open: &mut Opened,
+    recalling: &mut Recalling,
+    queued: &mut Prompts,
+) -> bool {
+    if vertical(editor, if back { Key::Up } else { Key::Down }) {
+        return true;
+    }
+    if open.is_open() {
+        return if back { open.up() } else { open.down() };
+    }
+    if queued.waiting_count() > 0 {
+        return queued.walk(back);
+    }
     if back {
-        vertical(editor, Key::Up) || open.up() || (!open.is_open() && recalling.back(editor))
+        recalling.back(editor)
     } else {
-        vertical(editor, Key::Down) || open.down() || (!open.is_open() && recalling.on(editor))
+        recalling.on(editor)
     }
 }
 
@@ -359,10 +371,11 @@ pub(crate) struct Between<'a> {
     /// nobody took is a turn the model still owes, and this loop is what stands
     /// between the two.
     pub(crate) aside: &'a Aside,
-    /// The lines a used-up plan left waiting behind the turn it stopped, which
-    /// the box stands under and Ctrl+Q opens. Empty at every other prompt: the
-    /// loop above runs the queue as the next turn before it asks for a line.
-    pub(crate) queued: &'a Prompts,
+    /// The lines a used-up plan left waiting behind the turn it stopped, whose
+    /// panel stands over the box and answers the same keys it does under a
+    /// turn. Empty at every other prompt: the loop above runs the queue as the
+    /// next turn before it asks for a line.
+    pub(crate) queued: &'a mut Prompts,
     /// Whether there is a keyboard to read. A session with a terminal at only
     /// one end reads whole lines instead, and the caller is what does that.
     pub(crate) keys: bool,
@@ -568,6 +581,10 @@ pub(crate) fn ask<T: Terminal>(
         let offered = leaving.take();
         says.asking = None;
 
+        // And so was the panel's word that a line could not go back into the
+        // box: the key after it clears it, and still does what it does below.
+        let settled = queued.settle();
+
         // Whether this key left the box looking like anything other than what
         // is already on screen. Answered by every arm and drawn on once, below:
         // a key that moved nothing costs no frame, and the arms that end the
@@ -622,12 +639,18 @@ pub(crate) fn ask<T: Terminal>(
             // the box's own footing rather than something committed above it.
             Pressed::Plan => planning.expand(),
 
-            // The lines a used-up plan held are named over the box with this
-            // key on the frame, so it opens them here as it does under a turn.
-            // Handed back for the reason Ctrl+O is: the view is the loop's.
-            // Over an empty queue there is no frame and so no offer, and the
-            // key is one of the rest below.
-            Pressed::Queue if queued.waiting_count() > 0 => return Ok(Asked::Queue),
+            // The panel's two keys, answered as they are under a turn: the
+            // highlighted line back into the box, or out of the queue. Over an
+            // empty queue there is no panel naming them, and both are among
+            // the rest below.
+            Pressed::Explain if queued.waiting_count() > 0 => {
+                let moved = queued.take_back(editor, &terms.steer);
+                open = Opened::filtered(commands, editor.projection().text(), glyphs);
+                moved || offered.is_some()
+            }
+            Pressed::Remove if queued.waiting_count() > 0 => {
+                queued.delete(&terms.steer) || offered.is_some()
+            }
 
             // The command list a `/`-started line has open is standing, and Esc
             // backs out of it; the line stays as it was typed. With no list
@@ -636,8 +659,8 @@ pub(crate) fn ask<T: Terminal>(
 
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
-            // and has just been taken back. Ctrl+Q among them, where nothing is
-            // queued.
+            // and has just been taken back. Ctrl+E and Ctrl+X among them, where
+            // nothing is queued.
             // The pointer moving under a held button and the button coming up
             // again among them: both belong to the selection, which was
             // offered every press before this one saw it, so neither reaches
@@ -646,7 +669,7 @@ pub(crate) fn ask<T: Terminal>(
             // Named all the same — a variant nothing decides about is one that
             // will arrive undecided the day something changes.
             Pressed::Explain
-            | Pressed::Queue
+            | Pressed::Remove
             | Pressed::Tab
             | Pressed::Rename
             | Pressed::All
@@ -675,8 +698,10 @@ pub(crate) fn ask<T: Terminal>(
 
             // The line, the list, then the history — see [`arrowed`], which is
             // where that order is decided for both loops.
-            Pressed::Up => arrowed(true, editor, &mut open, recalling) || offered.is_some(),
-            Pressed::Down => arrowed(false, editor, &mut open, recalling) || offered.is_some(),
+            Pressed::Up => arrowed(true, editor, &mut open, recalling, queued) || offered.is_some(),
+            Pressed::Down => {
+                arrowed(false, editor, &mut open, recalling, queued) || offered.is_some()
+            }
 
             // And the wheel walks the transcript, which is the thing the arrows
             // never reach. It draws its own frame, so what is left to say here
@@ -765,7 +790,7 @@ pub(crate) fn ask<T: Terminal>(
         // came from stops saying it on the same frame the edit lands in.
         recalling.standing(editor);
 
-        if moved {
+        if moved || settled {
             draw(
                 renderer,
                 editor,
@@ -896,16 +921,24 @@ fn working<T: Terminal>(
     //
     // The turn's own rows read as the transcript's last rows, with the scroll
     // rail beside them, so they are laid out at the transcript's width. The
-    // list is not the transcript's and keeps the window's.
-    let turn = footing.turning.rows(
+    // queue's panel is not the transcript's and keeps the window's, and so do
+    // the working row and plan where the panel stands under them: its rule
+    // runs the full width, and the row it hangs from runs with it. The list is
+    // not the transcript's either.
+    let widths = Widths {
+        columns: renderer.transcript_columns(),
+        window: columns,
+    };
+    let (turn, mut over) = footing.turning.rows(
         footing.planning,
         footing.counting,
-        renderer.transcript_columns(),
+        footing.queued,
+        widths,
         style,
         room,
     );
-    let left = room.saturating_sub(turn.len());
-    let over = footing.opened_list.rows(columns, left, style.glyphs());
+    let left = room.saturating_sub(turn.len() + over.len());
+    over.extend(footing.opened_list.rows(columns, left, style.glyphs()));
 
     Footed {
         turn,
@@ -923,9 +956,12 @@ fn working<T: Terminal>(
 /// apart all the way to the renderer — a turn whose plan is open would
 /// otherwise push the box off the bottom of the screen.
 struct Footed {
-    /// The row saying the turn is running, and the plan above it.
+    /// The row saying the turn is running, and the plan above it, where they
+    /// read as the transcript's last rows.
     turn: Vec<Row>,
-    /// The list a `/`-started line has open, under the turn.
+    /// What stands at the window's width under the transcript: the queue's
+    /// panel, with the working row and plan above it where it stands, and the
+    /// list a `/`-started line has open.
     over: Vec<Row>,
     /// The box.
     boxed: Vec<Row>,
@@ -954,6 +990,9 @@ pub(super) struct Footing<'a> {
     pub(super) counting: &'a str,
     /// The command list a `/`-started line has open, standing over both.
     pub(super) opened_list: &'a Opened,
+    /// The lines waiting behind the turn, whose panel stands under the
+    /// working row.
+    pub(super) queued: &'a Prompts,
     /// Where in the retained prompts the line in the box came from. Walked
     /// mid-turn as it is between turns: the box is the same box, and a line
     /// being written under a running turn is written the same way.
@@ -1010,7 +1049,6 @@ pub(super) fn during<T: Terminal>(
         planning,
         kept,
         opened,
-        viewing,
         recalling,
         opened_list,
         listing,
@@ -1053,7 +1091,7 @@ pub(super) fn during<T: Terminal>(
         // renderer is still holding, and go on being rewound over at that size
         // for the rest of the turn.
         if arrived == Pressed::Resized {
-            rewrap(renderer, turning, queued, style)?;
+            rewrap(renderer, turning)?;
         }
 
         // While the view stands it has the keyboard, the way whatever is
@@ -1082,28 +1120,12 @@ pub(super) fn during<T: Terminal>(
             continue;
         }
 
-        // And the queue, for the same reason and by the same rule. Only one of
-        // the two is ever standing — the key that opens this one is swallowed
-        // above while that one is up — so the order between them decides
-        // nothing, and reading them in the order they are drawn in is what
-        // keeps that visible.
-        if viewing.is_open() {
-            let walked = viewing.against(
-                &arrived,
-                queueing::Reading {
-                    queue: queued,
-                    editor,
-                    steer,
-                },
-            );
-            moved |= walked;
-
-            // And the same about the wheel, for the same reason.
-            if let (false, Pressed::Scrolled { back }) = (walked, arrived) {
-                renderer.notched(back)?;
-            }
-
-            continue;
+        // The panel's word that a line could not go back into the box lasts
+        // until the next key, and this is that key: it clears the word and
+        // still does what it does below.
+        if queued.settle() {
+            turning.redraw();
+            moved = true;
         }
 
         // And the command list, which stands over the turn as they do and so
@@ -1134,7 +1156,12 @@ pub(super) fn during<T: Terminal>(
             // The same three claims as between turns, read the same way. The
             // one list a running turn can stand is the only one that can be
             // open here, and a line that is not a command has none.
-            Meant::Arrow { back } => moved |= arrowed(back, editor, opened_list, recalling),
+            Meant::Arrow { back } => {
+                if arrowed(back, editor, opened_list, recalling, queued) {
+                    turning.redraw();
+                    moved = true;
+                }
+            }
 
             // Stepped to on this side and held for the next turn: the mode the
             // running turn is decided under was settled before it ran, so the
@@ -1156,12 +1183,23 @@ pub(super) fn during<T: Terminal>(
                 moved = true;
             }
 
-            // The queue itself, opened whole: the panel names what fits and
-            // counts the rest, and this is the list the count is about. A line
-            // taken back returns to the box to be edited or sent sooner.
-            Meant::QueueView => {
-                viewing.open(queued, steer);
-                moved |= viewing.is_open();
+            // The panel's two keys on its highlighted line: back into the box
+            // to be edited, or out of the queue. Either way the line is taken
+            // back from the turn it was offered to as well, so it reaches the
+            // agent only if it is sent again.
+            Meant::TakeBack => {
+                if queued.take_back(editor, steer) {
+                    *opened_list =
+                        Opened::filtered(&commands, editor.projection().text(), style.glyphs());
+                    turning.redraw();
+                    moved = true;
+                }
+            }
+            Meant::Remove => {
+                if queued.delete(steer) {
+                    turning.redraw();
+                    moved = true;
+                }
             }
 
             Meant::Copy => {
@@ -1280,7 +1318,7 @@ pub(super) fn during<T: Terminal>(
                         editor,
                         steer,
                     };
-                    notice = queue(reading, turning, renderer.transcript_columns(), style);
+                    notice = queue(reading, turning);
                     moved = true;
                 }
 
@@ -1388,18 +1426,16 @@ pub(super) fn during<T: Terminal>(
         moved = true;
     }
 
-    if moved
-        && !expanding::under(renderer, style, kept, opened)?
-        && !queueing::under(renderer, style, queued, viewing, steer, turning)?
-    {
-        // A view takes the rows the box has, so a frame draws one of the three.
-        // A window with no room for either view has closed it above, and the
+    if moved && !expanding::under(renderer, style, kept, opened)? {
+        // The view takes the rows the box has, so a frame draws one of the
+        // two. A window with no room for the view has closed it above, and the
         // box comes back in the same frame.
         let footing = Footing {
             turning,
             planning,
             counting,
             opened_list,
+            queued,
             history: recalling.place(),
         };
         match notice {
@@ -1418,17 +1454,12 @@ pub(super) fn during<T: Terminal>(
 /// and one the turn had been offered as well would reach the agent while the
 /// reader still held it, once more for every enter against a full queue.
 ///
-/// The row above the box is read again here rather than on the next thing to
-/// move, because what it names is exactly the line that has just gone: a box
-/// emptied by Return, with nothing anywhere saying where the line went, is what
-/// this row exists to answer. `None` where it was taken, which is also what
-/// clears whatever the row was saying before.
-fn queue(
-    reading: queueing::Reading<'_>,
-    turning: &mut Turning,
-    columns: usize,
-    style: Style,
-) -> Option<&'static str> {
+/// The footing is drawn again here rather than on the next thing to move,
+/// because the panel over the box names exactly the line that has just gone: a
+/// box emptied by Return, with nothing anywhere saying where the line went, is
+/// what the panel exists to answer. `None` where it was taken, which is also
+/// what clears whatever the row under the box was saying before.
+fn queue(reading: queueing::Reading<'_>, turning: &mut Turning) -> Option<&'static str> {
     let queueing::Reading {
         queue,
         editor,
@@ -1442,7 +1473,7 @@ fn queue(
         steer.say(line.clone());
     }
 
-    turning.queueing(queue.waiting_all(), columns, style);
+    turning.redraw();
     matches!(retained, Retained::Refused).then_some(QUEUED_LIMITED)
 }
 
@@ -1554,11 +1585,11 @@ enum Meant {
     Resized,
     /// The turn is asked to stop.
     Interrupt,
-    /// Ctrl+Q: the queue itself, stood whole so it can be read and a waiting
-    /// line taken back. Distinct from the press that finishes a line, which
-    /// adds to it — that one is [`Meant::Editing`], because which press finishes
-    /// a line is the editor's to say.
-    QueueView,
+    /// Ctrl+E: the queue's highlighted line, back into the box. Nothing where
+    /// nothing is queued, since then no panel names the key.
+    TakeBack,
+    /// Ctrl+X: the queue's highlighted line, out of the queue.
+    Remove,
     /// A run of characters beginning here, taken into the line in one edit.
     Typing(char),
     /// A bracketed paste, taken into the line whole: its newlines are characters
@@ -1650,10 +1681,10 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Copy => Meant::Copy,
         Pressed::PasteImage => Meant::PasteImage,
 
-        // The panel of what is waiting behind the turn, opened whole. Its own
-        // meaning rather than the queue's: Return adds to the queue, and this
-        // is the list that reads it and takes a line back.
-        Pressed::Queue => Meant::QueueView,
+        // The two keys the queue's panel names on its footer. Over an empty
+        // queue there is no panel, and the arms they reach move nothing.
+        Pressed::Explain => Meant::TakeBack,
+        Pressed::Remove => Meant::Remove,
 
         Pressed::Clicked { row, column } => Meant::Clicked(Pointed { row, column }),
 
@@ -1662,11 +1693,6 @@ fn meant(arrived: Pressed) -> Meant {
         // it is being added to above them is the reason they would reach for it.
         Pressed::Scrolled { back } => Meant::Scrolled { back },
 
-        // Ctrl+E among them: what it opens is an explanation of something
-        // waiting to be decided about, and a running turn has decided already.
-        // The arrows for a plainer reason — they walk a view that is not
-        // standing, and a key that means nothing until Ctrl+O has been pressed
-        // means nothing before it.
         // The two halves of a drag among them, for the reason the box gives:
         // the selection was offered every press first, so neither arrives.
         // Shift+Tab steps the mode the next turn runs under, held until the
@@ -1681,8 +1707,7 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Down => Meant::Arrow { back: false },
         // The key that crosses regions among them: it is read by whatever is
         // standing, and nothing is standing while this arm is the one reading.
-        Pressed::Explain
-        | Pressed::Tab
+        Pressed::Tab
         | Pressed::Rename
         | Pressed::All
         | Pressed::Dragged { .. }
@@ -1751,9 +1776,6 @@ pub(super) struct During<'a> {
     /// `leaving` is, and one more: the view goes on standing after the turn it
     /// was opened under has ended.
     pub(super) opened: &'a mut Standing,
-    /// Whether the queue is standing open to be gone over, which is the other
-    /// thing that takes the box's rows while the turn goes on writing above.
-    pub(super) viewing: &'a mut queueing::Standing,
     /// The prompts this directory holds and where an arrow has walked back to
     /// in them. Held by the session for the reason the view above is: a walk
     /// opened mid-turn is still open when the turn ends, and the box it was
@@ -1814,19 +1836,15 @@ pub(super) struct During<'a> {
     pub(super) leaving: &'a mut Option<Instant>,
 }
 
-/// Re-wraps the live rows for the window's new size and re-measures the queue.
+/// Re-wraps the live rows for the window's new size and lays the turn's out
+/// again.
 ///
 /// Both halves of what a resize costs the box: the renderer takes back rows
-/// wrapped for a width the window no longer has, and the row above the box is
-/// measured again for the one it does.
-fn rewrap<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    turning: &mut Turning,
-    queued: &Prompts,
-    style: Style,
-) -> Result<(), Fatal> {
+/// wrapped for a width the window no longer has, and the rows above the box
+/// are laid out again for the one it does.
+fn rewrap<T: Terminal>(renderer: &mut Renderer<T>, turning: &mut Turning) -> Result<(), Fatal> {
     renderer.resized()?;
-    turning.queueing(queued.waiting_all(), renderer.transcript_columns(), style);
+    turning.redraw();
     Ok(())
 }
 

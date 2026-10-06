@@ -106,8 +106,8 @@ thing from four tasks nobody has reached.
 A window too short for the panel takes rows from the same end, and a window with
 no room for the rule, the counts and one task between them has no panel in it at
 all. The panel is measured before the rows the turn draws around it, so what a
-short window drops first is the call line and the queued prompt rather than what
-the agent is working to.
+short window drops first is the call line and the prompts waiting in the queue
+rather than what the agent is working to.
 
 The panel is not written into the transcript. It stands in the rows above the
 box, so a plan rewritten twenty times in one turn costs twenty redraws of the

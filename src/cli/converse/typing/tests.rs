@@ -270,7 +270,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             clipboard: &mut None,
             left: &crucible_builtins::Background::new(),
             aside: &Aside::new(),
-            queued: &Prompts::default(),
+            queued: &mut Prompts::default(),
             keys: false,
         },
     )
@@ -1237,6 +1237,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
             counting: "",
             opened_list: &Opened::default(),
             history: Recalled::default(),
+            queued: &Prompts::default(),
         },
         &says,
         Style::plain(),
@@ -1277,6 +1278,7 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
             counting: "",
             opened_list: &Opened::default(),
             history: Recalled::default(),
+            queued: &Prompts::default(),
         },
         &says,
         Style::plain(),
@@ -1924,10 +1926,12 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
     let lines: std::collections::VecDeque<String> = (0..super::super::QUEUED_LINES)
         .map(|at| format!("prompt-{at}"))
         .collect();
-    let mut queued = Prompts {
-        bytes: lines.iter().map(String::len).sum(),
-        lines,
-    };
+    let mut queued = Prompts::default();
+    for line in lines {
+        let mut held = Editor::new();
+        held.put(&line);
+        assert_eq!(queued.accept(&mut held), Retained::Accepted);
+    }
     let steer = crucible_runtime::Steer::new();
     let mut turning = Turning::started(Breakdown::default());
 
@@ -1942,7 +1946,7 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
             editor: &mut editor,
             steer: &steer,
         };
-        let notice = queue(reading, &mut turning, 80, Style::plain());
+        let notice = queue(reading, &mut turning);
         assert_eq!(notice, Some(QUEUED_LIMITED));
     }
 
@@ -1956,7 +1960,7 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
         editor: &mut editor,
         steer: &steer,
     };
-    let notice = queue(reading, &mut turning, 80, Style::plain());
+    let notice = queue(reading, &mut turning);
     assert_eq!(notice, None);
     assert!(editor.is_empty());
     assert_eq!(steer.take(), ["once more"]);
