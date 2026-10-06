@@ -89,7 +89,7 @@ fn the_view_under_a_turn_leaves_the_tail_a_row_to_go_on_writing_into() {
         column: 0,
     };
     by_hand
-        .under(&rows, Some(caret), Style::plain().palette())
+        .instead(&rows, Some(caret), Style::plain().palette())
         .expect("drawn");
 
     assert_eq!(stood.terminal().written(), by_hand.terminal().written());

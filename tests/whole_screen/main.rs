@@ -3204,6 +3204,46 @@ fn ctrl_o_pages_and_steps_through_cut_results() {
     assert!(closed.contains("All three are read."), "{closed}");
 }
 
+#[test]
+fn ctrl_o_under_a_running_turn_stands_the_view_in_the_box_s_place() {
+    // Under a turn the view takes the rows the box has, as it does between
+    // turns: the box standing under it as well pushes the view's foot, and the
+    // footer that says how to close it, off the bottom of the window.
+    for screen in ["fullscreen", "native"] {
+        let vendor =
+            Vendor::calling_then_holding("read", r#"{"path":"gamma.txt"}"#, "Ready to inspect.");
+        let mut window = Watched::allowing_drawn(
+            &format!("results-in-the-box-s-place-{screen}"),
+            (80, 24),
+            &vendor,
+            "read(*)",
+            ("unicode", screen),
+        );
+        three_files(&window);
+        window.types_and_catches("read gamma\r", "Ready to inspect.");
+        window.types_and_catches("\x0f", "gamma line 02");
+
+        let picture = window.picture();
+        let rows: Vec<&str> = picture
+            .lines()
+            .filter_map(|row| row.strip_prefix('|')?.strip_suffix('|'))
+            .collect();
+        assert!(
+            rows.last()
+                .is_some_and(|row| row.starts_with("esc to close")),
+            "the view's footer is not on the window's last row: {picture}"
+        );
+        assert!(
+            !rows.iter().any(|row| row.starts_with('\u{256d}')),
+            "the box still stands under the view: {picture}"
+        );
+
+        // And it was a turn it stood under: closed, it gives the box back with
+        // the working row over it.
+        window.types_and_catches("\x1b", "esc to interrupt");
+    }
+}
+
 /// A window whose transcript holds one read the transcript cut short, and
 /// the row and the drawn cells of the line that offers it.
 ///

@@ -308,7 +308,7 @@ pub(super) fn under<T: Terminal>(
     // parks it too: the cursor sits at the bottom of whatever is standing, and
     // a cursor left in the transcript above reads as a place text is about to
     // appear.
-    renderer.under(&rows, Some(Caret { row, column: 0 }), style.palette())?;
+    renderer.instead(&rows, Some(Caret { row, column: 0 }), style.palette())?;
     Ok(true)
 }
 

@@ -145,6 +145,25 @@ fn what_a_turn_stands_under_sits_between_the_transcript_and_the_box() {
 }
 
 #[test]
+fn rows_standing_instead_of_the_box_take_it_off_in_one_frame() {
+    let mut drawn = Drawn::new(40, 10);
+    let (rows, caret) = boxed();
+    drawn.commit("answer").unwrap();
+    drawn.live(&rows, caret, Palette::plain()).unwrap();
+    let before = drawn.terminal().flushes();
+
+    drawn
+        .instead(&[Row::plain("view")], None, Palette::plain())
+        .unwrap();
+
+    let screen = drawn.screen();
+    assert_eq!(screen.row(0), "answer");
+    assert_eq!(screen.row(9), "view");
+    assert!((0..10).all(|at| !screen.row(at).starts_with('\u{256d}')));
+    assert_eq!(drawn.terminal().flushes(), before + 1);
+}
+
+#[test]
 fn replacing_the_foot_flushes_turn_prompt_and_status_once() {
     let mut drawn = Drawn::new(60, 10);
     let old = vec![Row::plain("old prompt"), Row::plain("old status")];
