@@ -1427,7 +1427,11 @@ pub(super) fn during<T: Terminal>(
         moved = true;
     }
 
-    if moved && !expanding::under(renderer, style, kept, opened)? {
+    // Laid out only for a frame that is drawn, at the window's width, for the
+    // view, which keeps it over its rule; the box lays its own in `stand`.
+    if let Some(working) = moved.then(|| turning.working(renderer.columns(), style))
+        && !expanding::under(renderer, style, kept, opened, Some(working))?
+    {
         // The view takes the rows the box has, so a frame draws one of the
         // two. A window with no room for the view has closed it above, and the
         // box comes back in the same frame.

@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+40x24 cursor 23,0 scrolled 0
+|All three are read.                    ●|
+|                                       ┃|
+|✳ writing (0s · ↓ 4 · esc to interrupt) |
+|────────────────────────────────────────|
+|                                        |
+|Read(gamma.txt)                         |
+|                                        |
+|     1 gamma line 01                    |
+|     2 gamma line 02                    |
+|     3 gamma line 03                    |
+|     4 gamma line 04                    |
+|     5 gamma line 05                    |
+|     6 gamma line 06                    |
+|     7 gamma line 07                    |
+|     8 gamma line 08                    |
+|     9 gamma line 09                    |
+|    10 gamma line 10                    |
+|    11 gamma line 11                    |
+|    12 gamma line 12                    |
+|    13 gamma line 13                    |
+|    14 gamma line 14                    |
+|    15 gamma line 15                    |
+|                                        |
+|esc to close · ↑↓ pgup pgdn to see more |

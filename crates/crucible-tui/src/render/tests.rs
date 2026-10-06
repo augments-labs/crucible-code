@@ -153,7 +153,7 @@ fn rows_standing_instead_of_the_box_take_it_off_in_one_frame() {
     let before = drawn.terminal().flushes();
 
     drawn
-        .instead(&[Row::plain("view")], None, Palette::plain())
+        .instead(&[], &[Row::plain("view")], None, Palette::plain())
         .unwrap();
 
     let screen = drawn.screen();
@@ -2723,6 +2723,30 @@ fn a_list_under_a_running_turn_stands_beside_no_rail_and_is_not_counted() {
         rail_down(&drawn),
         format!("{}{}y ", "│".repeat(17), "┃".repeat(8))
     );
+}
+
+#[test]
+fn a_turn_s_rows_standing_in_the_box_s_place_stand_beside_the_rail() {
+    // What the turn was showing over the box goes on standing over what takes
+    // the box's place, and is still the transcript's: the rail stands beside
+    // it and counts it, as it did over the box, and stops before the rows
+    // under it. Twenty-seven band rows and the blank are twenty-eight rail rows
+    // over eighty-one, so the thumb is ten rows; leaving the blank out would
+    // have made it nine.
+    let mut drawn = railed_turn();
+    let rows = [Row::plain("writing"), Row::plain("view")];
+    drawn
+        .instead(&[Row::new()], &rows, None, Palette::plain())
+        .unwrap();
+
+    let bands = drawn.bands();
+    let screen = drawn.screen();
+    assert_eq!(bands.transcript.len(), 27);
+    assert_eq!(screen.row(bands.turn.end - 2), "writing");
+    assert_eq!(screen.row(bands.turn.end - 1), "view");
+    let rail = rail_down(&drawn);
+    assert!(rail.ends_with("\u{2503}  "), "{rail:?}");
+    assert_eq!(thumb_of(&rail), 10, "{rail:?}");
 }
 
 #[test]

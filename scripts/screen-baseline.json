@@ -1,7 +1,7 @@
 {
   "harness": {
     "tests/whole_screen/screen.rs": "07a6964bb72ea96433275b39f33ab91459a81610e73a0e7f5b95662fab426c4b",
-    "tests/whole_screen/vendor.rs": "ff505c326f4d397d9d894db3a6a011b8b4f5b77122a01e1cf9776ad02f229281",
+    "tests/whole_screen/vendor.rs": "c60595fde97a88e1dfb8ee46ea69ce1bdbdb2b80a191987a5278009432792011",
     "tests/whole_screen/watched.rs": "4da9c9c2dfaa4b199ef6e755e5ea2a984240d62455ce2bf98e1b24238496aaf7"
   },
   "captures": [
@@ -395,6 +395,78 @@
         "Watched::configured(\"results-paged\", 80, 24, &config, true)"
       ],
       "sha256": "35f9e996605b7fae592710668774c5fe547cde3a3fb6740739f50d9a2e22a61b"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_fullscreen_ascii_at_40.snap",
+      "case": "ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view",
+      "opened": [
+        "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
+        "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
+      ],
+      "sha256": "6fbc1e62e5988060ea0a4fcbc1f5853e161c29dda7be29bcb6f9286922dabd3d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_fullscreen_ascii_at_80.snap",
+      "case": "ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view",
+      "opened": [
+        "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
+        "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
+      ],
+      "sha256": "6f77409f6a52486954a1f88df6580036afc501913d5a748a2e32edd56a6e08de"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_fullscreen_unicode_at_40.snap",
+      "case": "ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view",
+      "opened": [
+        "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
+        "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
+      ],
+      "sha256": "459d47b7cd373349be45454ff1b8bf555486d4b58780bb11e1a00bbb930e7a88"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_fullscreen_unicode_at_80.snap",
+      "case": "ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view",
+      "opened": [
+        "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
+        "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
+      ],
+      "sha256": "3db7ad3846f56c1ca3e06388cb62fee9a220d203e94342ab3cbd29d3fa6850b5"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_native_ascii_at_40.snap",
+      "case": "ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view",
+      "opened": [
+        "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
+        "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
+      ],
+      "sha256": "3d329c6d1eb3e936ae1c57f860ad22c8fa23799869fc9ebc20cbbb1c013d179b"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_native_ascii_at_80.snap",
+      "case": "ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view",
+      "opened": [
+        "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
+        "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
+      ],
+      "sha256": "b0a453233f54afa92bc5a09c89a43c35db3300dd1c9dd465dd2ad35ddcc3867b"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_native_unicode_at_40.snap",
+      "case": "ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view",
+      "opened": [
+        "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
+        "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
+      ],
+      "sha256": "d246e4cd70f18ce6cd5fe2152752f3f8eef1da3a9d34ad243103275c5bbb8da4"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_native_unicode_at_80.snap",
+      "case": "ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view",
+      "opened": [
+        "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
+        "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
+      ],
+      "sha256": "67e36729a47065239df7adbf94db955bf3db8999c7d32a7e0d2329cb303c7045"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_w_adds_this_repositorys_other_checkouts.snap",
