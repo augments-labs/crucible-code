@@ -203,12 +203,14 @@ Both durations remember exactly what the question named.
 - For a file change, it is the tool **and the resolved path**. `session` on a
   `write` to `src/a.rs` stops asking about that write; another path asks again,
   and `edit` is separate too.
-- For a command, it is the tool **and the whole command**, with runs of
-  whitespace between words collapsed and spaces inside quotes kept as
-  written. `session` on `cargo test` stops asking about
-  `cargo test`; `cargo build`, the same program but a different command, asks
-  again. Standing permission for a family of commands is a job for an
-  [allow rule](rules.md), which is written down where you can read it back.
+- For a command, it is the tool **and the whole line the question
+  showed**, operators and the spacing between words included. `session` on `cargo test` stops
+  asking about `cargo test`; `cargo build`, the same program but a different
+  command, asks again, and so does `make; make install` after a yes to
+  `make && make install`, because the operators between commands are part of
+  what you agreed to. Standing permission for a family of commands is a job
+  for an [allow rule](rules.md), which is written down where you can read it
+  back.
 - For a web tool, it is the tool **and the host**. `session` on a `web_fetch`
   from `docs.rs` stops asking about that host; another host asks again.
 
