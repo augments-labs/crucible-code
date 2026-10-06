@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Headless prior-binary rollback drill.
 #
-# Runs the previous released binary (v0.45.2) over a copy of synthetic session
+# Runs the previous released binary (v0.45.3) over a copy of synthetic session
 # fixtures the candidate has read and recovered, headless with redirected
 # input, and compares replay, pending-action recovery and command behaviour to
 # the preservation contract:
@@ -43,7 +43,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-readonly PRIOR_TAG=v0.45.2
+readonly PRIOR_TAG=v0.45.3
 readonly CONV_ID=1788000000000-d81101
 readonly PEND_ID=1788000000001-d81102
 readonly CONV_USER='what does the rollback drill replay'
