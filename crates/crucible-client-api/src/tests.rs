@@ -22,9 +22,10 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 72] = [
+const KEYS: [&str; 73] = [
     "ambiguous",
     "answers",
+    "summary_kind",
     "asks",
     "cache",
     "call",
@@ -713,6 +714,25 @@ fn progress() -> Vec<Progress> {
             call: marked(),
             tool: marked(),
             summary: marked(),
+            summary_kind: SummaryKind::Path,
+        },
+        Progress::ToolRequested {
+            call: marked(),
+            tool: marked(),
+            summary: marked(),
+            summary_kind: SummaryKind::Address,
+        },
+        Progress::ToolRequested {
+            call: marked(),
+            tool: marked(),
+            summary: marked(),
+            summary_kind: SummaryKind::Command,
+        },
+        Progress::ToolRequested {
+            call: marked(),
+            tool: marked(),
+            summary: marked(),
+            summary_kind: SummaryKind::Other,
         },
         Progress::ToolFinished {
             call: marked(),
@@ -1265,7 +1285,7 @@ fn framed(value: &Value) -> Vec<u8> {
 }
 
 fn asking(command: &Value) -> Value {
-    json!({"version": 2, "capabilities": [], "correlation": 41, "command": command})
+    json!({"version": 3, "capabilities": [], "correlation": 41, "command": command})
 }
 
 /// `frame` with `field` saying `value` instead.
@@ -1287,7 +1307,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 1, 3, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 4, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1348,9 +1368,9 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
         (b"{\"version\": 2".to_vec(), None),
-        (framed(&json!({"version": 2})), None),
+        (framed(&json!({"version": 3})), None),
         (
-            framed(&json!({"version": 2, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 3, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
@@ -1373,7 +1393,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 2, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 3, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -1612,10 +1632,10 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":2,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":3,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -1625,7 +1645,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -1788,7 +1808,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 1, 3, 65_536, u64::MAX] {
+        for version in [0, 1, 2, 4, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -1920,7 +1940,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (2, 17_377_940_167_198_915_265),
+        (3, 2_273_694_165_132_666_843),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2089,7 +2109,7 @@ fn plan_limit_a_failed_turn_carrying_it_reads_back_as_it_was_written() {
 
 #[test]
 fn plan_limit_is_spoken_under_the_second_revision_and_not_the_first() {
-    assert_eq!(Version::CURRENT.number(), 2);
+    assert!(Version::CURRENT.number() >= 2);
     assert!(Version::CURRENT.spoken());
     assert!(!Version::numbered(1).spoken());
 

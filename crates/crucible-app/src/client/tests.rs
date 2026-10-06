@@ -10,9 +10,9 @@ use std::collections::VecDeque;
 use crucible_client_api::bounds::{ITEMS, TEXT_BYTES};
 use crucible_client_api::{
     Capabilities, Capability, Decision, ErrorCode, Lasting, Pending, PendingId, Picked, Progress,
-    Refusal, Ruling, Said,
+    Refusal, Ruling, Said, SummaryKind,
 };
-use crucible_tools::{Ask, Remember, Sensitivity, Target, Verdict};
+use crucible_tools::{Argument, Ask, Remember, Sensitivity, Summary, Target, Verdict};
 use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
 use super::deciding::{Deciding, Front, Shown, questions, warned};
@@ -490,6 +490,31 @@ fn a_client_that_never_asked_for_progress_is_handed_none() {
         .with(Capability::Questions);
     assert_eq!(progress(without, &retrying, None), None);
     assert_eq!(progress(Capabilities::none(), &retrying, None), None);
+}
+
+#[test]
+fn a_requested_call_says_which_of_the_four_kinds_its_argument_is() {
+    for (argument, kind) in [
+        (Argument::Path, SummaryKind::Path),
+        (Argument::Address, SummaryKind::Address),
+        (Argument::Command, SummaryKind::Command),
+        (Argument::Other, SummaryKind::Other),
+    ] {
+        let requested = crucible_runner::Event::ToolRequested {
+            call: call(),
+            summary: Summary::of(argument, "said"),
+            backgroundable: false,
+            alone: true,
+            looking: None,
+        };
+        assert!(
+            matches!(
+                progress(Capabilities::every(), &requested, None),
+                Some(Progress::ToolRequested { summary_kind, .. }) if summary_kind == kind
+            ),
+            "{argument:?}"
+        );
+    }
 }
 
 /// What a client is told of a turn that ended `turned`.
