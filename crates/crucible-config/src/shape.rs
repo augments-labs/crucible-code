@@ -55,8 +55,8 @@ pub(crate) enum Shape {
     /// every layer's own set to decide what each may add or narrow.
     TextSet { maximum: usize, bytes: usize },
 
-    /// A whole number between two bounds, written as a JSON integer or as the
-    /// string the environment would hold.
+    /// A whole number between two bounds, written as a JSON whole number (`6`
+    /// or `6.0`) or as the string the environment would hold.
     ///
     /// A string is allowed because the one place this appears is `env`, and the
     /// environment holds strings — see [`VALUE`]. The bounds are what the
@@ -69,7 +69,7 @@ pub(crate) enum Shape {
     Whole(&'static Whole),
 
     /// A whole number between two bounds, both included, written as a JSON
-    /// integer and nothing else.
+    /// whole number (`6` or `6.0`) and nothing else.
     ///
     /// What a [`Limit`](Shape::Limit) is where nought means something: a
     /// delay of none is a delay, and a ceiling of none is not a ceiling. Not a
@@ -316,16 +316,16 @@ const PROVIDER: Shape = Shape::Fields(&[
 /// Text for every variable, because this block is the environment and the
 /// environment holds strings. The one exception is the declared whole number,
 /// [`MOUSE_SCROLL_SPEED`] within [`SCROLL_SPEED`], which also takes a JSON
-/// integer: `spelled` gives its digits, so a command sees the same variable
-/// either way.
+/// whole number: `spelled` gives its digits, so a command sees the same
+/// variable either way.
 const VALUE: Shape = Shape::Text;
 
 /// The bounds a whole number is allowed to fall between: one in the `env` block,
 /// or a [`Shape::Within`] anywhere else.
 ///
 /// The block is the environment, so the number may be written as the string the
-/// environment holds or as a JSON integer. The schema publishes the bounds for
-/// the integer as `minimum` and `maximum`, and for the string as a pattern
+/// environment holds or as a JSON whole number. The schema publishes the bounds
+/// for the number as `minimum` and `maximum`, and for the string as a pattern
 /// generated from the same two numbers, so neither can say what the other
 /// refuses. The reader is `settings::variables`, which takes decimal digits
 /// only — no sign, no leading zero, no space — so that the pattern, which has

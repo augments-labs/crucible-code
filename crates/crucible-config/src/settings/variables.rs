@@ -57,7 +57,7 @@ fn accepted() -> Accepted {
 
 /// What a value in the `env` block says, as the text the readers below take.
 ///
-/// A string is itself. A JSON integer is the digits it is written with, so that
+/// A string is itself. A JSON whole number is its digits, `6.0` as `6`, so that
 /// a number in the file and the same digits in a string or in the shell go
 /// through one reader. Anything else says nothing: the walk that ran before
 /// this has already refused it, and where it has not, there is no answer here.
