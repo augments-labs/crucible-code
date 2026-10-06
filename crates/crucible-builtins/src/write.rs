@@ -8,6 +8,7 @@
 
 use std::fs;
 use std::io::Read as _;
+use std::path::{Component, Path};
 
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{
@@ -103,7 +104,7 @@ impl DescribeTool for Write {
 impl Tool for Write {
     fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
         let args = Args::parse(NAME, args)?;
-        args.text(PATH)?;
+        refuse_parent_after_missing_directory(self.workspace.root(), args.text(PATH)?)?;
         args.exact(CONTENT).map(drop)
     }
 
@@ -359,6 +360,31 @@ fn prepare(
     }
 
     Ok(None)
+}
+
+/// Refuses a `..` that follows a name that is not a directory yet.
+///
+/// The call is settled before the write makes its directories and opened
+/// after, so where such a `..` leads depends on what the write itself makes:
+/// no question asked beforehand could name the file it would open.
+fn refuse_parent_after_missing_directory(root: &Path, requested: &str) -> Result<(), ToolError> {
+    let mut walked = root.to_path_buf();
+
+    for part in Path::new(requested).components() {
+        if matches!(part, Component::ParentDir) && !walked.is_dir() {
+            return Err(ToolError::Arguments {
+                tool: NAME.into(),
+                problem: format!(
+                    "{requested} has `..` after a name that is not an existing directory, \
+                     so where it leads cannot be known: name the file without it"
+                )
+                .into(),
+            });
+        }
+        walked.push(part);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

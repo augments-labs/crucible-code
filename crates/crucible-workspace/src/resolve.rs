@@ -17,6 +17,7 @@
 //! here, once, about text somebody sent; whether the tree still agrees is
 //! decided there, at the moment of the call.
 
+use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
 use super::{PathError, Workspace, WorkspacePath};
@@ -29,9 +30,31 @@ impl Workspace {
     /// the permission boundary. A write can make several missing directories
     /// before it makes its file, so requiring the immediate parent here would
     /// turn the target into an unresolved one and hide its name from policy.
-    /// The ancestor that does exist is still canonicalised and contained; only
-    /// the ordinary names below it are appended. A `..` among the missing
-    /// components therefore resolves nothing rather than being guessed at.
+    ///
+    /// The path is walked one component at a time, as the filesystem walks it
+    /// when the write opens it. Each name that exists is canonicalised, so a
+    /// symbolic link is followed to where it leads, and a `..` then steps out
+    /// of that place rather than out of the text: `sub/../config.json` is
+    /// `config.json`, and `link/../config.json` is beside wherever `link`
+    /// points. Once a name is missing, the ordinary names below it are
+    /// appended as written. A `..` after a missing name resolves nothing, since
+    /// what it would lead to is not there to ask, and neither does a `..` after
+    /// a file.
+    ///
+    /// Windows is the exception to that walk. Win32 makes the text a full path
+    /// before it follows any link: it applies `..` to the text, so `link\..`
+    /// is the folder that holds `link` wherever `link` points; it starts
+    /// `C:..\x` from the current directory of `C:`; and it trims the dots and
+    /// spaces that end the last name. The write's parent is made full that way
+    /// here first, as [`Workspace::creatable`] has it made when it
+    /// canonicalises it, and the walk starts from what comes back. A relative
+    /// path arrives already full, because joining it to the verbatim root
+    /// applies its `..` the same way. A verbatim path with a `..` in it
+    /// resolves nothing: Win32 passes it on as written, and no file can be
+    /// made under a folder called `..`.
+    ///
+    /// A name that would read as a drive or a root on its own resolves nothing
+    /// either. Joined onto the path walked so far, it would replace it.
     ///
     /// What comes back is a plain [`PathBuf`], never a [`WorkspacePath`]. The
     /// permission engine that calls this lives in another crate and needs the
@@ -39,37 +62,49 @@ impl Workspace {
     /// would let a question about a path become the authority to open one.
     #[must_use]
     pub fn intended(&self, requested: &str) -> Option<PathBuf> {
-        if Path::new(requested)
-            .components()
-            .any(|part| matches!(part, Component::ParentDir))
-        {
-            return None;
-        }
+        let joined = self.join(requested);
+        #[cfg(windows)]
+        let joined = win32(&joined)?;
+        let mut resolved = PathBuf::new();
+        let mut missing: Vec<&OsStr> = Vec::new();
 
-        let mut ancestor = self.join(requested);
-        let mut missing = Vec::new();
-
-        loop {
-            if let Ok(mut resolved) = ancestor.canonicalize() {
-                self.roots.containing(&resolved)?;
-
-                for name in missing.iter().rev() {
-                    resolved.push(name);
+        for part in joined.components() {
+            match part {
+                Component::Prefix(_) | Component::RootDir => resolved.push(part),
+                Component::CurDir => {}
+                Component::ParentDir if !missing.is_empty() || !resolved.is_dir() => {
+                    return None;
                 }
-
-                return self.roots.containing(&resolved).map(|_| resolved);
+                // Every name in `resolved` was canonicalised, so it holds no
+                // link and its parent is where `..` leads.
+                Component::ParentDir => {
+                    resolved.pop();
+                }
+                Component::Normal(name)
+                    if !matches!(
+                        Path::new(name).components().next(),
+                        Some(Component::Normal(_))
+                    ) =>
+                {
+                    return None;
+                }
+                Component::Normal(name) if missing.is_empty() => {
+                    match resolved.join(name).canonicalize() {
+                        Ok(next) => resolved = next,
+                        Err(_) => missing.push(name),
+                    }
+                }
+                Component::Normal(name) => missing.push(name),
             }
-
-            let Component::Normal(name) = ancestor.components().next_back()? else {
-                // A root or prefix cannot be appended below an existing
-                // ancestor, and a parent component would make the lexical
-                // target say something different after the permission
-                // question was answered.
-                return None;
-            };
-            missing.push(name.to_owned());
-            ancestor = ancestor.parent()?.to_owned();
         }
+
+        self.roots.containing(&resolved)?;
+
+        for name in missing {
+            resolved.push(name);
+        }
+
+        self.roots.containing(&resolved).map(|_| resolved)
     }
 
     /// Resolves a path that must already exist — what `read`, `grep` and
@@ -212,4 +247,29 @@ impl Workspace {
             }),
         }
     }
+}
+
+/// The path Win32 opens for this one: its parent made full as
+/// `GetFullPathNameW` makes it, which is what canonicalising that parent
+/// starts from, with the last name kept as written. A name the walk joins
+/// below a canonical path is joined verbatim, so nothing trims it there. A
+/// verbatim path is passed on as written, so one holding a `..` is not a path
+/// anything could be created at.
+#[cfg(windows)]
+fn win32(path: &Path) -> Option<PathBuf> {
+    let verbatim = matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix)) if prefix.kind().is_verbatim()
+    );
+    if verbatim {
+        return (!path.components().any(|part| part == Component::ParentDir))
+            .then(|| path.to_path_buf());
+    }
+
+    let full = std::path::absolute(path.parent()?).ok()?;
+    // Where that parent is there, it is the one `creatable` opens the file
+    // under, and the last name joins it verbatim, as it does there. Where it is
+    // not, the walk finds how much of it is.
+    let full = full.canonicalize().unwrap_or(full);
+    Some(full.join(path.file_name()?))
 }
