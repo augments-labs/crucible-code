@@ -277,6 +277,25 @@ fn the_arrows_go_back_to_the_answers_where_the_prose_fitted() {
 }
 
 #[test]
+fn the_keys_that_send_what_is_queued_take_no_answer_at_a_question() {
+    // Ctrl+Enter is not the Enter that takes the marked answer: a reader
+    // pressing it meant to send what they had typed ahead, and nothing here was
+    // typed ahead.
+    for arrived in [Pressed::SendAll, Pressed::SendNow] {
+        let mut standing = Standing::new(false);
+        assert_eq!(moving(Pressed::Down, &mut standing), Moved::Redraw);
+        let marked = standing.marked;
+
+        assert_eq!(
+            moving(arrived.clone(), &mut standing),
+            Moved::Still,
+            "{arrived:?}"
+        );
+        assert_eq!(standing.marked, marked, "{arrived:?}");
+    }
+}
+
+#[test]
 fn the_way_out_of_a_question_is_the_way_out_of_everything_else_and_it_refuses() {
     // Escape and Ctrl-C leave, and leaving is a denial rather than a question
     // asked again: silence about a command is not consent to it.

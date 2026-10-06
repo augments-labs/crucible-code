@@ -942,6 +942,49 @@ impl Watched {
         }
     }
 
+    /// Types `keys` and holds what follows to [`Self::never_draws`].
+    pub(crate) fn types_and_never_draws(&mut self, keys: &str, unwanted: &str, held: Duration) {
+        self.terminal
+            .write_all(keys.as_bytes())
+            .expect("keys go to the terminal");
+        self.never_draws(&format!("{keys:?} was typed"), unwanted, held);
+    }
+
+    /// Reads what crucible writes for `held`, failing as soon as `unwanted` is
+    /// on screen, in a finished frame or not: what a key that should leave part
+    /// of the screen alone is held to after `step`.
+    ///
+    /// No frame can say that something will never be drawn, so this watches
+    /// for longer than crucible takes to draw what the key would wrongly have
+    /// done, and the cases that use it each saw that draw land inside it. It
+    /// waits for neither a byte nor quiet, since a running turn redraws on its
+    /// beat and a key that rightly does nothing draws nothing.
+    pub(crate) fn never_draws(&mut self, step: &str, unwanted: &str, held: Duration) {
+        let ended = Instant::now() + held;
+
+        loop {
+            assert!(
+                !self.picture().contains(unwanted),
+                "{unwanted:?} was drawn after {step}\n{}",
+                self.picture()
+            );
+            let left = ended.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            match self.bytes.recv_timeout(left) {
+                Ok(bytes) => self.feed(&bytes),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!(
+                        "crucible left the terminal while {step}\n{}",
+                        self.picture()
+                    )
+                }
+            }
+        }
+    }
+
     /// Changes the size of the window, the way dragging its corner would.
     ///
     /// The kernel is what tells crucible: setting the size on the near side of

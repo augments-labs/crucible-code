@@ -1966,6 +1966,38 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
     assert_eq!(steer.take(), ["once more"]);
 }
 
+#[test]
+fn a_line_typed_while_the_queue_is_held_back_waits_with_the_rest() {
+    // Ctrl+S sends one line alone and holds the rest back until that turn
+    // ends. A line typed meanwhile waits behind them: said to the turn, it
+    // would join the turn meant to carry one line, ahead of the lines typed
+    // before it.
+    let mut queued = Prompts::default();
+    let steer = crucible_runtime::Steer::new();
+    let mut turning = Turning::started(Breakdown::default());
+    let mut typing = |line: &str, queued: &mut Prompts| {
+        let mut editor = Editor::new();
+        editor.put(line);
+        let reading = queueing::Reading {
+            queue: queued,
+            editor: &mut editor,
+            steer: &steer,
+        };
+        assert_eq!(queue(reading, &mut turning), None);
+    };
+    typing("first", &mut queued);
+    typing("second", &mut queued);
+    assert!(queued.send_now(&steer));
+
+    typing("third", &mut queued);
+
+    assert_eq!(steer.take(), Vec::<String>::new());
+    assert_eq!(
+        queued.waiting_all().collect::<Vec<_>>(),
+        ["first", "second", "third"]
+    );
+}
+
 /// A box holding `said`, told the commands there are, as the prompt draws it.
 fn boxed_with_names(said: &str, style: Style) -> Vec<crucible_tui::Row> {
     let mut editor = Editor::new();

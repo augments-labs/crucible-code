@@ -68,8 +68,8 @@ fn stopped_then<T>(
 /// What [`stopped_after`] does besides sending the prompts into the stop.
 #[derive(Default)]
 struct Besides {
-    /// Done to the queue once [`QUEUED`] is in it, as a key pressed while the
-    /// last prompt runs would do it.
+    /// Done to the queue once [`QUEUED`] is in it, just before the last
+    /// prompt's turn starts: what a key pressed under that turn would find.
     queued: Option<fn(&mut Held<'_>, &Terms)>,
     /// Run once the prompts have, before the queue is asked for the next turn:
     /// work that ends some other way than the stop.
@@ -217,7 +217,7 @@ fn plan_limit_hold_lets_go_once_the_next_work_ends_another_way() {
 #[test]
 fn plan_limit_lets_go_of_a_queue_a_send_now_key_was_holding_back() {
     // Ctrl+S holds the queue back from the turn it stops and from the line it
-    // sends alone. A used-up plan ends that turn with the rest still queued,
+    // sends alone. A used-up plan ends that turn with that line still queued,
     // between turns, where nothing is to be held back from anything: kept
     // held, nothing typed under the next turn the reader sends would reach it.
     let (stopped, (offered, taken, behind)) = stopped_after(

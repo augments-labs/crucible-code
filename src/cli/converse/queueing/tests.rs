@@ -371,7 +371,7 @@ fn ctrl_s_whose_line_is_deleted_before_the_turn_stops_sends_no_other_line_alone(
     queue.walk(false);
     assert!(queue.send_now(&steer));
 
-    // Up past the line that followed it to the front, where it went.
+    // Back past the line it was moved ahead of, to the front, where it went.
     queue.walk(true);
     queue.walk(true);
     assert_eq!(queue.highlighted(), 0);
@@ -380,6 +380,40 @@ fn ctrl_s_whose_line_is_deleted_before_the_turn_stops_sends_no_other_line_alone(
     assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
     assert_eq!(steer.take(), vec!["third".to_owned()]);
     assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
+fn ctrl_e_and_ctrl_x_reach_the_lines_ctrl_s_holds_back() {
+    // Held back from the turn, the lines are on offer to nothing but the
+    // panel, so its keys act on them there alone: asking the turn to give back
+    // a line it was never offered would refuse every one of them.
+    let (mut queue, steer) = queued(&["first", "second", "third", "fourth"]);
+    assert!(queue.send_now(&steer));
+    assert_eq!(queue.highlighted(), 1);
+
+    assert!(queue.delete(queue.offer(&steer)));
+    let mut editor = Editor::new();
+    assert!(queue.take_back(&mut editor, queue.offer(&steer)));
+
+    assert_eq!(editor.text(), "third");
+    assert_eq!(waiting(&queue), vec!["first", "fourth"]);
+    assert!(
+        matches!(queue.offer(&steer), Offer::Nowhere),
+        "what is left is offered to the turn it waits behind"
+    );
+}
+
+#[test]
+fn ctrl_enter_after_ctrl_s_sends_every_line_rather_than_the_one_alone() {
+    // The later key asks for all of it, so nothing is left to go alone.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    queue.walk(false);
+    assert!(queue.send_now(&steer));
+
+    assert_eq!(queue.send_all(&mut Editor::new(), &steer), Now::Sending);
+
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("second"));
+    assert_eq!(steer.take(), vec!["first".to_owned(), "third".to_owned()]);
 }
 
 #[test]

@@ -24,10 +24,10 @@
 //! next pass boundary, whichever line is highlighted: a line the reader wants
 //! back is one key away, and a queue that stopped the turn merely for being
 //! read would be a second way to stop the turn that Esc already is. The two
-//! keys above stop it on purpose, and are pressed for nothing else. A line taken back or
-//! deleted leaves the turn's offer as well as the panel, because the two hold
-//! the same lines — one dropped from the panel alone is a prompt the reader
-//! deleted that the turn works in anyway.
+//! keys above stop it on purpose, and are pressed for nothing else. A line
+//! taken back or deleted leaves the turn's offer as well as the panel, because
+//! the two hold the same lines — one dropped from the panel alone is a prompt
+//! the reader deleted that the turn works in anyway.
 
 use std::collections::VecDeque;
 

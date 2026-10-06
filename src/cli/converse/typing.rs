@@ -1047,10 +1047,10 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// bounds it again, and Ctrl+Enter and Ctrl+S stop the turn to send the queue
 /// now, as [`queueing`] says. Ctrl-C is the line's own: in raw mode the
 /// terminal sends it rather than raising a signal, so it reaches the editor
-/// here exactly as it does at the prompt. The rest edit the line. While that view stands it
-/// has all of them: it takes the rows the box has, so the box is not on screen
-/// to be typed into and Esc closes the view rather than stopping the turn behind
-/// it.
+/// here exactly as it does at the prompt. The rest edit the line. While that
+/// view stands it has all of them: it takes the rows the box has, so the box is
+/// not on screen to be typed into and Esc closes the view rather than stopping
+/// the turn behind it.
 ///
 /// Shift+Tab steps the mode, but for the next turn: the runner that holds it
 /// is on the worker thread for the length of the turn, so the step waits in

@@ -61,13 +61,16 @@ fn a_window_that_changed_while_a_question_stood_is_news_rather_than_nothing() {
 
 #[test]
 fn a_key_that_answers_nothing_is_not_read_as_an_answer() {
-    // An arrow through a list there is none of, a click, a mode step. The
-    // question is still standing after each of them.
+    // An arrow through a list there is none of, a click, a mode step, a key
+    // that sends what is queued. The question is still standing after each of
+    // them: Ctrl+Enter is not the Enter that refuses.
     for arrived in [
         Pressed::Up,
         Pressed::Down,
         Pressed::Cycle,
         Pressed::Clicked { row: 4, column: 2 },
+        Pressed::SendAll,
+        Pressed::SendNow,
         Pressed::Ignored,
     ] {
         assert!(
