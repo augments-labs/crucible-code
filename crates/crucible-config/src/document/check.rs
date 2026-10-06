@@ -15,7 +15,7 @@ use std::path::Path;
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
 use crate::settings;
-use crate::shape::Shape;
+use crate::shape::{Shape, whole};
 use serde_json::Value;
 
 use super::Origin;
@@ -89,17 +89,14 @@ impl Reader<'_> {
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Count => self.count(value, shape, spot),
             Shape::Limit(maximum) => {
-                if value
-                    .as_u64()
-                    .is_some_and(|value| (1..=*maximum).contains(&value))
-                {
+                if whole(value).is_some_and(|value| (1..=*maximum).contains(&value)) {
                     Ok(())
                 } else {
                     Err(self.wrong_type(shape, spot))
                 }
             }
             Shape::Within(bounds) => {
-                if value.as_u64().is_some_and(|value| {
+                if whole(value).is_some_and(|value| {
                     (u64::from(bounds.least)..=u64::from(bounds.most)).contains(&value)
                 }) {
                     Ok(())
@@ -145,7 +142,7 @@ impl Reader<'_> {
     /// Either may still be out of range, which is not this layer's to say. A
     /// fraction, a negative and a boolean are not whole numbers at all.
     fn whole_at(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
-        if value.is_string() || value.as_u64().is_some() {
+        if value.is_string() || whole(value).is_some() {
             return Ok(());
         }
         Err(self.wrong_type(shape, spot))
@@ -153,12 +150,12 @@ impl Reader<'_> {
 
     /// A whole number that is not negative, and nothing else.
     ///
-    /// `as_u64` is the whole of the check: it refuses a string that looks like
+    /// [`whole`] is the whole of the check: it refuses a string that looks like
     /// a number, a negative, and a fraction together, which are the three ways
     /// a count gets written wrong. A number too large for it is refused for the
     /// same reason a negative is — nothing here can mean it.
     fn count(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
-        if value.as_u64().is_some() {
+        if whole(value).is_some() {
             return Ok(());
         }
         Err(self.wrong_type(shape, spot))

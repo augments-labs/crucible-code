@@ -71,6 +71,9 @@ cannot choose an unbounded startup allocation.
 
 ## What you can set
 
+A key that takes a whole number also takes it written with a zero fraction, so
+`6.0` is read as `6` and held to the same bounds; `6.5` is still refused.
+
 ### `provider`
 
 Which provider to ask, by the name `--model` qualifies a model with:
@@ -1184,7 +1187,8 @@ keys still move one step at a time.
 { "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": 12 } }
 ```
 
-The value may be a JSON integer, as above, or a string such as `"12"`.
+The value may be a JSON whole number, as above or as `12.0`, or a string of
+digits such as `"12"`.
 
 Written in `env` like any other variable, so it layers like one: a project can
 set it for everybody who clones the repository, your home directory can set it

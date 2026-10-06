@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use crate::error::ConfigError;
 use crate::shape::rows::{Row, Values};
+use crate::shape::whole;
 
 mod splice;
 
@@ -335,7 +336,7 @@ pub fn unasked(text: &str, file: &str) -> Result<String, ConfigError> {
     if value
         .get("compaction")
         .and_then(|block| block.get(KEY))
-        .and_then(Value::as_u64)
+        .and_then(whole)
         == Some(0)
     {
         return Ok(text.to_owned());
