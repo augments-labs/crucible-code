@@ -22,7 +22,8 @@
 //! half made. That join waits for at most one attempt at the lock or one
 //! publication, each bounded by the entry, byte and depth ceilings of what it
 //! writes, which is the wait the same work made on the asking thread before it
-//! moved here.
+//! moved here. Before it publishes, an ending also gives the command's output
+//! readers a bounded while to reach their ends and finish the reads they began.
 
 use std::io;
 use std::sync::Arc;
@@ -544,10 +545,14 @@ impl Drop for Held {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
+    use std::sync::{Arc, mpsc};
     use std::time::{Duration, Instant};
 
-    use super::{BoundedPublication, IN_FLIGHT};
+    use crucible_sandbox::{SandboxOutput, SandboxRead};
+
+    use super::{
+        BoundedPublication, IN_FLIGHT, OUTPUT_READER_SEAL, OutputBoundary, PublicationOutput,
+    };
 
     /// How long a thread here gets to end before the test calls it hung.
     const HUNG: Duration = Duration::from_secs(30);
@@ -593,5 +598,137 @@ mod tests {
         for ending in running {
             ending.finish().expect("a held ending");
         }
+    }
+
+    /// A stream that answers the reads it was given, in order, and then ends.
+    struct Scripted(std::collections::VecDeque<SandboxRead>);
+
+    impl SandboxOutput for Scripted {
+        fn read_ready(&mut self, _buffer: &mut [u8]) -> std::io::Result<SandboxRead> {
+            Ok(self.0.pop_front().unwrap_or(SandboxRead::End))
+        }
+    }
+
+    fn reader(boundary: &Arc<OutputBoundary>, reads: &[SandboxRead]) -> PublicationOutput {
+        PublicationOutput::new(
+            Box::new(Scripted(reads.iter().copied().collect())),
+            Arc::clone(boundary),
+        )
+    }
+
+    /// Seals `boundary`, saying how long the seal took and what it found.
+    fn sealed(boundary: &OutputBoundary) -> (Duration, bool) {
+        let started = Instant::now();
+        let limited = boundary.seal().expect("no read was in flight");
+        (started.elapsed(), limited)
+    }
+
+    #[test]
+    fn a_reader_still_short_of_its_end_at_the_seal_is_told_its_output_was_cut() {
+        let boundary = Arc::new(OutputBoundary::default());
+        let mut stdout = reader(&boundary, &[SandboxRead::Bytes(4), SandboxRead::Bytes(4)]);
+        let mut buffer = [0_u8; 8];
+        assert_eq!(
+            stdout
+                .read_ready(&mut buffer)
+                .expect("a read before the seal"),
+            SandboxRead::Bytes(4)
+        );
+
+        let (took, limited) = sealed(&boundary);
+        assert!(
+            took >= OUTPUT_READER_SEAL,
+            "the seal did not wait for the open reader: {took:?}"
+        );
+        assert!(!limited);
+        let after = stdout.read_ready(&mut buffer);
+        assert!(
+            after.is_err(),
+            "a reader cut off by the seal was answered {after:?}, as if it had everything"
+        );
+        let after = crucible_runtime::answered!(stdout.read(&mut buffer));
+        assert!(after.is_err(), "the waiting read was answered {after:?}");
+    }
+
+    #[test]
+    fn a_reader_that_reached_its_end_lets_the_seal_go_at_once_and_still_reads_the_end() {
+        let boundary = Arc::new(OutputBoundary::default());
+        let mut stdout = reader(&boundary, &[SandboxRead::Bytes(4)]);
+        let mut buffer = [0_u8; 8];
+        while stdout
+            .read_ready(&mut buffer)
+            .expect("a read before the seal")
+            != SandboxRead::End
+        {}
+
+        let (took, limited) = sealed(&boundary);
+        assert!(
+            took < OUTPUT_READER_SEAL,
+            "the seal waited on a reader that had ended: {took:?}"
+        );
+        assert!(!limited);
+        for _ in 0..2 {
+            assert_eq!(
+                stdout
+                    .read_ready(&mut buffer)
+                    .expect("a read after the seal"),
+                SandboxRead::End
+            );
+        }
+        assert_eq!(
+            crucible_runtime::answered!(stdout.read(&mut buffer)).expect("a waiting read"),
+            SandboxRead::End
+        );
+    }
+
+    #[test]
+    fn a_reader_let_go_before_its_end_lets_the_seal_go_at_once() {
+        let boundary = Arc::new(OutputBoundary::default());
+        let mut stdout = reader(&boundary, &[SandboxRead::Bytes(4)]);
+        let stderr = reader(&boundary, &[]);
+        let mut buffer = [0_u8; 8];
+        stdout
+            .read_ready(&mut buffer)
+            .expect("a read before the seal");
+        drop(stdout);
+        drop(stderr);
+
+        let (took, _) = sealed(&boundary);
+        assert!(
+            took < OUTPUT_READER_SEAL,
+            "the seal waited on readers that were let go: {took:?}"
+        );
+    }
+
+    #[test]
+    fn a_limit_a_reader_meets_while_the_seal_waits_for_it_is_what_the_seal_finds() {
+        let boundary = Arc::new(OutputBoundary::default());
+        let mut stdout = reader(
+            &boundary,
+            &[
+                SandboxRead::Bytes(4),
+                SandboxRead::Limited {
+                    retained: 2,
+                    discarded: 2,
+                },
+            ],
+        );
+        let mut buffer = [0_u8; 8];
+        stdout
+            .read_ready(&mut buffer)
+            .expect("a read before the seal");
+
+        let late = std::thread::spawn(move || {
+            // Only once the seal has begun waiting for this reader.
+            std::thread::sleep(OUTPUT_READER_SEAL / 4);
+            while stdout
+                .read_ready(&mut buffer)
+                .expect("a read during the wait")
+                != SandboxRead::End
+            {}
+        });
+        let (_, limited) = sealed(&boundary);
+        late.join().expect("the late reader");
+        assert!(limited, "the seal missed a limit met while it waited");
     }
 }
