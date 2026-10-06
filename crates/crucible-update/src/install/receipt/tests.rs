@@ -58,6 +58,7 @@ fn reasons() -> Vec<(&'static str, ReceiptError)> {
         ("empty", ReceiptError::NotAReceipt),
         ("unterminated", ReceiptError::Unterminated),
         ("larger-than-the-ceiling", ReceiptError::TooLarge),
+        ("one-past-the-ceiling", ReceiptError::TooLarge),
         ("carriage-returns", ReceiptError::Control { line: 1 }),
         ("tab-in-prefix", ReceiptError::Control { line: 6 }),
         ("nul-in-prefix", ReceiptError::Control { line: 6 }),
@@ -119,10 +120,12 @@ fn reasons() -> Vec<(&'static str, ReceiptError)> {
         ("version-empty", invalid(7, "version", RELEASE)),
         ("crucible-upper-case", invalid(8, "sha256.crucible", HEX_64)),
         ("crucible-short", invalid(8, "sha256.crucible", HEX_64)),
-        (
-            "broker-not-hex",
-            invalid(9, "sha256.crucible-sandbox-broker", HEX_64),
-        ),
+        ("broker-not-hex", invalid(9, BROKER, HEX_64)),
+        ("broker-empty", invalid(9, BROKER, HEX_64)),
+        ("broker-upper-case", invalid(9, BROKER, HEX_64)),
+        ("broker-short", invalid(9, BROKER, HEX_64)),
+        ("broker-key-unknown", expected(9, BROKER)),
+        ("broker-key-repeats-crucible", expected(9, BROKER)),
     ]
 }
 
@@ -159,6 +162,66 @@ fn every_refused_fixture_has_its_reason_stated() {
 
     // A fixture added without a reason here would be held only to a verdict.
     assert_eq!(present, stated);
+}
+
+#[test]
+fn a_receipt_as_large_as_the_ceiling_is_read() {
+    let bytes = fixture("accepted", "exactly-the-ceiling");
+
+    assert_eq!(bytes.len(), MAX_BYTES);
+    assert!(Receipt::parse(&bytes).is_ok());
+}
+
+/// How many arms [`named`] has. A target added to the enum fails to compile
+/// there until it is named, and this count is then held to [`Target::ALL`],
+/// which the parser looks names up in.
+const NAMED: usize = 5;
+
+/// The name each target has, written as a match so that a new target cannot
+/// be added without a name being decided here.
+fn named(target: Target) -> &'static str {
+    match target {
+        Target::LinuxX86_64 => "linux-x86_64",
+        Target::LinuxAarch64 => "linux-aarch64",
+        Target::MacosX86_64 => "macos-x86_64",
+        Target::MacosAarch64 => "macos-aarch64",
+        Target::FreebsdX86_64 => "freebsd-x86_64",
+    }
+}
+
+#[test]
+fn every_target_has_one_name_and_an_accepted_receipt_that_uses_it() {
+    let accepted: Vec<Vec<u8>> = std::fs::read_dir(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/installer/receipts/accepted"),
+    )
+    .expect("the accepted fixtures")
+    .map(|entry| std::fs::read(entry.expect("an entry").path()).expect("a receipt"))
+    .collect();
+
+    let mut names: Vec<&str> = Target::ALL.iter().map(|target| target.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(
+        Target::ALL.len(),
+        NAMED,
+        "a target is missing from the list"
+    );
+    assert_eq!(names.len(), Target::ALL.len(), "two targets share a name");
+    for target in Target::ALL {
+        assert_eq!(target.as_str(), named(target));
+        assert_eq!(target.to_string(), named(target));
+        let line = format!("\ntarget={}\n", named(target));
+        assert!(
+            accepted.iter().any(|receipt| receipt
+                .windows(line.len())
+                .any(|window| window == line.as_bytes())),
+            "no accepted receipt names {target}"
+        );
+    }
+    if let Some(running) = Target::running() {
+        assert!(Target::ALL.contains(&running));
+    }
 }
 
 #[test]

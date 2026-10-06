@@ -1,6 +1,6 @@
 # The installer receipt, read the way `crucible-update` reads it.
 #
-# A receipt is the last file of a release unit,
+# A receipt is written into a release unit once its executables are in place,
 # `<dir>/.crucible-install/releases/<version>/receipt`. It names the unit's
 # installation, platform, prefix and release, and the SHA-256 of each
 # executable the unit holds. The format is line text, version 1:
@@ -8,7 +8,7 @@
 #     crucible-installer-receipt 1
 #     manager=crucible-installer
 #     installation=<32 lowercase hex digits, fixed for the install's life>
-#     target=<linux|macos|freebsd>-<x86_64|aarch64>
+#     target=<linux-x86_64|linux-aarch64|macos-x86_64|macos-aarch64|freebsd-x86_64>
 #     layout=versioned
 #     prefix=<the absolute, canonical prefix>
 #     version=<major>.<minor>.<patch>
@@ -47,15 +47,25 @@ crucible_receipt_read() {
         crucible_receipt_refuse 'the receipt is larger than 8192 bytes'
         return 1
     fi
-    receipt_controls=$(LC_ALL=C tr -d '\n\040-\176\200-\377' <"$receipt_file" | wc -c) ||
-        return 1
+    # A pipeline's status is its last command's, so a `tr` that fails adds a
+    # byte of its own to what is counted rather than going unseen.
+    receipt_controls=$(
+        { LC_ALL=C tr -d '\n\040-\176\200-\377' <"$receipt_file" || printf x; } | wc -c
+    ) || return 1
     if [ "$((receipt_controls))" -ne 0 ]; then
-        crucible_receipt_refuse 'the receipt holds a control character'
+        crucible_receipt_refuse 'the receipt holds a control character or could not be read'
         return 1
     fi
-    if [ "$((receipt_size))" -gt 0 ] && [ -n "$(tail -c 1 "$receipt_file")" ]; then
-        crucible_receipt_refuse 'the last line of the receipt does not end'
-        return 1
+    # The `x` keeps the newline from being stripped, and is missing only when
+    # `tail` failed.
+    receipt_newline='
+x'
+    if [ "$((receipt_size))" -gt 0 ]; then
+        receipt_last=$(tail -c 1 <"$receipt_file" && printf x) || return 1
+        if [ "$receipt_last" != "$receipt_newline" ]; then
+            crucible_receipt_refuse 'the last line of the receipt does not end'
+            return 1
+        fi
     fi
 
     while IFS= read -r receipt_text; do

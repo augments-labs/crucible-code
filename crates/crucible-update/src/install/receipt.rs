@@ -7,7 +7,7 @@
 //! crucible-installer-receipt 1
 //! manager=crucible-installer
 //! installation=<32 lowercase hex digits, fixed for the install's life>
-//! target=<linux|macos|freebsd>-<x86_64|aarch64>
+//! target=<linux-x86_64|linux-aarch64|macos-x86_64|macos-aarch64|freebsd-x86_64>
 //! layout=versioned
 //! prefix=<the absolute, canonical prefix>
 //! version=<major>.<minor>.<patch>
@@ -16,10 +16,10 @@
 //! ```
 //!
 //! Only the broker line may be left out, when the release carries no broker.
-//! Each line ends in a newline. The installer writes it from shell, so the
-//! format is one a POSIX shell can read and write without a parser of its own,
-//! and the shell reader in `tests/fixtures/installer/receipt.sh` is held to the
-//! same answer as this one on every receipt beside it.
+//! Each line ends in a newline. The installer that will write it is shell, so
+//! the format is one a POSIX shell can read and write without a parser of its
+//! own, and the shell reader in `tests/fixtures/installer/receipt.sh` is held
+//! to the same answer as this one on every receipt beside it.
 //!
 //! Anything the grammar does not name is refused rather than skipped: a reader
 //! that ignored an unknown key would let a later installer's receipt mean less
@@ -124,8 +124,8 @@ pub enum ReceiptError {
         /// The first key missing.
         key: &'static str,
     },
-    /// A line follows the last key.
-    #[error("nothing may follow the last key, but line {line} does")]
+    /// A line follows the broker's, which is the last a receipt may hold.
+    #[error("nothing may follow the broker's line, but line {line} does")]
     Trailing {
         /// The line, counting from 1.
         line: usize,
@@ -294,7 +294,7 @@ impl fmt::Display for Installation {
 }
 
 impl Target {
-    /// Every target, in the order the installer lists them.
+    /// Every target.
     const ALL: [Self; 5] = [
         Self::LinuxX86_64,
         Self::LinuxAarch64,

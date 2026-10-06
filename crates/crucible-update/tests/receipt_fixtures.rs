@@ -1,7 +1,7 @@
 //! The receipt read by both of its readers, which must agree.
 //!
-//! The installer is shell and writes a receipt that crucible later reads, and
-//! the installer reads it back on an upgrade. Each receipt under
+//! The installer that writes the receipt is shell, and reads it back on an
+//! upgrade, while crucible reads it on its own. Each receipt under
 //! `tests/fixtures/installer/receipts/` is given to the shell reader beside
 //! them, under `/bin/sh` and `LC_ALL=C`, and to [`Receipt::parse`]. Both must
 //! accept the ones in `accepted/` with the same values, byte for byte, and
@@ -40,6 +40,11 @@ fn shown(bytes: &[u8]) -> String {
 /// What the shell reader made of `receipt`: the values it set, in the order
 /// the receipt holds them, or `None` when it refused.
 fn shell(receipt: &Path) -> Option<Vec<String>> {
+    shell_with(receipt, "/usr/bin:/bin")
+}
+
+/// [`shell`], with commands found on `path`.
+fn shell_with(receipt: &Path, path: &str) -> Option<Vec<String>> {
     let output = Command::new("/bin/sh")
         .arg("-c")
         .arg(
@@ -53,7 +58,7 @@ fn shell(receipt: &Path) -> Option<Vec<String>> {
         .arg(receipt)
         .env_clear()
         .env("LC_ALL", "C")
-        .env("PATH", "/usr/bin:/bin")
+        .env("PATH", path)
         .output()
         .expect("/bin/sh runs");
     match output.status.code() {
@@ -109,5 +114,35 @@ fn both_readers_refuse_each_refused_receipt() {
         let name = receipt.display();
         assert_eq!(shell(&receipt), None, "the shell took {name}");
         assert_eq!(rust(&receipt), None, "the parser took {name}");
+    }
+}
+
+/// The commands the shell reader runs that are not built into the shell.
+const COMMANDS: [&str; 3] = ["tail", "tr", "wc"];
+
+#[test]
+fn the_shell_reader_refuses_a_receipt_it_cannot_check_whole() {
+    let accepted = receipts("accepted");
+    let receipt = accepted.first().expect("an accepted receipt");
+    for missing in COMMANDS {
+        let path = std::env::temp_dir().join(format!(
+            "crucible-receipt-path-{missing}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path).expect("a directory for the commands");
+        for command in COMMANDS.into_iter().filter(|command| *command != missing) {
+            let found = ["/usr/bin", "/bin"]
+                .into_iter()
+                .map(|dir| Path::new(dir).join(command))
+                .find(|at| at.exists())
+                .unwrap_or_else(|| panic!("{command} is installed"));
+            std::os::unix::fs::symlink(found, path.join(command)).expect("the command linked");
+        }
+
+        let read = shell_with(receipt, path.to_str().expect("a UTF-8 path"));
+
+        let _ = fs::remove_dir_all(&path);
+        assert_eq!(read, None, "read without {missing}");
     }
 }

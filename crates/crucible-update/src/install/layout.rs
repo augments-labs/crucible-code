@@ -3,20 +3,24 @@
 //!
 //! What may be trusted is decided entry by entry, before an entry is read.
 //! Each directory from the prefix down, the receipt and each executable must
-//! be owned by root or by whoever owns the running executable, and writable by
-//! nobody else, which is the rule the broker lookup already holds its image
-//! to. That is what makes reading them in turn sound: nobody who is not
-//! already trusted can change an entry between its check and its use. The
-//! files are opened without following a link and examined through the handle
-//! that is read. The directories above the prefix are not examined; a
-//! substitute tree made by anybody else fails on its first entry, whatever
-//! led to it.
+//! be owned by root or by the user running crucible, and writable by nobody
+//! else, which is the rule the broker lookup holds its image to. That is what
+//! makes reading them in turn sound: nobody who is not already trusted can
+//! change an entry between its check and its use, and a tree anybody else made
+//! fails on its first entry, whatever led to it. The files are opened without
+//! following a link and examined through the handle that is read.
+//!
+//! The directories above the prefix are not examined. Whoever may change one
+//! of them may already replace the `crucible` link in the directory the
+//! installer was given, which is what the user runs, so holding them to the
+//! rule would protect nothing it does not already lose.
 //!
 //! The layout's links are read rather than followed. `current` must say
 //! exactly `releases/<version>`, so it cannot reach out of the prefix, and a
 //! release directory, a receipt or an executable that is itself a link is
 //! refused. The unit holds exactly the files its receipt accounts for.
 
+use std::fmt;
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read as _};
 use std::os::unix::ffi::OsStrExt as _;
@@ -45,8 +49,9 @@ const CRUCIBLE: &str = "crucible";
 /// The broker's name inside its unit.
 const BROKER: &str = "crucible-sandbox-broker";
 
-/// The most an executable may occupy before it is refused unread. A release
-/// binary is a few tens of MiB; this only bounds the time a hash can take.
+/// The most an executable may hold. Hashing stops one byte past it and the
+/// file is refused; a release binary is a few tens of MiB, so this only bounds
+/// the time a hash can take.
 const EXECUTABLE_CEILING: u64 = 256 * 1024 * 1024;
 
 /// How much of an executable is hashed at a time.
@@ -73,10 +78,10 @@ pub enum LayoutError {
     #[error("crucible is not running from an installer-managed release")]
     Unmanaged,
     /// An entry could not be examined or read.
-    #[error("could not read the install's {what}")]
+    #[error("could not read the install's {entry}")]
     Io {
         /// The entry.
-        what: &'static str,
+        entry: LayoutEntry,
         /// What the operating system said.
         #[source]
         source: io::Error,
@@ -84,37 +89,38 @@ pub enum LayoutError {
     /// The prefix is reached through a link, or its path is not canonical.
     #[error("the install's prefix is not its own canonical path")]
     NotCanonical,
-    /// An entry is owned by another user than root or the executable's owner.
-    #[error("the install's {what} belongs to another user")]
+    /// An entry is owned by another user than root or the one running
+    /// crucible.
+    #[error("the install's {entry} belongs to another user")]
     Foreign {
         /// The entry.
-        what: &'static str,
+        entry: LayoutEntry,
     },
     /// An entry may be written by its group or by anybody.
-    #[error("the install's {what} may be written by other users")]
+    #[error("the install's {entry} may be written by other users")]
     Writable {
         /// The entry.
-        what: &'static str,
+        entry: LayoutEntry,
     },
     /// An entry is a link where a directory or a file belongs.
-    #[error("the install's {what} is a link")]
+    #[error("the install's {entry} is a link")]
     Link {
         /// The entry.
-        what: &'static str,
+        entry: LayoutEntry,
     },
     /// An entry is not the kind of entry its place holds.
-    #[error("the install's {what} is not a {kind}")]
+    #[error("the install's {entry} is not a {kind}")]
     Kind {
         /// The entry.
-        what: &'static str,
+        entry: LayoutEntry,
         /// What it should be.
-        kind: &'static str,
+        kind: EntryKind,
     },
     /// A file has another name than its place in the layout.
-    #[error("the install's {what} has another name as well")]
+    #[error("the install's {entry} has another name as well")]
     HardLink {
         /// The entry.
-        what: &'static str,
+        entry: LayoutEntry,
     },
     /// The executable is a release that is no longer the active one.
     #[error("crucible is running from a release that is no longer the active one")]
@@ -130,28 +136,111 @@ pub enum LayoutError {
     #[error("the install's receipt is not valid")]
     Receipt(#[source] ReceiptError),
     /// The receipt says something the layout or the running build contradicts.
-    #[error("the install's receipt names another {what}")]
+    #[error("the install's receipt names another {claim}")]
     Mismatch {
         /// What disagrees.
-        what: &'static str,
+        claim: ReceiptClaim,
     },
     /// A file is larger than a release ever is.
-    #[error("the install's {what} is too large to be a release")]
+    #[error("the install's {entry} is too large to be a release")]
     TooLarge {
         /// The entry.
-        what: &'static str,
+        entry: LayoutEntry,
     },
     /// A file's SHA-256 is not the one its receipt records.
-    #[error("the install's {what} is not the file its receipt records")]
+    #[error("the install's {entry} is not the file its receipt records")]
     Digest {
         /// The entry.
-        what: &'static str,
+        entry: LayoutEntry,
     },
 }
 
-/// Whose files an install may be made of, besides root's.
+/// A place in the layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutEntry {
+    /// The prefix, `<dir>/.crucible-install`.
+    Prefix,
+    /// `releases`, which holds the release units.
+    Releases,
+    /// `current`, the link naming the active release.
+    Current,
+    /// The active release unit, `releases/<version>`.
+    Unit,
+    /// The active unit's receipt.
+    Receipt,
+    /// The active unit's `crucible`.
+    Executable,
+    /// The active unit's `crucible-sandbox-broker`.
+    Broker,
+}
+
+/// The kind of entry a place in the layout holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    /// A directory.
+    Directory,
+    /// An ordinary file.
+    File,
+    /// A symbolic link.
+    Link,
+}
+
+/// What a receipt says that the layout or the running build can contradict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiptClaim {
+    /// The prefix the receipt is kept under.
+    Prefix,
+    /// The release the unit holds.
+    Release,
+    /// The platform the release was built for.
+    Platform,
+}
+
+impl fmt::Display for LayoutEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Prefix => "prefix",
+            Self::Releases => "releases directory",
+            Self::Current => "active-release link",
+            Self::Unit => "active release",
+            Self::Receipt => "receipt",
+            Self::Executable => "executable",
+            Self::Broker => "broker",
+        })
+    }
+}
+
+impl fmt::Display for EntryKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Directory => "directory",
+            Self::File => "file",
+            Self::Link => "link",
+        })
+    }
+}
+
+impl fmt::Display for ReceiptClaim {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Prefix => "prefix",
+            Self::Release => "release",
+            Self::Platform => "platform",
+        })
+    }
+}
+
+/// Whose files an install may be made of, besides root's: the user running
+/// crucible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Owner(u32);
+
+impl Owner {
+    /// The user this process runs as.
+    fn running() -> Self {
+        Self(rustix::process::getuid().as_raw())
+    }
+}
 
 impl ReceiptLayout {
     /// Takes the layout the running executable belongs to.
@@ -168,12 +257,15 @@ impl ReceiptLayout {
     /// [`LayoutError`] naming the first entry that is not as a managed install
     /// leaves it.
     pub fn of_executable(executable: &Path) -> Result<Self, LayoutError> {
-        let executable = fs::canonicalize(executable).map_err(io("executable"))?;
+        Self::taken(executable, Owner::running())
+    }
+
+    /// Takes the layout `executable` belongs to, whose entries `owner` or root
+    /// must own.
+    fn taken(executable: &Path, owner: Owner) -> Result<Self, LayoutError> {
+        let executable = fs::canonicalize(executable).map_err(io(LayoutEntry::Executable))?;
         let prefix = managed(&executable).ok_or(LayoutError::Unmanaged)?;
-        let owner = fs::symlink_metadata(&executable)
-            .map_err(io("executable"))?
-            .uid();
-        let layout = Self::read(prefix, Owner(owner))?;
+        let layout = Self::read(prefix, owner)?;
         if executable != layout.unit().join(CRUCIBLE) {
             return Err(LayoutError::Inactive);
         }
@@ -200,41 +292,47 @@ impl ReceiptLayout {
     /// Reads the layout under `prefix`, whose entries `owner` or root must
     /// own.
     fn read(prefix: &Path, owner: Owner) -> Result<Self, LayoutError> {
-        if fs::canonicalize(prefix).map_err(io("prefix"))? != prefix {
+        if fs::canonicalize(prefix).map_err(io(LayoutEntry::Prefix))? != prefix {
             return Err(LayoutError::NotCanonical);
         }
-        directory(prefix, "prefix", owner)?;
+        directory(prefix, LayoutEntry::Prefix, owner)?;
         let version = current(&prefix.join(CURRENT))?;
         let releases = prefix.join(RELEASES);
-        directory(&releases, "releases directory", owner)?;
+        directory(&releases, LayoutEntry::Releases, owner)?;
         let unit = releases.join(version.as_str());
-        directory(&unit, "active release", owner)?;
+        directory(&unit, LayoutEntry::Unit, owner)?;
 
         let mut bytes = Vec::new();
-        file(&unit.join(RECEIPT), "receipt", owner)?
+        file(&unit.join(RECEIPT), LayoutEntry::Receipt, owner)?
             .take(receipt::MAX_BYTES as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(io("receipt"))?;
+            .map_err(io(LayoutEntry::Receipt))?;
         let receipt = Receipt::parse(&bytes).map_err(LayoutError::Receipt)?;
         contents(&unit, receipt.broker().is_some())?;
         if receipt.prefix().as_os_str() != prefix.as_os_str() {
-            return Err(LayoutError::Mismatch { what: "prefix" });
+            return Err(LayoutError::Mismatch {
+                claim: ReceiptClaim::Prefix,
+            });
         }
         if *receipt.version() != version {
-            return Err(LayoutError::Mismatch { what: "release" });
+            return Err(LayoutError::Mismatch {
+                claim: ReceiptClaim::Release,
+            });
         }
         if Target::running() != Some(receipt.target()) {
-            return Err(LayoutError::Mismatch { what: "platform" });
+            return Err(LayoutError::Mismatch {
+                claim: ReceiptClaim::Platform,
+            });
         }
 
-        let executable = file(&unit.join(CRUCIBLE), "executable", owner)?;
-        if digest(executable, "executable")? != *receipt.crucible() {
-            return Err(LayoutError::Digest { what: "executable" });
-        }
-        if let Some(recorded) = receipt.broker() {
-            let broker = file(&unit.join(BROKER), "broker", owner)?;
-            if digest(broker, "broker")? != *recorded {
-                return Err(LayoutError::Digest { what: "broker" });
+        for (entry, name, recorded) in [
+            (LayoutEntry::Executable, CRUCIBLE, Some(receipt.crucible())),
+            (LayoutEntry::Broker, BROKER, receipt.broker()),
+        ] {
+            let Some(recorded) = recorded else { continue };
+            let opened = file(&unit.join(name), entry, owner)?;
+            if digest(opened, entry, EXECUTABLE_CEILING)? != *recorded {
+                return Err(LayoutError::Digest { entry });
             }
         }
 
@@ -260,12 +358,15 @@ fn managed(executable: &Path) -> Option<&Path> {
 /// The release the active-release link at `at` names, which it must spell
 /// exactly `releases/<version>`.
 fn current(at: &Path) -> Result<Version, LayoutError> {
-    let what = "active-release link";
-    let metadata = fs::symlink_metadata(at).map_err(io(what))?;
+    let entry = LayoutEntry::Current;
+    let metadata = fs::symlink_metadata(at).map_err(io(entry))?;
     if !metadata.file_type().is_symlink() {
-        return Err(LayoutError::Kind { what, kind: "link" });
+        return Err(LayoutError::Kind {
+            entry,
+            kind: EntryKind::Link,
+        });
     }
-    let target = fs::read_link(at).map_err(io(what))?;
+    let target = fs::read_link(at).map_err(io(entry))?;
     target
         .as_os_str()
         .as_bytes()
@@ -277,63 +378,66 @@ fn current(at: &Path) -> Result<Version, LayoutError> {
 
 /// Holds the directory at `at` to the layout: a directory, not a link, that
 /// only `owner` or root may change.
-fn directory(at: &Path, what: &'static str, owner: Owner) -> Result<(), LayoutError> {
-    let metadata = fs::symlink_metadata(at).map_err(io(what))?;
+fn directory(at: &Path, entry: LayoutEntry, owner: Owner) -> Result<(), LayoutError> {
+    let metadata = fs::symlink_metadata(at).map_err(io(entry))?;
     if metadata.file_type().is_symlink() {
-        return Err(LayoutError::Link { what });
+        return Err(LayoutError::Link { entry });
     }
     if !metadata.is_dir() {
         return Err(LayoutError::Kind {
-            what,
-            kind: "directory",
+            entry,
+            kind: EntryKind::Directory,
         });
     }
-    held(&metadata, what, owner)
+    held(&metadata, entry, owner)
 }
 
 /// Opens the file at `at` once it is held to the layout: an ordinary file,
 /// not a link, under one name, that only `owner` or root may change. The
 /// checks are made again on the handle returned, so the file read is the one
 /// that was examined.
-fn file(at: &Path, what: &'static str, owner: Owner) -> Result<File, LayoutError> {
-    let named = fs::symlink_metadata(at).map_err(io(what))?;
+fn file(at: &Path, entry: LayoutEntry, owner: Owner) -> Result<File, LayoutError> {
+    let named = fs::symlink_metadata(at).map_err(io(entry))?;
     if named.file_type().is_symlink() {
-        return Err(LayoutError::Link { what });
+        return Err(LayoutError::Link { entry });
     }
-    ordinary(&named, what, owner)?;
+    ordinary(&named, entry, owner)?;
     let opened = crucible_privacy::open_read(at).map_err(|error| LayoutError::Io {
-        what,
+        entry,
         source: error.into_io(),
     })?;
-    let metadata = opened.metadata().map_err(io(what))?;
+    let metadata = opened.metadata().map_err(io(entry))?;
     if (metadata.dev(), metadata.ino()) != (named.dev(), named.ino()) {
         return Err(LayoutError::Io {
-            what,
+            entry,
             source: io::Error::other("the entry was replaced while it was examined"),
         });
     }
-    ordinary(&metadata, what, owner)?;
+    ordinary(&metadata, entry, owner)?;
     Ok(opened)
 }
 
 /// Holds a file's metadata to the layout's rule for files.
-fn ordinary(metadata: &Metadata, what: &'static str, owner: Owner) -> Result<(), LayoutError> {
+fn ordinary(metadata: &Metadata, entry: LayoutEntry, owner: Owner) -> Result<(), LayoutError> {
     if !metadata.is_file() {
-        return Err(LayoutError::Kind { what, kind: "file" });
+        return Err(LayoutError::Kind {
+            entry,
+            kind: EntryKind::File,
+        });
     }
     if metadata.nlink() != 1 {
-        return Err(LayoutError::HardLink { what });
+        return Err(LayoutError::HardLink { entry });
     }
-    held(metadata, what, owner)
+    held(metadata, entry, owner)
 }
 
 /// Holds an entry to the trust rule.
-fn held(metadata: &Metadata, what: &'static str, owner: Owner) -> Result<(), LayoutError> {
+fn held(metadata: &Metadata, entry: LayoutEntry, owner: Owner) -> Result<(), LayoutError> {
     if !owned(owner, metadata.uid()) {
-        return Err(LayoutError::Foreign { what });
+        return Err(LayoutError::Foreign { entry });
     }
     if !trusted(owner, metadata.uid(), metadata.mode()) {
-        return Err(LayoutError::Writable { what });
+        return Err(LayoutError::Writable { entry });
     }
     Ok(())
 }
@@ -341,17 +445,17 @@ fn held(metadata: &Metadata, what: &'static str, owner: Owner) -> Result<(), Lay
 /// Whether the unit at `unit` holds exactly its receipt, its executable and,
 /// when `broker`, its broker. Only one entry more than that is ever read.
 fn contents(unit: &Path, broker: bool) -> Result<(), LayoutError> {
-    let what = "active release";
+    let entry = LayoutEntry::Unit;
     let mut expected = vec![RECEIPT, CRUCIBLE];
     if broker {
         expected.push(BROKER);
     }
     let mut found = Vec::new();
-    for entry in fs::read_dir(unit)
-        .map_err(io(what))?
+    for listed in fs::read_dir(unit)
+        .map_err(io(entry))?
         .take(expected.len() + 1)
     {
-        found.push(entry.map_err(io(what))?.file_name());
+        found.push(listed.map_err(io(entry))?.file_name());
     }
     found.sort();
     expected.sort_unstable();
@@ -365,11 +469,11 @@ fn contents(unit: &Path, broker: bool) -> Result<(), LayoutError> {
     Ok(())
 }
 
-/// The SHA-256 of `file`, read to its end, which must come within
-/// [`EXECUTABLE_CEILING`].
-fn digest(file: File, what: &'static str) -> Result<Digest, LayoutError> {
+/// The SHA-256 of `file`, read to its end, which must come within `ceiling`
+/// bytes.
+fn digest(file: File, entry: LayoutEntry, ceiling: u64) -> Result<Digest, LayoutError> {
     let mut hasher = Sha256::new();
-    let mut limited = file.take(EXECUTABLE_CEILING + 1);
+    let mut limited = file.take(ceiling + 1);
     let mut buffer = vec![0; HASH_BUFFER];
     loop {
         let read = match limited.read(&mut buffer) {
@@ -378,7 +482,7 @@ fn digest(file: File, what: &'static str) -> Result<Digest, LayoutError> {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => {
                 return Err(LayoutError::Io {
-                    what,
+                    entry,
                     source: error,
                 });
             }
@@ -386,14 +490,14 @@ fn digest(file: File, what: &'static str) -> Result<Digest, LayoutError> {
         hasher.update(buffer.get(..read).unwrap_or_default());
     }
     if limited.limit() == 0 {
-        return Err(LayoutError::TooLarge { what });
+        return Err(LayoutError::TooLarge { entry });
     }
     Ok(Digest::new(hasher.finalize().into()))
 }
 
 /// Builds the error for an entry the operating system would not examine.
-fn io(what: &'static str) -> impl FnOnce(io::Error) -> LayoutError {
-    move |source| LayoutError::Io { what, source }
+fn io(entry: LayoutEntry) -> impl FnOnce(io::Error) -> LayoutError {
+    move |source| LayoutError::Io { entry, source }
 }
 
 /// Whether `uid` may own part of `owner`'s install.

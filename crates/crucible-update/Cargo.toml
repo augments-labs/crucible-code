@@ -1,6 +1,6 @@
 [package]
 name = "crucible-update"
-description = "Release discovery and the cached release check."
+description = "Release discovery, the cached release check and the installed release's receipt."
 publish.workspace = true
 version.workspace = true
 edition.workspace = true

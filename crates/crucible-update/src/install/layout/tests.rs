@@ -1,6 +1,7 @@
 use std::fs;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sha2::{Digest as _, Sha256};
 
@@ -79,17 +80,13 @@ impl Install {
         ReceiptLayout::of_executable(&self.dir.join(CRUCIBLE))
     }
 
-    /// Reads the layout for `owner`, as the executable's owner would be found.
+    /// Reads the layout for `owner`, as the running user would be found.
     fn read_for(&self, owner: Owner) -> Result<ReceiptLayout, LayoutError> {
         ReceiptLayout::read(&self.prefix(), owner)
     }
 
     fn read(&self) -> Result<ReceiptLayout, LayoutError> {
-        self.read_for(Owner(
-            fs::symlink_metadata(&self.dir)
-                .expect("the directory")
-                .uid(),
-        ))
+        self.read_for(Owner::running())
     }
 }
 
@@ -145,7 +142,12 @@ fn receipt_for(prefix: &Path, version: &str, target: &str, broker: Option<&[u8]>
 
 /// Who runs the tests, as the owner of a file they make.
 fn me() -> u32 {
-    let probe = std::env::temp_dir().join(format!("crucible-layout-uid-{}", std::process::id()));
+    static PROBES: AtomicUsize = AtomicUsize::new(0);
+    let probe = std::env::temp_dir().join(format!(
+        "crucible-layout-uid-{}-{}",
+        std::process::id(),
+        PROBES.fetch_add(1, Ordering::Relaxed)
+    ));
     fs::write(&probe, b"").expect("a probe file");
     let uid = fs::symlink_metadata(&probe).expect("the probe").uid();
     let _ = fs::remove_file(&probe);
@@ -233,7 +235,9 @@ fn a_receipt_naming_another_prefix_is_refused() {
 
     assert!(matches!(
         install.take(),
-        Err(LayoutError::Mismatch { what: "prefix" })
+        Err(LayoutError::Mismatch {
+            claim: ReceiptClaim::Prefix
+        })
     ));
 }
 
@@ -244,7 +248,9 @@ fn a_receipt_naming_another_release_than_its_unit_is_refused() {
 
     assert!(matches!(
         install.take(),
-        Err(LayoutError::Mismatch { what: "release" })
+        Err(LayoutError::Mismatch {
+            claim: ReceiptClaim::Release
+        })
     ));
 }
 
@@ -261,7 +267,9 @@ fn a_receipt_naming_another_platform_is_refused() {
 
     assert!(matches!(
         install.take(),
-        Err(LayoutError::Mismatch { what: "platform" })
+        Err(LayoutError::Mismatch {
+            claim: ReceiptClaim::Platform
+        })
     ));
 }
 
@@ -273,7 +281,9 @@ fn an_executable_whose_hash_is_not_the_recorded_one_is_refused() {
 
     assert!(matches!(
         install.take(),
-        Err(LayoutError::Digest { what: "executable" })
+        Err(LayoutError::Digest {
+            entry: LayoutEntry::Executable
+        })
     ));
 }
 
@@ -285,33 +295,94 @@ fn a_broker_whose_hash_is_not_the_recorded_one_is_refused() {
 
     assert!(matches!(
         install.take(),
-        Err(LayoutError::Digest { what: "broker" })
+        Err(LayoutError::Digest {
+            entry: LayoutEntry::Broker
+        })
     ));
 }
 
 #[test]
-fn an_install_owned_by_somebody_else_is_refused() {
-    let install = Install::new("foreign");
-
-    if me() == 0 {
-        // Root's entries are trusted whoever runs, so the foreign entry has to
-        // be made: one file handed to an ordinary user.
-        let at = install.unit(ACTIVE).join(CRUCIBLE);
-        std::os::unix::fs::chown(&at, Some(4242), None).expect("the executable handed over");
-        assert!(matches!(
-            install.read_for(Owner(0)),
-            Err(LayoutError::Foreign { what: "executable" })
-        ));
-    } else {
-        assert!(matches!(
-            install.read_for(somebody_else()),
-            Err(LayoutError::Foreign { what: "prefix" })
-        ));
-    }
+fn the_owner_an_install_is_held_to_is_the_user_running_crucible() {
+    assert_eq!(Owner::running(), Owner(me()));
 }
 
 #[test]
-fn root_and_the_executable_owner_are_trusted_and_nobody_else_is() {
+fn an_install_somebody_else_made_is_refused_on_its_first_entry() {
+    let install = Install::new("foreign");
+
+    // The install is this user's, so to a process another user runs it is
+    // somebody else's tree.
+    assert!(matches!(
+        ReceiptLayout::taken(&install.dir.join(CRUCIBLE), somebody_else()),
+        Err(LayoutError::Foreign {
+            entry: LayoutEntry::Prefix
+        })
+    ));
+}
+
+#[test]
+fn an_install_reached_through_a_link_to_another_tree_is_held_to_that_tree() {
+    let install = Install::new("redirected");
+    let elsewhere = install.dir.join("elsewhere");
+    directory(&elsewhere);
+    let other = elsewhere.join(PREFIX);
+    fs::rename(install.prefix(), &other).expect("the prefix moved");
+    symlink(&other, install.prefix()).expect("the prefix linked to it");
+
+    assert!(matches!(
+        ReceiptLayout::taken(&install.dir.join(CRUCIBLE), somebody_else()),
+        Err(LayoutError::Foreign {
+            entry: LayoutEntry::Prefix
+        })
+    ));
+}
+
+#[test]
+fn each_entry_handed_to_somebody_else_is_refused_when_root_runs() {
+    if me() != 0 {
+        // Only root can hand an entry to another user; an ordinary run holds
+        // the whole install to an owner it is not, above.
+        return;
+    }
+    for (entry, place) in places() {
+        let install = Install::new("handed-over");
+        std::os::unix::fs::lchown(place(&install), Some(4242), None).expect("handed over");
+
+        let refused = install.read_for(Owner(0));
+
+        assert!(
+            matches!(refused, Err(LayoutError::Foreign { entry: found }) if found == entry),
+            "{entry}: {refused:?}"
+        );
+    }
+}
+
+/// Where an entry is in an install.
+type Place = fn(&Install) -> PathBuf;
+
+/// Each directory and file the trust rule covers, with where it is in an
+/// install.
+fn places() -> [(LayoutEntry, Place); 6] {
+    [
+        (LayoutEntry::Prefix, |install| install.prefix()),
+        (LayoutEntry::Releases, |install| {
+            install.prefix().join(RELEASES)
+        }),
+        (LayoutEntry::Unit, |install| install.unit(ACTIVE)),
+        (LayoutEntry::Receipt, |install| {
+            install.unit(ACTIVE).join(RECEIPT)
+        }),
+        (LayoutEntry::Executable, |install| {
+            install.unit(ACTIVE).join(CRUCIBLE)
+        }),
+        (LayoutEntry::Broker, |install| {
+            install.unit(ACTIVE).join(BROKER)
+        }),
+    ]
+}
+
+#[test]
+fn root_and_the_running_user_are_trusted_and_nobody_else_is() {
     let owner = Owner(1000);
 
     assert!(trusted(owner, 0, 0o755));
@@ -323,28 +394,25 @@ fn root_and_the_executable_owner_are_trusted_and_nobody_else_is() {
 }
 
 #[test]
-fn a_release_directory_others_may_write_is_refused() {
-    let install = Install::new("open-unit");
-    fs::set_permissions(install.unit(ACTIVE), fs::Permissions::from_mode(0o775)).expect("mode");
+fn each_entry_its_group_or_anybody_may_write_is_refused() {
+    for (entry, place) in places() {
+        let modes = if entry == LayoutEntry::Receipt {
+            [0o664, 0o646]
+        } else {
+            [0o775, 0o757]
+        };
+        for mode in modes {
+            let install = Install::new("open");
+            fs::set_permissions(place(&install), fs::Permissions::from_mode(mode)).expect("mode");
 
-    assert!(matches!(
-        install.take(),
-        Err(LayoutError::Writable {
-            what: "active release"
-        })
-    ));
-}
+            let refused = install.take();
 
-#[test]
-fn a_receipt_others_may_write_is_refused() {
-    let install = Install::new("open-receipt");
-    let at = install.unit(ACTIVE).join(RECEIPT);
-    fs::set_permissions(at, fs::Permissions::from_mode(0o666)).expect("mode");
-
-    assert!(matches!(
-        install.take(),
-        Err(LayoutError::Writable { what: "receipt" })
-    ));
+            assert!(
+                matches!(refused, Err(LayoutError::Writable { entry: found }) if found == entry),
+                "{entry} at {mode:o}: {refused:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -377,7 +445,7 @@ fn an_active_release_that_is_not_a_link_is_refused() {
     assert!(matches!(
         install.read(),
         Err(LayoutError::Kind {
-            what: "active-release link",
+            entry: LayoutEntry::Current,
             ..
         })
     ));
@@ -393,7 +461,7 @@ fn a_release_directory_that_is_a_link_out_of_the_prefix_is_refused() {
     assert!(matches!(
         install.read(),
         Err(LayoutError::Link {
-            what: "active release"
+            entry: LayoutEntry::Unit
         })
     ));
     assert!(install.take().is_err());
@@ -409,7 +477,7 @@ fn a_releases_directory_that_is_a_link_is_refused() {
     assert!(matches!(
         install.read(),
         Err(LayoutError::Link {
-            what: "releases directory"
+            entry: LayoutEntry::Releases
         })
     ));
 }
@@ -425,7 +493,9 @@ fn an_executable_that_is_a_link_out_of_its_unit_is_refused() {
 
     assert!(matches!(
         install.read(),
-        Err(LayoutError::Link { what: "executable" })
+        Err(LayoutError::Link {
+            entry: LayoutEntry::Executable
+        })
     ));
     assert!(install.take().is_err());
 }
@@ -440,7 +510,9 @@ fn a_receipt_that_is_a_link_is_refused() {
 
     assert!(matches!(
         install.take(),
-        Err(LayoutError::Link { what: "receipt" })
+        Err(LayoutError::Link {
+            entry: LayoutEntry::Receipt
+        })
     ));
 }
 
@@ -465,7 +537,9 @@ fn an_executable_with_a_second_name_is_refused() {
 
     assert!(matches!(
         install.take(),
-        Err(LayoutError::HardLink { what: "executable" })
+        Err(LayoutError::HardLink {
+            entry: LayoutEntry::Executable
+        })
     ));
 }
 
@@ -491,4 +565,129 @@ fn a_broker_the_receipt_names_but_the_unit_lacks_is_refused() {
     fs::remove_file(install.unit(ACTIVE).join(BROKER)).expect("the broker removed");
 
     assert!(matches!(install.take(), Err(LayoutError::Contents)));
+}
+
+#[test]
+fn a_unit_holding_several_files_its_receipt_does_not_name_is_refused() {
+    let install = Install::new("extra-files");
+    for name in ["one", "two", "three"] {
+        file(&install.unit(ACTIVE).join(name), b"", 0o644);
+    }
+
+    assert!(matches!(install.take(), Err(LayoutError::Contents)));
+}
+
+#[test]
+fn a_receipt_that_is_a_directory_is_refused() {
+    let install = Install::new("receipt-directory");
+    let at = install.unit(ACTIVE).join(RECEIPT);
+    fs::remove_file(&at).expect("the receipt removed");
+    directory(&at);
+
+    assert!(matches!(
+        install.read(),
+        Err(LayoutError::Kind {
+            entry: LayoutEntry::Receipt,
+            kind: EntryKind::File
+        })
+    ));
+}
+
+#[test]
+fn an_executable_that_is_a_directory_is_refused() {
+    let install = Install::new("executable-directory");
+    let at = install.unit(ACTIVE).join(CRUCIBLE);
+    fs::remove_file(&at).expect("the executable removed");
+    directory(&at);
+
+    assert!(matches!(
+        install.read(),
+        Err(LayoutError::Kind {
+            entry: LayoutEntry::Executable,
+            kind: EntryKind::File
+        })
+    ));
+}
+
+#[test]
+fn a_releases_directory_that_is_a_file_is_refused() {
+    let install = Install::new("releases-file");
+    let at = install.prefix().join(RELEASES);
+    fs::remove_dir_all(&at).expect("the releases removed");
+    file(&at, b"", 0o644);
+
+    assert!(matches!(
+        install.read(),
+        Err(LayoutError::Kind {
+            entry: LayoutEntry::Releases,
+            kind: EntryKind::Directory
+        })
+    ));
+}
+
+#[test]
+fn a_broker_that_is_a_fifo_is_refused_without_being_opened() {
+    let install = Install::new("broker-fifo");
+    let at = install.unit(ACTIVE).join(BROKER);
+    fs::remove_file(&at).expect("the broker removed");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&at)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+
+    // Opening a FIFO to read waits for a writer, so a refusal that came only
+    // after the open would never come.
+    assert!(matches!(
+        install.read(),
+        Err(LayoutError::Kind {
+            entry: LayoutEntry::Broker,
+            kind: EntryKind::File
+        })
+    ));
+}
+
+#[test]
+fn an_executable_that_is_not_there_is_refused() {
+    let install = Install::new("missing");
+
+    assert!(matches!(
+        ReceiptLayout::of_executable(&install.dir.join("nothing")),
+        Err(LayoutError::Io {
+            entry: LayoutEntry::Executable,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_receipt_larger_than_the_ceiling_is_refused() {
+    let install = Install::new("large-receipt");
+    let mut text = receipt(&install.prefix(), ACTIVE, Some(HELPER));
+    text.insert_str(0, &"x".repeat(receipt::MAX_BYTES + 1 - text.len()));
+
+    install.write_receipt(&text);
+
+    assert!(matches!(
+        install.take(),
+        Err(LayoutError::Receipt(ReceiptError::TooLarge))
+    ));
+}
+
+#[test]
+fn a_file_is_hashed_up_to_its_ceiling_and_refused_past_it() {
+    let install = Install::new("ceiling");
+    let at = install.dir.join("sized");
+    file(&at, &[7; 16], 0o644);
+
+    let within = digest(File::open(&at).expect("the file"), LayoutEntry::Broker, 16);
+
+    assert_eq!(within.expect("the digest").to_string(), hex(&[7; 16]));
+    file(&at, &[7; 17], 0o644);
+    assert!(matches!(
+        digest(File::open(&at).expect("the file"), LayoutEntry::Broker, 16),
+        Err(LayoutError::TooLarge {
+            entry: LayoutEntry::Broker
+        })
+    ));
 }

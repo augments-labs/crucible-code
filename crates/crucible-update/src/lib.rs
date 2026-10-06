@@ -13,10 +13,10 @@
 //! built once and can be lent to the application's other HTTP client, so
 //! separate pools do not become separate trust or environment decisions.
 //!
-//! On Unix it also reads the receipt the shell installer leaves in each
-//! release it installs. [`ReceiptLayout::of_executable`] takes the layout the
-//! running executable belongs to only once every entry of it, the receipt and
-//! the recorded hashes agree, and reads nothing over the network.
+//! On Unix it also reads the versioned layout an installer-managed release
+//! lives in: the layout the running executable belongs to is taken only once
+//! its directories and files, its receipt and the recorded hashes agree, and
+//! nothing about it is read over the network.
 
 #[cfg(unix)]
 mod install;
@@ -24,6 +24,7 @@ mod release;
 
 #[cfg(unix)]
 pub use install::{
-    Digest, Installation, LayoutError, Receipt, ReceiptError, ReceiptLayout, Target, Version,
+    Digest, EntryKind, Installation, LayoutEntry, LayoutError, Receipt, ReceiptClaim, ReceiptError,
+    ReceiptLayout, Target, Version,
 };
 pub use release::{Newer, SHUTDOWN, Unjoined, UpdateCrateReleaseCheck, newer};
