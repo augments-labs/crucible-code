@@ -475,11 +475,13 @@ fn renumbered(noted: Vec<Noted>) -> Vec<Noted> {
                 tool,
                 effect,
                 subject,
+                asked,
             }) => Noted::Put(Pending::Permission {
                 id: ordinal(id),
                 tool,
                 effect,
                 subject,
+                asked,
             }),
             Noted::Put(Pending::Questions { id, questions }) => Noted::Put(Pending::Questions {
                 id: ordinal(id),
