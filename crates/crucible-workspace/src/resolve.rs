@@ -41,6 +41,14 @@ impl Workspace {
     /// what it would lead to is not there to ask, and neither does a `..` after
     /// a file.
     ///
+    /// Windows is the exception to that walk. Win32 applies `..` to the text
+    /// before it follows any link, so `link\..` is the folder that holds
+    /// `link` wherever `link` points, and the `..` is taken out of the text
+    /// here first, the same way. A relative path already arrives that way,
+    /// because joining it to the verbatim root does the same. A verbatim path
+    /// with a `..` in it resolves nothing: Win32 passes it on as written, and
+    /// no file can be made under a folder called `..`.
+    ///
     /// What comes back is a plain [`PathBuf`], never a [`WorkspacePath`]. The
     /// permission engine that calls this lives in another crate and needs the
     /// name to describe the call it is settling; handing it a proof instead
@@ -48,6 +56,8 @@ impl Workspace {
     #[must_use]
     pub fn intended(&self, requested: &str) -> Option<PathBuf> {
         let joined = self.join(requested);
+        #[cfg(windows)]
+        let joined = win32(&joined)?;
         let mut resolved = PathBuf::new();
         let mut missing: Vec<&OsStr> = Vec::new();
 
@@ -222,4 +232,33 @@ impl Workspace {
             }),
         }
     }
+}
+
+/// A path with its `..` applied to the text, as Win32 applies it before it
+/// opens anything: each one removes the name before it, and one at the top of
+/// a drive or share stays there. A verbatim path is passed on as written, so
+/// one holding a `..` is not a path anything could be created at.
+#[cfg(windows)]
+fn win32(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    let mut verbatim = false;
+
+    for part in path.components() {
+        match part {
+            Component::Prefix(prefix) => {
+                verbatim = prefix.kind().is_verbatim();
+                out.push(part);
+            }
+            Component::ParentDir if verbatim => return None,
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                }
+            }
+            Component::CurDir => {}
+            Component::RootDir | Component::Normal(_) => out.push(part),
+        }
+    }
+
+    Some(out)
 }
