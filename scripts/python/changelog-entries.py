@@ -3,18 +3,18 @@
 
 A pull request writes its entry to `changelog.d/<name>.md` instead of editing
 `CHANGELOG.md`, so two pull requests open at once never edit the same lines,
-and only a release commit writes the changelog. An entry file is one heading
-from the changelog's own list, an empty line, and one or more list items, the
-first opening with a bold lead; it holds no heading of its own and is at most
-4096 bytes. `changelog.d/README.md` says so to whoever opens the directory and
+and only a release commit writes the changelog. An entry file is one of the
+headings in `HEADINGS`, an empty line, and one or more list items, the first
+opening with a bold lead; it holds no other heading and is at most 4096
+bytes. `changelog.d/README.md` says so to whoever opens the directory and
 is the one file there that is not an entry.
 
 `check` holds every entry file to that shape and `## [Unreleased]` to staying
 empty, since an entry written there by hand is the conflict the directory
 exists to prevent. `assemble` writes a version section from the entries,
-directly under the empty `## [Unreleased]`, headings in the changelog's order
-and entries under one heading in byte order of their names, then deletes the
-entry files. It writes the lists alone: the summary above them and the
+directly under the empty `## [Unreleased]`, headings in the order of
+`HEADINGS` and entries under one heading in byte order of their names, then
+deletes the entry files. It writes the lists alone: the summary above them and the
 comparison link are written by the person cutting the release, and
 `release-notes.py` refuses the section until they are.
 """
@@ -34,7 +34,7 @@ ENTRIES = "changelog.d"
 README = "README.md"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]*\.md")
 MAX_BYTES = 4096
-VERSION = re.compile(r"[0-9A-Za-z.+-]+")
+VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]*")
 DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 UNRELEASED = "## [Unreleased]"
 
@@ -44,7 +44,7 @@ class Refused(Exception):
 
 
 def entry_problems(label: str, data: bytes) -> list[str]:
-    """What keeps one entry file from rule 1, each naming the file."""
+    """What keeps one entry file from being an entry, each naming the file."""
     if len(data) > MAX_BYTES:
         return [f"{label}: is {len(data)} bytes; an entry is at most {MAX_BYTES} bytes"]
     try:
@@ -68,12 +68,17 @@ def entry_problems(label: str, data: bytes) -> list[str]:
 
 
 def unreleased_problems(changelog: str) -> list[str]:
-    """`## [Unreleased]` holds nothing: entries live in `changelog.d/`."""
+    """`## [Unreleased]` is there and holds nothing: entries live in `changelog.d/`."""
     lines = changelog.splitlines()
     if UNRELEASED not in lines:
-        return []
-    for line in lines[lines.index(UNRELEASED) + 1 :]:
-        if line.startswith("## [") or re.match(r"\[[^\]]+\]: ", line):
+        return [f"CHANGELOG.md: has no `{UNRELEASED}` for the release to write the section under"]
+    below = lines[lines.index(UNRELEASED) + 1 :]
+    # Up to the next version, or, when Unreleased is the last section, up to the
+    # link definitions at the foot of the file.
+    if not any(line.startswith("## [") for line in below):
+        below = [line for line in below if not re.match(r"\[[^\]]+\]: ", line)]
+    for line in below:
+        if line.startswith("## ["):
             break
         if line.strip():
             return [
@@ -130,7 +135,7 @@ def section(found: list[tuple[str, bytes]], version: str, date: str) -> list[str
 def assemble(root: pathlib.Path, version: str, date: str) -> None:
     """Write the version section and delete the entries, or change nothing."""
     if not VERSION.fullmatch(version):
-        raise Refused(f"the version {version!r} is not a version as Cargo.toml writes one")
+        raise Refused(f"the version {version!r} is not a version as Cargo.toml writes one, without its v")
     if not DATE.fullmatch(date):
         raise Refused(f"the date {date!r} is not YYYY-MM-DD")
     try:
@@ -144,8 +149,6 @@ def assemble(root: pathlib.Path, version: str, date: str) -> None:
     if problems:
         raise Refused("\n".join(problems))
     lines = changelog.split("\n")
-    if UNRELEASED not in lines:
-        raise Refused(f"CHANGELOG.md has no {UNRELEASED} to write the section under")
     heading = re.compile(r"## \[" + re.escape(version) + r"\]")
     if any(heading.match(line) for line in lines):
         raise Refused(f"CHANGELOG.md already has a section for {version}")
@@ -166,7 +169,7 @@ def assemble(root: pathlib.Path, version: str, date: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    # The tree the commands act on; the validator points it at a copy.
+    # The tree the commands act on; the validator points it at trees it builds.
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("--root", type=pathlib.Path, default=ROOT, help=argparse.SUPPRESS)
     commands = parser.add_subparsers(dest="command", required=True)

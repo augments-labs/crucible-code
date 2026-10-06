@@ -76,7 +76,8 @@ same way afterwards.
    edited by this commit alone.
    `python3 scripts/python/changelog-entries.py assemble --version X --date D`
    writes the version section with today's date from those files and deletes
-   them; it refuses, changing nothing, when there is none or the section
+   them; it refuses, changing nothing, when there is none, an entry or
+   `Unreleased` breaks the rules `check` holds them to, or the section
    exists. Then read the lists it wrote and add the comparison link. Written
    for someone deciding whether to upgrade, not generated from commit
    subjects. Open the section with a summary above its first `###` list: a

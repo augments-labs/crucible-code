@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -77,7 +78,7 @@ def run(root: pathlib.Path, *arguments: str) -> subprocess.CompletedProcess[str]
 
 
 def check_rules() -> None:
-    # Every heading rule 1 allows, one item, continuation lines and a second item.
+    # Every heading an entry may open with, one item, continuation lines and a second item.
     good = {
         f"{heading.lower()}-entry.md": f"### {heading}\n\n- **A change.**\n  Continued.\n- **Another.**\n"
         for heading in MODULE.HEADINGS
@@ -125,7 +126,8 @@ def check_rules() -> None:
     assert MODULE.check(tree({"fits.md": fits})) == []
     broken({"binary.md": b"### Fixed\n\n- **\xff**\n"}, "changelog.d/binary.md", "UTF-8")
 
-    # Rule 2: nothing is written under `## [Unreleased]` by hand.
+    # Nothing is written under `## [Unreleased]` by hand, a link definition included,
+    # and the heading the release writes beneath is there.
     for written in (
         CHANGELOG.replace("## [Unreleased]\n", "## [Unreleased]\n\n- **By hand.**\n"),
         CHANGELOG.replace("## [Unreleased]\n", "## [Unreleased]\n\n### Fixed\n"),
@@ -133,8 +135,19 @@ def check_rules() -> None:
         broken({}, "CHANGELOG.md", "Unreleased", written)
     last = "# Changelog\n\n## [Unreleased]\n\n- **By hand.**\n\n[Unreleased]: https://example.com\n"
     broken({}, "CHANGELOG.md", "Unreleased", last)
+    linked = CHANGELOG.replace("## [Unreleased]\n", "## [Unreleased]\n\n[1.1.0]: https://example.com\n")
+    broken({}, "CHANGELOG.md", "Unreleased", linked)
+    broken({}, "CHANGELOG.md", "no `## [Unreleased]`", CHANGELOG.replace("## [Unreleased]\n\n", ""))
     blank = "# Changelog\n\n## [Unreleased]\n\n   \n\n[Unreleased]: https://example.com\n"
     assert MODULE.check(tree({}, blank)) == []
+
+
+def readme_names_every_heading() -> None:
+    # The README lists the headings an entry may open with; it and the code are
+    # one list read twice, so they are held to agree here.
+    readme = (ROOT.parents[1] / "changelog.d" / "README.md").read_text(encoding="utf-8")
+    listed = re.findall(r"`### ([A-Za-z]+)`", readme)
+    assert tuple(listed) == MODULE.HEADINGS, listed
 
 
 def check_command() -> None:
@@ -222,16 +235,18 @@ def assemble_refusals() -> None:
         "Unreleased",
         *version,
     )
-    refused(tree({"fine.md": FIXED}, CHANGELOG.replace("## [Unreleased]\n\n", "")), "no ## [Unreleased]", *version)
+    refused(tree({"fine.md": FIXED}, CHANGELOG.replace("## [Unreleased]\n\n", "")), "no `## [Unreleased]`", *version)
     refused(tree({"fine.md": FIXED}), "YYYY-MM-DD", "--version", "1.1.0", "--date", "2026-2-3")
     refused(tree({"fine.md": FIXED}), "YYYY-MM-DD", "--version", "1.1.0", "--date", "2026-02-30")
     refused(tree({"fine.md": FIXED}), "version", "--version", "1.1.0]", "--date", "2026-02-03")
+    refused(tree({"fine.md": FIXED}), "without its v", "--version", "v1.1.0", "--date", "2026-02-03")
 
 
 def main() -> int:
     with WORK:
         check_rules()
         check_command()
+        readme_names_every_heading()
         assemble_rules()
         assemble_refusals()
     print("changelog entries validator passed")
