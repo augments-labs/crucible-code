@@ -62,6 +62,64 @@ fn spacing_is_not_part_of_what_a_rule_has_to_match() {
     assert_eq!(parts("cargo\ttest"), ["cargo test"]);
 }
 
+// Inside quotes, and after a backslash, a space is part of the word the shell
+// hands the program: `"report final.txt"` and `"report  final.txt"` name two
+// files. A rule or a remembered approval about the one is not about the other.
+
+#[test]
+fn a_double_quoted_argument_keeps_its_spaces() {
+    assert_eq!(
+        parts(r#"rm   -f   "report  final.txt""#),
+        [r#"rm -f "report  final.txt""#]
+    );
+    assert_ne!(
+        parts(r#"rm -f "report final.txt""#),
+        parts(r#"rm -f "report  final.txt""#)
+    );
+}
+
+#[test]
+fn a_single_quoted_argument_keeps_its_spaces() {
+    assert_eq!(
+        parts("rm -f 'report  final.txt'"),
+        ["rm -f 'report  final.txt'"]
+    );
+    assert_ne!(
+        parts("rm -f 'report final.txt'"),
+        parts("rm -f 'report  final.txt'")
+    );
+}
+
+#[test]
+fn a_tab_inside_a_quoted_argument_is_kept_as_a_tab() {
+    assert_eq!(
+        parts("rm -f \"report\tfinal.txt\""),
+        ["rm -f \"report\tfinal.txt\""]
+    );
+    assert_ne!(
+        parts("rm -f \"report\tfinal.txt\""),
+        parts("rm -f \"report final.txt\"")
+    );
+}
+
+#[test]
+fn a_backslash_quoted_space_is_kept_beside_the_one_that_separates() {
+    // `report\  final.txt` is two words, `report ` and `final.txt`; the escaped
+    // space stays in the first and the one after it separates.
+    assert_eq!(
+        parts(r"rm -f report\ \ final.txt"),
+        [r"rm -f report\ \ final.txt"]
+    );
+    assert_eq!(
+        parts(r"rm -f report\    final.txt"),
+        [r"rm -f report\  final.txt"]
+    );
+    assert_ne!(
+        parts(r"rm -f report\ final.txt"),
+        parts(r"rm -f report\ \ final.txt")
+    );
+}
+
 #[test]
 fn a_path_is_kept_as_the_command_wrote_it() {
     // Collapsing `./cargo` to `cargo` would let a rule about the one on `PATH`
