@@ -1255,6 +1255,36 @@ fn counted(answer: &str) -> Vec<(Slot, String, Option<String>)> {
     said
 }
 
+/// What `answer` hands on, read with links to paths opened in `/repo`.
+fn opened(answer: &str) -> Vec<(Slot, String, Option<String>)> {
+    let files = Files::new(std::path::Path::new("/repo"), crate::files::Line::Fragment);
+    let mut markdown = Markdown::default().opening(Some(files));
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, link: Option<&str>| {
+        said.push((slot, text.to_owned(), link.map(str::to_owned)));
+    };
+    markdown.read(answer, ROOM, &mut into);
+    markdown.finish(ROOM, &mut into);
+    said
+}
+
+#[test]
+fn a_link_to_a_path_points_at_the_file_in_the_checkout() {
+    // A terminal opens an address, and `src/a.rs:3` is not one until it is
+    // read against the directory the session is in. The words are what the
+    // answer wrote; only where they point changes.
+    let said = opened("see [a](src/a.rs:3) and [docs](https://example.test/d)");
+
+    assert_eq!(wrote(&said), "see a and docs");
+    assert_eq!(
+        points(&said),
+        [
+            ("a", "file:///repo/src/a.rs#3"),
+            ("docs", "https://example.test/d")
+        ]
+    );
+}
+
 /// Everything one of those answers drew, with the markers gone.
 fn wrote(said: &[(Slot, String, Option<String>)]) -> String {
     said.iter().map(|(_, text, _)| text.as_str()).collect()

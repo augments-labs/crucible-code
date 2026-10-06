@@ -770,6 +770,13 @@ accent and carrying the address, so a terminal that opens links opens it from
 the words without the address written out after them. A bracket that was not a
 link is left exactly as it was written.
 
+A link to a file, such as one to `src/main.rs:12`, points at that file in the
+checkout you are in, so clicking it opens the file at line 12 in the editor
+your terminal opens files with. The line can be written `:12` or `#L12`, and a
+path can be relative or absolute. VS Code, kitty and the desktop's opener read
+the line from `#12` after the address; in a JetBrains terminal it is written
+`:12` instead, which is how that one reads it.
+
 A bare `#487`, or `PR #487` and `issue #487` with the word included, is read the
 same way, and points at the repository you are in. The
 address comes out of the `origin` remote in `.git/config`, so a checkout cloned

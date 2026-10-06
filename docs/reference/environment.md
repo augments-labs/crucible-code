@@ -151,6 +151,10 @@ but `auto` decides which table is drawn whatever `COLORFGBG` says. No key in
   containing `256color` gives the indexed table of 256 colours; any other
   value gives the sixteen basic colours. Unset turns colour off, because
   whatever is reading is not saying it is a terminal.
+- `TERMINAL_EMULATOR`: `JetBrains-JediTerm`, which a JetBrains IDE sets in
+  its terminal, writes the line of a link to a file as `:12` after the path,
+  the form that terminal reads. Any other value, or none, writes it as
+  `#12`, which VS Code, kitty and the desktop's file opener read.
 - `COLORTERM`: `truecolor` or `24bit` gives exact colours, whatever `TERM`
   says. Any other value is ignored.
 - `COLORFGBG`: `fg;bg`, or `fg;other;bg`, the rxvt convention. The last field
