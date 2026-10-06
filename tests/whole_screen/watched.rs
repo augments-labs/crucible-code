@@ -906,9 +906,18 @@ impl Watched {
     /// being written, as [`Screen::shows`] has it: a read that ends inside a
     /// frame would otherwise hand a case half a box.
     pub(crate) fn catches(&mut self, step: &str, wanted: &str) {
+        self.catches_where(step, &format!("{wanted:?}"), |picture| {
+            picture.contains(wanted)
+        });
+    }
+
+    /// The same, for a screen a piece of text cannot name: reads frames until
+    /// a finished one is a picture `drawn` holds of. `named` says what that
+    /// is when none ever was.
+    pub(crate) fn catches_where(&mut self, step: &str, named: &str, drawn: impl Fn(&str) -> bool) {
         let deadline = Instant::now() + CEILING;
 
-        while !self.screen.shows(wanted) {
+        while !self.screen.shows_where(&drawn) {
             match self.bytes.recv_timeout(QUIET) {
                 Ok(bytes) => self.feed(&bytes),
                 Err(RecvTimeoutError::Timeout) => {}
@@ -922,7 +931,7 @@ impl Watched {
 
             assert!(
                 Instant::now() < deadline,
-                "no {wanted:?} was ever drawn after {step}, in {CEILING:?}{}\n{}",
+                "no {named} was ever drawn after {step}, in {CEILING:?}{}\n{}",
                 if self.screen.is_holding() {
                     " — the frame it is in was never finished"
                 } else {

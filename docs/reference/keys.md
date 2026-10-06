@@ -19,7 +19,9 @@ this page is the list. Slash commands are not keys: they are listed under
   keys distinctly. Crucible asks for that spelling when it starts, a terminal
   without it discards the request, and there the press arrives as a plain
   <kbd>Enter</kbd>. <kbd>Alt-Enter</kbd> and <kbd>Ctrl+J</kbd> need nothing
-  asked for.
+  asked for. <kbd>Ctrl+Enter</kbd> is the same: VTE terminals such as GNOME
+  Terminal, macOS Terminal, and tmux without `extended-keys` send it as a plain
+  <kbd>Enter</kbd>, and there it does what <kbd>Enter</kbd> does.
 - A mark in any list stops at each end. It never wraps round.
 - The mouse is reported to crucible for the whole session. Hold
   <kbd>Shift</kbd> while you drag to hand the pointer back to your terminal's
@@ -119,6 +121,8 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
 | <kbd>Esc</kbd> | Closes the command list, keeping the line. Nothing otherwise. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
+| <kbd>Ctrl+Enter</kbd> | Sends the prompt, as <kbd>Enter</kbd> does. |
+| <kbd>Ctrl+S</kbd> | Sends the highlighted prompt of [the queue](#the-queue) alone, and the rest stay queued. Nothing while none are waiting. |
 | <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
 
@@ -139,6 +143,7 @@ wheel. These differ:
 | <kbd>Ctrl+B</kbd> | Leaves the running command in the background, where it can be, including in the seconds before its row offering `(ctrl+b to background)` is drawn ([`output.pinAfterSeconds`](../configuration/configuration.md#output)). See [Leaving one running](../tools/commands.md#leaving-one-running). Where there is no such command and one or more commands are left running, it stands their `Still running` list, as a click on their count under the box does. Nothing otherwise. |
 | <kbd>Ctrl+O</kbd> | Stands the cut results under the tail of the answer, which goes on arriving above them. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
+| <kbd>Ctrl+Enter</kbd>, <kbd>Ctrl+S</kbd> | Stop the turn and send [the queue](#the-queue) now: all of it with the line in the box last, or the highlighted prompt alone. |
 | <kbd>Tab</kbd> | Nothing. |
 
 While the <kbd>Ctrl+O</kbd> view or the command list stands over a running
@@ -457,9 +462,13 @@ the panel only adds these keys:
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the highlight, once the line in the box has no row above or below to move to and no command list is open. While prompts wait they do not reach the history. The three rows shown follow the highlight. |
 | <kbd>Ctrl+E</kbd> | Takes the highlighted prompt out of the queue and into the box at the cursor, where it can be edited or sent again. A prompt too long to go in beside what the box already holds (1 MiB together) stays queued and highlighted, and the panel says `no room in the box · line stays queued` until the next key. On an approval prompt it opens the explanation instead. |
 | <kbd>Ctrl+X</kbd> | Deletes the highlighted prompt; the box is left as it was. |
+| <kbd>Ctrl+Enter</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends every waiting prompt, oldest first, with the line in the box last, as the next turn. The panel goes and the box is left empty. With nothing waiting it stops the turn and sends the line in the box; with the box empty too it does nothing. A line in the box past the queue's bound stays there, the row says why, and the turn goes on; one that is a command is run or refused as <kbd>Enter</kbd> runs it. Between turns it is <kbd>Enter</kbd>. |
+| <kbd>Ctrl+S</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends the highlighted prompt alone as the next turn. The rest stay queued in order behind it, to be sent together when it ends, with the highlight on the prompt that followed; the line in the box stays in the box. Between turns it sends the highlighted prompt. Nothing while none are waiting, or once the turn has taken the highlighted one. |
 
 After either, the highlight stays where it was, on the prompt that followed,
 and the panel goes when the last prompt does. A prompt queued later goes to the
-end and leaves the highlight where it is. Nothing here holds the queue: the
-running turn takes every waiting prompt at its next step, whichever is
-highlighted, and the panel goes with them.
+end and leaves the highlight where it is. Neither <kbd>Ctrl+Enter</kbd> nor
+<kbd>Ctrl+S</kbd> asks first: each does in one press what <kbd>Esc</kbd>,
+<kbd>Ctrl+E</kbd> and <kbd>Enter</kbd> already do. Otherwise nothing here holds
+the queue: the running turn takes every waiting prompt at its next step,
+whichever is highlighted, and the panel goes with them.

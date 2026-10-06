@@ -1,0 +1,46 @@
+---
+source: tests/whole_screen/main.rs
+assertion_line: 1359
+expression: steadied_picture(&window.picture())
+---
+80x40 cursor 37,20 scrolled 0
+|│                                                                             ││|
+|│ ─────────────────────────────────────────────────────────────────────────── ││|
+|│                                                                             ││|
+|│ Tips                                                                        ││|
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    │┃|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› start it                                                                     ┃|
+|                                                                               ┃|
+|● Bash(sleep 30)                                                               ┃|
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                              ┃|
+|                                                                               ┃|
+|It is started. That is all.                                                    ┃|
+|                                                                               ┃|
+|! stopped                                                                      ┃|
+|                                                                               ┃|
+|› then run the whole gate                                                      ┃|
+|                                                                               ●|
+|It is started. That is all.                                                    ┃|
+|                                                                               ┃|
+|✳ writing (0s · esc to interrupt)                                               |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|2 queued · ctrl+enter to send all now                                           |
+|                                                                                |
+|  and add a test for the windows path                                           |
+|                                                                                |
+|› check the ascii glyphs too                                                    |
+|                                                                                |
+|↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now             |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ › and the box last                                                           │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1|

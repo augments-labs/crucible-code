@@ -1,0 +1,54 @@
+---
+source: tests/whole_screen/native.rs
+assertion_line: 972
+expression: "crate::steadied_picture(&window.picture())"
+---
+40x48 cursor 28,4 scrollback 0
+|CRUCIBLE                                |
+|/.../workspace                          |
+|                                        |
+|> start it                              |
+|                                        |
+|* Bash(sleep 30)                        |
+|  + (no... (+2 lines - ctrl+o to expand)|
+|                                        |
+|It is started. That is all.             |
+|                                        |
+|! stopped                               |
+|                                        |
+|> and add a test for the windows path   |
+|                                        |
+|> then run the whole gate               |
+|                                        |
+|> check the ascii glyphs too            |
+|                                        |
+|> and the box last                      |
+|                                        |
+|                                        |
+|                                        |
+|It is started. That is all.             |
+|                                        |
+|| writing (0s - esc to interrupt)       |
+|                                        |
+|                         99% window left|
+|+--------------------------------------+|
+|| >                                    ||
+|+--------------------------------------+|
+|ask mode on    anthropic - claude-test-1|
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |

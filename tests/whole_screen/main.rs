@@ -1230,6 +1230,157 @@ fn esc_stops_the_turn_and_leaves_what_waits_behind_it() {
     }
 }
 
+/// Ctrl+Enter as a terminal asked to spell a modified key distinctly sends it.
+const CTRL_ENTER: &str = "\x1b[13;5u";
+
+/// What a case types into the box under a turn, short enough to sit beside
+/// what is queued and named nowhere else.
+const IN_THE_BOX: &str = "and the box last";
+
+#[test]
+fn ctrl_enter_stops_the_turn_and_sends_everything_waiting_then_the_box() {
+    // One key for what took Esc and the queue typed again: the turn stops as
+    // Esc stops it, and the next turn is every prompt waiting, in the order
+    // they were typed, with the line still in the box last. Nothing is left
+    // waiting, so the panel goes.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-send-all", 80, 40, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 3);
+    window.types_and_catches(IN_THE_BOX, &format!("\u{203a} {IN_THE_BOX}"));
+
+    // The box's line in the transcript, at the left edge rather than in the
+    // box, is the last of what was sent: the answer's words are already on
+    // screen from the turn that was stopped, so they say nothing here.
+    window.types_and_catches(CTRL_ENTER, "! stopped");
+    window.catches("the queue sent", &format!("|\u{203a} {IN_THE_BOX}"));
+    let picture = window.picture();
+    let stopped = picture.find("! stopped");
+    let mut after = stopped;
+    for prompt in WAITING.iter().take(3).chain([&IN_THE_BOX]) {
+        let sent = picture.find(&format!("|\u{203a} {prompt}"));
+        assert!(
+            after.is_some() && sent > after,
+            "{prompt:?} was not sent after the stop, in its order:\n{picture}"
+        );
+        after = sent;
+    }
+    assert!(!picture.contains("queued"), "the panel stayed:\n{picture}");
+}
+
+#[test]
+fn ctrl_s_stops_the_turn_and_sends_the_highlighted_prompt_alone() {
+    // The one prompt that matters most, sooner: the turn stops as Esc stops
+    // it and the highlighted prompt is the next turn, alone. The others wait
+    // behind it in their order, counted again with the highlight on the one
+    // that followed, and what is typed in the box stays there.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-send-now", 80, 40, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 3);
+    window.types_and_catches("\x1b[B", &format!("\u{203a} {}", WAITING[1]));
+    window.types_and_catches(IN_THE_BOX, &format!("\u{203a} {IN_THE_BOX}"));
+
+    window.types_and_catches("\x13", "! stopped");
+    window.catches(
+        "the highlighted prompt sent",
+        &format!("|\u{203a} {}", WAITING[1]),
+    );
+    window.catches("the rest counted again", "2 queued");
+    let picture = window.picture();
+    let stopped = picture.find("! stopped");
+    let sent = picture.find(&format!("\u{203a} {}", WAITING[1]));
+    assert!(
+        stopped.is_some() && sent > stopped,
+        "the highlighted prompt was not what ran after the stop:\n{picture}"
+    );
+    assert!(
+        picture.contains(&format!("  {}", WAITING[0]))
+            && picture.contains(&format!("\u{203a} {}", WAITING[2])),
+        "the other two are not waiting, the highlight on the one that followed:\n{picture}"
+    );
+    assert!(
+        !picture.contains(&format!("|\u{203a} {}", WAITING[0])),
+        "a prompt that was not highlighted was sent:\n{picture}"
+    );
+    assert!(
+        picture.contains(&format!("\u{2502} \u{203a} {IN_THE_BOX}")),
+        "the box lost what was typed in it:\n{picture}"
+    );
+}
+
+/// Queues three prompts behind a held turn in `window`, drawn in `glyphs`,
+/// walks the highlight to the second, types [`IN_THE_BOX`] and presses `key`.
+/// Returns once the turn the key sent has answered under the last line it
+/// sent, `last`: the screen that turn stands on, not the stop on the way to it.
+fn sent_now(window: &mut Watched, glyphs: &str, key: &str, last: &str) {
+    let mark = if glyphs == "ascii" { '>' } else { '\u{203a}' };
+    waiting_behind_a_turn(window, 3);
+    window.types_and_catches("\x1b[B", &format!("{mark} {}", WAITING[1]));
+    window.types_and_catches(IN_THE_BOX, &format!("{mark} {IN_THE_BOX}"));
+    window.types_and_catches(key, "! stopped");
+
+    let sent = format!("|{mark} {last}");
+    window.catches_where(
+        "the key sent it",
+        &format!("answer under {sent:?}"),
+        |picture| {
+            picture
+                .rfind(&sent)
+                .and_then(|at| picture.get(at..))
+                .is_some_and(|after| after.contains(HELD_ANSWER))
+        },
+    );
+}
+
+#[test]
+fn the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it() {
+    // Nothing new is drawn for either key. The stopped turn's row reads as
+    // Esc leaves it, the prompt sent is written into the transcript as any
+    // prompt is, and the panel goes or stands counted again.
+    for (columns, glyphs) in [
+        (80, "unicode"),
+        (40, "unicode"),
+        (80, "ascii"),
+        (40, "ascii"),
+    ] {
+        for (key, named, last) in [
+            (CTRL_ENTER, "all", IN_THE_BOX),
+            ("\x13", "highlighted", WAITING[1]),
+        ] {
+            let vendor = a_turn_still_running_long();
+            let mut window = Watched::allowing_drawn(
+                &format!("queue-sent-{named}-{glyphs}-{columns}"),
+                (columns, 40),
+                &vendor,
+                "bash(*)",
+                (glyphs, "fullscreen"),
+            );
+            sent_now(&mut window, glyphs, key, last);
+
+            insta::assert_snapshot!(
+                format!("queue_sent_{named}_now_in_{glyphs}_at_{columns}"),
+                steadied_picture(&window.picture())
+            );
+        }
+    }
+}
+
+#[test]
+fn ctrl_enter_between_turns_sends_the_box_as_return_does() {
+    // No turn to stop and nothing queued: sending everything now is sending
+    // the line, so a terminal that spells the key apart loses nothing by it.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("send-all-idle", 80, 24, &vendor);
+
+    window.types_and_catches(&format!("say hello{CTRL_ENTER}"), "Hello.");
+    let picture = window.picture();
+    assert!(
+        picture
+            .lines()
+            .any(|row| row.starts_with("|\u{203a} say hello")),
+        "the box was not sent:\n{picture}"
+    );
+}
+
 #[test]
 fn a_take_back_the_box_has_no_room_for_says_so_beside_the_title() {
     // A key that seemed to do nothing left the reader asking whether the

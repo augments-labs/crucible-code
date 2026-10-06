@@ -1,6 +1,6 @@
 use crucible_tui::{Glyphs, Key};
 
-use super::super::Retained;
+use super::super::{QUEUED_LINES, Retained};
 use super::*;
 
 /// A queue with these lines waiting, and the offer the turn reads holding the
@@ -263,6 +263,128 @@ fn between_turns_the_panel_holds_the_only_copy_and_both_keys_reach_it() {
     assert!(queue.delete(Offer::Nowhere));
 
     assert_eq!(waiting(&queue), vec!["third"]);
+}
+
+/// The box, holding `line` as though it had been typed there.
+fn typed(line: &str) -> Editor {
+    let mut editor = Editor::new();
+    for key in line.chars() {
+        editor.press(Key::Char(key));
+    }
+    editor
+}
+
+#[test]
+fn ctrl_enter_readies_every_line_then_the_box_and_holds_them_from_the_turn() {
+    // The turn being stopped takes none of them on its way out, and the next
+    // takes them as one: the oldest its prompt and the rest offered to it, in
+    // the order they were typed, the box's line last.
+    let (mut queue, steer) = queued(&["first", "second"]);
+    let mut editor = typed("third");
+
+    assert_eq!(queue.send_all(&mut editor, &steer), Now::Sending);
+
+    assert!(
+        editor.is_empty(),
+        "the box's line was not sent with the rest"
+    );
+    assert_eq!(waiting(&queue), vec!["first", "second", "third"]);
+    assert!(!steer.any(), "the turn being stopped can still take a line");
+    assert!(matches!(queue.offer(&steer), Offer::Nowhere));
+
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
+    assert_eq!(steer.take(), vec!["second".to_owned(), "third".to_owned()]);
+    assert_eq!(queue.waiting_count(), 0);
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
+fn ctrl_enter_sends_the_box_alone_where_nothing_is_waiting_and_nothing_where_it_is_empty() {
+    let steer = Steer::new();
+
+    let mut queue = Prompts::default();
+    let mut editor = Editor::new();
+    assert_eq!(
+        queue.send_all(&mut editor, &steer),
+        Now::Nothing,
+        "the turn was stopped with nothing to send"
+    );
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+
+    let mut editor = typed("only");
+    assert_eq!(queue.send_all(&mut editor, &steer), Now::Sending);
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("only"));
+    assert!(!steer.any());
+}
+
+#[test]
+fn ctrl_enter_whose_box_line_meets_a_ceiling_stops_nothing() {
+    // Stopped anyway, the turn would be sent everything but the line the
+    // reader pressed the key to send with it.
+    let lines: Vec<String> = (0..QUEUED_LINES).map(|n| format!("line {n}")).collect();
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let (mut queue, steer) = queued(&lines);
+    let mut editor = typed("one more");
+
+    assert_eq!(queue.send_all(&mut editor, &steer), Now::Refused);
+
+    assert_eq!(editor.text(), "one more", "the box lost a line it refused");
+    assert_eq!(queue.waiting_count(), QUEUED_LINES);
+    assert!(steer.any(), "the running turn's offer was taken from it");
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
+fn ctrl_s_readies_the_highlighted_line_alone_and_the_rest_wait_behind_its_turn() {
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    queue.walk(false);
+
+    assert!(queue.send_now(&steer));
+    assert!(!steer.any(), "the turn being stopped can still take a line");
+
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("second"));
+    assert!(!steer.any(), "a line was sent with the one sent alone");
+    assert_eq!(waiting(&queue), vec!["first", "third"]);
+    assert_eq!(
+        queue.highlighted(),
+        1,
+        "on the line that followed the one sent"
+    );
+    assert!(
+        matches!(queue.offer(&steer), Offer::Nowhere),
+        "the rest are offered to the turn they wait behind"
+    );
+
+    // Once that turn is over they are taken whole, as any queue is.
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
+    assert_eq!(steer.take(), vec!["third".to_owned()]);
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
+fn ctrl_s_on_the_last_line_leaves_the_highlight_on_the_new_last() {
+    let (mut queue, steer) = queued(&["first", "second"]);
+    queue.walk(false);
+
+    assert!(queue.send_now(&steer));
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("second"));
+    assert_eq!(waiting(&queue), vec!["first"]);
+    assert_eq!(queue.highlighted(), 0);
+}
+
+#[test]
+fn ctrl_s_sends_nothing_the_turn_has_taken_or_that_is_not_there() {
+    // A line the turn took is in its transcript already: sent again it would
+    // be said twice. Where nothing is queued there is nothing to send, and
+    // the turn goes on.
+    let (mut queue, steer) = queued(&["first"]);
+    drop(steer.take());
+
+    assert!(!queue.send_now(&steer));
+    assert_eq!(waiting(&queue), vec!["first"]);
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+
+    assert!(!Prompts::default().send_now(&steer));
 }
 
 #[test]

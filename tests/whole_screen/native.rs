@@ -950,6 +950,34 @@ fn five_waiting_prompts_stand_in_one_panel_in_native_mode() {
 }
 
 #[test]
+fn the_queue_sent_now_is_drawn_in_native_mode_as_in_fullscreen() {
+    // As in fullscreen, with no rail, in the rows native mode keeps under the
+    // transcript; the stop and the prompts sent go out with the transcript.
+    for (columns, glyphs) in [(80, "unicode"), (40, "ascii")] {
+        for (key, named, last) in [
+            (crate::CTRL_ENTER, "all", crate::IN_THE_BOX),
+            ("\x13", "highlighted", crate::WAITING[1]),
+        ] {
+            let vendor = crate::a_turn_still_running_long();
+            let mut window = Watched::allowing_drawn(
+                &format!("native-queue-sent-{named}-{columns}"),
+                (columns, 48),
+                &vendor,
+                "bash(*)",
+                (glyphs, "native"),
+            );
+            crate::sent_now(&mut window, glyphs, key, last);
+
+            window.assert_never_alternate();
+            insta::assert_snapshot!(
+                format!("native_queue_sent_{named}_now_in_{glyphs}_at_{columns}"),
+                crate::steadied_picture(&window.picture())
+            );
+        }
+    }
+}
+
+#[test]
 fn a_refused_take_back_says_so_beside_the_title_in_native_mode() {
     let vendor = crate::a_turn_still_running_long();
     let mut window = Watched::allowing_drawn(

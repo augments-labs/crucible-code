@@ -1,8 +1,8 @@
 {
   "harness": {
-    "tests/whole_screen/screen.rs": "07a6964bb72ea96433275b39f33ab91459a81610e73a0e7f5b95662fab426c4b",
+    "tests/whole_screen/screen.rs": "923ea6c0bfa9b63671bd937e71c3e14db9c8b24645a87302bd26e5ccd4d01cbb",
     "tests/whole_screen/vendor.rs": "c60595fde97a88e1dfb8ee46ea69ce1bdbdb2b80a191987a5278009432792011",
-    "tests/whole_screen/watched.rs": "4da9c9c2dfaa4b199ef6e755e5ea2a984240d62455ce2bf98e1b24238496aaf7"
+    "tests/whole_screen/watched.rs": "75d709893cba5dbb63829fbcc9c1714ea8d363a6b9d9d2a575edbdfe8929a60e"
   },
   "captures": [
     {
@@ -861,6 +861,38 @@
       "sha256": "88d99c7f628b779414ec634b39928afb253d340d38fc392cbec6fe0b33008ba2"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_all_now_in_ascii_at_40.snap",
+      "case": "the_queue_sent_now_is_drawn_in_native_mode_as_in_fullscreen",
+      "opened": [
+        "Watched::allowing_drawn( &format!(\"native-queue-sent-{named}-{columns}\"), (columns, 48), &vendor, \"bash(*)\", (glyphs, \"native\"), )"
+      ],
+      "sha256": "db0cc01b879b07f15a89f66562895eae0b181454354c991903e187bc732b6db7"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_all_now_in_unicode_at_80.snap",
+      "case": "the_queue_sent_now_is_drawn_in_native_mode_as_in_fullscreen",
+      "opened": [
+        "Watched::allowing_drawn( &format!(\"native-queue-sent-{named}-{columns}\"), (columns, 48), &vendor, \"bash(*)\", (glyphs, \"native\"), )"
+      ],
+      "sha256": "8b64b668d9e1ee570c31ccf5ab8a0cc7681104c34a6f56c075f4dbace6d0b1cd"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_highlighted_now_in_ascii_at_40.snap",
+      "case": "the_queue_sent_now_is_drawn_in_native_mode_as_in_fullscreen",
+      "opened": [
+        "Watched::allowing_drawn( &format!(\"native-queue-sent-{named}-{columns}\"), (columns, 48), &vendor, \"bash(*)\", (glyphs, \"native\"), )"
+      ],
+      "sha256": "4c61caef379acbbf3c430846f34f81d7bcc6fc08a4f6c7d9ba1bb4b2310784c5"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_highlighted_now_in_unicode_at_80.snap",
+      "case": "the_queue_sent_now_is_drawn_in_native_mode_as_in_fullscreen",
+      "opened": [
+        "Watched::allowing_drawn( &format!(\"native-queue-sent-{named}-{columns}\"), (columns, 48), &vendor, \"bash(*)\", (glyphs, \"native\"), )"
+      ],
+      "sha256": "0aa24f18341395ec9422c028579f28b57a1f4e37364f235a8d2c7b6eca945566"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_divider_is_clipped_at_16_columns_in_native_mode.snap",
       "case": "resume_divider_is_clipped_at_16_columns_in_native_mode",
       "opened": [
@@ -1036,6 +1068,78 @@
         "Watched::allowing_drawn( &format!(\"queue-panel-ascii-{columns}\"), (columns, 24), &vendor, \"bash(*)\", (\"ascii\", \"fullscreen\"), )"
       ],
       "sha256": "573e31d918ed7d3db5bee987a22f818c0ae1e44cbdefb26045aa67590e014c6b"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_sent_all_now_in_ascii_at_40.snap",
+      "case": "the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-sent-{named}-{glyphs}-{columns}\"), (columns, 40), &vendor, \"bash(*)\", (glyphs, \"fullscreen\"), )"
+      ],
+      "sha256": "f1a6f62e337db8fd3603b17fa5c8cdaf70a7337307ed8aab129340cd8dd5c45c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_sent_all_now_in_ascii_at_80.snap",
+      "case": "the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-sent-{named}-{glyphs}-{columns}\"), (columns, 40), &vendor, \"bash(*)\", (glyphs, \"fullscreen\"), )"
+      ],
+      "sha256": "a6e3d523cd75b65837f30378c7262a1b6d118b3efcbaaae53502fee9e8a804ca"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_sent_all_now_in_unicode_at_40.snap",
+      "case": "the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-sent-{named}-{glyphs}-{columns}\"), (columns, 40), &vendor, \"bash(*)\", (glyphs, \"fullscreen\"), )"
+      ],
+      "sha256": "341c098343af4210dd669404df71c74e15de5ab7e8b3edbd9d39adbbaf4ca56a"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_sent_all_now_in_unicode_at_80.snap",
+      "case": "the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-sent-{named}-{glyphs}-{columns}\"), (columns, 40), &vendor, \"bash(*)\", (glyphs, \"fullscreen\"), )"
+      ],
+      "sha256": "963555110f1c260860d7d67f308d20c705e5840c06e06b6b052b90930a2b33d8"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_sent_highlighted_now_in_ascii_at_40.snap",
+      "case": "the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-sent-{named}-{glyphs}-{columns}\"), (columns, 40), &vendor, \"bash(*)\", (glyphs, \"fullscreen\"), )"
+      ],
+      "sha256": "f80ab36c1ee067b3b1a5660ac8bf0a978fbb545eebd412b115fe882bfb471700"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_sent_highlighted_now_in_ascii_at_80.snap",
+      "case": "the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-sent-{named}-{glyphs}-{columns}\"), (columns, 40), &vendor, \"bash(*)\", (glyphs, \"fullscreen\"), )"
+      ],
+      "sha256": "f079af8aee62d4f8045b6a5ea42bce451fb3d6410b0c626c054d37c172942f52"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_sent_highlighted_now_in_unicode_at_40.snap",
+      "case": "the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-sent-{named}-{glyphs}-{columns}\"), (columns, 40), &vendor, \"bash(*)\", (glyphs, \"fullscreen\"), )"
+      ],
+      "sha256": "489cf24ad01ffb68c9780ca6937b2048a9142ab45dc10d38761b4b558ddfcebc"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_sent_highlighted_now_in_unicode_at_80.snap",
+      "case": "the_queue_sent_now_is_drawn_as_the_stop_and_the_next_turn_draw_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-sent-{named}-{glyphs}-{columns}\"), (columns, 40), &vendor, \"bash(*)\", (glyphs, \"fullscreen\"), )"
+      ],
+      "sha256": "4d9275c00702a1bd2325d29f61d992b91da1e65ed82de11fa8cdce76e7b39c19"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_40.snap",
