@@ -11,10 +11,12 @@
 //! redirection, grouping, a leading assignment and the wrapper programs all
 //! land in the same place: nobody may have written a narrow `allow` about them.
 //!
-//! What it keeps is the text of each simple command, with runs of shell
-//! whitespace collapsed. That text is what a rule pattern is matched against,
-//! so `cargo   test` and `cargo test` are the same thing to a rule, which is
-//! what somebody writing one would expect.
+//! What it keeps is the text of each simple command, with each run of shell
+//! whitespace between words written as one space. That text is what a rule
+//! pattern is matched against, so `cargo   test` and `cargo test` are the same
+//! thing to a rule, which is what somebody writing one would expect. Inside
+//! quotes, or after a backslash, a space is part of a word and is kept as it
+//! was written: `"a  b"` names a different file from `"a b"`.
 
 use crucible_tools::Command;
 
@@ -80,6 +82,9 @@ pub(super) fn parts(line: &str, accepts: fn(&str) -> bool) -> Option<Box<[Box<st
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut quote = Quote::None;
+    // A separator was read since the last word character, so the next one
+    // starts a new word.
+    let mut gap = false;
     let mut chars = line.chars();
 
     while let Some(c) = chars.next() {
@@ -106,45 +111,54 @@ pub(super) fn parts(line: &str, accepts: fn(&str) -> bool) -> Option<Box<[Box<st
                 _ => current.push(c),
             },
 
-            Quote::None => match c {
-                // Substitution, expansion, grouping and redirection. Each one
-                // means the words here are not the words that run, or that a
-                // file nobody named is about to be written.
-                '$' | '`' | '(' | ')' | '{' | '}' | '<' | '>' => return None,
+            // A run of separators is one space between two words and nothing
+            // at either end of a command.
+            Quote::None if IFS.contains(&c) => gap = !current.is_empty(),
 
-                '\\' => {
-                    current.push(c);
-                    current.push(chars.next()?);
+            Quote::None => {
+                if std::mem::take(&mut gap) && !matches!(c, ';' | '\n' | '|' | '&') {
+                    current.push(' ');
                 }
-                '\'' => {
-                    current.push(c);
-                    quote = Quote::Single;
-                }
-                '"' => {
-                    current.push(c);
-                    quote = Quote::Double;
-                }
+                match c {
+                    // Substitution, expansion, grouping and redirection. Each one
+                    // means the words here are not the words that run, or that a
+                    // file nobody named is about to be written.
+                    '$' | '`' | '(' | ')' | '{' | '}' | '<' | '>' => return None,
 
-                ';' | '\n' => finish(&mut parts, &mut current, accepts)?,
-                '|' => {
-                    // `||` as well as a pipe. Both join two commands, and both
-                    // leave each of them needing its own rule.
-                    chars.as_str().starts_with('|').then(|| chars.next());
-                    finish(&mut parts, &mut current, accepts)?;
-                }
-                '&' => {
-                    // `&&` joins; a lone `&` backgrounds, which leaves nothing
-                    // watching the exit status and is not a shape this models.
-                    if chars.as_str().starts_with('&') {
-                        chars.next();
-                        finish(&mut parts, &mut current, accepts)?;
-                    } else {
-                        return None;
+                    '\\' => {
+                        current.push(c);
+                        current.push(chars.next()?);
                     }
-                }
+                    '\'' => {
+                        current.push(c);
+                        quote = Quote::Single;
+                    }
+                    '"' => {
+                        current.push(c);
+                        quote = Quote::Double;
+                    }
 
-                _ => current.push(c),
-            },
+                    ';' | '\n' => finish(&mut parts, &mut current, accepts)?,
+                    '|' => {
+                        // `||` as well as a pipe. Both join two commands, and both
+                        // leave each of them needing its own rule.
+                        chars.as_str().starts_with('|').then(|| chars.next());
+                        finish(&mut parts, &mut current, accepts)?;
+                    }
+                    '&' => {
+                        // `&&` joins; a lone `&` backgrounds, which leaves nothing
+                        // watching the exit status and is not a shape this models.
+                        if chars.as_str().starts_with('&') {
+                            chars.next();
+                            finish(&mut parts, &mut current, accepts)?;
+                        } else {
+                            return None;
+                        }
+                    }
+
+                    _ => current.push(c),
+                }
+            }
         }
     }
 
@@ -166,8 +180,7 @@ fn finish(
     current: &mut String,
     accepts: fn(&str) -> bool,
 ) -> Option<()> {
-    let text = normalised(current);
-    current.clear();
+    let text = std::mem::take(current);
 
     // A separator with nothing before it — a leading `;`, or `a ;; b`. The
     // shell would refuse most of these and the rest run nothing.
@@ -209,19 +222,6 @@ fn assigns(program: &str) -> bool {
         Some(at) => !program[..at].contains('/'),
         None => false,
     }
-}
-
-/// The text a rule is matched against: trimmed, with runs of shell whitespace
-/// collapsed to one space.
-fn normalised(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for word in text.split(IFS).filter(|word| !word.is_empty()) {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(word);
-    }
-    out
 }
 
 #[cfg(test)]

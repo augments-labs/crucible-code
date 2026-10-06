@@ -58,7 +58,9 @@ question and a rule are both spelled with `/` there.
 
 **Command patterns**, such as `bash(cargo test)` or `bash(git *)`, are matched
 against each simple command a line decomposes into, with runs of whitespace
-collapsed, so `cargo   test` and `cargo test` are one thing to a rule. In a
+between words collapsed, so `cargo   test` and `cargo test` are one thing to a
+rule. Spaces inside quotes or after a backslash are kept as written, so
+`rm "a  b"` and `rm "a b"` are two commands. In a
 command pattern `*` spans everything, because a command is not a path:
 `bash(git *)` covers `git add src/main.rs`.
 
