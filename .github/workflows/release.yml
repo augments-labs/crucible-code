@@ -24,10 +24,10 @@ jobs:
   # going to ship.
   gate:
     name: gate
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -105,16 +105,16 @@ jobs:
           - stem: linux-x86_64
             target: x86_64-unknown-linux-gnu
             rustup_sha256: 4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
-            runner: ubuntu-22.04
+            runner: blacksmith-4vcpu-ubuntu-2204
           - stem: linux-aarch64
             target: aarch64-unknown-linux-gnu
             rustup_sha256: 9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792
-            runner: ubuntu-24.04-arm
+            runner: blacksmith-4vcpu-ubuntu-2404-arm
     steps:
       - name: Build tools
         run: dnf install -y binutils curl-minimal gcc git gzip tar
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -195,17 +195,17 @@ jobs:
         include:
           - stem: macos-aarch64
             target: aarch64-apple-darwin
-            runner: macos-latest
+            runner: blacksmith-6vcpu-macos-15
           - stem: macos-x86_64
             target: x86_64-apple-darwin
-            runner: macos-15-intel
+            runner: blacksmith-6vcpu-macos-15
           - stem: windows-x86_64
             target: x86_64-pc-windows-msvc
-            runner: windows-latest
+            runner: blacksmith-4vcpu-windows-2025
             exe: .exe
           - stem: windows-aarch64
             target: aarch64-pc-windows-msvc
-            runner: windows-11-arm
+            runner: blacksmith-4vcpu-windows-2025
             exe: .exe
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -275,7 +275,7 @@ jobs:
   freebsd-x86_64:
     name: freebsd-x86_64
     needs: gate
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     # The one platform allowed to be missing. There is no FreeBSD runner, so
     # this builds inside a virtual machine an action brings up on a Linux one,
@@ -292,7 +292,7 @@ jobs:
     # that is gone.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -356,10 +356,10 @@ jobs:
   smoke-linux:
     name: smoke linux-x86_64 artifact
     needs: build-linux
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -419,10 +419,10 @@ jobs:
   budgets:
     name: release budgets
     needs: gate
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -492,7 +492,7 @@ jobs:
   # is putting the name back in `needs`.
   publish:
     needs: [build, build-linux, freebsd-x86_64]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     permissions:
       contents: write # creates the GitHub Release and uploads the archives
