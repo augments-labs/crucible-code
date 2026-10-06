@@ -165,6 +165,20 @@ impl Vendor {
     /// round trip answering all four, which is the unit a run of lookups is
     /// counted over.
     pub(crate) fn calling_batches(batches: &[Vec<(&str, String)>], text: &str) -> Self {
+        Self::batches_then(batches, stream(text))
+    }
+
+    /// The same, except the last answer holds the turn open behind `text`, for
+    /// the reason [`Self::calling_then_holding`] gives.
+    pub(crate) fn calling_batches_then_holding(
+        batches: &[Vec<(&str, String)>],
+        text: &str,
+    ) -> Self {
+        Self::batches_then(batches, holding(text, HOLDING))
+    }
+
+    /// Asks for each of `batches` at once, then answers with `last`.
+    fn batches_then(batches: &[Vec<(&str, String)>], last: Vec<String>) -> Self {
         let mut named = 0;
         let mut bodies: Vec<Vec<String>> = Vec::new();
 
@@ -180,7 +194,7 @@ impl Vendor {
             bodies.push(asking_all(&called));
         }
 
-        bodies.push(stream(text));
+        bodies.push(last);
 
         Self::serving(bodies)
     }

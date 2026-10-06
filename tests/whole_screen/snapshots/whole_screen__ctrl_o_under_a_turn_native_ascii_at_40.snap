@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+40x24 cursor 18,0 scrollback 0
+|CRUCIBLE                                |
+|/.../workspace                          |
+|                                        |
+|> read all three                        |
+|                                        |
+|* Read 3 files                          |
+|                                        |
+|All three are read.                     |
+|                                        |
+|| writing (0s - v 4 - esc to interrupt) |
+|----------------------------------------|
+|                                        |
+|Read(gamma.txt)                         |
+|                                        |
+|     1 gamma line 01                    |
+|     2 gamma line 02                    |
+|     3 gamma line 03                    |
+|                                        |
+|esc to close · ↑↓ pgup pgdn to see more |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |

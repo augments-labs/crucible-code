@@ -1426,22 +1426,49 @@ impl<T: Terminal> Renderer<T> {
         caret: Option<Caret>,
         palette: Palette,
     ) -> Result<(), TerminalError> {
+        self.standing_under(&[], rows, caret, palette)
+    }
+
+    /// Stands `rows` under the transcript, with `turn` over them: rows that
+    /// are still the transcript's, laid out beside the scroll rail at the width
+    /// it leaves and counted as the record's tail, as
+    /// [`Renderer::replace_running`] stands its own `turn`. The caret's row
+    /// counts from the first of `turn`.
+    fn standing_under(
+        &mut self,
+        turn: &[Row],
+        rows: &[Row],
+        caret: Option<Caret>,
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
             return Ok(());
         }
 
-        paint(rows, &palette, self.size.columns, &mut self.standing.turn);
+        paint(
+            turn.iter().chain(rows),
+            &palette,
+            self.size.columns,
+            &mut self.standing.turn,
+        );
+        let folds = self.folds();
         self.standing.drew.clear();
-        self.standing
-            .drew
-            .extend(rows.iter().map(|row| drawn(row, self.size.columns)));
+        self.standing.drew.extend(
+            turn.iter()
+                .map(|row| drawn(row, folds))
+                .chain(rows.iter().map(|row| drawn(row, self.size.columns))),
+        );
         self.standing.running.clear();
-        self.standing.ran = None;
+        self.standing
+            .running
+            .extend(turn.iter().map(|row| row.clipped(folds)));
+        self.standing.ran = (!turn.is_empty()).then_some(palette);
         self.standing.turned = caret;
         self.draw()
     }
 
-    /// [`Renderer::under`] in the box's place: takes the box off and stands
+    /// [`Renderer::under`] in the box's place, with `turn` over it as
+    /// [`Renderer::replace_running`] stands it: takes the box off and stands
     /// `rows` where it was, in one frame.
     ///
     /// For a component that takes the rows the box has while a turn runs, and
@@ -1449,11 +1476,19 @@ impl<T: Terminal> Renderer<T> {
     /// [`Renderer::live`] first would draw every one of those twice, the first
     /// time with neither the box nor the component's new rows on screen.
     ///
+    /// `turn` is the rows over `rows` that are still the transcript's, so the
+    /// scroll rail stands beside them and counts them, as it does
+    /// [`Renderer::replace_running`]'s `turn`: they are laid out at the width
+    /// the rail leaves, and the caret's row counts from the first of them.
+    /// Anything else a turn keeps over `rows` goes in `rows`. Empty between
+    /// turns.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn instead(
         &mut self,
+        turn: &[Row],
         rows: &[Row],
         caret: Option<Caret>,
         palette: Palette,
@@ -1467,7 +1502,7 @@ impl<T: Terminal> Renderer<T> {
         self.standing.prompted = Some(Caret::default());
         self.prompt_target = None;
         self.pointed_changed = false;
-        self.under(rows, caret, palette)
+        self.standing_under(turn, rows, caret, palette)
     }
 
     /// Ends the line the transcript is still writing to.

@@ -3244,6 +3244,164 @@ fn ctrl_o_under_a_running_turn_stands_the_view_in_the_box_s_place() {
     }
 }
 
+#[test]
+fn ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view() {
+    // The view stands in the box's place while a turn runs, and the box had
+    // the row saying the turn is running over it: the only thing on screen
+    // that says so, and the one that says how to stop it. So the view keeps
+    // it, over its rule and parted from the transcript by a blank as the box
+    // has it, and shows two lines fewer for them. In both screens and both
+    // glyph sets, at a width that fits the footer whole and one that does not.
+    for (screen, glyphs, columns, lines) in [
+        ("fullscreen", "unicode", 80, 15),
+        ("fullscreen", "ascii", 80, 15),
+        ("fullscreen", "unicode", 40, 15),
+        ("fullscreen", "ascii", 40, 15),
+        ("native", "unicode", 80, 3),
+        ("native", "ascii", 80, 3),
+        ("native", "unicode", 40, 3),
+        ("native", "ascii", 40, 3),
+    ] {
+        // All three asked for in one response, which reports its four tokens.
+        let vendor = Vendor::calling_batches_then_holding(
+            &[reading_three().concat()],
+            "All three are read.",
+        );
+        let mut window = Watched::allowing_drawn(
+            &format!("results-under-a-turn-{screen}-{glyphs}-{columns}"),
+            (columns, 24),
+            &vendor,
+            "read(*)",
+            (glyphs, screen),
+        );
+        three_files(&window);
+        window.types_and_catches("read all three\r", "All three are read.");
+        window.types_and_catches("\x0f", "to see more");
+
+        let picture = steadied_picture(&window.picture());
+        let rows: Vec<&str> = picture
+            .lines()
+            .filter_map(|row| row.strip_prefix('|')?.strip_suffix('|'))
+            .collect();
+        let rule = if glyphs == "ascii" { "-" } else { "\u{2500}" }.repeat(columns.into());
+        let opens = rows
+            .iter()
+            .position(|row| *row == rule)
+            .unwrap_or_else(|| panic!("no view is standing:\n{picture}"));
+        let mark = if glyphs == "ascii" { "|" } else { "\u{2733}" };
+        // Whatever the rail draws beside the blank: it is the transcript's row,
+        // and the rail's cell there is as it is anywhere in the transcript.
+        let rail = ['\u{2502}', '\u{2503}', '\u{25cf}', '|', '#', '*'];
+
+        assert_eq!(
+            rows.get(opens.wrapping_sub(1)).map(|row| row.trim_end()),
+            Some(
+                format!(
+                    "{mark} writing (0s {} esc to interrupt)",
+                    if glyphs == "ascii" {
+                        "- v 4 -"
+                    } else {
+                        "\u{b7} \u{2193} 4 \u{b7}"
+                    }
+                )
+                .as_str()
+            ),
+            "the working row is not directly over the view:\n{picture}"
+        );
+        assert!(
+            rows.get(opens.wrapping_sub(2))
+                .is_some_and(|row| row.trim_end_matches(rail).trim().is_empty()),
+            "no blank row parts the working row from the transcript:\n{picture}"
+        );
+        assert!(
+            rows.get(opens.wrapping_sub(3))
+                .is_some_and(|row| row.starts_with("All three are read.")),
+            "the transcript lost its row:\n{picture}"
+        );
+        if screen == "fullscreen" {
+            assert_eq!(opens, 3, "the transcript has more than its row:\n{picture}");
+        }
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.contains(" gamma line "))
+                .count(),
+            lines,
+            "{picture}"
+        );
+        // The last row drawn: a native window with less in it than it is tall
+        // leaves the rows under its live region empty.
+        assert!(
+            rows.iter()
+                .rfind(|row| !row.trim().is_empty())
+                .is_some_and(|row| row.starts_with("esc to close")),
+            "{picture}"
+        );
+        insta::assert_snapshot!(
+            format!("ctrl_o_under_a_turn_{screen}_{glyphs}_at_{columns}"),
+            picture
+        );
+    }
+}
+
+#[test]
+fn the_working_row_over_the_view_keeps_counting_and_goes_with_its_turn() {
+    // The row the view keeps is the live one: its clock goes on counting while
+    // the view stands, because it is the only thing on screen saying the turn
+    // is alive. And it is the turn's, not the view's: once the turn ends under
+    // a view still open, the row and the blank over it go, and the view
+    // stands as it does between turns, from the window's top.
+    let vendor =
+        Vendor::calling_batches_then_holding(&[reading_three().concat()], "All three are read.");
+    let mut window = Watched::allowing_drawn(
+        "results-outlive-their-turn",
+        (80, 24),
+        &vendor,
+        "read(*)",
+        ("unicode", "fullscreen"),
+    );
+    three_files(&window);
+    window.types_and_catches("read all three\r", "All three are read.");
+    window.types_and_catches("\x0f", "to see more");
+    let rule = "\u{2500}".repeat(80);
+    let rows_of = |picture: &str| -> Vec<String> {
+        picture
+            .lines()
+            .filter_map(|row| Some(row.strip_prefix('|')?.strip_suffix('|')?.to_owned()))
+            .collect()
+    };
+
+    window.catches("the clock over the view", "writing (2s");
+    let picture = window.picture();
+    let rows = rows_of(&picture);
+    let opens = rows
+        .iter()
+        .position(|row| *row == rule)
+        .unwrap_or_else(|| panic!("the view closed while the clock ran:\n{picture}"));
+    assert!(
+        rows.get(opens.wrapping_sub(1))
+            .is_some_and(|row| row.contains("writing (2s")),
+        "the clock is not counting over the view:\n{picture}"
+    );
+
+    // Its sixteenth line is the first the view shows that it could not while
+    // the turn held rows over it.
+    window.catches("the turn ends under the view", "gamma line 16");
+    let picture = window.picture();
+    let rows = rows_of(&picture);
+    assert!(!picture.contains("esc to interrupt"), "{picture}");
+    assert_eq!(
+        rows.iter().position(|row| *row == rule),
+        Some(0),
+        "the view does not stand from the window's top as between turns:\n{picture}"
+    );
+    assert!(
+        rows.iter()
+            .rfind(|row| !row.trim().is_empty())
+            .is_some_and(|row| row.starts_with("esc to close")),
+        "{picture}"
+    );
+}
+
 /// A window whose transcript holds one read the transcript cut short, and
 /// the row and the drawn cells of the line that offers it.
 ///

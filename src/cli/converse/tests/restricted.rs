@@ -77,7 +77,7 @@ fn opened_first(conversation: &crucible_app::Conversation, session: &Arc<Session
     let mut standing = expanding::Standing::default();
     standing.one(&kept, first);
     assert!(
-        expanding::under(&mut renderer, Style::plain(), &kept, &mut standing)
+        expanding::under(&mut renderer, Style::plain(), &kept, &mut standing, None)
             .expect("a recording cannot fail"),
         "the first row opened nothing"
     );

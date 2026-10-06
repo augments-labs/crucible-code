@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+80x24 cursor 23,0 scrollback 7
+||                                  | Tips                                      ||
+||                                  |                                           ||
+||                                  | - /          opens the command list       ||
+||                                  | - \ enter    adds a line without sending  ||
+||                                  | - shift+tab  steps the permission mode    ||
+||                                  | - ctrl+c     clears the line typed so far ||
+|+------------------------------------------------------------------------------+|
+|                                                                                |
+|> read all three                                                                |
+|                                                                                |
+|* Read 3 files                                                                  |
+|                                                                                |
+|All three are read.                                                             |
+|                                                                                |
+|| writing (0s - v 4 - esc to interrupt)                                         |
+|--------------------------------------------------------------------------------|
+|                                                                                |
+|Read(gamma.txt)                                                                 |
+|                                                                                |
+|     1 gamma line 01                                                            |
+|     2 gamma line 02                                                            |
+|     3 gamma line 03                                                            |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ result 1 of 3                      |
