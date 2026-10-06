@@ -639,6 +639,30 @@ for reader in crates/crucible-builtins/src/read.rs src/cli/converse/attaching.rs
     fi
 done
 
+section "every crate says what it is for"
+# AGENTS.md sends a reader to the first line of each crate's `src/lib.rs` for the
+# map of the workspace, so a crate that opens with anything else is missing from
+# it: line 1 is `//! ` and at least three words.
+crate_dirs=(crates/*/)
+if ((${#crate_dirs[@]} == 0)); then
+    printf '    FAIL no crate under crates/; this check read nothing\n'
+    failed=1
+fi
+for dir in "${crate_dirs[@]}"; do
+    lib="${dir}src/lib.rs"
+    if [[ ! -f "$lib" ]]; then
+        printf '    FAIL %s is missing; a crate says what it is for on its first line\n' "$lib"
+        failed=1
+        continue
+    fi
+    opening=""
+    IFS= read -r opening <"$lib" || true
+    if [[ ! "$opening" =~ ^//!\ [^[:space:]]+([[:space:]]+[^[:space:]]+){2} ]]; then
+        printf '    FAIL %s: line 1 is not `//! ` and at least three words saying what the crate is for\n' "$lib"
+        failed=1
+    fi
+done
+
 member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 
