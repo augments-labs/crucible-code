@@ -96,6 +96,26 @@ jobs:
           }
       - uses: ./.github/actions/check-clean-worktree
 
+  # FreeBSD's mv, ln, install, sync and checksum tools differ from both GNU and
+  # macOS, and the installer depends on how each renames over a link. GitHub
+  # hosts no FreeBSD runner, so the installer's tests run in the same guest the
+  # release builds in. Unlike that release job, this one is required: it
+  # builds nothing, so the guest is all it waits on.
+  freebsd-installer:
+    name: FreeBSD installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: vmactions/freebsd-vm@a2f9a41fa97f6848b8c3b791087dfcdaa5b473ff # v1.5.8
+        with:
+          release: "14.4"
+          usesh: true
+          prepare: pkg install -y bash curl
+          run: scripts/sh/install-tests.sh
+
   rollback-drill:
     name: Rollback drill (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
