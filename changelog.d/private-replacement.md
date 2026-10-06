@@ -1,4 +1,4 @@
 ### Security
 
-- **A file being replaced is unreadable by other accounts until the replacement is finished.**
-  On Unix, `edit` and a `write` over an existing file prepare the new content in a file only you can open, and give it the original's mode just before it takes the original's place.
+- **On Unix, the new content of a file that `edit` or `write` replaces can be opened only by you until it takes the original's place.**
+  It then has the original's mode, as before. The `crucible-workspace` test `a_replaced_files_preparation_file_is_owner_only_from_the_moment_it_is_made` holds this.
