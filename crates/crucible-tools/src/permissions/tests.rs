@@ -286,6 +286,84 @@ fn allowing_one_command_for_the_session_does_not_allow_another() {
     assert_eq!(answer.asked, 2, "the allowed command stays allowed");
 }
 
+/// A command sent to the shell as `line`, which decomposes into `parts`.
+fn sending(line: &str, parts: &[&str]) -> Sensitivity {
+    Sensitivity::SpawnsProcess {
+        command: Command::Understood {
+            sent: line.into(),
+            parts: parts.iter().map(|part| (*part).into()).collect(),
+        },
+    }
+}
+
+/// Allows `approved` for the session, then sends `other`, which decomposes
+/// into the same commands joined differently, and says how often the user was
+/// asked across the two.
+fn asked_after_remembering(approved: &str, other: &str, parts: &[&str]) -> usize {
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_the_session();
+    let call = call("bash");
+
+    permission.decided(&call, &sending(approved, parts), &mut answer);
+    permission.decided(&call, &sending(approved, parts), &mut answer);
+    assert_eq!(answer.asked, 1, "the line that was allowed stays allowed");
+
+    permission.decided(&call, &sending(other, parts), &mut answer);
+    answer.asked
+}
+
+#[test]
+fn a_remembered_command_does_not_cover_its_commands_run_regardless_of_each_other() {
+    // `&&` runs the second command only if the first worked; `;` runs it
+    // anyway. Same commands, a different line, so a different question.
+    assert_eq!(
+        asked_after_remembering(
+            "false && rm -f important.txt",
+            "false; rm -f important.txt",
+            &["false", "rm -f important.txt"],
+        ),
+        2
+    );
+}
+
+#[test]
+fn a_remembered_pipeline_does_not_cover_the_same_commands_joined_by_or() {
+    assert_eq!(
+        asked_after_remembering(
+            "true | rm -f important.txt",
+            "true || rm -f important.txt",
+            &["true", "rm -f important.txt"],
+        ),
+        2
+    );
+}
+
+#[test]
+fn a_remembered_command_on_two_lines_does_not_cover_the_same_line_joined_by_a_semicolon() {
+    assert_eq!(
+        asked_after_remembering(
+            "false\nrm -f important.txt",
+            "false; rm -f important.txt",
+            &["false", "rm -f important.txt"],
+        ),
+        2
+    );
+}
+
+#[test]
+fn a_remembered_file_change_does_not_cover_a_command_spelled_like_its_path() {
+    // One tool can describe one call as a change and another as a process.
+    // What the user agreed to was one of them, so the other is still asked.
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_the_session();
+    let call = call("tool");
+
+    permission.decided(&call, &writing("make"), &mut answer);
+    permission.decided(&call, &sending("make", &["make"]), &mut answer);
+
+    assert_eq!(answer.asked, 2);
+}
+
 #[test]
 fn allowing_one_file_for_the_session_does_not_allow_another() {
     let mut permission = Permission::new();
