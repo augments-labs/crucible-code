@@ -1189,6 +1189,48 @@ fn ctrl_e_takes_the_highlighted_prompt_back_into_the_box() {
 }
 
 #[test]
+fn ctrl_q_mid_turn_opens_nothing_and_the_next_letter_lands_in_the_box() {
+    // Ctrl+Q opened a view that held the queue. Nothing is bound to it now:
+    // the panel stands as it stood and what is typed next is the box's.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-ctrl-q", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 2);
+
+    window.types_and_catches("\x11z", "│ › z");
+    let picture = window.picture();
+    assert!(picture.contains("2 queued"), "{picture}");
+    assert!(
+        picture.contains("› and add a test for the windows path"),
+        "{picture}"
+    );
+}
+
+#[test]
+fn esc_stops_the_turn_and_leaves_what_waits_behind_it() {
+    // Esc is about the turn, not the queue: the turn stops as it always has,
+    // and the prompts typed behind it are not dropped with it. They are what
+    // runs next, each as the line it was typed as.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-esc", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 2);
+
+    window.types_and_catches("\x1b", "! stopped");
+    window.catches(
+        "the turn stopped",
+        &format!("\u{203a} {}", WAITING.get(1).expect("two waiting")),
+    );
+    let picture = window.picture();
+    let stopped = picture.find("! stopped");
+    for prompt in WAITING.iter().take(2) {
+        let sent = picture.find(&format!("\u{203a} {prompt}"));
+        assert!(
+            stopped.is_some() && sent > stopped,
+            "{prompt:?} was not what ran after the stop:\n{picture}"
+        );
+    }
+}
+
+#[test]
 fn a_take_back_the_box_has_no_room_for_says_so_beside_the_title() {
     // A key that seemed to do nothing left the reader asking whether the
     // prompt was lost. The notice says why and that it was not, in the room
@@ -1324,8 +1366,8 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
 #[test]
 fn esc_mid_turn_closes_the_command_list_and_the_turn_runs_on() {
     // The list stands over a running turn, and it is the thing in front of the
-    // reader rather than the turn: Esc closes it, as it closes the Ctrl+O view
-    // and the queue, and the turn goes on behind it. The answer the list stood
+    // reader rather than the turn: Esc closes it, as it closes the Ctrl+O view,
+    // and the turn goes on behind it. The answer the list stood
     // over is what comes back.
     let vendor = a_turn_still_running();
     let mut window = Watched::allowing("list-closed-mid-turn", 80, 24, &vendor, "bash(*)");
