@@ -282,6 +282,35 @@ fn a_path_outside_the_workspace_is_refused_without_reading_it() {
 }
 
 #[test]
+fn a_link_retargeted_after_the_verdict_to_another_file_inside_changes_neither() {
+    // The verdict was reached about the file the link led to when the question
+    // was put. Text that happens to match in the file it leads to now is not a
+    // yes to change that one.
+    let sample = Sample::new("edit-retargeted-inside");
+    sample.write("inside.txt", "token = 1\n");
+    sample.write(".env", "token = 1\n");
+    crate::sample::symlink(
+        sample.root().join("inside.txt"),
+        sample.root().join("door.txt"),
+    );
+
+    let tool = Edit::new(sample.workspace());
+    let approved = allowed(
+        &tool,
+        r#"{"path":"door.txt","find":"token = 1","replace":"token = 2"}"#,
+    );
+
+    fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
+    crate::sample::symlink(sample.root().join(".env"), sample.root().join("door.txt"));
+
+    let output =
+        crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, ".env"), "token = 1\n");
+    assert_eq!(read(&sample, "inside.txt"), "token = 1\n");
+}
+
+#[test]
 fn a_missing_file_says_so() {
     let sample = Sample::new("edit-missing");
 

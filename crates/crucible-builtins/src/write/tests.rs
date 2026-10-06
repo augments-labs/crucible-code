@@ -335,6 +335,66 @@ fn a_link_planted_while_the_question_was_on_screen_is_still_refused() {
 }
 
 #[test]
+fn a_link_retargeted_after_the_verdict_to_another_file_inside_replaces_neither() {
+    // Both files have been read, so the record of what the agent has seen
+    // does not stand in the way; what does is that the verdict was reached
+    // about the file the link led to when the question was put.
+    let sample = Sample::new("write-retargeted-inside");
+    sample.write("inside.txt", "the file the verdict was about\n");
+    sample.write(".env", "nobody was asked about this\n");
+    symlink(
+        sample.root().join("inside.txt"),
+        sample.root().join("door.txt"),
+    );
+    let seen = looked_at(&sample, "inside.txt");
+    seen.record(sample.workspace().existing(".env").unwrap().as_path());
+
+    let tool = Write::new(sample.workspace(), seen);
+    let approved = allowed(&tool, r#"{"path":"door.txt","content":"stolen\n"}"#);
+
+    fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
+    symlink(sample.root().join(".env"), sample.root().join("door.txt"));
+
+    let output =
+        crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, ".env"), "nobody was asked about this\n");
+    assert_eq!(
+        read(&sample, "inside.txt"),
+        "the file the verdict was about\n"
+    );
+}
+
+// A directory link: Windows makes one with a call `sample::symlink` does not use.
+#[cfg(unix)]
+#[test]
+fn a_directory_link_retargeted_after_the_verdict_makes_nothing_where_it_now_leads() {
+    // The file did not exist when the question was put, so what the verdict
+    // names is where the path would have created it then. Neither the file
+    // nor the directory above it is made anywhere else.
+    let sample = Sample::new("write-retargeted-directory");
+    fs::create_dir_all(sample.root().join("drafts")).unwrap();
+    fs::create_dir_all(sample.root().join("private")).unwrap();
+    symlink(sample.root().join("drafts"), sample.root().join("door"));
+
+    let tool = Write::new(sample.workspace(), Ledger::new());
+    let approved = allowed(&tool, r#"{"path":"door/sub/new.txt","content":"x\n"}"#);
+    assert_eq!(
+        approved.sensitivity().to_string(),
+        "change drafts/sub/new.txt"
+    );
+
+    fs::remove_file(sample.root().join("door")).expect("the link is there");
+    symlink(sample.root().join("private"), sample.root().join("door"));
+
+    let output =
+        crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(!sample.root().join("private/sub").exists());
+    assert!(!sample.root().join("drafts/sub").exists());
+}
+
+#[test]
 fn a_directory_is_not_a_file_to_write_over() {
     let sample = Sample::new("write-dir");
     sample.write("sub/one.txt", "a\n");

@@ -163,6 +163,13 @@ fn put(
     let requested = args.text(PATH)?;
     let content = args.exact(CONTENT)?;
 
+    // Where the name leads now, held to where it led when the question was
+    // put, before a directory is made for it: a directory made for a file
+    // nobody agreed to is already something done.
+    if let Err(problem) = target::intends(workspace, approved, requested) {
+        return Ok(ToolOutput::failed(problem).into());
+    }
+
     // The parent has to exist before the path can be contained, because
     // containment is decided on a resolved path and only a directory that
     // is really there can be resolved. So the directories are made first,
@@ -175,6 +182,12 @@ fn put(
         Ok(path) => path,
         Err(problem) => return Ok(ToolOutput::failed(problem.to_string()).into()),
     };
+
+    // And again on the resolution the write goes through, because the name
+    // can be moved while the directories above it are being made.
+    if let Err(problem) = target::held(workspace, approved, requested, &path) {
+        return Ok(ToolOutput::failed(problem).into());
+    }
 
     // What is at the name now, asked about the name itself rather than
     // through it: `creatable` proved the last component was not a symbolic
