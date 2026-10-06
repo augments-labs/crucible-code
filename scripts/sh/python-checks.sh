@@ -37,6 +37,10 @@ if ! PYTHONDONTWRITEBYTECODE=1 scripts/python/validate-release-notes.py; then
     printf '    FAIL release notes are not the summary and comparison link of their section\n'
     failed=1
 fi
+if ! PYTHONDONTWRITEBYTECODE=1 scripts/python/validate-changelog-entries.py; then
+    printf '    FAIL changelog entries were not held to their shape or not assembled as written\n'
+    failed=1
+fi
 # The release workflow writes the body after the tag is pushed, where a refusal
 # leaves a tag to repair: the change that bumps the version is where a section
 # without a summary or comparison link has to stop.

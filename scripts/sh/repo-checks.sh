@@ -1399,6 +1399,23 @@ while IFS= read -r file; do
     fi
 done <<<"$naming"
 
+section "changelog entries"
+# A pull request writes its entry to a file of its own under `changelog.d/`, so
+# two open at once never edit the same lines of `CHANGELOG.md`; only a release
+# commit writes the changelog, assembling the section from those files. An
+# entry the release could not assemble, or a line written under
+# `## [Unreleased]` by hand, is caught on the change that adds it.
+if [[ ! -f changelog.d/README.md ]]; then
+    printf '    FAIL changelog.d/README.md is missing; nothing tells a contributor where the entry goes\n'
+    failed=1
+fi
+if ! entry_problems=$(PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/changelog-entries.py check); then
+    while IFS= read -r said; do
+        printf '    FAIL %s\n' "$said"
+    done <<<"${entry_problems:-changelog-entries.py check failed without saying why}"
+    failed=1
+fi
+
 section "the release notes reach nothing outside the binary"
 # `/release-notes` reads the changelog the binary was built with, and so opens
 # no socket and reads no file, which is what lets it be asked with no network

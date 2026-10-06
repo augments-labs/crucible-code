@@ -53,7 +53,8 @@ then, and the ruleset is what keeps the same rule from reaching `dev` or `main`.
 2. Read the module documentation beside the code being changed.
 3. Start new behavior with a failing test; reproduce a bug before fixing it.
 4. Run the narrow test while working, then the complete local gate.
-5. Update user documentation and the changelog when shipped behavior changes.
+5. Update user documentation, and write a changelog entry under
+   `changelog.d/`, when shipped behavior changes.
 6. Open a pull request and state what changed and how it was verified.
 
 Coding agents begin in [`AGENTS.md`](AGENTS.md), which holds the repository
@@ -203,8 +204,11 @@ section, kept placeholder text or bundled unrelated changes get the pull
 request closed rather than reviewed. The surfaces it lists — security
 boundaries, durable formats, generated files, platform-specific behavior,
 terminal rendering, performance-sensitive paths and required-case obligations —
-are the ones a reviewer cannot recover from the diff alone. `CHANGELOG.md` is
-for user-visible changes, written for someone deciding whether to upgrade.
+are the ones a reviewer cannot recover from the diff alone. A changelog entry
+is for user-visible changes, written for someone deciding whether to upgrade,
+in a file of its own under `changelog.d/` as
+[its README](changelog.d/README.md) says; only a release commit edits
+`CHANGELOG.md`.
 
 It opens by asking who made the change, because a reviewer reads a generated
 diff with different questions than a hand-written one, and which model, harness
