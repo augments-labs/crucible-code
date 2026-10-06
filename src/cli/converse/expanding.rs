@@ -181,7 +181,7 @@ impl Standing {
 
             // Not this one's. A line, a turn nobody typed and the end of a
             // session are the loop's.
-            Asked::Said(_) | Asked::Woke(_) | Asked::Ended | Asked::Untyped | Asked::Queue => {
+            Asked::Said(_) | Asked::Woke(_) | Asked::Ended | Asked::Untyped => {
                 return false;
             }
         }
@@ -754,7 +754,7 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Plan
         | Pressed::Clicked { .. }
         | Pressed::Pasted(_)
-        | Pressed::Queue
+        | Pressed::Remove
         | Pressed::Copy
         | Pressed::PasteImage
         | Pressed::Rename

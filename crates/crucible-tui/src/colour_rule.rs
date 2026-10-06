@@ -136,13 +136,13 @@ fn the_colour_rule_counts_runs_of_the_accent_slot_and_nothing_else() {
         .then(Slot::Pointed, "here");
     let one = Row::new()
         .then(Slot::Accent, "ctrl")
-        .then(Slot::Accent, "+q");
+        .then(Slot::Accent, "+x");
     // Any other slot between two runs parts them, a blank one too: a
     // border and a key with a space between are two things lit.
     let parted = Row::new()
         .then(Slot::Accent, "╰────")
         .then(Slot::Plain, " ")
-        .then(Slot::Accent, "ctrl+q");
+        .then(Slot::Accent, "ctrl+x");
     let two = Row::new()
         .then(Slot::Accent, "●")
         .then(Slot::Plain, " Read ")

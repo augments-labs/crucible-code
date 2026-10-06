@@ -9,10 +9,11 @@ use std::time::{Duration, SystemTime};
 use crucible_types::{Message, PlanWindows, Window, WindowReading};
 
 use crucible_app::Conversation;
-use crucible_tui::{Pressed, Recalled};
+use crucible_tui::Recalled;
 
-use crate::cli::converse::typing::{self, Asked, Opened};
-use crate::cli::converse::{Answers, Held, Terms, Work, queueing, ran};
+use crate::cli::converse::queueing::{self, Offer};
+use crate::cli::converse::typing::{self, Opened};
+use crate::cli::converse::{Answers, Held, Terms, Work, ran};
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
 
@@ -218,11 +219,11 @@ fn idle(conversation: &Conversation, held: &Held<'_>) -> Vec<String> {
 }
 
 #[test]
-fn plan_limit_draws_the_held_line_in_the_queue_box_over_the_idle_prompt() {
+fn plan_limit_stands_the_held_line_in_the_queue_panel_over_the_idle_prompt() {
     // Held and unseen, the line would run behind whatever the reader sends
-    // next without anything on screen having said it was still there. The box
-    // that names it while a turn runs names it here, with the key that opens
-    // it, directly over the prompt.
+    // next without anything on screen having said it was still there. The
+    // panel that names it while a turn runs names it here, with the same keys,
+    // and the box stays under it.
     let (_, rows) = stopped_then(
         "plan-limit-idle-box",
         None,
@@ -230,61 +231,67 @@ fn plan_limit_draws_the_held_line_in_the_queue_box_over_the_idle_prompt() {
         |conversation, held, _| idle(conversation, held),
     );
 
-    let top = format!(
-        "\u{256d}\u{2500} 1 queued {}\u{256e}",
-        "\u{2500}".repeat(67)
-    );
-    let line = format!("\u{2502} \u{203a} {QUEUED:<74} \u{2502}");
-    let bottom = format!(
-        "\u{2570}{} ctrl+q edit \u{2500}\u{256f}",
-        "\u{2500}".repeat(64)
-    );
+    let rule = "\u{2500}".repeat(80);
     let opens = rows
         .iter()
-        .position(|row| *row == top)
-        .unwrap_or_else(|| panic!("no queue box over the idle prompt: {rows:#?}"));
+        .position(|row| *row == rule)
+        .unwrap_or_else(|| panic!("no queue panel over the idle prompt: {rows:#?}"));
 
-    assert_eq!(rows.get(opens + 1), Some(&line), "{rows:#?}");
-    assert_eq!(rows.get(opens + 2), Some(&bottom), "{rows:#?}");
-    // The prompt's own reading row stands between the two, blank while no
-    // window has been reported, as it does under a running turn; the frame
-    // spends no parting blank of its own over it.
-    assert_eq!(rows.get(opens + 3), Some(&String::new()), "{rows:#?}");
+    assert_eq!(
+        rows.get(opens..opens + 9),
+        Some(
+            &[
+                rule.clone(),
+                String::new(),
+                "1 queued \u{b7} ctrl+enter to send all now".to_owned(),
+                String::new(),
+                format!("\u{203a} {QUEUED}"),
+                String::new(),
+                "\u{2191}\u{2193} to walk \u{b7} ctrl+e to edit \u{b7} ctrl+x to delete \u{b7} ctrl+s to send now"
+                    .to_owned(),
+                String::new(),
+                // The prompt's own reading row, blank while no window has been
+                // reported, as it is under a running turn.
+                String::new(),
+            ][..]
+        ),
+        "{rows:#?}"
+    );
+    assert_eq!(
+        rows.get(opens.wrapping_sub(1)),
+        Some(&String::new()),
+        "the rule is kept off what stands above it: {rows:#?}"
+    );
     assert!(
-        rows.get(opens + 4)
+        rows.get(opens + 9)
             .is_some_and(|row| row.starts_with('\u{256d}')),
-        "the prompt does not stand directly under the queue box: {rows:#?}"
+        "the prompt does not stand directly under the queue panel: {rows:#?}"
     );
 }
 
 #[test]
-fn plan_limit_ctrl_q_at_the_idle_box_opens_the_queue_view_and_d_empties_it() {
-    // The box names the key, so the key has to work where the box stands. What
-    // it reaches is the view a running turn opens, and `d` there drops the line
-    // from the queue the stop held it in.
-    let (_, (opened, waiting, open)) = stopped_then(
-        "plan-limit-idle-view",
+fn plan_limit_ctrl_x_at_the_idle_box_deletes_the_held_line_and_the_panel_goes() {
+    // The panel names the key, so the key has to work where the panel stands.
+    // It drops the line from the queue the stop held it in, and with nothing
+    // left the box stands under the transcript again.
+    let (_, (deleted, waiting, rows)) = stopped_then(
+        "plan-limit-idle-delete",
         None,
         &["fix the build"],
-        |_, held, terms| {
-            let taken = held
-                .viewing
-                .asked(&Asked::Queue, &held.queued, &terms.steer);
-            let opened = taken && held.viewing.is_open();
-
-            held.viewing.against(
-                &Pressed::Key(Key::Char('d')),
-                queueing::Reading {
-                    queue: &mut held.queued,
-                    editor: &mut held.editor,
-                    steer: &terms.steer,
-                },
-            );
-            (opened, held.queued.waiting_count(), held.viewing.is_open())
+        |conversation, held, _terms| {
+            let deleted = held.queued.delete(Offer::Nowhere);
+            (
+                deleted,
+                held.queued.waiting_count(),
+                idle(conversation, held),
+            )
         },
     );
 
-    assert!(opened, "ctrl+q at the idle box did not open the queue view");
-    assert_eq!(waiting, 0, "d in the view left the line queued");
-    assert!(!open, "the view stood on over an empty queue");
+    assert!(deleted, "ctrl+x at the idle box found nothing to delete");
+    assert_eq!(waiting, 0, "ctrl+x left the line queued");
+    assert!(
+        !rows.iter().any(|row| row.contains("queued")),
+        "the panel stood on over an empty queue: {rows:#?}"
+    );
 }

@@ -1,8 +1,8 @@
 {
   "harness": {
     "tests/whole_screen/screen.rs": "07a6964bb72ea96433275b39f33ab91459a81610e73a0e7f5b95662fab426c4b",
-    "tests/whole_screen/vendor.rs": "aa9c2a759b0c5d6a3434650ad0643d8188769664337dee7602362aba67cbefca",
-    "tests/whole_screen/watched.rs": "fc480932ac70de72e0ce7a8fc8a904c6d564f2948c4c54def5f5cce3fc39b21d"
+    "tests/whole_screen/vendor.rs": "ff505c326f4d397d9d894db3a6a011b8b4f5b77122a01e1cf9776ad02f229281",
+    "tests/whole_screen/watched.rs": "4da9c9c2dfaa4b199ef6e755e5ea2a984240d62455ce2bf98e1b24238496aaf7"
   },
   "captures": [
     {
@@ -186,24 +186,6 @@
       "sha256": "fd669e58d9b6ca88bdc3e523299ec8d57b7f7e945b1b3751e5d408096406fe7c"
     },
     {
-      "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
-      "case": "a_single_waiting_prompt_is_told_the_key_that_opens_the_queue",
-      "opened": [
-        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
-        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
-      ],
-      "sha256": "5de7deef9616b5250c31d5a68b62d51b7f9b46fc9e1a1e4d6238a08f34bb3733"
-    },
-    {
-      "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window.snap",
-      "case": "a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window",
-      "opened": [
-        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
-        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
-      ],
-      "sha256": "a7fe2d4c45969e0e5337173451d6c519bf8642722212b23196aadcee47e6cd8d"
-    },
-    {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_opens_the_command_list_above_the_box.snap",
       "case": "a_slash_opens_the_command_list_above_the_box",
       "opened": [
@@ -219,6 +201,15 @@
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "8c6ebf96549b781e5a4ed373cbfe28b88e42d3e2376aae5d3ff3c7aab0d25e73"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_take_back_the_box_has_no_room_for_says_so_beside_the_title.snap",
+      "case": "a_take_back_the_box_has_no_room_for_says_so_beside_the_title",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(\"queue-refused\", 80, 40, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "7a0b50562e6f86bc6451a6d214fad11b157a1727c4f833b9507080e43f3637a9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
@@ -535,6 +526,24 @@
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
       "sha256": "c5cbf45eb449beb0772d3732d418dddc53c89dc2dc32fb9c04a212cb8602de93"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__five_waiting_prompts_stand_in_one_panel_in_a_narrow_window.snap",
+      "case": "five_waiting_prompts_stand_in_one_panel_in_a_narrow_window",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(\"queue-panel-narrow\", 40, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "eca9b1306f3c054aef516c80eb84adc70f0a5c4b586c2733092f7a3203aaeb2d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__five_waiting_prompts_stand_in_one_panel_over_the_box.snap",
+      "case": "five_waiting_prompts_stand_in_one_panel_over_the_box",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(\"queue-panel\", 80, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "c86e646d5b6bd68cf0393a9473b3bcb11ee8e057112c9d896167626a95b5bf12"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_api_key_login_40.snap",
@@ -939,6 +948,24 @@
       "sha256": "71dd15ea723b8dab395eeb5972786772ea2aabd1579c24bf62156071a05a68a3"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_panel_in_ascii_at_40.snap",
+      "case": "five_waiting_prompts_stand_in_one_panel_in_ascii",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-panel-ascii-{columns}\"), (columns, 24), &vendor, \"bash(*)\", (\"ascii\", \"fullscreen\"), )"
+      ],
+      "sha256": "2d6fab0cc97a18ce182879627477db579cde37be7c32dc4392e24ea68ac76d41"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__queue_panel_in_ascii_at_80.snap",
+      "case": "five_waiting_prompts_stand_in_one_panel_in_ascii",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing_drawn( &format!(\"queue-panel-ascii-{columns}\"), (columns, 24), &vendor, \"bash(*)\", (\"ascii\", \"fullscreen\"), )"
+      ],
+      "sha256": "573e31d918ed7d3db5bee987a22f818c0ae1e44cbdefb26045aa67590e014c6b"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_40.snap",
       "case": "release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest",
       "opened": [
@@ -1114,6 +1141,15 @@
       "sha256": "cc93992ec741b182eaf190ec20f2ad82ef0ee8ad7663527a8d5eae966ac0afb5"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_arrows_walk_the_highlight_and_the_window_follows_it.snap",
+      "case": "the_arrows_walk_the_highlight_and_the_window_follows_it",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(\"queue-walked\", 80, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "9d77181b22260ca9120d59bbe7e13a6bde9db23717b90015d5d6763835a94531"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill.snap",
       "case": "the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill",
       "opened": [
@@ -1145,24 +1181,6 @@
         "Watched::open(&format!(\"login-ways-{held}-{columns}\"), columns, 24)"
       ],
       "sha256": "2a23090c109f028c339b1db2a13661b794dba21acc11cceaf8e2c2729181cfb9"
-    },
-    {
-      "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_names_the_keys_that_work_on_a_waiting_prompt.snap",
-      "case": "the_open_queue_names_the_keys_that_work_on_a_waiting_prompt",
-      "opened": [
-        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
-        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
-      ],
-      "sha256": "84faf2cbe4ec48abf54f5f2d5ee7f78ddb39f5620acc1362c05107d9433210ce"
-    },
-    {
-      "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_wraps_its_keys_in_a_narrow_window.snap",
-      "case": "the_open_queue_wraps_its_keys_in_a_narrow_window",
-      "opened": [
-        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
-        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
-      ],
-      "sha256": "60abf62dc90b3bbee2c63be4403f81106a7f729d949deaba517fb15306194892"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_provider_panel_reaches_a_turn_without_a_provider_being_named.snap",

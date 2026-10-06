@@ -390,6 +390,45 @@ impl Watched {
         Self::configured(case, columns, rows, &document, true)
     }
 
+    /// The same, drawn with the glyphs and on the screen `drawn` names: the two
+    /// settings a panel has to look right under in every combination, paired
+    /// because a case always names both.
+    ///
+    /// Both are written as the configuration spells them, so a case reads as
+    /// the setting it is about. A native terminal is the one that keeps a
+    /// scrollback, as [`Self::native`] says.
+    pub(crate) fn allowing_drawn(
+        case: &str,
+        size: (u16, u16),
+        vendor: &Vendor,
+        rule: &str,
+        drawn: (&str, &str),
+    ) -> Self {
+        let (glyphs, screen) = drawn;
+        let document = format!(
+            "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+             \"output\": {{\"glyphs\": \"{glyphs}\", \"screen\": \"{screen}\"}},\n  \
+             \"permissions\": {{\"allow\": [\"{rule}\"]}},\n  \
+             \"providers\": {{\n    \"anthropic\": {{\n      \
+             \"model\": \"{MODEL}\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+            vendor.address()
+        );
+        let (columns, rows) = size;
+
+        Self::configured_with_terminal(
+            case,
+            &document,
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: screen == "native",
+            },
+            None,
+        )
+    }
+
     /// Colour, rules for the calls a case makes, and no middle to recap.
     ///
     /// Three things at once, which no other case here needs together. Colour,

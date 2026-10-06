@@ -170,6 +170,16 @@ fn a_turn_still_running() -> Vendor {
     )
 }
 
+/// The same turn, held open long enough for a case that queues prompts behind
+/// it and then works on them.
+fn a_turn_still_running_long() -> Vendor {
+    Vendor::calling_then_holding_long(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        HELD_ANSWER,
+    )
+}
+
 /// Moves the mark of the panel standing to the entry named `name` and takes
 /// it: a row is reached by what it says, never by how far down it stands,
 /// so a row added above it moves no case.
@@ -739,123 +749,541 @@ fn a_mistyped_command_with_words_after_it_mid_turn_is_queued_as_a_prompt() {
     assert!(!queued.contains("esc to close"), "{queued}");
 }
 
-/// A turn held open with one prompt waiting behind it, in a window `columns`
-/// wide, and the vendor that holds it open for the caller to keep.
-fn with_a_prompt_waiting(case: &str, columns: u16, vendor: &Vendor) -> Watched {
-    let mut window = Watched::allowing(case, columns, 24, vendor, "bash(*)");
+/// What the queue cases type behind a running turn, in the order typed.
+const WAITING: [&str; 5] = [
+    "and add a test for the windows path",
+    "then run the whole gate",
+    "check the ascii glyphs too",
+    "update the changelog entry",
+    "and say what changed",
+];
 
+/// Starts the held turn in `window` and queues the first `count` of
+/// [`WAITING`] behind it, each one caught on screen before the next is typed.
+fn waiting_behind_a_turn(window: &mut Watched, count: usize) {
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("and add a test for the windows path\r", "1 queued");
-    window
+    for (before, prompt) in WAITING.iter().take(count).enumerate() {
+        window.types_and_catches(&format!("{prompt}\r"), &format!("{} queued", before + 1));
+    }
 }
 
-/// The picture from the top edge of the queue box down.
+/// A box filled so close to its ceiling that no waiting prompt fits beside it.
 ///
-/// Not the whole screen: the working row above it counts seconds, and a picture
-/// that held the count would be one a loaded machine draws a second later.
-fn from_the_queue_box(picture: &str) -> String {
+/// Bracketed, so it lands as one paste. Twenty bytes short of the ceiling,
+/// because the shortest prompt in [`WAITING`] is longer than that.
+fn a_box_with_no_room() -> String {
+    const CEILING: usize = 1024 * 1024;
+    format!("\x1b[200~{}\x1b[201~", "a".repeat(CEILING - 20))
+}
+
+/// The rows from the running turn's working row to the last one drawn, as a
+/// reader sees each: the frame off and the blank cells after the text gone.
+///
+/// The working row is steadied the way [`on_the_first_beat`] steadies it, in
+/// either set of marks. The two rows over it are held to what stands there
+/// under a turn: the transcript's last line, then one blank row.
+fn under_the_turn(picture: &str) -> Vec<String> {
+    let rows: Vec<&str> = picture
+        .lines()
+        .skip(1)
+        .map(|row| {
+            row.strip_prefix('|')
+                .and_then(|row| row.strip_suffix('|'))
+                .unwrap_or(row)
+        })
+        .collect();
+    let working = rows
+        .iter()
+        .position(|row| row.contains("esc to interrupt"))
+        .unwrap_or_else(|| panic!("no working row in\n{picture}"));
+
+    let parted = rows.get(working.wrapping_sub(1)).is_some_and(|row| {
+        // The last column is the rail's in fullscreen.
+        let width = row.chars().count().saturating_sub(1);
+        row.chars().take(width).all(|cell| cell == ' ')
+    });
+    assert!(parted, "no blank row over the working row in\n{picture}");
+    assert!(
+        rows.get(working.wrapping_sub(2))
+            .is_some_and(|row| row.contains(HELD_ANSWER)),
+        "the transcript does not end over the working row in\n{picture}"
+    );
+
+    let mut under: Vec<String> = rows
+        .iter()
+        .skip(working)
+        .map(|row| steadied(row.trim_end()))
+        .collect();
+    // Native mode draws under the transcript, so until the transcript fills
+    // the window the rows past the footer are ones nothing has drawn yet.
+    while under.last().is_some_and(String::is_empty) {
+        under.pop();
+    }
+    under
+}
+
+/// `row` with a working row's mark on its first face and its clock at zero.
+fn steadied(row: &str) -> String {
+    let Some((mark, rest)) = row.split_once(" writing (") else {
+        return row.to_owned();
+    };
+    let mark = match mark {
+        "\u{2733}" | "\u{273b}" | "\u{273a}" | "\u{2731}" => "\u{2733}",
+        "|" | "/" | "-" | "\\" => "|",
+        other => other,
+    };
+    match rest.split_once('s') {
+        Some((elapsed, tail))
+            if !elapsed.is_empty() && elapsed.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            format!("{mark} writing ({}s{tail}", "0".repeat(elapsed.len()))
+        }
+        _ => format!("{mark} writing ({rest}"),
+    }
+}
+
+/// `picture` with its working row steadied, for a snapshot.
+fn steadied_picture(picture: &str) -> String {
     picture
         .lines()
-        .skip_while(|row| !row.contains("╭─ 1 queued"))
+        .map(|row| match row.strip_prefix('|') {
+            Some(inner) if inner.contains("esc to interrupt") => {
+                let (cells, edge) = inner.split_at(inner.len() - 1);
+                let text = cells.trim_end();
+                let pad = cells.chars().count() - text.chars().count();
+                format!("|{}{}{edge}", steadied(text), " ".repeat(pad))
+            }
+            _ => row.to_owned(),
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-#[test]
-fn a_single_waiting_prompt_is_told_the_key_that_opens_the_queue() {
-    // The key used to appear only once the box overflowed, so a reader with one
-    // prompt waiting had nothing on screen saying it could be taken back. It
-    // is drawn into the box's bottom edge, which costs the screen no row.
-    let vendor = a_turn_still_running();
-    let window = with_a_prompt_waiting("queue-hint", 80, &vendor);
-
+/// Asserts the rows under the turn in `window` are `drawn`, row for row.
+fn draws(window: &Watched, drawn: &[&str]) {
     let picture = window.picture();
-    assert!(
-        picture.contains("\u{2500} ctrl+q edit \u{2500}\u{256f}"),
-        "{picture}"
-    );
-    insta::assert_snapshot!(from_the_queue_box(&picture));
+    let under = under_the_turn(&picture);
+    assert_eq!(under, drawn, "\n{picture}");
 }
 
-#[test]
-fn a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window() {
-    let vendor = a_turn_still_running();
-    let window = with_a_prompt_waiting("queue-hint-narrow", 40, &vendor);
-
+/// Asserts the panel's own rows under the turn in `window`, from the working
+/// row to the blank row under the footer, are those of `drawn`.
+///
+/// For a box holding a paste: the design draws the box empty, and what the
+/// box holds is not what the case is about.
+fn draws_the_panel(window: &Watched, drawn: &[&str]) {
     let picture = window.picture();
-    assert!(
-        picture.contains("\u{2500} ctrl+q edit \u{2500}\u{256f}"),
-        "{picture}"
-    );
-    insta::assert_snapshot!(from_the_queue_box(&picture));
-}
-
-#[test]
-fn the_open_queue_names_the_keys_that_work_on_a_waiting_prompt() {
-    let vendor = a_turn_still_running();
-    let mut window = with_a_prompt_waiting("queue-open", 80, &vendor);
-
-    window.types_and_catches("\x11", "d delete");
-    let picture = window.picture();
-    assert!(picture.contains("e edit"), "{picture}");
-    insta::assert_snapshot!(on_the_first_beat(&picture));
-}
-
-#[test]
-fn the_open_queue_keeps_the_working_row_directly_above_its_rule() {
-    // The view replaces the box and what stood over it, and the row that says a
-    // turn is running stood over it: dropped, the reader looking at their queue
-    // could not tell the turn behind it was still going. It is the row the
-    // view's rule sits directly under, and it is the live one, so its clock
-    // goes on counting while the view stands.
-    let vendor = a_turn_still_running();
-    let mut window = with_a_prompt_waiting("queue-open-working", 80, &vendor);
-
-    window.types_and_catches("\x11", "d delete");
-    let picture = window.picture();
-
-    let rows: Vec<&str> = picture.lines().collect();
-    let title = rows
+    let under = under_the_turn(&picture);
+    let panel = drawn.len().saturating_sub(5);
+    let drawn: Vec<String> = drawn
         .iter()
-        .position(|row| row.contains("1 queued"))
-        .unwrap_or_else(|| panic!("no title in {picture}"));
-    let rule = title.saturating_sub(2);
+        .take(panel)
+        .map(|row| (*row).to_owned())
+        .collect();
+    assert_eq!(under.get(..panel), Some(&drawn[..]), "\n{picture}");
+}
+
+/// Five prompts waiting, 80 columns.
+const WAITING_80: &[&str] = &[
+    "✳ writing (0s · ↓ 4 · esc to interrupt)",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "",
+    "5 queued · ctrl+enter to send all now",
+    "",
+    "› and add a test for the windows path",
+    "",
+    "  then run the whole gate",
+    "",
+    "  check the ascii glyphs too",
+    "",
+    "↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now",
+    "",
+    "                                                                 99% window left",
+    "╭──────────────────────────────────────────────────────────────────────────────╮",
+    "│ ›                                                                            │",
+    "╰──────────────────────────────────────────────────────────────────────────────╯",
+    "ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1",
+];
+
+/// The same in ASCII.
+const WAITING_80_ASCII: &[&str] = &[
+    "| writing (0s - v 4 - esc to interrupt)",
+    "--------------------------------------------------------------------------------",
+    "",
+    "5 queued - ctrl+enter to send all now",
+    "",
+    "> and add a test for the windows path",
+    "",
+    "  then run the whole gate",
+    "",
+    "  check the ascii glyphs too",
+    "",
+    "^v to walk - ctrl+e to edit - ctrl+x to delete - ctrl+s to send now",
+    "",
+    "                                                                 99% window left",
+    "+------------------------------------------------------------------------------+",
+    "| >                                                                            |",
+    "+------------------------------------------------------------------------------+",
+    "ask mode on (shift+tab to cycle) - 1 command           anthropic - claude-test-1",
+];
+
+/// Five prompts waiting, 40 columns: the footer folds.
+const WAITING_40: &[&str] = &[
+    "✳ writing (0s · ↓ 4 · esc to interrupt)",
+    "────────────────────────────────────────",
+    "",
+    "5 queued · ctrl+enter to send all now",
+    "",
+    "› and add a test for the windows path",
+    "",
+    "  then run the whole gate",
+    "",
+    "  check the ascii glyphs too",
+    "",
+    "↑↓ to walk · ctrl+e to edit · ctrl+x to",
+    "delete · ctrl+s to send now",
+    "",
+    "                         99% window left",
+    "╭──────────────────────────────────────╮",
+    "│ ›                                    │",
+    "╰──────────────────────────────────────╯",
+    "ask mode on    anthropic · claude-test-1",
+];
+
+/// The same in ASCII.
+const WAITING_40_ASCII: &[&str] = &[
+    "| writing (0s - v 4 - esc to interrupt)",
+    "----------------------------------------",
+    "",
+    "5 queued - ctrl+enter to send all now",
+    "",
+    "> and add a test for the windows path",
+    "",
+    "  then run the whole gate",
+    "",
+    "  check the ascii glyphs too",
+    "",
+    "^v to walk - ctrl+e to edit - ctrl+x to",
+    "delete - ctrl+s to send now",
+    "",
+    "                         99% window left",
+    "+--------------------------------------+",
+    "| >                                    |",
+    "+--------------------------------------+",
+    "ask mode on    anthropic - claude-test-1",
+];
+
+/// Walked to the fourth of five: the window has followed the highlight.
+const WALKED_TO_THE_FOURTH: &[&str] = &[
+    "✳ writing (0s · ↓ 4 · esc to interrupt)",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "",
+    "5 queued · ctrl+enter to send all now",
+    "",
+    "  then run the whole gate",
+    "",
+    "  check the ascii glyphs too",
+    "",
+    "› update the changelog entry",
+    "",
+    "↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now",
+    "",
+    "                                                                 99% window left",
+    "╭──────────────────────────────────────────────────────────────────────────────╮",
+    "│ ›                                                                            │",
+    "╰──────────────────────────────────────────────────────────────────────────────╯",
+    "ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1",
+];
+
+/// A take-back the box had no room for, 80 columns: the notice beside the title.
+const REFUSED_80: &[&str] = &[
+    "✳ writing (0s · ↓ 4 · esc to interrupt)",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "",
+    "5 queued · ctrl+enter to send all now · no room in the box · line stays queued",
+    "",
+    "› and add a test for the windows path",
+    "",
+    "  then run the whole gate",
+    "",
+    "  check the ascii glyphs too",
+    "",
+    "↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now",
+    "",
+    "                                                                 99% window left",
+    "╭──────────────────────────────────────────────────────────────────────────────╮",
+    "│ ›                                                                            │",
+    "╰──────────────────────────────────────────────────────────────────────────────╯",
+    "ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1",
+];
+
+/// The same at 40 columns, where the notice takes the row under the title.
+const REFUSED_40: &[&str] = &[
+    "✳ writing (0s · ↓ 4 · esc to interrupt)",
+    "────────────────────────────────────────",
+    "",
+    "5 queued · ctrl+enter to send all now",
+    "no room in the box · line stays queued",
+    "› and add a test for the windows path",
+    "",
+    "  then run the whole gate",
+    "",
+    "  check the ascii glyphs too",
+    "",
+    "↑↓ to walk · ctrl+e to edit · ctrl+x to",
+    "delete · ctrl+s to send now",
+    "",
+    "                         99% window left",
+    "╭──────────────────────────────────────╮",
+    "│ ›                                    │",
+    "╰──────────────────────────────────────╯",
+    "ask mode on    anthropic · claude-test-1",
+];
+
+/// The same at 80 columns in ASCII.
+const REFUSED_80_ASCII: &[&str] = &[
+    "| writing (0s - v 4 - esc to interrupt)",
+    "--------------------------------------------------------------------------------",
+    "",
+    "5 queued - ctrl+enter to send all now - no room in the box - line stays queued",
+    "",
+    "> and add a test for the windows path",
+    "",
+    "  then run the whole gate",
+    "",
+    "  check the ascii glyphs too",
+    "",
+    "^v to walk - ctrl+e to edit - ctrl+x to delete - ctrl+s to send now",
+    "",
+    "                                                                 99% window left",
+    "+------------------------------------------------------------------------------+",
+    "| >                                                                            |",
+    "+------------------------------------------------------------------------------+",
+    "ask mode on (shift+tab to cycle) - 1 command           anthropic - claude-test-1",
+];
+
+#[test]
+fn five_waiting_prompts_stand_in_one_panel_over_the_box() {
+    // One panel says what is queued and which goes next, and its keys are
+    // Ctrl keys, so the box under it keeps every letter typed. Three prompts
+    // are shown and nothing counts the other two: the title and the footer
+    // already say there are more and how to reach them.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-panel", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 5);
+
+    draws(&window, WAITING_80);
+    insta::assert_snapshot!(steadied_picture(&window.picture()));
+}
+
+#[test]
+fn five_waiting_prompts_stand_in_one_panel_in_a_narrow_window() {
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-panel-narrow", 40, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 5);
+
+    draws(&window, WAITING_40);
+    insta::assert_snapshot!(steadied_picture(&window.picture()));
+}
+
+#[test]
+fn five_waiting_prompts_stand_in_one_panel_in_ascii() {
+    for (columns, drawn) in [(80, WAITING_80_ASCII), (40, WAITING_40_ASCII)] {
+        let vendor = a_turn_still_running_long();
+        let mut window = Watched::allowing_drawn(
+            &format!("queue-panel-ascii-{columns}"),
+            (columns, 24),
+            &vendor,
+            "bash(*)",
+            ("ascii", "fullscreen"),
+        );
+        waiting_behind_a_turn(&mut window, 5);
+
+        draws(&window, drawn);
+        insta::assert_snapshot!(
+            format!("queue_panel_in_ascii_at_{columns}"),
+            steadied_picture(&window.picture())
+        );
+    }
+}
+
+#[test]
+fn the_arrows_walk_the_highlight_and_the_window_follows_it() {
+    // With prompts waiting the arrows walk them, in the place the history
+    // walk had: an empty box has no lines of its own to move through. The
+    // three rows shown follow the highlight, so it is never walked off screen.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-walked", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 5);
+
+    for walked_to in WAITING.iter().skip(1).take(3) {
+        window.types_and_catches("\x1b[B", &format!("› {walked_to}"));
+    }
+    draws(&window, WALKED_TO_THE_FOURTH);
+    insta::assert_snapshot!(steadied_picture(&window.picture()));
+
+    // And back up, without the history putting an earlier prompt in the box.
+    window.types_and_catches("\x1b[A", "› check the ascii glyphs too");
+    let picture = window.picture();
+    let under = under_the_turn(&picture);
     assert!(
-        rows.get(rule)
-            .is_some_and(|row| row.contains("\u{2500}\u{2500}\u{2500}")),
-        "{picture}"
-    );
-    assert!(
-        rows.get(rule.saturating_sub(1))
-            .is_some_and(|row| row.contains("esc to interrupt")),
-        "{picture}"
+        under
+            .iter()
+            .any(|row| row.trim_end_matches(['│', ' ']) == "│ ›"),
+        "the box took a line from the history:\n{picture}"
     );
 }
 
 #[test]
-fn the_open_queue_wraps_its_keys_in_a_narrow_window() {
-    let vendor = a_turn_still_running();
-    let mut window = with_a_prompt_waiting("queue-open-narrow", 40, &vendor);
+fn ctrl_x_deletes_the_highlighted_prompt_and_the_highlight_stays_in_place() {
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-deleted", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 5);
 
-    window.types_and_catches("\x11", "d delete");
-    insta::assert_snapshot!(on_the_first_beat(&window.picture()));
+    window.types_and_catches("\x18", "4 queued");
+    let picture = window.picture();
+    let under = under_the_turn(&picture);
+    assert_eq!(
+        under.get(5..10),
+        Some(
+            &[
+                "› then run the whole gate",
+                "",
+                "  check the ascii glyphs too",
+                "",
+                "  update the changelog entry",
+            ]
+            .map(String::from)[..]
+        ),
+        "\n{picture}"
+    );
+    assert!(!picture.contains("windows path"), "{picture}");
 }
 
 #[test]
-fn deleting_the_only_waiting_prompt_closes_the_queue_and_leaves_the_box_empty() {
+fn deleting_the_last_waiting_prompt_takes_the_panel_away_and_leaves_the_box_empty() {
     // Taking it back would put its words in the box; deleting must not.
-    let vendor = a_turn_still_running();
-    let mut window = with_a_prompt_waiting("queue-delete", 80, &vendor);
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-delete-last", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 1);
 
-    window.types_and_catches("\x11", "d delete");
-    window.types("d");
-
-    // What is typed next lands in a box holding nothing else: a prompt taken
-    // back would be in it already, and the line would read as the two joined.
-    window.types_and_catches("hi", "│ › hi");
+    // What is typed after it lands in a box holding nothing else: a prompt
+    // taken back would be in it already, and the line would read as the two
+    // joined.
+    window.types_and_catches("\x18hi", "│ › hi");
     let picture = window.picture();
     assert!(!picture.contains("queued"), "{picture}");
     assert!(!picture.contains("windows path"), "{picture}");
+}
+
+#[test]
+fn ctrl_e_takes_the_highlighted_prompt_back_into_the_box() {
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-taken-back", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 2);
+
+    window.types_and_catches("\x05", "│ › and add a test for the windows path");
+    let picture = window.picture();
+    assert!(picture.contains("1 queued"), "{picture}");
+    assert!(picture.contains("› then run the whole gate"), "{picture}");
+}
+
+#[test]
+fn ctrl_q_mid_turn_opens_nothing_and_the_next_letter_lands_in_the_box() {
+    // Ctrl+Q opened a view that held the queue. Nothing is bound to it now:
+    // the panel stands as it stood and what is typed next is the box's.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-ctrl-q", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 2);
+
+    window.types_and_catches("\x11z", "│ › z");
+    let picture = window.picture();
+    assert!(picture.contains("2 queued"), "{picture}");
+    assert!(
+        picture.contains("› and add a test for the windows path"),
+        "{picture}"
+    );
+}
+
+#[test]
+fn esc_stops_the_turn_and_leaves_what_waits_behind_it() {
+    // Esc is about the turn, not the queue: the turn stops as it always has,
+    // and the prompts typed behind it are not dropped with it. They are what
+    // runs next, each as the line it was typed as.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-esc", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 2);
+
+    window.types_and_catches("\x1b", "! stopped");
+    window.catches(
+        "the turn stopped",
+        &format!("\u{203a} {}", WAITING.get(1).expect("two waiting")),
+    );
+    let picture = window.picture();
+    let stopped = picture.find("! stopped");
+    for prompt in WAITING.iter().take(2) {
+        let sent = picture.find(&format!("\u{203a} {prompt}"));
+        assert!(
+            stopped.is_some() && sent > stopped,
+            "{prompt:?} was not what ran after the stop:\n{picture}"
+        );
+    }
+}
+
+#[test]
+fn a_take_back_the_box_has_no_room_for_says_so_beside_the_title() {
+    // A key that seemed to do nothing left the reader asking whether the
+    // prompt was lost. The notice says why and that it was not, in the room
+    // beside the title, and the next key takes it away and does what it does.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-refused", 80, 40, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 5);
+    window.types_and_catches(&a_box_with_no_room(), "[Pasted text");
+
+    window.types_and_catches("\x05", "no room in the box · line stays queued");
+    draws_the_panel(&window, REFUSED_80);
+    insta::assert_snapshot!(steadied_picture(&window.picture()));
+
+    window.types_and_catches("\x1b[B", "› then run the whole gate");
+    let picture = window.picture();
+    assert!(!picture.contains("no room in the box"), "{picture}");
+    assert!(picture.contains("5 queued"), "{picture}");
+}
+
+#[test]
+fn a_refused_take_back_in_a_narrow_window_says_so_under_the_title() {
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-refused-narrow", 40, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 5);
+    window.types_and_catches(&a_box_with_no_room(), "[Pasted text");
+
+    window.types_and_catches("\x05", "no room in the box · line stays queued");
+    draws_the_panel(&window, REFUSED_40);
+}
+
+#[test]
+fn a_prompt_waiting_while_the_reader_walks_the_panel_is_taken_by_the_turn() {
+    // The panel is only looked at: walking its highlight holds nothing, so
+    // the turn still takes what waits behind it while a reader is on it.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::allowing("queue-not-held", 80, 24, &vendor, "bash(*)");
+    waiting_behind_a_turn(&mut window, 2);
+
+    window.types_and_catches("\x1b[B", "2 queued");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    while !window.recorded().contains(WAITING[1]) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the turn never took what was waiting\n{}",
+            window.picture()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    window.types_and_catches("hi", "│ › hi");
+    let picture = window.picture();
+    assert!(!picture.contains("queued"), "{picture}");
 }
 
 #[test]
@@ -938,8 +1366,8 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
 #[test]
 fn esc_mid_turn_closes_the_command_list_and_the_turn_runs_on() {
     // The list stands over a running turn, and it is the thing in front of the
-    // reader rather than the turn: Esc closes it, as it closes the Ctrl+O view
-    // and the queue, and the turn goes on behind it. The answer the list stood
+    // reader rather than the turn: Esc closes it, as it closes the Ctrl+O view,
+    // and the turn goes on behind it. The answer the list stood
     // over is what comes back.
     let vendor = a_turn_still_running();
     let mut window = Watched::allowing("list-closed-mid-turn", 80, 24, &vendor, "bash(*)");

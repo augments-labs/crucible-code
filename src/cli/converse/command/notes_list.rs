@@ -209,7 +209,7 @@ impl<'a> Listing<'a> {
             | Pressed::Expand
             | Pressed::Background
             | Pressed::Plan
-            | Pressed::Queue
+            | Pressed::Remove
             | Pressed::Copy
             | Pressed::PasteImage
             | Pressed::Rename

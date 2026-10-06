@@ -2007,6 +2007,45 @@ pub(crate) fn clipped(text: impl fmt::Display, width: usize, glyphs: Glyphs) -> 
     within(flattened(text), width, glyphs)
 }
 
+/// [`clipped`] for text that may run to a megabyte, as a prompt waiting in the
+/// queue may: only as much of it as a row of `width` could show is read, so a
+/// panel drawn on every frame flattens a row's worth of it rather than all of
+/// it.
+///
+/// Read up to the first character the row has no room for, or a few times the
+/// width in characters where the text draws narrower than it says — characters
+/// that draw nothing can be most of a line. The mark that says it was cut is
+/// owed whenever anything was left unread, even where what was read fits the
+/// row.
+pub(crate) fn clipped_start(text: &str, width: usize, glyphs: Glyphs) -> String {
+    let text = text.trim();
+    let reach = width.saturating_mul(4).saturating_add(4);
+
+    let mut used = 0;
+    let mut end = text.len();
+    let mut one = [0; 4];
+    for (read, (at, character)) in text.char_indices().enumerate() {
+        used += if character.is_control() {
+            1
+        } else {
+            columns(character.encode_utf8(&mut one))
+        };
+        if used > width || read >= reach {
+            end = at + character.len_utf8();
+            break;
+        }
+    }
+
+    match text.get(..end) {
+        Some(read) if end < text.len() => within(
+            format!("{}{}", flattened(read), glyphs.ellipsis()),
+            width,
+            glyphs,
+        ),
+        _ => clipped(text, width, glyphs),
+    }
+}
+
 /// One line of a file, or of a command's output, at most `width` display columns
 /// of it.
 ///

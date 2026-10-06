@@ -923,3 +923,46 @@ fn a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode() {
     assert!(!all.contains("the response ended before"), "{all}");
     insta::assert_snapshot!(window.picture());
 }
+
+#[test]
+fn five_waiting_prompts_stand_in_one_panel_in_native_mode() {
+    // As in fullscreen, with no rail. Forty-eight rows, because native mode
+    // holds what stands under the transcript to half the window, and the
+    // panel with three prompts named, the row over it and the box under it
+    // need more than half of forty once the footer folds at forty columns.
+    for (columns, glyphs, drawn) in [
+        (80, "unicode", crate::WAITING_80),
+        (40, "ascii", crate::WAITING_40_ASCII),
+    ] {
+        let vendor = crate::a_turn_still_running_long();
+        let mut window = Watched::allowing_drawn(
+            &format!("native-queue-panel-{columns}"),
+            (columns, 48),
+            &vendor,
+            "bash(*)",
+            (glyphs, "native"),
+        );
+        crate::waiting_behind_a_turn(&mut window, 5);
+
+        crate::draws(&window, drawn);
+        window.assert_never_alternate();
+    }
+}
+
+#[test]
+fn a_refused_take_back_says_so_beside_the_title_in_native_mode() {
+    let vendor = crate::a_turn_still_running_long();
+    let mut window = Watched::allowing_drawn(
+        "native-queue-refused",
+        (80, 40),
+        &vendor,
+        "bash(*)",
+        ("ascii", "native"),
+    );
+    crate::waiting_behind_a_turn(&mut window, 5);
+    window.types_and_catches(&crate::a_box_with_no_room(), "[Pasted text");
+
+    window.types_and_catches("\x05", "no room in the box - line stays queued");
+    crate::draws_the_panel(&window, crate::REFUSED_80_ASCII);
+    window.assert_never_alternate();
+}

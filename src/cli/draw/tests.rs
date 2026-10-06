@@ -1038,6 +1038,46 @@ fn a_line_is_clipped_to_the_columns_it_takes_not_the_characters_it_holds() {
     assert_eq!(clipped(three, 5, unicode()), format!("{warning}{warning}…"));
 }
 
+#[test]
+fn a_prompt_read_from_its_start_is_clipped_where_the_whole_of_it_would_be() {
+    // Reading only a row's worth is a saving, not a second way of clipping: on
+    // anything a row can show, it comes to what reading all of it does.
+    let warning = "\u{26A0}\u{FE0F}";
+    let lines = [
+        "short".to_owned(),
+        "héllo wörld".to_owned(),
+        "日本語のテキスト".to_owned(),
+        format!("{warning}{warning}{warning}"),
+        "first line\nsecond line".to_owned(),
+        "  padded  ".to_owned(),
+    ];
+
+    for line in &lines {
+        for width in [1, 4, 5, 8, 40] {
+            for glyphs in [unicode(), Glyphs::Ascii] {
+                assert_eq!(
+                    clipped_start(line, width, glyphs),
+                    clipped(line, width, glyphs),
+                    "{line:?} at {width}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_prompt_mostly_of_characters_that_draw_nothing_still_says_it_was_cut() {
+    // Past the few times its width it reads in characters, the rest is left
+    // unread however little of the row the read part filled, and the row says
+    // so rather than drawing what reads as the whole of it.
+    let line = format!("a{}b", "\u{200B}".repeat(100));
+
+    let row = clipped_start(&line, 5, unicode());
+
+    assert!(row.ends_with('\u{2026}'), "{row:?}");
+    assert!(columns(&row) <= 5, "{row:?}");
+}
+
 /// What a question about `sensitivity` leaves on the terminal.
 fn questioned(sensitivity: &Sensitivity) -> String {
     let mut renderer = Renderer::new(Recording::new(80, 24));

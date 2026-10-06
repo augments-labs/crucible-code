@@ -396,27 +396,39 @@ and the clock after that, since all three are recoverable: the key is named
 under the box, and the other two will be back next second. The word is the last
 thing left.
 
-The prompts waiting behind the turn stand in a panel over the box, framed the
-way the box is because they are the same thing a moment apart. They are your own
+The prompts waiting behind the turn stand in a panel over the box, under the
+row saying a turn is running, for as long as any are waiting. They are your own
 words, one of them being typed and the rest already sent for:
 
 ```
-╭─ 4 queued ───────────────────────────────────────────────╮
-│ › fix the failing test                                   │
-│ › then run the gate                                      │
-│ › and write the changelog                                │
-│   … +1 more                                              │
-╰──────────────────────────────────────────── ctrl+q edit ─╯
+────────────────────────────────────────────────────────────────────
+
+4 queued · ctrl+enter to send all now
+
+› fix the failing test
+
+  then run the gate
+
+  and write the changelog
+
+↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now
 ```
 
-The bottom edge names the key that opens the queue, for one waiting prompt as
-for many. Three are named and the rest are counted, oldest first, which is the
-order they will be said in. A line too wide for the window is cut at the right.
-On a window too narrow to open a frame the panel is one indented row saying
-how many are waiting, since that is the fact that cannot go, and on one too
-short for everything standing over the box it gives its rows up before the row
-saying a turn is running does: a queued prompt has its own turn coming, and
-that row is written nowhere else.
+Three are named at most, oldest first, which is the order they will be said
+in, and the title counts them all. One is highlighted, the first when the panel
+appears; a prompt queued later goes to the end and leaves the highlight where
+it is. You go on typing in the box while the panel stands. Once the line in the
+box has no row above or below to move to, <kbd>↑</kbd> and <kbd>↓</kbd> walk
+the highlight rather than the history, and the three named follow it.
+<kbd>Ctrl+E</kbd> takes the highlighted prompt back into the box at the cursor,
+to be edited or sent ahead of the rest, and <kbd>Ctrl+X</kbd> deletes it. The
+highlight stays where it was, on the prompt that followed, and the panel goes
+with the last one. A prompt too long to go in beside what the box already holds
+stays queued, and the panel says `no room in the box · line stays queued` until
+the next key. A line too wide for the window is cut at the right. On one too
+short for everything standing over the box the panel names fewer prompts, and
+gives its rows up before the row saying a turn is running does: a queued prompt
+has its own turn coming, and that row is written nowhere else.
 
 They go together. When the turn ends the whole queue is one turn: the oldest is
 its prompt and the rest are handed to the same turn before it asks anything, so
@@ -425,24 +437,14 @@ turn are one thing you wanted said, and answering the first before reading the
 third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
 write. A turn that stopped on a used-up plan is the exception: the queue waits
-over the box, where <kbd>Ctrl+Q</kbd> opens it to edit or delete, until you send
-a prompt, since sent on its own it would reach a plan that is spent.
+in the same panel over the box, where the same keys edit or delete it, until
+you send a prompt, since sent on its own it would reach a plan that is spent.
 
-<kbd>Ctrl+Q</kbd> stands the whole queue where the box was, with a footer naming
-the keys that work. Up and down walk it, <kbd>e</kbd> takes the marked line back
-into the box to be edited or sent ahead of the rest, <kbd>d</kbd> deletes it
-without taking it back, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes
-it. While it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view
-rather than interrupting the turn. In a window too short for the whole queue the
-view scrolls, so the line the keys act on is always drawn, from its first row.
-
-Nothing leaves the queue while it stands open. The turn above goes on writing,
-tools go on running, the answer goes on arriving; what waits is the one moment
-those lines would cross into the transcript, and it waits exactly as long as you
-hold the view open. A line already in the transcript cannot be taken back, which
-is why the ones you are still going over are kept out of it. Closing the view
-gives the whole batch up at once, edited and untouched alike, and the turn works
-them in at its next pass.
+Nothing holds the queue while you look at it. The turn above goes on writing,
+tools go on running, and the turn takes every waiting prompt at its next step,
+whichever is highlighted. A line already in the transcript cannot be taken
+back, so a prompt you want back is one you take before then; <kbd>Esc</kbd>
+stops the turn as it always does and leaves the queue as it is.
 
 While room is being made, a second line under the word says how far the notes
 have got:
@@ -490,7 +492,7 @@ Seven tasks are shown and the rest are counted: `… +4 more · ctrl+t to expand
 <kbd>Ctrl+T</kbd> takes that bound off and puts it back, and what it adds
 arrives underneath the rows already on screen, so nothing you were reading
 moves. On a window with no room for all of this, the panel is measured before
-the rows around it: the call line and the queued prompt give way first, since a
+the rows around it: the call line and the queue's panel give way first, since a
 call joins the transcript the moment its tool answers and a queued prompt has
 its own turn coming, while what the agent is working to is on screen nowhere
 else.

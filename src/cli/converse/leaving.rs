@@ -244,7 +244,7 @@ impl Leaving {
                 | Pressed::Plan
                 | Pressed::Clicked { .. }
                 | Pressed::Pasted(_)
-                | Pressed::Queue
+                | Pressed::Remove
                 | Pressed::Copy
                 | Pressed::PasteImage
                 | Pressed::Rename
@@ -329,7 +329,7 @@ impl Leaving {
             | Pressed::Expand
             | Pressed::Plan
             | Pressed::Pasted(_)
-            | Pressed::Queue
+            | Pressed::Remove
             | Pressed::Copy
             | Pressed::PasteImage
             | Pressed::Rename

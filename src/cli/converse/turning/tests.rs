@@ -2,7 +2,7 @@
 
 use crucible_runner::TurnError;
 use crucible_tools::{Summary, ToolOutput};
-use crucible_tui::Glyphs;
+use crucible_tui::{Editor, Glyphs, Key};
 use crucible_types::{Spend, StopReason, ToolArgs, ToolCall, ToolId, TurnId};
 
 use super::*;
@@ -13,13 +13,41 @@ fn nothing() -> Planning {
     Planning::new(crucible_builtins::Plan::new())
 }
 
+impl Turning {
+    /// Both bands of the footing as one run of rows, over an empty queue: the
+    /// layout every case here but the queue's is about, where nothing stands
+    /// over the transcript and the two bands are the one.
+    // The inputs `rows` takes less the two this fixes, so one over the limit
+    // for the reason it gives.
+    #[allow(clippy::too_many_arguments)]
+    fn laid(
+        &self,
+        planning: &Planning,
+        counting: &str,
+        columns: usize,
+        style: Style,
+        room: usize,
+    ) -> Vec<Row> {
+        let (mut turn, over) = self.rows(
+            planning,
+            counting,
+            &Prompts::default(),
+            across(columns),
+            style,
+            room,
+        );
+        turn.extend(over);
+        turn
+    }
+}
+
 #[test]
 fn an_empty_queue_adds_no_row_to_the_footing() {
     // The panel is for a queue that has something in it. With nothing
     // waiting, the footing is the same three rows it has always been — the
     // blank, the word, the blank — and not one row taller for a frame around
     // nothing.
-    let rows = Turning::started(Breakdown::default()).rows(&nothing(), "", 80, Style::plain(), 24);
+    let rows = Turning::started(Breakdown::default()).laid(&nothing(), "", 80, Style::plain(), 24);
     assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
 }
 
@@ -96,7 +124,7 @@ fn aged(turning: &mut Turning) {
 
 fn footing(turning: &Turning) -> Vec<String> {
     turning
-        .rows(&nothing(), "", 80, Style::plain(), 24)
+        .laid(&nothing(), "", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect()
@@ -243,7 +271,7 @@ fn a_call_written_where_it_was_asked_for_does_not_stand_in_the_footing() {
     let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested_alone("web_search", "rust traits", false));
 
-    let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
+    let rows = turning.laid(&nothing(), "", 80, Style::plain(), 24);
     assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
 
     assert_eq!(
@@ -346,7 +374,7 @@ fn a_turn_asked_to_stop_goes_on_saying_so_whatever_arrives_after() {
     assert_eq!(turning.doing.word(), "interrupting");
 
     // And stops offering the key that has already been pressed.
-    let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
+    let rows = turning.laid(&nothing(), "", 80, Style::plain(), 24);
     let said = rows.iter().map(Row::text).collect::<String>();
 
     assert!(said.contains("interrupting"), "{said:?}");
@@ -360,7 +388,7 @@ fn the_row_says_what_the_turn_has_spent_once_the_provider_has_said() {
     let mut turning = Turning::started(Breakdown::default());
     let said = |turning: &Turning| {
         turning
-            .rows(&nothing(), "", 80, Style::plain(), 24)
+            .laid(&nothing(), "", 80, Style::plain(), 24)
             .iter()
             .map(Row::text)
             .collect::<String>()
@@ -383,7 +411,7 @@ fn the_window_left_is_handed_to_the_prompt_and_takes_no_turn_row() {
     let mut turning = Turning::started(Breakdown::default());
     turning.saw(&Event::Carried { breakdown: carried });
 
-    let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
+    let rows = turning.laid(&nothing(), "", 80, Style::plain(), 24);
     let texts: Vec<String> = rows.iter().map(Row::text).collect();
 
     assert!(carried.left().is_some(), "{carried:?}");
@@ -455,7 +483,7 @@ fn completed_compaction_stays_full_long_enough_to_be_seen() {
     });
 
     let complete = turning
-        .rows(&nothing(), "", 80, Style::plain(), 24)
+        .laid(&nothing(), "", 80, Style::plain(), 24)
         .into_iter()
         .map(|row| row.text())
         .collect::<Vec<_>>()
@@ -479,7 +507,7 @@ fn completed_compaction_stays_full_long_enough_to_be_seen() {
         "clearing the completed bar did not guarantee a following frame"
     );
     let gone = turning
-        .rows(&nothing(), "", 80, Style::plain(), 24)
+        .laid(&nothing(), "", 80, Style::plain(), 24)
         .into_iter()
         .map(|row| row.text())
         .collect::<Vec<_>>()
@@ -665,7 +693,7 @@ fn a_window_with_no_room_for_the_row_keeps_the_turn_s_own_output_instead() {
     for room in 0..=ROWS {
         assert!(
             turning
-                .rows(&nothing(), "", 80, Style::plain(), room)
+                .laid(&nothing(), "", 80, Style::plain(), room)
                 .is_empty(),
             "{room}"
         );
@@ -673,7 +701,7 @@ fn a_window_with_no_room_for_the_row_keeps_the_turn_s_own_output_instead() {
 
     assert_eq!(
         turning
-            .rows(&nothing(), "", 80, Style::plain(), ROWS + 1)
+            .laid(&nothing(), "", 80, Style::plain(), ROWS + 1)
             .len(),
         ROWS
     );
@@ -687,7 +715,7 @@ fn a_call_stands_over_the_row_for_as_long_as_its_tool_is_out() {
     let mut turning = Turning::started(Breakdown::default());
     let said = |turning: &Turning| {
         turning
-            .rows(&nothing(), "", 80, Style::plain(), 24)
+            .laid(&nothing(), "", 80, Style::plain(), 24)
             .iter()
             .map(Row::text)
             .collect::<Vec<_>>()
@@ -735,7 +763,7 @@ fn a_command_shows_its_last_lines_and_says_how_many_there_have_been() {
     }
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), "", 80, Style::plain(), 24)
+        .laid(&nothing(), "", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -778,7 +806,7 @@ fn a_native_web_call_does_not_offer_to_leave_it_running() {
         let mut turning = Turning::started(Breakdown::default());
         turning.saw(&requested_as(name, false));
 
-        let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
+        let rows = turning.laid(&nothing(), "", 80, Style::plain(), 24);
         assert!(
             !rows.iter().any(|row| row.text().contains("ctrl+b")),
             "{name} advertised an unavailable action: {:?}",
@@ -797,7 +825,7 @@ fn the_row_under_a_call_offers_to_leave_it_running_before_it_has_printed_anythin
 
     let rows = |turning: &Turning| {
         turning
-            .rows(&nothing(), "", 80, Style::plain(), 24)
+            .laid(&nothing(), "", 80, Style::plain(), 24)
             .iter()
             .map(Row::text)
             .collect::<Vec<_>>()
@@ -839,7 +867,7 @@ fn what_a_command_printed_is_handed_back_when_its_tool_answers() {
     });
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), "", 80, Style::plain(), 24)
+        .laid(&nothing(), "", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -859,7 +887,7 @@ fn a_window_short_of_rows_drops_the_sample_before_the_call_line() {
     turning.saw(&printed("Compiling one\n"));
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), "", 80, Style::plain(), CALLING + 1)
+        .laid(&nothing(), "", 80, Style::plain(), CALLING + 1)
         .iter()
         .map(Row::text)
         .collect();
@@ -923,7 +951,7 @@ fn a_line_rewritten_in_place_replaces_the_row_rather_than_adding_one() {
     turning.saw(&printed("Building [====>  ] 96/128\r"));
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), "", 80, Style::plain(), 24)
+        .laid(&nothing(), "", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -1196,279 +1224,164 @@ fn the_call_line_is_on_the_value_the_loop_keys_a_redraw_on() {
     assert!(turning.moved(), "the call went and the footing did not");
 }
 
-/// A turn with `lines` waiting behind it, drawn to a picture.
-///
-/// One place the queue is filled and the footing read, so the cases below
-/// are about what the panel says rather than how it is fed.
-fn queueing(lines: &[&str], columns: usize, room: usize) -> Vec<String> {
-    let mut turning = Turning::started(Breakdown::default());
-    turning.queueing(lines.iter().copied(), columns, Style::plain());
-
-    turning
-        .rows(&nothing(), "", columns, Style::plain(), room)
-        .iter()
-        .map(Row::text)
-        .collect()
-}
-
-#[test]
-fn prompts_finished_while_the_turn_runs_are_named_in_a_box() {
-    // The gap this closes: Return during a turn takes the line out of the
-    // box, and until the panel nothing on the screen said where it went —
-    // and a second or third line was nowhere at all, since only the front
-    // one was ever named. The next acknowledgement a line gets is its own
-    // turn starting, which is however long the turn in front of it takes.
-    let said = queueing(&["fix the failing test", "and then commit"], 80, 24);
-    let whole = said.join("\n");
-
-    // Both are named, each led by the mark a line is typed after, inside a
-    // frame whose top edge carries the count.
-    assert!(whole.contains("2 queued"), "{whole}");
-    assert!(whole.contains("› fix the failing test"), "{whole}");
-    assert!(whole.contains("› and then commit"), "{whole}");
-}
-
-#[test]
-fn every_row_of_the_panel_ends_in_the_column_the_box_below_it_ends_in() {
-    // The defect this pins: the rows between the borders were padded to the
-    // width the left border was already inside, so each of them closed a
-    // column short of the top and bottom edges and the right-hand side of
-    // the frame stepped in and out. It is read directly above the box, so
-    // the column both of them close in is the same column.
-    for columns in [Prompt::FRAMED_AT, 40, 80] {
-        let said = queueing(&["one", "two longer than the first"], columns, 24);
-        let opens = said
-            .iter()
-            .position(|row| row.starts_with('\u{256d}'))
-            .unwrap_or_else(|| panic!("{columns}: no frame in {said:?}"));
-        let closes = said
-            .iter()
-            .position(|row| row.starts_with('\u{2570}'))
-            .unwrap_or_else(|| panic!("{columns}: the frame never closes in {said:?}"));
-        let panel = said.get(opens..=closes).unwrap_or_default();
-
-        for row in panel {
-            assert_eq!(
-                crucible_tui::columns(row),
-                columns,
-                "{columns}: {row:?} in {said:?}"
-            );
+/// A queue holding `lines`, as the box leaves one the moment each is finished
+/// under a running turn.
+fn waiting(lines: &[&str]) -> Prompts {
+    let mut queue = Prompts::default();
+    for line in lines {
+        let mut editor = Editor::new();
+        for key in line.chars() {
+            editor.press(Key::Char(key));
         }
+        queue.accept(&mut editor);
+    }
+    queue
+}
 
-        // A blank parts the frame from the working row above it: a box is a
-        // thing of its own rather than a second line of the row it stands
-        // under.
-        assert!(
-            opens.checked_sub(1).and_then(|above| said.get(above)) == Some(&String::new()),
-            "{said:?}"
-        );
+/// Both bands of the footing over a queue holding `lines`, as plain text: the
+/// turn's, laid out at `columns`, and what stands over the transcript, laid
+/// out at `window`.
+fn queueing(
+    turning: &Turning,
+    planning: &Planning,
+    lines: &[&str],
+    widths: Widths,
+    room: usize,
+) -> (Vec<String>, Vec<String>) {
+    let (turn, over) = turning.rows(planning, "", &waiting(lines), widths, Style::plain(), room);
+    (
+        turn.iter().map(Row::text).collect(),
+        over.iter().map(Row::text).collect(),
+    )
+}
+
+/// The same width for the transcript and the window, as a window too narrow
+/// for the rail lays them out.
+const fn across(columns: usize) -> Widths {
+    Widths {
+        columns,
+        window: columns,
     }
 }
 
 #[test]
-fn a_queue_longer_than_the_panel_compacts_the_rest_to_a_count() {
-    // Three are named and the rest are a row that says how many and where
-    // they are: a full queue cannot push the box off the screen, and a
-    // count that is not the count is worse than none.
-    let said = queueing(&["one", "two", "three", "four", "five"], 80, 24);
-    let whole = said.join("\n");
-
-    assert!(whole.contains("5 queued"), "{whole}");
-    assert!(whole.contains("… +2 more"), "{whole}");
-    assert!(whole.contains("ctrl+q"), "{whole}");
-    assert!(!whole.contains("four"), "{whole}");
-}
-
-#[test]
-fn one_waiting_prompt_is_told_the_key_that_opens_the_queue() {
-    // The gap this closes: the key appeared only once the box overflowed, so a
-    // reader with a single prompt waiting could not learn it can be taken
-    // back. The hint is inlaid in the bottom border, mirroring the count in
-    // the top one, and costs the box no row.
-    let said = queueing(&["and add a test for the windows path"], 80, 24);
-    let whole = said.join("\n");
-
-    let bottom = said
-        .iter()
-        .find(|row| row.starts_with('\u{2570}'))
-        .unwrap_or_else(|| panic!("no bottom edge in {whole}"));
-    assert!(
-        bottom.ends_with(" ctrl+q edit \u{2500}\u{256f}"),
-        "{bottom:?}"
-    );
-    assert_eq!(
-        said.iter().filter(|row| row.contains('\u{2500}')).count(),
-        2
-    );
-}
-
-#[test]
-fn the_queue_box_ends_the_footing_so_the_line_under_it_stands_directly_beneath() {
-    // The gap this closes: a blank row stood between the box's bottom edge and
-    // the window-left line, where the design draws the line directly under the
-    // edge. The blank parts the working row from the box below it; with the
-    // queue box standing it is the box that is that box's own, so nothing after
-    // it needs parting from.
-    for columns in [Prompt::FRAMED_AT, 40, 80] {
-        let said = queueing(&["one", "two"], columns, 24);
-        assert_eq!(
-            said.last().map(|row| row.starts_with('\u{2570}')),
-            Some(true),
-            "{columns}: {said:?}"
-        );
-    }
-}
-
-#[test]
-fn the_one_row_queue_count_keeps_the_blank_every_other_footing_ends_in() {
-    // The blank is dropped only under a frame, which needs no parting from the
-    // line below it. The one row that says how many are waiting, drawn where
-    // there is no room (or no width) for the frame, is a row of the footing
-    // like the working row and keeps the blank under it.
-    let said = queueing(&["one", "two"], Prompt::FRAMED_AT - 1, 24);
-
-    assert!(said.iter().any(|row| row.contains("2 queued")), "{said:?}");
-    assert!(
-        said.iter().all(|row| !row.starts_with('\u{256d}')),
-        "no frame in {said:?}"
-    );
-    assert_eq!(said.last(), Some(&String::new()), "{said:?}");
-}
-
-#[test]
-fn a_plan_under_the_queue_box_keeps_the_blank_under_the_footing() {
-    // The plan stands under the box rather than being the box's own, so the
-    // footing's last row is the blank that parts it from the line below.
-    let mut turning = Turning::started(Breakdown::default());
-    turning.queueing(["one", "two"].into_iter(), 80, Style::plain());
-
-    let said: Vec<String> = turning
-        .rows(&planned(2), "", 80, Style::plain(), 40)
-        .iter()
-        .map(Row::text)
-        .collect();
-
-    let edge = said
-        .iter()
-        .position(|row| row.starts_with('\u{2570}'))
-        .unwrap_or_else(|| panic!("no frame in {said:?}"));
-    assert!(
-        edge + 1 < said.len(),
-        "a plan stands under the box: {said:?}"
-    );
-    assert_eq!(said.last(), Some(&String::new()), "{said:?}");
-}
-
-#[test]
-fn the_queue_overflow_row_counts_and_leaves_the_key_to_the_border() {
-    // The key is named once, in the border, and the row says what it is for.
-    let said = queueing(&["one", "two", "three", "four", "five"], 80, 24);
-    let whole = said.join("\n");
-
-    assert!(whole.contains("\u{2026} +2 more "), "{whole}");
-    assert!(!whole.contains("(ctrl+q"), "{whole}");
-    assert_eq!(whole.matches("ctrl+q").count(), 1, "{whole}");
-}
-
-#[test]
-fn the_queue_key_hint_keeps_the_frame_square_down_to_the_narrowest_box() {
-    // The hint is drawn into the bottom edge, so it is the one row that could
-    // end a column long or short of its neighbours -- or be cut where it is
-    // not worth reading. At every width a frame is drawn it is whole or gone.
-    for columns in [Prompt::FRAMED_AT, 30, 40, 80] {
-        let said = queueing(&["one", "two", "three", "four", "five"], columns, 24);
-        let closes = said
-            .iter()
-            .find(|row| row.starts_with('\u{2570}'))
-            .unwrap_or_else(|| panic!("{columns}: no bottom edge in {said:?}"));
-
-        assert_eq!(crucible_tui::columns(closes), columns, "{closes:?}");
-        assert!(closes.contains(" ctrl+q edit "), "{columns}: {closes:?}");
-    }
-}
-
-#[test]
-fn an_empty_queue_draws_no_panel() {
-    // Absent rather than blank. A frame around nothing is rows of the
-    // window spent saying nothing, spent against the turn's own output.
-    let said = queueing(&[], 80, 24);
-    assert!(!said.join("\n").contains("queued"), "{}", said.join("\n"));
-}
-
-#[test]
-fn a_turn_with_nothing_waiting_behind_it_draws_no_row_for_it() {
-    // Absent rather than blank. A row that says nothing is a row of the
-    // window spent, and what it is spent against is the turn's own output
-    // above it.
+fn prompts_waiting_stand_in_the_panel_under_the_row_saying_a_turn_is_running() {
+    // The row and the panel are about what comes next rather than what the
+    // turn has done, so both leave the turn's band: it ends in the blank that
+    // parts the turn's output from them, and the working row heads the band
+    // over the transcript with the panel's rule directly under it.
     let turning = Turning::started(Breakdown::default());
-    let rows = turning.rows(&nothing(), "", 80, Style::plain(), 24);
-
-    assert_eq!(rows.len(), ROWS, "{:?}", rows.iter().map(Row::text));
-}
-
-#[test]
-fn a_prompt_wider_than_the_panel_is_cut_at_the_right() {
-    // Cut rather than wrapped: the footing owns a fixed band, and a height
-    // that depended on how much somebody typed would take rows from the
-    // transcript one keystroke at a time.
-    let long = "a".repeat(200);
-    let said = queueing(&[&long], 40, 24);
-
-    let named = said
-        .iter()
-        .find(|row| row.contains("aaa"))
-        .cloned()
-        .unwrap_or_default();
-
-    assert!(named.contains('…'), "{named:?}");
-    assert!(crucible_tui::columns(&named) <= 40, "{named:?}");
-}
-
-#[test]
-fn what_is_held_of_a_waiting_prompt_is_a_row_of_it_rather_than_all_of_it() {
-    // It is cloned into the value the redraw is keyed on, sixty times a
-    // second, and the box lets a prompt reach a megabyte. Cutting it where
-    // it is taken is what keeps that clone the size of a row.
-    let mut turning = Turning::started(Breakdown::default());
-    let long = "a".repeat(1024 * 1024);
-    turning.queueing([long.as_str()].into_iter(), 80, Style::plain());
-
-    let held = turning.queued.lines.first().cloned().unwrap_or_default();
-    assert!(crucible_tui::columns(&held) <= 80, "{}", held.len());
-}
-
-#[test]
-fn the_prompt_waiting_is_on_the_value_the_loop_keys_a_redraw_on() {
-    // Left off it, a line finished into the queue would reach the screen
-    // on the beat some other segment happened to change -- a box emptied by
-    // Return with nothing anywhere saying the line was kept, for as long as
-    // a quarter of a second after the press.
-    let mut turning = Turning::started(Breakdown::default());
-    turning.moved();
-
-    turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
-    assert!(
-        turning.moved(),
-        "the prompt appeared and the footing did not"
+    let (turn, over) = queueing(
+        &turning,
+        &nothing(),
+        &["fix the failing test", "and then commit"],
+        across(80),
+        24,
     );
 
-    turning.queueing(std::iter::empty(), 80, Style::plain());
-    assert!(turning.moved(), "the prompt went and the footing did not");
+    assert_eq!(turn, vec![String::new()], "{over:#?}");
+    assert!(
+        over.first()
+            .is_some_and(|row| row.contains("esc to interrupt")),
+        "{over:#?}"
+    );
+    assert_eq!(over.get(1), Some(&"\u{2500}".repeat(80)), "{over:#?}");
+    assert!(
+        over.contains(&"2 queued \u{b7} ctrl+enter to send all now".to_owned()),
+        "{over:#?}"
+    );
+    assert!(
+        over.contains(&"\u{203a} fix the failing test".to_owned()),
+        "{over:#?}"
+    );
+    assert!(over.contains(&"  and then commit".to_owned()), "{over:#?}");
 }
 
 #[test]
-fn the_row_naming_a_waiting_prompt_is_never_drawn_past_the_last_column() {
+fn the_panel_and_the_row_over_it_take_the_window_while_the_call_keeps_the_transcripts_width() {
+    // The rail is the transcript's, so the call beside it is cut where the
+    // transcript ends, and the rule over the queue runs from edge to edge of
+    // the window, the way it does between turns where there is no rail.
+    let mut turning = Turning::started(Breakdown::default());
+    turning.saw(&requested());
+    let (turn, over) = queueing(
+        &turning,
+        &nothing(),
+        &["fix the failing test"],
+        Widths {
+            columns: 78,
+            window: 80,
+        },
+        40,
+    );
+
+    assert!(turn.iter().any(|row| row.contains("Read")), "{turn:#?}");
+    for row in &turn {
+        assert!(crucible_tui::columns(row) <= 78, "{row:?} in {turn:#?}");
+    }
+    assert_eq!(over.get(1), Some(&"\u{2500}".repeat(80)), "{over:#?}");
+}
+
+#[test]
+fn the_panel_ends_the_footing_so_the_box_stands_under_its_last_blank() {
+    // The panel closes on a blank of its own, so the footing adds none: a
+    // second would be a row of the window spent between the queue and the
+    // box the keys it names are pressed in.
+    let turning = Turning::started(Breakdown::default());
+    let (_, over) = queueing(&turning, &nothing(), &["one", "two"], across(80), 24);
+
+    let footer = over
+        .iter()
+        .position(|row| row.contains("to walk"))
+        .unwrap_or_else(|| panic!("no footer in {over:#?}"));
+    assert_eq!(over.len(), footer + 2, "{over:#?}");
+    assert_eq!(over.last(), Some(&String::new()), "{over:#?}");
+}
+
+#[test]
+fn a_plan_under_the_panel_keeps_the_blank_under_the_footing() {
+    // The plan stands under the panel rather than being the panel's own, so
+    // the footing's last row is the blank that parts it from the box.
+    let turning = Turning::started(Breakdown::default());
+    let (_, over) = queueing(&turning, &planned(2), &["one", "two"], across(80), 40);
+
+    let footer = over
+        .iter()
+        .position(|row| row.contains("to walk"))
+        .unwrap_or_else(|| panic!("no footer in {over:#?}"));
+    let task = over
+        .iter()
+        .position(|row| row.contains("Task 0"))
+        .unwrap_or_else(|| panic!("no plan in {over:#?}"));
+    assert!(footer < task, "the plan stands under the panel: {over:#?}");
+    assert_eq!(over.last(), Some(&String::new()), "{over:#?}");
+}
+
+#[test]
+fn an_empty_queue_leaves_nothing_over_the_transcript() {
+    // With nothing waiting the working row is the turn's last row again, at
+    // the transcript's width, and the band over the transcript is empty.
+    let turning = Turning::started(Breakdown::default());
+    let (turn, over) = queueing(&turning, &nothing(), &[], across(80), 24);
+
+    assert_eq!(turn.len(), ROWS, "{turn:#?}");
+    assert!(over.is_empty(), "{over:#?}");
+}
+
+#[test]
+fn no_row_of_the_footing_over_a_queue_is_drawn_past_the_last_column() {
     // The mark that says a line was cut is columns of the row rather than
     // columns past it, and the ascii set spells it with three -- so a row
     // that reserved one column for it would be committed two past the
     // window, and the terminal would wrap it into a row nothing counted.
+    let queue = waiting(&["fix the failing test"]);
     for wide in [0, 1, 2, 3, 5, 6, 7, 8, 20, 80] {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             let style = Style::drawn(glyphs);
-            let mut turning = Turning::started(Breakdown::default());
-            turning.queueing(["fix the failing test"].into_iter(), wide, style);
+            let turning = Turning::started(Breakdown::default());
+            let (turn, over) = turning.rows(&nothing(), "", &queue, across(wide), style, 40);
 
-            for row in turning.rows(&nothing(), "", wide, style, 40) {
+            for row in turn.iter().chain(&over) {
                 let said = row.text();
                 assert!(
                     crucible_tui::columns(&said) <= wide,
@@ -1480,42 +1393,41 @@ fn the_row_naming_a_waiting_prompt_is_never_drawn_past_the_last_column() {
 }
 
 #[test]
-fn a_window_too_short_for_all_three_drops_the_call_before_the_waiting_prompt() {
+fn a_window_too_short_for_all_three_drops_the_call_before_the_waiting_prompts() {
     // In that order, because that is the order they stop being worth the
     // room. The call joins the transcript the moment its tool answers and
-    // the prompt is still in the queue with its own turn to come; the row
-    // saying a turn is running exists nowhere else, so it goes last.
+    // the prompts are still in the queue with their own turns to come; the
+    // row saying a turn is running exists nowhere else, so it goes last.
     let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
-    turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
     let said = |room: usize| {
-        turning
-            .rows(&nothing(), "", 80, Style::plain(), room)
-            .iter()
-            .map(Row::text)
-            .collect::<Vec<_>>()
+        let (turn, over) = queueing(
+            &turning,
+            &nothing(),
+            &["fix the failing test"],
+            across(80),
+            room,
+        );
+        [turn, over].concat().concat()
     };
 
     // Room for all three: the call, the panel, and the row saying a turn
     // is running.
     let whole = said(40);
-    assert!(whole.concat().contains("Read"), "{whole:?}");
-    assert!(whole.concat().contains("1 queued"), "{whole:?}");
-    assert!(whole.concat().contains("running"), "{whole:?}");
+    assert!(whole.contains("Read"), "{whole:?}");
+    assert!(whole.contains("1 queued"), "{whole:?}");
+    assert!(whole.contains("running"), "{whole:?}");
 
-    // A window short of rows drops the call first — it joins the transcript
-    // the moment its tool answers — and keeps the panel, which
-    // is still in the queue with its own turn to come.
-    let shorter = said(ROWS + 6);
-    assert!(!shorter.concat().contains("Read"), "{shorter:?}");
-    assert!(shorter.concat().contains("1 queued"), "{shorter:?}");
+    // A window short of rows drops the call first and keeps the panel.
+    let shorter = said(ROWS + 10);
+    assert!(!shorter.contains("Read"), "{shorter:?}");
+    assert!(shorter.contains("1 queued"), "{shorter:?}");
 
-    // And the panel gives way before the row that says a turn is running:
-    // that row exists nowhere else, so it is the last thing to go.
+    // And the panel gives way before the row that says a turn is running.
     let shortest = said(ROWS + 1);
-    assert!(!shortest.concat().contains("queued"), "{shortest:?}");
-    assert!(shortest.concat().contains("running"), "{shortest:?}");
+    assert!(!shortest.contains("queued"), "{shortest:?}");
+    assert!(shortest.contains("running"), "{shortest:?}");
 }
 
 #[test]
@@ -1526,7 +1438,7 @@ fn a_window_too_short_for_both_drops_the_call_before_the_row() {
     let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
 
-    let rows = turning.rows(&nothing(), "", 80, Style::plain(), CALLING - 1);
+    let rows = turning.laid(&nothing(), "", 80, Style::plain(), CALLING - 1);
     let said = rows.iter().map(Row::text).collect::<String>();
 
     assert_eq!(rows.len(), ROWS, "{said:?}");
@@ -1537,63 +1449,69 @@ fn a_window_too_short_for_both_drops_the_call_before_the_row() {
 #[test]
 fn the_plan_stands_under_everything_the_turn_says_and_over_the_box() {
     // The only place it can go. What it stands under is the turn — the call
-    // out and the row saying one is running — and what it stands over is
-    // the line being typed while that happens. The blank at the end parts
-    // it from the box, so the panel is the last thing above one.
+    // out, the row saying one is running and the prompts behind it — and
+    // what it stands over is the line being typed while that happens. The
+    // blank at the end parts it from the box.
     let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
-    turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
-    let rows = turning.rows(&planned(3), "", 80, Style::plain(), 40);
-    let said = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+    let (turn, over) = queueing(
+        &turning,
+        &planned(3),
+        &["fix the failing test"],
+        across(80),
+        40,
+    );
+    let said = [turn, over.clone()].concat().join("\n");
 
     assert!(said.contains("Task 0"), "{said:?}");
     assert!(said.find("Read") < said.find("Task 0"), "{said:?}");
     assert!(said.find("running") < said.find("Task 0"), "{said:?}");
-    assert!(said.find("Next:") < said.find("Task 0"), "{said:?}");
-    assert_eq!(rows.last().map(Row::text).as_deref(), Some(""), "{said:?}");
+    assert!(said.find("1 queued") < said.find("Task 0"), "{said:?}");
+    assert_eq!(over.last().map(String::as_str), Some(""), "{said:?}");
 }
 
 #[test]
-fn a_window_short_of_rows_drops_the_call_and_the_waiting_prompt_before_a_task() {
-    // What measuring the panel first buys. The call line and the row naming
-    // the prompt behind the turn are the two measured against what the plan
-    // left, so they are the two a narrow window drops on its behalf: a call
-    // joins the transcript the moment its tool answers and a queued
-    // prompt has its own turn coming, while what the agent is working to is
-    // on screen nowhere else.
+fn a_window_short_of_rows_drops_the_call_and_the_waiting_prompts_before_a_task() {
+    // What measuring the plan first buys. The call line and the panel naming
+    // the prompts behind the turn are the two measured against what the plan
+    // left, so they are the two a short window drops on its behalf: a call
+    // joins the transcript the moment its tool answers and a queued prompt
+    // has its own turn coming, while what the agent is working to is on
+    // screen nowhere else.
     let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
-    turning.queueing(["fix the failing test"].into_iter(), 80, Style::plain());
 
     let planning = planned(3);
-    let panel = planning.rows(80, 40, Style::plain().glyphs()).len();
+    let plan = planning.rows(80, 40, Style::plain().glyphs()).len();
 
     let said = |room: usize| {
-        turning
-            .rows(&planning, "", 80, Style::plain(), room)
-            .iter()
-            .map(Row::text)
-            .collect::<String>()
+        let (turn, over) = queueing(
+            &turning,
+            &planning,
+            &["fix the failing test"],
+            across(80),
+            room,
+        );
+        [turn, over].concat().concat()
     };
 
-    // Room for all of it: the call, the queue panel, and the plan.
-    let whole = said(panel + 12);
+    // Room for all of it: the call, the queue's panel, and the plan.
+    let whole = said(plan + 16);
     assert!(whole.contains("Read"), "{whole:?}");
     assert!(whole.contains("1 queued"), "{whole:?}");
     assert!(whole.contains("Task 2"), "{whole:?}");
 
-    // A window short of rows drops the call before the panel — the call joins
-    // the transcript the moment its tool answers — and keeps both
+    // A window short of rows drops the call before the panel, and keeps both
     // the queue and the plan, which are on screen nowhere else.
-    let shorter = said(panel + 8);
+    let shorter = said(plan + 12);
     assert!(!shorter.contains("Read"), "{shorter:?}");
     assert!(shorter.contains("1 queued"), "{shorter:?}");
     assert!(shorter.contains("Task 2"), "{shorter:?}");
 
     // And the panel gives way before the plan does, for the same reason the
     // call does: a queued prompt has its own turn coming to say it.
-    let shortest = said(panel + 4);
+    let shortest = said(plan + 4);
     assert!(!shortest.contains("queued"), "{shortest:?}");
     assert!(shortest.contains("Task 2"), "{shortest:?}");
 }
@@ -1608,7 +1526,7 @@ fn a_run_of_calls_that_only_looked_around_stands_over_the_call_that_is_out() {
     turning.saw(&requested());
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
+        .laid(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -1630,9 +1548,9 @@ fn a_footing_with_no_run_going_stands_no_row_for_one() {
     let mut turning = Turning::started(Breakdown::default());
     turning.saw(&requested());
 
-    let alone = turning.rows(&nothing(), "", 80, Style::plain(), 24).len();
+    let alone = turning.laid(&nothing(), "", 80, Style::plain(), 24).len();
     let over = turning
-        .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
+        .laid(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
         .len();
 
     assert_eq!(alone + 1, over, "{alone} {over}");
@@ -1643,7 +1561,7 @@ fn a_run_still_says_itself_between_the_calls_in_it() {
     // One tool has answered and the next has not gone out yet. The run is
     // still going, and this row is the only thing on the screen saying so.
     let rows: Vec<String> = Turning::started(Breakdown::default())
-        .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
+        .laid(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -1664,7 +1582,7 @@ fn the_run_wears_the_same_mark_as_the_call_beneath_it() {
     turning.saw(&requested());
 
     let rows: Vec<String> = turning
-        .rows(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
+        .laid(&nothing(), "Reading 4 files", 80, Style::plain(), 24)
         .iter()
         .map(Row::text)
         .collect();
@@ -1727,19 +1645,31 @@ fn usage_a_turn_keeps_what_it_last_reported_for_the_panel_over_it() {
 }
 
 #[test]
-fn the_queue_box_follows_the_colour_rule() {
-    // A mark per waiting line and the key on the bottom edge, each the one
-    // accent on its row, whether the box names every line or counts the rest.
+fn the_footing_over_a_queue_follows_the_colour_rule() {
+    // The panel brings its own accents — the rule and the highlighted line —
+    // and the working row over it keeps its one, at either width the rows
+    // over the transcript are laid out at.
     for lines in [
         &["fix the failing test"][..],
         &["one", "two", "three", "four", "five", "six", "seven"][..],
     ] {
         for columns in [80, 40] {
-            let mut turning = Turning::started(Breakdown::default());
-            turning.queueing(lines.iter().copied(), columns, Style::plain());
-            let rows = turning.rows(&nothing(), "", columns, Style::plain(), 24);
+            let turning = Turning::started(Breakdown::default());
+            let (mut rows, over) = turning.rows(
+                &nothing(),
+                "",
+                &waiting(lines),
+                across(columns),
+                Style::plain(),
+                24,
+            );
+            rows.extend(over);
 
-            crate::cli::colour_rule::holds(&format!("queue box at {columns}"), &rows, |_| false);
+            crate::cli::colour_rule::holds(
+                &format!("queue at {columns}"),
+                &rows,
+                crate::cli::colour_rule::marked,
+            );
         }
     }
 }
