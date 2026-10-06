@@ -14,7 +14,11 @@
 //!    the whole of its line. It is [`Slot::Accent`]. A frame in the accent, as
 //!    around a question, is the frame and not a span of what it holds: its top
 //!    and bottom are whole lines, and its edges run down both sides of every
-//!    row inside, which is counted between them. The slots drawn in the
+//!    row inside, which is counted between them. The welcome card's frame is
+//!    a frame in this sense too, though its top carries the card's name and
+//!    version between two runs of bar and an edge parts its two columns: the
+//!    runs, the edge between the columns and the edges on both sides are the
+//!    frame, and each row is counted between them. The slots drawn in the
 //!    accent's ink for a reason of their own are not a second accent:
 //!    [`Slot::Strong`] for the title, name, version or figure a panel, a note
 //!    or the banner is read for, [`Slot::Code`], and the kinds a [`Design`]
@@ -101,8 +105,8 @@
 //! A control under the pointer is the smallest exception. At rest its text
 //! spends the accent as ink; under the pointer that exact accent becomes the
 //! ground under contrasting black or white text. The rectangle says the
-//! control's text is one thing to press, and because the ground is made from the same table entry it cannot
-//! drift from the configured theme.
+//! control's text is one thing to press, and because the ground is made from
+//! the same table entry it cannot drift from the configured theme.
 //!
 //! The row the reader's own prompt is on is the other, and it is the exception
 //! to the exception: its ground is *their* ground where they have one to give,
