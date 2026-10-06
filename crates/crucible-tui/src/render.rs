@@ -1441,6 +1441,35 @@ impl<T: Terminal> Renderer<T> {
         self.draw()
     }
 
+    /// [`Renderer::under`] in the box's place: takes the box off and stands
+    /// `rows` where it was, in one frame.
+    ///
+    /// For a component that takes the rows the box has while a turn runs, and
+    /// so is drawn again on every beat of it. Taking the box off with
+    /// [`Renderer::live`] first would draw every one of those twice, the first
+    /// time with neither the box nor the component's new rows on screen.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn instead(
+        &mut self,
+        rows: &[Row],
+        caret: Option<Caret>,
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(());
+        }
+
+        // As an empty slice given to `live` takes it off, without its frame.
+        paint(&[], &palette, self.size.columns, &mut self.standing.prompt);
+        self.standing.prompted = Some(Caret::default());
+        self.prompt_target = None;
+        self.pointed_changed = false;
+        self.under(rows, caret, palette)
+    }
+
     /// Ends the line the transcript is still writing to.
     ///
     /// Called between turns. After this the next delta starts a line of its
