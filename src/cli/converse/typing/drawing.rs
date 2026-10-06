@@ -112,10 +112,11 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
 ///
 /// The lines a used-up plan held are measured last, in the panel a running
 /// turn stands them in, as they are measured there: what the window cannot fit
-/// of it gives way before the plan or the list does. It stands under the plan
-/// and over the list, where it stands under a turn, with a blank row over its
-/// rule to keep the rule off what is above it. It closes with a blank row of
-/// its own, which keeps the box off it in place of the one owed below.
+/// of it gives way before the plan or the list does. It stands where it stands
+/// under a turn, over the plan and the list, with a blank row over its rule to
+/// keep the rule off what is above it. With nothing under it, it closes with a
+/// blank row of its own, which keeps the box off it in place of the one owed
+/// below.
 pub(super) fn over(around: Around<'_>, columns: usize, room: usize, style: Style) -> Vec<Row> {
     let mut listed = around.open.rows(columns, room, style.glyphs());
     let opened = !listed.is_empty();
@@ -126,22 +127,30 @@ pub(super) fn over(around: Around<'_>, columns: usize, room: usize, style: Style
     // an answer reads as part of it.
     let blank = usize::from(!opened);
 
-    let mut over = around.planning.rows(
+    let mut planned = around.planning.rows(
         columns,
         room.saturating_sub(listed.len() + blank),
         style.glyphs(),
     );
 
-    let left = room.saturating_sub(listed.len() + over.len() + 1);
+    // The blank over the panel's rule, and the one the box is owed under a
+    // plan, which the panel's own closing row stands in for only when it is
+    // the last thing over the box.
+    let owed = usize::from(!opened && !planned.is_empty());
+    let left = room.saturating_sub(listed.len() + planned.len() + 1 + owed);
     let panel = queueing::panel(around.queued, columns, left, style);
+
+    let mut over = Vec::with_capacity(1 + panel.len() + planned.len() + blank + listed.len());
     let paneled = !panel.is_empty();
     if paneled {
         over.push(Row::new());
         over.extend(panel);
-    } else if !opened {
-        listed.push(Row::new());
     }
-
+    let planning = !planned.is_empty();
+    over.append(&mut planned);
+    if !opened && (!paneled || planning) {
+        over.push(Row::new());
+    }
     over.append(&mut listed);
     over
 }

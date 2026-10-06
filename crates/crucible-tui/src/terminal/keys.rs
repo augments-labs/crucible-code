@@ -460,10 +460,10 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // both spelled with.
         KeyCode::Char('b') if bound => Pressed::Background,
 
-        // And last of these. Ctrl+X is a prefix in one program and cut in the
-        // next, and this editor has no use for either: nothing here edits by
-        // chords or keeps what it cuts. So the letter is free, and it is the
-        // one a mark drawn through a line has always been spelled with.
+        // And another. Ctrl+X is a prefix in one program and cut in the next,
+        // and this editor has no use for either: nothing here edits by chords
+        // or keeps what it cuts. So the letter is free, and an x through a line
+        // is what deleting it looks like on paper.
         KeyCode::Char('x') if bound => Pressed::Remove,
 
         // And one more of the same kind. Ctrl+Y is readline's yank, which puts
@@ -727,15 +727,15 @@ mod tests {
             Pressed::PasteImage,
             "the key that pastes an image was dropped as a modified letter"
         );
-
-        // Its neighbours in that arm, unbound and staying so. Typed as bare
-        // characters they would be the letters without the modifier, which is
-        // not what was pressed.
         assert_eq!(
             meaning(control(KeyCode::Char('x'))),
             Pressed::Remove,
             "the key that deletes a waiting prompt was dropped as a modified letter"
         );
+
+        // Its neighbours in that arm, unbound and staying so. Typed as bare
+        // characters they would be the letters without the modifier, which is
+        // not what was pressed.
         for letter in ['g', 'q'] {
             assert_eq!(
                 meaning(control(KeyCode::Char(letter))),

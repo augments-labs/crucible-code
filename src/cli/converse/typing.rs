@@ -58,7 +58,7 @@ use super::expanding::{self, Standing};
 use super::leaving::Leaving;
 use super::mode::tone;
 use super::planning::Planning;
-use super::queueing;
+use super::queueing::{self, Offer};
 use super::recalling::Recalling;
 use super::turning::{Turning, Widths};
 use super::{Prompts, Retained, Terms};
@@ -644,12 +644,12 @@ pub(crate) fn ask<T: Terminal>(
             // empty queue there is no panel naming them, and both are among
             // the rest below.
             Pressed::Explain if queued.waiting_count() > 0 => {
-                let moved = queued.take_back(editor, &terms.steer);
+                let moved = queued.take_back(editor, Offer::Nowhere);
                 open = Opened::filtered(commands, editor.projection().text(), glyphs);
                 moved || offered.is_some()
             }
             Pressed::Remove if queued.waiting_count() > 0 => {
-                queued.delete(&terms.steer) || offered.is_some()
+                queued.delete(Offer::Nowhere) || offered.is_some()
             }
 
             // The command list a `/`-started line has open is standing, and Esc
@@ -696,8 +696,8 @@ pub(crate) fn ask<T: Terminal>(
                 }
             }
 
-            // The line, the list, then the history — see [`arrowed`], which is
-            // where that order is decided for both loops.
+            // The line, the list, the queue, then the history — see
+            // [`arrowed`], which is where that order is decided for both loops.
             Pressed::Up => arrowed(true, editor, &mut open, recalling, queued) || offered.is_some(),
             Pressed::Down => {
                 arrowed(false, editor, &mut open, recalling, queued) || offered.is_some()
@@ -1084,6 +1084,14 @@ pub(super) fn during<T: Terminal>(
         let offered = leaving.take();
         moved |= offered.is_some();
 
+        // And so was the panel's word that a line could not go back into the
+        // box, whatever has the keyboard: the key after it clears it, and still
+        // does what it does below, even when the view standing takes it.
+        if queued.settle() {
+            turning.redraw();
+            moved = true;
+        }
+
         // News about the window rather than a key aimed at whatever is
         // standing, so it is acted on before the view below is offered it —
         // which is the order every other loop in this session reads a resize
@@ -1120,14 +1128,6 @@ pub(super) fn during<T: Terminal>(
             continue;
         }
 
-        // The panel's word that a line could not go back into the box lasts
-        // until the next key, and this is that key: it clears the word and
-        // still does what it does below.
-        if queued.settle() {
-            turning.redraw();
-            moved = true;
-        }
-
         // And the command list, which stands over the turn as they do and so
         // takes Esc before the turn sees it. It shares the rest of the keyboard
         // with the line, so only that key is read here.
@@ -1153,9 +1153,10 @@ pub(super) fn during<T: Terminal>(
             // longer matches, which is what the redraw below reads.
             Meant::Resized => moved = true,
 
-            // The same three claims as between turns, read the same way. The
-            // one list a running turn can stand is the only one that can be
-            // open here, and a line that is not a command has none.
+            // The same claims as between turns, read the same way: see
+            // [`arrowed`]. The one list a running turn can stand is the only
+            // one that can be open here, and a line that is not a command has
+            // none.
             Meant::Arrow { back } => {
                 if arrowed(back, editor, opened_list, recalling, queued) {
                     turning.redraw();
@@ -1188,7 +1189,7 @@ pub(super) fn during<T: Terminal>(
             // back from the turn it was offered to as well, so it reaches the
             // agent only if it is sent again.
             Meant::TakeBack => {
-                if queued.take_back(editor, steer) {
+                if queued.take_back(editor, Offer::Turn(steer)) {
                     *opened_list =
                         Opened::filtered(&commands, editor.projection().text(), style.glyphs());
                     turning.redraw();
@@ -1196,7 +1197,7 @@ pub(super) fn during<T: Terminal>(
                 }
             }
             Meant::Remove => {
-                if queued.delete(steer) {
+                if queued.delete(Offer::Turn(steer)) {
                     turning.redraw();
                     moved = true;
                 }

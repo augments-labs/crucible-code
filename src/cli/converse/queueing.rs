@@ -73,6 +73,22 @@ pub(super) struct Prompts {
     refused: bool,
 }
 
+/// Where the lines the panel names are besides the panel, which is what
+/// deleting one or taking it back has to reach.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Offer<'a> {
+    /// Between turns: nowhere. The panel holds the only copy.
+    Nowhere,
+    /// Under a turn: on offer to it as well, through the steer it reads.
+    ///
+    /// The turn takes the whole offer at a pass boundary and says which lines
+    /// it took a moment later, when the panel lets them go. A line the steer no
+    /// longer has in that moment is the turn's: deleting it would not stop it
+    /// being sent, and taking it back would send it twice. The key does
+    /// nothing, and the line leaves the panel when the turn says it took it.
+    Turn(&'a Steer),
+}
+
 /// Whether a finished line moved from the editor into [`Prompts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Retained {
@@ -163,9 +179,10 @@ impl Prompts {
     /// Moves the highlight a line toward the oldest where `back` is set, and
     /// toward the newest where it is not, and answers whether it moved.
     ///
-    /// It stops at either end rather than going round: the arrow that finds
-    /// nothing further is the one the history behind the box would have taken,
-    /// and a highlight that wrapped would never let it go.
+    /// It stops at either end rather than going round, so the reader who
+    /// looks away and back finds it at the end they walked it to. The arrow
+    /// that finds nothing further goes no further: nothing falls through to
+    /// the history behind the box while a prompt waits.
     pub(super) fn walk(&mut self, back: bool) -> bool {
         let to = if back {
             self.at.checked_sub(1)
@@ -185,13 +202,21 @@ impl Prompts {
     ///
     /// Nothing goes into the box: a line deleted is one the reader did not want
     /// sent, and one put in the box would be one Return away from being sent.
-    pub(super) fn delete(&mut self, steer: &Steer) -> bool {
-        let Some(line) = self.drop(self.at) else {
+    ///
+    /// Under a turn, a line the turn has already taken is past deleting: see
+    /// [`Offer::Turn`].
+    pub(super) fn delete(&mut self, offer: Offer<'_>) -> bool {
+        let Some(line) = self.lines.get(self.at) else {
             return false;
         };
 
-        steer.forget(&line);
-        true
+        if let Offer::Turn(steer) = offer
+            && !steer.forget(line)
+        {
+            return false;
+        }
+
+        self.drop(self.at).is_some()
     }
 
     /// Takes the highlighted prompt back into the box, out of the queue and the
@@ -201,19 +226,29 @@ impl Prompts {
     /// what is already typed there — stays queued under the highlight, and the
     /// panel says why until the next key: taken out before the box said no, it
     /// would be in neither place.
-    pub(super) fn take_back(&mut self, editor: &mut Editor, steer: &Steer) -> bool {
+    ///
+    /// The box is asked on a copy of itself, because under a turn the turn is
+    /// asked second, and a line it has already taken is past taking back (see
+    /// [`Offer::Turn`]): put in the box anyway, it would be sent twice.
+    pub(super) fn take_back(&mut self, editor: &mut Editor, offer: Offer<'_>) -> bool {
         let Some(line) = self.lines.get(self.at) else {
             return false;
         };
 
-        if editor.paste(line) == Typed::Refused {
+        let mut box_with_it = editor.clone();
+        if box_with_it.paste(line) == Typed::Refused {
             self.refused = true;
             return true;
         }
 
-        if let Some(line) = self.drop(self.at) {
-            steer.forget(&line);
+        if let Offer::Turn(steer) = offer
+            && !steer.forget(line)
+        {
+            return false;
         }
+
+        *editor = box_with_it;
+        self.drop(self.at);
         true
     }
 

@@ -11,8 +11,9 @@ use crucible_types::{Message, PlanWindows, Window, WindowReading};
 use crucible_app::Conversation;
 use crucible_tui::Recalled;
 
+use crate::cli::converse::queueing::{self, Offer};
 use crate::cli::converse::typing::{self, Opened};
-use crate::cli::converse::{Answers, Held, Terms, Work, queueing, ran};
+use crate::cli::converse::{Answers, Held, Terms, Work, ran};
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
 
@@ -277,8 +278,8 @@ fn plan_limit_ctrl_x_at_the_idle_box_deletes_the_held_line_and_the_panel_goes() 
         "plan-limit-idle-delete",
         None,
         &["fix the build"],
-        |conversation, held, terms| {
-            let deleted = held.queued.delete(&terms.steer);
+        |conversation, held, _terms| {
+            let deleted = held.queued.delete(Offer::Nowhere);
             (
                 deleted,
                 held.queued.waiting_count(),

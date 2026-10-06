@@ -955,10 +955,11 @@ impl Turning {
 
         // What the call has to clear is taller where the queue's panel below is
         // being drawn, since the two are standing in the same window. The panel
-        // is measured against what the working row and the bar under it leave,
-        // with the blank over them and the one row the footing leaves the
-        // window. Its own last blank stands for the footing's where no plan is
-        // under it. What it cannot fit it does not draw — a queue is still in
+        // is measured against what is left once the row saying a turn is
+        // running has its `ROWS`, the footing its one, and the row saying room
+        // is being made its one where that is under way. Its own last blank
+        // stands for the footing's where no plan is under it, which gives that
+        // row back. What it cannot fit it does not draw — a queue is still in
         // the queue, and its own turn will say it.
         let spare = room
             .saturating_sub(ROWS + 1 + usize::from(self.making.is_some()))

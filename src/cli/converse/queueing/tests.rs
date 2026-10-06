@@ -110,8 +110,8 @@ fn a_narrow_window_folds_the_footer_rather_than_cutting_a_key_off_it() {
 
 #[test]
 fn the_arrows_walk_the_highlight_and_stop_at_either_end() {
-    // Stopping rather than going round is what hands the arrow back to the
-    // history once the queue is empty, and keeps it from looping here.
+    // Stopping rather than going round leaves the highlight at the end it was
+    // walked to; the arrow past it goes nowhere else while a prompt waits.
     let (mut queue, _) = queued(&["first", "second"]);
 
     assert!(!queue.walk(true), "nothing is before the first");
@@ -120,6 +120,23 @@ fn the_arrows_walk_the_highlight_and_stop_at_either_end() {
     assert!(!queue.walk(false), "nothing is after the last");
     assert!(queue.walk(true));
     assert_eq!(queue.highlighted(), 0);
+}
+
+#[test]
+fn a_line_queued_behind_the_highlight_leaves_it_on_the_line_it_was_on() {
+    // A line typed while the reader is partway down the queue joins it at the
+    // end. The keys go on acting on the line the reader walked to.
+    let (mut queue, _) = queued(&["first", "second", "third"]);
+    assert!(queue.walk(false));
+    assert!(queue.walk(false));
+
+    let mut editor = Editor::new();
+    for key in "fourth".chars() {
+        editor.press(Key::Char(key));
+    }
+    assert_eq!(queue.accept(&mut editor), Retained::Accepted);
+
+    assert_eq!(queue.highlighted(), 2, "the highlight moved off the third");
 }
 
 #[test]
@@ -152,7 +169,7 @@ fn ctrl_x_deletes_the_highlighted_line_from_the_queue_and_the_turn() {
     let (mut queue, steer) = queued(&["first", "second", "third"]);
     queue.walk(false);
 
-    assert!(queue.delete(&steer));
+    assert!(queue.delete(Offer::Turn(&steer)));
 
     assert_eq!(waiting(&queue), vec!["first", "third"]);
     assert_eq!(
@@ -169,17 +186,51 @@ fn deleting_the_last_line_in_the_queue_leaves_the_highlight_on_the_new_last() {
     let (mut queue, steer) = queued(&["first", "second"]);
     queue.walk(false);
 
-    assert!(queue.delete(&steer));
+    assert!(queue.delete(Offer::Turn(&steer)));
     assert_eq!(queue.highlighted(), 0);
 
-    assert!(queue.delete(&steer));
+    assert!(queue.delete(Offer::Turn(&steer)));
     assert_eq!(queue.waiting_count(), 0);
     assert!(
         panel(&queue, 80, 40, Style::plain()).is_empty(),
         "the panel goes"
     );
     assert!(!steer.any(), "a deleted line was sent anyway");
-    assert!(!queue.delete(&steer), "nothing is left to delete");
+    assert!(
+        !queue.delete(Offer::Turn(&steer)),
+        "nothing is left to delete"
+    );
+}
+
+#[test]
+fn a_line_the_turn_has_already_taken_is_past_deleting_or_taking_back() {
+    // The turn takes its whole offer at a pass boundary and says which lines
+    // it took a moment later. A key in between finds the line still named here
+    // but already the turn's: deleted, it would be sent anyway, and taken back
+    // it would be sent twice. It stays named until the turn says it took it.
+    let (mut queue, steer) = queued(&["first", "second"]);
+    let taken = steer.take();
+    let mut editor = Editor::new();
+
+    assert!(
+        !queue.delete(Offer::Turn(&steer)),
+        "a line the turn took was shown deleted"
+    );
+    assert!(
+        !queue.take_back(&mut editor, Offer::Turn(&steer)),
+        "a line the turn took was put back in the box"
+    );
+    assert!(editor.is_empty(), "the box holds a line the turn will send");
+    assert_eq!(waiting(&queue), vec!["first", "second"]);
+    assert_eq!(queue.bytes, "first".len() + "second".len());
+
+    for line in &taken {
+        assert!(
+            queue.steered(line),
+            "{line} was not waiting when the turn said it took it"
+        );
+    }
+    assert_eq!(queue.waiting_count(), 0);
 }
 
 #[test]
@@ -190,7 +241,7 @@ fn ctrl_e_takes_the_highlighted_line_back_into_the_box() {
     let mut editor = Editor::new();
     queue.walk(false);
 
-    assert!(queue.take_back(&mut editor, &steer));
+    assert!(queue.take_back(&mut editor, Offer::Turn(&steer)));
 
     assert_eq!(editor.text(), "second");
     editor.press(Key::Char('!'));
@@ -198,6 +249,20 @@ fn ctrl_e_takes_the_highlighted_line_back_into_the_box() {
     assert_eq!(waiting(&queue), vec!["first", "third"]);
     assert_eq!(queue.highlighted(), 1);
     assert_eq!(steer.take(), vec!["first".to_owned(), "third".to_owned()]);
+}
+
+#[test]
+fn between_turns_the_panel_holds_the_only_copy_and_both_keys_reach_it() {
+    // A used-up plan held these lines with no turn running, so no steer has
+    // them: the keys act on the panel alone, and nothing else is asked.
+    let (mut queue, _) = queued(&["first", "second", "third"]);
+    let mut editor = Editor::new();
+
+    assert!(queue.take_back(&mut editor, Offer::Nowhere));
+    assert_eq!(editor.text(), "first");
+    assert!(queue.delete(Offer::Nowhere));
+
+    assert_eq!(waiting(&queue), vec!["third"]);
 }
 
 #[test]
@@ -218,7 +283,7 @@ fn a_line_the_box_has_no_room_for_stays_queued_and_the_panel_says_so() {
     queue.walk(false);
 
     assert!(
-        queue.take_back(&mut editor, &steer),
+        queue.take_back(&mut editor, Offer::Turn(&steer)),
         "the panel owes a frame"
     );
 
@@ -260,7 +325,7 @@ fn a_narrow_window_says_the_box_had_no_room_under_the_title() {
         editor.paste(&"y".repeat(Editor::MAX_BYTES - 2)),
         Typed::Changed
     );
-    queue.take_back(&mut editor, &steer);
+    queue.take_back(&mut editor, Offer::Turn(&steer));
 
     let laid = said(&panel(&queue, 40, 40, Style::plain()));
     assert_eq!(
@@ -341,7 +406,7 @@ fn a_megabyte_line_is_cut_to_its_row() {
 fn deleting_a_queued_line_gives_back_the_bytes_it_held() {
     // The ceiling is on what is waiting, so a deleted line is room for another.
     let (mut queue, steer) = queued(&["first", "second"]);
-    queue.delete(&steer);
+    queue.delete(Offer::Turn(&steer));
 
     assert_eq!(queue.bytes, "second".len());
 }
@@ -371,7 +436,7 @@ fn the_panel_follows_the_colour_rule() {
                 for refused in [false, true] {
                     queue.settle();
                     if refused {
-                        queue.take_back(&mut full, &steer);
+                        queue.take_back(&mut full, Offer::Turn(&steer));
                     }
                     let laid = panel(&queue, columns, 40, Style::drawn(glyphs));
 
@@ -433,7 +498,7 @@ fn every_state_of_the_panel_fits_every_window_it_is_given() {
         editor.paste(&"y".repeat(Editor::MAX_BYTES - 2)),
         Typed::Changed
     );
-    refused.take_back(&mut editor, &steer);
+    refused.take_back(&mut editor, Offer::Turn(&steer));
 
     for (state, queue) in [
         ("fresh", &fresh),

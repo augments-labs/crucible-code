@@ -301,7 +301,8 @@ local time. `resets soon` is a reset the clock has reached, and
 `resets: not reported` is a refusal that named none, so send later. Prompts you
 queued behind that turn are not sent on to the spent plan: they stay queued in
 the panel over the box, where <kbd>Ctrl+E</kbd> takes the highlighted one back
-and <kbd>Ctrl+X</kbd> deletes it, and follow the next prompt you send. The mark is `#` where the glyphs are ASCII.
+and <kbd>Ctrl+X</kbd> deletes it, and follow the next prompt you send. The mark
+is `#` where the glyphs are ASCII.
 
 ## The network and proxies
 
