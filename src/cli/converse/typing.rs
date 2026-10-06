@@ -19,7 +19,8 @@
 //! the same in [`ask`] as in [`during`], because a key that meant one thing
 //! between turns and another during one would have to be relearned at exactly
 //! the moment there is something to lose. Esc belongs to whatever is standing:
-//! nothing, between turns, and the turn itself while one runs.
+//! the command list a `/`-started line has open, in either loop; otherwise
+//! nothing between turns, and the turn itself while one runs.
 //!
 //! It is one of the two places the mode changes — `/mode` is the other — which
 //! is why the runner is a parameter here. The mode is a fact about the session
@@ -383,7 +384,8 @@ const BEAT: Duration = Duration::from_millis(250);
 ///
 /// Stood here rather than handed back to the loop above, unlike the view of what
 /// the transcript cut: that key means the same thing while a turn runs, and this
-/// one means something else there entirely.
+/// one means backgrounding there first, and the list only where the turn has
+/// nothing to background — see [`backgrounding`].
 fn stood<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
@@ -627,6 +629,11 @@ pub(crate) fn ask<T: Terminal>(
             // key is one of the rest below.
             Pressed::Queue if queued.waiting_count() > 0 => return Ok(Asked::Queue),
 
+            // The command list a `/`-started line has open is standing, and Esc
+            // backs out of it; the line stays as it was typed. With no list
+            // open, nothing is standing and the key is one of the rest below.
+            Pressed::Escape => open.close() || offered.is_some(),
+
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
             // and has just been taken back. Ctrl+Q among them, where nothing is
@@ -638,8 +645,7 @@ pub(crate) fn ask<T: Terminal>(
             // reason of all: nothing is standing, so there are no regions.
             // Named all the same — a variant nothing decides about is one that
             // will arrive undecided the day something changes.
-            Pressed::Escape
-            | Pressed::Explain
+            Pressed::Explain
             | Pressed::Queue
             | Pressed::Tab
             | Pressed::Rename
@@ -647,6 +653,8 @@ pub(crate) fn ask<T: Terminal>(
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }
             | Pressed::Released { .. }
+            | Pressed::PageUp
+            | Pressed::PageDown
             | Pressed::Ignored => offered.is_some(),
 
             // Two things a click can land on and one round trip to tell them
@@ -878,7 +886,9 @@ fn working<T: Terminal>(
         history: footing.history,
     };
     let boxed = boxing(renderer, editor, says, bordering, style);
-    let room = renderer.rows().saturating_sub(boxed.rows.len());
+    // What may stand under the transcript is the renderer's to say, the box
+    // counted in: the turn's rows and the list share what it leaves.
+    let room = renderer.room().saturating_sub(boxed.rows.len());
 
     // The list a `/`-started line has open stands directly above the box, over
     // the running row and plan, as it does at the prompt: a list is what the
@@ -969,9 +979,10 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// then the line stays in the box and the row under it says why.
 ///
 /// The keys that mean something here are the ones that still do. Return
-/// finishes a line, Esc asks the turn to stop, Ctrl+O stands the whole of what
-/// the results so far were cut down to, a click on a row that offered to expand
-/// stands that one result, Ctrl+T opens the whole of the plan above the box or
+/// finishes a line, Esc closes the command list where one is open and otherwise
+/// asks the turn to stop, Ctrl+O stands the whole of what the results so far
+/// were cut down to, a click on a row that offered to expand stands that one
+/// result, Ctrl+T opens the whole of the plan above the box or
 /// bounds it again, Ctrl-C is the line's own — in raw mode the terminal sends it
 /// rather than raising a signal, so it reaches the editor here exactly as it
 /// does at the prompt — and the rest edit the line. While that view stands it
@@ -1095,8 +1106,26 @@ pub(super) fn during<T: Terminal>(
             continue;
         }
 
+        // And the command list, which stands over the turn as they do and so
+        // takes Esc before the turn sees it. It shares the rest of the keyboard
+        // with the line, so only that key is read here.
+        if arrived == Pressed::Escape && opened_list.close() {
+            moved = true;
+            continue;
+        }
+
         match meant(arrived) {
-            Meant::Background if turning.can_background() => background.ask(),
+            // The command the turn is waiting on first, then the list the count
+            // under the box opens, by the call the click on it makes.
+            Meant::Background => {
+                match backgrounding(turning.can_background(), background.count()) {
+                    Backgrounding::Asked => background.ask(),
+                    Backgrounding::Listed => {
+                        moved |= stood(renderer, style, listing, background, &terms.ending)?;
+                    }
+                    Backgrounding::Nothing => {}
+                }
+            }
             // Taken back and re-wrapped above, before the view could have been
             // handed the same press. What is left to say is that the picture no
             // longer matches, which is what the redraw below reads.
@@ -1289,9 +1318,10 @@ pub(super) fn during<T: Terminal>(
                 }
                 Landed::Line => moved = true,
                 // The count is the one door on that row, and it is the door it
-                // is between turns: the key cannot open the list here — it
-                // means backgrounding the command the turn is waiting on — so
-                // the click is the way the list is reached while a turn runs.
+                // is between turns. The key reaches the list here only while
+                // the turn has nothing to background, because backgrounding
+                // comes first, so the click is the door that is always open
+                // while a turn runs.
                 Landed::Counted => {
                     moved |= stood(renderer, style, listing, background, &terms.ending)?;
                 }
@@ -1316,7 +1346,7 @@ pub(super) fn during<T: Terminal>(
                 );
             }
 
-            Meant::Background | Meant::Ignored => {}
+            Meant::Ignored => {}
         }
     }
 
@@ -1541,7 +1571,8 @@ enum Meant {
     /// the turn that is still writing it.
     Expand,
     /// Ctrl+B: the command the turn is waiting on is to be left running, and the
-    /// turn is to go on without it.
+    /// turn is to go on without it — or, where it is waiting on none, the list
+    /// of what is already running, as [`backgrounding`] decides.
     ///
     /// Asked of the registry rather than done in the loop that reads the key. The
     /// command is being waited on by the worker thread, so what this side can do
@@ -1594,7 +1625,9 @@ fn meant(arrived: Pressed) -> Meant {
 
         // Esc means back out of the thing in front of you everywhere else in a
         // session — a login, a secret, a list being picked from — and while a
-        // turn is running the turn is the thing in front of you.
+        // turn is running the turn is the thing in front of you. Whatever
+        // stands over it instead — the view, the queue, the command list — is
+        // handed the key before it reaches here.
         Pressed::Escape => Meant::Interrupt,
 
         Pressed::Key(Key::Char(first)) => Meant::Typing(first),
@@ -1655,7 +1688,40 @@ fn meant(arrived: Pressed) -> Meant {
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }
+        | Pressed::PageUp
+        | Pressed::PageDown
         | Pressed::Ignored => Meant::Ignored,
+    }
+}
+
+/// What Ctrl+B comes to while a turn is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backgrounding {
+    /// The command the turn is waiting on is asked to be left running.
+    Asked,
+    /// The list of what is still running, stood as a click on its count stands it.
+    Listed,
+    /// Nothing: there is nothing to leave running and nothing to list.
+    Nothing,
+}
+
+/// Reads Ctrl+B against the turn it was pressed under.
+///
+/// The key's own meaning first: a command the turn is waiting on is left
+/// running. Only a turn with nothing to leave running gives the key back to
+/// the list it opens between turns, and only while there is something on it —
+/// which is what lets a terminal that reports no clicks reach that list while
+/// a turn runs.
+///
+/// Apart from the loop for the reason [`meant`] is: the loop cannot be driven
+/// from a test, and this much of the deciding can be.
+fn backgrounding(can_background: bool, running: usize) -> Backgrounding {
+    if can_background {
+        Backgrounding::Asked
+    } else if running > 0 {
+        Backgrounding::Listed
+    } else {
+        Backgrounding::Nothing
     }
 }
 
@@ -1700,8 +1766,9 @@ pub(super) struct During<'a> {
     /// that opened it to the arrow that walks it.
     pub(super) opened_list: &'a mut Opened,
     /// The list of what is still running, which a click on the count under the
-    /// box stands — the same door the key is at the prompt, kept across the
-    /// looks at the channel a turn is one of.
+    /// box stands, and Ctrl+B where the turn has nothing to background — the
+    /// same door the key is at the prompt, kept across the looks at the channel
+    /// a turn is one of.
     pub(super) listing: &'a mut Leaving,
     /// Mutable for the one fact on it that moves while the turn does: a
     /// command left running can begin or end between two of this loop's looks
@@ -1884,6 +1951,17 @@ impl Opened {
     /// reader is choosing a command from.
     pub(super) fn is_open(&self) -> bool {
         !self.shown.is_empty()
+    }
+
+    /// Closes the list, and says whether there was one to close.
+    ///
+    /// What Esc does to it in both loops. The line is left as it was typed,
+    /// so return then takes the line rather than a row no longer on screen,
+    /// and the next edit filters the list open again from what the line says.
+    pub(super) fn close(&mut self) -> bool {
+        let was = self.is_open();
+        *self = Self::default();
+        was
     }
 
     /// What return runs, or `None` where there is no list and the line is what

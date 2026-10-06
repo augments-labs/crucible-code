@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: opened
+---
+80x24 cursor 13,10 scrollback 30
+|quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy|
+|dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over|
+|the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox  |
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick |
+|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. |
+|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the |
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps|
+|over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown |
+|fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the   |
+|quick brown fox jumps over the lazy dog. done.                                  |
+|                                                                                |
+|› /resume                                                                       |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ Search    a session, or a branch                                             │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+| Resume a session · 2 of 2 · ~/a-directory-to-be-working-in/and-something-belo… |
+|                                                                                |
+|╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮|
+|│ › say something              │ │ ────────────────────────────────────────────│|
+|│   just now                   │ │ just now · in use elsewhere                 │|
+|│                              │ │ Enter to resume · Esc to cancel             │|
+|╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
+|                                                                                |
+| ctrl+r rename · ctrl+a all projects · ctrl+w worktrees · esc                   |

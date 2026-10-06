@@ -73,6 +73,17 @@ const NOTCH: i32 = 3;
 /// reader who wants the paragraph above gets there without letting go.
 const CREEP: Duration = Duration::from_millis(60);
 
+/// The most of a native window a panel standing over or in place of the box
+/// may take: half, rounded down.
+///
+/// Half, so that what the panel stands over can still be read while it is
+/// open — and, in native mode, so that it is still there when the panel
+/// closes. The same share the prompt is held to (`crate::bands`), kept apart
+/// from it because they are two rules: that one is about a prompt being
+/// written, this one is about the rows a panel would otherwise push into the
+/// terminal's scrollback for good.
+const PANEL_SHARE: usize = 2;
+
 /// Where the cursor rests inside a band.
 ///
 /// Counted from the top left of the rows the caller handed over rather than
@@ -160,10 +171,16 @@ pub enum Aimed {
 /// beside their painted copy: they read as the transcript's last rows, so the
 /// scroll rail stands beside them too, and its cell there changes from one
 /// frame to the next as the transcript's does.
+///
+/// Of every row of the first slot, the cells it drew are kept as well, which
+/// is all a press needs of it: the painted copy cannot say where its text ends,
+/// and a second unpainted copy of a list would be kept only to be measured.
 #[derive(Debug, Default)]
 struct Standing {
     /// What a running turn is showing, and anything else standing over the box.
     turn: Vec<String>,
+    /// The cells each row of `turn` drew, as [`Renderer::cells`] answers for it.
+    drew: Vec<Range<usize>>,
     /// The first rows of `turn`, unpainted, where a running turn put them
     /// there: the turn's own rows, laid out at the transcript's width. Empty
     /// between turns and under anything else standing there.
@@ -182,6 +199,7 @@ impl Standing {
     /// Forget both, for a window whose size has changed underneath them.
     fn clear(&mut self) {
         self.turn.clear();
+        self.drew.clear();
         self.running.clear();
         self.ran = None;
         self.turned = None;
@@ -235,12 +253,15 @@ pub struct Renderer<T: Terminal> {
     record: Record,
     /// The rows at the foot of the window that are not the transcript.
     standing: Standing,
-    /// The row of the prompt that offers an action while the box is standing.
+    /// The row of the prompt that offers an action while the box is standing,
+    /// and the cells of it the offer takes.
     ///
     /// Relative to the prompt band. The renderer owns the absolute placement,
     /// so this is enough for it to decide whether a motion crossed the offer
-    /// without teaching it what the row means.
-    prompt_target: Option<usize>,
+    /// without teaching it what the row means. The cells are the ones the
+    /// caller drew pointed ([`door`]): the rest of the row says facts beside
+    /// the offer, and a pointer there is over none.
+    prompt_target: Option<(usize, Range<usize>)>,
     /// Whether a pointer transition is waiting for the prompt to be replaced.
     pointed_changed: bool,
     /// The size the record is folded for and the bands are shared out over.
@@ -842,7 +863,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The rows showing the result the transcript cut short that the pointer is
-    /// resting on. Empty where it is resting on nothing of the kind.
+    /// resting on. Empty where it is resting on nothing of the kind, which
+    /// includes a cell of the row the result did not draw ([`Self::cells`]).
     ///
     /// Every row of that one result and no row of any other, because what a
     /// pointer asks is what *this* opens: the light and the click have to name
@@ -856,17 +878,11 @@ impl<T: Terminal> Renderer<T> {
         let bands = self.bands();
         let nothing = bands.transcript.start..bands.transcript.start;
 
-        let Some((row, _)) = self.pointing else {
+        let Some((row, column)) = self.pointing else {
             return nothing;
         };
 
         if !bands.transcript.contains(&row) {
-            return nothing;
-        }
-
-        // The rail is the band's furniture, not a line of it: a pointer
-        // resting there is over no result.
-        if self.pointing.map(|(_, column)| column) == self.rail_column() {
             return nothing;
         }
 
@@ -876,6 +892,13 @@ impl<T: Terminal> Renderer<T> {
         };
 
         if !self.record.wears(line, Slot::Cut) {
+            return nothing;
+        }
+
+        // A row is a result only as far as it drew: the indent before it, the
+        // blank after it and the rail beside it are the window's, and a pointer
+        // resting there is over no result.
+        if !self.cells(row).contains(&column) {
             return nothing;
         }
 
@@ -903,13 +926,15 @@ impl<T: Terminal> Renderer<T> {
         (bands.transcript.start + head.start)..(bands.transcript.start + foot.end)
     }
 
-    /// Whether the pointer is over the prompt row the caller marked pointable.
+    /// Whether the pointer is over the offer on the prompt row the caller
+    /// marked pointable: on that row, and on a cell of it the offer took.
     fn prompt_pointed(&self) -> bool {
-        let (Some((row, _)), Some(target)) = (self.pointing, self.prompt_target) else {
+        let (Some((row, column)), Some((target, door))) = (self.pointing, &self.prompt_target)
+        else {
             return false;
         };
 
-        matches!(self.aimed(row), Some(Aimed::Boxed(at)) if at == target)
+        door.contains(&column) && self.aimed(row) == Some(Aimed::Boxed(*target))
     }
 
     /// Drops whatever is selected, because the picture under it is about to
@@ -941,7 +966,8 @@ impl<T: Terminal> Renderer<T> {
     /// thing here that puts a character of its own in place of one the model
     /// wrote. The reader is told rather than replaced, since a change can
     /// arrive between two deltas of one answer and the scan has to go on where
-    /// it was; rows already written keep the characters they were drawn with.
+    /// it was; rows already written keep the characters they were drawn with,
+    /// except the opening, which the next resize lays out again in this set.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
@@ -1022,7 +1048,7 @@ impl<T: Terminal> Renderer<T> {
         // scrollbar is the rail.
         self.rails = on && self.native.is_none();
         self.grip = None;
-        self.record.resized(self.folds());
+        self.record.resized(self.folds(), self.glyphs);
         self.unselects();
         self.painted.forget();
     }
@@ -1096,10 +1122,17 @@ impl<T: Terminal> Renderer<T> {
     /// escape bytes by the same rules streamed output is, because it arrived
     /// the same way.
     ///
+    /// An empty line straight under a divider ([`Renderer::divides`]) is not
+    /// taken: the divider is already the row that parts what follows, and a
+    /// blank one under it would part the new session from its own start.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn commit(&mut self, line: &str) -> Result<(), TerminalError> {
+        if line.is_empty() && self.record.divided() {
+            return Ok(());
+        }
         self.take(Slot::Plain, line)?;
         // The newline is what ends the line; without it the next thing written
         // would continue this one.
@@ -1187,19 +1220,24 @@ impl<T: Terminal> Renderer<T> {
     /// session, so what laid it is still here to lay it again — and it is what
     /// a reader is looking at when they take the corner of a fresh window and
     /// pull. Each width it is handed is [`Self::transcript_columns`], as for
-    /// [`Self::present`].
+    /// [`Self::present`], and each glyph set the one [`Self::draws`] last
+    /// named, so a card laid out again after the reader changed it is drawn
+    /// in the set they chose.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
-    pub fn opens(&mut self, lay: Box<dyn Fn(usize) -> Vec<Row>>) -> Result<(), TerminalError> {
+    pub fn opens(
+        &mut self,
+        lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
+    ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
             // Nothing will resize a file, so holding what could draw it again
             // would be holding it for an event that cannot arrive.
-            return self.present(&lay(self.transcript_columns()));
+            return self.present(&lay(self.transcript_columns(), self.glyphs));
         }
 
-        self.record.opens(lay);
+        self.record.opens(self.glyphs, lay);
         self.draw()
     }
 
@@ -1311,6 +1349,14 @@ impl<T: Terminal> Renderer<T> {
             &mut self.standing.turn,
         );
         let folds = self.folds();
+        // The turn's own rows at the width the rail leaves them, as the frame
+        // draws them; what stands under them at the window's.
+        self.standing.drew.clear();
+        self.standing.drew.extend(
+            turn.iter()
+                .map(|row| drawn(row, folds))
+                .chain(over.iter().map(|row| drawn(row, self.size.columns))),
+        );
         self.standing.running.clear();
         self.standing
             .running
@@ -1318,7 +1364,8 @@ impl<T: Terminal> Renderer<T> {
         self.standing.ran = (!turn.is_empty()).then_some(palette);
         self.standing.prompted = Some(prompt.caret);
         self.standing.turned = None;
-        self.prompt_target = prompt.pointed.map(|(at, _)| at);
+        let columns = self.size.columns;
+        self.prompt_target = prompt.pointed.map(|(at, row)| (at, door(row, columns)));
 
         if self.prompt_pointed()
             && let Some((at, row)) = prompt.pointed
@@ -1367,6 +1414,10 @@ impl<T: Terminal> Renderer<T> {
         }
 
         paint(rows, &palette, self.size.columns, &mut self.standing.turn);
+        self.standing.drew.clear();
+        self.standing
+            .drew
+            .extend(rows.iter().map(|row| drawn(row, self.size.columns)));
         self.standing.running.clear();
         self.standing.ran = None;
         self.standing.turned = caret;
@@ -1510,7 +1561,7 @@ impl<T: Terminal> Renderer<T> {
 
         self.native_resize(size);
         self.size = size;
-        self.record.resized(self.folds());
+        self.record.resized(self.folds(), self.glyphs);
         self.standing.clear();
         self.prompt_target = None;
         self.pointed_changed = false;
@@ -1531,16 +1582,28 @@ impl<T: Terminal> Renderer<T> {
     /// conversation, and putting it under what was there would leave a reader
     /// scrolling back through two of them, joined at a point nothing marks.
     ///
+    /// In native mode what was there stays in the terminal's scrollback, which
+    /// nothing written can take back, so the next block is parted from the
+    /// last row that went out there rather than from nothing, and
+    /// [`Renderer::divides`] is what marks the point.
+    ///
     /// The record's numbering carries on past the lines it drops, so a number
     /// some other part of the program is holding names the line it named and
     /// names nothing once that line has gone.
+    ///
+    /// A reply hung by [`Renderer::hangs`] is let go of unmarked, as the full
+    /// screen marks nothing of a reply that emptied the transcript.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn empties(&mut self) -> Result<(), TerminalError> {
+        self.record.unhangs();
         self.native_empties()?;
-        self.record.empties();
+        match self.native {
+            Some(_) => self.record.empties_under(),
+            None => self.record.empties(),
+        }
         self.standing.clear();
         self.prompt_target = None;
         self.pointed_changed = false;
@@ -1720,11 +1783,23 @@ impl<T: Terminal> Renderer<T> {
         self.size.rows
     }
 
-    /// How many rows a panel standing over the box gets: the whole window,
-    /// since nothing else holds a row of it for the length of a session.
+    /// How many rows what stands over or in place of the box gets.
+    ///
+    /// The whole window on the full screen, since nothing else holds a row of
+    /// it for the length of a session. Half the window, rounded down, in native
+    /// mode: a row the transcript gives up there goes into the terminal's
+    /// scrollback, and closing what took it does not bring it back, so a panel
+    /// is held to a share and scrolls inside it instead. The one place the
+    /// share is worked out, so every component that asks is held to the same
+    /// one — a panel the share cannot hold at all is the caller's to stand
+    /// taller, at the least it can be drawn in.
     #[must_use]
     pub fn room(&self) -> usize {
-        self.size.rows
+        if self.native.is_some() {
+            self.size.rows / PANEL_SHARE
+        } else {
+            self.size.rows
+        }
     }
 
     /// How many lines the transcript has taken this session.
@@ -1761,6 +1836,22 @@ impl<T: Terminal> Renderer<T> {
 
         self.record.amend(at, edit);
         self.draw()
+    }
+
+    /// Hangs what is written from here on under `glyphs.hangs()`, for
+    /// [`Renderer::subordinate`] to finish once it has all been written.
+    ///
+    /// Told before a reply starts rather than after it ends, because in native
+    /// mode a row is written once, and a reply that leaves the live region
+    /// before its command ends has to leave it carrying its mark. Each line
+    /// goes out marked, and [`Renderer::subordinate`], given the line this
+    /// started at, marks whatever is still held. The full screen marks nothing
+    /// before that. Emptying the transcript forgets it, and where output is
+    /// redirected nothing is marked at all.
+    pub fn hangs(&mut self, glyphs: Glyphs) {
+        if self.terminal.is_terminal() {
+            self.record.hangs(glyphs.hangs());
+        }
     }
 
     /// Hangs every transcript row written since `from` under one result mark.
@@ -1803,7 +1894,7 @@ impl<T: Terminal> Renderer<T> {
 
     /// What is under window row `at`.
     ///
-    /// The whole of what a click means. On a screen this process owns, the
+    /// What a click means, row by row. On a screen this process owns, the
     /// answer needs nothing from the terminal: the bands say which region the
     /// row is in and the record says which line is on it, so there is no round
     /// trip to ask where the cursor happens to be.
@@ -1815,6 +1906,9 @@ impl<T: Terminal> Renderer<T> {
     /// the first of them: the offer to open the result was made on that one,
     /// and a reader pointing at the second row of a sentence is pointing at the
     /// sentence.
+    ///
+    /// The row only: which of its cells the row drew is [`Self::cells`], and a
+    /// press on any other cell of it lands on nothing.
     #[must_use]
     pub fn aimed(&self, at: usize) -> Option<Aimed> {
         // A window row names nothing here: the region moves with the
@@ -1842,6 +1936,54 @@ impl<T: Terminal> Renderer<T> {
         }
 
         None
+    }
+
+    /// The cells of window row `at` that a click or a resting pointer counts
+    /// on: from the first cell the row drew to its last, in terminal cells.
+    ///
+    /// [`Self::aimed`] says what a row is; this says how much of it is that.
+    /// The indent before a row's first mark and the blank after its last
+    /// character are the window's, not the row's, so a press there lands on
+    /// nothing. Read from the row the band shows, folded and clipped as the
+    /// frame draws it, so what answers is what is on screen.
+    ///
+    /// A row standing over the box answers the same way, at the width it was
+    /// drawn at, so a list's row is the list's only as far as its text goes.
+    ///
+    /// The prompt row the caller marked pointable answers with the cells of
+    /// its offer alone: what it says beside the offer is a fact, not a door.
+    ///
+    /// Empty in native mode, where no press arrives, and for any row but a
+    /// transcript row, a row standing over the box, or that one.
+    #[must_use]
+    pub fn cells(&self, at: usize) -> Range<usize> {
+        if self.native.is_some() {
+            return 0..0;
+        }
+
+        if let Some((target, door)) = &self.prompt_target
+            && self.aimed(at) == Some(Aimed::Boxed(*target))
+        {
+            return door.clone();
+        }
+
+        let bands = self.bands();
+        if bands.turn.contains(&at) {
+            return self
+                .standing
+                .drew
+                .get(at - bands.turn.start)
+                .cloned()
+                .unwrap_or(0..0);
+        }
+        if !bands.transcript.contains(&at) {
+            return 0..0;
+        }
+
+        let top = self.record.top_row(bands.transcript.len());
+        self.record
+            .row_at(top + (at - bands.transcript.start))
+            .map_or(0..0, |row| drawn(&row, self.folds()))
     }
 
     /// How the window is shared out, given what is standing in it.
@@ -2046,6 +2188,32 @@ impl<T: Terminal> Taking<'_, T> {
             None => Ok(()),
         }
     }
+}
+
+/// The cells `row` draws when it is given `room` of them: from its first
+/// character that is not a blank to the end of its last, a wide character
+/// counting as two.
+fn drawn(row: &Row, room: usize) -> Range<usize> {
+    let text = row.text();
+    let said = width::clip(&text, room).trim_end_matches(' ');
+    let indent = said.len() - said.trim_start_matches(' ').len();
+    indent..width::columns(said)
+}
+
+/// The cells of `row` its [`Slot::Pointed`] runs take when it is given `room`
+/// of them: the offer on a pointable row, from its first such cell to its last.
+/// Empty for a row that offers nothing.
+fn door(row: &Row, room: usize) -> Range<usize> {
+    let mut column = 0;
+    let mut door: Option<Range<usize>> = None;
+    for (slot, text) in row.clipped(room).spans() {
+        let end = column + width::columns(text);
+        if slot == Slot::Pointed {
+            door = Some(door.map_or(column..end, |door| door.start..end));
+        }
+        column = end;
+    }
+    door.unwrap_or(0..0)
 }
 
 /// Paints `rows` into buffers the caller keeps between frames.

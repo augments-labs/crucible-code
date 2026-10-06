@@ -442,6 +442,47 @@ shown=$(in_terminal 80 env TERM=xterm HOME="$on_path_home" \
 expect 'a directory on PATH' "$shown" '~/.local/bin is on your PATH.'
 refuse 'a directory on PATH' "$shown" 'export PATH='
 
+echo '==> a spinner that cannot act on its stop signal does not hold its step'
+# bash runs a trap only once the foreground command returns, so a spinner whose
+# frame pause does not return cannot act on the signal that ends it, and a step
+# that waited for it would wait as long as the pause. This `sleep` holds the
+# spinner's frame pause, and only that one, for longer than the whole step list
+# takes; every other wait goes to the real sleep. The pause is held away from
+# the terminal, so `script` is not kept open by what the spinner leaves behind.
+held_for=120
+real_sleep=$(command -v sleep)
+held_tools=$scratch/held-tools
+mkdir -p "$held_tools"
+cat >"$held_tools/sleep" <<SLEEP
+#!/usr/bin/env bash
+if [[ \${1:-} == 0.1 ]]; then
+    : >"$scratch/frame-held"
+    exec "$real_sleep" $held_for </dev/null >/dev/null 2>&1
+fi
+exec "$real_sleep" "\$@"
+SLEEP
+chmod +x "$held_tools/sleep"
+held_bin=$scratch/held-bin
+started=$SECONDS
+held=$(in_terminal 80 env TERM=xterm LC_ALL=C PATH="$held_tools:$PATH" "$INSTALL" \
+    --version "$version" --dir "$held_bin" \
+    --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+took=$((SECONDS - started))
+[[ -e $scratch/frame-held ]] || {
+    echo 'no spinner reached its frame pause, so no stop signal was held off' >&2
+    exit 1
+}
+((took < held_for)) || {
+    printf 'a held spinner kept the install waiting %s seconds\n' "$took" >&2
+    exit 1
+}
+for step in 'detect platform' 'verify checksum' 'unpack' 'install'; do
+    expect 'a held spinner' "$(visible "$held")" "ok $step"
+done
+refuse 'a held spinner' "$held" 'install.sh: line'
+expect 'a held spinner' "$held" 'status=0'
+[[ -x $held_bin/crucible ]]
+
 echo '==> a checksum mismatch installs nothing and names the step'
 mismatch_bin=$scratch/mismatch-bin
 status=0

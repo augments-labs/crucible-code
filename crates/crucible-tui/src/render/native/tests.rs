@@ -357,6 +357,10 @@ struct Seen {
     written: String,
     emulator: Emulator,
     is_terminal: bool,
+    /// How many of the next size queries fail.
+    unsizable: usize,
+    /// The size the terminal reports, where that is not the size it draws at.
+    reports: Option<Size>,
 }
 
 /// A terminal with a scrollback, for a renderer to own and a test to read.
@@ -369,7 +373,22 @@ impl Window {
             written: String::new(),
             emulator: Emulator::new(columns, rows),
             is_terminal: true,
+            unsizable: 0,
+            reports: None,
         })))
+    }
+
+    /// Makes the next `times` size queries fail, as a terminal that would
+    /// not say does.
+    fn loses_size(&self, times: usize) {
+        self.0.borrow_mut().unsizable = times;
+    }
+
+    /// Makes every size query answer `size`, whatever the window draws at: a
+    /// pty nobody told its size reports none, while the display behind it has
+    /// rows all the same.
+    fn reports(&self, size: Size) {
+        self.0.borrow_mut().reports = Some(size);
     }
 
     fn redirected(columns: usize, rows: usize) -> Self {
@@ -415,11 +434,17 @@ impl Window {
 
 impl Terminal for Window {
     fn size(&self) -> Result<Size, TerminalError> {
-        let seen = self.0.borrow();
-        Ok(Size {
+        let mut seen = self.0.borrow_mut();
+        if seen.unsizable > 0 {
+            seen.unsizable = seen.unsizable.saturating_sub(1);
+            return Err(TerminalError::Io(std::io::Error::other(
+                "the window would not say",
+            )));
+        }
+        Ok(seen.reports.unwrap_or(Size {
             columns: seen.emulator.columns,
             rows: seen.emulator.rows,
-        })
+        }))
     }
 
     fn write(&mut self, text: &str) -> Result<(), TerminalError> {
@@ -481,7 +506,7 @@ fn a_native_frame_never_names_a_screen_row() {
     let mut render = native(&window);
 
     render
-        .opens(Box::new(|_| vec![row("crucible"), row("the opening")]))
+        .opens(Box::new(|_, _| vec![row("crucible"), row("the opening")]))
         .unwrap();
     stands(&mut render);
     render.commit("> hello").unwrap();
@@ -555,6 +580,59 @@ fn a_finished_native_row_is_written_exactly_once_across_later_frames() {
     for at in 0..8 {
         assert_eq!(window.rows_saying(&format!("later {at}")), 1, "later {at}");
     }
+}
+
+#[test]
+fn a_native_region_that_grew_in_a_turn_keeps_its_height_so_the_box_stays_at_the_foot() {
+    // A turn grows the region: the line asked and the answer stand in it with
+    // the spinner under them, and the growth pushes the rows above into the
+    // scrollback. When the turn ends the answer is sealed out and the spinner
+    // goes, and what the region still has to show is shorter than the rows it
+    // stood in. The rows it pushed out cannot come back, so the region keeps
+    // its height, padded with blank rows at its top, and the box stands at
+    // the foot where the turn left it rather than two rows above blank ones.
+    let window = Window::new(40, 8);
+    let mut render = native(&window);
+    for at in 0..5 {
+        render.commit(&format!("said {at}")).unwrap();
+    }
+    stands(&mut render);
+    render.seal().unwrap();
+
+    render.commit("> asked").unwrap();
+    render.stream("an answer").unwrap();
+    render
+        .under(&[row("* thinking")], None, Palette::plain())
+        .unwrap();
+    stands(&mut render);
+    assert_eq!(
+        window.scrollback(),
+        ["said 0", "said 1", "said 2"],
+        "the turn did not grow the region: {:#?}",
+        window.all()
+    );
+    render.settle().unwrap();
+    render.under(&[], None, Palette::plain()).unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    assert_eq!(
+        window.screen(),
+        [
+            "said 3",
+            "said 4",
+            "> asked",
+            "an answer",
+            "",
+            "+--box--+",
+            "| > typed",
+            "+-------+",
+        ],
+        "{:#?}",
+        window.all()
+    );
+    assert_eq!(window.caret(), (6, 4));
+    assert_eq!(window.scrollback(), ["said 0", "said 1", "said 2"]);
 }
 
 #[test]
@@ -682,6 +760,96 @@ fn a_native_narrowing_keeps_the_finished_rows_that_still_fit_on_screen() {
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
 
+#[test]
+fn a_native_frame_drawn_before_the_resize_is_reported_takes_the_new_width() {
+    // The kernel narrows the window before the press reporting it is read,
+    // and an answer still arriving draws frames in between. Replayed into a
+    // terminal that wraps what is written past its edge: a frame drawn at the
+    // old width wraps, the next rewinds over the rows it counted rather than
+    // the rows the terminal made of them, and what it did not reach stays
+    // above the region as a second copy.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render
+        .stream("alfa bravo charlie delta echo foxtrot golf ")
+        .unwrap();
+    window.take();
+
+    window.resize(20);
+    render.stream("hotel ").unwrap();
+    render.stream("india ").unwrap();
+    render.resized().unwrap();
+    stands(&mut render);
+
+    let after = window.take();
+    assert!(
+        !after.contains("> asked"),
+        "a frame wrote a finished row again: {after:?}"
+    );
+    for word in ["alfa", "delta", "golf", "hotel", "india"] {
+        assert_eq!(window.rows_saying(word), 1, "{word}: {:#?}", window.all());
+    }
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+    assert!(
+        window.all().iter().all(|row| row.chars().count() <= 20),
+        "a row was written wider than the window: {:#?}",
+        window.all()
+    );
+}
+
+#[test]
+fn a_native_frame_whose_size_query_fails_is_drawn_at_the_size_already_known() {
+    // A size query that fails says nothing about the window: it is neither a
+    // resize to the fallback size nor a reason to hold the frame back. The
+    // frame goes out for the window as it was last known, whether the query
+    // fails once, between the frame asking and the resize asking again, or
+    // for good.
+    let window = Window::new(100, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render.stream("alfa bravo charlie delta ").unwrap();
+    window.take();
+
+    window.loses_size(1);
+    render.stream("echo ").unwrap();
+    assert!(
+        window.take().contains("echo"),
+        "the frame was held back: {:#?}",
+        window.all()
+    );
+
+    window.loses_size(usize::MAX);
+    render
+        .stream("foxtrot golf hotel india juliett kilo lima mike november oscar")
+        .unwrap();
+    stands(&mut render);
+
+    let said: Vec<String> = window
+        .all()
+        .into_iter()
+        .filter(|row| row.contains("alfa") || row.contains("oscar"))
+        .collect();
+    assert_eq!(
+        said.len(),
+        1,
+        "the row was folded for a window of eighty: {:#?}",
+        window.all()
+    );
+    assert!(
+        said.iter().all(|row| row.chars().count() > 80),
+        "the row was folded for a window of eighty: {:#?}",
+        window.all()
+    );
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+}
+
 /// A palette that writes every hue it has, so a row's colours are on the
 /// record as well as its words.
 fn colourful() -> Palette {
@@ -714,7 +882,7 @@ fn three_turns(render: &mut Renderer<Window>) {
     ];
     render.wears(colourful());
     render
-        .opens(Box::new(|_| vec![row("crucible"), row("the opening")]))
+        .opens(Box::new(|_, _| vec![row("crucible"), row("the opening")]))
         .unwrap();
     stands(render);
     render.seal().unwrap();
@@ -928,5 +1096,280 @@ fn a_native_renderer_says_it_is_native_and_a_new_one_is_fullscreen() {
     assert_eq!(
         Renderer::new(Window::new(40, 10)).screen(),
         ScreenMode::Fullscreen
+    );
+}
+
+#[test]
+fn a_native_panel_gets_half_the_window_rounded_down_and_a_fullscreen_one_the_whole() {
+    // What stands in place of the box in native mode is held to half the
+    // window, so that what it stands over is still on screen rather than
+    // pushed into a scrollback that closing the panel cannot take back. The
+    // full screen owns every row and gives the whole window, as before.
+    assert_eq!(native(&Window::new(80, 24)).room(), 12);
+    assert_eq!(native(&Window::new(80, 23)).room(), 11);
+    assert_eq!(native(&Window::new(80, 1)).room(), 0);
+    assert_eq!(Renderer::new(Window::new(80, 24)).room(), 24);
+}
+
+#[test]
+fn a_native_divider_has_one_blank_row_above_it_and_none_below_however_the_transcript_ended() {
+    // Emptying a native transcript takes nothing back from the terminal, so
+    // what the divider is parted from is whatever went out last: a row of
+    // words, or a row of nothing that a block before it already left. Either
+    // way one blank row stands above the divider, and the block that follows
+    // it asks for none, because the divider is what parts them.
+    for (case, ending) in [
+        ("words", &["the last answer"][..]),
+        ("blank", &["the last answer", ""][..]),
+    ] {
+        let window = Window::new(40, 10);
+        let mut render = native(&window);
+        for line in ending {
+            render.commit(line).unwrap();
+        }
+        stands(&mut render);
+        render.seal().unwrap();
+
+        render.empties().unwrap();
+        render.divides("new session").unwrap();
+        render.apart().unwrap();
+        render.commit("what follows").unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let all = window.all();
+        let at = all
+            .iter()
+            .position(|row| row.starts_with("── new session ─"))
+            .unwrap_or_else(|| panic!("{case}: no divider in {all:#?}"));
+        let divider = format!("── new session {}", "─".repeat(40 - 15));
+        let around: Vec<&str> = all
+            .iter()
+            .skip(at.saturating_sub(2))
+            .take(4)
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            around,
+            ["the last answer", "", divider.as_str(), "what follows"],
+            "{case}: {all:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_blank_line_committed_under_a_native_divider_is_not_written() {
+    // A command's answer ends with a blank line that parts it from what is
+    // said next. When the answer is a divider, the divider already does that,
+    // and a blank row under it would part the new session from its own start.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.commit("the last answer").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.commit("").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    let under: Vec<&str> = all
+        .iter()
+        .skip_while(|row| **row != divider)
+        .take(2)
+        .map(String::as_str)
+        .collect();
+    assert_eq!(under, [divider.as_str(), "what follows"], "{all:#?}");
+}
+
+#[test]
+fn a_native_divider_let_go_in_the_frame_that_draws_it_still_parts_what_follows() {
+    // Emptying the transcript takes the box down, so when the divider is drawn
+    // the transcript band is the whole window, and the one window with no row
+    // for it is one that reports no rows at all: a pty nobody told its size
+    // says so, while the display behind it has rows. There every line goes
+    // out to the scrollback in the frame that first draws it, the divider
+    // included, and the mark that parts what follows from it has to be on it
+    // by then, or the block after it is given the blank row the divider was
+    // meant to stand in for.
+    let window = Window::new(40, 10);
+    window.reports(Size {
+        columns: 40,
+        rows: 0,
+    });
+    let mut render = native(&window);
+    render.commit("> /clear").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    let at = all
+        .iter()
+        .position(|row| row.as_str() == "> /clear")
+        .unwrap_or_else(|| panic!("nothing asked: {all:#?}"));
+    let after: Vec<&str> = all.iter().skip(at).take(4).map(String::as_str).collect();
+    assert_eq!(
+        after,
+        ["> /clear", "", divider.as_str(), "what follows"],
+        "{all:#?}"
+    );
+}
+
+#[test]
+fn a_redirected_native_divider_is_written_plain_once_and_parts_what_follows() {
+    // Where output is redirected nothing is framed, so the divider is written
+    // through as plain text the moment it is laid, as every other row is, and
+    // the mark that spares the block after it a blank row holds there too.
+    let window = Window::redirected(40, 10);
+    let mut render = native(&window);
+    render.commit("> /clear").unwrap();
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    assert_eq!(
+        window.written(),
+        format!("> /clear\n\n{divider}\nwhat follows\n")
+    );
+}
+
+/// Every row of `rows` from the one that reads `asked` through the first that
+/// is blank, without that blank.
+fn under<'a>(rows: &'a [String], asked: &str) -> Vec<&'a str> {
+    rows.iter()
+        .skip_while(|row| *row != asked)
+        .skip(1)
+        .take_while(|row| !row.is_empty())
+        .map(String::as_str)
+        .collect()
+}
+
+#[test]
+fn a_native_reply_that_leaves_the_region_before_its_command_ends_goes_out_marked() {
+    // A command whose reply is taller than the region: most of it goes out to
+    // the scrollback while the command is still writing, and a key wait in the
+    // middle seals the rest written so far. Each row is written once, so each
+    // has to go out already carrying the mark or the indent under it.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    render.commit("> /usage").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let start = render.lines();
+    render.hangs(Glyphs::Unicode);
+    for at in 0..10 {
+        render.commit(&format!("row {at}")).unwrap();
+        stands(&mut render);
+    }
+    render.seal().unwrap();
+    for at in 10..12 {
+        render.commit(&format!("row {at}")).unwrap();
+    }
+    render.subordinate(start, Glyphs::Unicode).unwrap();
+    render.commit("").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let mut wanted = vec!["⎿ row 0".to_owned()];
+    wanted.extend((1..12).map(|at| format!("  row {at}")));
+    assert_eq!(under(&all, "> /usage"), wanted, "{all:#?}");
+    for at in 0..12 {
+        assert_eq!(
+            all.iter()
+                .filter(|row| row.ends_with(&format!("row {at}")))
+                .count(),
+            1,
+            "row {at} was not written exactly once: {all:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_reply_written_after_the_last_key_wait_is_marked_before_it_goes_out() {
+    // How `/compact` answers the line that asked: its reply is drawn once the
+    // work is over, and the mark is hung before the session next waits for a
+    // key, so nothing of it has gone out unmarked.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.commit("> /compact").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let start = render.lines();
+    render.commit("nothing to compact").unwrap();
+    render.subordinate(start, Glyphs::Unicode).unwrap();
+    render.commit("").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    assert_eq!(
+        under(&all, "> /compact"),
+        ["⎿ nothing to compact"],
+        "{all:#?}"
+    );
+    assert_eq!(window.rows_saying("nothing to compact"), 1, "{all:#?}");
+}
+
+#[test]
+fn a_native_mark_waiting_when_the_transcript_empties_is_dropped() {
+    // What the full screen does with a reply that emptied the transcript is
+    // hang nothing at all, because what the mark would hang from has gone.
+    // Here what was written before the emptying stays in the scrollback, and
+    // neither it nor the divider nor anything under the divider takes a mark.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.commit("> /clear").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let start = render.lines();
+    render.hangs(Glyphs::Unicode);
+    render.commit("! the session file is gone").unwrap();
+    render.empties().unwrap();
+    render.divides("new session").unwrap();
+    render.subordinate(start, Glyphs::Unicode).unwrap();
+    render.commit("").unwrap();
+    render.apart().unwrap();
+    render.commit("what follows").unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let all = window.all();
+    let divider = format!("── new session {}", "─".repeat(40 - 15));
+    let at = all
+        .iter()
+        .position(|row| row.as_str() == "> /clear")
+        .unwrap_or_else(|| panic!("nothing asked: {all:#?}"));
+    let after: Vec<&str> = all.iter().skip(at).take(5).map(String::as_str).collect();
+    assert_eq!(
+        after,
+        [
+            "> /clear",
+            "! the session file is gone",
+            "",
+            divider.as_str(),
+            "what follows"
+        ],
+        "{all:#?}"
     );
 }

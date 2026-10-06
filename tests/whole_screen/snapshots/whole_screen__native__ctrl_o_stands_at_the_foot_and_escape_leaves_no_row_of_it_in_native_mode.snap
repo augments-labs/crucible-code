@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: opened
+---
+80x24 cursor 23,0 scrollback 15
+|› read all three                                                                |
+|                                                                                |
+|● Read(alpha.txt)                                                               |
+|  ⎿ 1 alpha line 01 (+29 lines · ctrl+o to expand)                              |
+|                                                                                |
+|● Read(beta.txt)                                                                |
+|  ⎿ 1 beta line 01 (+29 lines · ctrl+o to expand)                               |
+|                                                                                |
+|● Read(gamma.txt)                                                               |
+|  ⎿ 1 gamma line 01 (+29 lines · ctrl+o to expand)                              |
+|                                                                                |
+|All three are read.                                                             |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Read(gamma.txt)                                                                 |
+|                                                                                |
+|     1 gamma line 01                                                            |
+|     2 gamma line 02                                                            |
+|     3 gamma line 03                                                            |
+|     4 gamma line 04                                                            |
+|     5 gamma line 05                                                            |
+|     6 gamma line 06                                                            |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ result 1 of 3                      |

@@ -12,7 +12,9 @@
 //! an empty context drawn under a full transcript would read as a conversation
 //! the agent has no memory of. What goes back up is the opening card and
 //! nothing else, so the screen after a clear is the screen a fresh start
-//! draws.
+//! draws. In native mode the terminal's scrollback keeps what was said and the
+//! card above it, so what goes under them is one divider saying a new session
+//! starts there, and no second card.
 //!
 //! What was said is not deleted. The log it was written to is closed and stays
 //! on the disk, so the session is on `/resume`'s list like any other and
@@ -24,7 +26,7 @@
 use crucible_app::Conversation;
 use crucible_app::client::{Cleared, Performed};
 use crucible_client_api::Command;
-use crucible_tui::{Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{Renderer, Row, ScreenMode, Slot, Terminal, clip};
 
 use crate::cli::Fatal;
 use crate::cli::client::astray;
@@ -51,7 +53,13 @@ pub(super) fn run<T: Terminal>(
             held.kept.forget();
             held.images.clear();
             renderer.empties()?;
-            held.opening.commit(renderer)?;
+            match renderer.screen() {
+                ScreenMode::Fullscreen => held.opening.commit(renderer)?,
+                // No divider and no card: no session ended here to be parted
+                // from the one that follows, and the launch's card is still
+                // in the scrollback above.
+                ScreenMode::Native => {}
+            }
 
             let rows = [Row::new().then(Slot::Quiet, clip("nothing had been said", columns))];
             return Ok(renderer.present(&rows)?);
@@ -112,8 +120,15 @@ pub(super) fn run<T: Terminal>(
     // fresh start is the whole of what says one happened. The card's facts
     // were read at launch, so its list of recent sessions does not yet name
     // the one just left — the price of a card that never disagrees with the
-    // one the launch drew.
-    held.opening.commit(renderer)?;
+    // one the launch drew. What it is drawn with is the session's now rather
+    // than the launch's: a glyph set chosen since then is the one every row
+    // drawn after it uses. In native mode the launch's card is still in the
+    // scrollback above what was said, and a second one would read as a second
+    // launch, so one divider says where the new session starts instead.
+    match renderer.screen() {
+        ScreenMode::Fullscreen => held.opening.commit(renderer)?,
+        ScreenMode::Native => renderer.divides("new session")?,
+    }
     Ok(())
 }
 

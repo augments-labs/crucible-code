@@ -5,7 +5,7 @@ expression: "dump(&welcome.rows(columns, glyphs), columns)"
 <Accent>╭─ </><Strong>crucible</> <Quiet>v0.0.8</><Accent> ────────────────────────────────────────────────────────────╮</>
 <Accent>│</>                                  <Accent>│</> <Strong>Recent sessions</>                           <Accent>│</>
 <Accent>│</>  <Strong>▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄</>  <Accent>│</>                                           <Accent>│</>
-<Accent>│</>  <Strong>█   █▄▄ █  █ █   █ █▄█ █   █▄▄</>  <Accent>│</> <Quiet>No recent sessions</>                        <Accent>│</>
+<Accent>│</>  <Strong>█   █▄▄ █  █ █   █ █▄█ █   █▄▄</>  <Accent>│</> <Quiet>No earlier session for this workspace</>     <Accent>│</>
 <Accent>│</>  <Strong>▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄</>  <Accent>│</>                                           <Accent>│</>
 <Accent>│</>                                  <Accent>│</> <Quiet>─────────────────────────────────────────</> <Accent>│</>
 <Accent>│</>  <Quiet>~/code/crucible-code</>            <Accent>│</>                                           <Accent>│</>

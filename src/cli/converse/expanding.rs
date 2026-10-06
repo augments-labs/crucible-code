@@ -81,9 +81,22 @@ pub(super) struct View {
     from: usize,
     /// The furthest down it may go, as of the last frame drawn.
     end: usize,
+    /// The furthest down the window opens on rows, as of the last frame
+    /// drawn: less than `end` where the window may go on only to reach a
+    /// result not read back yet. Asked for further down than this, the frame
+    /// is drawn from here, so this is where the result at its top is counted
+    /// from, by the footer and by a step alike, and where a press back goes.
+    laid: usize,
     /// Where the window was open when the last frame was drawn, which is how
     /// a frame knows which way the window moved since.
     was: usize,
+    /// How many rows of results the window showed, as of the last frame
+    /// drawn: what a page is, less the one row a page keeps in sight.
+    page: usize,
+    /// Where each result begins, counting the blank that parts it from the
+    /// one above, as of the last frame drawn: where a step to the next or
+    /// the last result puts the top of the window.
+    starts: Vec<usize>,
     /// What it is a window over.
     over: Over,
     /// What the window reaches of the results the store let go of, read back
@@ -103,7 +116,10 @@ impl View {
         Self {
             from: 0,
             end: 0,
+            laid: 0,
             was: 0,
+            page: 0,
+            starts: Vec::new(),
             over,
             back: Vec::new(),
             refused: None,
@@ -278,8 +294,9 @@ pub(super) fn under<T: Terminal>(
     // One row is left to the transcript whatever stands here, and it is the row
     // the turn goes on writing into: a view that asked for the whole window
     // would be a reader looking back through what was said while what is being
-    // said now has nowhere at all to appear.
-    let room = renderer.rows().saturating_sub(1);
+    // said now has nowhere at all to appear. How much what stands here may have
+    // is the renderer's to say, as it is for the view between turns.
+    let room = renderer.room().saturating_sub(1);
     let rows = laying(kept, view, style.glyphs(), renderer.columns(), room);
 
     let Some(row) = rows.len().checked_sub(1) else {
@@ -306,12 +323,16 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     if entries.is_empty() {
         return Vec::new();
     }
-    let heights = reaching(kept, view, &entries, columns, rows);
+    let heights = reaching(kept, view, &entries, columns, rows)
+        .unwrap_or_else(|| heights(&entries, &view.back, columns));
 
     let View {
         from,
         end,
+        laid,
         was,
+        page,
+        starts: begun,
         back,
         ..
     } = view;
@@ -322,22 +343,20 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     };
 
     // Written before the rows are asked for, so the key pressed against this
-    // picture is clamped to what this picture could reach. Where results were
-    // let go of, the rows are counted already, and a result not read back yet
+    // picture is clamped to what this picture could reach, pages by what it
+    // showed and steps to where its results begin. A result not read back yet
     // is a few rows until it is: the last of them could sit under the end of
     // the window and never be reached, so the window may go down as far as its
     // top, which is where the view reads it.
-    *end = match heights {
-        Some(heights) => {
-            let total: usize = heights.iter().sum();
-            total
-                .saturating_sub(Expanded::seen(rows))
-                .max(unread(&entries, back, &heights))
-        }
-        None => expanded.end(columns, rows),
-    };
+    let total: usize = heights.iter().sum();
+    *laid = total.saturating_sub(Expanded::seen(rows));
+    *end = (*laid).max(unread(&entries, back, &heights));
     *from = (*from).min(*end);
     *was = *from;
+    *page = Expanded::seen(rows);
+    *begun = starts(&heights);
+    // Where the last of them ends, which no step goes to.
+    begun.pop();
 
     expanded.within(columns, rows, glyphs)
 }
@@ -657,12 +676,50 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         // over more text than its rows hold, and that is exactly the thing a
         // reader turning a wheel is pointing at. At either end it moves nothing,
         // and the loop that reads this takes that as the transcript's turn.
+        // Back goes from the row the frame is drawn from, which is above where
+        // the window stands while the oldest result is not read back yet.
         Pressed::Up | Pressed::Scrolled { back: true } => {
-            let next = view.from.checked_sub(1);
+            let next = drawn(view).checked_sub(1);
             region::step(&mut view.from, next)
         }
         Pressed::Down | Pressed::Scrolled { back: false } => {
             let next = Some(view.from.saturating_add(1)).filter(|next| *next <= view.end);
+            region::step(&mut view.from, next)
+        }
+
+        // A page is the rows the window shows less one, so the row that was at
+        // the foot is at the top afterwards and the reader keeps their place.
+        // A page down onto a result not read back yet stops at its top, as an
+        // arrow does: the layout that reads it back is where that is decided.
+        Pressed::PageUp => {
+            let top = drawn(view);
+            let next = Some(top.saturating_sub(paged(view))).filter(|next| *next < top);
+            region::step(&mut view.from, next)
+        }
+        Pressed::PageDown => {
+            let next = Some(view.from.saturating_add(paged(view)).min(view.end))
+                .filter(|next| *next > view.from);
+            region::step(&mut view.from, next)
+        }
+
+        // From one result to the next older or newer, whatever the window was
+        // part way through: the top of that result at the top of the window,
+        // or as near it as the window may go. Newest is first, so older is
+        // down the view. At the oldest or the newest there is nowhere to step,
+        // and the key moves nothing.
+        Pressed::Key(Key::Right) => {
+            let next = topmost(view)
+                .checked_add(1)
+                .and_then(|at| heading(view, at))
+                .map(|top| top.min(view.end))
+                .filter(|next| *next > view.from);
+            region::step(&mut view.from, next)
+        }
+        Pressed::Key(Key::Left) => {
+            let next = topmost(view)
+                .checked_sub(1)
+                .and_then(|at| heading(view, at))
+                .filter(|next| *next < view.from);
             region::step(&mut view.from, next)
         }
 
@@ -707,6 +764,44 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Released { .. }
         | Pressed::Ignored => Moved::Still,
     }
+}
+
+/// How far a page moves the window: the rows it showed less the one kept in
+/// sight, and a row at least, so a window of one row still moves.
+fn paged(view: &View) -> usize {
+    view.page.saturating_sub(1).max(1)
+}
+
+/// The row the call's line of result `at` is on: where it begins, past the
+/// blank that parts it from the one above. That is the row the newest result's
+/// call stands on when the view opens, so a step puts each one where the first
+/// was rather than under a blank.
+///
+/// A step onto a result not read back yet stops at the blank instead, as a
+/// step down by any other key does, and the layout reads it back from there.
+fn heading(view: &View, at: usize) -> Option<usize> {
+    let start = view.starts.get(at)?;
+    Some(start.saturating_add(usize::from(at > 0)))
+}
+
+/// The row the frame is drawn from: where the window stands, or the furthest
+/// down it opens on rows while the result past them is not read back yet.
+fn drawn(view: &View) -> usize {
+    view.from.min(view.laid)
+}
+
+/// Which result is at the top of the window: the last to begin at or above it.
+///
+/// The top of the window as it is drawn rather than as far as it was asked to
+/// go, which past the rows there are to lay is further down: counted from
+/// there, the footer would name one result and a step go from another.
+fn topmost(view: &View) -> usize {
+    let top = drawn(view);
+    view.starts
+        .iter()
+        .filter(|start| **start <= top)
+        .count()
+        .saturating_sub(1)
 }
 
 #[cfg(test)]

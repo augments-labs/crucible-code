@@ -206,6 +206,26 @@ fn the_keys_are_the_last_row_and_the_heading_sits_under_the_search_line() {
 }
 
 #[test]
+fn a_heading_wider_than_the_window_ends_in_the_ellipsis() {
+    // A directory cut mid-name with nothing to say so reads as the whole of
+    // it, and names a place that is not there. The mark is inside the row's
+    // budget, in each glyph set's own width, and a heading that fits is left
+    // whole.
+    let preview = tail();
+    let picker = picker(&FIVE, &preview);
+    let wide = crate::width::columns;
+
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let cut = said(&picker.within(40, 30, glyphs), 3);
+        assert!(cut.ends_with(glyphs.ellipsis()), "{glyphs:?}: {cut:?}");
+        assert!(wide(&cut) < 40, "{glyphs:?}: {cut:?}");
+
+        let whole = said(&picker.within(100, 30, glyphs), 3);
+        assert!(whole.ends_with("crucible-code"), "{glyphs:?}: {whole:?}");
+    }
+}
+
+#[test]
 fn the_keys_row_takes_the_longest_form_the_window_has_room_for() {
     // Longest first, and a form is drawn only where all of it fits: two
     // columns go to the row's margin and its last column.

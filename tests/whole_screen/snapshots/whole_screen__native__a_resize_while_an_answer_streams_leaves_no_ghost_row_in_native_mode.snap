@@ -1,0 +1,30 @@
+---
+source: tests/whole_screen/native.rs
+assertion_line: 835
+expression: window.picture()
+---
+80x24 cursor 21,4 scrollback 20
+|is the third, worded so that no word of it stands in any                        |
+|other row. Row delta is the fourth, and the window may well                     |
+|be narrow by the time it lands. Row foxtrot is the fifth,                       |
+|long enough that the resize has somewhere to fall. Row golf                     |
+|closes the first answer, and the box is drawn again under it                    |
+|at sixty.                                                                       |
+|                                                                                |
+|› say the second                                                                |
+|                                                                                |
+|Row hotel opens the second answer, the one the window is widened under again.   |
+|Row india follows it at sixty columns, folded by the renderer and not by the    |
+|terminal. Row juliett is the third of the second, and reads the same at either  |
+|width. Row kilo is the fourth, and the window may well be wide again by the time|
+|it lands. Row lima is the fifth, long enough that this resize has somewhere to  |
+|fall too. Row mike closes the second answer, and the box is drawn again under it|
+|at eighty.                                                                      |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|

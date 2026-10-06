@@ -30,7 +30,8 @@
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
 //! and a resize replaces those lines with the same card drawn for the window
-//! there is now.
+//! there is now, in the glyph set in force now: a reader who changed it since
+//! launch is not handed the card back in the characters they turned away from.
 
 use std::fmt;
 
@@ -38,6 +39,7 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 use crate::color::Slot;
+use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::scroll_rail::Place;
 
@@ -113,6 +115,23 @@ impl Subordinate {
     }
 }
 
+/// A mark hung on what is written from a line on, before it is written.
+///
+/// Native mode writes a line out once, and a reply can leave the live region
+/// before the command writing it ends. What it is to be hung under is known
+/// before the reply starts, so each of its lines is marked as it goes out and
+/// [`Record::subordinate`] marks the rest.
+#[derive(Debug)]
+struct Hanging {
+    /// The line the reply starts at, as [`Record::lines`] numbers it.
+    from: usize,
+    /// The first line not marked yet.
+    next: usize,
+    mark: Box<str>,
+    /// Whether the mark itself is still to be given, rather than the indent.
+    first: bool,
+}
+
 impl Line {
     /// Its share of the record's retained-memory ceiling.
     fn weight(&self) -> usize {
@@ -147,8 +166,9 @@ struct Opening {
     from: usize,
     /// How many lines it laid, at the width they were laid at.
     lines: usize,
-    /// What laid them, kept for as long as they are held.
-    lay: Box<dyn Fn(usize) -> Vec<Row>>,
+    /// What laid them, kept for as long as they are held, and handed the
+    /// width and the glyph set each time it lays them.
+    lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
 }
 
 impl fmt::Debug for Opening {
@@ -248,6 +268,15 @@ pub(crate) struct Record {
     /// would take every block after that for the first of the session, and
     /// part none of them from the one above.
     parted_before: bool,
+    /// The line, by its number counted from the first of the session, that
+    /// parts what is above it from what follows although it is not blank.
+    ///
+    /// A divider: a block that follows it asks for a blank row and is given
+    /// none, because the divider is already the space between them.
+    parting: Option<usize>,
+    /// The mark a reply still being written is hung under, from
+    /// [`Self::hangs`] until [`Self::subordinate`] or [`Self::unhangs`].
+    hanging: Option<Hanging>,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -285,7 +314,9 @@ impl Record {
             landmarks: VecDeque::new(),
             landed: None,
             parted_before: true,
+            parting: None,
             open: false,
+            hanging: None,
         }
     }
 
@@ -337,24 +368,25 @@ impl Record {
         }
     }
 
-    /// Lay down the opening, keeping what laid it.
+    /// Lay down the opening in `glyphs`, keeping what laid it.
     ///
     /// The one block a resize draws again — see the prose at the top of this
     /// file for why this one and nothing else.
-    pub(crate) fn opens(&mut self, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
+    pub(crate) fn opens(&mut self, glyphs: Glyphs, lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>) {
         self.end();
         let from = self.gone + self.lines.len();
-        let laid = lay(self.columns);
+        let laid = lay(self.columns, glyphs);
         let lines = laid.len();
         self.lay(laid);
         self.opening = Some(Opening { from, lines, lay });
     }
 
-    /// Draw the opening again for `columns`, in the lines it already holds.
+    /// Draw the opening again for `columns` in `glyphs`, in the lines it
+    /// already holds.
     ///
     /// Before the heights are worked out again rather than after: this changes
     /// which lines there are, and [`Self::resized`] is what measures them.
-    fn relay(&mut self, columns: usize) {
+    fn relay(&mut self, columns: usize, glyphs: Glyphs) {
         let Some(opening) = self.opening.take() else {
             return;
         };
@@ -367,7 +399,7 @@ impl Record {
         }
 
         let at = opening.from - self.gone;
-        let laid = (opening.lay)(columns);
+        let laid = (opening.lay)(columns, glyphs);
         let lines = laid.len();
 
         for _ in 0..opening.lines {
@@ -459,7 +491,7 @@ impl Record {
     fn drop_oldest(&mut self) {
         if let Some(line) = self.lines.pop_front() {
             self.weight = self.weight.saturating_sub(line.weight());
-            self.parted_before = Self::blank(&line);
+            self.parted_before = Self::blank(&line) || self.parting == Some(self.gone);
         }
         let tall = self.tall.pop_front().unwrap_or(0);
         self.before = self.ends.pop_front().unwrap_or(self.before);
@@ -538,13 +570,31 @@ impl Record {
     /// each want space around them get one row between them rather than two.
     /// A record nobody has written to is parted: there is nothing above to be
     /// parted from. One holding nothing because it let go of everything it had
-    /// ends in whatever it let go of last, which is still above.
+    /// ends in whatever it let go of last, which is still above. A line marked
+    /// by [`Self::parts`] parts as a blank one does.
     pub(crate) fn parted(&self) -> bool {
         match self.lines.back() {
             None => self.parted_before,
             Some(Line::Flowed(_)) if self.open => false,
-            Some(line) => Self::blank(line),
+            Some(line) => Self::blank(line) || self.parting == self.lines().checked_sub(1),
         }
+    }
+
+    /// Marks the last line as one that parts what follows it from what is
+    /// above, as a blank line would.
+    pub(crate) fn parts(&mut self) {
+        if !self.lines.is_empty() {
+            self.parting = Some(self.lines() - 1);
+        }
+    }
+
+    /// Whether the last line is one [`Self::parts`] marked, with nothing open
+    /// after it.
+    ///
+    /// Asked even once that line has gone out and been let go of: the count
+    /// of lines goes on including it, so it is still the last.
+    pub(crate) fn divided(&self) -> bool {
+        !self.open && self.parting.is_some() && self.parting == self.lines().checked_sub(1)
     }
 
     /// Whether a finished line is a row of nothing.
@@ -589,6 +639,18 @@ impl Record {
         self.parted_before = true;
     }
 
+    /// Drop every line as [`Self::empties`] does, where what was said is still
+    /// above what replaces it.
+    ///
+    /// What emptying means in the terminal's own buffer, which keeps what went
+    /// out: the next block is parted from the last row written there, not from
+    /// nothing, so whether that row was blank is kept.
+    pub(crate) fn empties_under(&mut self) {
+        let parted = self.parted();
+        self.empties();
+        self.parted_before = parted;
+    }
+
     /// How many lines the session has taken, including those since dropped.
     ///
     /// Counted from the first line of the session rather than the first still
@@ -605,57 +667,120 @@ impl Record {
     /// rather than a list of unrelated results. If the beginning spilled or the
     /// command replaced the transcript, nothing is changed: the retained rows no
     /// longer identify one complete answer block.
+    ///
+    /// Where [`Self::hangs`] was told of `from` before the output began, the
+    /// lines it has already marked are left as they are and the rest are
+    /// marked after them.
     pub(crate) fn subordinate(&mut self, from: usize, mark: &str) {
         self.end();
-        if from < self.gone || from >= self.lines() || mark.is_empty() {
+        let (next, mut first) = self
+            .hanging
+            .take()
+            .filter(|hanging| hanging.from == from)
+            .map_or((from, true), |hanging| (hanging.next, hanging.first));
+        if next < self.gone || next >= self.lines() || mark.is_empty() {
             return;
         }
+        self.mark(next..self.lines(), mark, &mut first);
+    }
 
+    /// Hangs what is written from here on under `mark`, before it is written.
+    ///
+    /// For a reply that may leave the record before it ends: each line of it
+    /// is marked as [`Self::hangs_through`] lets it go, and
+    /// [`Self::subordinate`], given the line this started at, marks the rest.
+    /// Emptying the record forgets it.
+    pub(crate) fn hangs(&mut self, mark: &str) {
+        let from = self.lines();
+        self.hanging = (!mark.is_empty()).then(|| Hanging {
+            from,
+            next: from,
+            mark: mark.into(),
+            first: true,
+        });
+    }
+
+    /// Forgets the mark [`Self::hangs`] hung, marking nothing more under it.
+    pub(crate) fn unhangs(&mut self) {
+        self.hanging = None;
+    }
+
+    /// Marks the lines of a hung reply before `through`, which are about to
+    /// be let go of.
+    ///
+    /// Nothing where no reply is hung, and the mark is forgotten where lines
+    /// of the reply have already gone unmarked, as [`Self::subordinate`]
+    /// forgets a block whose beginning spilled.
+    pub(crate) fn hangs_through(&mut self, through: usize) {
+        let Some(mut hanging) = self.hanging.take() else {
+            return;
+        };
+        if hanging.next < self.gone {
+            return;
+        }
+        let through = through.min(self.lines());
+        if hanging.next < through {
+            let mark = std::mem::take(&mut hanging.mark);
+            self.mark(hanging.next..through, &mark, &mut hanging.first);
+            hanging.mark = mark;
+            hanging.next = through;
+        }
+        self.hanging = Some(hanging);
+    }
+
+    /// Puts `mark` on the first row of `lines` still owed it while `first`,
+    /// and its indent on every other row; lines of the opening are skipped.
+    fn mark(&mut self, lines: Range<usize>, mark: &str, first: &mut bool) {
         let opening = self
             .opening
             .as_ref()
             .map(|opening| opening.from..opening.from + opening.lines);
-        let from = from - self.gone;
         let subordinate = Subordinate {
             mark: mark.into(),
             opening: crate::width::columns(mark),
             marks_first: true,
             keeps_first: false,
         };
-        let mut first = true;
+        let gone = self.gone;
 
-        for (at, line) in self.lines.iter_mut().enumerate().skip(from) {
+        for (at, line) in self
+            .lines
+            .iter_mut()
+            .enumerate()
+            .skip(lines.start - gone)
+            .take(lines.len())
+        {
             if opening
                 .as_ref()
-                .is_some_and(|opening| opening.contains(&(self.gone + at)))
+                .is_some_and(|opening| opening.contains(&(gone + at)))
             {
                 continue;
             }
             match line {
                 Line::Flowed(row) | Line::Set(row) => {
-                    if first && row.starts_structural() {
-                        first = false;
+                    if *first && row.starts_structural() {
+                        *first = false;
                     } else {
-                        row.prepend(subordinate.row(&mut first));
+                        row.prepend(subordinate.row(first));
                     }
                 }
                 Line::Responsive { rows, prefix, .. } => {
-                    if first && rows.first().is_some_and(Row::starts_structural) {
-                        first = false;
+                    if *first && rows.first().is_some_and(Row::starts_structural) {
+                        *first = false;
                         let mut retained = subordinate.clone();
                         retained.marks_first = false;
                         retained.keeps_first = true;
                         for row in rows.iter_mut().skip(1) {
-                            row.prepend(subordinate.row(&mut first));
+                            row.prepend(subordinate.row(first));
                         }
                         *prefix = Some(retained);
                         continue;
                     }
                     let mut retained = subordinate.clone();
-                    retained.marks_first = first && !rows.is_empty();
+                    retained.marks_first = *first && !rows.is_empty();
                     retained.keeps_first = false;
                     for row in rows {
-                        row.prepend(subordinate.row(&mut first));
+                        row.prepend(subordinate.row(first));
                     }
                     *prefix = Some(retained);
                 }
@@ -1119,17 +1244,18 @@ impl Record {
         self.following = true;
     }
 
-    /// Lay the record out for a window of a different width.
+    /// Lay the record out for a window of a different width, with the opening
+    /// drawn again in `glyphs`.
     ///
     /// Every height is wrong at once, so every height is worked out again —
     /// and the spot keeps its line and loses its offset into it, because the
     /// row that was third of five in a line is not the third of two.
-    pub(crate) fn resized(&mut self, columns: usize) {
+    pub(crate) fn resized(&mut self, columns: usize, glyphs: Glyphs) {
         if columns == self.columns {
             return;
         }
         self.columns = columns;
-        self.relay(columns);
+        self.relay(columns, glyphs);
         self.relay_responsive(columns);
         self.rows = 0;
         self.before = 0;
@@ -1270,8 +1396,8 @@ mod tests {
 
     /// A source that lays one row per column of the window, so what width it
     /// was called at can be read straight off what it laid.
-    fn ruler() -> Box<dyn Fn(usize) -> Vec<Row>> {
-        Box::new(|columns| {
+    fn ruler() -> Box<dyn Fn(usize, Glyphs) -> Vec<Row>> {
+        Box::new(|columns, _| {
             (0..columns)
                 .map(|row| Row::new().then(Slot::Plain, format!("{row}")))
                 .collect()
@@ -1329,7 +1455,7 @@ mod tests {
         let after = record.landmarks.front().copied().expect("a landmark");
         assert_eq!(after, 1, "one responsive block is one logical line");
 
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
 
         assert_eq!(record.landmarks.front().copied(), Some(after));
         assert_eq!(record.start_of(after), Some(3));
@@ -1358,7 +1484,7 @@ mod tests {
     #[test]
     fn a_record_that_was_emptied_has_nothing_left_of_what_it_held() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         record.write(Slot::Plain, "said\n", None);
 
         record.empties();
@@ -1368,7 +1494,7 @@ mod tests {
         // The card goes with the lines and does not come back: what a resize
         // lays out again is an opening whose lines are still held, and these
         // are not.
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
         assert!(said(&record, 8).is_empty());
     }
 
@@ -1424,7 +1550,7 @@ mod tests {
         record.subordinate(from, "⎿");
 
         assert_eq!(said(&record, 8), ["⎿ failed at 8", "  details"]);
-        record.resized(12);
+        record.resized(12, Glyphs::Unicode);
         assert_eq!(said(&record, 8), ["⎿ failed at 12", "  details"]);
     }
 
@@ -1463,7 +1589,7 @@ mod tests {
         record.subordinate(from, "⎿");
 
         assert_eq!(said(&record, 8), ["⎿ at 8", "  after"]);
-        record.resized(12);
+        record.resized(12, Glyphs::Unicode);
         assert_eq!(said(&record, 8), ["⎿ at 12", "  after"]);
     }
 
@@ -1509,10 +1635,10 @@ mod tests {
     #[test]
     fn the_opening_is_laid_out_again_when_the_window_changes() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         record.write(Slot::Plain, "after\n", None);
 
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
 
         let laid: Vec<String> = record.lines.iter().map(measured).collect();
         assert_eq!(laid, ["0", "1", "2", "3", "4", "after"]);
@@ -1521,7 +1647,7 @@ mod tests {
     #[test]
     fn a_card_that_changes_height_leaves_the_reader_on_the_line_they_were_on() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         for line in 0..6 {
             record.write(Slot::Plain, &format!("said {line}\n"), None);
         }
@@ -1537,7 +1663,7 @@ mod tests {
         // record means two lines further down than it did. Wide enough that
         // what is under the card still folds to one row apiece, because that
         // is the other half of a resize and is not what this is about.
-        record.resized(6);
+        record.resized(6, Glyphs::Unicode);
 
         assert_eq!(said(&record, 4), reading);
     }
@@ -1545,12 +1671,12 @@ mod tests {
     #[test]
     fn a_card_that_changes_height_keeps_prompt_landmarks_on_their_prompts() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         record.landmark();
         record.write(Slot::Plain, "the prompt\n", None);
         let before = record.landmarks.front().copied().expect("a landmark");
 
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
 
         let after = record.landmarks.front().copied().expect("the landmark");
         assert_eq!(after, before - 3);
@@ -1560,7 +1686,7 @@ mod tests {
     #[test]
     fn a_reader_inside_a_card_that_was_laid_out_again_is_left_at_the_top_of_it() {
         let mut record = Record::new(8);
-        record.opens(ruler());
+        record.opens(Glyphs::Unicode, ruler());
         for line in 0..6 {
             record.write(Slot::Plain, &format!("said {line}\n"), None);
         }
@@ -1572,7 +1698,7 @@ mod tests {
         record.scroll(-6, 4);
         assert_eq!(said(&record, 1), ["4"]);
 
-        record.resized(5);
+        record.resized(5, Glyphs::Unicode);
 
         assert_eq!(said(&record, 1), ["0"]);
     }
@@ -1800,7 +1926,7 @@ mod tests {
         // that was fourth of five in a line is not the fourth of two.
         assert!(record.top.into > 0);
 
-        record.resized(18);
+        record.resized(18, Glyphs::Unicode);
 
         assert_eq!(record.top.line, was);
         assert_eq!(record.top.into, 0);

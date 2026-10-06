@@ -760,7 +760,9 @@ pub(crate) fn converse<T: Terminal>(
                 Ran::Again => continue,
                 Ran::Leave => break,
                 // Asked as a prompt is, before the question about a vendor
-                // a recap with nobody to ask would never reach.
+                // a recap with nobody to ask would never reach. Only down a
+                // pipe: at a terminal the command said the warning itself, as
+                // its reply under the line that asked, and asked for nothing.
                 Ran::Room(Compacting::Asked) if !answerable(&conversation) => {
                     unanswered(&conversation, renderer, terms)?;
                     continue;
@@ -924,7 +926,14 @@ fn answerable(conversation: &Conversation) -> bool {
     conversation.missing().is_none()
 }
 
-/// Says that a prompt or `/compact` has nobody to ask, where [`answerable`] said so.
+/// Says that what was asked has nobody to ask, where [`answerable`] said
+/// so: a prompt typed at the box or queued, `/compact` down a pipe (at a
+/// terminal the command says it itself), and room asked for with no model
+/// to make a recap, a picked-up session's or the application's refusal.
+///
+/// At a terminal it draws the warning. Down a pipe it fails instead: there
+/// is nobody to type `/model`, so carrying on reads every remaining line
+/// and answers none of them.
 ///
 /// `/model` is what changes this answer, so it is said again here rather than
 /// only under the welcome the session opened with: by now that has scrolled
@@ -944,6 +953,20 @@ fn unanswered<T: Terminal>(
     }
 
     draw::unconfigured(renderer, said)?;
+    Ok(())
+}
+
+/// Hangs the one-line reply written since `command` under the line that
+/// asked, and parts the next block from the pair; nothing where nobody asked.
+fn replied<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    command: Option<usize>,
+    style: Style,
+) -> Result<(), Fatal> {
+    if let Some(from) = command {
+        renderer.subordinate(from, style.glyphs())?;
+        renderer.commit("")?;
+    }
     Ok(())
 }
 
@@ -967,16 +990,21 @@ fn ran<T: Terminal>(
         unanswered(&conversation, renderer, terms)?;
         return Ok((conversation, false));
     }
-    if warning::held(&conversation, renderer, terms, &work, held)? {
-        return Ok((conversation, false));
-    }
     // Only a line somebody typed has a reply to hang under it, which is why
     // this asks who asked rather than what ran: room made because the window
     // filled, or because a resumed session was picked up as notes, was nobody's
     // command and has no line above it to hang from.
+    //
+    // Counted before anything is asked or sent, because the line that asked
+    // left no blank under it: the reply, whichever it turns out to be, is the
+    // next row, and the blank after it is written here once it is.
     let command = matches!(work, Work::Room(Compacting::Asked)).then(|| renderer.lines());
-    let took = take(conversation, renderer, terms, work, held)?;
     let style = terms.style();
+    if warning::held(&conversation, renderer, terms, &work, held)? {
+        replied(renderer, command, style)?;
+        return Ok((conversation, false));
+    }
+    let took = take(conversation, renderer, terms, work, held)?;
 
     troubled(renderer, took.conversation.session(), &mut held.told)?;
 
@@ -998,12 +1026,13 @@ fn ran<T: Terminal>(
         Did::Unasked => unanswered(&took.conversation, renderer, terms)?,
     }
 
-    // And only the two one-line replies are a reply. A compaction that ran
-    // posts the ruled record instead, which is true of the session rather than
-    // of the line that asked for it — a rule is drawn from the first column,
-    // and a mark shoved in front of one reads as a result that lost its start.
-    if let Some(from) = command.filter(|_| !matches!(took.did, Did::Reported | Did::UsedUp)) {
-        renderer.subordinate(from, style.glyphs())?;
+    // And only a one-line reply is a reply. A compaction that ran posts the
+    // ruled record instead, which is true of the session rather than of the
+    // line that asked for it — a rule is drawn from the first column, and a
+    // mark shoved in front of one reads as a result that lost its start. The
+    // blank above that record is the one it asks for on its way in.
+    if !matches!(took.did, Did::Reported | Did::UsedUp) {
+        replied(renderer, command, style)?;
     }
 
     // Asked of every piece of work that ran, so the first one to end any other

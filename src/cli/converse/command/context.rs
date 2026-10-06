@@ -14,6 +14,13 @@
 //! A window the model never stated has nothing to take a share of: the panel
 //! says so, and shows the tokens with no bar, no free row and no percent.
 //!
+//! The panel stands in the room the window gives it. Where it is taller, it
+//! shows as much of the body as the room leaves under the rule and over the
+//! footer, with a row saying how many more are below; ↑ and ↓ scroll it, and
+//! the footer says so. It is printed rather than stood only where the whole
+//! of it does not fit and even the rule, the blank rows, the footer, a row of
+//! the body and the row under it saying how many more are below have no room.
+//!
 //! It reads and changes nothing, so it stands over a running turn too, with
 //! the figures that turn last reported, which include anything it has
 //! recorded since its last request.
@@ -28,14 +35,19 @@ use crate::cli::client::astray;
 use crate::cli::draw;
 
 use super::region::{self, Ended, Moved};
-use super::{HUNG, Still, Terms};
+use super::{HUNG, Terms};
 
 /// The narrowest window the rows keep the two-cell swatch and the wider
 /// columns in; below it they close up behind a single cell.
 const ROOMY: usize = 42;
 
+/// The rows a standing panel draws around its body: the rule and a blank row
+/// over it, a blank row and the footer under it.
+const CHROME: usize = 4;
+
 /// Asks for the breakdown of the next request and stands it, or prints it
-/// where no keys can close a panel or there is no room to stand one.
+/// where no keys can close a panel, or where the whole of it does not fit and
+/// not even a row of its body and the row under it have room to stand.
 ///
 /// # Errors
 ///
@@ -61,7 +73,8 @@ pub(super) fn run<T: Terminal>(
 }
 
 /// Stands the panel over a running turn, with the figures of the last
-/// request it built, or prints them where there is no room to stand it.
+/// request it built, or prints them where the whole of it does not fit and
+/// not even a row of its body and the row under it have room to stand.
 ///
 /// # Errors
 ///
@@ -90,11 +103,83 @@ fn stood<T: Terminal>(
     region::stand_while(
         renderer,
         |_| style,
-        &mut Still,
-        |_, columns, _| (panel(context, columns, style.glyphs()), None),
-        |pressed, _| closing(&pressed),
+        &mut Scrolled::default(),
+        |scrolled: &mut Scrolled, columns, room| {
+            (scrolled.laid(context, columns, room, style.glyphs()), None)
+        },
+        |pressed, scrolled: &mut Scrolled| scrolled.pressed(&pressed),
         while_waiting,
     )
+}
+
+/// How far the standing panel's body is scrolled where it is taller than its
+/// room.
+#[derive(Debug, Default)]
+struct Scrolled {
+    /// The body's first row shown.
+    first: usize,
+    /// The furthest `first` goes at the last layout: none where the body
+    /// fits.
+    furthest: usize,
+}
+
+impl Scrolled {
+    /// The panel's rows at `columns` in `room` rows: the whole of it where it
+    /// fits; else as much of the body as `room` leaves beside the rule, the
+    /// blank rows and the footer, from the row it is scrolled to, with a row
+    /// saying how many more are below and a footer naming the arrows. None
+    /// where not even a row of the body and the row under it have room.
+    fn laid(
+        &mut self,
+        context: &api::Context,
+        columns: usize,
+        room: usize,
+        glyphs: Glyphs,
+    ) -> Vec<Row> {
+        let rows = body(context, columns, glyphs);
+        let Some(left) = room.checked_sub(CHROME) else {
+            return Vec::new();
+        };
+        if rows.len() <= left {
+            self.first = 0;
+            self.furthest = 0;
+            return framed(rows, columns, glyphs, "esc to close".to_owned());
+        }
+        let Some(fit) = left.checked_sub(1).filter(|fit| *fit > 0) else {
+            return Vec::new();
+        };
+        self.furthest = rows.len().saturating_sub(fit);
+        self.first = self.first.min(self.furthest);
+        let below = rows.len().saturating_sub(self.first.saturating_add(fit));
+        let mut shown: Vec<Row> = rows.into_iter().skip(self.first).take(fit).collect();
+        let (up, down) = glyphs.walking();
+        if below > 0 {
+            shown.push(
+                Row::new()
+                    .then(Slot::Quiet, format!("  {down} {below} more"))
+                    .clipped(columns),
+            );
+        }
+        let footer = format!("esc to close {} {up}{down} to see more", glyphs.dot());
+        framed(shown, columns, glyphs, footer)
+    }
+
+    /// What `pressed` does to the standing panel: ↑ and ↓ scroll a body
+    /// taller than its room a row at a time, and the keys that close a panel
+    /// close it.
+    fn pressed(&mut self, pressed: &Pressed) -> Moved {
+        match pressed {
+            Pressed::Up => {
+                let next = self.first.checked_sub(1);
+                region::step(&mut self.first, next)
+            }
+            Pressed::Down => {
+                let next = self.first.saturating_add(1);
+                region::step(&mut self.first, (next <= self.furthest).then_some(next))
+            }
+            _ => closing(pressed),
+        }
+    }
 }
 
 /// What a key does to the panel: escape, the key its footer names, closes it,
@@ -108,20 +193,16 @@ pub(super) fn closing(pressed: &Pressed) -> Moved {
     }
 }
 
-/// The panel's rows at `columns`: a rule, the body, and how to close it.
-fn panel(context: &api::Context, columns: usize, glyphs: Glyphs) -> Vec<Row> {
-    let mut rows = vec![
-        Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
-        Row::new(),
-    ];
-    rows.extend(body(context, columns, glyphs));
-    rows.push(Row::new());
-    rows.push(
-        Row::new()
-            .then(Slot::Quiet, "esc to close")
-            .clipped(columns),
-    );
-    rows
+/// `rows` at `columns` as the panel stands them: under a rule and a blank
+/// row, over a blank row and `footer`.
+fn framed(rows: Vec<Row>, columns: usize, glyphs: Glyphs, footer: String) -> Vec<Row> {
+    let mut framed = Vec::with_capacity(rows.len().saturating_add(CHROME));
+    framed.push(Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)));
+    framed.push(Row::new());
+    framed.extend(rows);
+    framed.push(Row::new());
+    framed.push(Row::new().then(Slot::Quiet, footer).clipped(columns));
+    framed
 }
 
 /// The title, the bar where the window is known, and a row per category.

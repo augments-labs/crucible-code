@@ -26,7 +26,9 @@
 //! minute, so opening the panel again within it asks nothing and shows what
 //! is known.
 //!
-//! A cost nobody priced reads `not priced`, never `$0.00`. A reset time is the
+//! A cost nobody priced reads `not priced`, never `$0.00`. A reset is drawn
+//! with its date and time, `resets 4 Oct 14:00`, even one later today, so a
+//! time is never read against the wrong day. It is the
 //! reader's own wall clock, read in the system's zone as the panel opens; a
 //! machine whose zone cannot be read is shown UTC, and the times say so, as is
 //! one whose `TZ`, or with `TZ` unset whose `/etc/localtime`, names anything
@@ -38,6 +40,14 @@
 //! [`body`] draws the blocks at a width and nothing else, so the panel here
 //! and anything that embeds the same figures draw them alike. Below
 //! [`WIDE`] columns each label stands over its value rather than beside it.
+//! A blank row stands between one plan window and the next.
+//!
+//! The panel stands in the room the window gives it. Where it is taller, it
+//! shows as much of the body as the room leaves under the rule and over the
+//! footer, with a row saying how many more are below; ↑ and ↓ scroll it, and
+//! the footer says so. It is printed rather than stood only where even the
+//! rule, the blank rows, the footer and a row of the body have no room, or,
+//! for a body taller than the room, a row of it with the row under it.
 //!
 //! Over a running turn it stands with the figures that turn last reported and
 //! asks nothing: the turn has the conversation.
@@ -52,9 +62,8 @@ use crucible_app::providers::{CredentialSource, credential_source, in_use, offer
 use crucible_app::startup::ProviderAuth;
 use crucible_client_api::{self as api, Cost, Limit, Reading, Window};
 use crucible_tui::{Bar, Fill, Glyphs, Part, Pressed, Renderer, Row, Slot, Terminal};
-use jiff::Timestamp;
-use jiff::civil::Date;
 use jiff::tz::TimeZone;
+use jiff::{Timestamp, Zoned};
 
 use crate::cli::Fatal;
 use crate::cli::client::{Out, astray};
@@ -86,6 +95,13 @@ pub(super) const BEAT: std::time::Duration = std::time::Duration::from_millis(25
 /// The largest zone file the system's zone may be read from; a real one is a
 /// few kilobytes.
 const ZONE_FILE: u64 = 1 << 20;
+
+/// How a reset with its date is drawn: `4 Oct 14:00`.
+const DATED: &str = "%-d %b %H:%M";
+
+/// The rows a standing panel draws around its body: the rule and a blank row
+/// over it, a blank row and the footer under it.
+const CHROME: usize = 4;
 
 /// Where the system's zone is read from when `TZ` is unset.
 const LOCALTIME: &str = "/etc/localtime";
@@ -151,16 +167,16 @@ impl Clock {
         }
     }
 
-    /// The phrase a window's reset is drawn with: `resets 15:40` for one to
-    /// come, and `reset 09:00, since passed` for one the clock is already
-    /// past.
+    /// The phrase a window's reset is drawn with: `resets 22 Oct 15:40` for
+    /// one to come, and `reset 22 Oct 09:00, since passed` for one the clock
+    /// is already past; dated even later today.
     ///
     /// A reading is kept until a response brings another, so after an idle
     /// stretch its reset can be behind the clock: the window has started
     /// again since, and its figure is what it was as of the reading, which
     /// the phrase says rather than promising a reset that already happened.
     fn resets(&self, at: u64) -> Option<String> {
-        let read = self.reads(at)?;
+        let read = self.dated(at)?;
         let passed = i64::try_from(at).is_ok_and(|at| at <= self.now.as_second());
         Some(if passed {
             format!("reset {read}, since passed")
@@ -170,10 +186,12 @@ impl Clock {
     }
 
     /// The phrase a turn stopped on a used-up plan names its reset with:
-    /// `resets Mon 09:00` for one still to come, and `resets soon` for one the
-    /// clock has reached. The stop happened against a reset still ahead, so
-    /// one behind the clock now says the plan is about to be usable again
-    /// rather than that it already is. `None` where the time cannot be read.
+    /// `resets 5 Oct 09:00` for one still to come, dated as [`Self::resets`]
+    /// dates it so the notice and the panel name one reset one way, and
+    /// `resets soon` for one the clock has reached. The stop happened against
+    /// a reset still ahead, so one behind the clock now says the plan is about
+    /// to be usable again rather than that it already is. `None` where the
+    /// time cannot be read.
     pub(crate) fn reset_by(&self, at: SystemTime) -> Option<String> {
         let Ok(since) = at.duration_since(UNIX_EPOCH) else {
             return Some("resets soon".to_owned());
@@ -182,34 +200,38 @@ impl Clock {
         if i64::try_from(at).is_ok_and(|at| at <= self.now.as_second()) {
             return Some("resets soon".to_owned());
         }
-        self.reads(at).map(|read| format!("resets {read}"))
+        self.dated(at).map(|read| format!("resets {read}"))
     }
 
-    /// When a window starts again, as a wall clock reads it: the time alone
-    /// today, with the weekday within the week, and with the date beyond or
-    /// before.
-    fn reads(&self, at: u64) -> Option<String> {
-        let at = Timestamp::from_second(i64::try_from(at).ok()?)
-            .ok()?
-            .to_zoned(self.zone.clone());
-        let today: Date = self.now.to_zoned(self.zone.clone()).date();
-        let days = today.until(at.date()).ok()?.get_days();
-        let shape = match days {
-            0 => "%H:%M",
-            1..=6 => "%a %H:%M",
-            _ => "%-d %b %H:%M",
-        };
+    /// When a window starts again, as a wall clock reads it, with its date
+    /// whatever day it falls on.
+    fn dated(&self, at: u64) -> Option<String> {
+        Some(self.read(&self.zoned(at)?, DATED))
+    }
+
+    /// `at` in the reader's zone.
+    fn zoned(&self, at: u64) -> Option<Zoned> {
+        Some(
+            Timestamp::from_second(i64::try_from(at).ok()?)
+                .ok()?
+                .to_zoned(self.zone.clone()),
+        )
+    }
+
+    /// `at` in `shape`, saying UTC where the zone is a guess.
+    fn read(&self, at: &Zoned, shape: &str) -> String {
         let read = at.strftime(shape).to_string();
-        Some(if self.guessed {
+        if self.guessed {
             format!("{read} UTC")
         } else {
             read
-        })
+        }
     }
 }
 
 /// Asks for what the session has used and stands it, or prints it where no
-/// keys can close a panel or there is no room to stand one.
+/// keys can close a panel or not even a row of it has room to stand, with the
+/// row saying how many more where the body is taller than the room.
 ///
 /// # Errors
 ///
@@ -324,13 +346,19 @@ pub(super) fn live<T: Terminal>(
 }
 
 /// What the panel draws, read once as it opens: the figures, who is
-/// answering, and the clock its reset times are read against; and the
-/// question out to the plan, until it is answered.
+/// answering, and the clock its reset times are read against; the question
+/// out to the plan, until it is answered; and how far the body is scrolled
+/// where it is taller than its room.
 struct Shown {
     heading: String,
     usage: api::Usage,
     clock: Clock,
     out: Option<Out>,
+    /// The body's first row shown.
+    scrolled: usize,
+    /// The furthest `scrolled` goes at the last layout: none where the body
+    /// fits.
+    furthest: usize,
 }
 
 impl Shown {
@@ -340,6 +368,59 @@ impl Shown {
             usage,
             clock: Clock::system(),
             out: None,
+            scrolled: 0,
+            furthest: 0,
+        }
+    }
+
+    /// The panel's rows at `columns` in `room` rows: the whole of it where it
+    /// fits; else as much of the body as `room` leaves beside the rule, the
+    /// blank rows and the footer, from the row it is scrolled to, with a row
+    /// saying how many more are below and a footer naming the arrows. None
+    /// where not even a row of the body and the row under it have room.
+    fn laid(&mut self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        let body = self.body(columns, glyphs);
+        let Some(left) = room.checked_sub(CHROME) else {
+            return Vec::new();
+        };
+        if body.len() <= left {
+            self.scrolled = 0;
+            self.furthest = 0;
+            return framed(body, columns, glyphs, "esc to close".to_owned());
+        }
+        let Some(fit) = left.checked_sub(1).filter(|fit| *fit > 0) else {
+            return Vec::new();
+        };
+        self.furthest = body.len().saturating_sub(fit);
+        self.scrolled = self.scrolled.min(self.furthest);
+        let below = body.len().saturating_sub(self.scrolled.saturating_add(fit));
+        let mut shown: Vec<Row> = body.into_iter().skip(self.scrolled).take(fit).collect();
+        let (up, down) = glyphs.walking();
+        if below > 0 {
+            shown.push(
+                Row::new()
+                    .then(Slot::Quiet, format!("  {down} {below} more"))
+                    .clipped(columns),
+            );
+        }
+        let footer = format!("esc to close {} {up}{down} to see more", glyphs.dot());
+        framed(shown, columns, glyphs, footer)
+    }
+
+    /// What `pressed` does to the standing panel: ↑ and ↓ scroll a body
+    /// taller than its room a row at a time, and the keys that close a panel
+    /// close it.
+    fn pressed(&mut self, pressed: &Pressed) -> Moved {
+        match pressed {
+            Pressed::Up => {
+                let next = self.scrolled.checked_sub(1);
+                region::step(&mut self.scrolled, next)
+            }
+            Pressed::Down => {
+                let next = self.scrolled.saturating_add(1);
+                region::step(&mut self.scrolled, (next <= self.furthest).then_some(next))
+            }
+            _ => closing(pressed),
         }
     }
 
@@ -435,26 +516,14 @@ fn stood<T: Terminal>(
     watch: Option<&mut dyn FnMut(&mut Shown) -> Moved>,
 ) -> Result<Ended, Fatal> {
     let style = terms.style();
-    let laid = |shown: &mut Shown, columns, _| {
-        let glyphs = style.glyphs();
-        let asking = shown.out.as_ref().map(Out::provider);
-        let rows = panel(
-            &shown.heading,
-            &shown.usage,
-            asking,
-            columns,
-            glyphs,
-            &shown.clock,
-        );
-        (rows, None)
-    };
+    let laid = |shown: &mut Shown, columns, room| (shown.laid(columns, room, style.glyphs()), None);
     match watch {
         Some(watch) => region::stand_watching(
             renderer,
             |_| style,
             shown,
             laid,
-            |pressed, _| closing(&pressed),
+            |pressed, shown: &mut Shown| shown.pressed(&pressed),
             BEAT,
             watch,
         ),
@@ -463,36 +532,22 @@ fn stood<T: Terminal>(
             |_| style,
             shown,
             laid,
-            |pressed, _| closing(&pressed),
+            |pressed, shown: &mut Shown| shown.pressed(&pressed),
             while_waiting,
         ),
     }
 }
 
-/// The panel's rows at `columns`: a rule, the body, and how to close it.
-// What is drawn, whose plan is being asked, and how wide, in which glyphs and
-// against which clock, are independent inputs, as for `body`.
-#[allow(clippy::too_many_arguments)]
-fn panel(
-    heading: &str,
-    usage: &api::Usage,
-    asking: Option<&str>,
-    columns: usize,
-    glyphs: Glyphs,
-    clock: &Clock,
-) -> Vec<Row> {
-    let mut rows = vec![
-        Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
-        Row::new(),
-    ];
-    rows.extend(body(heading, usage, asking, columns, glyphs, clock));
-    rows.push(Row::new());
-    rows.push(
-        Row::new()
-            .then(Slot::Quiet, "esc to close")
-            .clipped(columns),
-    );
-    rows
+/// `rows` at `columns` as the panel stands them: under a rule and a blank
+/// row, over a blank row and `footer`.
+fn framed(rows: Vec<Row>, columns: usize, glyphs: Glyphs, footer: String) -> Vec<Row> {
+    let mut framed = Vec::with_capacity(rows.len().saturating_add(CHROME));
+    framed.push(Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)));
+    framed.push(Row::new());
+    framed.extend(rows);
+    framed.push(Row::new());
+    framed.push(Row::new().then(Slot::Quiet, footer).clipped(columns));
+    framed
 }
 
 /// What the session has used, at `columns`: the title, the session's figures,
@@ -576,7 +631,8 @@ pub(crate) fn body(
 }
 
 /// The rows under `Plan limits` at `columns`: the plan-wide windows, then a
-/// group for each model the plan limits on its own, then a row saying more
+/// group for each model the plan limits on its own, a blank row between one
+/// window and the next and before each group, then a row saying more
 /// were reported than crossed, where they were, then a row saying whose plan
 /// is being asked, while it is.
 fn limits(
@@ -602,10 +658,11 @@ fn limits(
         .fold(FIGURE, usize::max);
     let mut rows = Vec::new();
     for group in &limits.groups {
-        let drawn: Vec<Row> = group
+        let drawn: Vec<Vec<Row>> = group
             .limits
             .iter()
-            .flat_map(|limit| self::limit(limit, figure, columns, glyphs, clock))
+            .map(|limit| self::limit(limit, figure, columns, glyphs, clock))
+            .filter(|window| !window.is_empty())
             .collect();
         if drawn.is_empty() {
             continue;
@@ -622,7 +679,13 @@ fn limits(
                 ),
             ));
         }
-        rows.extend(drawn);
+        for (at, window) in drawn.into_iter().enumerate() {
+            // The first window of a group stands right under its name.
+            if !rows.is_empty() && (at > 0 || group.model.is_none()) {
+                rows.push(Row::new());
+            }
+            rows.extend(window);
+        }
     }
     // What was cut at a ceiling is said to be missing, so what is drawn is
     // not read as every limit the plan has.

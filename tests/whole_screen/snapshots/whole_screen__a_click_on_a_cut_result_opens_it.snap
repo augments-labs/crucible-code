@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: opened
+---
+80x24 cursor 23,0 scrolled 0
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Read(alpha.txt)                                                                 |
+|                                                                                |
+|     1 alpha line 01                                                            |
+|     2 alpha line 02                                                            |
+|     3 alpha line 03                                                            |
+|     4 alpha line 04                                                            |
+|     5 alpha line 05                                                            |
+|     6 alpha line 06                                                            |
+|     7 alpha line 07                                                            |
+|     8 alpha line 08                                                            |
+|     9 alpha line 09                                                            |
+|    10 alpha line 10                                                            |
+|    11 alpha line 11                                                            |
+|    12 alpha line 12                                                            |
+|    13 alpha line 13                                                            |
+|    14 alpha line 14                                                            |
+|    15 alpha line 15                                                            |
+|    16 alpha line 16                                                            |
+|    17 alpha line 17                                                            |
+|    18 alpha line 18                                                            |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more                                         |

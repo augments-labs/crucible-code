@@ -8,6 +8,130 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.45.3] - 2026-10-06
+
+**Native mode keeps the box at the foot of the window and stops leaving
+stray copies in the scrollback, and a click opens a result only on its own
+text.**
+In native mode `/resume`, `/clear`, a panel and a resize no longer write a
+second welcome card, a second copy of rows or a whole window into the
+terminal's scrollback. The Ctrl+O results view moves a page or a result at a
+time, and Ctrl+B opens the `Still running` list while a turn runs.
+
+### Changed
+
+- **The Ctrl+O results view moves a page at a time and from one result to
+  the next.** <kbd>PgUp</kbd> and <kbd>PgDn</kbd> move by the rows it shows
+  less one, and <kbd>→</kbd> and <kbd>←</kbd> put the next older or newer
+  result at its top, in both screen modes. The footer names the keys and says
+  which result is at the top, as in `result 2 of 7`.
+- **Ctrl+B opens the `Still running` list while a turn runs.** Where the turn
+  has no command to leave in the background and one or more commands are left
+  running, the key stands the list a click on their count stands, in both
+  screen modes. Native mode asks for no clicks, so this is the way to the list
+  there during a turn.
+
+### Fixed
+
+- **↑ and the wheel in the Ctrl+O results view move it at once.** Where
+  the oldest result was not read back from the session log yet, the window
+  could stand further down than the rows it shows, and a press back walked
+  that distance first with nothing on screen changing. It now goes back from
+  the row the view is drawn from.
+- **In native mode `/resume` and `/clear` no longer draw a second welcome
+  card.** The session that follows starts under one `session resumed` or `new
+  session` divider row, and the launch's warnings are not written again. A
+  `/clear` in a session that has said nothing writes only `nothing had been
+  said`.
+- **In native mode a panel takes at most half the window.** `/model`,
+  `/theme`, `/resume`, `/settings`, the `/` list and the Ctrl+O results view
+  stand in at most half the window's rows, or the least they can be drawn in
+  where that is more, instead of the whole of it, so opening one pushes at
+  most the rows it takes above the box into the terminal's scrollback. A
+  resize while one is open leaves no row of it in the scrollback.
+- **In native mode a command's reply keeps its mark when it is taller than
+  the window.** A reply such as `/cache` in a short window went out to the
+  scrollback without the `⎿` mark and the indent under it; every row of it now
+  carries them, as in fullscreen.
+- **In native mode a resize while an answer is arriving leaves no second copy
+  of its rows.** A frame drawn between the window changing size and the
+  report of it being read was drawn at the old width, so the terminal wrapped
+  it and the next frame left the wrapped rows standing above the region.
+  Every frame now asks the window's size first and is drawn for the size it
+  has.
+- **A click beside a cut result no longer opens it.** In fullscreen a click or
+  a resting pointer counts on a result's own text, from its mark to its last
+  character, so the indent before it and the blank after it on the same row
+  open and light nothing. The count of commands left running under the box
+  answers on its own words in the same way, not on the mode beside it.
+- **The `/resume` heading says when it is cut.** A directory too long for
+  the window now ends in `…` rather than stopping mid-name.
+- **The installer no longer hangs on a step whose spinner outlives its stop
+  signal.** On macOS the step list was seen stuck on `detect platform`, still
+  spinning two minutes later, because the installer waited without bound for a
+  spinner that had not acted on the signal that ends it. A spinner still there
+  a second after it is told to stop is now killed, with nothing written to the
+  terminal, and the step's row is drawn as usual.
+- **`/cache` keeps its indent in a narrow window.** Lines that wrapped
+  started again at the left edge, out from under the reply's mark; they now
+  wrap inside it, as `/context` and `/usage` do. So does the line `/model`,
+  `/login` and `/logout` add when retiring the cache left resources behind or
+  stopped the switch.
+- **Esc closes the command list.** Between turns it used to do nothing, and
+  during a turn it stopped the turn and left the list standing. It now closes
+  the list in both, keeping the line, as it already closes the Ctrl+O view
+  and the queue.
+- **`/usage` stands in a narrow window.** With plan limits it was taller than
+  a 40-column window and was printed into the transcript instead; it now
+  stands as a panel and scrolls with ↑ and ↓. Every reset shows its date with
+  its time, as in `resets 4 Oct 14:00`, a reset later today among them, and a
+  blank row parts one plan window from the next. The notice a turn stops on
+  when a plan is used up names its reset the same way.
+- **Every one-line `/compact` reply answers under the line that asked.** The
+  no-model warning, `nothing was sent`, `! stopped` and the note that there was
+  nothing worth replacing used to stand apart, two rows down, unlike every other
+  command's reply.
+- **The welcome card and `/resume` agree on an empty directory.** Under
+  `Recent sessions` the card said `No recent sessions` where `/resume` said
+  `no earlier session for this workspace`; both now say the second.
+- **`/release-notes` closed with Esc leaves the spacing other panels do.**
+  It left one blank row fewer above the box, and so did a resize that closed
+  it.
+- **`/context` stands in a short window.** In a window shorter than its panel
+  it was printed into the transcript instead, and in native mode it could
+  take more than half the window; it now stands in the room it is given and
+  scrolls with ↑ and ↓.
+- **Wrapped text holding a control character no longer runs past the
+  window's edge.** An error or a reply can carry a character a terminal would
+  act on, which crucible draws as a space; wrapping counted it as nothing, so
+  the row came out a column wider than the window and the terminal cut or
+  wrapped it. Wrapping now counts that space, and a tab, drawn as one space,
+  as one column rather than up to eight.
+- **A click beside a row of the `Still running` list no longer opens it.** In
+  fullscreen a click or a resting pointer on a list standing over the box
+  counts on the cells the row drew, so the blank after a command on its row
+  marks, opens and lights nothing.
+- **A command piped in at a terminal hangs its reply's mark on the reply's
+  first row.** A reply that opened with a line such as `! fly is not a mode`
+  was written on the `ask ›` row and the `⎿` mark went on the line under it;
+  the reply now starts on its own row under the prompt, marked, as other
+  replies are. A `/release-notes` answer, a release or a refusal, starts on
+  its own row too, set apart as when it is typed.
+- **In native mode the box stays at the foot of the window after a turn.**
+  What a turn showed under the answer pushed transcript rows into the
+  terminal's scrollback, and once it ended the box was drawn directly under
+  the answer, with the rows it had stood in left blank beneath it. The part of
+  the window drawn again now keeps the height it grew to, so the box stays at
+  the foot and the rows the turn stood in are blank between the transcript
+  and the box; a panel closing leaves the box at the foot the same way.
+- **`/compact` with no model answers under the line that asked.** The warning
+  used to stand apart, two rows down, unlike every other command's reply.
+- **The welcome card is drawn with the glyphs chosen in `/settings`.** After
+  the Glyphs row was set to `ascii` in a running session, the card a
+  fullscreen `/clear` or `/resume` put back, or a resize drew again, was still
+  drawn in box-drawing characters; it now uses the set in force, as every row
+  drawn after the change does.
+
 ## [0.45.2] - 2026-10-03
 
 **Ctrl+B backgrounds a running command from the moment it starts again, and
@@ -4960,7 +5084,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.3...HEAD
+[0.45.3]: https://github.com/augments-labs/crucible-code/compare/v0.45.2...v0.45.3
 [0.45.2]: https://github.com/augments-labs/crucible-code/compare/v0.45.1...v0.45.2
 [0.45.1]: https://github.com/augments-labs/crucible-code/compare/v0.45.0...v0.45.1
 [0.45.0]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...v0.45.0

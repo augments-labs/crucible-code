@@ -44,7 +44,6 @@ fn standing(sample: &Sample) -> Standing {
             workspace: &sample.workspace(),
             sessions: &[],
             update: None,
-            style: Style::plain(),
         },
         std::time::SystemTime::now(),
     )
@@ -491,4 +490,42 @@ fn a_result_let_go_of_after_a_clear_is_read_back_from_the_session_it_started() {
         "{:?}",
         text.get(..80)
     );
+}
+
+#[test]
+fn the_card_a_clear_puts_back_is_drawn_with_the_glyphs_in_force_now() {
+    // The card's facts were read at launch, but the characters it is drawn
+    // with are the session's: somebody who switched to ascii because their
+    // font has no box drawing would otherwise get a fresh start drawn in the
+    // one set they cannot read. Both ways a clear puts the card back: after a
+    // session that took a turn, and after one that said nothing.
+    let sample = Sample::new("clear-draws-with-the-glyphs-now");
+    let terms = terms(&sample, &Ledger::new(), &Plan::new());
+
+    // What the settings panel's Glyphs row does to a running session.
+    terms
+        .style
+        .set(terms.style().drawing(crucible_tui::Glyphs::Ascii));
+
+    let mut conversation = talking(&sample, "what was said before");
+    for case in ["a session that took a turn", "a session that said nothing"] {
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+        renderer.draws(crucible_tui::Glyphs::Ascii);
+        let mut input = std::io::empty();
+        // Read at launch, when the session drew in unicode.
+        let opening = standing(&sample);
+        let mut held = lent(&mut input, &opening);
+
+        run(&mut renderer, &mut conversation, &mut held, &terms)
+            .expect("the terminal to be written");
+
+        let picture = renderer.terminal().picture().rows().join("\n");
+        assert!(picture.contains("Tips"), "{case}: {picture}");
+        assert_eq!(
+            picture.contains("nothing had been said"),
+            case == "a session that said nothing",
+            "{case}: {picture}"
+        );
+        assert!(picture.is_ascii(), "{case}: {picture}");
+    }
 }

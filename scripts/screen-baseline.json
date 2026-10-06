@@ -1,8 +1,8 @@
 {
   "harness": {
-    "tests/whole_screen/screen.rs": "cc2ad5999ac72ed007d79e0197b0bd8782b9a75d05424aa7fb6ba8906b3a0e8f",
-    "tests/whole_screen/vendor.rs": "34f9d6bbec72850a23e2c252f03bd859e3d9dce87eb156e8f1350f71fdecbb1c",
-    "tests/whole_screen/watched.rs": "4b9ced9e9b5a072c6b65caa4b4552643ed77fe6ab81569b2ef2baf2b4de1d84d"
+    "tests/whole_screen/screen.rs": "07a6964bb72ea96433275b39f33ab91459a81610e73a0e7f5b95662fab426c4b",
+    "tests/whole_screen/vendor.rs": "aa9c2a759b0c5d6a3434650ad0643d8188769664337dee7602362aba67cbefca",
+    "tests/whole_screen/watched.rs": "fc480932ac70de72e0ce7a8fc8a904c6d564f2948c4c54def5f5cce3fc39b21d"
   },
   "captures": [
     {
@@ -15,15 +15,28 @@
       "sha256": "f2dc66bb59889116ebee1c69d63c51c12886a9353f092731fa1944d1f47b43ad"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_a_cut_result_opens_it.snap",
+      "case": "a_click_on_a_cut_result_opens_it",
+      "opened": [
+        "Vendor::calling_batches(&reading, \"The file is read.\")",
+        "Watched::configured(case, 80, 24, &config, true)"
+      ],
+      "sha256": "091c83b94de22c207e274222e4fab8a5d6e33a9693f7353d1f11267f296d8cc7"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks.snap",
       "case": "a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "177a776cb24b1c98aed572525132a401d60b281f97729fd5d0b29b7350894bfa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_the_count_opens_the_list_while_a_turn_is_still_running.snap",
       "case": "a_click_on_the_count_opens_the_list_while_a_turn_is_still_running",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"click-count-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "836dac6f440cfee2a652efd56585d2c611f98f0e19fa438a729ba67f9266488a"
@@ -31,16 +44,20 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it.snap",
       "case": "a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "d6971c539388152a69b8d90fb7f1b0828bb14450942d6169b91ad1d6b593231f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_command_that_cannot_run_mid_turn_says_so_on_a_panel.snap",
       "case": "a_command_that_cannot_run_mid_turn_says_so_on_a_panel",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"refuse-command-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "261ec803091a31605c4dba8bce5b8dd80726c3d5caba7b49448fe6ae347b52fa"
+      "sha256": "74344846d6cf2e812347cad11ceef931ab6072607406e3a7e2a7b5b14ffcc3bf"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box.snap",
@@ -48,7 +65,7 @@
       "opened": [
         "Watched::open(\"welcome\", 80, 24)"
       ],
-      "sha256": "fe269e5d4b18320330e0ffacf75da810682f6b970fa049a456a548bd19b70946"
+      "sha256": "8f9896c4f2a7fb26531eab1984e50389d641a0d615ec7a669c6f52f286dba1e4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_key_given_to_login_is_what_the_turn_after_it_is_sent_with.snap",
@@ -95,14 +112,16 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_mistyped_command_mid_turn_is_refused_on_the_panel_and_not_queued.snap",
       "case": "a_mistyped_command_mid_turn_is_refused_on_the_panel_and_not_queued",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"mistyped-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "ca6860ff5bdf70ed3470053ebce466bd1f1fadd148989c35e7b2a6cc02ce1e52"
+      "sha256": "d08c07bbf23583cb829f70471324879d45bd2961427da6a757b49bebaa34762a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_model_picked_mid_turn_is_confirmed_then_held.snap",
       "case": "a_model_picked_mid_turn_is_confirmed_then_held",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"model-mid-turn\", 100, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "90551ccfbc52965d79a4b8ba23df03d5a294b6c97988cc919866b5756aa4b1d5"
@@ -121,7 +140,7 @@
       "opened": [
         "Watched::open(\"pasted\", 80, 24)"
       ],
-      "sha256": "384a527ddba335d571ca203c8ee1e7547b65c872a877163c65837989c727a6d8"
+      "sha256": "a9d0c521217427bdc825e0511f73bbe9d3b77596eae470bf735dbbadde0ca7c6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_pasted_key_draws_one_mark_per_character_and_offers_to_save.snap",
@@ -146,7 +165,7 @@
       "opened": [
         "Watched::unavailable(\"remembered-without-key\", 80, 24)"
       ],
-      "sha256": "fe269e5d4b18320330e0ffacf75da810682f6b970fa049a456a548bd19b70946"
+      "sha256": "8f9896c4f2a7fb26531eab1984e50389d641a0d615ec7a669c6f52f286dba1e4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_scroll_rail_left_off_gives_the_transcript_its_last_column.snap",
@@ -161,6 +180,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under.snap",
       "case": "a_shift_tab_mid_turn_steps_the_mode_the_next_turn_runs_under",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"mode-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "fd669e58d9b6ca88bdc3e523299ec8d57b7f7e945b1b3751e5d408096406fe7c"
@@ -168,13 +188,19 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
       "case": "a_single_waiting_prompt_is_told_the_key_that_opens_the_queue",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
+      ],
       "sha256": "5de7deef9616b5250c31d5a68b62d51b7f9b46fc9e1a1e4d6238a08f34bb3733"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window.snap",
       "case": "a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
+      ],
       "sha256": "a7fe2d4c45969e0e5337173451d6c519bf8642722212b23196aadcee47e6cd8d"
     },
     {
@@ -189,6 +215,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
       "case": "a_slash_typed_mid_turn_opens_the_command_list",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "8c6ebf96549b781e5a4ed373cbfe28b88e42d3e2376aae5d3ff3c7aab0d25e73"
@@ -208,7 +235,7 @@
       "opened": [
         "Watched::open(\"wrapped\", 80, 24)"
       ],
-      "sha256": "de2814f4053793a9f76cc6baa209759461df02c9b0fd470f869a3ef156dec2ac"
+      "sha256": "b7dd69fbbda02c7086c0acb67f308903b14b2746442106014001e9130daeb039"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_window_that_narrows_mid_session_redraws_what_is_live_at_the_new_width.snap",
@@ -225,7 +252,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::answering(\"answered\", 80, 24, &vendor)"
       ],
-      "sha256": "e268fd6dcfe69116932b185e67fbde34f0741ae57bc7fe71c5814ecdce587022"
+      "sha256": "03927ccc27ace622786661f865d004782f0ca9dcc99a76c154bbf0edfb951e3c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_longer_than_the_window_leaves_the_box_whole_under_it.snap",
@@ -252,7 +279,7 @@
         "Vendor::answering(\"still authenticated\")",
         "Watched::answering(\"environment-logout\", 80, 24, &vendor)"
       ],
-      "sha256": "1c2244b8004069a74bd2572d57b04681c493bc73f6d20704554f63ea5c15a3ff"
+      "sha256": "90f196821e18ee67b4bb488e8b7819394b55eb19e5aab5ff0699257221bd74db"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__choosing_notes_makes_room_and_says_what_it_took.snap",
@@ -270,7 +297,7 @@
         "Vendor::calling_batches(&calls, \"Inspection finished.\")",
         "Watched::configured(\"compact-activity\", 80, 32, &config, true)"
       ],
-      "sha256": "a2759486aa60ef237fafb0e861d30c95ff1cfe06b774b46e668ff6d9eee0b123"
+      "sha256": "55dd15731d6de666dc0037a3c16cb204ccfa7bf163a1842e7989e4b790fce43e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__compact_tool_group_expanded.snap",
@@ -302,16 +329,29 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_long_80.snap",
       "case": "context_stands_over_a_long_session_with_what_the_prompt_line_says_is_left",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "ea3f2cbf2b6e808d4e549d0f4024c29fa21e84d8d2f6ea1c3c3600ee47498d0c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_mid_turn_80.snap",
       "case": "context_stands_over_a_running_turn_with_the_figures_it_last_carried",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"context-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
       "sha256": "73c8d291c6c1108b770cf13117fe8641ad39a85b9cb0c573bd0919f08eff0a9e"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__context_short_40.snap",
+      "case": "context_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"context-short-40\", 40, 12, &vendor)"
+      ],
+      "sha256": "f2b744d8a3b0dd8daa6ffc4ba3b3ab3d388adf63668f56bdb3f61a6434715d38"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_a_shows_every_project_and_says_where_each_session_is.snap",
@@ -327,7 +367,43 @@
       "opened": [
         "Watched::launched( \"reach-branch\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "7d083cbdcb7098b5696a2adc29eac620281b5c615b1cff80858fc079a25d532c"
+      "sha256": "9499fd4890d828c5f3f6673fd0d5b000709c6e139beb6fd6c12bace20e359ee6"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_b_opens_the_running_list_during_a_turn.snap",
+      "case": "ctrl_b_opens_the_running_list_during_a_turn",
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(\"ctrl-b-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "836dac6f440cfee2a652efd56585d2c611f98f0e19fa438a729ba67f9266488a"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_results_opened.snap",
+      "case": "ctrl_o_pages_and_steps_through_cut_results",
+      "opened": [
+        "Vendor::calling_batches(&reading_three(), \"All three are read.\")",
+        "Watched::configured(\"results-paged\", 80, 24, &config, true)"
+      ],
+      "sha256": "cb05c03ba488216a75f375a98eae14a4d91f9edf34f10666bb70db20479e9c46"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_results_paged_down.snap",
+      "case": "ctrl_o_pages_and_steps_through_cut_results",
+      "opened": [
+        "Vendor::calling_batches(&reading_three(), \"All three are read.\")",
+        "Watched::configured(\"results-paged\", 80, 24, &config, true)"
+      ],
+      "sha256": "7e661ad96e772b711433d28a00584877d9b24db9bb68701d3d1bc1fb2a3f65fa"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_results_stepped_older.snap",
+      "case": "ctrl_o_pages_and_steps_through_cut_results",
+      "opened": [
+        "Vendor::calling_batches(&reading_three(), \"All three are read.\")",
+        "Watched::configured(\"results-paged\", 80, 24, &config, true)"
+      ],
+      "sha256": "35f9e996605b7fae592710668774c5fe547cde3a3fb6740739f50d9a2e22a61b"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_w_adds_this_repositorys_other_checkouts.snap",
@@ -346,13 +422,30 @@
       "sha256": "55ec76b878be4a06e3845ed8b37939cc669d7ad63ba02475c5cf0f99735a3f57"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__esc_closes_the_command_list_and_keeps_the_line.snap",
+      "case": "esc_closes_the_command_list_and_keeps_the_line",
+      "opened": [
+        "Watched::open(\"commands-closed\", 80, 24)"
+      ],
+      "sha256": "a329ad50aa3595ffe19ac640370305ccf5bd806548883caef8642b1b35dc9f88"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__esc_mid_turn_closes_the_command_list_and_the_turn_runs_on.snap",
+      "case": "esc_mid_turn_closes_the_command_list_and_the_turn_runs_on",
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(\"list-closed-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "26862a4fffa4efdf53af933b1c56e5ed89ffb7ff380d8d89fcc254833df2dd76"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__escape_while_room_is_being_made_stops_it_and_replaces_nothing.snap",
       "case": "escape_while_room_is_being_made_stops_it_and_replaces_nothing",
       "opened": [
         "Vendor::recapping_after(&[\"one answer\", \"two answer\", \"three answer\"], &notes, None)",
         "Watched::compacting(\"compact-stopped\", 80, 24, &vendor)"
       ],
-      "sha256": "52959e3e892c7a29976d6cc300cbf15b3805915697e7f23fd7f7c6a88985b7f8"
+      "sha256": "c3ab18f224c8ccc9e8190744e6f9d2c142813ca3899e0fa9a80c7322117abdd9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__every_way_a_terminal_spells_a_newline_grows_the_box_and_sends_nothing.snap",
@@ -366,9 +459,10 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__exit_mid_turn_is_refused_with_its_reason.snap",
       "case": "exit_mid_turn_is_refused_with_its_reason",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"exit-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "bdecd86a2c91c67a8835c9f27f29953aa50bafbb33a32a692f22581edd6c8bbf"
+      "sha256": "e615f68e9e47dc759edc8f0ea158712f764f6900603914e502165c61009167cc"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_lines_where_no_panel_fits.snap",
@@ -424,7 +518,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "96e5eea64bdd3e20c2d9d7df727dbb4b66ec287963810459f4f369bb40f7c800"
+      "sha256": "64256574bd36f7289303014b42e09eb33b0a47371d646a777160c87c493b6d63"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_unicode_40.snap",
@@ -440,7 +534,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "dd8a9d4fc37edd45ca1675f68e9431c91fe97b697b76078bd7aa380d556ab8e8"
+      "sha256": "c5cbf45eb449beb0772d3732d418dddc53c89dc2dc32fb9c04a212cb8602de93"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_api_key_login_40.snap",
@@ -517,13 +611,17 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_40.snap",
       "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
-      "opened": [],
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
+      ],
       "sha256": "842e0e46b000c0526743620c05d9e0a2a121c6913a8b27f5eed1d7eb0781c6f0"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_80.snap",
       "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
-      "opened": [],
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
+      ],
       "sha256": "eb7acc34cafccdf168f9a78a3ece1dfa348e93213a9afca833bd18caee97d158"
     },
     {
@@ -534,6 +632,218 @@
         "Watched::keyless(\"model-trains\", 80, 24, &vendor)"
       ],
       "sha256": "efdc0e31738207489d0c2746d9815668752b122fe714744c716fb48551d068d0"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_one_row_reply_carries_its_mark_in_native_mode.snap",
+      "case": "a_one_row_reply_carries_its_mark_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-reply-one-row\", 80, 24, &vendor)",
+        "Watched::configured(case, columns, rows, &document, true)"
+      ],
+      "sha256": "9803033c1cb04cf0587b74c0019c9e4037dbc5a7103852be7814ff4d381ad5d4"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mode.snap",
+      "case": "a_reply_taller_than_the_window_carries_its_mark_on_its_first_row_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::native(\"native-reply-tall\", 80, 24, &vendor)",
+        "Watched::configured(case, columns, rows, &document, true)"
+      ],
+      "sha256": "447c34b645e9eabf9be78862ec2f030c027bc4061575d33e76b86db44c952f40"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode.snap",
+      "case": "a_reply_that_wraps_carries_its_mark_and_indent_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-reply-wrapped\", 24, 24, &vendor)",
+        "Watched::configured(case, columns, rows, &document, true)"
+      ],
+      "sha256": "ff9e774ebceed3cff6e0df1b41919264da9d5ae6327af04948d6bdbbcfd2faf6"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_while_an_answer_streams_leaves_no_ghost_row_in_native_mode.snap",
+      "case": "a_resize_while_an_answer_streams_leaves_no_ghost_row_in_native_mode",
+      "opened": [
+        "Vendor::answering_each(&[NARROWED_UNDER, WIDENED_UNDER])",
+        "Watched::native(\"native-resized-mid-answer\", 80, 24, &vendor)"
+      ],
+      "sha256": "a4f89844fcee8f5b6b2bf8225ec6c0ef2f68e1d719c2288751cdd58d9e2609ef"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_60x24.snap",
+      "case": "a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "a5bcb85af729244787871f6032d3240a083606023ec6e7ddb7adeab574dc6345"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_80x16.snap",
+      "case": "a_resize_with_a_panel_open_leaves_no_panel_row_in_the_scrollback_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "58326499502bcbae6cd1986db7794fc71e10daf9ee8eb7fefbc5506f4735fb69"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode.snap",
+      "case": "a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode",
+      "opened": [
+        "Vendor::holding(SEVENTY_EIGHT)",
+        "Watched::native(\"native-sealed-after-narrowing\", 80, 24, &vendor)"
+      ],
+      "sha256": "2c8a1ad0be0fffb35b0304d39c06cf9768537db6688d2f7028ce87b3236c1828"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode.snap",
+      "case": "a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Two plus two is four.\")",
+        "Watched::native(\"native-answered\", 80, 24, &vendor)"
+      ],
+      "sha256": "0d32ac9ddf589011c39ff79e454d855e5729f7f3038604147f409f934439b284"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_wheel_or_click_report_changes_nothing_in_native_mode.snap",
+      "case": "a_wheel_or_click_report_changes_nothing_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Two plus two is four.\")",
+        "Watched::native(\"native-reported\", 80, 24, &vendor)"
+      ],
+      "sha256": "27907c8504ef56c5e4838291d3b8e7de4291a75b3123d269a824ad7d61b637ec"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_divider_is_drawn_in_ascii_glyphs_in_native_mode.snap",
+      "case": "clear_divider_is_drawn_in_ascii_glyphs_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-clear-ascii\", 80, 24, &vendor)"
+      ],
+      "sha256": "4b12a8e0843eba289a2c54e3dc3e000315a99e0d0882e8dfdc8005ecdceb9168"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_of_a_silent_session_writes_no_divider_in_native_mode.snap",
+      "case": "clear_of_a_silent_session_writes_no_divider_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-clear-silent\", 80, 24, &vendor)"
+      ],
+      "sha256": "b7255ec65a3e959ca7c2c2a365fa43003586dcf721a304524c34f5b488f1400f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__clear_writes_one_divider_and_no_second_card_in_native_mode.snap",
+      "case": "clear_writes_one_divider_and_no_second_card_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Done.\")",
+        "Watched::native(\"native-clear\", 80, 24, &vendor)"
+      ],
+      "sha256": "01230767dc4846392ca9c7f25614755d6c746ae633526fc6891f79161adaca0c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_b_opens_the_running_list_during_a_turn_in_native_mode.snap",
+      "case": "ctrl_b_opens_the_running_list_during_a_turn_in_native_mode",
+      "opened": [
+        "Watched::native(\"native-ctrl-b-mid-turn\", 60, 24, &vendor)"
+      ],
+      "sha256": "eec9cfe349f4ec9e762b7f1c2b2addfe5fee8228f3ffaeab2c7aff5b68fde502"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_o_stands_at_the_foot_and_escape_leaves_no_row_of_it_in_native_mode.snap",
+      "case": "ctrl_o_stands_at_the_foot_and_escape_leaves_no_row_of_it_in_native_mode",
+      "opened": [
+        "Vendor::calling_batches(&crate::reading_three(), \"All three are read.\")",
+        "Watched::native(\"native-results\", 80, 24, &vendor)"
+      ],
+      "sha256": "b5c5629ee43bf1b4246c0de407dd41a0c9432e3b3e73d1a5fcfc4123afb67349"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_o_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "ctrl_o_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::calling_batches(&crate::reading_three(), \"All three are read.\")",
+        "Watched::native(\"native-cap-results\", 80, 24, &vendor)"
+      ],
+      "sha256": "b5c5629ee43bf1b4246c0de407dd41a0c9432e3b3e73d1a5fcfc4123afb67349"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__model_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "model_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "88d99c7f628b779414ec634b39928afb253d340d38fc392cbec6fe0b33008ba2"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_divider_is_clipped_at_16_columns_in_native_mode.snap",
+      "case": "resume_divider_is_clipped_at_16_columns_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"The first thing this session said.\")",
+        "Watched::native(case, 80, 24, vendor)",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "c4751b555a367d4ae2513d8c5403d490843f703dcc81aea84a6bacb67707bc00"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "resume_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(\"native-cap-resume\", 80, 24, &vendor)",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "5b81282663b7568bbd3eceb6b4059f94c4390d25921b0b67b98b39b178905aee"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_writes_one_divider_and_no_second_card_in_native_mode.snap",
+      "case": "resume_writes_one_divider_and_no_second_card_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"The first thing this session said.\")",
+        "Watched::native(case, 80, 24, vendor)",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "31ae9dc29075b3866be7f69ed62366d18f2ce8be148cafcd7707cc19382e19b0"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_scrolls_inside_its_room_in_native_mode.snap",
+      "case": "settings_scrolls_inside_its_room_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "f2490344ed47865b27d3a752ed9594b638d5ba741f719cbd8830c42fba7d10e3"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "settings_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "41b4d8649b35a436d7a4072e39fabb0b595dda24c3f589f88ce4285b0d76af27"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__slash_list_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "slash_list_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "9205d57e607dc5674ecad336c072de7812638886d829908a8be612e87a4b4e6c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__theme_takes_at_most_half_the_window_in_native_mode.snap",
+      "case": "theme_takes_at_most_half_the_window_in_native_mode",
+      "opened": [
+        "Vendor::answering(&crate::a_long_answer())",
+        "Watched::native(case, 80, 24, vendor)"
+      ],
+      "sha256": "9f31399eaa76bb79289f5eb13012fd8be945a6b1ef1a67693793ab6e64534bb8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",
@@ -626,7 +936,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__question_at_send_80.snap",
       "case": "a_send_on_a_warned_route_stands_the_question_and_sends_nothing_before_the_yes",
       "opened": [],
-      "sha256": "021ef8fb5a49e9393784c65199babcfa7626cf4a7f6f1a6ac6cbf86e321c3b74"
+      "sha256": "71dd15ea723b8dab395eeb5972786772ea2aabd1579c24bf62156071a05a68a3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_40.snap",
@@ -656,9 +966,10 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_mid_turn_are_refused_on_the_panel.snap",
       "case": "release_notes_mid_turn_are_refused_on_the_panel",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"release-notes-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "252717d3b3ac45f8b83fe8beaf3c4822d8039d52dc24db1082481aff1ecd7169"
+      "sha256": "bce6242020ea0eac24160b5ffd53bd17b742c798b11c075791fd7e6f3fb88b32"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_one_from_the_list_at_40.snap",
@@ -679,25 +990,37 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_at_rest_at_40.snap",
       "case": "the_scroll_rail_at_rest_grows_the_current_prompt_s_mark",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "91681fe4113d6332019f74d122ef2eb3555ec4eeb551f596c9e0cecb084039ca"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_at_rest_at_80.snap",
       "case": "the_scroll_rail_at_rest_grows_the_current_prompt_s_mark",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "5364baeea29f35c922d3317425ab4606fc6a1b7a48fc8f7f5d1724cae31c3ba8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_hovered_at_40.snap",
       "case": "a_pointer_on_the_scroll_rail_grows_the_mark_under_it",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "ba7105aef25be814b795a247ee4fa2c4d0f36e5a1fc1b6a9b804352d3ce2402e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__scroll_rail_hovered_at_80.snap",
       "case": "a_pointer_on_the_scroll_rail_grows_the_mark_under_it",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "a349a646c877f0728ac9bdc55648b3b85fb6c67f7795e6613685aaa9ff6a4ad1"
     },
     {
@@ -734,7 +1057,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "5ae7d5f0ace607bf7ff36aa59b47a013d70f5ec37ea513b1a2e5e9126492e0a2"
+      "sha256": "409a1c02e17401e410e681a18f2770d8683bc16104a3ffdb9234744a5a6d2bb9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_send_with_alt_enter_80.snap",
@@ -743,7 +1066,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(\"settings-send\", 80, 30, &vendor)"
       ],
-      "sha256": "00a9612d26a44dc293b00f3ec04d723a36faf08adcaf48b7df10731d48551691"
+      "sha256": "ade8bad5619de1d619e10c344ef0a9147cadc7836d8862ab5319b935928a2fb5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_status_40.snap",
@@ -761,7 +1084,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "01bd8de9dce20f062be0e22179e55198a02088ccb87b26e1e9bfe432fef3de71"
+      "sha256": "dca606a0ff3e4ed729d3628242b53a8f6230328fe598497bddb59cacd7742dff"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_toggle_80.snap",
@@ -770,7 +1093,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(\"settings-toggle\", 80, 30, &vendor)"
       ],
-      "sha256": "dac474116c06be3cd951406198eec6c1c225d11b6515e0c8081e26747b504651"
+      "sha256": "1636fad66170333b7ee732391c31f94cd230815efd5908450ed9ea66b286848a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_usage_40.snap",
@@ -826,13 +1149,19 @@
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_names_the_keys_that_work_on_a_waiting_prompt.snap",
       "case": "the_open_queue_names_the_keys_that_work_on_a_waiting_prompt",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
+      ],
       "sha256": "84faf2cbe4ec48abf54f5f2d5ee7f78ddb39f5620acc1362c05107d9433210ce"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_wraps_its_keys_in_a_narrow_window.snap",
       "case": "the_open_queue_wraps_its_keys_in_a_narrow_window",
-      "opened": [],
+      "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::allowing(case, columns, 24, vendor, \"bash(*)\")"
+      ],
       "sha256": "60abf62dc90b3bbee2c63be4403f81106a7f729d949deaba517fb15306194892"
     },
     {
@@ -850,7 +1179,7 @@
       "opened": [
         "Watched::launched( \"reach-here\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "87098c172d1b5ebe3dfd94fc65a04cb28df1c4afd72b77bf22990159098dc0d8"
+      "sha256": "84644a970e90da3297ccd329c2f8768d04760bab0e1573bb0ec1fac3a18fc96f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_same_session_in_a_narrow_window_is_the_same_screen_at_its_width.snap",
@@ -867,12 +1196,15 @@
         "Vendor::answering(&a_long_answer())",
         "Watched::answering(\"scroll-rail\", 80, 16, &vendor)"
       ],
-      "sha256": "b24dd7d779727523b63bc7fad6791ff5e0f185d78ba850711cc1d59c7ed999b1"
+      "sha256": "eb807bd6d87c26ae1f333cb9e36b902fa7b2d86611c6843d8f9c32793a590cb3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window.snap",
       "case": "the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window",
-      "opened": [],
+      "opened": [
+        "Vendor::answering_each(&[&a_long_answer(), &again])",
+        "Watched::answering(case, columns, rows, &vendor)"
+      ],
       "sha256": "71f9803684b924e52ab24980ced818a08a5a0af0efa7d8cd596033b366d06c50"
     },
     {
@@ -897,9 +1229,28 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_mid_turn_80.snap",
       "case": "usage_stands_over_a_running_turn_with_the_figures_it_last_posted",
       "opened": [
+        "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"usage-mid-turn\", 80, 30, &vendor, \"bash(*)\")"
       ],
       "sha256": "7fb0dfd7e38b753bff945f6ac12a846870a87b0bdafac7680957d5b844602a8c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_short_40.snap",
+      "case": "usage_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"usage-short-40\", 40, 16, &vendor)"
+      ],
+      "sha256": "97d6ca9e8ac6eacbd04a0c51ab5aa14b5a04dff52d4850e2f17c951ded3e6c70"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_short_40_scrolled.snap",
+      "case": "usage_taller_than_the_window_stands_and_scrolls_with_the_arrows",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"usage-short-40\", 40, 16, &vendor)"
+      ],
+      "sha256": "9818c2abcaa88c4d0ed14779737df6381d7be7d45057bb1deb423d616e5a755f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_40_ascii.snap",
@@ -917,7 +1268,7 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_80_ascii.snap",
       "case": "the_question_stands_at_forty_and_eighty_columns_in_either_glyph_set",
       "opened": [],
-      "sha256": "b73901ffdd57b26e2c261946803f947285e16061ab2ff143c0ef2f01fdbaa8d3"
+      "sha256": "cf3e662c4c6f8282a2bf28036254e5f24d98d48ddfeb8afbc677168697c47788"
     }
   ]
 }

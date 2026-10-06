@@ -26,7 +26,9 @@ this page is the list. Slash commands are not keys: they are listed under
   own selection.
 - With `output.screen` set to `native` the mouse is not reported at all, and
   the wheel, a drag and a click are your terminal's.
-- A click outside the rows of whatever is standing over the box is ignored.
+- A click outside the rows of whatever is standing over the box is ignored,
+  and so is a click on a blank cell beside what one of its rows drew; the
+  pointer lights nothing there either.
   The wheel over a panel that is not a window over more text than it shows
   scrolls the transcript underneath it; over one that is, it walks the panel,
   and a notch the panel has no use for at either end goes to the transcript.
@@ -97,7 +99,8 @@ it](../getting-started/getting-started.md#run-it) tells the longer story.
 While the box holds one word starting with `/`, the commands whose names begin
 with it stand in a list above the box, and a bare `/` shows all of them.
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list and <kbd>Enter</kbd> runs the
-marked command rather than the word as typed. Where there is no room for the
+marked command rather than the word as typed. <kbd>Esc</kbd> closes it and
+keeps the line; typing reopens it. Where there is no room for the
 whole of it, it shows as many commands as fit and ends on a row saying how
 many more there are, `↓ 2 more`; once <kbd>↓</kbd> walks the mark past the
 last one shown, the list moves with it and a `↑ N more` row stands over it.
@@ -110,11 +113,12 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | Key | What it does |
 | --- | --- |
 | <kbd>Shift-Tab</kbd> | Steps the permission mode on the press: `ask`, `allowEdits`, `fullAccess`, then `ask` again. See [Stepping it while you type](../permissions/modes.md#stepping-it-while-you-type). |
-| <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. |
+| <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. While a turn runs it stands the list only when the turn has no command to leave in the background and one or more commands are left running: see [While a turn runs](#while-a-turn-runs). |
 | <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
 | <kbd>Ctrl+Q</kbd> | Stands the prompts left queued behind a turn that stopped on a used-up plan. See [The queue](#the-queue). Nothing while none are waiting. |
-| <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
+| <kbd>Esc</kbd> | Closes the command list, keeping the line. Nothing otherwise. |
+| <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
 
 ## While a turn runs
@@ -126,29 +130,29 @@ wheel. These differ:
 
 | Key | What it does |
 | --- | --- |
-| <kbd>Esc</kbd> | Asks the turn to stop. The row above the box reads `interrupting` until it has. A search or a walk stopped this way answers with what it found: see [Stopping one](../tools/searching.md#stopping-one). |
+| <kbd>Esc</kbd> | Closes the command list where one is open. Otherwise asks the turn to stop. The row above the box reads `interrupting` until it has. A search or a walk stopped this way answers with what it found: see [Stopping one](../tools/searching.md#stopping-one). |
 | <kbd>Enter</kbd> | Queues the prompt for the running turn. Up to 64 prompts and 1 MiB of text can wait; past either bound the prompt stays in the box and the row says `typed-ahead prompts are limited to 64 lines and 1 MiB`. A prompt that is a command is run or refused instead: see [A command typed while a turn runs](../getting-started/getting-started.md#a-command-typed-while-a-turn-runs). |
 | <kbd>Shift-Tab</kbd> | Steps the mode for the turn that starts next, and the row under the box says which. The running turn keeps the mode it began under. |
 | <kbd>Ctrl+C</kbd> | Clears the box. When it is already empty it offers to leave as at the prompt, and the second press within two seconds stops the turn and ends the session. |
 | <kbd>Ctrl+D</kbd> | Nothing. |
-| <kbd>Ctrl+B</kbd> | Leaves the running command in the background, where it can be, including in the seconds before its row offering `(ctrl+b to background)` is drawn ([`output.pinAfterSeconds`](../configuration/configuration.md#output)). Nothing otherwise. See [Leaving one running](../tools/commands.md#leaving-one-running). |
+| <kbd>Ctrl+B</kbd> | Leaves the running command in the background, where it can be, including in the seconds before its row offering `(ctrl+b to background)` is drawn ([`output.pinAfterSeconds`](../configuration/configuration.md#output)). See [Leaving one running](../tools/commands.md#leaving-one-running). Where there is no such command and one or more commands are left running, it stands their `Still running` list, as a click on their count under the box does. Nothing otherwise. |
 | <kbd>Ctrl+Q</kbd> | Stands the prompts waiting in the queue. Nothing while it is empty. |
 | <kbd>Ctrl+O</kbd> | Stands the cut results under the tail of the answer, which goes on arriving above them. |
 | <kbd>Ctrl+E</kbd>, <kbd>Tab</kbd> | Nothing. |
 
-While the <kbd>Ctrl+O</kbd> view or the queue stands over a running turn it
-has the keyboard: <kbd>Esc</kbd> closes it rather than stopping the turn. Its
-keys are under [Results cut short](#results-cut-short) and [The
-queue](#the-queue).
+While the <kbd>Ctrl+O</kbd> view, the queue or the command list stands over a
+running turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its
+keys are under [Results cut short](#results-cut-short), [The command
+list](#the-command-list) and [The queue](#the-queue).
 
 ## Reading the conversation
 
 | Action | What it does |
 | --- | --- |
 | Wheel | Scrolls the transcript, six rows a notch unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise, from 3 to 30. Sending a prompt takes you back to the foot. |
-| Pointer over a cut result | Lights it, every row of it. |
+| Pointer over a cut result | Lights it, every row of it, while the pointer is on the result's own text rather than a blank cell beside it. |
 | Pointer over the scroll rail | Lights the track and its marks, and draws the mark under the pointer larger. |
-| Click on a cut result | Stands that one result, in the view <kbd>Ctrl+O</kbd> stands them all in. |
+| Click on a cut result | Stands that one result, in the view <kbd>Ctrl+O</kbd> stands them all in. The click counts on the result's own text; a blank cell beside it on the row opens nothing. |
 | Drag | Selects the rows you cover, anywhere in the window, and letting go copies them. At the top or the foot the transcript scrolls under the pointer, and the wheel scrolls it while the button is still down. Resizing lets go of the selection. |
 | Click on the scroll rail | Off the thumb, moves the transcript so the thumb is centred where you clicked, or as near as the rail's ends allow; a click on a prompt's mark lands on that prompt. A click on the thumb takes hold of it without moving it. |
 | Drag on the scroll rail | Scrolls the transcript with the pointer, holding the thumb where you took it; at the foot it follows the newest line again. |
@@ -275,14 +279,18 @@ turn runs, the speed taken is asked for once the turn ends.
 ### `/context`
 
 <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
-redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
+redraws it; <kbd>↑</kbd> and <kbd>↓</kbd> scroll it where it is taller than the
+window, and the footer then reads `esc to close · ↑↓ to see more`.
+<kbd>Enter</kbd> and every other key do nothing. Typed while a turn
 runs, it stands over the turn with the figures that turn last reported, which
 include anything it has recorded since its last request.
 
 ### `/usage`
 
 <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
-redraws it; <kbd>Enter</kbd> and every other key do nothing. While it asks the
+redraws it; <kbd>↑</kbd> and <kbd>↓</kbd> scroll it where it is taller than the
+window, and the footer then reads `esc to close · ↑↓ to see more`.
+<kbd>Enter</kbd> and every other key do nothing. While it asks the
 plan for its limits, keys work as ever, and the block is drawn again when the
 answer comes. Typed while a turn runs, it stands over the turn with the totals
 and plan windows that turn last reported, and asks nothing.
@@ -383,14 +391,18 @@ one](../sessions/sessions.md#picking-up-a-large-one).
 ### Commands left running
 
 <kbd>Ctrl+B</kbd> between turns stands the `Still running` list, under
-`esc to close · enter shows it · x stops it`.
+`esc to close · enter shows it · x stops it`. While a turn runs it stands the
+list when the turn has no command to leave in the background and one or more
+commands are left running; where the turn has one, the key backgrounds it
+instead. A click on their count under the box stands the list at either time,
+in fullscreen.
 
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. |
 | <kbd>Enter</kbd> | Shows what the marked command has printed so far. |
 | <kbd>x</kbd> | Stops it, with no confirmation. If the stop fails the panel says `Stop failed; x retries`. |
-| Click | Marks the row under the pointer, and a click on the marked row shows it. |
+| Click | Marks the row under the pointer, and a click on the marked row shows it. The click counts on the row's own text; the blank after it marks nothing. |
 | <kbd>Esc</kbd>, <kbd>Ctrl+B</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Closes the list. |
 | Wheel | Scrolls the transcript. |
 
@@ -411,12 +423,19 @@ stops at each such result rather than passing it.
 Between
 turns the view takes the place of the box; while a turn runs it stands under
 the tail. Results cut after it opened are there the next time it is opened.
-The footer reads `esc to close`, or `esc to close · ↑↓ to see more` where
-there is more.
+In native mode the key is the way to a cut result, and an offer above a
+`session resumed` or `new session` divider belongs to a session no longer
+open. The footer reads `esc to close`; where there is more it reads
+`esc to close · ↑↓ pgup pgdn to see more`, and where there is more than one
+result it goes on ` · ←→ result 2 of 7`, counting the result at the top of
+the view with the newest as 1. In a window too narrow for all of it, it loses
+whole parts from the right, and never `esc to close`.
 
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd>, <kbd>↓</kbd>, wheel | An arrow moves a row up or down; a wheel notch moves as many rows as it moves the transcript, six unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise. At either end, a notch the view cannot use scrolls the transcript. |
+| <kbd>PgUp</kbd>, <kbd>PgDn</kbd> | Moves by the rows the view shows, less one, so the row that was at one edge is at the other. |
+| <kbd>→</kbd>, <kbd>←</kbd> | <kbd>→</kbd> puts the top of the next older result at the top of the view, and <kbd>←</kbd> the next newer. At the oldest or the newest it does nothing. |
 | <kbd>Ctrl+O</kbd>, <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Closes it. |
 | Anything else | Nothing, <kbd>Enter</kbd> included. |
 

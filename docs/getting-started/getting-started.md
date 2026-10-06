@@ -599,8 +599,10 @@ offer where the box was, newest first, each under the line of the call it
 answers. A result no longer held in memory is read back from the session log
 when the view reaches it; one the log cannot give back says
 `! this result could not be read back from the session log` in its place.
-Arrow keys move one row at a time; the mouse
+<kbd>↑</kbd> and <kbd>↓</kbd> move a row up or down; the mouse
 wheel uses `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` (six rows per notch by default).
+<kbd>PgUp</kbd> and <kbd>PgDn</kbd> move by the rows the view shows, less one.
+<kbd>→</kbd> and <kbd>←</kbd> put the next older or newer result at the top of the view.
 Long headings and output lines wrap here so their ends remain readable.
 <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
 it: the box comes back with the line you were typing still in it, and nothing is
@@ -658,8 +660,9 @@ appearing instead of two minutes of empty screen.
 
 Nothing is folded away. Clicking the line opens every result in the run at once,
 in the same view a single result opens in, each under the call it answers, so
-the run costs one row and keeps all of it. The whole line lights up under the
-pointer, because the whole line is the door.
+the run costs one row and keeps all of it. The line lights up under the pointer
+from its mark to its last character, because those cells are the door; the
+blank after it on the same row is not.
 
 While the run is still going the counters are in the present
 (`Searching for 1 pattern, reading 4 files`), on its own row over the box, above

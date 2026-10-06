@@ -20,10 +20,14 @@
 //! [`Expanded::end`] is that number and the caller clamps its own offset to it
 //! before asking for the picture.
 //!
-//! **The footer names a key only where it does something.** `↑↓ to see more` is
-//! true when there are rows the window did not reach and false when there are
-//! not, and a row that says it either way is one nobody can believe the rest of
-//! the time.
+//! **The footer names a key only where it does something.** `↑↓ pgup pgdn to
+//! see more` is true when there are rows the window did not reach and false
+//! when there are not, and a row that says it either way is one nobody can
+//! believe the rest of the time. `←→ result 2 of 7` is said only where there is
+//! both a window to move and another result to move it to, and counts the
+//! result at the top of the window, newest first. Where the row is wider than
+//! the window it loses whole segments from the right, so what is left still
+//! says something true, and `esc to close` is the one it never loses.
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
@@ -37,12 +41,11 @@ const CHROME: usize = 4;
 /// The one key always worth naming.
 const CLOSE: &str = "esc to close";
 
-/// And the same row where the window did not reach the end.
-///
-/// Written out whole rather than joined, for the reason the panels here write
-/// theirs out whole: what a footer costs is read off the row somebody sees, and
-/// there is no joining two `&'static str` without allocating on the layout path.
-const MORE: &str = "esc to close · ↑↓ to see more";
+/// The keys that move the window, named where it did not reach the end.
+const MORE: &str = "↑↓ pgup pgdn to see more";
+
+/// What parts one segment of the footer from the next.
+const PARTED: &str = " · ";
 
 /// One result, under the line of the call it answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,9 +74,18 @@ impl Expanded<'_> {
     /// next frame expects it.
     #[must_use]
     fn laid(&self, columns: usize) -> Vec<Row> {
+        self.placed(columns).0
+    }
+
+    /// The whole of it at this width, and the row each result begins on,
+    /// counting the blank that parts it from the one above.
+    fn placed(&self, columns: usize) -> (Vec<Row>, Vec<usize>) {
         let mut rows = Vec::new();
+        let mut starts = Vec::with_capacity(self.shown.len());
 
         for (at, shown) in self.shown.iter().enumerate() {
+            starts.push(rows.len());
+
             // Between results and not above the first, which already has the
             // rule and a blank above it. A blank leading the list would part it
             // from a heading that is not there.
@@ -99,7 +111,7 @@ impl Expanded<'_> {
             }
         }
 
-        rows
+        (rows, starts)
     }
 
     /// How many rows of results `room` rows show at once: what the rule, the
@@ -145,9 +157,12 @@ impl Expanded<'_> {
             return Vec::new();
         };
 
-        let laid = self.laid(columns);
+        let (laid, starts) = self.placed(columns);
         let from = self.from.min(laid.len().saturating_sub(held));
         let scrolls = laid.len() > held;
+        // Counted from one, which is the newest: the last result to begin at
+        // or above the top of the window is the one the reader is in.
+        let top = starts.iter().filter(|start| **start <= from).count();
 
         let mut rows = vec![
             Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
@@ -162,23 +177,36 @@ impl Expanded<'_> {
         rows.extend(laid.into_iter().skip(from).take(held));
 
         rows.push(Row::new());
-        rows.push(Row::new().then(Slot::Quiet, footer(scrolls, columns)));
+        let footer = footer(scrolls, top, self.shown.len(), columns);
+        rows.push(Row::new().then(Slot::Quiet, footer));
 
         rows
     }
 }
 
-/// The row under the window, saying only what is true of it.
-fn footer(scrolls: bool, columns: usize) -> String {
-    let said = if scrolls { MORE } else { CLOSE };
-
-    // A window this narrow has given the arrows up rather than the way out, so
-    // what is cut is the end of the row rather than the start of it.
-    if wide(said) > columns {
-        return clip(CLOSE, columns).to_owned();
+/// The row under the window, saying only what is true of it: the way out, the
+/// keys that move the window where there is somewhere to move it, and which of
+/// `of` results is at its top where there is another to step to.
+fn footer(scrolls: bool, top: usize, of: usize, columns: usize) -> String {
+    // A window too narrow even for the way out keeps as much of it as fits,
+    // and nothing after it.
+    let mut said = clip(CLOSE, columns).to_owned();
+    if !scrolls {
+        return said;
     }
 
-    said.to_owned()
+    let counted = (of > 1).then(|| format!("←→ result {top} of {of}"));
+    for segment in std::iter::once(MORE).chain(counted.as_deref()) {
+        // Whole segments or none, from the right: half of a key's name is not
+        // a key anybody can press, and a count cut short reads as a different
+        // count.
+        if wide(&said) + wide(PARTED) + wide(segment) > columns {
+            break;
+        }
+        said.push_str(PARTED);
+        said.push_str(segment);
+    }
+    said
 }
 
 #[cfg(test)]

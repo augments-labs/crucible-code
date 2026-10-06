@@ -372,7 +372,20 @@ fn macos_proxy_permission_does_not_grant_the_same_port_on_ipv6() {
     let mut control =
         TcpStream::connect_timeout(&target, Duration::from_secs(1)).expect("host control");
     control.write_all(b"host").expect("host canary bytes");
-    let (mut accepted, _) = listener.accept().expect("host control accepted");
+    // The listener is non-blocking so the closing check can see it untouched,
+    // and a connect returning does not mean it is queued here yet.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut accepted = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            other => panic!("host control was not accepted: {other:?}"),
+        }
+    };
     accepted
         .set_nonblocking(false)
         .expect("blocking accepted control");

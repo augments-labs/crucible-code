@@ -7,9 +7,10 @@
 
 use std::time::SystemTime;
 
-use crate::cli::style::Style;
 use crucible_session::Recorded;
-use crucible_tui::{Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, fold};
+use crucible_tui::{
+    Glyphs, Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, fold,
+};
 use crucible_update::Newer;
 use crucible_workspace::Workspace;
 
@@ -36,8 +37,6 @@ pub(crate) struct Opening<'a> {
     pub(crate) sessions: &'a [Recorded],
     /// A release newer than this one, where this machine has heard of one.
     pub(crate) update: Option<&'a Newer>,
-    /// Whether to write colour, and what to draw with.
-    pub(crate) style: Style,
 }
 
 /// The opening, read off the wiring and not yet laid out.
@@ -47,8 +46,10 @@ pub(crate) struct Opening<'a> {
 /// were opened, and the width it is drawn against is only known one call
 /// further on, in the loop that owns the renderer. Between the two it is
 /// facts — a clock read once, so four recent sessions are four ages measured
-/// from one now. Cloned once, on the way into the record, so that what lays the
-/// card out is still there when the window changes size under it.
+/// from one now. A clone goes into the record, so that what lays the card out
+/// is still there when the window changes size under it. The glyph set is not
+/// one of its facts: the renderer hands over the set in force each time it
+/// lays the card, so a card put back after the set changed is drawn in it.
 #[derive(Clone)]
 pub(crate) struct Standing {
     /// The directory being worked in, already shortened for drawing.
@@ -63,8 +64,6 @@ pub(crate) struct Standing {
     trouble: Option<String>,
     /// Which half of setting crucible up is still missing, where one is.
     unasked: Option<String>,
-    /// Whether to write colour, and what to draw with.
-    style: Style,
 }
 
 impl Standing {
@@ -97,11 +96,10 @@ impl Standing {
             }),
             trouble: opening.trouble.map(str::to_owned),
             unasked: opening.model.is_none().then(|| opening.unasked.to_owned()),
-            style: opening.style,
         }
     }
 
-    /// The whole opening, drawn for a terminal `columns` wide.
+    /// The whole opening, drawn for a terminal `columns` wide in `glyphs`.
     ///
     /// The root is drawn because every tool path is relative to it, and a user
     /// who started crucible in the wrong directory should find out before the
@@ -117,8 +115,7 @@ impl Standing {
     /// cannot take a turn is a fact about this run and sits nearest the prompt
     /// where the answer gets typed. Every piece is followed by the blank row
     /// that keeps the next one off it.
-    pub(crate) fn rows(&self, columns: usize) -> Vec<Row> {
-        let glyphs = self.style.glyphs();
+    pub(crate) fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         let recent: Vec<Recent<'_>> = self
             .recent
             .iter()
@@ -183,8 +180,9 @@ impl Standing {
     /// box: it scrolls with whatever is said after it. What goes over is a
     /// clone rather than the rows it makes, which is what lets the card be laid
     /// out for the window there is rather than the one there was — the facts it
-    /// draws from were read once and never change again, so the only thing that
-    /// can be out of date about it is the width.
+    /// draws from were read once and never change again, so what can be out of
+    /// date about it is the width and the glyph set, and the renderer hands
+    /// over both each time it lays the card.
     ///
     /// # Errors
     ///
@@ -194,7 +192,9 @@ impl Standing {
         renderer: &mut Renderer<T>,
     ) -> Result<(), TerminalError> {
         let standing = self.clone();
-        renderer.opens(Box::new(move |columns| standing.rows(columns)))
+        renderer.opens(Box::new(move |columns, glyphs| {
+            standing.rows(columns, glyphs)
+        }))
     }
 }
 
@@ -254,7 +254,6 @@ mod tests {
                 sessions,
                 trouble: None,
                 update: None,
-                style: Style::plain(),
             },
         )
     }
@@ -331,7 +330,10 @@ mod tests {
 
         // A directory nobody has worked in. The heading stays either way: its
         // absence would be a different thing than its emptiness.
-        assert!(screen.contains("No recent sessions"), "{screen}");
+        assert!(
+            screen.contains("No earlier session for this workspace"),
+            "{screen}"
+        );
     }
 
     #[test]
@@ -359,7 +361,10 @@ mod tests {
 
         assert!(screen.contains("count the columns in the tail"), "{screen}");
         assert!(screen.contains("just now"), "{screen}");
-        assert!(!screen.contains("No recent sessions"), "{screen}");
+        assert!(
+            !screen.contains("No earlier session for this workspace"),
+            "{screen}"
+        );
     }
 
     #[test]
@@ -402,7 +407,6 @@ mod tests {
                 sessions: &[],
                 trouble: None,
                 update: None,
-                style: Style::plain(),
             },
         );
 
@@ -447,7 +451,6 @@ mod tests {
                 sessions: &[],
                 trouble: None,
                 update: Some(&newer),
-                style: Style::plain(),
             },
         );
 
