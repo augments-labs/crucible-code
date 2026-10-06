@@ -9,7 +9,10 @@
 //! redundancy waiting to be cached away. What crosses the permission boundary
 //! between the two is a [`Target`], which is text; a tool that carried a
 //! resolved handle across it would be a tool that had decided what to open
-//! before anyone said yes.
+//! before anyone said yes. The second resolution is held to the first, inside
+//! the workspace as well as outside it: the filesystem can answer differently
+//! by the time the call runs, and a verdict about one file is not a verdict
+//! about the file a name leads to now.
 //!
 //! Anything that does not resolve becomes [`Target::unresolved`], which no rule
 //! matches. The call is asked about and then refused by the tool a moment
@@ -25,7 +28,8 @@ use crate::args::Args;
 /// The existing path `requested` names, resolved for the open — the second of
 /// the two resolutions the module doc describes, made in the tool's `run`.
 ///
-/// Inside the workspace it is [`Workspace::existing`]'s answer. A path that
+/// Inside the workspace it is [`Workspace::existing`]'s answer, provided that
+/// answer is still the file the question named — see [`held`]. A path that
 /// escapes is followed only when the verdict in hand was reached about a read
 /// that leaves the workspace, and only to the very file the question named:
 /// the filesystem can answer differently now than it did when the question was
@@ -42,7 +46,7 @@ pub(crate) fn opened(
     requested: &str,
 ) -> Result<WorkspacePath, String> {
     match workspace.existing(requested) {
-        Ok(path) => Ok(path),
+        Ok(path) => held(workspace, approved, requested, &path).map(|()| path),
         Err(problem @ PathError::Escapes { .. }) => {
             let named = match approved.sensitivity() {
                 Sensitivity::ReadsOutside { target } => target,
@@ -54,14 +58,75 @@ pub(crate) fn opened(
 
             match workspace.outside(requested) {
                 Ok(path) if Target::outside(&path) == *named => Ok(path),
-                Ok(_) => Err(format!(
-                    "{requested} no longer leads to the file the question named"
-                )),
+                Ok(_) => Err(moved(requested)),
                 Err(problem) => Err(problem.to_string()),
             }
         }
         Err(problem) => Err(problem.to_string()),
     }
+}
+
+/// Whether `path`, a resolution inside the workspace made in `run`, is the
+/// file the verdict in hand was reached about.
+///
+/// Asked before anything is read or changed, because it is the read or the
+/// change the verdict permitted. A verdict about a path that did not resolve
+/// when the question was put named no file, so there is nothing to hold the
+/// resolution to and it is not refused here.
+///
+/// # Errors
+///
+/// Text for a failed output: the path no longer leads where the question said.
+pub(crate) fn held(
+    workspace: &Workspace,
+    approved: &Approved,
+    requested: &str,
+    path: &WorkspacePath,
+) -> Result<(), String> {
+    agrees(approved, requested, &Target::resolved(workspace, path))
+}
+
+/// Whether the file `requested` would create is still the one the verdict in
+/// hand was reached about — asked by `write` before it makes a directory,
+/// where [`held`] cannot be asked yet because the path does not resolve until
+/// its parents exist.
+///
+/// # Errors
+///
+/// Text for a failed output: the path no longer leads where the question said.
+pub(crate) fn intends(
+    workspace: &Workspace,
+    approved: &Approved,
+    requested: &str,
+) -> Result<(), String> {
+    agrees(approved, requested, &Target::intended(workspace, requested))
+}
+
+/// Whether `now`, the target a call resolves to as it runs, is the target its
+/// verdict named.
+fn agrees(approved: &Approved, requested: &str, now: &Target) -> Result<(), String> {
+    let named = match approved.sensitivity() {
+        Sensitivity::ReadOnly { target }
+        | Sensitivity::ReadsOutside { target }
+        | Sensitivity::MutatesFile { target } => target,
+        // A verdict about running a program or reaching a host is about no
+        // file, so no file is the one it named.
+        Sensitivity::SpawnsProcess { .. } | Sensitivity::ReachesNetwork { .. } => {
+            return Err(moved(requested));
+        }
+    };
+
+    if *named == Target::unresolved() || named == now {
+        Ok(())
+    } else {
+        Err(moved(requested))
+    }
+}
+
+/// The refusal of a path that resolves somewhere other than the file the
+/// question named.
+fn moved(requested: &str) -> String {
+    format!("{requested} no longer leads to the file the question named")
 }
 
 /// The file named in `field`, which has to be there already.

@@ -520,6 +520,30 @@ fn a_path_naming_one_file_searches_that_file() {
 }
 
 #[test]
+fn a_root_retargeted_after_the_verdict_to_another_file_inside_is_not_searched() {
+    // The search was decided about the file its path led to when the question
+    // was put, and a rule may refuse the file it leads to now.
+    let sample = Sample::new("grep-retargeted-inside");
+    sample.write("inside.txt", "nothing here\n");
+    sample.write(".env", "the hidden needle\n");
+    crate::sample::symlink(
+        sample.root().join("inside.txt"),
+        sample.root().join("door.txt"),
+    );
+
+    let tool = Grep::new(sample.workspace());
+    let approved = allowed(&tool, r#"{"pattern":"needle","path":"door.txt"}"#);
+
+    std::fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
+    crate::sample::symlink(sample.root().join(".env"), sample.root().join("door.txt"));
+
+    let output =
+        crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(!output.text().contains("hidden"), "{}", output.text());
+}
+
+#[test]
 fn a_very_long_matching_line_is_cut() {
     let sample = Sample::new("grep-wide");
     sample.write("wide.txt", &format!("needle{}\n", "x".repeat(WIDTH * 2)));

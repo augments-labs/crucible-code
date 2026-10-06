@@ -229,6 +229,12 @@ fn edited(
         Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
     };
 
+    // The file the verdict was reached about, or nothing is read: a name
+    // that leads elsewhere now is not the file anybody agreed to change.
+    if let Err(problem) = target::held(workspace, approved, requested, &path) {
+        return Ok(ToolOutput::failed(problem));
+    }
+
     // Read through a descriptor-relative open. If the last component or a
     // directory above it became a link after resolution, the open refuses
     // it rather than bringing outside bytes into this transformation. The
