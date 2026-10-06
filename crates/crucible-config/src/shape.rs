@@ -337,6 +337,35 @@ pub(crate) struct Whole {
     pub(crate) most: u16,
 }
 
+/// The whole number a JSON value stands for, if it stands for one that is not
+/// negative.
+///
+/// What the walk checks a whole-number key against and what every reader of
+/// one takes, so a key can never be accepted in one spelling and read in
+/// another. The schema calls these keys `integer`, and an editor holds `6.0`
+/// to be one, so a number with a zero fraction is the integer it equals.
+/// Only up to 2^53, past which a float no longer holds every whole number and
+/// `6.0` would be a neighbour of what was written; `-0.0` is nought. A
+/// fraction, a negative, a string and anything too large to hold exactly are
+/// nothing.
+pub(crate) fn whole(value: &serde_json::Value) -> Option<u64> {
+    /// 2^53, the last whole number past which a float skips some.
+    const EXACT: f64 = 9_007_199_254_740_992.0;
+
+    let number = value.as_number()?;
+    if let Some(whole) = number.as_u64() {
+        return Some(whole);
+    }
+    let real = number.as_f64()?;
+    // An infinity's fraction is not nought, so the first test refuses it too.
+    if real.fract() != 0.0 || !(0.0..=EXACT).contains(&real) {
+        return None;
+    }
+    // Written out and read back rather than cast: a float's decimal form is
+    // exact for every whole number this far down, and has no exponent.
+    real.abs().to_string().parse().ok()
+}
+
 /// How far one notch of the wheel may be asked to move the transcript.
 ///
 /// Three at the bottom, and a number below it is refused rather than pulled up

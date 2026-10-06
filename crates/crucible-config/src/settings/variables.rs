@@ -21,7 +21,7 @@ use std::borrow::Cow;
 use serde_json::Value;
 
 use crate::error::{Accepted, ConfigError};
-use crate::shape::{MOUSE_SCROLL_SPEED, SCROLL_SPEED};
+use crate::shape::{MOUSE_SCROLL_SPEED, SCROLL_SPEED, whole};
 
 use super::Settings;
 
@@ -64,7 +64,7 @@ fn accepted() -> Accepted {
 pub(crate) fn spelled(held: &Value) -> Option<Cow<'_, str>> {
     match held {
         Value::String(text) => Some(Cow::Borrowed(text)),
-        Value::Number(number) => number.as_u64().map(|whole| Cow::Owned(whole.to_string())),
+        Value::Number(_) => whole(held).map(|whole| Cow::Owned(whole.to_string())),
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     }
 }

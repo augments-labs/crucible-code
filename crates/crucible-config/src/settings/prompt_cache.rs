@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::document::{Document, Origin};
 use crate::error::{At, ConfigError};
+use crate::shape::whole;
 
 /// Only fields one document actually stated.
 #[derive(Clone)]
@@ -116,7 +117,7 @@ fn retention(
             "requested retention must name its class",
         )
     })?;
-    let seconds = retention.get("maxSeconds").and_then(Value::as_u64);
+    let seconds = retention.get("maxSeconds").and_then(whole);
 
     match class {
         PromptCacheRetentionClass::ProviderDefault if seconds.is_none() => {

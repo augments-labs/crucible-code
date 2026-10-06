@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use super::Settings;
 use crate::env;
+use crate::shape::whole;
 
 /// The most server records one document may write down.
 ///
@@ -246,7 +247,7 @@ impl McpServer {
             shutdown: seconds(record, "shutdownSeconds", SHUTDOWN),
             restarts: record
                 .get("restarts")
-                .and_then(Value::as_u64)
+                .and_then(whole)
                 .and_then(|held| u32::try_from(held).ok())
                 .unwrap_or_default(),
             required: record
@@ -276,7 +277,7 @@ fn block(record: &Value, key: &str) -> Vec<(Box<str>, Box<str>)> {
 
 /// A whole number of seconds, or the default the schema publishes for the key.
 fn seconds(record: &Value, key: &str, usual: u64) -> Duration {
-    Duration::from_secs(record.get(key).and_then(Value::as_u64).unwrap_or(usual))
+    Duration::from_secs(record.get(key).and_then(whole).unwrap_or(usual))
 }
 
 /// Borrowed halves of a retained pair.

@@ -325,3 +325,225 @@ fn no_example_hands_a_program_a_wildcard() {
         }
     }
 }
+
+/// Every key that takes a whole number, by the route a document takes to it.
+///
+/// Below a name the user chooses as well as beside one, unlike [`offering`],
+/// because a context window is keyed by the model it describes and is a whole
+/// number a document writes all the same.
+fn wholes(
+    shape: &'static Shape,
+    path: &mut Vec<&'static str>,
+    found: &mut Vec<(Vec<&'static str>, &'static Shape)>,
+) {
+    match shape {
+        Shape::Fields(fields) => {
+            for field in *fields {
+                path.push(field.name);
+                wholes(&field.shape, path, found);
+                path.pop();
+            }
+        }
+        Shape::Named {
+            declared, others, ..
+        } => {
+            for field in *declared {
+                path.push(field.name);
+                wholes(&field.shape, path, found);
+                path.pop();
+            }
+            path.push("whatever");
+            wholes(others, path, found);
+            path.pop();
+        }
+        Shape::Count | Shape::Limit(_) | Shape::Within(_) | Shape::Whole(_) => {
+            found.push((path.clone(), shape));
+        }
+        // No list holds a whole number, and a list element has no key a
+        // document could write it under for this walk to name.
+        Shape::Text
+        | Shape::Choice(_)
+        | Shape::TextSet { .. }
+        | Shape::Flag
+        | Shape::Pattern(_)
+        | Shape::List { .. }
+        | Shape::Opaque => {}
+    }
+}
+
+/// The two smallest values a whole-number key takes.
+///
+/// Two, because the smallest alone is sometimes the default too, and a reader
+/// that dropped what it was given would then read back the right answer.
+fn smallest(shape: &Shape) -> [u64; 2] {
+    let least = match shape {
+        Shape::Limit(_) => 1,
+        Shape::Within(bounds) | Shape::Whole(bounds) => u64::from(bounds.least),
+        _ => 0,
+    };
+    [least, least + 1]
+}
+
+/// The smallest value past a key's bounds, where it has an upper one.
+fn past(shape: &Shape) -> Option<u64> {
+    match shape {
+        Shape::Limit(most) => Some(most + 1),
+        Shape::Within(bounds) | Shape::Whole(bounds) => Some(u64::from(bounds.most) + 1),
+        _ => None,
+    }
+}
+
+/// What the settings a key belongs to read back, as one comparable string.
+///
+/// Through the reader the program uses, so a key whose reader still took only
+/// the integer spelling would read back the default for the other one.
+fn read_back(path: &str, settings: &crate::settings::Settings) -> Option<String> {
+    let said = match path {
+        "providers.whatever.defaultContextWindow" => {
+            format!("{:?}", settings.context_window("whatever", "unnamed"))
+        }
+        "providers.whatever.contextWindow.whatever" => {
+            format!("{:?}", settings.context_window("whatever", "whatever"))
+        }
+        "env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED" => {
+            format!("{:?}", settings.env().collect::<Vec<_>>())
+        }
+        "output.pinAfterSeconds" => format!("{:?}", settings.pin_after()),
+        "sandbox.limits.commandSeconds"
+        | "sandbox.limits.outputBytes"
+        | "sandbox.limits.concurrentCommands" => format!("{:?}", settings.sandbox()),
+        "promptCaching.requestedRetention.maxSeconds" => {
+            format!("{:?}", settings.prompt_cache())
+        }
+        "compaction.reserve"
+        | "compaction.keep"
+        | "compaction.recap"
+        | "compaction.askOnResume"
+        | "compaction.spendCeiling" => format!("{:?}", settings.compaction()),
+        "mcp.servers.whatever.handshakeSeconds"
+        | "mcp.servers.whatever.requestSeconds"
+        | "mcp.servers.whatever.shutdownSeconds"
+        | "mcp.servers.whatever.restarts" => format!("{:?}", settings.mcp_servers()),
+        _ => return None,
+    };
+    Some(said)
+}
+
+/// One whole-number key set to `value`, as the smallest document that holds
+/// it, with the siblings the key cannot be written without.
+fn holding(path: &[&str], value: Value) -> String {
+    let text = written_value(path, value);
+    if path.last() != Some(&"maxSeconds") {
+        return text;
+    }
+    // A ceiling is refused beside the provider's own retention, which is the
+    // class the walk fills in when the block names none.
+    let mut document: Value = serde_json::from_str(&text).expect("a written document is JSON");
+    let (_, block) = path.split_last().expect("a key has a name");
+    let parent = format!("/{}", block.join("/"));
+    document
+        .pointer_mut(&parent)
+        .and_then(Value::as_object_mut)
+        .expect("the ceiling sits in a block")
+        .insert("class".to_owned(), json!("ephemeral"));
+    document.to_string()
+}
+
+fn load(text: &str) -> Result<crate::settings::Settings, crate::ConfigError> {
+    let document = Document::parse(text, "~/.crucible/config.json", Origin::User)?;
+    Ok(crate::settings::Settings::resolve(vec![document]))
+}
+
+#[test]
+fn a_whole_number_written_with_a_zero_fraction_loads_as_that_number() {
+    // The schema calls each of these an `integer`, which an editor holds `6.0`
+    // to be. A file the editor passed and the program refused is the editor
+    // and the program disagreeing about one document, so each key is loaded
+    // both ways and read back through what the program reads it with.
+    let mut found = Vec::new();
+    wholes(&DOCUMENT, &mut Vec::new(), &mut found);
+    let names: Vec<String> = found.iter().map(|(path, _)| path.join(".")).collect();
+    assert_eq!(names.len(), 17, "the walk lost or gained a key: {names:?}");
+
+    let mut refused = Vec::new();
+
+    for (path, shape) in found {
+        let name = path.join(".");
+        let [least, next] = smallest(shape);
+        let read = |value: Value| {
+            let settings = load(&holding(&path, value.clone()))
+                .unwrap_or_else(|error| panic!("{name} = {value} is refused: {error}"));
+            read_back(&name, &settings)
+                .unwrap_or_else(|| panic!("{name} has no reader in this test"))
+        };
+
+        let integer = [read(json!(least)), read(json!(next))];
+        assert_ne!(integer[0], integer[1], "{name} is not read back at all");
+
+        for (whole, expected) in [least, next].into_iter().zip(&integer) {
+            let fraction = format!("{whole}.0").parse::<f64>().expect("a decimal");
+            match load(&holding(&path, json!(fraction))) {
+                Ok(settings) => {
+                    assert_eq!(
+                        read_back(&name, &settings).as_ref(),
+                        Some(expected),
+                        "{name} = {whole}.0"
+                    );
+                }
+                Err(error) => refused.push(format!("{name} = {whole}.0: {error}")),
+            }
+        }
+
+        let half = format!("{least}.5").parse::<f64>().expect("a decimal");
+        assert!(
+            load(&holding(&path, json!(half))).is_err(),
+            "{name} = {least}.5"
+        );
+
+        let huge = holding(&path, json!("HUGE")).replace("\"HUGE\"", "1e400");
+        assert!(load(&huge).is_err(), "{name} = 1e400");
+
+        if let Some(beyond) = past(shape) {
+            let integer = load(&holding(&path, json!(beyond)))
+                .err()
+                .unwrap_or_else(|| panic!("{name} = {beyond} loads"));
+            let fraction = format!("{beyond}.0").parse::<f64>().expect("a decimal");
+            let fraction = load(&holding(&path, json!(fraction)))
+                .err()
+                .unwrap_or_else(|| panic!("{name} = {beyond}.0 loads"));
+            if fraction.to_string() != integer.to_string() {
+                refused.push(format!("{name} = {beyond}.0: {fraction}"));
+            }
+        }
+    }
+    assert!(refused.is_empty(), "refused:\n{}", refused.join("\n"));
+}
+
+#[test]
+fn a_variable_written_as_a_decimal_string_is_still_refused() {
+    // The string form is the environment's, and the environment holds digits:
+    // `"6.0"` is what a shell would hand over, and nothing there reads it.
+    let path = ["env", super::MOUSE_SCROLL_SPEED];
+    assert!(load(&written_value(&path, json!("6"))).is_ok());
+    assert!(load(&written_value(&path, json!("6.0"))).is_err());
+}
+
+#[test]
+fn a_float_is_a_whole_number_only_where_it_holds_one_exactly() {
+    let exact = 9_007_199_254_740_992_u64;
+    let read = |text: &str| super::whole(&serde_json::from_str(text).expect("a number"));
+
+    assert_eq!(read("6"), Some(6));
+    assert_eq!(read("6.0"), Some(6));
+    assert_eq!(read("6e0"), Some(6));
+    assert_eq!(read("-0.0"), Some(0));
+    assert_eq!(read("9007199254740992.0"), Some(exact));
+    // Past 2^53 a float skips whole numbers, so what it holds may not be what
+    // was written; the integer spelling is still read exactly.
+    assert_eq!(read("9007199254740994.0"), None);
+    assert_eq!(read("9007199254740993"), Some(exact + 1));
+
+    for refused in ["6.5", "-1", "-1.0", "0.1", "\"6\"", "true", "null"] {
+        assert_eq!(read(refused), None, "{refused}");
+    }
+}

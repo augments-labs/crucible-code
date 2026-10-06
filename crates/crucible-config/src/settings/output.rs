@@ -8,6 +8,7 @@
 use serde_json::Value;
 
 use super::Settings;
+use crate::shape::whole;
 
 /// What `output.pinAfterSeconds` is where no layer sets it.
 ///
@@ -87,7 +88,7 @@ impl Settings {
             .value
             .get("output")
             .and_then(|block| block.get("pinAfterSeconds"))
-            .and_then(Value::as_u64)
+            .and_then(whole)
             .unwrap_or(PIN_AFTER_SECONDS);
         std::time::Duration::from_secs(seconds)
     }

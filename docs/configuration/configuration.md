@@ -71,6 +71,9 @@ cannot choose an unbounded startup allocation.
 
 ## What you can set
 
+A key that takes a whole number also takes it written with a zero fraction, so
+`6.0` is read as `6` and held to the same bounds; `6.5` is still refused.
+
 ### `provider`
 
 Which provider to ask, by the name `--model` qualifies a model with:
