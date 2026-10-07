@@ -452,6 +452,8 @@ fn secrets() -> Vec<Case> {
         in_a_password_holding_what_ends_a_url(),
         before_an_at_sign_that_is_not_where_a_user_ends(),
         where_a_cut_could_show_part_of_one(),
+        after_a_scheme_word_in_the_same_argument(),
+        after_a_name_joined_to_what_comes_before_it(),
     ]
     .concat()
 }
@@ -888,6 +890,51 @@ fn where_a_cut_could_show_part_of_one() -> Vec<Case> {
     ]
 }
 
+/// A credential after an authorization scheme written in the same argument,
+/// in any case and with any room between them.
+fn after_a_scheme_word_in_the_same_argument() -> Vec<Case> {
+    let word = WORD;
+    let mut cases: Vec<Case> = ["Basic", "basic", "BASIC", "Bearer", "Token"]
+        .iter()
+        .flat_map(|scheme| {
+            [" ", "\t", "  "].map(|room| case(&[&format!("{scheme}{room}{word}")], &[HIDDEN]))
+        })
+        .collect();
+    cases.extend([
+        case(&["Basic dXNlcjpwYXNz"], &[HIDDEN]),
+        case(&[&format!("--x=Basic {word}")], &[HIDDEN]),
+        case(&["-H", &format!("Basic {word}")], &["-H", HIDDEN]),
+        case(
+            &["--header-value", &format!("Basic {word}")],
+            &["--header-value", HIDDEN],
+        ),
+        // Written as two arguments, the scheme names the one after it.
+        case(&["Basic", word], &[HIDDEN, HIDDEN]),
+    ]);
+    cases
+}
+
+/// A flag or a scheme word joined to what comes before it by a quote, with
+/// or without a closing mark after it, which names the argument after it.
+fn after_a_name_joined_to_what_comes_before_it() -> Vec<Case> {
+    let word = WORD;
+    let names = [
+        "https://h.example.test'--api-key",
+        "https://h.example.test\"--password",
+        "https://h.example.test'-token",
+        "https://h.example.test'Bearer",
+        "https://h.example.test\"Basic",
+        "https://h.example.test'Token",
+    ];
+    names
+        .iter()
+        .flat_map(|name| {
+            ["", "'", "\"", ")", "]", "}"]
+                .map(|close| case(&[&format!("{name}{close}"), word], &[HIDDEN, HIDDEN]))
+        })
+        .collect()
+}
+
 #[test]
 fn an_argument_with_nothing_secret_about_it_is_shown_as_written() {
     let plain = [
@@ -909,8 +956,11 @@ fn an_argument_with_nothing_secret_about_it_is_shown_as_written() {
         "region:us",
         "--map=a:b;c",
         "/srv/docs",
-        // A flag whose name says nothing about what follows it.
+        // A flag whose name says nothing about what follows it, alone or
+        // joined to a URL by a quote.
         "-p",
+        "8080",
+        "https://h.example.test'-p",
         "8080",
         "--log-level",
         "debug",
@@ -929,9 +979,10 @@ fn an_argument_shaped_like_one_that_holds_a_secret_is_hidden_though_it_holds_non
         r#"["someone:pa","a@b.example.test"]"#,
         "--label=team:core,owner=a@b.example.test",
         "--tokenizer",
+        "--mode=basic",
     ];
 
-    assert_eq!(shown(&shaped), [HIDDEN; 5]);
+    assert_eq!(shown(&shaped), [HIDDEN; 6]);
 }
 
 #[test]
@@ -954,6 +1005,8 @@ fn an_argument_a_megabyte_long_is_shown_whole_or_hidden_whole() {
         "https://h/",
         "--token ",
         "u:p@h ",
+        "Basic ",
+        "h'--key)",
     ];
     for unit in units {
         let arg = unit.repeat((1 << 20) / unit.len());

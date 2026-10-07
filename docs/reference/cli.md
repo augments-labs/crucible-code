@@ -191,21 +191,24 @@ how often it is restarted and whether a run that names it fails without it.
 Nothing is started for this either. A secret is left out wherever crucible can
 tell a record holds one: a variable set under `env` is shown by its name with
 `<redacted>` for its value, a variable under `envFrom` by its name and the one
-it is taken from, and each argument is shown exactly as written or as
-`<redacted>` in its place, never in part. An argument is hidden when a word in
-it, a run of letters, digits, `-` and `_` in any case, holds `token`, `key`,
-`secret`, `pass`, `pwd`, `auth`, `bearer`, `credential`, `cookie`, `session`,
-`private`, `signature` or `jwt`, or has `pat` as a part of its own
-(`--api-key=…`, `Password=…`, `"apiKey"`, `?token=…`). It is hidden when it
-holds an `@` anywhere after a `:`, as `user:password@host` and a URL with a
-user do; when a URL in it has a `?` or `#` after its `://`, or a `:` after its
-host followed by anything but a port number; and when a run of it is shaped
-like a token. The argument after one that ends on a flag naming a key
+it is taken from, and each argument is shown as written, cut and escaped as
+every string in both lists is, or as `<redacted>` in its place, never in part.
+An argument is hidden when a word in it, a run of letters, digits, `-` and `_`
+in any case, holds `token`, `key`, `secret`, `pass`, `pwd`, `auth`, `bearer`,
+`credential`, `cookie`, `session`, `private`, `signature` or `jwt`, has `pat`
+as a part of its own (`--api-key=…`, `Password=…`, `"apiKey"`, `?token=…`), or
+is the scheme word `Bearer`, `Basic` or `Token` (`Basic dXNlcjpwYXNz`). It is
+hidden when it holds an `@` anywhere after a `:`, as `user:password@host` and a
+URL with a user do; when a URL in it has a `?` or `#` after its `://`, or a `:`
+after its host followed by anything but a port number; and when a run of it is
+shaped like a token. The argument after one that ends on a flag naming a key
 (`--api-key`), on such a name followed by `=` or `:` (`Authorization:`), or on
-`Bearer`, `Basic` or `Token` is hidden too. A value after a flag whose name
-says nothing about it, such as `-p`, is shown. More is hidden than is secret,
-on purpose: `https://registry.example.test/@scope/pkg` and `--tokenizer` are
-hidden although neither holds one.
+`Bearer`, `Basic` or `Token` is hidden too, also when a quote joins that flag
+or word to what comes before it (`https://host'--api-key`), with or without a
+quote or bracket closing it. A value after a flag whose name says nothing about
+it, such as `-p`, is shown. More is hidden than is secret, on purpose:
+`https://registry.example.test/@scope/pkg`, `--tokenizer` and `--mode=basic`
+are hidden although none holds one.
 
 ```
   command    docs-mcp
