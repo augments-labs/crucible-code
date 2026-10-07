@@ -138,6 +138,16 @@ impl fmt::Display for Host {
 ///
 /// Which of them a particular target holds is a `Wanted`, because one of
 /// these is built per file a walk reaches rather than per call.
+///
+/// A path whose name is not text — bytes that are not UTF-8, or on Windows a
+/// lone surrogate — is spelled with a replacement character where the name
+/// could not be written, so two different files can share every spelling.
+/// Rules are still matched against those spellings: a file below a denied
+/// directory is below it whatever its name, and a rule written about the
+/// replacement character is one nobody writes by accident. What the path is
+/// compared by is the path itself, kept beside the spellings for exactly
+/// that case, and no answer about one is remembered or written down as a
+/// rule, since the words either would be kept in name the other file too.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target(Held);
 
@@ -161,8 +171,8 @@ pub(super) enum Held {
 
 /// A path that resolved, in the spellings something was going to read.
 ///
-/// `None` in either field means nobody asked for that spelling, never that the
-/// path has none — and from here the two are indistinguishable. That is why
+/// `None` in either spelling means nobody asked for that spelling, never that
+/// the path has none — and from here the two are indistinguishable. That is why
 /// the [`Wanted`] a target is built with comes from the very patterns that
 /// will read it, and why a target built with less than [`Wanted::BOTH`] goes
 /// straight to those patterns and is not kept.
@@ -170,6 +180,10 @@ pub(super) enum Held {
 pub(super) struct Named {
     absolute: Option<Box<str>>,
     below_root: Option<Box<str>>,
+    /// The resolved path itself, where its name is not text and the
+    /// absolute spelling only approximates it. `None` for every path that is
+    /// text, and for one whose absolute spelling nobody asked for.
+    untextual: Option<Box<Path>>,
 }
 
 /// Which spellings of a path are going to be read.
@@ -278,6 +292,7 @@ impl Target {
     /// string rather than two that started out alike.
     fn spelled(workspace: &Workspace, path: &Path, wanted: Wanted) -> Self {
         let absolute = wanted.absolute.then(|| written(path).into());
+        let untextual = untextual(path, wanted.absolute);
 
         let below_root = wanted
             .below_root
@@ -295,6 +310,7 @@ impl Target {
         Self(Held::Named(Named {
             absolute,
             below_root,
+            untextual,
         }))
     }
 
@@ -310,6 +326,7 @@ impl Target {
         Self(Held::Named(Named {
             absolute: Some(written(path.as_path()).into()),
             below_root: None,
+            untextual: untextual(path.as_path(), true),
         }))
     }
 
@@ -343,6 +360,16 @@ impl Target {
         &self.0
     }
 
+    /// Whether this is a resolved path whose name is not text, which its
+    /// spellings share with every other name that differs only where text
+    /// could not be written.
+    pub(super) fn untextual(&self) -> bool {
+        match &self.0 {
+            Held::Named(named) => named.untextual.is_some(),
+            Held::Unresolved | Held::Pathless => false,
+        }
+    }
+
     /// The resolved path, absolute, when it was one of the spellings asked
     /// for.
     pub(super) fn absolute(&self) -> Option<&str> {
@@ -371,8 +398,15 @@ impl Target {
         Self(Held::Named(Named {
             absolute: Some(absolute.into()),
             below_root: below_root.map(Into::into),
+            untextual: None,
         }))
     }
+}
+
+/// The path, kept where `absolute` was spelled and the spelling could not
+/// write it whole.
+fn untextual(path: &Path, absolute: bool) -> Option<Box<Path>> {
+    (absolute && path.to_str().is_none()).then(|| path.into())
 }
 
 impl fmt::Display for Target {

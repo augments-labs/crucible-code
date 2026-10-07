@@ -1118,6 +1118,51 @@ mod tests {
         );
     }
 
+    /// Linux alone, as the other tests about names that are not text: macOS
+    /// refuses to make such a file, and not every Linux mount keeps one
+    /// either, which is why a refusal to make it ends the test rather than
+    /// failing it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_link_retargeted_between_outside_files_whose_names_are_not_text_is_refused() {
+        // A yes to reading one file outside the workspace, where the two
+        // files' names are not text. Spelled as text they read alike, so the
+        // file the question named has to be told apart from the one the link
+        // leads to now by more than its spelling.
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let sample = Sample::new("read-retargeted-outside-untextual");
+        let outside = std::path::PathBuf::from(sample.beside("outside"));
+        let named = outside.join(OsStr::from_bytes(b"\xff"));
+        let now = outside.join(OsStr::from_bytes(b"\xfe"));
+        if std::fs::write(&named, "the file the verdict was about\n").is_err()
+            || std::fs::write(&now, "nobody was asked about this\n").is_err()
+        {
+            return;
+        }
+        crate::sample::symlink(&named, sample.root().join("door.txt"));
+
+        let tool = Read::new(sample.workspace(), Ledger::new());
+        let approved = allowed(&tool, r#"{"path":"door.txt"}"#);
+        assert!(matches!(
+            approved.sensitivity(),
+            Sensitivity::ReadsOutside { .. }
+        ));
+
+        std::fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
+        crate::sample::symlink(&now, sample.root().join("door.txt"));
+
+        let output =
+            crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+        assert!(output.is_failed(), "{}", output.text());
+        assert!(
+            !output.text().contains("nobody was asked"),
+            "{}",
+            output.text()
+        );
+    }
+
     #[test]
     fn a_link_retargeted_after_the_verdict_to_another_file_inside_is_refused() {
         // Staying inside the workspace does not make the new file the one the
