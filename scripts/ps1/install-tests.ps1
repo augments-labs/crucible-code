@@ -224,6 +224,9 @@ try {
     # which fails the install after the broker has already been replaced. It
     # is held for reading and without delete sharing, which still lets the
     # installer hash it, so the failure comes from moving it and not before.
+    # The renames in the directory are watched, so the case knows the broker
+    # was the one file moved aside before the move of the executable failed;
+    # otherwise an install that failed before replacing anything would pass.
     $midway = Join-Path $root 'midway'
     $null = New-Item -ItemType Directory -Path $midway
     $kept = [ordered]@{
@@ -233,18 +236,44 @@ try {
     }
     foreach ($file in $kept.Keys) { [IO.File]::WriteAllText((Join-Path $midway $file), $kept[$file]) }
     $midwayBinary = Join-Path $midway 'crucible.exe'
+    $watcher = New-Object IO.FileSystemWatcher $midway
+    $watched = 'install-tests-midway-renames'
+    $null = Register-ObjectEvent -InputObject $watcher -EventName Renamed -SourceIdentifier $watched
     $held = [IO.File]::Open($midwayBinary, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     try {
         $null = Get-FileHash -LiteralPath $midwayBinary -Algorithm SHA256
         $moved = $true
         try { [IO.File]::Move($midwayBinary, "$midwayBinary.moved") } catch [IO.IOException] { $moved = $false }
         if ($moved) { Stop-Test 'a file held open for reading could be moved aside' }
+        $watcher.EnableRaisingEvents = $true
         $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $midway))
+        # Renames are reported in the order they happened, and putting the
+        # broker back is the last one, so once it is seen every earlier one
+        # has been too. An install that never moved the broker aside waits
+        # out the deadline instead.
+        $renames = New-Object System.Collections.Generic.List[object]
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        do {
+            Start-Sleep -Milliseconds 100
+            foreach ($raised in @(Get-Event | Where-Object { $_.SourceIdentifier -ceq $watched })) {
+                $renames.Add($raised.SourceEventArgs)
+                Remove-Event -EventIdentifier $raised.EventIdentifier
+            }
+        } until (@($renames | Where-Object { $_.Name -ceq 'crucible-sandbox-broker.exe' }).Count -ne 0 -or
+            [DateTime]::UtcNow -gt $deadline)
     } finally {
         $held.Dispose()
+        Unregister-Event -SourceIdentifier $watched
+        $watcher.Dispose()
     }
     if ($run.Status -ne 1) { Stop-Test "an install that failed midway exited $($run.Status): $($run.Err)" }
     Assert-Contains $run.Out 'install: install: failed' 'a failure midway'
+    $movedAside = @($renames | Where-Object { $kept.Contains($_.OldName) } | ForEach-Object { $_.OldName })
+    if (($movedAside -join ', ') -cne 'crucible-sandbox-broker.exe') {
+        $shown = if ($movedAside.Count -eq 0) { 'nothing' } else { $movedAside -join ', ' }
+        Stop-Test ("an install that failed midway moved aside $shown before it stopped; it should move aside " +
+            "crucible-sandbox-broker.exe alone and then fail to move crucible.exe: $($run.Err)")
+    }
     foreach ($file in $kept.Keys) {
         $path = Join-Path $midway $file
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Test "an install that failed midway lost $file" }
