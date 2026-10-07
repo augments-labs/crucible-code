@@ -6,9 +6,16 @@ exposes `CI required` as the single merge result. `dev` and `main` both merge
 directly once `CI required` is green on a head that is up to date with the
 base.
 
+A pull request tests on Linux, Apple silicon macOS and x86_64 Windows, and
+only compiles for Windows ARM64. macOS Intel and Windows ARM64 were the slowest
+platforms to test, so their tests and rollback drills run on the push a merge
+makes to `dev` or `main`, where `CI required` covers all five. A failure there
+is fixed on `dev` like any other red run, and a release is tagged only after
+the push run on `main` passes.
+
 | Workflow | Owns |
 | --- | --- |
-| `rust-ci.yml` | Rust formatting on Linux; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS and in a FreeBSD guest, and the Windows installer's tests under Windows PowerShell 5.1 and PowerShell 7; the rollback drill and its self-test on all five platforms |
+| `rust-ci.yml` | Rust formatting on Linux; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS and in a FreeBSD guest, and the Windows installer's tests under Windows PowerShell 5.1 and PowerShell 7; the rollback drill and its self-test; which of the five platforms a run covers, through its `all-platforms` input |
 | `repo-checks.yml` | Deterministic cross-file repository policy |
 | `python-ci.yml` | Python canary and campaign harness syntax, fixtures and report validation |
 | `dependency-policy.yml` | Blocking Cargo usage, license, source and ban policy |
@@ -32,11 +39,12 @@ files left by a check. Ignored build output is outside that invariant.
 Every Linux job that runs the Rust gate first runs
 `.github/actions/enforcing-sandbox` and sets
 `CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX`, so the enforcing sandbox tests are
-exercised there rather than skipped. The Intel and Apple silicon macOS jobs set
-the same requirement and exercise the built-in Seatbelt backend. The x86_64 and
-ARM64 Windows jobs provision their versioned dedicated sandbox account and WFP
-policy, require the native backend for the full test run, and remove that
-machine state in an always-run cleanup step. The release gate and `rust-ci.yml`
+exercised there rather than skipped. The macOS jobs that run the tests (Apple
+silicon on every run, Intel on a push) set the same requirement and exercise
+the built-in Seatbelt backend. The Windows jobs that run the tests (x86_64 on
+every run, ARM64 on a push) provision their versioned dedicated sandbox account
+and WFP policy, require the native backend for the full test run, and remove
+that machine state in an always-run cleanup step. The release gate and `rust-ci.yml`
 share the Linux setup action so they cannot drift apart.
 
 Windows tests run under Git Bash so their concurrent shell children share an

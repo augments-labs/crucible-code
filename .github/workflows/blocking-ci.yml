@@ -5,9 +5,12 @@ on:
   push:
     branches: [main, dev]
 
+# A newer push to a pull request replaces its run. A push to main or dev is
+# never cancelled: it is the only run that tests every platform, so each merged
+# commit keeps its own.
 concurrency:
   group: blocking-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -32,6 +35,10 @@ jobs:
   rust-ci:
     name: Rust CI
     uses: ./.github/workflows/rust-ci.yml
+    # A pull request is tested on the platforms rust-ci.yml names for it; the
+    # push its merge makes is tested on all of them.
+    with:
+      all-platforms: ${{ github.event_name == 'push' }}
 
   required:
     name: CI required

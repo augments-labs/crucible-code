@@ -30,8 +30,10 @@ same way afterwards.
 ## Before you tag
 
 1. **`dev` is green, and so is the release branch.** CI passed on the commit
-   you intend to tag. `main` is only as green as what you are about to merge
-   into it, so the reading that matters is the one on the release pull request.
+   you intend to tag. A pull request's run leaves the macOS Intel and Windows
+   ARM64 tests to the run its merge starts, so the readings that matter are the
+   run on the `dev` commit the release branch is cut from, and the run the
+   release merge starts on `main`, which step 3 waits for.
 2. **Gates pass locally.**
 
    ```bash
@@ -160,8 +162,11 @@ gh pr create --base main --title "release: 0.0.1"
 gh pr checks --watch
 gh pr merge --merge
 
-# 3. Tag the commit CI just proved green.
+# 3. Wait for the run the merge started on main, which tests every platform,
+#    and tag the commit it proved green.
 git switch main && git pull
+gh run watch --exit-status "$(gh run list --workflow blocking-ci.yml --branch main \
+  --event push --commit "$(git rev-parse HEAD)" --json databaseId -q '.[0].databaseId')"
 git tag -a v0.0.1 -m "crucible 0.0.1"
 git push origin v0.0.1
 
