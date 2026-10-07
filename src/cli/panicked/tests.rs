@@ -267,3 +267,38 @@ fn a_panic_the_drawing_thread_could_not_draw_is_put_back_under_the_same_ceiling(
     );
     assert!(copy.status.success(), "{:?}: {said}", copy.status);
 }
+
+#[test]
+fn a_panic_written_once_the_session_lets_go_is_one_line_whatever_its_message_holds() {
+    // A message is built from whatever the code that gave up was holding,
+    // which can be text a checkout or a vendor chose.
+    let hostile = "the probe gave up on a\ncrucible: forged \u{1b}]0;retitled\u{7}\u{2028}line";
+    if body().is_some() {
+        let panics = Panics::kept();
+        let gave_up = thread::Builder::new()
+            .name("probe".to_owned())
+            .spawn(move || panic!("{hostile}"))
+            .expect("a thread")
+            .join();
+        assert!(gave_up.is_err(), "the thread did not give up");
+        drop(panics);
+        return;
+    }
+
+    let copy = in_a_copy(
+        "cli::panicked::tests::a_panic_written_once_the_session_lets_go_is_one_line_whatever_its_message_holds",
+        "hostile",
+    );
+
+    let said = said(&copy);
+    let lines: Vec<&str> = said.lines().collect();
+    assert!(
+        matches!(lines.as_slice(), [one] if one.starts_with("crucible: probe panicked at ")),
+        "a panic's message added a line of its own: {said:?}"
+    );
+    assert!(
+        !said.contains(['\u{1b}', '\u{7}', '\u{2028}']),
+        "a panic's message reached standard error with a control character in it: {said:?}"
+    );
+    assert!(copy.status.success(), "{:?}: {said}", copy.status);
+}

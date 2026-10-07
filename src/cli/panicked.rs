@@ -11,7 +11,9 @@
 //! drawing thread instead, which says it in the transcript the next time it
 //! comes round to the prompt. What it has not said by the time the session
 //! lets go is written to standard error then, once the screen is the reader's
-//! own again, so a panic on another thread is never lost. A panic on the
+//! own again, so a panic on another thread is never lost. Each is one line,
+//! written as a failure is, so a message holding a line break or a control
+//! character cannot add a line of its own or act on the terminal. A panic on the
 //! drawing thread itself still goes to the hook in force before: it ends the
 //! session, and there is nobody left to keep it for — nor for what it had
 //! taken to say, if it gave up while saying it. That hook writes it where the
@@ -128,9 +130,7 @@ impl Drop for Panics {
         };
         let mut written = String::new();
         for one in said {
-            written.push_str("crucible: ");
-            written.push_str(&one);
-            written.push('\n');
+            written.push_str(&super::failing(&one));
         }
         if unkept > 0 {
             let _ = writeln!(written, "crucible: and {unkept} more panics");
