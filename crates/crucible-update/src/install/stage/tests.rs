@@ -316,6 +316,14 @@ impl Archive {
     fn tar(self) -> Vec<u8> {
         self.builder.into_inner().expect("a finished archive")
     }
+
+    /// The tar stream without the two zero blocks that end an archive, so
+    /// that what follows it is read as more of the same archive.
+    fn unended(self) -> Vec<u8> {
+        let mut tar = self.tar();
+        tar.truncate(tar.len() - 1024);
+        tar
+    }
 }
 
 fn gzip(bytes: &[u8]) -> Vec<u8> {
@@ -942,4 +950,91 @@ fn a_member_whose_extended_header_makes_it_sparse_is_refused() {
         refused(install.stage(&archive)),
         StageError::Special
     ));
+}
+
+#[test]
+fn a_member_whose_extended_header_gives_a_key_twice_is_refused() {
+    let install = Install::new("pax-key-twice");
+    let size = EXECUTABLE.len().to_string();
+    let archive = Archive::new()
+        .directory("")
+        .pax(&[("size", size.as_bytes()), ("size", b"1024")])
+        .file(CRUCIBLE, EXECUTABLE)
+        .gzip();
+
+    assert!(matches!(
+        refused(install.stage(&archive)),
+        StageError::Ambiguous
+    ));
+    assert_eq!(names(&install.releases()), [ACTIVE]);
+}
+
+#[test]
+fn a_member_whose_extended_header_names_it_otherwise_is_refused() {
+    let install = Install::new("pax-path-differs");
+    let stem = stem(NEXT);
+    let archive = Archive::new()
+        .directory("")
+        .long_name(format!("{stem}/{CRUCIBLE}").as_bytes())
+        .pax(&[("path", format!("{stem}/README.md").as_bytes())])
+        .entry(b"truncated-name", EntryType::Regular, EXECUTABLE, None)
+        .gzip();
+
+    assert!(matches!(
+        refused(install.stage(&archive)),
+        StageError::Ambiguous
+    ));
+    assert_eq!(names(&install.releases()), [ACTIVE]);
+}
+
+// Archives read in part.
+
+#[test]
+fn a_second_gzip_member_is_refused() {
+    let install = Install::new("two-members");
+    let crucible = Archive::new().file(CRUCIBLE, b"another crucible").tar();
+    let path = format!("{}/{BROKER}", stem(NEXT));
+    let link = Some(b"/etc/passwd".as_slice());
+    let broker = Archive::new()
+        .entry(path.as_bytes(), EntryType::Symlink, b"", link)
+        .tar();
+    let seconds = [(true, crucible), (false, broker)];
+
+    for (broker, second) in seconds {
+        let mut archive = gzip(&Archive::release(broker).unended());
+        archive.extend(gzip(&second));
+
+        assert!(matches!(
+            refused(install.stage(&archive)),
+            StageError::Corrupt(_)
+        ));
+        assert_eq!(names(&install.releases()), [ACTIVE]);
+    }
+}
+
+#[test]
+fn bytes_after_the_gzip_member_are_refused() {
+    let install = Install::new("trailing");
+    let mut archive = Archive::release(true).gzip();
+    archive.extend_from_slice(b"trailing bytes");
+
+    assert!(matches!(
+        refused(install.stage(&archive)),
+        StageError::Corrupt(_)
+    ));
+    assert_eq!(names(&install.releases()), [ACTIVE]);
+}
+
+#[test]
+fn an_archive_whose_gzip_checksum_does_not_match_is_refused() {
+    let install = Install::new("bad-crc");
+    let mut archive = Archive::release(true).gzip();
+    let crc = archive.len() - 8;
+    *archive.get_mut(crc).expect("the gzip trailer") ^= 0xff;
+
+    assert!(matches!(
+        refused(install.stage(&archive)),
+        StageError::Corrupt(_)
+    ));
+    assert_eq!(names(&install.releases()), [ACTIVE]);
 }

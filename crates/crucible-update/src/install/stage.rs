@@ -8,37 +8,42 @@
 //! hashed, and that copy, which nobody else can write, is the one read from
 //! then on, so the bytes checked are the bytes unpacked.
 //!
-//! The copy is read twice. The first pass reads each header as it is written,
-//! before any long name or extended header is applied, and refuses a link, a
-//! device, a pipe, a sparse file or any header larger than a release holds, so
-//! the second pass, which applies them, only ever holds a bounded one in
-//! memory. The second pass takes each member by its full name, byte for byte,
-//! and only a member a release ships: its own directory, `crucible`, the
-//! broker and the documents beside them. A name that climbs out, an absolute
-//! name, another release's names, a member given twice and a member whose
-//! headers disagree about its size are refused rather than resolved, since
-//! two archivers could resolve them differently. Only the executables are
-//! written, each hashed as it is written, and the receipt that names them is
-//! read back before the unit is called staged.
+//! The copy is read twice, each time as one gzip member decompressed to its
+//! end, so its checksum is checked, and a byte after that member is refused,
+//! since a reader that decodes every member would go on to read it. The first
+//! pass reads each header as it is written, before any long name or extended
+//! header is applied, and refuses a link, a device, a pipe, a sparse file or
+//! any header larger than a release holds, so the second pass, which applies
+//! them, only ever holds a bounded one in memory. The second pass takes each
+//! member by its full name, byte for byte, and only a member a release ships:
+//! its own directory, `crucible`, the broker and the documents beside them. A
+//! name that climbs out, an absolute name, another release's names, a member
+//! given twice, a member its extended header makes sparse and a member whose
+//! headers describe it in two ways (two sizes, two names, or an extended
+//! record given twice) are refused rather than resolved, since two archivers
+//! could resolve them differently. Only the executables are written, each
+//! hashed as it is written, and the receipt that names them is read back
+//! before the unit is called staged.
 //!
 //! Every count and size is bounded before it is stored or read: the
 //! checksums, the archive, its decompressed contents, its headers and each
 //! member, each by the most a release holds. A unit is staged under
 //! `releases/` in a directory named as the installer names its own, which is
-//! removed with the value unless it is taken, so a refusal or a crash before
-//! activation leaves only what the installer already cleans up. The active
-//! unit, the `current` link and every other release are never opened for
-//! writing.
+//! removed when the value is dropped, so whatever keeps the unit must move it
+//! out first, and a refusal or a crash before activation leaves only what the
+//! installer already cleans up. The active unit, the `current` link and every
+//! other release are never opened for writing.
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{BuildHasher as _, Hasher as _, RandomState};
-use std::io::{self, Read, Seek as _, SeekFrom, Write as _};
+use std::io::{self, BufRead as _, BufReader, Read, Seek as _, SeekFrom, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
-use flate2::read::GzDecoder;
+use flate2::bufread::GzDecoder;
 use sha2::{Digest as _, Sha256};
 use tar::EntryType;
 
@@ -63,6 +68,9 @@ const DOCUMENTS: [&str; 4] = ["README.md", "LICENSE", "install.sh", "uninstall.s
 /// What the PAX records of a sparse file open with; a sparse file is one this
 /// reader and the installer's `tar` would unpack differently.
 const SPARSE: &[u8] = b"GNU.sparse.";
+
+/// The PAX record that names a member.
+const PATH: &[u8] = b"path";
 
 /// A release unit staged and verified beside the active one, not yet
 /// activated.
@@ -101,7 +109,8 @@ pub enum StageError {
     /// The archive is not a readable gzip-compressed tar.
     #[error("the release archive is not a readable gzip-compressed tar")]
     Corrupt(#[source] io::Error),
-    /// A member's headers give it two different sizes.
+    /// A member's headers describe it in two ways: two sizes, two names, or
+    /// one extended record given twice.
     #[error("the release archive describes a member in two ways")]
     Ambiguous,
     /// A member is a symbolic or a hard link.
@@ -375,6 +384,40 @@ impl<R: Read> Read for Bounded<'_, R> {
     }
 }
 
+/// What the archive holds once decompressed: its copy read as one gzip
+/// member, through the ceiling on what it unpacks to.
+type Contents<'a> = Bounded<'a, GzDecoder<BufReader<&'a File>>>;
+
+/// The archive's copy as a tar stream, failing through `exceeded` once it
+/// unpacks past its ceiling.
+fn contents<'a>(
+    archive: &'a File,
+    limits: &Limits,
+    exceeded: &'a Cell<bool>,
+) -> tar::Archive<Contents<'a>> {
+    tar::Archive::new(Bounded {
+        inner: GzDecoder::new(BufReader::new(archive)),
+        left: limits.unpacked,
+        exceeded,
+    })
+}
+
+/// Reads what is left of the archive once its members are read: the rest of
+/// its gzip member, through the ceiling, so that member's checksum and length
+/// are checked, and then refuses any byte after it, a second member included.
+fn ended(tar: tar::Archive<Contents<'_>>, exceeded: &Cell<bool>) -> Result<(), StageError> {
+    let mut contents = tar.into_inner();
+    io::copy(&mut contents, &mut io::sink()).map_err(unreadable(exceeded))?;
+    let mut rest = contents.inner.into_inner();
+    if rest.fill_buf().map_err(io(StagePart::Unit))?.is_empty() {
+        Ok(())
+    } else {
+        Err(StageError::Corrupt(io::Error::other(
+            "the archive goes on past its gzip stream",
+        )))
+    }
+}
+
 /// The name a release's archive is published under.
 fn archive_name(version: &Version, target: Target) -> String {
     format!("crucible-{version}-{}.tar.gz", target.as_str())
@@ -459,11 +502,7 @@ fn copied(from: &Path, to: &Path, expected: Digest, limits: &Limits) -> Result<F
 /// lets the archive reader apply them.
 fn survey(archive: &File, limits: &Limits) -> Result<(), StageError> {
     let exceeded = Cell::new(false);
-    let mut tar = tar::Archive::new(Bounded {
-        inner: GzDecoder::new(archive),
-        left: limits.unpacked,
-        exceeded: &exceeded,
-    });
+    let mut tar = contents(archive, limits, &exceeded);
     let entries = tar.entries().map_err(unreadable(&exceeded))?.raw(true);
     for (count, entry) in entries.enumerate() {
         let entry = entry.map_err(unreadable(&exceeded))?;
@@ -486,7 +525,7 @@ fn survey(archive: &File, limits: &Limits) -> Result<(), StageError> {
             });
         }
     }
-    Ok(())
+    ended(tar, &exceeded)
 }
 
 /// Unpacks the executables of the release under `stem` from the archive into
@@ -498,11 +537,7 @@ fn extract(
     limits: &Limits,
 ) -> Result<Unpacked, StageError> {
     let exceeded = Cell::new(false);
-    let mut tar = tar::Archive::new(Bounded {
-        inner: GzDecoder::new(archive),
-        left: limits.unpacked,
-        exceeded: &exceeded,
-    });
+    let mut tar = contents(archive, limits, &exceeded);
     let mut seen: Vec<Vec<u8>> = Vec::new();
     let mut crucible = None;
     let mut broker = None;
@@ -516,9 +551,7 @@ fn extract(
         if matches!(kind, EntryType::Symlink | EntryType::Link) {
             return Err(StageError::Link);
         }
-        if sparse(&mut entry)? {
-            return Err(StageError::Special);
-        }
+        extended(&mut entry)?;
         let place = {
             let path = entry.path_bytes();
             let name = if kind == EntryType::Directory {
@@ -559,25 +592,39 @@ fn extract(
             }
         }
     }
+    ended(tar, &exceeded)?;
     let crucible = crucible.ok_or(StageError::Missing)?;
     Ok(Unpacked { crucible, broker })
 }
 
-/// Whether the member's PAX records describe a sparse file.
-fn sparse<R: Read>(entry: &mut tar::Entry<'_, R>) -> Result<bool, StageError> {
+/// Refuses a member whose PAX records another archiver would apply
+/// differently: records of a sparse file, a record given twice, of which the
+/// installer's `tar` takes the last and this reader the first, and a `path`
+/// other than the name the member is taken by, which a long name overrides
+/// here and not there.
+fn extended<R: Read>(entry: &mut tar::Entry<'_, R>) -> Result<(), StageError> {
     let Some(records) = entry.pax_extensions().map_err(StageError::Corrupt)? else {
-        return Ok(false);
+        return Ok(());
     };
+    let mut keys = HashSet::new();
+    let mut path = None;
     for record in records {
-        if record
-            .map_err(StageError::Corrupt)?
-            .key_bytes()
-            .starts_with(SPARSE)
-        {
-            return Ok(true);
+        let record = record.map_err(StageError::Corrupt)?;
+        let key = record.key_bytes();
+        if key.starts_with(SPARSE) {
+            return Err(StageError::Special);
+        }
+        if !keys.insert(key) {
+            return Err(StageError::Ambiguous);
+        }
+        if key == PATH {
+            path = Some(record.value_bytes().to_vec());
         }
     }
-    Ok(false)
+    match path {
+        Some(path) if path != *entry.path_bytes() => Err(StageError::Ambiguous),
+        _ => Ok(()),
+    }
 }
 
 /// Writes the member `entry`, of `size` bytes, to `to` as an executable and
