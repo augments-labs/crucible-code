@@ -9,7 +9,11 @@ readonly RECEIPT=$PWD/tests/fixtures/installer/receipt.sh
 # shellcheck source=../../tests/fixtures/installer/receipt.sh
 . "$RECEIPT"
 scratch=$(mktemp -d)
-trap 'rm -rf -- "$scratch"' EXIT
+# A case still running beside the others writes in here, so it is waited for
+# before the directory goes, whichever way the script ends.
+beside_pids=()
+trap 'for p in ${beside_pids[@]+"${beside_pids[@]}"}; do wait "$p" 2>/dev/null || :; done
+rm -rf -- "$scratch"' EXIT
 # The installer prints the directory as it resolves it, and the temporary
 # directory can sit behind a symbolic link (/var is /private/var on macOS), so
 # every expected directory is spelled the same way.
@@ -260,6 +264,90 @@ assert_layout "$destination" "$version"
 [[ $receipt_installation == "$first_installation" ]]
 [[ $(cd "$destination/.crucible-install" && LC_ALL=C ls -A) == $'current\nreleases' ]]
 [[ $(cd "$destination/.crucible-install/releases" && LC_ALL=C ls -A) == "$version" ]]
+
+# Three cases spend most of their time waiting rather than working: one sits
+# out the minute the installer waits on a held lock, and the crash probes run an
+# install once for every point it could be killed at. Each keeps to a scratch
+# directory of its own, so they run beside the cases that follow, from here on,
+# and `join_beside` prints each one's output whole at the end, in the order they
+# were started; a case that failed fails the run there.
+beside_names=()
+beside() {
+    beside_names+=("$1")
+    # The case is no place for this script's own exit trap, whatever a shell
+    # passes to a background process.
+    (trap - EXIT; "$1") >"$scratch/beside-$1.out" 2>&1 &
+    beside_pids+=("$!")
+}
+join_beside() {
+    local i status failed=0
+    for ((i = 0; i < ${#beside_names[@]}; i++)); do
+        status=0
+        wait "${beside_pids[i]}" || status=$?
+        cat "$scratch/beside-${beside_names[i]}.out"
+        ((status == 0)) || {
+            printf 'the case run as %s failed with status %s\n' "${beside_names[i]}" "$status" >&2
+            failed=1
+        }
+    done
+    beside_pids=()
+    ((failed == 0)) || exit 1
+}
+
+lock_of_no_install() {
+    local reused slow_tools bystander status started waited
+    echo '==> a lock held by a process that is no install ends with a way out'
+    # A pid that a stopped install left in the lock may now belong to any
+    # process, so the wait ends, as long as any wait does, and the message says
+    # what to do. Each look at the lock is slowed here as a loaded runner slows
+    # it, and the wait still ends after the minute it promises rather than after
+    # a count of looks.
+    reused=$scratch/reused
+    install_from "$asset" "$reused" >/dev/null
+    slow_tools=$scratch/slow-tools
+    mkdir -p "$slow_tools"
+    cat >"$slow_tools/readlink" <<SLOW
+#!/usr/bin/env bash
+sleep 0.2
+exec $(command -v readlink) "\$@"
+SLOW
+    chmod +x "$slow_tools/readlink"
+    # The bystander outlives the longest wait, so it is never found gone instead.
+    sleep 600 &
+    bystander=$!
+    status=0
+    ln -s "$bystander@$(uname -n)" "$reused/.crucible-install/lock"
+    started=$SECONDS
+    PATH="$slow_tools:$PATH" refused 'a lock named for a process that is no install' \
+        "still holds $reused/.crucible-install/lock after a minute" install_from "$asset" "$reused" ||
+        status=$?
+    waited=$((SECONDS - started))
+    kill "$bystander" 2>/dev/null || :
+    wait "$bystander" 2>/dev/null || :
+    ((status == 0)) || exit 1
+    ((waited <= 75)) || {
+        printf 'installer waited %ss on a held lock, not a minute\n' "$waited" >&2
+        exit 1
+    }
+    [[ -L $reused/.crucible-install/lock ]]
+    rm -f -- "$reused/.crucible-install/lock"
+    install_from "$asset" "$reused" >/dev/null
+    assert_layout "$reused" "$version"
+}
+
+crash_probes() {
+    echo '==> an interrupted install never leaves a broken release active'
+    tests/fixtures/installer/crash-probes.sh "$INSTALL"
+}
+
+migration_crash_probes() {
+    echo '==> an interrupted migration of a flat install never leaves a broken pair in use'
+    tests/fixtures/installer/migration-crash-probes.sh "$INSTALL" "$FLAT_INSTALLERS/install-0.45.3.sh"
+}
+
+beside lock_of_no_install
+beside crash_probes
+beside migration_crash_probes
 
 echo '==> an archive without a sandbox broker still installs the executable'
 brokerless=$scratch/brokerless
@@ -664,43 +752,6 @@ wait "$holder" 2>/dev/null || :
 }
 assert_layout "$held" "$version"
 
-echo '==> a lock held by a process that is no install ends with a way out'
-# A pid that a stopped install left in the lock may now belong to any process,
-# so the wait ends, as long as any wait does, and the message says what to do.
-# Each look at the lock is slowed here as a loaded runner slows it, and the wait
-# still ends after the minute it promises rather than after a count of looks.
-reused=$scratch/reused
-install_from "$asset" "$reused" >/dev/null
-slow_tools=$scratch/slow-tools
-mkdir -p "$slow_tools"
-cat >"$slow_tools/readlink" <<SLOW
-#!/usr/bin/env bash
-sleep 0.2
-exec $(command -v readlink) "\$@"
-SLOW
-chmod +x "$slow_tools/readlink"
-# The bystander outlives the longest wait, so it is never found gone instead.
-sleep 600 &
-bystander=$!
-status=0
-ln -s "$bystander@$(uname -n)" "$reused/.crucible-install/lock"
-started=$SECONDS
-PATH="$slow_tools:$PATH" refused 'a lock named for a process that is no install' \
-    "still holds $reused/.crucible-install/lock after a minute" install_from "$asset" "$reused" ||
-    status=$?
-waited=$((SECONDS - started))
-kill "$bystander" 2>/dev/null || :
-wait "$bystander" 2>/dev/null || :
-((status == 0)) || exit 1
-((waited <= 75)) || {
-    printf 'installer waited %ss on a held lock, not a minute\n' "$waited" >&2
-    exit 1
-}
-[[ -L $reused/.crucible-install/lock ]]
-rm -f -- "$reused/.crucible-install/lock"
-install_from "$asset" "$reused" >/dev/null
-assert_layout "$reused" "$version"
-
 echo '==> an archive unpacked below a name with a backslash is still verified'
 slashed=$scratch/'back\slash'
 mkdir -p "$slashed"
@@ -733,12 +784,6 @@ if (($(id -u) != 0)); then
 else
     echo '    skipped: root can write to a read-only directory'
 fi
-
-echo '==> an interrupted install never leaves a broken release active'
-tests/fixtures/installer/crash-probes.sh "$INSTALL"
-
-echo '==> an interrupted migration of a flat install never leaves a broken pair in use'
-tests/fixtures/installer/migration-crash-probes.sh "$INSTALL" "$FLAT_INSTALLERS/install-0.45.3.sh"
 
 echo '==> a group-writable installation directory is reported as untrusted'
 loose=$scratch/loose
@@ -1437,5 +1482,7 @@ refused=$(INSTALL_TEST_SYSTEM=Linux INSTALL_TEST_MACHINE=x86_64 INSTALL_TEST_VER
     status=$?
 ((status == 22)) || { echo "a failed piped download exited $status, not curl's 22" >&2; exit 1; }
 expect 'a failed piped download' "$refused" 'install: download: failed'
+
+join_beside
 
 echo 'installer tests passed'
