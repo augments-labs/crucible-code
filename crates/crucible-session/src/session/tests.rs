@@ -1617,6 +1617,9 @@ mod placed;
 /// Which session `--continue` takes when old and new names share a directory.
 mod latest;
 
+/// What a resume answers a call with that was started and never finished.
+mod started;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {

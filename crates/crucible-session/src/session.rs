@@ -10,10 +10,10 @@
 //!
 //! The one cut is where continuing starts. `--continue` shortens the file to
 //! the end of the last message the replay could settle on — before a line a
-//! crash tore in half, before a tool call nothing ever answered — and does it
-//! before the handle that appends exists. A log already ending there loses
-//! nothing, which is every ordinary run. It is a truncation and not a rewrite:
-//! what survives is byte for byte what was written.
+//! crash tore in half, before a pass of tool calls none of which recorded a
+//! start — and does it before the handle that appends exists. A log already
+//! ending there loses nothing, which is every ordinary run. It is a truncation
+//! and not a rewrite: what survives is byte for byte what was written.
 //!
 //! One thread per session owns the file, for as long as the session lives: a
 //! write to a local file is a call that blocks, and it is made there rather
