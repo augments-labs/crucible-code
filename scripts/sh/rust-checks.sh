@@ -135,7 +135,7 @@ elif ! cargo test "${TEST_SELECTION[@]}" --doc -- --list >"$examples" ||
     ! cargo test "${TEST_SELECTION[@]}" --doc -- --list --ignored >"$silenced"; then
     printf '    FAIL the documentation examples did not list; the required cases were not checked\n'
     failed=1
-elif ! python3 scripts/python/required-cases.py "$artifacts" "$examples" "$silenced"; then
+elif ! python3 scripts/python/required-cases.py "$artifacts" "$examples" "$silenced" "${TEST_SELECTION[@]}"; then
     printf '    FAIL a named obligation in scripts/required-cases.json is missing, silenced or changed\n'
     failed=1
 fi
