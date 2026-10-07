@@ -19,45 +19,102 @@ fn a_key_at_the_bound_is_taken_whole_with_the_whitespace_around_it() {
     assert!(secret.is_ok(), "a key under the bound, padded, is taken");
 }
 
-#[test]
-fn a_key_longer_than_the_bound_is_refused_however_it_arrives_and_never_cut() {
-    let key = "k".repeat(MAX_SECRET);
-    let refused = Refused::Oversized.to_string();
-    for (how, presses) in [
+/// `key` with `before` and `after` spaces around it, as one paste and as one
+/// press at a time, each ended with Enter.
+fn arrivals(key: &str, before: usize, after: usize) -> [(&'static str, Vec<Pressed>); 2] {
+    let text = format!("{}{key}{}", " ".repeat(before), " ".repeat(after));
+    [
         (
-            "pasted after whitespace",
+            "pasted",
             vec![
-                Pressed::Pasted(format!("  {key}").into()),
+                Pressed::Pasted(text.clone().into()),
                 Pressed::Key(Key::Enter),
             ],
         ),
         (
-            "typed after whitespace",
-            "  ".chars()
-                .chain(key.chars())
-                .chain(['x'])
+            "typed",
+            text.chars()
                 .map(|one| Pressed::Key(Key::Char(one)))
                 .chain([Pressed::Key(Key::Enter)])
                 .collect(),
         ),
-        (
-            "pasted over what was typed",
-            vec![
-                Pressed::Key(Key::Char(' ')),
-                Pressed::Pasted(format!("{key}x").into()),
-                Pressed::Key(Key::Backspace),
-                Pressed::Key(Key::Enter),
-            ],
-        ),
+    ]
+}
+
+/// What Enter makes of `presses`: the key stored, or what is said instead.
+fn entered(presses: Vec<Pressed>) -> Result<String, String> {
+    match typed(presses)? {
+        Some(text) => Secret::typed(&text)
+            .map(|_| text.trim().to_owned())
+            .map_err(|problem| problem.to_string()),
+        None => Err("left the prompt".to_owned()),
+    }
+}
+
+#[test]
+fn a_key_of_exactly_the_bound_is_taken_with_the_whitespace_the_stdin_reader_allows() {
+    let key = "k".repeat(MAX_SECRET);
+    for (before, after) in [
+        (0, 2),
+        (SURROUNDING / 2, SURROUNDING / 2),
+        (0, SURROUNDING),
+        (SURROUNDING, 0),
     ] {
-        let outcome = typed(presses).and_then(|entered| {
-            entered
-                .map(|text| Secret::typed(&text).map_err(|problem| problem.to_string()))
-                .transpose()
-        });
+        for (how, presses) in arrivals(&key, before, after) {
+            assert_eq!(
+                entered(presses).map(|taken| taken == key),
+                Ok(true),
+                "{how} with {before} before and {after} after: the key itself fits"
+            );
+        }
+    }
+    let crlf = format!("{key}\r\n");
+    assert!(
+        Secret::read(&mut crlf.as_bytes()).is_ok(),
+        "standard input takes the same key"
+    );
+    assert_eq!(
+        entered(vec![Pressed::Pasted(crlf.into()), Pressed::Key(Key::Enter)])
+            .map(|taken| taken == key),
+        Ok(true),
+        "pasted with a trailing line break"
+    );
+}
+
+#[test]
+fn a_key_longer_than_the_bound_is_refused_however_it_arrives_and_never_cut() {
+    let refused = Refused::Oversized.to_string();
+    let past = "k".repeat(MAX_SECRET.saturating_add(1));
+    let mut cases = Vec::new();
+    for (before, after) in [(0, 0), (2, 0), (0, 2), (SURROUNDING, 0)] {
+        for (how, presses) in arrivals(&past, before, after) {
+            cases.push((format!("one byte past, {how}, {before}+{after}"), presses));
+        }
+    }
+    // Whitespace past what standard input allows refuses the same key.
+    let key = "k".repeat(MAX_SECRET);
+    for (before, after) in [(SURROUNDING + 1, 0), (0, SURROUNDING + 1), (SURROUNDING, 1)] {
+        for (how, presses) in arrivals(&key, before, after) {
+            cases.push((
+                format!("whitespace past the room, {how}, {before}+{after}"),
+                presses,
+            ));
+        }
+    }
+    // Backspace after an overflow leaves what would fit if the rest had been
+    // cut to fit; it is refused, not the key typed.
+    cases.push((
+        "pasted over the room, then Backspace".to_owned(),
+        vec![
+            Pressed::Pasted(format!("{}{key}xx", " ".repeat(SURROUNDING)).into()),
+            Pressed::Key(Key::Backspace),
+            Pressed::Key(Key::Enter),
+        ],
+    ));
+    for (how, presses) in cases {
         assert_eq!(
-            outcome.as_ref().err(),
-            Some(&refused),
+            entered(presses).as_ref(),
+            Err(&refused),
             "{how}: a key cut to fit would have been stored"
         );
     }
