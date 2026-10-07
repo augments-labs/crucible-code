@@ -1019,6 +1019,41 @@ refuse 'a held spinner' "$held" 'install.sh: line'
 expect 'a held spinner' "$held" 'status=0'
 [[ -x $held_bin/crucible ]]
 
+echo '==> a spinner whose frame cannot be written keeps the error off the terminal'
+# bash reports a builtin's failed write on the standard error of the shell that
+# made it, and the spinner's is the user's terminal: on CI a stop signal that
+# interrupted a frame's write put `printf: write error` above the step's row.
+# An interrupted write cannot be had on demand, but a refused one can. Here the
+# spinner's standard output is open for reading only, so its first frame's
+# write fails. A whole install would fail its own first row the same way, so
+# the installer's spinner functions are run alone, from `step_begin` to
+# `stop_spinner`, in a shell that writes nothing else to either output.
+cat >"$scratch/unwritable-spinner.sh" <<'SPINNER'
+set -euo pipefail
+frames=('|' '/' '-' '\') mark_width=2 fancy=1 spinner= download_to= download_headers= on_exit=:
+eval "$(sed -n -e '/^progress() {$/,/^}/p' -e '/^spin() {$/,/^}/p' \
+    -e '/^stop_spinner() {$/,/^}/p' -e '/^step_begin() {$/,/^}/p' "$1")"
+step_begin unpack
+status=0
+wait "$spinner" || status=$?
+stop_spinner
+printf '%s\n' "$status" >"$2"
+SPINNER
+unwritable_err=$scratch/unwritable-spinner.err
+bash "$scratch/unwritable-spinner.sh" "$INSTALL" "$scratch/unwritable-spinner.status" \
+    </dev/null 1</dev/null 2>"$unwritable_err"
+# The spinner ends on the failed write, which is how its drawing is known to
+# have been reached.
+[[ $(cat "$scratch/unwritable-spinner.status") == 1 ]] || {
+    printf 'an unwritable spinner ended with status %s, not its failed write\n' \
+        "$(cat "$scratch/unwritable-spinner.status")" >&2
+    exit 1
+}
+[[ ! -s $unwritable_err ]] || {
+    printf 'an unwritable spinner reached the terminal:\n%s\n' "$(cat "$unwritable_err")" >&2
+    exit 1
+}
+
 echo '==> a checksum mismatch installs nothing and names the step'
 mismatch_bin=$scratch/mismatch-bin
 status=0

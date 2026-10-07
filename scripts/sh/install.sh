@@ -235,8 +235,14 @@ step_begin() {
         # Started without the exit trap, as a precaution: bash 5.3 does not
         # pass it to a background process, but a shell that did would clean up
         # and report under this script's name if the spinner ran it.
+        #
+        # The spinner's standard error goes nowhere. bash reports a frame
+        # whose write failed on it, and the stop signal interrupting a write
+        # (`printf: write error: Interrupted system call`) put that report on
+        # the terminal above the step's row. A frame is only drawing; this
+        # script's own errors keep their standard error.
         trap - EXIT
-        spin &
+        spin 2>/dev/null &
         spinner=$!
         trap "$on_exit" EXIT
     fi
