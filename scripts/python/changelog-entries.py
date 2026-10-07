@@ -10,11 +10,11 @@ most 4096 bytes. `CONTRIBUTING.md` says so to whoever writes one.
 
 `check` holds every entry file to that shape, where the directory exists at
 all, and `## [Unreleased]` to staying empty, since an entry written there by
-hand is a change editing the changelog. `assemble` writes a version section from the entries,
-directly under the empty `## [Unreleased]`, headings in the order of
-`HEADINGS` and entries under one heading in byte order of their names, then
-deletes the entry files. It writes the lists alone: the summary above them and the
-comparison link are written by the person cutting the release, and
+hand is a change editing the changelog. `assemble` writes a version section
+from the entries, directly under the empty `## [Unreleased]`, headings in the
+order of `HEADINGS` and entries under one heading in byte order of their names,
+then deletes the entry files. It writes the lists alone: the summary above them
+and the comparison link are written by the person cutting the release, and
 `release-notes.py` refuses the section until they are.
 """
 

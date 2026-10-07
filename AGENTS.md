@@ -80,8 +80,8 @@ surface below, and updates every one it reaches in the same change.
 
 - The user docs under `docs/`, the README's first-run section, contributor
   setup in `CONTRIBUTING.md`, and the changelog entry, which is never
-  committed: it goes in the pull request and in the main checkout's
-  `changelog.d/`, which git ignores.
+  committed: the pull request gives it, and whoever merges writes it to the
+  main checkout's `changelog.d/`, which git ignores.
 - A boolean environment variable accepts exactly `true`, `false`, `1` and `0`,
   and refuses any other value with a message that names those four.
 - Content added to a request gets a category in `/context`.

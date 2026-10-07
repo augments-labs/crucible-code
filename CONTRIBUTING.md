@@ -243,8 +243,8 @@ The headings are `### Added`, `### Changed`, `### Fixed`, `### Removed`,
 heading and is at most 4096 bytes. The repository gate fails on any file under
 `changelog.d/` that is committed, and runs
 `python3 scripts/python/changelog-entries.py check`, which holds every entry it
-finds to that shape and `## [Unreleased]` to staying empty. [`RELEASING.md`](RELEASING.md) says how the
-entries become the version section.
+finds to that shape and `## [Unreleased]` to staying empty.
+[`RELEASING.md`](RELEASING.md) says how the entries become the version section.
 
 ## Dependencies
 
