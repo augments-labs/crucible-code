@@ -70,9 +70,10 @@ namespace starts. It is accepted only when it and every directory
 above it belong to root or to the user running Crucible and are writable by
 neither group nor others; a copy under `/tmp`, in another user's directory or
 below a group-writable directory is ignored, and `chmod g-w` on the offending
-directory is the remedy. When no copy qualifies, the error names each path it
-looked at and what turned it down, so a broker that was never built reads
-differently from one below a directory others can rewrite.
+directory is the remedy. When no copy qualifies, the error names each place it
+looked, beside the Crucible binary or in the directory above it, and what
+turned it down, so a broker that was never built reads differently from one
+below a directory others can rewrite.
 
 The Linux view starts from an empty temporary root. It exposes only the minimal
 read-only runtime needed to execute the selected absolute program, the exact
@@ -527,9 +528,12 @@ and quarantines ambiguous publication instead of inventing cleanup or success.
 are standing in and stops; `crucible --sandbox` prints the same report. Nothing
 is started to produce it: not the backend, not its broker, not a command. No
 sandbox is prepared, nothing is materialized and nothing is written. The
-backend is found the way a command's preparation would find it, under the same
-trust checks on its owner and on who can write it, and `build` is the SHA-256
-of the file that was found.
+backend reported is the first one in the places a command's preparation looks
+that passes the same trust checks on its owner, on who can write it and on
+whether you may run it, and `build` is the SHA-256 of that file. Preparation
+also starts each candidate to check it, and passes over one that fails for the
+next, so where a trusted file will not start, the backend a command gets can be
+a later one than the report names.
 
 ```
 sandbox enabled in <root>

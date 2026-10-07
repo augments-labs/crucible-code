@@ -126,14 +126,16 @@ impl LocalSandbox {
     /// What would confine `request` on this machine, found without starting
     /// a process, materializing anything or reading a credential.
     ///
-    /// The backend is the one [`SandboxService::prepare`] would use, located
-    /// with the trust checks it applies: outside every root `request` may
-    /// write, owned and writable only as preparation demands, and measured by
-    /// digest. What preparation learns only by running the backend — that it
-    /// starts, what version it reports, whether this host's account and
-    /// network setup still hold — is not learned here, so a native backend's
-    /// version is [`ObservedVersion::Unverified`]. Whether the backend's
-    /// declared matrix takes the policy is answered by
+    /// The backend is the first one [`SandboxService::prepare`] would try,
+    /// located with the trust checks it applies: outside every root `request`
+    /// may write, owned and writable only as preparation demands, and measured
+    /// by digest. What preparation learns only by running the backend — that
+    /// it starts, what version it reports, whether this host's account and
+    /// network setup still hold — is not learned here, so a version only the
+    /// backend could report is [`ObservedVersion::Unverified`], and one
+    /// crucible gives a backend of its own is [`ObservedVersion::Stated`];
+    /// what is left unproven is [`SandboxObservation::unchecked`]. Whether the
+    /// backend's declared matrix takes the policy is answered by
     /// [`SandboxObservation::refusal`].
     ///
     /// An associated function rather than a method, because nothing a service

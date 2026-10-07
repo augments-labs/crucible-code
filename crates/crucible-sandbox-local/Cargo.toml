@@ -45,9 +45,11 @@ tokio = { workspace = true, features = ["rt", "time"] }
 # `kill` on a process group, which is how a command's whole pipeline is stopped
 # rather than the shell at the head of it. `std` signals the one child it
 # spawned; the negated group id reaches the rest, and there is no call in `std`
-# that takes one. Unix targets only.
+# that takes one. Unix targets only. `fs` is `access`, the kernel's own answer
+# to whether this process may execute a Bubblewrap it found, which a mode read
+# through `std` can only guess at.
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["fs", "process"] }
 
 # A command's pipes, read and written asynchronously, are handed to the reactor
 # of the runtime polling them: `net` is the descriptor it watches and `rt` is

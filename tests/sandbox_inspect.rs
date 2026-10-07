@@ -47,7 +47,17 @@ impl Drop for Scratch {
 /// What the built binary answers to `args`, run in `scratch`, with crucible's
 /// home named outright unless `homeless`.
 fn asked(scratch: &Scratch, args: &[&str], homeless: bool) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_crucible"));
+    asked_of(
+        Path::new(env!("CARGO_BIN_EXE_crucible")),
+        scratch,
+        args,
+        homeless,
+    )
+}
+
+/// [`asked`], of the binary at `program`.
+fn asked_of(program: &Path, scratch: &Scratch, args: &[&str], homeless: bool) -> Output {
+    let mut command = Command::new(program);
     command
         .args(args)
         .env_clear()
@@ -173,4 +183,88 @@ fn a_command_line_that_does_not_parse_is_a_usage_error() {
         assert_eq!(answered.status.code(), Some(2), "{args:?}: {answered:?}");
         assert!(answered.stdout.is_empty(), "{answered:?}");
     }
+}
+
+/// Every place `said` names a path under `scratch`.
+fn paths_in(said: &str, scratch: &Scratch) -> Vec<String> {
+    let under = scratch.0.to_string_lossy().into_owned();
+    said.match_indices(&under)
+        .map(|(at, _)| {
+            said.get(at..)
+                .unwrap_or_default()
+                .chars()
+                .take(120)
+                .collect()
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_backend_that_was_not_found_is_reported_without_the_paths_looked_at() {
+    // A copy of the binary, so the broker crucible looks for beside itself is
+    // looked for in this test's directory, where none was ever built.
+    let scratch = Scratch::new("unavailable");
+    let program = scratch.0.join("bin/crucible");
+    fs::create_dir_all(scratch.0.join("bin")).expect("a directory for the binary");
+    fs::copy(env!("CARGO_BIN_EXE_crucible"), &program).expect("a copy of the binary");
+    fs::create_dir_all(scratch.work().join(".crucible")).expect("a project directory");
+    fs::write(
+        scratch.work().join(".crucible/config.json"),
+        r#"{"sandbox":{"enabled":true}}"#,
+    )
+    .expect("a project file");
+
+    let json = asked_of(&program, &scratch, &["sandbox", "inspect", "--json"], false);
+    assert_eq!(json.status.code(), Some(0), "{json:?}");
+    let written = String::from_utf8_lossy(&json.stdout);
+    let read = Inspection::decode(&json.stdout).expect("a document that reads back");
+    assert_eq!(read.status(), "unavailable", "{written}");
+    assert_eq!(
+        paths_in(&written, &scratch),
+        Vec::<String>::new(),
+        "{written}"
+    );
+
+    // The text names the directory asked about on its first line and no path
+    // after it.
+    let text = asked_of(&program, &scratch, &["sandbox", "inspect"], false);
+    assert_eq!(text.status.code(), Some(0), "{text:?}");
+    let said = String::from_utf8_lossy(&text.stdout);
+    let (first, rest) = said.split_once('\n').expect("a first line");
+    assert!(first.starts_with("sandbox enabled in "), "{said}");
+    assert!(rest.contains("no sandbox backend was found"), "{said}");
+    assert_eq!(paths_in(rest, &scratch), Vec::<String>::new(), "{said}");
+}
+
+#[test]
+fn a_report_that_could_not_be_made_does_not_name_the_file_that_stopped_it() {
+    let scratch = Scratch::new("unreadable-config");
+    fs::create_dir_all(scratch.work().join(".crucible")).expect("a project directory");
+    fs::write(
+        scratch.work().join(".crucible/config.json"),
+        r#"{"not_a_setting":true}"#,
+    )
+    .expect("a project file");
+
+    let json = asked(&scratch, &["sandbox", "inspect", "--json"], false);
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    let written = String::from_utf8_lossy(&json.stdout);
+    let read = Inspection::decode(&json.stdout).expect("a document that reads back");
+    assert_eq!(read.status(), "failed", "{written}");
+    assert_eq!(
+        paths_in(&written, &scratch),
+        Vec::<String>::new(),
+        "{written}"
+    );
+    // The run's own failure still says which file, where a failure is said.
+    assert!(
+        String::from_utf8_lossy(&json.stderr).contains(".crucible/config.json"),
+        "{json:?}"
+    );
+
+    // As text there is no report at all, only the failure.
+    let text = asked(&scratch, &["sandbox", "inspect"], false);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    assert!(text.stdout.is_empty(), "{text:?}");
 }

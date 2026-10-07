@@ -361,7 +361,9 @@ pub enum Inspection {
     /// A report was made. Boxed, as it is many times the size of a failure.
     Inspected(Box<Inspected>),
     /// None could be: the directory, crucible's files or the policy could not
-    /// be read. The words are the sentence a person would have been shown.
+    /// be read. The words name the step that stopped and, like every other
+    /// field, no path; the file it was about is left to the error a person is
+    /// shown.
     Failed(Text),
 }
 

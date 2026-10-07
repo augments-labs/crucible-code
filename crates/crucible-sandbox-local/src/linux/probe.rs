@@ -155,7 +155,7 @@ impl Bwrap {
 /// so the first trusted candidate is the one reported, where `find` would pass
 /// over one that failed to run.
 pub(super) fn locate(excluded: &[&Path]) -> Result<SandboxObservation, SandboxError> {
-    let digest = first_trusted(excluded, |path| digest(&path, trusted(&path)?))?;
+    let digest = first_trusted(excluded, |path| measured(&path))?;
     Ok(SandboxObservation::new(
         backend_id()?,
         SandboxBackendProvenance::System,
@@ -165,6 +165,11 @@ pub(super) fn locate(excluded: &[&Path]) -> Result<SandboxObservation, SandboxEr
         ),
         capabilities(),
     ))
+}
+
+/// The SHA-256 of the candidate at `path`, where it passes [`trusted`].
+fn measured(path: &Path) -> Result<[u8; 32], SandboxError> {
+    digest(path, trusted(path)?)
 }
 
 /// The first candidate on `PATH` that `check` accepts, or why none was.
@@ -204,7 +209,11 @@ fn first_trusted<T>(
 }
 
 /// The length of the executable at `path`, where it and every directory above
-/// it are root-owned and writable by nobody else.
+/// it are root-owned and writable by nobody else, and this process may execute
+/// it.
+///
+/// The execute check is the kernel's own, made for this process, so a file
+/// spawning it would be refused is never the one an inspection reports.
 fn trusted(path: &Path) -> Result<u64, SandboxError> {
     let metadata = path
         .metadata()
@@ -217,6 +226,11 @@ fn trusted(path: &Path) -> Result<u64, SandboxError> {
     {
         return Err(unavailable(
             "system Bubblewrap or its parent path is not root-owned and non-writable",
+        ));
+    }
+    if rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_err() {
+        return Err(unavailable(
+            "system Bubblewrap is not executable by this user",
         ));
     }
     Ok(metadata.len())
@@ -453,17 +467,32 @@ fn digest(path: &Path, length: u64) -> Result<[u8; 32], SandboxError> {
         .map_err(|_| unavailable("could not inspect system Bubblewrap provenance"))?;
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 16 * 1024];
+    // `length` is what `trusted` measured; a file that grew or shrank since is
+    // not the one that was checked, and reading on would let it grow without
+    // end.
+    let mut read = 0_u64;
     loop {
-        let read = file
+        let count = file
             .read(&mut buffer)
             .map_err(|_| unavailable("could not hash system Bubblewrap provenance"))?;
-        if read == 0 {
+        if count == 0 {
             break;
         }
-        let Some(bytes) = buffer.get(..read) else {
+        read = read.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+        if read > length || read > MAX_BACKEND_BYTES {
+            return Err(unavailable(
+                "system Bubblewrap changed while it was inspected",
+            ));
+        }
+        let Some(bytes) = buffer.get(..count) else {
             return Err(unavailable("invalid Bubblewrap provenance read"));
         };
         digest.update(bytes);
+    }
+    if read != length {
+        return Err(unavailable(
+            "system Bubblewrap changed while it was inspected",
+        ));
     }
     Ok(digest.finalize().into())
 }
@@ -797,6 +826,47 @@ mod tests {
         assert_eq!(
             version_refusal("printf 'a\\tb\\033[31mc\\r\\n' >&2; exit 1").strip_prefix(prefix),
             Some("a b [31mc")
+        );
+    }
+
+    #[test]
+    fn a_root_owned_file_nobody_may_execute_is_not_taken_for_bubblewrap() {
+        // Root's, writable by nobody else, under root's own directories: every
+        // check a Bubblewrap passes, except that nobody could start it.
+        let passwd = Path::new("/etc/passwd");
+        let mode = passwd.metadata().expect("/etc/passwd").permissions().mode();
+        assert!(
+            passwd.metadata().expect("/etc/passwd").uid() == 0
+                && mode & 0o133 == 0
+                && trusted_parent_chain(passwd),
+            "this host's /etc/passwd ({mode:o}) is not the root-owned file nobody may execute that this test needs"
+        );
+        assert!(
+            measured(passwd).is_err(),
+            "a file nobody may execute was reported as Bubblewrap"
+        );
+    }
+
+    #[test]
+    fn a_backend_is_hashed_no_further_than_the_length_it_was_measured_at() {
+        let sample = Sample::new("sandbox-bwrap-overlong");
+        let short = sample.root().join("short");
+        std::fs::write(&short, b"more than nothing").expect("fixture");
+        let length = short.metadata().expect("fixture").len();
+        assert!(digest(&short, length).is_ok(), "the length it has");
+        // A procfs file reports a length of nothing and reads on.
+        assert!(
+            digest(&short, 0).is_err(),
+            "a file longer than it said was hashed to its end"
+        );
+
+        let large = sample.root().join("large");
+        File::create(&large)
+            .and_then(|file| file.set_len(MAX_BACKEND_BYTES + 1))
+            .expect("a sparse fixture past the cap");
+        assert!(
+            digest(&large, MAX_BACKEND_BYTES).is_err(),
+            "a file larger than the cap was hashed past it"
         );
     }
 

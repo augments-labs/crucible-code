@@ -19,6 +19,9 @@ use super::broker::Broker;
 use crate::{ObservedVersion, SandboxObservation};
 
 const SEATBELT: &str = "/usr/bin/sandbox-exec";
+/// The version crucible gives the profile scheme it hands Seatbelt: its own
+/// name, so a preparation and an inspection state it without asking anything.
+const VERSION: &str = "seatbelt-v1";
 const MAX_BACKEND_BYTES: u64 = 16 * 1024 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -34,7 +37,7 @@ impl Seatbelt {
         functional_probe(broker)?;
         let identity = SandboxBackendIdentity::new(
             backend_id()?,
-            "seatbelt-v1",
+            VERSION,
             SandboxBackendProvenance::System,
             Some(digest(&path, length)?),
         )
@@ -56,16 +59,15 @@ impl Seatbelt {
 
 /// The launcher [`Seatbelt::find`] would accept, checked and measured the same
 /// way but with no functional probe: that probe starts the broker, and an
-/// inspection starts nothing.
+/// inspection starts nothing. The version is crucible's own, so it is stated;
+/// whether the broker starts is what the caller leaves unchecked.
 pub(super) fn locate() -> Result<SandboxObservation, SandboxError> {
     let (path, length) = trusted()?;
     Ok(SandboxObservation::new(
         backend_id()?,
         SandboxBackendProvenance::System,
         Some(digest(&path, length)?),
-        ObservedVersion::Unverified(
-            "confirming it would start the sandbox broker, and inspecting starts nothing",
-        ),
+        ObservedVersion::Stated(VERSION),
         capabilities(),
     ))
 }

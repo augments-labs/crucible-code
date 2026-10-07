@@ -28,6 +28,25 @@ fn trusted_owner(uid: u32, mode: u32) -> bool {
     (uid == 0 || uid == rustix::process::getuid().as_raw()) && mode & 0o022 == 0
 }
 
+/// Where a broker image is looked for.
+#[derive(Debug, Clone, Copy)]
+enum Place {
+    /// The directory the running executable is in.
+    BesideExecutable,
+    /// The directory above that one, where a build puts its helpers.
+    AboveExecutable,
+}
+
+impl Place {
+    /// Which rule put a candidate where it was looked for.
+    const fn said(self) -> &'static str {
+        match self {
+            Self::BesideExecutable => "the broker beside the crucible executable",
+            Self::AboveExecutable => "the broker in the directory above the crucible executable",
+        }
+    }
+}
+
 /// One opened broker image whose descriptor is mounted into the namespace.
 pub(super) struct Broker {
     path: PathBuf,
@@ -40,22 +59,31 @@ impl Broker {
             .map_err(|_| unavailable("could not locate the Crucible executable"))?;
         let mut candidates = Vec::new();
         if let Some(parent) = executable.parent() {
-            candidates.push(parent.join("crucible-sandbox-broker"));
+            candidates.push((
+                Place::BesideExecutable,
+                parent.join("crucible-sandbox-broker"),
+            ));
             if let Some(build_root) = parent.parent() {
-                candidates.push(build_root.join("crucible-sandbox-broker"));
+                candidates.push((
+                    Place::AboveExecutable,
+                    build_root.join("crucible-sandbox-broker"),
+                ));
             }
         }
-        candidates.sort();
-        candidates.dedup();
+        candidates.sort_by(|(_, one), (_, other)| one.cmp(other));
+        candidates.dedup_by(|(_, one), (_, other)| one == other);
         Self::first_trusted(candidates, excluded)
     }
 
-    fn first_trusted(candidates: Vec<PathBuf>, excluded: &[&Path]) -> Result<Self, SandboxError> {
+    fn first_trusted(
+        candidates: Vec<(Place, PathBuf)>,
+        excluded: &[&Path],
+    ) -> Result<Self, SandboxError> {
         let mut refused = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
+        for (place, candidate) in candidates {
             match Self::pin(&candidate, excluded) {
                 Ok(broker) => return Ok(broker),
-                Err(reason) => refused.push((candidate, reason)),
+                Err(reason) => refused.push((place, reason)),
             }
         }
         Err(none_trusted(&refused))
@@ -227,17 +255,20 @@ fn unavailable(reason: &'static str) -> SandboxError {
 
 /// Name every candidate and why it was refused.
 ///
-/// Both paths are searched before this is reached, so reporting only the last
-/// one would hide the reason that applies to the reader's own layout.
-fn none_trusted(refused: &[(PathBuf, &'static str)]) -> SandboxError {
+/// Both places are searched before this is reached, so reporting only the
+/// last one would hide the reason that applies to the reader's own layout.
+/// Each is named by the rule that looked there rather than by its path: the
+/// reason reaches `crucible sandbox inspect`, whose report is pasted into
+/// issues, and a path to the executable is a path into somebody's home.
+fn none_trusted(refused: &[(Place, &'static str)]) -> SandboxError {
     let mut reason =
         String::from("no trusted crucible-sandbox-broker executable was found; refused:");
     if refused.is_empty() {
         reason.push_str(" no path was searched");
     }
-    for (path, why) in refused {
+    for (place, why) in refused {
         reason.push_str("\n  ");
-        reason.push_str(&path.display().to_string());
+        reason.push_str(place.said());
         reason.push_str(" — ");
         reason.push_str(why);
     }
@@ -318,7 +349,7 @@ mod tests {
             .expect("fixture mode");
         std::fs::set_permissions(sample.root(), std::fs::Permissions::from_mode(0o777))
             .expect("world-writable parent");
-        let refused = Broker::first_trusted(vec![image.clone()], &[]);
+        let refused = Broker::first_trusted(vec![(Place::BesideExecutable, image.clone())], &[]);
         let Err(SandboxError::BackendUnavailable { reason }) = refused else {
             panic!("a broker anyone can replace was accepted");
         };
@@ -327,8 +358,12 @@ mod tests {
             "the refusal did not say which check turned the image down: {reason}"
         );
         assert!(
-            reason.contains(&image.display().to_string()),
-            "the refusal did not name the path it turned down: {reason}"
+            reason.contains("the broker beside the crucible executable"),
+            "the refusal did not say which candidate it turned down: {reason}"
+        );
+        assert!(
+            !reason.contains(&sample.root().display().to_string()),
+            "the refusal named the path it turned down: {reason}"
         );
     }
 
@@ -346,7 +381,7 @@ mod tests {
         std::fs::set_permissions(sample.root(), std::fs::Permissions::from_mode(0o775))
             .expect("group-writable parent");
         let Err(SandboxError::BackendUnavailable { reason }) =
-            Broker::first_trusted(vec![image], &[])
+            Broker::first_trusted(vec![(Place::AboveExecutable, image)], &[])
         else {
             panic!("a broker any group member can replace was accepted");
         };
@@ -361,7 +396,7 @@ mod tests {
         let sample = crate::sample::Sample::new("sandbox-broker-absent");
         let absent = sample.root().join("crucible-sandbox-broker");
         let Err(SandboxError::BackendUnavailable { reason }) =
-            Broker::first_trusted(vec![absent.clone()], &[])
+            Broker::first_trusted(vec![(Place::BesideExecutable, absent.clone())], &[])
         else {
             panic!("a broker that does not exist was accepted");
         };
@@ -370,8 +405,12 @@ mod tests {
             "an absent broker was not told apart from an untrusted one: {reason}"
         );
         assert!(
-            reason.contains(&absent.display().to_string()),
-            "the refusal did not name the path it looked at: {reason}"
+            reason.contains("the broker beside the crucible executable"),
+            "the refusal did not say which candidate it looked for: {reason}"
+        );
+        assert!(
+            !reason.contains(&sample.root().display().to_string()),
+            "the refusal named the path it looked at: {reason}"
         );
     }
 }

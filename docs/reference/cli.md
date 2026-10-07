@@ -208,9 +208,9 @@ crucible sandbox inspect --json
 
 The first line is `sandbox enabled in <root>` or `sandbox disabled in <root>`,
 and `mode` says whether project configuration requires confinement. The
-backend is found the way a confined command would find it, and the same trust
-checks are applied to it; where crucible read the backend's file it prints the
-file's `sha256` as `build`. A backend's version that only starting it could
+backend is the first one a confined command's search would reach that passes
+the same trust checks, without starting it; where crucible read the backend's
+file it prints the file's `sha256` as `build`. A backend's version that only starting it could
 tell is printed `unverified`, with the reason, and whatever else only starting
 something could check is listed under `not checked, since checking would start
 something:`. The rest is explained under
@@ -242,7 +242,8 @@ When the report cannot be made, for example because there is no home
 directory to read configuration from, the reason is one line beginning
 `crucible: ` on standard error and the run ends 1; with `--json` a document
 with `status` `failed` and the `problem` is written to standard output as
-well.
+well. The `problem` names the step that stopped, such as reading
+configuration, and no file; the line on standard error names the file.
 
 ### `config check [--json]`
 

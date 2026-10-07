@@ -10,8 +10,9 @@
 //! applies and measured by digest, its declared matrix is negotiated against
 //! this directory's policy, and no process is started, no manifest is
 //! materialized and no credential is read. Proving a backend can mean starting
-//! it, so what only running it could tell — its version, that it starts on
-//! this host — is reported as unverified, with the reason, rather than learned.
+//! it, so what only running it could tell — a version only it reports, that it
+//! starts on this host — is reported as unverified, with the reason, rather
+//! than learned.
 //!
 //! Every path in the report is a digest. The record this is written from
 //! redacts them at the source, and that is the right bargain rather than an
@@ -21,7 +22,7 @@
 //! One [`Observed`] is written two ways. [`Observed::human`] is one string
 //! written once, like the extension listing beside it: by the time this runs
 //! there is no session, no screen and nothing to protect.
-//! [`Observed::contract`] is the `crucible_client_api` inspection document a
+//! [`Observed::json`] is the `crucible_client_api` inspection document a
 //! script reads, translated field by field by hand.
 //!
 //! And what `/sandbox enable` and `/sandbox disable` decide, in [`choosing`]:
@@ -324,16 +325,57 @@ impl Observed {
     }
 }
 
-/// The document a failure to inspect at all is written as, in the sentence a
-/// person would have been shown, so a script reading standard output is never
-/// left with nothing.
+/// Why no report could be made, as far as the failed document says it.
+#[derive(Debug, Clone, Copy)]
+pub enum Unmade<'a> {
+    /// The directory crucible was started in could not be read.
+    Here,
+    /// [`inspection`] refused.
+    Inspecting(&'a AppError),
+    /// A report was made and the document could not carry it.
+    Unwritten(&'a Unwritten),
+}
+
+impl Unmade<'_> {
+    /// The step that stopped, in words that name no file.
+    ///
+    /// The document is pasted where the report would have been, so it keeps
+    /// the report's promise to carry no path. A workspace or configuration
+    /// error leads with the file it is about, so for those the document says
+    /// which step stopped and leaves the file to standard error, where the
+    /// run ends with the whole sentence. A policy refusal and an unwritable
+    /// report name no file, so they are said as they stand.
+    fn said(self) -> String {
+        match self {
+            Self::Here => "the directory crucible was started in could not be read".to_owned(),
+            Self::Inspecting(AppError::Workspace(_)) => {
+                "this directory is not one crucible can work in; standard error says why".to_owned()
+            }
+            Self::Inspecting(AppError::Config(_)) => {
+                "crucible's configuration could not be read; standard error names the file and why"
+                    .to_owned()
+            }
+            Self::Inspecting(refused @ AppError::Confinement(_)) => refused.to_string(),
+            // Nothing else is returned by an inspection today, and a sentence
+            // not read here cannot be promised to carry no path.
+            Self::Inspecting(_) => {
+                "the sandbox inspection could not be made; standard error says why".to_owned()
+            }
+            Self::Unwritten(unwritten) => unwritten.to_string(),
+        }
+    }
+}
+
+/// The document a failure to inspect at all is written as, naming the step
+/// that stopped, so a script reading standard output is never left with
+/// nothing.
 ///
 /// # Errors
 ///
 /// [`Unwritten`] if even that could not be framed; the sentence is cut to its
 /// bound first, so this is the refusal said rather than one expected.
-pub fn failure(problem: &str) -> Result<Vec<u8>, Unwritten> {
-    Ok(Inspection::Failed(Text::cut(problem)).encode()?)
+pub fn failure(problem: Unmade<'_>) -> Result<Vec<u8>, Unwritten> {
+    Ok(Inspection::Failed(Text::cut(&problem.said())).encode()?)
 }
 
 /// A report that was made and could not be written as its document.

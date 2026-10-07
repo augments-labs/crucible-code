@@ -483,32 +483,34 @@ fn listed() -> Result<(), Fatal> {
 ///
 /// A report that was made is written and the run succeeds, whatever it says:
 /// "no command could be run here" is the answer that was asked for. Where no
-/// report could be made, `json` still writes one document, a failed one in the
-/// words the run then ends with, so a script reading standard output never
-/// finds it empty. A write that fails is dropped for the reason [`listed`]
-/// drops one.
+/// report could be made, `json` still writes one document, a failed one naming
+/// the step that stopped, so a script reading standard output never finds it
+/// empty; the run then ends with the whole error, file and all, on standard
+/// error. A write that fails is dropped for the reason [`listed`] drops one.
 fn inspected(json: bool) -> Result<(), Fatal> {
-    let observed = std::env::current_dir()
-        .map_err(Fatal::Here)
-        .and_then(|here| {
-            let home = Home::find(&|name| std::env::var_os(name))?;
-            Ok(crucible_app::sandbox::inspection(&here, &home)?)
-        });
+    use crucible_app::sandbox::{Unmade, failure};
+
+    let observed = std::env::current_dir().map(|here| {
+        Home::find(&|name| std::env::var_os(name))
+            .map_err(AppError::from)
+            .and_then(|home| crucible_app::sandbox::inspection(&here, &home))
+    });
     if !json {
-        let _ = io::stdout().write_all(observed?.human().as_bytes());
+        let observed = observed.map_err(Fatal::Here)??;
+        let _ = io::stdout().write_all(observed.human().as_bytes());
         return Ok(());
     }
 
-    let (written, ended) = match observed.map(|observed| observed.json()) {
-        Ok(Ok(written)) => (Ok(written), Ok(())),
-        Ok(Err(unwritten)) => (
-            crucible_app::sandbox::failure(&unwritten.to_string()),
-            Err(Fatal::Inspection(unwritten)),
-        ),
-        Err(problem) => (
-            crucible_app::sandbox::failure(&problem.to_string()),
-            Err(problem),
-        ),
+    let (written, ended) = match observed {
+        Err(why) => (failure(Unmade::Here), Err(Fatal::Here(why))),
+        Ok(Err(why)) => (failure(Unmade::Inspecting(&why)), Err(Fatal::App(why))),
+        Ok(Ok(observed)) => match observed.json() {
+            Ok(written) => (Ok(written), Ok(())),
+            Err(unwritten) => (
+                failure(Unmade::Unwritten(&unwritten)),
+                Err(Fatal::Inspection(unwritten)),
+            ),
+        },
     };
     match written {
         Ok(written) => {
