@@ -421,6 +421,10 @@ const WORD: &str = "swordfish-sentinel";
 /// away.
 const TOKEN: &str = "Zq7Sentinel0451Secret9Kx";
 
+/// A secret shaped like a token with no name a secret is given under inside
+/// it, as `TOKEN` has one, so its shape is all that can hide it.
+const SHAPED: &str = "Zq7Sentinel0451Hidden9Kx";
+
 /// The arguments one server is given, shown, from a record written as JSON.
 fn shown(args: &[&str]) -> Vec<String> {
     let args = serde_json::to_string(args).expect("a list of strings writes");
@@ -433,405 +437,455 @@ fn shown(args: &[&str]) -> Vec<String> {
     server.shown_args()
 }
 
-#[test]
-fn every_place_an_argument_can_carry_a_secret_is_shown_without_it() {
-    let word = WORD;
-    let token = TOKEN;
-    let cases: [(&[&str], &[&str]); 32] = [
-        (&["--token", word], &["--token", HIDDEN]),
-        (
-            &["--api-key", word, "--port", "8080"],
-            &["--api-key", HIDDEN, "--port", "8080"],
-        ),
-        (&[&format!("--api-key={word}")], &["--api-key=<redacted>"]),
-        (&[&format!("API_KEY={word}")], &["API_KEY=<redacted>"]),
-        (
-            &[&format!("Authorization: Bearer {word}")],
-            &["Authorization: <redacted>"],
-        ),
-        (
-            &["-H", &format!("X-Api-Key: {word}")],
-            &["-H", "X-Api-Key: <redacted>"],
-        ),
-        (
-            &["--header", "Authorization:", "Bearer", word],
-            &["--header", "Authorization:", HIDDEN, HIDDEN],
-        ),
-        (
-            &[&format!("https://someone:{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
-        ),
-        (
-            &[&format!("https://mcp.example.test/sse?key={word}&page=1")],
-            &["https://mcp.example.test/sse?<redacted>"],
-        ),
-        (
-            &[&format!("https://mcp.example.test/hook#{word}")],
-            &["https://mcp.example.test/hook#<redacted>"],
-        ),
-        (
-            &[&format!(
-                "--url=https://mcp.example.test/sse?access_token={word}"
-            )],
-            &["--url=https://mcp.example.test/sse?<redacted>"],
-        ),
-        (&[token], &[HIDDEN]),
-        (
-            &[&format!("https://hooks.example.test/services/{token}")],
-            &["https://hooks.example.test/services/<redacted>"],
-        ),
-        (
-            &[
-                "-c",
-                &format!("curl -H 'Authorization: Bearer {word}' https://mcp.example.test"),
-            ],
-            &["-c", "curl -H 'Authorization: <redacted>"],
-        ),
-        // A value written as JSON holds its keys as pairs of its own.
-        (
-            &[&format!(r#"--config={{"region":"us","apiKey":"{word}"}}"#)],
-            &[r#"--config={"region":"us","apiKey":<redacted>"#],
-        ),
-        (
-            &[&format!(r#"--headers={{"Authorization":"Bearer {word}"}}"#)],
-            &[r#"--headers={"Authorization":<redacted>"#],
-        ),
-        (
-            &[&format!(r#"--config={{"region":"us","id":"{token}"}}"#)],
-            &[r#"--config={"region":"us","id":"<redacted>"}"#],
-        ),
-        // A URL is one wherever in a word it starts.
-        (
-            &[&format!(
-                r#"{{"url":"https://someone:{word}@mcp.example.test/sse"}}"#
-            )],
-            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
-        ),
-        (
-            &[&format!("url:https://someone:{word}@mcp.example.test")],
-            &["url:https://<redacted>@mcp.example.test"],
-        ),
-        (
-            &[&format!(
-                r#"{{"url":"https://mcp.example.test/sse","apiKey":"{word}"}}"#
-            )],
-            &[r#"{"url":"https://mcp.example.test/sse","apiKey":<redacted>"#],
-        ),
-        (
-            &[&format!("https://someone:{word}/more@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
-        ),
-        (
-            &[&format!("someone:{word}@db.example.test:5432")],
-            &["someone:<redacted>@db.example.test:5432"],
-        ),
-        // A pair inside a pair's value, as docker's `--env=NAME=VALUE`.
-        (
-            &[&format!("--env=DB_PASSWORD={word}")],
-            &["--env=DB_PASSWORD=<redacted>"],
-        ),
-        // Pairs run together, as a connection string or a query writes them.
-        (
-            &[&format!("--connection-string=Server=h;Password={word}")],
-            &["--connection-string=Server=h;Password=<redacted>"],
-        ),
-        (
-            &[
-                "--connection-string",
-                &format!("Host=h;Username=u;Password={word}"),
-            ],
-            &[
-                "--connection-string",
-                "Host=h;Username=u;Password=<redacted>",
-            ],
-        ),
-        (
-            &[&format!("Server=db;User Id=sa;Password={word}")],
-            &["Server=db;User Id=sa;Password=<redacted>"],
-        ),
-        (
-            &[&format!("--query=page=1&token={word}")],
-            &["--query=page=1&token=<redacted>"],
-        ),
-        (
-            &[&format!("--pairs=region=us,secret={word}")],
-            &["--pairs=region=us,secret=<redacted>"],
-        ),
-        // A scheme word hidden as a value still names the word after it.
-        (
-            &[&format!("Authorization=Bearer {word}")],
-            &["Authorization=<redacted>"],
-        ),
-        (
-            &["Authorization=Bearer", word],
-            &["Authorization=<redacted>", HIDDEN],
-        ),
-        (&["--pat", word], &["--pat", HIDDEN]),
-        (&[&format!("--jwt={word}")], &["--jwt=<redacted>"]),
-    ];
+/// One server's arguments, and how a reader is shown them.
+type Case = (Vec<String>, Vec<String>);
 
-    // Every shape that is shown wrong, not only the first, so one run says
+fn case(args: &[&str], expected: &[&str]) -> Case {
+    let owned = |held: &[&str]| held.iter().map(|one| (*one).to_owned()).collect();
+    (owned(args), owned(expected))
+}
+
+/// Every argument a secret is written into, in each place one can go.
+fn secrets() -> Vec<Case> {
+    [
+        written_where_a_key_goes(),
+        in_a_password_holding_what_ends_a_url(),
+        before_an_at_sign_that_is_not_where_a_user_ends(),
+        where_a_cut_could_show_part_of_one(),
+    ]
+    .concat()
+}
+
+#[test]
+fn an_argument_is_shown_as_written_or_hidden_whole_and_never_in_part() {
+    // Every argument that is shown wrong, not only the first, so one run says
     // which of them a rule misses.
-    let wrong: Vec<String> = cases
+    let wrong: Vec<String> = secrets()
         .iter()
-        .filter_map(|(args, expected)| shown_wrong(args, expected))
-        .chain(shown_wrong_where_a_password_holds_what_ends_a_url())
-        .chain(shown_wrong_where_an_at_sign_is_not_where_a_user_ends())
+        .filter_map(|(args, _)| {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let got = shown(&args);
+            let in_part = got.len() != args.len()
+                || got
+                    .iter()
+                    .zip(&args)
+                    .any(|(one, written)| one != written && one != HIDDEN);
+            let leaked = got.iter().any(|one| {
+                [WORD, TOKEN, SHAPED]
+                    .iter()
+                    .any(|secret| one.contains(secret))
+            });
+            (in_part || leaked).then(|| format!("{args:?} showed {got:?}"))
+        })
         .collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-/// How `args` are shown, where that is not `expected` or holds a secret.
-fn shown_wrong(args: &[&str], expected: &[&str]) -> Option<String> {
-    let got = shown(args);
-    let leaked = got
+#[test]
+fn every_place_an_argument_can_carry_a_secret_is_shown_without_it() {
+    let wrong: Vec<String> = secrets()
         .iter()
-        .any(|one| one.contains(WORD) || one.contains(TOKEN));
-    (leaked || got != expected).then(|| format!("{args:?} showed {got:?}, not {expected:?}"))
+        .filter_map(|(args, expected)| {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let got = shown(&args);
+            (&got != expected).then(|| format!("{args:?} showed {got:?}, not {expected:?}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-/// The URL shapes of the test above whose password holds a character that
-/// ends a URL or starts the next pair, each shown wrong.
-fn shown_wrong_where_a_password_holds_what_ends_a_url() -> Vec<String> {
+/// A secret after a flag, a header or a name it is given under, in each way
+/// a command line, a header, JSON, a URL or a connection string writes one.
+fn written_where_a_key_goes() -> Vec<Case> {
     let word = WORD;
-    let cases: [(&[&str], &[&str]); 22] = [
-        // A URL's user is hidden whatever its password holds, a character that
-        // ends a URL or starts the next pair included.
-        (
+    let token = TOKEN;
+    vec![
+        // A flag that names a secret is hidden, and so is the argument after it.
+        case(&["--token", word], &[HIDDEN, HIDDEN]),
+        case(
+            &["--api-key", word, "--port", "8080"],
+            &[HIDDEN, HIDDEN, "--port", "8080"],
+        ),
+        case(&[&format!("--api-key={word}")], &[HIDDEN]),
+        case(&[&format!("API_KEY={word}")], &[HIDDEN]),
+        case(&[&format!("Authorization: Bearer {word}")], &[HIDDEN]),
+        case(&["-H", &format!("X-Api-Key: {word}")], &["-H", HIDDEN]),
+        // A scheme word names the argument after it as well.
+        case(
+            &["--header", "Authorization:", "Bearer", word],
+            &["--header", HIDDEN, HIDDEN, HIDDEN],
+        ),
+        case(
+            &[&format!("https://someone:{word}@mcp.example.test/sse")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!("https://mcp.example.test/sse?key={word}&page=1")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!("https://mcp.example.test/hook#{word}")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!(
+                "--url=https://mcp.example.test/sse?access_token={word}"
+            )],
+            &[HIDDEN],
+        ),
+        case(&[token], &[HIDDEN]),
+        case(
+            &[&format!("https://hooks.example.test/services/{token}")],
+            &[HIDDEN],
+        ),
+        case(
+            &[
+                "-c",
+                &format!("curl -H 'Authorization: Bearer {word}' https://mcp.example.test"),
+            ],
+            &["-c", HIDDEN],
+        ),
+        // A value written as JSON holds its keys as names of its own.
+        case(
+            &[&format!(r#"--config={{"region":"us","apiKey":"{word}"}}"#)],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!(r#"--headers={{"Authorization":"Bearer {word}"}}"#)],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!(r#"--config={{"region":"us","id":"{token}"}}"#)],
+            &[HIDDEN],
+        ),
+        // A URL is one wherever in an argument it starts.
+        case(
+            &[&format!(
+                r#"{{"url":"https://someone:{word}@mcp.example.test/sse"}}"#
+            )],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!("url:https://someone:{word}@mcp.example.test")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!(
+                r#"{{"url":"https://mcp.example.test/sse","apiKey":"{word}"}}"#
+            )],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!("https://someone:{word}/more@mcp.example.test/sse")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!("someone:{word}@db.example.test:5432")],
+            &[HIDDEN],
+        ),
+        // A name inside a name's value, as docker's `--env=NAME=VALUE`.
+        case(&[&format!("--env=DB_PASSWORD={word}")], &[HIDDEN]),
+        // Pairs run together, as a connection string or a query writes them.
+        case(
+            &[&format!("--connection-string=Server=h;Password={word}")],
+            &[HIDDEN],
+        ),
+        case(
+            &[
+                "--connection-string",
+                &format!("Host=h;Username=u;Password={word}"),
+            ],
+            &["--connection-string", HIDDEN],
+        ),
+        case(
+            &[&format!("Server=db;User Id=sa;Password={word}")],
+            &[HIDDEN],
+        ),
+        case(&[&format!("--query=page=1&token={word}")], &[HIDDEN]),
+        case(&[&format!("--pairs=region=us,secret={word}")], &[HIDDEN]),
+        case(&[&format!("Authorization=Bearer {word}")], &[HIDDEN]),
+        case(&["Authorization=Bearer", word], &[HIDDEN, HIDDEN]),
+        case(&["--pat", word], &[HIDDEN, HIDDEN]),
+        case(&[&format!("--jwt={word}")], &[HIDDEN]),
+    ]
+}
+
+/// A URL whose password holds a character that ends a URL or starts the next
+/// pair.
+fn in_a_password_holding_what_ends_a_url() -> Vec<Case> {
+    let word = WORD;
+    vec![
+        case(
             &[&format!("https://someone:pa;{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:pa,{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:pa'{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:12,{word}@mcp.example.test")],
-            &["https://<redacted>@mcp.example.test"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 "--url=https://someone:pa;{word}@mcp.example.test/sse"
             )],
-            &["--url=https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 "--url=https://someone:pa,{word}@mcp.example.test/sse"
             )],
-            &["--url=https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 "--url=https://someone:pa'{word}@mcp.example.test/sse"
             )],
-            &["--url=https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("--url=https://someone:12,{word}@mcp.example.test")],
-            &["--url=https://<redacted>@mcp.example.test"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 r#"{{"url":"https://someone:pa;{word}@mcp.example.test/sse"}}"#
             )],
-            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 r#"{{"url":"https://someone:pa,{word}@mcp.example.test/sse"}}"#
             )],
-            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 r#"{{"url":"https://someone:pa'{word}@mcp.example.test/sse"}}"#
             )],
-            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 r#"{{"url":"https://someone:12,{word}@mcp.example.test"}}"#
             )],
-            &[r#"{"url":"https://<redacted>@mcp.example.test"}"#],
+            &[HIDDEN],
         ),
-        // A quote escaped inside a JSON string does not close it.
-        (
+        case(
             &[&format!(
                 r#"{{"url":"https://someone:pa\"{word}@mcp.example.test/sse"}}"#
             )],
-            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:pa\"{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:pa{{{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:pa|{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:pa<{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:pa\\{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone:pa^{word}@mcp.example.test/sse")],
-            &["https://<redacted>@mcp.example.test/sse"],
+            &[HIDDEN],
         ),
-        // A quote a shell closes only to write a quote goes on with the URL.
-        (
+        // A quote a shell closes only to write a quote.
+        case(
             &[
                 "-c",
                 &format!(r#"curl 'https://someone:pa'"'"'{word}@mcp.example.test/sse'"#),
             ],
-            &["-c", "curl 'https://<redacted>@mcp.example.test/sse'"],
+            &["-c", HIDDEN],
         ),
-        (
+        case(
             &[
                 "-c",
                 &format!(r"curl 'https://someone:pa'\''{word}@mcp.example.test/sse'"),
             ],
-            &["-c", "curl 'https://<redacted>@mcp.example.test/sse'"],
+            &["-c", HIDDEN],
         ),
-        // A `,` after the user still starts the next host.
-        (
+        case(
             &[&format!(
                 "postgres://someone:{word}@db1.example.test,db2.example.test/app"
             )],
-            &["postgres://<redacted>@db1.example.test,db2.example.test/app"],
+            &[HIDDEN],
         ),
-    ];
-
-    cases
-        .iter()
-        .filter_map(|(args, expected)| shown_wrong(args, expected))
-        .collect()
+    ]
 }
 
-/// The shapes of the test above where the last `@` before a URL's host ends,
-/// or a `user:password@host` written with no scheme, is not where its user
-/// ends, each shown wrong.
-fn shown_wrong_where_an_at_sign_is_not_where_a_user_ends() -> Vec<String> {
+/// A pair named for a secret after a URL, its value holding an `@`, and a
+/// `user:password@host` written with no scheme.
+fn before_an_at_sign_that_is_not_where_a_user_ends() -> Vec<Case> {
     let word = WORD;
-    let cases: [(&[&str], &[&str]); 20] = [
-        // A pair named for a secret after a URL with no path, its value
-        // holding an `@`, is a pair rather than the URL's user.
-        (
+    vec![
+        case(
             &[&format!(
                 "jdbc:sqlserver://db.example.test:1433;databaseName=app;user=sa;password=Pa@{word}"
             )],
-            &["jdbc:sqlserver://db.example.test:1433;databaseName=app;user=sa;password=<redacted>"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 "Server=https://h.example.test;Password=abc@{word}"
             )],
-            &["Server=https://h.example.test;Password=<redacted>"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("x=https://h.example.test,token=a@{word}")],
-            &["x=https://h.example.test,token=<redacted>"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 r#"{{"dsn":"Server=https://h.example.test;Password=abc@{word}"}}"#
             )],
-            &[r#"{"dsn":"Server=https://h.example.test;Password=<redacted>"#],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("https://someone@h.example.test;password=a@{word}")],
-            &["https://<redacted>@h.example.test;password=<redacted>"],
+            &[HIDDEN],
         ),
-        // A password written with no scheme is hidden whatever it holds.
-        (
+        case(
             &[&format!("someone:pa;{word}@db.example.test:5432")],
-            &["someone:<redacted>@db.example.test:5432"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("someone:pa,{word}@db.example.test:5432")],
-            &["someone:<redacted>@db.example.test:5432"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("someone:pa&{word}@db.example.test:5432")],
-            &["someone:<redacted>@db.example.test:5432"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("someone:pa={word}@db.example.test:5432")],
-            &["someone:<redacted>@db.example.test:5432"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("someone:{word}:pa@db.example.test:5432")],
-            &["someone:<redacted>@db.example.test:5432"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("someone:pa:{word}@db.example.test:5432")],
-            &["someone:<redacted>@db.example.test:5432"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 "--dsn=someone:pa;{word}@tcp(db.example.test:3306)/app"
             )],
-            &["--dsn=someone:<redacted>@tcp(db.example.test:3306)/app"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 r#"{{"dsn":"someone:pa;{word}@db.example.test:5432"}}"#
             )],
-            &[r#"{"dsn":"someone:<redacted>@db.example.test:5432"}"#],
+            &[HIDDEN],
         ),
-        // And a pair named for a secret before that `@` is still a pair.
-        (
-            &[&format!("someone:sa;password=a@{word}")],
-            &["someone:sa;password=<redacted>"],
-        ),
-        (
-            &[&format!("someone:pa@h;token=a@{word}")],
-            &["someone:<redacted>@h;token=<redacted>"],
-        ),
-        // Where a user ends before that pair, the user is still hidden.
-        (
+        case(&[&format!("someone:sa;password=a@{word}")], &[HIDDEN]),
+        case(&[&format!("someone:pa@h;token=a@{word}")], &[HIDDEN]),
+        case(
             &[&format!(
                 "https://someone:pa,{word}@h.example.test;token=a@b"
             )],
-            &["https://<redacted>@h.example.test;token=<redacted>"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!("someone:pa,{word}@h.example.test;token=a@b")],
-            &["someone:<redacted>@h.example.test;token=<redacted>"],
+            &[HIDDEN],
         ),
-        (
+        case(
             &[&format!(
                 "https://someone:pa,b@h.example.test&token={word},c@d"
             )],
-            &["https://<redacted>@h.example.test&token=<redacted>"],
+            &[HIDDEN],
         ),
-        // What is not a user and a password is shown as it was.
-        (
-            &["git+ssh://git@github.example.test/org/repo.git"],
-            &["git+ssh://<redacted>@github.example.test/org/repo.git"],
-        ),
-        (
-            &[r#"["someone:pa","a@b.example.test"]"#],
-            &[r#"["someone:pa","a@b.example.test"]"#],
-        ),
-    ];
+    ]
+}
 
-    cases
-        .iter()
-        .filter_map(|(args, expected)| shown_wrong(args, expected))
-        .collect()
+/// The shapes where hiding only the part of an argument that is a password
+/// showed some of it: each is hidden whole.
+fn where_a_cut_could_show_part_of_one() -> Vec<Case> {
+    let word = WORD;
+    vec![
+        // A password holding a `:` and then an `@` before a `/`.
+        case(
+            &[&format!("someone:p:a@b/{word}@h.example.test")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!(
+                "--dsn=root:p:a@b/{word}@tcp(h.example.test:3306)/app"
+            )],
+            &[HIDDEN],
+        ),
+        case(&[&format!("'someone::.@'{word}@[::1]:5432;x'")], &[HIDDEN]),
+        // A URL password holding a pair named for a secret.
+        case(
+            &[&format!(
+                "https://someone:pa;{word};password=x@h.example.test"
+            )],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!("https://someone:12;{word};token=x@h.example.test")],
+            &[HIDDEN],
+        ),
+        // A key written with room around it, inside a list, or escaped.
+        case(&[&format!(r#"{{"apiKey" : "{word}"}}"#)], &[HIDDEN]),
+        case(&[&format!("password = {word}")], &[HIDDEN]),
+        case(&[&format!(r#"["--api-key","{word}"]"#)], &[HIDDEN]),
+        case(&[&format!("token%3D{word}")], &[HIDDEN]),
+        // A URL password holding a `/` and then a `;`.
+        case(
+            &[&format!("https://someone:pa/b;{word}@h.example.test/p")],
+            &[HIDDEN],
+        ),
+        // A pair joined to a host by `&`, a quote closed inside a password,
+        // and a query after several hosts.
+        case(
+            &[&format!("https://h.example.test@x&token={word}")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!("sqlserver://h.example.test&token={word}@T")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!("'https://someone:pa'{word}@h.example.test'")],
+            &[HIDDEN],
+        ),
+        case(
+            &[&format!(
+                "mongodb://someone:pa@h1.example.test,h2.example.test/?replicaSet={word}"
+            )],
+            &[HIDDEN],
+        ),
+        // With no `@`, what follows a URL host's `:` and is not a port.
+        case(&[&format!("https://someone:{word}/more")], &[HIDDEN]),
+        // A secret that only its shape gives away.
+        case(&[SHAPED], &[HIDDEN]),
+        case(
+            &[&format!("https://hooks.example.test/services/{SHAPED}")],
+            &[HIDDEN],
+        ),
+    ]
 }
 
 #[test]
@@ -845,18 +899,76 @@ fn an_argument_with_nothing_secret_about_it_is_shown_as_written() {
         "--port=8080",
         "--path=/srv/docs",
         "https://mcp.example.test/sse",
-        "https://registry.example.test/@scope/pkg",
+        "https://mcp.example.test:8443/sse",
+        "http://[::1]:8080/sse",
+        "postgres://db1.example.test,db2.example.test/app",
         "git@github.example.test:org/repo.git",
         "@scope/pkg@1.2.3",
         "/srv/cache/@scope/pkg",
         "--log-level:debug",
         "region:us",
+        "--map=a:b;c",
         "/srv/docs",
+        // A flag whose name says nothing about what follows it.
+        "-p",
+        "8080",
         "--log-level",
         "debug",
     ];
 
     assert_eq!(shown(&plain), plain);
+}
+
+#[test]
+fn an_argument_shaped_like_one_that_holds_a_secret_is_hidden_though_it_holds_none() {
+    // Telling these from the arguments that do hold one is the cut that
+    // showed part of a password, so the shape is enough to hide it whole.
+    let shaped = [
+        "https://registry.example.test/@scope/pkg",
+        "git+ssh://git@github.example.test/org/repo.git",
+        r#"["someone:pa","a@b.example.test"]"#,
+        "--label=team:core,owner=a@b.example.test",
+        "--tokenizer",
+    ];
+
+    assert_eq!(shown(&shaped), [HIDDEN; 5]);
+}
+
+#[test]
+fn an_argument_a_megabyte_long_is_shown_whole_or_hidden_whole() {
+    // Each built from one unit over and over, each a shape a rule above reads:
+    // marks, schemes, at signs, quotes, hosts and runs a token is made of.
+    let units = [
+        ":",
+        "://",
+        "a:@",
+        "@:",
+        "x",
+        "-",
+        "Zq7",
+        "%3D",
+        "a=b;",
+        "\"'",
+        "[::1]:",
+        "h:80/",
+        "https://h/",
+        "--token ",
+        "u:p@h ",
+    ];
+    for unit in units {
+        let arg = unit.repeat((1 << 20) / unit.len());
+        let server = McpServer::read(
+            "docs",
+            &serde_json::json!({"command": "docs-mcp", "args": [arg]}),
+        )
+        .expect("a record with a command");
+        let got = server.shown_args();
+        assert!(
+            got == [arg.as_str()] || got == [HIDDEN],
+            "{unit:?} repeated showed {} bytes",
+            got.iter().map(String::len).sum::<usize>()
+        );
+    }
 }
 
 #[test]

@@ -253,7 +253,16 @@ fn no_secret_a_record_holds_reaches_either_stream() {
     let described = String::from_utf8_lossy(&described.stdout);
     assert!(described.contains("DOCS_TOKEN=<redacted>"), "{described}");
     assert!(
-        described.contains("https://<redacted>@mcp.example.test/sse"),
+        described.contains(
+            "  arguments  <redacted>\n\
+             \x20            <redacted>\n\
+             \x20            <redacted>\n\
+             \x20            -H\n\
+             \x20            <redacted>\n\
+             \x20            <redacted>\n\
+             \x20            <redacted>\n\
+             \x20            <redacted>\n"
+        ),
         "{described}"
     );
 }

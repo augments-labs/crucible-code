@@ -168,49 +168,44 @@ impl McpServer {
         self.args.iter().map(AsRef::as_ref)
     }
 
-    /// What to pass it, as a reader is shown it: each argument with whatever
-    /// could carry a secret replaced by [`HIDDEN`](Self::HIDDEN).
+    /// What to pass it, as a reader is shown it: each argument exactly as
+    /// written, or [`HIDDEN`](Self::HIDDEN) in its place where it could carry a
+    /// secret, and never in part.
     ///
     /// [`args`](Self::args) is what the server is started with and must stay
     /// whole; this is for a list somebody reads, and could paste. A key is
-    /// often given to a server on its command line, so an argument is read for
-    /// the places one goes. Each word is read as the pairs it holds: every
-    /// `name=value` and `name:value`, a value read again for a pair of its own
-    /// (`--env=DB_PASSWORD=...`), pairs run together with `;`, `&` or `,` as a
-    /// connection string or a query writes them, and a JSON object's
-    /// `"key":"value"` like any other pair. Once a pair's name, a flag or a
-    /// header names a secret, the rest of the argument is hidden, and the next
-    /// argument too where what was hidden ends on a scheme word such as
-    /// `Bearer`. A URL, wherever in a word its `scheme://` starts, is shown
-    /// without its user, query and fragment, as `user:password@host` is shown
-    /// without its password. Either password is hidden whatever it holds, up
-    /// to its last `@` before a `/` (for a URL, a `?` or `#` too) or the quote
-    /// that closes a string the user opens, as `"url":"https://...` opens
-    /// one: a `;`, `,` or other character that ends a URL ends one only after
-    /// its user, and a shell's `'"'"'` or `'\''` writes a quote rather than
-    /// closing one. But a pair named for a secret after such a character, as
-    /// in `https://host;password=a@b`, is that pair rather than part of a
-    /// user: the user ends at the last `@` before it, and a URL no later than
-    /// where it starts, so its value is hidden as any pair's is. And a word,
-    /// or a piece of one, shaped like a token is hidden. A value after a flag
-    /// whose name says nothing, as `-p`, is shown. More is hidden than is
-    /// secret, on purpose: a value shown in error is the one that cannot be
-    /// taken back.
+    /// often given to a server on its command line, and a password inside an
+    /// argument can hold any character that would end it, so a reading that
+    /// hides only the password shows the rest of it wherever that reading is
+    /// wrong. An argument is hidden whole instead where:
+    ///
+    /// - a word in it, a run of letters, digits, `-` and `_`, is a name a
+    ///   secret is given under, as in `--api-key=...`, a connection string's
+    ///   `Password=...`, JSON's `"apiKey"` or a query's `?token=...`;
+    /// - it holds an `@` after a `:`, as `user:password@host` and a URL with a
+    ///   user do;
+    /// - it holds a `?` or `#` after a URL's `://`, or a URL whose host is
+    ///   followed by a `:` and anything but a port number;
+    /// - a run of it is shaped like a token;
+    /// - or the argument before it ends naming it, as `--api-key`,
+    ///   `Authorization:` and `Bearer` do.
+    ///
+    /// A value after a flag whose name says nothing, as `-p`, is shown. More is
+    /// hidden than is secret, on purpose: a value shown in error is the one
+    /// that cannot be taken back.
     #[must_use]
     pub fn shown_args(&self) -> Vec<String> {
-        let mut withheld = false;
+        let mut named = false;
         self.args
             .iter()
             .map(|arg| {
-                if withheld {
-                    // A scheme word is still the name of what comes after it,
-                    // as `Authorization:`, `Bearer`, then the token.
-                    withheld = names_next(arg);
-                    return HIDDEN.to_owned();
+                let hidden = named || credential(arg);
+                named = names_next(arg);
+                if hidden {
+                    HIDDEN.to_owned()
+                } else {
+                    arg.to_string()
                 }
-                let (shown, naming) = spoken(arg);
-                withheld = naming;
-                shown
             })
             .collect()
     }
@@ -334,372 +329,95 @@ fn seconds(record: &Value, key: &str, usual: u64) -> Duration {
     Duration::from_secs(record.get(key).and_then(whole).unwrap_or(usual))
 }
 
-/// One argument as a reader is shown it, and whether it ends on the name of a
-/// secret, so the next argument is that secret's value.
-///
-/// An argument a shell will split, as `sh -c '...'` is given, is read word by
-/// word, and once a word names a secret the rest of the argument is its value.
-/// What was hidden says whether the next argument is a value too: where it
-/// ends on a scheme word, as `Authorization=Bearer` does, the token is next.
-fn spoken(arg: &str) -> (String, bool) {
-    let mut shown = String::with_capacity(arg.len());
-    let mut naming = false;
-    let mut at = 0;
-    for piece in arg.split_inclusive(char::is_whitespace) {
-        let word = piece.trim_end();
-        let gap = piece.get(word.len()..).unwrap_or_default();
-        let start = at;
-        at += piece.len();
-        if word.is_empty() {
-            shown.push_str(gap);
-            continue;
-        }
-        if naming {
-            shown.push_str(HIDDEN);
-            return (shown, names_next(arg.get(start..).unwrap_or_default()));
-        }
-        let (said, value) = worded(word);
-        shown.push_str(&said);
-        match value {
-            Some(value) if !value.is_empty() => {
-                shown.push_str(HIDDEN);
-                let from = start + word.len().saturating_sub(value.len());
-                return (shown, names_next(arg.get(from..).unwrap_or_default()));
-            }
-            Some(_) => naming = true,
-            None => {}
-        }
-        shown.push_str(gap);
-    }
-    (shown, naming)
+/// Whether an argument could carry a secret, for any of the reasons
+/// [`McpServer::shown_args`] gives, so that it is hidden whole.
+fn credential(arg: &str) -> bool {
+    named(arg) || has_user(arg) || past_host(arg) || shaped(arg)
 }
 
-/// Whether what was hidden ends on a scheme word, so the argument after it is
-/// the credential that scheme names.
-fn names_next(hidden: &str) -> bool {
-    hidden.split_whitespace().last().is_some_and(scheme)
+/// Whether a word in `arg`, a run of letters, digits, `-` and `_`, is a name a
+/// secret is given under, wherever in the argument it is written.
+fn named(arg: &str) -> bool {
+    arg.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_')))
+        .any(secret)
+}
+
+/// Whether `arg` holds an `@` after a `:`: a user and its password, with a
+/// scheme in front or without one, or a URL's user.
+fn has_user(arg: &str) -> bool {
+    arg.find(':')
+        .and_then(|colon| arg.get(colon..))
+        .is_some_and(|after| after.contains('@'))
+}
+
+/// Whether a URL in `arg` says more than where it is: a `?` or `#` anywhere
+/// after the first `://`, or a host that is followed by a `:` and anything but
+/// a port number, as `https://user:password/...` written with no `@` is.
+///
+/// A host runs to the first `/`, `?`, `#`, space, quote or other character a
+/// URL is not written with, or `;` or `,`. Each one ends at a `/` at the
+/// latest, so no host is read twice.
+fn past_host(arg: &str) -> bool {
+    const ENDS: [char; 15] = [
+        '/', '?', '#', '"', '\'', '`', '<', '>', '{', '}', '|', '\\', '^', ';', ',',
+    ];
+    let Some((_, after)) = arg.split_once("://") else {
+        return false;
+    };
+    after.contains(['?', '#'])
+        || arg.match_indices("://").any(|(at, sign)| {
+            let rest = arg.get(at + sign.len()..).unwrap_or_default();
+            let end = rest
+                .find(|c: char| ENDS.contains(&c) || c.is_whitespace())
+                .unwrap_or(rest.len());
+            !hosted(rest.get(..end).unwrap_or_default())
+        })
+}
+
+/// Whether a run of `arg` between the characters a token is not written with
+/// is shaped like one.
+fn shaped(arg: &str) -> bool {
+    arg.split(|c: char| !(c.is_ascii_alphanumeric() || SEPARATORS.contains(&c)))
+        .any(opaque)
+}
+
+/// Whether an argument ends naming the next one as a secret's value: on a
+/// flag named for a secret, as `--api-key`, on a name for one before `=` or
+/// `:`, as `Authorization:`, or on a scheme word, as `Bearer`, which a
+/// credential follows. Read from the last of its words, after the last mark
+/// in it, as `Authorization=Bearer` ends on `Bearer`.
+fn names_next(arg: &str) -> bool {
+    let Some(last) = arg.split_whitespace().last() else {
+        return false;
+    };
+    let (name, marked) = last
+        .strip_suffix(['=', ':'])
+        .map_or((last, false), |name| (name, true));
+    let named = name.rsplit(MARKS).next().unwrap_or(name);
+    scheme(named) || (secret(named) && (marked || unquoted(named).starts_with('-')))
 }
 
 /// What separates one pair in a word from the next, or a name from its value.
 const MARKS: [char; 5] = ['=', ':', ';', '&', ','];
 
-/// One word as a reader is shown it, up to where a secret's value starts if
-/// one does; and then what of the word is that value, empty where the value
-/// is the next word.
-///
-/// A word is read as the pairs it holds: every `name=value` and `name:value`,
-/// a value read again for a pair of its own, as `--env=DB_PASSWORD=...` holds
-/// one, and pairs run together with `;`, `&` or `,`, as a connection string or
-/// a query writes them. A JSON object is read the same way, its `"key":"value"`
-/// a pair like any other. A URL is read as one from its `scheme://`, wherever in
-/// the word that starts.
-fn worded(word: &str) -> (String, Option<&str>) {
-    let mut shown = String::with_capacity(word.len());
-    let mut at = 0;
-    while let Some(rest) = word.get(at..).filter(|rest| !rest.is_empty()) {
-        let (start, end) = url(rest).unwrap_or((rest.len(), rest.len()));
-        let text = rest.get(..start).unwrap_or_default();
-        if let Some(cut) = paired(text, start == rest.len(), &mut shown) {
-            return (shown, word.get(at + cut..));
-        }
-        if let Some(found) = rest.get(start..end).filter(|found| !found.is_empty()) {
-            shown.push_str(&located(found));
-        }
-        at += end;
-    }
-    (shown, None)
-}
-
-/// The pairs in `text`, a word or the part of one before a URL, written to
-/// `shown`; and, where a pair's name is a secret's, how far into `text` its
-/// value starts.
-///
-/// `last` is whether `text` ends the word, where a flag or a scheme word on
-/// its own names whatever comes after it.
-fn paired(text: &str, last: bool, shown: &mut String) -> Option<usize> {
-    let mut reached = [None; 3];
-    let mut at = 0;
-    while let Some(rest) = text.get(at..)
-        && let Some(found) = rest.find(MARKS)
-    {
-        let (piece, marked) = rest.split_at(found);
-        let (mark, _) = marked.split_at(1);
-        if matches!(mark, "=" | ":") && secret(piece) {
-            shown.push_str(piece);
-            shown.push_str(mark);
-            return Some(at + found + 1);
-        }
-        shown.push_str(&token(piece));
-        shown.push_str(mark);
-        at += found + 1;
-        // `user:password@host`, with no scheme in front to say it is a URL.
-        if mark == ":"
-            && let Some(sign) = user(text, at, piece, &mut reached)
-        {
-            shown.push_str(HIDDEN);
-            at = sign;
-        }
-    }
-    let tail = text.get(at..).unwrap_or_default();
-    let bare = unquoted(tail);
-    if last && ((bare.starts_with('-') && secret(bare)) || scheme(bare)) {
-        shown.push_str(tail);
-        return Some(text.len());
-    }
-    shown.push_str(&token(tail));
-    None
-}
-
-/// How far a `user:password@host` written with no scheme runs, read from just
-/// after one `:`: where its reading stopped, and the `@` that ends its user,
-/// if it has one there. Kept for each quote a user can be opened with, so the
-/// `:` after it is read without reading the text again.
-#[derive(Clone, Copy)]
-struct Reached {
-    end: usize,
-    sign: Option<usize>,
-}
-
-/// Where in `text` the user ends that is written before the `:` just before
-/// `from`, with `piece` the text before that `:`: the `@` its password is
-/// hidden up to, or `None` where nothing after it reads as a user.
-///
-/// The password runs to the last `@` before a `/` or the quote that closes the
-/// string the user opens, whatever it holds; but a pair named for a secret is
-/// a pair rather than part of a password, so the password runs only to the
-/// last `@` before the first such pair, and [`paired`] hides that pair's value
-/// as any other. A password that runs only to the next mark is hidden either
-/// way, as it was before it could run further.
-fn user(text: &str, from: usize, piece: &str, reached: &mut [Option<Reached>; 3]) -> Option<usize> {
-    let after = text.get(from..).unwrap_or_default();
-    let near = after
-        .find(MARKS)
-        .map_or(after, |end| after.get(..end).unwrap_or_default())
-        .rfind('@')
-        .map(|sign| from + sign);
-    let opened = piece
-        .trim_start_matches(['{', '['])
-        .chars()
-        .next()
-        .filter(|c| matches!(c, '"' | '\''));
-    let slot = match opened {
-        None => 0,
-        Some('"') => 1,
-        Some(_) => 2,
-    };
-    // Every `:` up to where a reading stopped stops it in the same place, so
-    // one reading answers all of them and a long word is read once. One past
-    // the pair named for a secret that bounded the reading, which `paired`
-    // stops at, takes no `@` from it, only the next mark's.
-    let known = reached
-        .get(slot)
-        .copied()
-        .flatten()
-        .filter(|known| from <= known.end);
-    let far = known.unwrap_or_else(|| {
-        let end = reach(after, opened, |c| c == '/');
-        let value = after.get(..end).unwrap_or_default();
-        let sign = value
-            .get(..secret_pair(value).unwrap_or(value.len()))
-            .and_then(|user| user.rfind('@'))
-            .map(|sign| from + sign);
-        let found = Reached {
-            end: from + end,
-            sign,
-        };
-        if let Some(held) = reached.get_mut(slot) {
-            *held = Some(found);
-        }
-        found
-    });
-    far.sign.filter(|sign| *sign >= from).max(near)
-}
-
-/// Where in `text` the first pair starts whose name is a secret's, read as
-/// [`paired`] reads one: a name before `=` or `:`, from the mark before it.
-fn secret_pair(text: &str) -> Option<usize> {
-    let mut at = 0;
-    for piece in text.split_inclusive(MARKS) {
-        if piece.strip_suffix(['=', ':']).is_some_and(secret) {
-            return Some(at);
-        }
-        at += piece.len();
-    }
-    None
-}
-
-/// A piece of a word with what is shaped like a token in it hidden, looked at
-/// without the quotes and brackets a shell or JSON writes around it.
-fn token(piece: &str) -> String {
-    let core = piece.trim_matches(['"', '\'', '{', '}', '[', ']']);
-    match piece.split_once(core) {
-        Some((before, after)) if opaque(core) => format!("{before}{HIDDEN}{after}"),
-        _ => piece.to_owned(),
-    }
-}
-
-/// Where the first URL in `text` starts and ends: from its scheme, wherever in
-/// the text that begins, to the first character a URL is not written with
-/// unescaped, or a `;` or `,` that starts the next pair.
-///
-/// Those ends are looked for only after the user part, so a password holding
-/// one is hidden whole rather than cut where it falls. The user part runs to
-/// the last `@` before the authority ends: at a `/`, `?`, `#`, or the quote
-/// that closes the string the URL opens, as `"url":"https://...` opens one.
-/// Where that runs on into a later `@`, more is hidden than the user.
-///
-/// But a pair named for a secret after the first of those ends, as
-/// `https://host;password=a@b` writes one, is a pair and not part of a user:
-/// the user runs only to the last `@` before that pair, and the URL ends no
-/// later than where the pair starts, so [`paired`] hides its value. A
-/// password that itself holds such a pair is read as the pairs it holds, so
-/// what of it comes before that pair can be shown.
-///
-/// `None` where `text` holds no URL.
-fn url(text: &str) -> Option<(usize, usize)> {
-    const ENDS: [char; 12] = ['"', '\'', '`', '<', '>', '{', '}', '|', '\\', '^', ';', ','];
-    let mut from = 0;
-    loop {
-        let found = from + text.get(from..)?.find("://")?;
-        let head = text.get(..found).unwrap_or_default();
-        let run = head
-            .char_indices()
-            .rev()
-            .take_while(|(_, c)| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
-            .last()
-            .map_or(found, |(at, _)| at);
-        let letter = head
-            .get(run..)
-            .and_then(|scheme| scheme.find(|c: char| c.is_ascii_alphabetic()));
-        let after = found + "://".len();
-        if let Some(letter) = letter {
-            let start = run + letter;
-            let opened = text
-                .get(..start)
-                .and_then(|head| head.chars().next_back())
-                .filter(|c| matches!(c, '"' | '\''));
-            let rest = text.get(after..).unwrap_or_default();
-            let reach = authority(rest, opened);
-            let pair = rest
-                .find(ENDS)
-                .filter(|first| *first < reach)
-                .and_then(|first| {
-                    rest.get(first..reach)
-                        .and_then(secret_pair)
-                        .map(|pair| first + pair)
-                });
-            let user = rest
-                .get(..pair.unwrap_or(reach))
-                .and_then(|authority| authority.rfind('@'))
-                .map_or(0, |sign| sign + 1);
-            let end = rest
-                .get(user..)
-                .and_then(|host| host.find(ENDS))
-                .map(|end| user + end)
-                .into_iter()
-                .chain(pair)
-                .min()
-                .map_or(text.len(), |end| after + end);
-            return Some((start, end));
-        }
-        from = after;
-    }
-}
-
-/// How far into what follows a URL's `://` its authority runs: to the first
-/// `/`, `?`, `#` or whitespace, or to `opened`, the quote the URL's string was
-/// opened with, where it is not escaped.
-///
-/// A quote next to another quote, or before a backslash, closes nothing: that
-/// is a shell writing a quote into the string, as `'"'"'` and `'\''` do.
-/// Where the quote that does close the string sits beside a quote or a
-/// backslash, as in `"https://h.test'"` or after an escaped `\"`, the
-/// authority runs on to the next key's quote, and more is hidden.
-fn authority(rest: &str, opened: Option<char>) -> usize {
-    reach(rest, opened, |c| matches!(c, '/' | '?' | '#'))
-}
-
-/// How far into `rest` a part of a word runs that one of `ends`, whitespace,
-/// or `opened` where it closes, as [`authority`] says, ends.
-fn reach(rest: &str, opened: Option<char>, ends: impl Fn(char) -> bool) -> usize {
-    let quote = |c: &char| matches!(c, '"' | '\'');
-    let mut escaped = false;
-    let mut before = None;
-    let mut chars = rest.char_indices().peekable();
-    while let Some((at, c)) = chars.next() {
-        let closes = !escaped
-            && Some(c) == opened
-            && !before.as_ref().is_some_and(quote)
-            && !chars
-                .peek()
-                .is_some_and(|(_, next)| quote(next) || *next == '\\');
-        if ends(c) || c.is_whitespace() || closes {
-            return at;
-        }
-        escaped = c == '\\' && !escaped;
-        before = Some(c);
-    }
-    rest.len()
-}
-
-/// A URL as a reader is shown it: scheme, host and path, with the user, the
-/// query and the fragment hidden, and any path segment shaped like a token.
-///
-/// A user part is the one before the last `@` of the host; one holding a `/`
-/// runs past where the host would end, and is told by what comes before that
-/// `/` being no host and port.
-fn located(url: &str) -> String {
-    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
-    let (rest, fragment) = rest
-        .split_once('#')
-        .map_or((rest, None), |(rest, fragment)| (rest, Some(fragment)));
-    let (rest, query) = rest
-        .split_once('?')
-        .map_or((rest, None), |(rest, query)| (rest, Some(query)));
-    let authority = rest
-        .split_once('/')
-        .map_or(rest, |(authority, _)| authority);
-    let hosted = hosted(authority);
-    let user = authority
-        .rfind('@')
-        .or_else(|| if hosted { None } else { rest.rfind('@') });
-
-    let mut shown = format!("{scheme}://");
-    let after = match user {
-        Some(sign) => {
-            shown.push_str(HIDDEN);
-            shown.push('@');
-            rest.get(sign + 1..).unwrap_or_default()
-        }
-        None if hosted => rest,
-        None => {
-            shown.push_str(HIDDEN);
-            rest.get(authority.len()..).unwrap_or_default()
-        }
-    };
-    let (host, path) = after.find('/').map_or((after, ""), |at| after.split_at(at));
-    shown.push_str(host);
-    let segments: Vec<&str> = path
-        .split('/')
-        .map(|segment| if opaque(segment) { HIDDEN } else { segment })
-        .collect();
-    shown.push_str(&segments.join("/"));
-    for (mark, part) in [('?', query), ('#', fragment)] {
-        if part.is_some() {
-            shown.push(mark);
-            shown.push_str(HIDDEN);
-        }
-    }
-    shown
-}
-
-/// Whether a URL's authority is a host, with a port where it has one: what
-/// follows its last `:` is digits, or it is a bracketed address.
+/// Whether a URL's host, with what follows it up to its path, is a host alone
+/// or a host and a port: nothing after it, or a `:` and digits. A host
+/// written as a bracketed address is read from its closing bracket.
 fn hosted(authority: &str) -> bool {
-    authority.ends_with(']')
-        || authority
-            .rsplit_once(':')
-            .is_none_or(|(_, port)| port.chars().all(|c| c.is_ascii_digit()))
+    let after = match authority.strip_prefix('[') {
+        Some(inner) => inner.split_once(']').map(|(_, after)| after),
+        None => Some(
+            authority
+                .find(':')
+                .map_or("", |colon| authority.get(colon..).unwrap_or_default()),
+        ),
+    };
+    after.is_some_and(|after| {
+        after.is_empty()
+            || after
+                .strip_prefix(':')
+                .is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
+    })
 }
 
 /// Whether a name is one a secret is given under: a flag, a variable, a
@@ -737,13 +455,15 @@ fn scheme(word: &str) -> bool {
         .any(|scheme| unquoted(word).eq_ignore_ascii_case(scheme))
 }
 
+/// What a token is written with besides letters and digits.
+const SEPARATORS: [char; 6] = ['-', '_', '.', '~', '+', '='];
+
 /// Whether a word is shaped like a token: letters and digits run together,
 /// long enough that nobody typed it as a word.
 ///
 /// A path, a package name and a version are not: each holds a character a
 /// token is not written with, or no run of letters and digits long enough.
 fn opaque(word: &str) -> bool {
-    const SEPARATORS: [char; 6] = ['-', '_', '.', '~', '+', '='];
     let mixed = |part: &str| {
         part.chars().any(|c| c.is_ascii_digit()) && part.chars().any(|c| c.is_ascii_alphabetic())
     };

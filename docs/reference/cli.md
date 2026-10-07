@@ -191,27 +191,27 @@ how often it is restarted and whether a run that names it fails without it.
 Nothing is started for this either. A secret is left out wherever crucible can
 tell a record holds one: a variable set under `env` is shown by its name with
 `<redacted>` for its value, a variable under `envFrom` by its name and the one
-it is taken from, and an argument is shown with `<redacted>` wherever a key
-could be. That is everything after a flag, a header or a name before `=` or
-`:` that names a key, to the end of the argument, and the next argument too
-when what was hidden ends on a word such as `Bearer`. Every such name in an
-argument counts, including one inside a value (`--env=DB_PASSWORD=…`), one in
-pairs run together with `;`, `&` or `,` as a connection string writes them,
-and a key in a JSON object. It is also a URL's user and its query and
-fragment, wherever in the argument the URL starts; the password in
-`user:password@host`; and a word shaped like a token. Either password is
-hidden whatever it holds short of a `/` (for a URL, a `?` or `#` too), a space
-or the quote that closes its string, except what reads as another pair naming
-a key, as `;password=` does: that pair's value is hidden, and what of the
-password comes before it can be shown. A value after a flag whose name says
-nothing about it, such as `-p`, is shown. More is hidden than is secret, on
-purpose.
+it is taken from, and each argument is shown exactly as written or as
+`<redacted>` in its place, never in part. An argument is hidden when a word in
+it, a run of letters, digits, `-` and `_` in any case, holds `token`, `key`,
+`secret`, `pass`, `pwd`, `auth`, `bearer`, `credential`, `cookie`, `session`,
+`private`, `signature` or `jwt`, or has `pat` as a part of its own
+(`--api-key=…`, `Password=…`, `"apiKey"`, `?token=…`). It is hidden when it
+holds an `@` anywhere after a `:`, as `user:password@host` and a URL with a
+user do; when a URL in it has a `?` or `#` after its `://`, or a `:` after its
+host followed by anything but a port number; and when a run of it is shaped
+like a token. The argument after one that ends on a flag naming a key
+(`--api-key`), on such a name followed by `=` or `:` (`Authorization:`), or on
+`Bearer`, `Basic` or `Token` is hidden too. A value after a flag whose name
+says nothing about it, such as `-p`, is shown. More is hidden than is secret,
+on purpose: `https://registry.example.test/@scope/pkg` and `--tokenizer` are
+hidden although neither holds one.
 
 ```
   command    docs-mcp
-  arguments  --token
+  arguments  <redacted>
              <redacted>
-             --url=https://<redacted>@mcp.example.test/sse?<redacted>
+             https://mcp.example.test/sse
   env        DOCS_TOKEN=<redacted>
   envFrom    DOCS_KEY from EXAMPLE_DOCS_KEY
 ```

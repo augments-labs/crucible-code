@@ -60,9 +60,9 @@ fn one_server_is_described_whole_with_every_secret_left_out() {
     assert!(said.starts_with("docs, written down in "), "{said}");
     for line in [
         "  command    docs-mcp\n",
-        "  arguments  --token\n",
+        "  arguments  <redacted>\n",
         "             <redacted>\n",
-        "             --url=https://<redacted>@mcp.example.test/sse?<redacted>\n",
+        "             <redacted>\n",
         "             --catalogue\n",
         "             public\n",
         "  env        DOCS_LOCALE=<redacted>\n",
