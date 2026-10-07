@@ -492,7 +492,7 @@ fn a_checksum_listed_in_binary_mode_and_upper_case_is_accepted() {
 }
 
 #[test]
-fn members_named_by_long_name_and_pax_records_are_staged_under_those_names() {
+fn members_named_by_long_name_and_pax_records_are_refused() {
     let install = Install::new("extended-names");
     let stem = stem(NEXT);
     let archive = Archive::new()
@@ -502,16 +502,7 @@ fn members_named_by_long_name_and_pax_records_are_staged_under_those_names() {
         .entry(b"truncated-name", EntryType::Regular, HELPER, None)
         .gzip();
 
-    let staged = install.stage(&archive).expect("a staged unit");
-
-    assert_eq!(
-        fs::read(staged.path().join(CRUCIBLE)).expect("crucible"),
-        EXECUTABLE
-    );
-    assert_eq!(
-        fs::read(staged.path().join(BROKER)).expect("the broker"),
-        HELPER
-    );
+    refused_as_unexpected(&install, &archive);
 }
 
 #[test]
@@ -618,31 +609,25 @@ fn an_absolute_member_is_refused() {
 }
 
 #[test]
-fn a_member_whose_long_name_climbs_out_is_refused_by_that_name() {
+fn a_member_whose_long_name_climbs_out_is_refused() {
     let install = Install::new("long-name-climbs");
     let archive = Archive::release(true)
         .long_name(format!("{}/../../escape", stem(NEXT)).as_bytes())
         .file("README.md", b"")
         .gzip();
 
-    assert!(matches!(
-        refused(install.stage(&archive)),
-        StageError::Unexpected
-    ));
+    refused_as_unexpected(&install, &archive);
 }
 
 #[test]
-fn a_member_whose_pax_path_climbs_out_is_refused_by_that_path() {
+fn a_member_whose_pax_path_climbs_out_is_refused() {
     let install = Install::new("pax-climbs");
     let archive = Archive::release(true)
         .pax(&[("path", b"../escape")])
         .file("README.md", b"")
         .gzip();
 
-    assert!(matches!(
-        refused(install.stage(&archive)),
-        StageError::Unexpected
-    ));
+    refused_as_unexpected(&install, &archive);
 }
 
 #[test]
@@ -768,7 +753,7 @@ fn a_document_larger_than_a_release_holds_is_refused() {
 }
 
 #[test]
-fn an_extension_header_larger_than_the_ceiling_is_refused() {
+fn a_long_name_larger_than_a_release_holds_is_refused() {
     let install = Install::new("large-extension");
     let name = vec![b'a'; 70 * 1024];
     let archive = Archive::release(true)
@@ -776,12 +761,7 @@ fn an_extension_header_larger_than_the_ceiling_is_refused() {
         .file("README.md", b"")
         .gzip();
 
-    assert!(matches!(
-        refused(install.stage(&archive)),
-        StageError::TooLarge {
-            part: StagePart::Member
-        }
-    ));
+    refused_as_unexpected(&install, &archive);
 }
 
 #[test]
@@ -953,10 +933,7 @@ fn a_member_whose_extended_header_gives_it_another_size_is_refused() {
         .file(CRUCIBLE, EXECUTABLE)
         .gzip();
 
-    assert!(matches!(
-        refused(install.stage(&archive)),
-        StageError::Ambiguous
-    ));
+    refused_as_unexpected(&install, &archive);
 }
 
 #[test]
@@ -968,10 +945,7 @@ fn a_member_whose_extended_header_makes_it_sparse_is_refused() {
         .file(CRUCIBLE, EXECUTABLE)
         .gzip();
 
-    assert!(matches!(
-        refused(install.stage(&archive)),
-        StageError::Special
-    ));
+    refused_as_unexpected(&install, &archive);
 }
 
 #[test]
@@ -984,11 +958,7 @@ fn a_member_whose_extended_header_gives_a_key_twice_is_refused() {
         .file(CRUCIBLE, EXECUTABLE)
         .gzip();
 
-    assert!(matches!(
-        refused(install.stage(&archive)),
-        StageError::Ambiguous
-    ));
-    assert_eq!(names(&install.releases()), [ACTIVE]);
+    refused_as_unexpected(&install, &archive);
 }
 
 #[test]
@@ -1002,11 +972,7 @@ fn a_member_whose_extended_header_names_it_otherwise_is_refused() {
         .entry(b"truncated-name", EntryType::Regular, EXECUTABLE, None)
         .gzip();
 
-    assert!(matches!(
-        refused(install.stage(&archive)),
-        StageError::Ambiguous
-    ));
-    assert_eq!(names(&install.releases()), [ACTIVE]);
+    refused_as_unexpected(&install, &archive);
 }
 
 // Headers no release writes, which other archivers read otherwise.
@@ -1125,6 +1091,87 @@ fn a_size_written_in_base_256_is_refused() {
         let archive = release_with_crucible(|block| overwrite(block, 124..136, &size));
 
         refused_as_unexpected(&install, &archive);
+    }
+}
+
+#[test]
+fn an_extended_header_before_crucible_is_refused() {
+    let install = Install::new("pax-before-crucible");
+    let path = format!("{}/{CRUCIBLE}", stem(NEXT));
+    let archive = Archive::new()
+        .directory("")
+        .pax(&[("path", path.as_bytes())])
+        .file(CRUCIBLE, EXECUTABLE)
+        .gzip();
+
+    refused_as_unexpected(&install, &archive);
+}
+
+#[test]
+fn a_long_name_naming_crucible_is_refused() {
+    let install = Install::new("long-name-crucible");
+    let archive = Archive::new()
+        .directory("")
+        .long_name(format!("{}/{CRUCIBLE}", stem(NEXT)).as_bytes())
+        .entry(b"truncated-name", EntryType::Regular, EXECUTABLE, None)
+        .gzip();
+
+    refused_as_unexpected(&install, &archive);
+}
+
+/// Asserts that a release whose `crucible` has each of `sizes`, every one
+/// of which this reader takes as the member's length, is refused.
+fn refused_with_sizes(name: &str, sizes: &[&[u8; 12]]) {
+    for size in sizes {
+        let install = Install::new(name);
+        let archive = release_with_crucible(|block| overwrite(block, 124..136, *size));
+
+        refused_as_unexpected(&install, &archive);
+    }
+}
+
+#[test]
+fn a_size_led_by_a_space_is_refused() {
+    refused_with_sizes("size-space", &[b" 0000000053\0", b"  000000053\0"]);
+}
+
+#[test]
+fn a_size_led_by_a_sign_is_refused() {
+    refused_with_sizes("size-sign", &[b"+0000000053\0"]);
+}
+
+#[test]
+fn a_size_with_other_whitespace_is_refused() {
+    refused_with_sizes(
+        "size-whitespace",
+        &[
+            b"\t0000000053\0",
+            b"\x0b0000000053\0",
+            b"\n0000000053\0",
+            b"\r0000000053\0",
+            b"\x0c0000000053\0",
+            b"0000000053\t\0",
+        ],
+    );
+}
+
+#[test]
+fn a_size_with_a_non_octal_digit_is_refused() {
+    refused_with_sizes("size-digit", &[b"0000000053\08", b"000000053\099"]);
+}
+
+#[test]
+fn a_size_ended_by_spaces_or_nuls_is_staged() {
+    for size in [b"0000000053 \0", b"0000000053  ", b"000000053\0\0\0"] {
+        let install = Install::new("size-terminators");
+        let archive = release_with_crucible(|block| overwrite(block, 124..136, size));
+
+        let staged = install.stage(&archive).expect("a staged unit");
+
+        assert_eq!(
+            fs::read(staged.path().join(CRUCIBLE)).expect("crucible"),
+            EXECUTABLE
+        );
     }
 }
 

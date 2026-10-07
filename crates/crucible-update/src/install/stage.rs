@@ -11,21 +11,22 @@
 //! The copy is read twice, each time as one gzip member decompressed to its
 //! end, so its checksum is checked, and a byte after that member is refused,
 //! since a reader that decodes every member would go on to read it. The first
-//! pass reads each header as it is written, before any long name or extended
-//! header is applied, and holds it to what a release writes, since a header
-//! outside that is one another archiver may read otherwise: exactly ustar or
-//! exactly GNU, its size in octal, a file or a directory with no link name, a
-//! long name, or an extended header whose records are only `path` and a
-//! decimal `size`, each given once. It refuses everything else, a link, a
-//! device, a pipe, a sparse file and a long link name among them, and any
-//! header larger than a release holds, so the second pass, which applies them,
-//! only ever holds a bounded one in memory. The second pass takes each member
-//! by its full name, byte for byte, and only a member a release ships: its own
-//! directory, `crucible`, the broker and the documents beside them. A name that
-//! climbs out, an absolute name, another release's names, a member given twice
-//! and a member whose headers describe it in two ways (two sizes or two names)
-//! are refused rather than resolved, since two archivers could resolve them
-//! differently. Only the executables are written, each hashed as it is
+//! pass reads each header as it is written and holds it to what a release
+//! writes, since a header outside that is one another archiver may read
+//! otherwise: exactly ustar or exactly GNU, its size strict octal (digits, then
+//! only NUL or space to the end of the field), and a file or a directory with
+//! no link name. It refuses everything else, a link, a device, a pipe, a
+//! sparse file, a long name, a long link name and an extended header, global
+//! or not, among them, and any member larger than a release holds. So every
+//! member is named and sized by its own header alone, and a release member's
+//! name must fit in that header: the ustar name and prefix, or a GNU header's
+//! name. The second pass takes each member by its full name, byte for byte,
+//! and only a member a release ships: its own directory, `crucible`, the
+//! broker and the documents beside them. A name that climbs out, an absolute
+//! name, another release's names and a member given twice are refused rather
+//! than resolved, since two archivers could resolve them differently, as is a
+//! member this reader sizes other than its header does, so both passes walk
+//! the same headers. Only the executables are written, each hashed as it is
 //! written, and the receipt that names them is read back before the unit is
 //! called staged.
 //!
@@ -39,7 +40,6 @@
 //! other release are never opened for writing.
 
 use std::cell::Cell;
-use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{BuildHasher as _, Hasher as _, RandomState};
@@ -68,22 +68,6 @@ const ARCHIVE: &str = "archive";
 /// The documents a release ships beside its executables, which are read past
 /// and not staged.
 const DOCUMENTS: [&str; 4] = ["README.md", "LICENSE", "install.sh", "uninstall.sh"];
-
-/// What the PAX records of a sparse file open with; a sparse file is one this
-/// reader and the installer's `tar` would unpack differently.
-const SPARSE: &[u8] = b"GNU.sparse.";
-
-/// The PAX record that names a member.
-const PATH: &[u8] = b"path";
-
-/// The PAX record that sizes a member.
-const SIZE: &[u8] = b"size";
-
-/// The PAX records a member may carry: those this reader applies as the
-/// installer's `tar` does and holds to the member's other headers, a `size`
-/// to the header's and a `path` to the long name. A release carries none; an
-/// archiver writes them only for a name or size a header cannot hold.
-const RECORDS: [&[u8]; 2] = [PATH, SIZE];
 
 /// A release unit staged and verified beside the active one, not yet
 /// activated.
@@ -122,8 +106,8 @@ pub enum StageError {
     /// The archive is not a readable gzip-compressed tar.
     #[error("the release archive is not a readable gzip-compressed tar")]
     Corrupt(#[source] io::Error),
-    /// A member's headers describe it in two ways: two sizes, two names, or
-    /// one extended record given twice.
+    /// A member's headers describe it in two ways: this reader sizes it other
+    /// than its header does.
     #[error("the release archive describes a member in two ways")]
     Ambiguous,
     /// A member is a symbolic or a hard link.
@@ -199,9 +183,7 @@ struct Limits {
     executable: u64,
     /// The most any other file member may hold.
     document: u64,
-    /// The most a long-name or extended header may hold.
-    extension: u64,
-    /// The most headers the archive may hold, extension headers included.
+    /// The most headers the archive may hold.
     entries: usize,
     /// The most the archive may hold, decompressed.
     unpacked: u64,
@@ -214,7 +196,6 @@ impl Limits {
         archive: 512 * 1024 * 1024,
         executable: EXECUTABLE_CEILING,
         document: 1024 * 1024,
-        extension: 64 * 1024,
         entries: 64,
         unpacked: 2 * EXECUTABLE_CEILING + 16 * 1024 * 1024,
     };
@@ -510,30 +491,31 @@ fn copied(from: &Path, to: &Path, expected: Digest, limits: &Limits) -> Result<F
     Ok(copy)
 }
 
-/// Reads every header of the archive as it is written, refusing what no
-/// release holds and any header larger than one does, before a second pass
-/// lets the archive reader apply them.
+/// Reads every header of the archive as it is written, before the second
+/// pass reads it, refusing every header a release does not write, a long name
+/// and an extended header among them, and any member larger than a release
+/// holds.
 fn survey(archive: &File, limits: &Limits) -> Result<(), StageError> {
     let exceeded = Cell::new(false);
     let mut tar = contents(archive, limits, &exceeded);
     let entries = tar.entries().map_err(unreadable(&exceeded))?.raw(true);
     for (count, entry) in entries.enumerate() {
-        let mut entry = entry.map_err(unreadable(&exceeded))?;
+        let entry = entry.map_err(unreadable(&exceeded))?;
         if count >= limits.entries {
             return Err(StageError::TooLarge {
                 part: StagePart::Contents,
             });
         }
         let header = entry.header();
-        let kind = header.entry_type();
-        let ceiling = match kind {
+        let ceiling = match header.entry_type() {
             _ if !written(header) => return Err(StageError::Unexpected),
             EntryType::Regular | EntryType::Directory if header.link_name_bytes().is_some() => {
                 return Err(StageError::Unexpected);
             }
             EntryType::Regular | EntryType::Directory => limits.executable,
-            EntryType::GNULongName | EntryType::XHeader => limits.extension,
-            EntryType::GNULongLink => return Err(StageError::Unexpected),
+            EntryType::GNULongName | EntryType::XHeader | EntryType::GNULongLink => {
+                return Err(StageError::Unexpected);
+            }
             EntryType::Symlink | EntryType::Link => return Err(StageError::Link),
             _ => return Err(StageError::Special),
         };
@@ -542,9 +524,6 @@ fn survey(archive: &File, limits: &Limits) -> Result<(), StageError> {
                 part: StagePart::Member,
             });
         }
-        if kind == EntryType::XHeader {
-            extended(&mut entry)?;
-        }
     }
     ended(tar, &exceeded)
 }
@@ -552,15 +531,25 @@ fn survey(archive: &File, limits: &Limits) -> Result<(), StageError> {
 /// Whether `header` is written as a release writes one: exactly ustar or
 /// exactly GNU, which every archiver reads alike, where an old header or
 /// another version leaves a reader to guess whether its name has a prefix;
-/// and with its size in octal, since this reader takes a base-256 size
-/// without its sign.
+/// and with its size in strict octal.
 fn written(header: &tar::Header) -> bool {
-    let octal = header
-        .as_old()
-        .size
-        .first()
-        .is_some_and(|byte| byte & 0x80 == 0);
-    (header.as_ustar().is_some() || header.as_gnu().is_some()) && octal
+    (header.as_ustar().is_some() || header.as_gnu().is_some()) && octal(&header.as_old().size)
+}
+
+/// Whether `field` holds a number as every archiver writes one: one or more
+/// octal digits, then only NUL or space to its end. This reader also takes a
+/// leading sign, whitespace around the digits, any bytes after a NUL and a
+/// base-256 number, which other readers take otherwise or refuse.
+fn octal(field: &[u8]) -> bool {
+    let digits = field
+        .iter()
+        .take_while(|byte| matches!(byte, b'0'..=b'7'))
+        .count();
+    digits > 0
+        && field
+            .iter()
+            .skip(digits)
+            .all(|byte| matches!(byte, b'\0' | b' '))
 }
 
 /// Unpacks the executables of the release under `stem` from the archive into
@@ -586,7 +575,6 @@ fn extract(
         if matches!(kind, EntryType::Symlink | EntryType::Link) {
             return Err(StageError::Link);
         }
-        named_alike(&mut entry)?;
         let place = {
             let path = entry.path_bytes();
             let name = if kind == EntryType::Directory {
@@ -630,59 +618,6 @@ fn extract(
     ended(tar, &exceeded)?;
     let crucible = crucible.ok_or(StageError::Missing)?;
     Ok(Unpacked { crucible, broker })
-}
-
-/// Refuses the PAX extended header `entry`, read as it is written, when
-/// another archiver would apply its records differently: records of a sparse
-/// file, any record but [`RECORDS`], which this reader ignores or applies to
-/// nothing it stages and another might apply, a link path among them, a
-/// `size` that is not a decimal number, which this reader ignores and another
-/// reads in part, and a record given twice, of which the installer's `tar`
-/// takes the last and this reader the first.
-fn extended<R: Read>(entry: &mut tar::Entry<'_, R>) -> Result<(), StageError> {
-    let Some(records) = entry.pax_extensions().map_err(StageError::Corrupt)? else {
-        return Ok(());
-    };
-    let mut keys = HashSet::new();
-    for record in records {
-        let record = record.map_err(StageError::Corrupt)?;
-        let key = record.key_bytes();
-        if key.starts_with(SPARSE) {
-            return Err(StageError::Special);
-        }
-        if !RECORDS.contains(&key) || (key == SIZE && !decimal(record.value_bytes())) {
-            return Err(StageError::Unexpected);
-        }
-        if !keys.insert(key) {
-            return Err(StageError::Ambiguous);
-        }
-    }
-    Ok(())
-}
-
-/// Whether `value` is a decimal number this reader takes as it is written.
-fn decimal(value: &[u8]) -> bool {
-    value.iter().all(u8::is_ascii_digit)
-        && std::str::from_utf8(value).is_ok_and(|text| text.parse::<u64>().is_ok())
-}
-
-/// Refuses a member whose PAX `path` is other than the name it is taken by,
-/// which a long name overrides here and not in the installer's `tar`.
-fn named_alike<R: Read>(entry: &mut tar::Entry<'_, R>) -> Result<(), StageError> {
-    let Some(records) = entry.pax_extensions().map_err(StageError::Corrupt)? else {
-        return Ok(());
-    };
-    let mut path = None;
-    for record in records {
-        let record = record.map_err(StageError::Corrupt)?;
-        if record.key_bytes() == PATH {
-            path = Some(record.value_bytes().to_vec());
-        }
-    }
-    match path {
-        Some(path) if path != *entry.path_bytes() => Err(StageError::Ambiguous),
-        _ => Ok(()),
-    }
 }
 
 /// Writes the member `entry`, of `size` bytes, to `to` as an executable and
