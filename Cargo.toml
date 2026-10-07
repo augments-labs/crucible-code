@@ -227,6 +227,16 @@ uuid = { version = "=1.26.1", features = ["v7"] }
 # implementations, and the crate has no runtime or platform dependencies.
 sha2 = { version = "=0.11.0", default-features = false }
 
+# A release archive is a gzip-compressed tar, and `std` reads neither format. A
+# hand-written reader of either is the unsafe archive parser the update design
+# rules out, so `tar` reads the members' headers and data and `flate2`
+# decompresses the stream under it, in pure Rust through its default backend.
+# Only their readers are used: nothing is unpacked by `tar`'s own extraction,
+# which is why its extended-attribute support is left off. `flate2` is already
+# in the tree under image decoding, at this version.
+flate2 = { version = "=1.1.9", default-features = false, features = ["rust_backend"] }
+tar = { version = "=0.4.46", default-features = false }
+
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
 # to do what rg does rather than to re-derive it: `ignore` reads .gitignore the

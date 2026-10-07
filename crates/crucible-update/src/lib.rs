@@ -16,7 +16,9 @@
 //! On Unix it also reads the versioned layout an installer-managed release
 //! lives in: the layout the running executable belongs to is taken only once
 //! its directories and files, its receipt and the recorded hashes agree, and
-//! nothing about it is read over the network.
+//! nothing about it is read over the network. A release's archive, once it is
+//! the one its `SHA256SUMS` lists, is staged into that layout as a unit beside
+//! the active one, which staging never changes.
 
 #[cfg(unix)]
 mod install;
@@ -25,6 +27,6 @@ mod release;
 #[cfg(unix)]
 pub use install::{
     Digest, EntryKind, Installation, LayoutEntry, LayoutError, Receipt, ReceiptClaim, ReceiptError,
-    ReceiptLayout, Target, Version,
+    ReceiptLayout, StageError, StagePart, StagedUnit, Target, Version,
 };
 pub use release::{Newer, SHUTDOWN, Unjoined, UpdateCrateReleaseCheck, newer};

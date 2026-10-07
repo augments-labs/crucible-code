@@ -40,24 +40,24 @@ pub(crate) const PREFIX: &str = ".crucible-install";
 const CURRENT: &str = "current";
 
 /// The directory each release unit is kept under.
-const RELEASES: &str = "releases";
+pub(super) const RELEASES: &str = "releases";
 
 /// The receipt's name inside its unit.
-const RECEIPT: &str = "receipt";
+pub(super) const RECEIPT: &str = "receipt";
 
 /// The executable's name inside its unit.
-const CRUCIBLE: &str = "crucible";
+pub(super) const CRUCIBLE: &str = "crucible";
 
 /// The broker's name inside its unit.
-const BROKER: &str = "crucible-sandbox-broker";
+pub(super) const BROKER: &str = "crucible-sandbox-broker";
 
 /// The most an executable may hold. Hashing stops one byte past it and the
 /// file is refused; a release binary is a few tens of MiB, so this only bounds
 /// the time a hash can take.
-const EXECUTABLE_CEILING: u64 = 256 * 1024 * 1024;
+pub(super) const EXECUTABLE_CEILING: u64 = 256 * 1024 * 1024;
 
 /// How much of an executable is hashed at a time.
-const HASH_BUFFER: usize = 64 * 1024;
+pub(super) const HASH_BUFFER: usize = 64 * 1024;
 
 /// A managed install's active release unit, with its receipt, each checked
 /// against the other and against the running executable.
