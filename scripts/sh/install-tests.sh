@@ -507,18 +507,35 @@ assert_layout "$held" "$version"
 echo '==> a lock held by a process that is no install ends with a way out'
 # A pid that a stopped install left in the lock may now belong to any process,
 # so the wait ends, as long as any wait does, and the message says what to do.
+# Each look at the lock is slowed here as a loaded runner slows it, and the wait
+# still ends after the minute it promises rather than after a count of looks.
 reused=$scratch/reused
 install_from "$asset" "$reused" >/dev/null
-sleep 90 &
+slow_tools=$scratch/slow-tools
+mkdir -p "$slow_tools"
+cat >"$slow_tools/readlink" <<SLOW
+#!/usr/bin/env bash
+sleep 0.2
+exec $(command -v readlink) "\$@"
+SLOW
+chmod +x "$slow_tools/readlink"
+# The bystander outlives the longest wait, so it is never found gone instead.
+sleep 600 &
 bystander=$!
 status=0
 ln -s "$bystander@$(uname -n)" "$reused/.crucible-install/lock"
-refused 'a lock named for a process that is no install' \
-    "if no install is running, remove it and run the install again" install_from "$asset" "$reused" ||
+started=$SECONDS
+PATH="$slow_tools:$PATH" refused 'a lock named for a process that is no install' \
+    "still holds $reused/.crucible-install/lock after a minute" install_from "$asset" "$reused" ||
     status=$?
+waited=$((SECONDS - started))
 kill "$bystander" 2>/dev/null || :
 wait "$bystander" 2>/dev/null || :
 ((status == 0)) || exit 1
+((waited <= 75)) || {
+    printf 'installer waited %ss on a held lock, not a minute\n' "$waited" >&2
+    exit 1
+}
 [[ -L $reused/.crucible-install/lock ]]
 rm -f -- "$reused/.crucible-install/lock"
 install_from "$asset" "$reused" >/dev/null
