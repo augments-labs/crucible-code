@@ -20,7 +20,7 @@ use std::process::{Command, Output, Stdio};
 
 /// A made-up key nothing may repeat: not standard output, not standard
 /// error, not a file but the store, and not a process started on the way.
-const SENTINEL: &str = "sk-auth-sentinel-0f9e8d7c6b5a49382716";
+const SENTINEL: &str = "not-a-real-key-auth-sentinel-0f9e8d7c6b5a49382716";
 
 /// A directory under the system temporary directory, removed when dropped.
 struct Scratch(PathBuf);
