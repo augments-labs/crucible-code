@@ -18,6 +18,10 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+#[cfg(target_os = "linux")]
+#[path = "auth/hidden.rs"]
+mod hidden;
+
 /// A made-up key nothing may repeat: not standard output, not standard
 /// error, not a file but the store, and not a process started on the way.
 const SENTINEL: &str = "not-a-real-key-auth-sentinel-0f9e8d7c6b5a49382716";
@@ -117,21 +121,10 @@ fn asked(
     input: Option<&[u8]>,
     variables: &[(&str, &str)],
 ) -> Output {
-    let mut path = std::ffi::OsString::from(scratch.bin());
-    if let Some(inherited) = std::env::var_os("PATH") {
-        path.push(":");
-        path.push(inherited);
-    }
     let mut command = Command::new(env!("CARGO_BIN_EXE_crucible"));
+    command.args(args);
+    confined(&mut command, scratch, sentinel, variables);
     command
-        .args(args)
-        .env_clear()
-        .env("PATH", path)
-        .env("NO_COLOR", "1")
-        .env("TERM", "dumb")
-        .env("HOME", scratch.home())
-        .env("CRUCIBLE_CODE_HOME", scratch.crucible())
-        .current_dir(scratch.work())
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -139,6 +132,37 @@ fn asked(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("the built binary runs");
+    if let Some(input) = input {
+        let mut stdin = child.stdin.take().expect("a piped standard input");
+        // A run that refuses early closes its end first; what it refused is
+        // what the test reads, not the broken pipe.
+        let _ = stdin.write_all(input);
+    }
+    child.wait_with_output().expect("the built binary ends")
+}
+
+/// Runs `command` in `scratch` with an environment cleared down to what it
+/// needs, every proxy pointed at `sentinel` and `variables` set beside them.
+fn confined(
+    command: &mut Command,
+    scratch: &Scratch,
+    sentinel: &Sentinel,
+    variables: &[(&str, &str)],
+) {
+    let mut path = std::ffi::OsString::from(scratch.bin());
+    if let Some(inherited) = std::env::var_os("PATH") {
+        path.push(":");
+        path.push(inherited);
+    }
+    command
+        .env_clear()
+        .env("PATH", path)
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .env("HOME", scratch.home())
+        .env("CRUCIBLE_CODE_HOME", scratch.crucible())
+        .current_dir(scratch.work());
     for proxy in [
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -152,14 +176,6 @@ fn asked(
     for (name, value) in variables {
         command.env(name, value);
     }
-    let mut child = command.spawn().expect("the built binary runs");
-    if let Some(input) = input {
-        let mut stdin = child.stdin.take().expect("a piped standard input");
-        // A run that refuses early closes its end first; what it refused is
-        // what the test reads, not the broken pipe.
-        let _ = stdin.write_all(input);
-    }
-    child.wait_with_output().expect("the built binary ends")
 }
 
 /// What one entry under a scratch directory is, as far as a test compares it.
