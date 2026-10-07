@@ -3,6 +3,6 @@
 Install or build crucible, give it a key, and run a first session in a
 directory of your own.
 
-- [Install, a key, a first session](getting-started.md)
+- [Install, a key, a first session](first-session.md)
 - [How a turn runs, from the prompt to the answer](how-crucible-works.md)
 - [When something goes wrong, looked up by what you saw](troubleshooting.md)

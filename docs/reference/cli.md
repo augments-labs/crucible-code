@@ -9,14 +9,14 @@ prints `crucible` and the version number on one line, and stops. All of these
 are answered by the parser, before a file is read or anything is started.
 
 Run with nothing after it, `crucible` opens a session in the directory you are
-standing in, as [Run it](../getting-started/getting-started.md#run-it)
+standing in, as [Run it](../getting-started/first-session.md#run-it)
 describes. The flags change what that session is. `--extensions`, `--sandbox`
 and the two subcommands do one thing and stop, and none of them can be
 combined with a session flag. crucible takes no prompt on the command line: a
 bare word, as in `crucible "fix the bug"`, is refused as `unrecognized
 subcommand 'fix the bug'` and the run ends 2. The installer also links `cru`
 to the same executable, so everything here holds for `cru`
-([Install it](../getting-started/getting-started.md#install-it)).
+([Install it](../getting-started/first-session.md#install-it)).
 
 Flags, session files and configuration are unstable for the whole 0.x line.
 
@@ -241,7 +241,7 @@ described under
 Both run inside `crucible.exe` itself; the `crucible-sandbox-broker.exe` that
 a confined command later starts through is not needed for them, and where it
 comes from is under
-[Install it](../getting-started/getting-started.md#install-it). On Linux and
+[Install it](../getting-started/first-session.md#install-it). On Linux and
 macOS the broker is installed beside `crucible` and there is nothing to run
 ([Turning it on](../security/sandboxing.md#turning-it-on)).
 
@@ -283,7 +283,7 @@ to type in: each line of input is one prompt, taken in order, and the run ends
 at the end of the input. A blank line is skipped, and a line whose first word
 is a slash followed by letters, such as `/effort high`, is taken as a command,
 as it would be in the box, rather than sent. What the output looks like is under
-[Run it](../getting-started/getting-started.md#run-it), and a permission
+[Run it](../getting-started/first-session.md#run-it), and a permission
 question with nobody to answer it is a refusal
 ([When nobody can answer](../permissions/modes.md#when-nobody-can-answer)).
 Three things end such a run early, each with one line on standard error and

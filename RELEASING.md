@@ -114,7 +114,7 @@ same way afterwards.
    and a home directory that did not exist a moment ago. It reports the glibc
    floor, which is the number that decides which distributions this release
    leaves behind, and fails when that floor rises above glibc 2.34, the floor
-   `docs/getting-started/getting-started.md` promises. Raising the promise is a
+   `docs/getting-started/first-session.md` promises. Raising the promise is a
    product decision: change the script's ceiling and that page together.
 
    The run stops short of a completed turn unless `CRUCIBLE_SMOKE_KEY` is set,

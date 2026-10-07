@@ -195,7 +195,7 @@ is set at all. On Windows an unset `TERM` allows colour too; anywhere,
   `the clipboard could not be opened` and the library's reason, written under
   the box. It is opened at the first paste and kept for the later ones. macOS
   and Windows read no variable for this. See
-  [run it](../getting-started/getting-started.md#run-it).
+  [run it](../getting-started/first-session.md#run-it).
 
 ## What a command is started with
 

@@ -3,9 +3,9 @@
 Every key and mouse action the terminal interface answers, grouped by where
 you are when you press it. A key means one thing at the prompt and can mean
 another inside a panel, so each section below is one place. The prose version
-of most of this is in [Run it](../getting-started/getting-started.md#run-it);
+of most of this is in [Run it](../getting-started/first-session.md#run-it);
 this page is the list. Slash commands are not keys: they are listed under
-[Commands](../getting-started/getting-started.md#commands).
+[Commands](../getting-started/first-session.md#commands).
 
 ## What holds everywhere
 
@@ -95,7 +95,7 @@ where you are, such as `history 80/100`. Any edit ends the walk and leaves the
 text yours; moving the cursor does not. Each directory keeps at most its last
 hundred prompts between sessions, out of 512 kept across every directory, and a
 blank prompt or one longer than 1024 bytes is never kept. [Run
-it](../getting-started/getting-started.md#run-it) tells the longer story.
+it](../getting-started/first-session.md#run-it) tells the longer story.
 
 ### The command list
 
@@ -109,7 +109,7 @@ many more there are, `↓ 2 more`; once <kbd>↓</kbd> walks the mark past the
 last one shown, the list moves with it and a `↑ N more` row stands over it.
 Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 <kbd>↓</kbd> still move its unseen mark. The commands themselves are under
-[Commands](../getting-started/getting-started.md#commands).
+[Commands](../getting-started/first-session.md#commands).
 
 ### Other keys at the prompt
 
@@ -136,7 +136,7 @@ wheel. These differ:
 | Key | What it does |
 | --- | --- |
 | <kbd>Esc</kbd> | Closes the command list where one is open. Otherwise asks the turn to stop. The row above the box reads `interrupting` until it has. A search or a walk stopped this way answers with what it found: see [Stopping one](../tools/searching.md#stopping-one). |
-| <kbd>Enter</kbd> | Queues the prompt for the running turn. Up to 64 prompts and 1 MiB of text can wait; past either bound the prompt stays in the box and the row says `typed-ahead prompts are limited to 64 lines and 1 MiB`. A prompt that is a command is run or refused instead: see [A command typed while a turn runs](../getting-started/getting-started.md#a-command-typed-while-a-turn-runs). |
+| <kbd>Enter</kbd> | Queues the prompt for the running turn. Up to 64 prompts and 1 MiB of text can wait; past either bound the prompt stays in the box and the row says `typed-ahead prompts are limited to 64 lines and 1 MiB`. A prompt that is a command is run or refused instead: see [A command typed while a turn runs](../getting-started/first-session.md#a-command-typed-while-a-turn-runs). |
 | <kbd>Shift-Tab</kbd> | Steps the mode for the turn that starts next, and the row under the box says which. The running turn keeps the mode it began under. |
 | <kbd>Ctrl+C</kbd> | Clears the box. When it is already empty it offers to leave as at the prompt, and the second press within two seconds stops the turn and ends the session. |
 | <kbd>Ctrl+D</kbd> | Nothing. |
@@ -165,7 +165,7 @@ the turn and leaves the prompts waiting as they are.
 | Drag on the scroll rail | Scrolls the transcript with the pointer, holding the thumb where you took it; at the foot it follows the newest line again. |
 
 [Moving through the transcript](../sessions/sessions.md#moving-through-the-transcript)
-describes the scroll rail, and [Run it](../getting-started/getting-started.md#run-it)
+describes the scroll rail, and [Run it](../getting-started/first-session.md#run-it)
 the drag.
 
 ## Answering a permission question
@@ -268,7 +268,7 @@ Typed while a turn runs, the shelf stands with an empty rung strip, and
 `esc to go back`. `Yes` holds the model for the turn that starts next; `No`,
 <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> go back to the shelf. See
 [A command typed while a turn
-runs](../getting-started/getting-started.md#a-command-typed-while-a-turn-runs).
+runs](../getting-started/first-session.md#a-command-typed-while-a-turn-runs).
 
 ### `/effort`
 
@@ -325,7 +325,7 @@ it was. Typed while a turn runs, it stands over the turn.
 <kbd>Enter</kbd> takes what is marked. The specimen is redrawn from the marks
 on every frame, so leaving with <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or
 <kbd>Ctrl+D</kbd> changes nothing.
-[Commands](../getting-started/getting-started.md#commands) describes the two
+[Commands](../getting-started/first-session.md#commands) describes the two
 lists.
 
 ### `/sandbox`
