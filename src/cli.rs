@@ -759,8 +759,11 @@ fn recalled(json: bool) -> Result<(), Fatal> {
 /// the step that stopped, so a script reading standard output never finds it
 /// empty; the run then ends with the whole error, file and all, on standard
 /// error. A write that fails is dropped for the reason [`listed`] drops one.
-/// The text names the directory asked about, which a checkout chose, so it is
-/// written [`visible`].
+/// The text names the directory asked about, which a checkout chose, and
+/// [`crucible_app::sandbox::Observed::human`] writes it with every character
+/// [`crucible_types::shown::escaped`] escapes as its escape, a line break among
+/// them, so the report keeps only lines of its own; it is then written
+/// [`visible`] as well, for any other word in it a terminal would act on.
 fn inspected(json: bool) -> Result<(), Fatal> {
     use crucible_app::sandbox::{Unmade, failure};
 

@@ -14,14 +14,16 @@
 //! starts on this host — is reported as unverified, with the reason, rather
 //! than learned.
 //!
-//! Every path in the report is a digest. The record this is written from
+//! Every path in the report but the workspace root is a digest. The record this is written from
 //! redacts them at the source, and that is the right bargain rather than an
 //! inconvenience: this is a listing people paste into an issue, and a home
 //! directory is a name.
 //!
 //! One [`Observed`] is written two ways. [`Observed::human`] is one string
 //! written once, like the extension listing beside it: by the time this runs
-//! there is no session, no screen and nothing to protect.
+//! there is no session and no screen. The one word in it a checkout chose, the
+//! directory's path, is written escaped, a line break among the rest, so the
+//! text has no line this report did not write.
 //! [`Observed::json`] is the `crucible_client_api` inspection document a
 //! script reads, translated field by field by hand.
 //!
@@ -47,6 +49,7 @@ use crucible_sandbox::{
     confined_inspection, plan_inspection, unconfined_inspection,
 };
 use crucible_sandbox_local::{LocalSandbox, ObservedVersion, SandboxObservation};
+use crucible_types::shown::escaped;
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use crucible_workspace::Workspace;
 
@@ -218,7 +221,9 @@ impl Observed {
     /// The workspace root is the one path printed unredacted: it is the
     /// directory the person running this is standing in, so it tells them
     /// which checkout they asked about rather than telling anybody something
-    /// they did not already have.
+    /// they did not already have. A checkout chose its name, so it is written
+    /// [`escaped`], a line break in it among the rest: the report's first line
+    /// stays one line, and no line follows that this report did not write.
     #[must_use]
     pub fn human(&self) -> String {
         let mut said = String::new();
@@ -226,7 +231,7 @@ impl Observed {
             said,
             "sandbox {} in {}",
             if self.enabled { "enabled" } else { "disabled" },
-            self.at.display()
+            escaped(&self.at.display().to_string())
         );
         let _ = writeln!(
             said,

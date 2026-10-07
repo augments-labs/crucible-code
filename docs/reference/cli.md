@@ -335,7 +335,10 @@ crucible sandbox inspect --json
 ```
 
 The first line is `sandbox enabled in <root>` or `sandbox disabled in <root>`,
-and `mode` says whether project configuration requires confinement. The
+with a control character, line break, line or paragraph separator or Unicode
+format character other than the zero-width joiner and non-joiner in the
+directory's path written as its escape, so the path stays on that line.
+`mode` says whether project configuration requires confinement. The
 backend is the first one a confined command's search would reach that passes
 the same trust checks, without starting it; where crucible read the backend's
 file it prints the file's `sha256` as `build`. A backend's version that only starting it could

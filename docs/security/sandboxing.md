@@ -623,8 +623,11 @@ an `enforced` elsewhere in the report mean something.
 Time ceilings retain their exact value, including fractional seconds: a 1.5-second
 limit is shown as `1.5s`, and a limit below one second is never rounded down to `0s`.
 
-The workspace root is the only path printed. Roots, the working directory and
-the policies are named by the digests the record keeps, so a report can be
+The workspace root is the only path printed; a control character, line break,
+line or paragraph separator or Unicode format character other than the
+zero-width joiner and non-joiner in it is written as its escape, so a
+directory's name cannot add a line to the report. Roots, the working directory
+and the policies are named by the digests the record keeps, so a report can be
 pasted into an issue without pasting your tree with it. Two reports over the
 same directory produce the same digests, which is what makes them comparable
 between machines.
