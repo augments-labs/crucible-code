@@ -146,7 +146,7 @@ pub(crate) fn examining(service: &dyn Observing, host: Host<'_>) -> Report {
 /// The report as a person reads it: the overall status, then each check on a
 /// line of its own with what to do beneath it.
 ///
-/// Words cut at the contract's ceiling end in [`CUT`], and a report with any
+/// Words cut at the contract's ceiling end in `[cut]`, and a report with any
 /// opens by saying so, since a reason cut short can read as a whole one; the
 /// document says the same in each check's `truncated`.
 #[must_use]
