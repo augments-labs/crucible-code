@@ -190,20 +190,61 @@ description holds, how to allow one, and the limit are under
 
 ### `--sandbox`
 
-Prints the confinement a command in the current directory would run under,
-and stops: which backend enforces it, what that backend can and cannot hold,
-the reach and ceilings a command would get, and anything given up along the
-way. No command is run to produce it, and every path in it but the workspace
-root is a digest, so it can be pasted into an issue whole. The first line is
-`sandbox enabled in <root>` or `sandbox disabled in <root>`; the rest is
-explained under [Reading the report](../security/sandboxing.md#reading-the-report).
+The same report as `crucible sandbox inspect`, as text, and the same exit.
 
-A backend that answers but will not take this workspace's policy prints its
-matrix and then `no command could be run here` with the reason under it, and
-no backend answering prints `no sandbox backend answered` with its reason.
-Both are the answer, and the run ends 0. The report is written even when
-shutting the backend down afterwards fails; the run then ends 1 with that
-failure on standard error.
+### `sandbox inspect [--json]`
+
+Prints the confinement a command in the current directory would run under,
+and stops: which backend would enforce it, what that backend can and cannot
+hold, the reach and ceilings a command would get, and why it would be refused.
+Nothing is started to produce it, not the backend, not its helper, not a
+command, and no file is written. Every path in it but the workspace root is a
+digest, so it can be pasted into an issue whole.
+
+```bash
+crucible sandbox inspect
+crucible sandbox inspect --json
+```
+
+The first line is `sandbox enabled in <root>` or `sandbox disabled in <root>`,
+and `mode` says whether project configuration requires confinement. The
+backend is the first one a confined command's search would reach that passes
+the same trust checks, without starting it; where crucible read the backend's
+file it prints the file's `sha256` as `build`. A backend's version that only starting it could
+tell is printed `unverified`, with the reason, and whatever else only starting
+something could check is listed under `not checked, since checking would start
+something:`. The rest is explained under
+[Reading the report](../security/sandboxing.md#reading-the-report).
+
+Each feature is `enforced`, `observed` or `unsupported`, and each ceiling is
+printed beside the claim it rests on. A backend that was found but will not
+take this workspace's policy prints its matrix, what was asked for, and then
+`no command could be run here` with the reason under it. No backend found
+prints `no sandbox backend was found` with its reason. Both are the answer,
+and the run ends 0.
+
+`--json` prints one JSON document on one line to standard output instead,
+with `format_version` 1, `kind` `sandbox-inspection`, `status`, and a
+`truncated` flag. `status` is `ready` when a backend was found and would take
+the policy, `refused` when it would not and `refusal` says why, `unavailable`
+when none was found, and `failed` when no report could be made. Beside it are
+`enabled`, `mode` (`optional` or `required`), the `requested` and `effective`
+plans, `backend` with its `name`, `provenance`, `version` (`stated` with a
+`name`, or `unverified` with `why`), optional `build` and `capabilities`, and
+`unchecked`, `refusal` and `confined`. `confined` is never true for the
+`compatibility` backend, which runs a command as an ordinary subprocess. Each
+plan carries its `policy` and `commands` digests, the `cwd` digest, its
+`roots` (with `omitted` for any past the list's limit), `hidden`, `network`,
+`ceilings` (each with `amount`, `nanos`, `unit` and `claim`), `staged`,
+`persistent` and `snapshots`.
+
+When the report cannot be made, for example because there is no home
+directory to read configuration from, the reason is one line beginning
+`crucible: ` on standard error and the run ends 1; with `--json` a document
+with `status` `failed` and the `problem` is written to standard output as
+well. The `problem` names the step that stopped, such as reading
+configuration, and no file; the line on standard error names the file, where
+there is one.
 
 ### `config check [--json]`
 
@@ -274,7 +315,8 @@ the answer too:
 crucible: Windows sandbox maintenance failed: the native Windows sandbox is available only on Windows
 ```
 
-`sandbox` on its own, without `setup` or `uninstall`, is a usage error.
+`sandbox` on its own, without `inspect`, `setup` or `uninstall`, is a usage
+error.
 
 ## Running without a terminal
 
@@ -318,8 +360,8 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, and `--sandbox` whatever the backend answered, both end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold ends here. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, and `sandbox inspect` or `--sandbox` whatever the backend answered, both end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold, and a `sandbox inspect` that could not be made, end here. |
 | 2 | The command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error. `--help` and `--version` are the parser's too, and end 0. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
 

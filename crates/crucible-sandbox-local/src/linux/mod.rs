@@ -15,6 +15,8 @@ mod escape_tests;
 #[cfg(test)]
 mod guardrail_tests;
 #[cfg(test)]
+mod observe_tests;
+#[cfg(test)]
 mod publication_tests;
 #[cfg(test)]
 mod resource_tests;
@@ -48,6 +50,16 @@ pub(super) fn probe(
     let backend = probe::Bwrap::find(excluded)?;
     let _broker = broker::Broker::find(excluded)?;
     Ok((backend.identity().clone(), backend.capabilities().clone()))
+}
+
+/// The backend [`prepare`] would use, found by the trust checks it applies and
+/// started neither for itself nor for its broker.
+pub(super) fn observe(excluded: &[&Path]) -> Result<crate::SandboxObservation, SandboxError> {
+    let backend = probe::locate(excluded)?;
+    let _broker = broker::Broker::find(excluded)?;
+    Ok(backend.leaving(
+        "whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes",
+    ))
 }
 
 #[cfg(test)]

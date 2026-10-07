@@ -13,6 +13,10 @@ use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
 
 const MAX_BROKER_BYTES: u64 = 32 * 1024 * 1024;
 
+/// The version crucible gives its account, filtering and token scheme: its own
+/// name, so a preparation and an inspection state it without asking anything.
+pub(super) const VERSION: &str = "account-wfp-token-v1";
+
 #[derive(Debug, Clone)]
 pub(super) struct Broker {
     path: PathBuf,
@@ -54,7 +58,7 @@ impl Broker {
                 .map_err(|_| unavailable("invalid built-in Windows backend identity"))?;
             let identity = SandboxBackendIdentity::new(
                 id,
-                "account-wfp-token-v1",
+                VERSION,
                 SandboxBackendProvenance::Bundled,
                 Some(digest),
             )

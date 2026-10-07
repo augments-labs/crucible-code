@@ -29,6 +29,31 @@ pub(super) fn probe() -> Result<(SandboxBackendIdentity, SandboxCapabilities), S
     Ok((broker.identity().clone(), declared_capabilities()))
 }
 
+/// The broker [`prepare`] would use, found by the trust checks it applies and
+/// started for nothing. The machine setup check is left undone: it reads the
+/// sandbox account's stored credential, and an inspection reads no credential.
+/// The version is crucible's own, so it is stated.
+pub(super) fn observe(
+    request: &SandboxRequest,
+    excluded: &[&Path],
+) -> Result<crate::SandboxObservation, SandboxError> {
+    let broker = broker::Broker::find(excluded)?;
+    let identity = broker.identity();
+    let mut observed = crate::SandboxObservation::new(
+        identity.id().clone(),
+        identity.provenance(),
+        identity.digest(),
+        crate::ObservedVersion::Stated(broker::VERSION),
+        declared_capabilities(),
+    );
+    if let Some(refused) = policy_refusal(request) {
+        observed = observed.refusing(refused);
+    }
+    Ok(observed.leaving(
+        "whether this machine's sandbox account and network setup are installed and current, and whether each root passes the checks a command's preparation makes",
+    ))
+}
+
 pub(super) fn declared_capabilities() -> SandboxCapabilities {
     let enforced = SandboxCapability::Enforced;
     SandboxCapabilities::none()
@@ -46,13 +71,15 @@ pub(super) fn declared_capabilities() -> SandboxCapabilities {
         .with(SandboxFeature::Usage, SandboxCapability::Observed)
 }
 
-pub(super) fn prepare(
-    request: SandboxRequest,
-    active: Arc<AtomicUsize>,
-    runtime: Option<tokio::runtime::Handle>,
-) -> Result<Box<dyn SandboxSession>, SandboxError> {
+/// The part of `request`'s policy this backend cannot hold, before its matrix
+/// is consulted, where there is one.
+///
+/// [`prepare`] refuses with it and [`observe`] reports it, so the two cannot
+/// disagree about what a command here would be refused for. Network comes
+/// first: it is the refusal a preparation has always returned when both apply.
+fn policy_refusal(request: &SandboxRequest) -> Option<SandboxError> {
     if !matches!(request.policy().network(), SandboxNetworkPolicy::Closed) {
-        return Err(SandboxError::Unsupported {
+        return Some(SandboxError::Unsupported {
             feature: SandboxFeature::NetworkAllowlist,
         });
     }
@@ -63,9 +90,20 @@ pub(super) fn prepare(
             .iter()
             .any(|rule| rule.access() == SandboxFilesystemAccess::Unreadable)
     {
-        return Err(SandboxError::Unsupported {
+        return Some(SandboxError::Unsupported {
             feature: SandboxFeature::Filesystem,
         });
+    }
+    None
+}
+
+pub(super) fn prepare(
+    request: SandboxRequest,
+    active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
+) -> Result<Box<dyn SandboxSession>, SandboxError> {
+    if let Some(refused) = policy_refusal(&request) {
+        return Err(refused);
     }
     let excluded: Vec<_> = request
         .policy()

@@ -5,7 +5,9 @@
 //! be written down: a [`Request`] carrying one [`Command`], the [`Response`]
 //! carrying what came of it, the [`Snapshot`] of what is now true, the
 //! [`Progress`] that is only true so far, and the [`Pending`] action a turn
-//! stops on until a [`Decision`] naming it arrives.
+//! stops on until a [`Decision`] naming it arrives. Beside them is one report
+//! no request asks for: the [`inspection`] a script reads from
+//! `crucible sandbox inspect --json`, held to the same bounds.
 //!
 //! Three things are decided here and nowhere else.
 //!
@@ -68,6 +70,7 @@ pub mod bounds;
 pub mod command;
 pub mod context;
 pub mod error;
+pub mod inspection;
 pub mod outcome;
 pub mod pending;
 pub mod progress;

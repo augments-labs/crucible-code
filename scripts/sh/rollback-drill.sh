@@ -12,7 +12,10 @@
 #   pending recovery:  both binaries resume a session ending in an unanswered
 #                      tool call, cut the same dangling message, and end with
 #                      byte-identical logs;
-#   command behaviour: --sandbox and --extensions agree past the home's name.
+#   command behaviour: --extensions agrees past the home's name, and --sandbox
+#                      exits 0 and writes a report on both sides. The
+#                      --sandbox report's layout changed in 0.46.0, so only
+#                      its exit convention is held to the prior release.
 #
 # Every fixture is planted under a header the candidate itself recorded, read
 # back from a session it wrote in a home of its own. A log is picked up only
@@ -363,7 +366,20 @@ else
 fi
 
 echo '==> command behaviour agrees'
-for command in --sandbox --extensions; do
+# --sandbox is held to its exit convention: each binary exits 0 and writes a
+# report that opens by naming the sandbox. Its layout is not compared.
+sandbox_held=1
+for side in candidate prior; do
+    if [[ $side == candidate ]]; then
+        status=$(headless "$candidate" "$chome" --sandbox)
+    else
+        status=$(headless "$prior" "$phome" --sandbox)
+    fi
+    [[ $status == 0 ]] || { fail "$side --sandbox exited $status"; sandbox_held=0; }
+    [[ $(head -n 1 "$stage/out") == 'sandbox '* ]] || { fail "$side --sandbox wrote no report"; sandbox_held=0; }
+done
+((sandbox_held)) && printf '    --sandbox exits 0 with a report on both sides\n'
+for command in --extensions; do
     status=$(headless "$candidate" "$chome" "$command")
     [[ $status == 0 ]] || fail "candidate $command exited $status"
     # The listing names the home it was read from, and the two homes differ by
