@@ -9,7 +9,8 @@ use crucible_config::Home;
 use serde_json::Value;
 
 use super::{
-    Desk, Login, MAX_SECRET, Refused, SURROUNDING, Secret, State, failed, forgotten, kept,
+    Desk, Login, MAX_PROBLEM, MAX_SECRET, Refused, SURROUNDING, Secret, State, failed, forgotten,
+    kept,
 };
 use crate::sample::Sample;
 
@@ -250,6 +251,59 @@ fn a_store_that_cannot_be_read_leaves_every_provider_unverified() {
     );
     assert_eq!(status.exit(), 1);
     assert_ne!(State::Unverified.as_str(), State::Absent.as_str());
+}
+
+#[test]
+fn a_name_the_store_holds_says_no_line_of_its_own_and_is_bounded_everywhere() {
+    let sample = Sample::new("auth-forged");
+    sample.holding(
+        r#"{"version":2,"keys":{"x\n  configured anthropic: forged":5},"subscriptions":{}}"#,
+    );
+    let desk = desk(&sample, &[]);
+
+    let status = desk.status(None, NOW);
+    let human = status.human(NOW);
+    assert!(
+        !human.lines().any(|line| line
+            .trim_start()
+            .starts_with("configured anthropic: forged")),
+        "a name in the store wrote a line of its own:\n{human}"
+    );
+    let document: Value = serde_json::from_slice(&status.json()).expect("a document");
+    let providers = at(&document, "/providers").as_array().expect("a list");
+    // The header, the store's sentence, one line a provider, and the last.
+    assert_eq!(human.lines().count(), providers.len() + 3, "{human}");
+    assert_eq!(status.exit(), 1);
+
+    let long = "x".repeat(60_000);
+    sample.holding(&format!(
+        r#"{{"version":2,"keys":{{"{long}":5}},"subscriptions":{{}}}}"#
+    ));
+    let status = desk.status(None, NOW);
+    let document: Value = serde_json::from_slice(&status.json()).expect("a document");
+    assert_eq!(at(&document, "/truncated"), true);
+    assert_eq!(at(&document, "/status"), "incomplete");
+    let problem = at(&document, "/problem").as_str().unwrap_or_default();
+    assert!(problem.len() <= MAX_PROBLEM, "{}", problem.len());
+    let providers = at(&document, "/providers").as_array().expect("a list");
+    assert!(!providers.is_empty());
+    for entry in providers {
+        let reason = at(entry, "/reason").as_str().unwrap_or_default();
+        assert!(
+            reason.len() <= MAX_PROBLEM + "not settled: ".len(),
+            "{}: a reason of {} bytes",
+            at(entry, "/provider"),
+            reason.len()
+        );
+        assert!(reason.ends_with(problem), "the same sentence as the header");
+    }
+    for line in status.human(NOW).lines() {
+        assert!(
+            line.len() <= MAX_PROBLEM + 64,
+            "a line of {} bytes",
+            line.len()
+        );
+    }
 }
 
 #[test]

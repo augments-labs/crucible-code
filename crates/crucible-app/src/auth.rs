@@ -689,22 +689,23 @@ impl Desk {
     #[must_use]
     pub fn status(&self, provider: Option<&'static str>, now: u64) -> Status {
         let inventory = self.inventory();
-        let trouble = inventory.trouble().map(str::to_owned).or_else(|| {
-            self.settings.as_ref().err().map(|_| {
-                "the configuration could not be read; run `crucible config check` to see why"
-                    .to_owned()
-            })
+        let said = inventory.trouble().or_else(|| {
+            self.settings.as_ref().err().map(
+                |_| "the configuration could not be read; run `crucible config check` to see why",
+            )
         });
+        // The store's sentence quotes the names it holds, and those are any
+        // other process's to choose: it is cut once, and the header and
+        // every provider's reason say that one cut sentence.
+        let trouble = said.map(|said| cut(said, MAX_PROBLEM));
         let entries = providers::offered(&self.providers)
             .filter(|one| provider.is_none_or(|named| named == one.name))
             .map(|one| self.entry(one, &inventory, trouble.as_deref(), now))
             .collect();
         Status {
             named: provider.is_some(),
-            trouble_cut: trouble
-                .as_ref()
-                .is_some_and(|said| said.len() > MAX_PROBLEM),
-            trouble: trouble.map(|said| cut(&said, MAX_PROBLEM)),
+            trouble_cut: said.is_some_and(|said| said.len() > MAX_PROBLEM),
+            trouble,
             entries,
         }
     }
