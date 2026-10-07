@@ -408,7 +408,7 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     // Where the last of them ends, which no step goes to.
     begun.pop();
 
-    expanded.within(columns, rows, glyphs)
+    expanded.within_measured(&heights, columns, rows, glyphs)
 }
 
 /// One result the view stands over: held by the store, or let go of and read
@@ -636,18 +636,28 @@ fn remeasured(
 }
 
 /// How many rows one result comes to at this width, with the blank above it.
+///
+/// A result the store holds is counted once for each width and kept beside
+/// its text, so a frame lays out only what its window reaches. What was read
+/// back is counted again on each frame, and the view holds no more of that
+/// than [`BEYOND`].
 fn measured(
     entry: Entry<'_>,
     at: usize,
     back: &[(Mark, Option<Box<str>>)],
     columns: usize,
 ) -> usize {
-    let one = shown(entry, back);
-    Expanded {
-        shown: std::slice::from_ref(&one),
-        from: 0,
+    let length = |one: Shown<'_>| {
+        Expanded {
+            shown: std::slice::from_ref(&one),
+            from: 0,
+        }
+        .length(columns)
+    };
+    match entry {
+        Entry::Held(whole) => whole.rows(columns, || length(showing(whole))),
+        Entry::Let(_) => length(shown(entry, back)),
     }
-    .length(columns)
     .saturating_add(usize::from(at > 0))
 }
 

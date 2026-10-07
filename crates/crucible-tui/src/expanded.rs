@@ -13,12 +13,15 @@
 //! clipped its preview: clipping again here would make the end of a command
 //! or a single-line result unreachable even after asking for the whole thing.
 //!
-//! **The window.** Everything is laid out and then a window `from` rows down is
+//! **The window.** Everything is measured and then a window `from` rows down is
 //! taken out of it, because how far down the reader may go is a fact about the
 //! layout rather than about the keyboard: it depends on how many rows the
 //! results came to at *this* width, which is not known until they are laid out.
 //! [`Expanded::end`] is that number and the caller clamps its own offset to it
-//! before asking for the picture.
+//! before asking for the picture. Only the results the window reaches are laid
+//! out for it, and a caller that kept how long each one was at this width
+//! hands that to [`Expanded::within_measured`] rather than having it measured
+//! again, so a frame over a long list costs what its window shows.
 //!
 //! **The footer names a key only where it does something.** `↑↓ pgup pgdn to
 //! see more` is true when there are rows the window did not reach and false
@@ -74,44 +77,26 @@ impl Expanded<'_> {
     /// next frame expects it.
     #[must_use]
     fn laid(&self, columns: usize) -> Vec<Row> {
-        self.placed(columns).0
+        let mut rows = Vec::new();
+        for (at, shown) in self.shown.iter().enumerate() {
+            lay(at, shown, columns, &mut rows);
+        }
+        rows
     }
 
-    /// The whole of it at this width, and the row each result begins on,
-    /// counting the blank that parts it from the one above.
-    fn placed(&self, columns: usize) -> (Vec<Row>, Vec<usize>) {
+    /// How many rows each result comes to at this width, counting the blank
+    /// that parts it from the one above.
+    fn lengths(&self, columns: usize) -> Vec<usize> {
         let mut rows = Vec::new();
-        let mut starts = Vec::with_capacity(self.shown.len());
-
-        for (at, shown) in self.shown.iter().enumerate() {
-            starts.push(rows.len());
-
-            // Between results and not above the first, which already has the
-            // rule and a blank above it. A blank leading the list would part it
-            // from a heading that is not there.
-            if at > 0 {
-                rows.push(Row::new());
-            }
-
-            for line in shown.called.lines() {
-                rows.extend(Row::new().then(Slot::Strong, line).fold(columns));
-            }
-            rows.push(Row::new());
-
-            // On the reader's own ground rather than in the quieter colour the
-            // transcript's row for it is drawn in. That row is a fragment beside
-            // the call it hangs off; this is the thing somebody asked to read,
-            // and a screen of dim text is a screen asking not to be.
-            for line in shown.text.lines() {
-                if line.is_empty() {
-                    rows.push(Row::new());
-                } else {
-                    rows.extend(Row::new().then(Slot::Plain, line).fold(columns));
-                }
-            }
-        }
-
-        (rows, starts)
+        self.shown
+            .iter()
+            .enumerate()
+            .map(|(at, shown)| {
+                rows.clear();
+                lay(at, shown, columns, &mut rows);
+                rows.len()
+            })
+            .collect()
     }
 
     /// How many rows of results `room` rows show at once: what the rule, the
@@ -153,16 +138,63 @@ impl Expanded<'_> {
     /// whole of what was cut short while hiding that it was cut twice.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        self.within_measured(&self.lengths(columns), columns, room, glyphs)
+    }
+
+    /// [`Expanded::within`], for a caller that already knows how many rows
+    /// each result comes to at this width: `lengths` has one for each of
+    /// [`Expanded::shown`], as [`Expanded::length`] counts that result laid
+    /// out on its own, and the blank parting it from the one above.
+    ///
+    /// Only the results the window reaches are laid out, so a frame costs what
+    /// the window shows rather than everything standing, which is what lets a
+    /// caller walking a long list keep what it measured between frames. Where
+    /// `lengths` does not have one for each result they are measured here.
+    #[must_use]
+    pub fn within_measured(
+        &self,
+        lengths: &[usize],
+        columns: usize,
+        room: usize,
+        glyphs: Glyphs,
+    ) -> Vec<Row> {
         let Some(held) = room.checked_sub(CHROME).filter(|held| *held > 0) else {
             return Vec::new();
         };
+        let measured;
+        let lengths = if lengths.len() == self.shown.len() {
+            lengths
+        } else {
+            measured = self.lengths(columns);
+            &measured
+        };
 
-        let (laid, starts) = self.placed(columns);
-        let from = self.from.min(laid.len().saturating_sub(held));
-        let scrolls = laid.len() > held;
-        // Counted from one, which is the newest: the last result to begin at
-        // or above the top of the window is the one the reader is in.
-        let top = starts.iter().filter(|start| **start <= from).count();
+        let total = lengths
+            .iter()
+            .fold(0_usize, |total, length| total.saturating_add(*length));
+        let from = self.from.min(total.saturating_sub(held));
+        let to = from.saturating_add(held);
+        let scrolls = total > held;
+
+        // Each result the window reaches, from the row the first of them
+        // begins on; the rest are counted past rather than laid out. Counted
+        // from one, which is the newest: the last result to begin at or above
+        // the top of the window is the one the reader is in.
+        let mut laid = Vec::new();
+        let mut first = None;
+        let mut top = 0;
+        let mut start = 0_usize;
+        for (at, (shown, length)) in self.shown.iter().zip(lengths).enumerate() {
+            let end = start.saturating_add(*length);
+            if start <= from {
+                top += 1;
+            }
+            if end > from && start < to {
+                first.get_or_insert(start);
+                lay(at, shown, columns, &mut laid);
+            }
+            start = end;
+        }
 
         let mut rows = vec![
             Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
@@ -174,13 +206,42 @@ impl Expanded<'_> {
         // nothing above it, and most results are a few lines rather than a
         // screenful — the view is meant to be read and then closed, not lived
         // in.
-        rows.extend(laid.into_iter().skip(from).take(held));
+        let skipped = from.saturating_sub(first.unwrap_or(from));
+        rows.extend(laid.into_iter().skip(skipped).take(held));
 
         rows.push(Row::new());
         let footer = footer(scrolls, top, self.shown.len(), columns);
         rows.push(Row::new().then(Slot::Quiet, footer));
 
         rows
+    }
+}
+
+/// Lays result `at` out under the rows already laid: the blank parting it from
+/// the one above, the call's line, a blank, and what came back.
+fn lay(at: usize, shown: &Shown<'_>, columns: usize, rows: &mut Vec<Row>) {
+    // Between results and not above the first, which already has the rule and
+    // a blank above it. A blank leading the list would part it from a heading
+    // that is not there.
+    if at > 0 {
+        rows.push(Row::new());
+    }
+
+    for line in shown.called.lines() {
+        rows.extend(Row::new().then(Slot::Strong, line).fold(columns));
+    }
+    rows.push(Row::new());
+
+    // On the reader's own ground rather than in the quieter colour the
+    // transcript's row for it is drawn in. That row is a fragment beside the
+    // call it hangs off; this is the thing somebody asked to read, and a screen
+    // of dim text is a screen asking not to be.
+    for line in shown.text.lines() {
+        if line.is_empty() {
+            rows.push(Row::new());
+        } else {
+            rows.extend(Row::new().then(Slot::Plain, line).fold(columns));
+        }
     }
 }
 

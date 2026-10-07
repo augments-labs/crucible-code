@@ -485,6 +485,64 @@ fn frame(kept: &Kept, standing: &mut Standing, rows: usize) -> Vec<String> {
 }
 
 #[test]
+fn what_a_call_still_out_goes_on_printing_is_reached_by_a_view_standing_over_it() {
+    // A view counts the rows a result comes to once for each width and keeps
+    // the count, and a command still running goes on printing under it. The
+    // rows it comes to grow with what it printed: the keys that walk the
+    // window are named once there is more than it shows, and its foot
+    // reaches the last line printed.
+    let mut kept = Kept::default();
+    let call = crucible_types::ToolId::new("build");
+    kept.calling(call.clone(), "Bash(cargo build)".to_owned());
+    kept.wrote(&call, "compiling 001\n");
+
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let rows = frame(&kept, &mut standing, 24);
+    assert_eq!(rows.last().map(String::as_str), Some("esc to close"));
+
+    for at in 2..=60 {
+        kept.wrote(&call, &format!("compiling {at:03}\n"));
+    }
+    let rows = frame(&kept, &mut standing, 24);
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · ↑↓ pgup pgdn to see more"),
+        "{rows:?}"
+    );
+
+    let view = opened(&mut standing);
+    view.from = view.end;
+    let rows = frame(&kept, &mut standing, 24);
+    assert!(rows.iter().any(|row| row == "compiling 060"), "{rows:?}");
+}
+
+#[test]
+fn a_call_still_out_named_again_is_measured_by_its_new_line() {
+    // The line a call is named by is laid out above what it printed, so the
+    // call named again in more lines than before comes to more rows, even
+    // with nothing more printed under it.
+    let mut kept = Kept::default();
+    let call = crucible_types::ToolId::new("build");
+    kept.calling(call.clone(), "Bash(cargo build)".to_owned());
+    kept.wrote(&call, "compiling 001\n");
+
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let rows = frame(&kept, &mut standing, 24);
+    assert_eq!(rows.last().map(String::as_str), Some("esc to close"));
+
+    let named: Vec<String> = (1..=30).map(|at| format!("step {at:02}")).collect();
+    kept.calling(call, named.join("\n"));
+    let rows = frame(&kept, &mut standing, 24);
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · ↑↓ pgup pgdn to see more"),
+        "{rows:?}"
+    );
+}
+
+#[test]
 fn page_down_moves_the_view_by_its_rows_less_one() {
     // Twenty-four rows of window show twenty of results, so a page keeps the
     // last of them in sight at the top of the next: the reader never has to

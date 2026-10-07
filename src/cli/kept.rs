@@ -58,7 +58,7 @@
 //! reader to hand over. The row says how many went, which is the whole of what
 //! is still true about them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -126,6 +126,11 @@ pub(crate) struct Whole {
     /// in, which the store keeps as they move between held and let go of.
     /// Nothing for a call still out, which has not been kept yet.
     drawn: usize,
+    /// How many rows the view that stands it laid it in, and at which width,
+    /// once it has: kept beside the line and the text it was counted from, so
+    /// either changing takes it away with it, and a view walking many results lays
+    /// out what its window reaches rather than every one of them each frame.
+    rows: Cell<Option<(usize, usize)>>,
 }
 
 impl Whole {
@@ -137,6 +142,20 @@ impl Whole {
     /// The whole of what came back.
     pub(crate) fn text(&self) -> &str {
         &self.text
+    }
+
+    /// How many rows it comes to `columns` wide, as `measure` counts them:
+    /// counted once for each width it is asked about, and again only once
+    /// the line or the text has changed.
+    pub(crate) fn rows(&self, columns: usize, measure: impl FnOnce() -> usize) -> usize {
+        match self.rows.get() {
+            Some((width, rows)) if width == columns => rows,
+            _ => {
+                let rows = measure();
+                self.rows.set(Some((columns, rows)));
+                rows
+            }
+        }
     }
 
     /// Which row of the record offered it, where one did.
@@ -317,6 +336,7 @@ impl Kept {
             pending.called = called;
             if let Some(writing) = &mut pending.writing {
                 writing.called.clone_from(&pending.called);
+                writing.rows.set(None);
             }
         } else {
             self.pending.push_back(Pending {
@@ -354,6 +374,7 @@ impl Kept {
             call: pending.id.clone(),
             position: None,
             drawn: 0,
+            rows: Cell::new(None),
         });
 
         let mut held = String::from(&*writing.text);
@@ -383,6 +404,7 @@ impl Kept {
         }
 
         writing.text = held.into();
+        writing.rows.set(None);
     }
 
     /// Keeps what a row could not say.
@@ -481,6 +503,7 @@ impl Kept {
             call: call.clone(),
             position,
             drawn,
+            rows: Cell::new(None),
         });
 
         // After the push rather than before it, so that the newest result is
