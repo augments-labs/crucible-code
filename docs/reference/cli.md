@@ -188,13 +188,19 @@ none is started unless a run names it with --with-mcp, and none was started to w
 Says how the server written down as `<NAME>` would be started, and stops: its
 command, arguments, directory, variables, how long crucible waits for it,
 how often it is restarted and whether a run that names it fails without it.
-Nothing is started for this either. A secret is left out wherever a record can
-hold one: a variable set under `env` is shown by its name with `<redacted>` for
-its value, a variable under `envFrom` by its name and the one it is taken from,
-and an argument is shown with `<redacted>` wherever a key could be: after a
-flag or a header that names one, after `=` or `:` where the name before it
-does, in a URL's user, query and fragment, and in place of a word shaped like
-a token. More is hidden than is secret, on purpose.
+Nothing is started for this either. A secret is left out wherever crucible can
+tell a record holds one: a variable set under `env` is shown by its name with
+`<redacted>` for its value, a variable under `envFrom` by its name and the one
+it is taken from, and an argument is shown with `<redacted>` wherever a key
+could be. That is everything after a flag, a header or a name before `=` or
+`:` that names a key, to the end of the argument, and the next argument too
+when what was hidden ends on a word such as `Bearer`. Every such name in an
+argument counts, including one inside a value (`--env=DB_PASSWORD=…`), one in
+pairs run together with `;`, `&` or `,` as a connection string writes them,
+and a key in a JSON object. It is also a URL's user, query and fragment
+wherever in the argument the URL starts, the password in `user:password@host`,
+and a word shaped like a token. A value after a flag whose name says nothing
+about it, such as `-p`, is shown. More is hidden than is secret, on purpose.
 
 ```
   command    docs-mcp

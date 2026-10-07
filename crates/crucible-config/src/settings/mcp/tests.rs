@@ -437,7 +437,7 @@ fn shown(args: &[&str]) -> Vec<String> {
 fn every_place_an_argument_can_carry_a_secret_is_shown_without_it() {
     let word = WORD;
     let token = TOKEN;
-    let cases: [(&[&str], &[&str]); 14] = [
+    let cases: [(&[&str], &[&str]); 32] = [
         (&["--token", word], &["--token", HIDDEN]),
         (
             &["--api-key", word, "--port", "8080"],
@@ -487,18 +487,103 @@ fn every_place_an_argument_can_carry_a_secret_is_shown_without_it() {
             ],
             &["-c", "curl -H 'Authorization: <redacted>"],
         ),
+        // A value written as JSON holds its keys as pairs of its own.
+        (
+            &[&format!(r#"--config={{"region":"us","apiKey":"{word}"}}"#)],
+            &[r#"--config={"region":"us","apiKey":<redacted>"#],
+        ),
+        (
+            &[&format!(r#"--headers={{"Authorization":"Bearer {word}"}}"#)],
+            &[r#"--headers={"Authorization":<redacted>"#],
+        ),
+        (
+            &[&format!(r#"--config={{"region":"us","id":"{token}"}}"#)],
+            &[r#"--config={"region":"us","id":"<redacted>"}"#],
+        ),
+        // A URL is one wherever in a word it starts.
+        (
+            &[&format!(
+                r#"{{"url":"https://someone:{word}@mcp.example.test/sse"}}"#
+            )],
+            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+        ),
+        (
+            &[&format!("url:https://someone:{word}@mcp.example.test")],
+            &["url:https://<redacted>@mcp.example.test"],
+        ),
+        (
+            &[&format!(
+                r#"{{"url":"https://mcp.example.test/sse","apiKey":"{word}"}}"#
+            )],
+            &[r#"{"url":"https://mcp.example.test/sse","apiKey":<redacted>"#],
+        ),
+        (
+            &[&format!("https://someone:{word}/more@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("someone:{word}@db.example.test:5432")],
+            &["someone:<redacted>@db.example.test:5432"],
+        ),
+        // A pair inside a pair's value, as docker's `--env=NAME=VALUE`.
+        (
+            &[&format!("--env=DB_PASSWORD={word}")],
+            &["--env=DB_PASSWORD=<redacted>"],
+        ),
+        // Pairs run together, as a connection string or a query writes them.
+        (
+            &[&format!("--connection-string=Server=h;Password={word}")],
+            &["--connection-string=Server=h;Password=<redacted>"],
+        ),
+        (
+            &[
+                "--connection-string",
+                &format!("Host=h;Username=u;Password={word}"),
+            ],
+            &[
+                "--connection-string",
+                "Host=h;Username=u;Password=<redacted>",
+            ],
+        ),
+        (
+            &[&format!("Server=db;User Id=sa;Password={word}")],
+            &["Server=db;User Id=sa;Password=<redacted>"],
+        ),
+        (
+            &[&format!("--query=page=1&token={word}")],
+            &["--query=page=1&token=<redacted>"],
+        ),
+        (
+            &[&format!("--pairs=region=us,secret={word}")],
+            &["--pairs=region=us,secret=<redacted>"],
+        ),
+        // A scheme word hidden as a value still names the word after it.
+        (
+            &[&format!("Authorization=Bearer {word}")],
+            &["Authorization=<redacted>"],
+        ),
+        (
+            &["Authorization=Bearer", word],
+            &["Authorization=<redacted>", HIDDEN],
+        ),
+        (&["--pat", word], &["--pat", HIDDEN]),
+        (&[&format!("--jwt={word}")], &["--jwt=<redacted>"]),
     ];
 
-    for (args, expected) in cases {
-        let got = shown(args);
-        assert_eq!(got, expected, "for {args:?}");
-        for one in &got {
-            assert!(
-                !one.contains(WORD) && !one.contains(TOKEN),
-                "{args:?} showed {got:?}"
-            );
-        }
-    }
+    // Every shape that is shown wrong, not only the first, so one run says
+    // which of them a rule misses.
+    let wrong: Vec<String> = cases
+        .iter()
+        .filter_map(|(args, expected)| {
+            let got = shown(args);
+            let leaked = got
+                .iter()
+                .any(|one| one.contains(WORD) || one.contains(TOKEN));
+            (leaked || got != *expected)
+                .then(|| format!("{args:?} showed {got:?}, not {expected:?}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 #[test]
@@ -510,7 +595,10 @@ fn an_argument_with_nothing_secret_about_it_is_shown_as_written() {
         "--catalogue",
         "public",
         "--port=8080",
+        "--path=/srv/docs",
         "https://mcp.example.test/sse",
+        "https://registry.example.test/@scope/pkg",
+        "git@github.example.test:org/repo.git",
         "/srv/docs",
         "--log-level",
         "debug",
