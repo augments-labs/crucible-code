@@ -2699,8 +2699,12 @@ fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
     // a limit's name keeps would be drawn reordering the row, and one only the
     // screen drops would be a name the two disagree about. The zero-width
     // non-joiner and joiner are the exception: on screen they join an emoji
-    // sequence or shape a script, and a limit's name has no use for them.
+    // sequence or shape a script, and a limit's name has no use for them. So
+    // are the line and paragraph separators, which are not format characters:
+    // the screen draws them a column each, and a limit's name drops them, as
+    // text written outside the renderer escapes them.
     const JOINERS: [char; 2] = ['\u{200c}', '\u{200d}'];
+    const SEPARATORS: [char; 2] = ['\u{2028}', '\u{2029}'];
     for character in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
         if character.is_control() {
             continue;
@@ -2708,7 +2712,8 @@ fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
         let said = format!("a{character}b");
         let drawn = crucible_tui::Row::plain(said.as_str()).text() == "ab";
         let named = crucible_types::GroupName::new(&said).is_some_and(|name| name.as_str() == "ab");
-        let screen_drops = named && !JOINERS.contains(&character);
+        let screen_drops =
+            named && !JOINERS.contains(&character) && !SEPARATORS.contains(&character);
         assert_eq!(drawn, screen_drops, "U+{:04X}", u32::from(character));
     }
 }

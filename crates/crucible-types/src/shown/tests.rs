@@ -44,3 +44,12 @@ fn escaped_text_keeps_the_joiners_a_terminal_draws_with_the_characters_around_th
     assert_eq!(escaped(persian), persian);
     assert_eq!(escaped(family), family);
 }
+
+#[test]
+fn the_line_and_paragraph_separators_are_shown_as_escapes_and_read_back_the_same() {
+    assert_eq!(escaped("a\u{2028}b\u{2029}c"), r"a\u{2028}b\u{2029}c");
+    let said = written("a\u{2028}b\u{2029}c");
+    assert_eq!(said, r"a\u2028b\u2029c");
+    let read: String = serde_json::from_str(&format!("\"{said}\"")).expect("a JSON string");
+    assert_eq!(read, "a\u{2028}b\u{2029}c");
+}
