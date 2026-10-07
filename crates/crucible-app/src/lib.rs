@@ -49,6 +49,7 @@ mod sample;
 pub mod sandbox;
 pub mod selecting;
 pub mod services;
+pub mod sessions;
 pub mod speed;
 pub mod startup;
 pub mod subscription;
