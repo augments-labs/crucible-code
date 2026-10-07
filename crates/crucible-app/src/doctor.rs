@@ -10,12 +10,15 @@
 //! credential a provider would use is settled by the rule a launch uses, from
 //! those names and from whether an environment variable is set — never by
 //! asking for the credential a request would be signed with, because an
-//! account login's is renewed on the way out, and renewing is a request. The
-//! sandbox backend is observed the way `crucible sandbox inspect` observes it,
-//! so it is measured and not started. A declared MCP server is counted and
-//! left alone. No probe, no session directory and no write is reached from
-//! here, and the tests beside this stand a dialling login, a counting backend
-//! and a server that leaves a mark in front of it to show it.
+//! account login's is renewed on the way out, and renewing is a request. So
+//! no login is built here at all: whether a provider signs in by subscription
+//! is read off the `/login` rows, which are names, and a test holds the rows
+//! to the login registry a launch asks. The sandbox backend is observed the
+//! way `crucible sandbox inspect` observes it, so it is measured and not
+//! started. A declared MCP server is counted and left alone. No probe, no
+//! session directory and no write is reached from here, and the tests beside
+//! this stand a counting backend and a server that leaves a mark in front of
+//! it to show it.
 //!
 //! A check that rests on something which failed is not made: it is said to be
 //! unavailable, with what it rests on. The configuration is the large case.
@@ -30,7 +33,7 @@
 
 use std::path::Path;
 
-use crucible_auth::{Inventory, Renewals, Store};
+use crucible_auth::{Inventory, Store};
 use crucible_client_api::doctor::{Check, Report, Status};
 use crucible_client_api::inspection::Inspection;
 use crucible_client_api::{Name, Text};
@@ -43,7 +46,6 @@ use crucible_workspace::{PathError, Workspace};
 use crate::AppError;
 use crate::providers::{self, Providers, Rows, Served};
 use crate::sandbox::{self, Observing};
-use crate::subscription::Subscriptions;
 
 /// Every check, by the id a script holds on to, in the order they are made.
 ///
@@ -89,23 +91,15 @@ impl std::fmt::Debug for Host<'_> {
     }
 }
 
-/// This host, examined with this machine's sandbox and this build's logins.
+/// This host, examined with this machine's sandbox and this build's rows.
 #[must_use]
 pub fn examine(host: Host<'_>) -> Report {
-    examining(
-        &LocalSandbox::new(),
-        &Subscriptions::production(&Renewals::new()),
-        host,
-    )
+    examining(&LocalSandbox::new(), host)
 }
 
-/// [`examine`], asked of a sandbox service and a login registry handed in,
-/// so that ones which count or dial can stand in for this machine's.
-pub(crate) fn examining(
-    service: &dyn Observing,
-    subscriptions: &Subscriptions,
-    host: Host<'_>,
-) -> Report {
+/// [`examine`], asked of a sandbox service handed in, so that one which
+/// counts can stand in for this machine's.
+pub(crate) fn examining(service: &dyn Observing, host: Host<'_>) -> Report {
     let home = host.home.ok();
     let workspace = host.here.map(Workspace::open);
     let opened = workspace.as_ref().and_then(|opened| opened.as_ref().ok());
@@ -114,11 +108,8 @@ pub(crate) fn examining(
         _ => None,
     };
     let readable = settings.as_ref().and_then(Read::settings);
-    let inventory = home.map(|home| {
-        Store::in_home(home.path())
-            .naming(Rows::production().names())
-            .inventory()
-    });
+    let rows = Rows::production();
+    let inventory = home.map(|home| Store::in_home(home.path()).naming(rows.names()).inventory());
     let registry = providers::providers().map(|registry| registry.snapshot());
     let extensions = home.map(|home| Extensions::discover(home.path()));
 
@@ -128,20 +119,8 @@ pub(crate) fn examining(
         configured(settings.as_ref()),
         private(home, inventory.as_ref()),
         stocked(inventory.as_ref()),
-        credentialed(
-            readable,
-            &registry,
-            host.from,
-            inventory.as_ref(),
-            subscriptions,
-        ),
-        provided(
-            readable,
-            &registry,
-            host.from,
-            inventory.as_ref(),
-            subscriptions,
-        ),
+        credentialed(readable, &registry, host.from, inventory.as_ref(), &rows),
+        provided(readable, &registry, host.from, inventory.as_ref(), &rows),
         backed(service, opened),
         confined(service, host.here, home, readable),
         discovered(extensions.as_ref()),
@@ -500,7 +479,7 @@ fn credentialed(
     registry: &Result<Providers, impl std::fmt::Display>,
     from: &dyn Fn(&str) -> Option<String>,
     inventory: Option<&Inventory>,
-    subscriptions: &Subscriptions,
+    rows: &Rows,
 ) -> Finding {
     let Some(settings) = settings else {
         return Finding::unavailable(NO_CONFIG);
@@ -510,7 +489,7 @@ fn credentialed(
     };
     let sources: Vec<String> = providers::offered(registry)
         .filter_map(|one| {
-            source(one, settings, from, inventory, subscriptions)
+            source(one, settings, from, inventory, rows)
                 .map(|source| format!("{} from {source}", one.name))
         })
         .collect();
@@ -530,10 +509,10 @@ fn source(
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
     inventory: Option<&Inventory>,
-    subscriptions: &Subscriptions,
+    rows: &Rows,
 ) -> Option<providers::CredentialSource> {
     let held = inventory.and_then(|inventory| inventory.held(one.name));
-    providers::sourced(one, settings, from, held, subscriptions)
+    providers::sourced(one, settings, from, held, rows.subscribes(one.name))
 }
 
 /// Which provider a launch would open, and whether it could ask it anything.
@@ -545,7 +524,7 @@ fn provided(
     registry: &Result<Providers, impl std::fmt::Display>,
     from: &dyn Fn(&str) -> Option<String>,
     inventory: Option<&Inventory>,
-    subscriptions: &Subscriptions,
+    rows: &Rows,
 ) -> Finding {
     let Some(settings) = settings else {
         return Finding::unavailable(NO_CONFIG);
@@ -559,7 +538,7 @@ fn provided(
             );
         }
     };
-    let usable = |one: Served| source(one, settings, from, inventory, subscriptions).is_some();
+    let usable = |one: Served| source(one, settings, from, inventory, rows).is_some();
     let chosen = match providers::choosing(registry, settings, usable) {
         Ok(chosen) => chosen,
         Err(why @ AppError::Provider { .. }) => {
@@ -573,7 +552,7 @@ fn provided(
         }
     };
     if let Some(one) = chosen {
-        let from_where = source(one, settings, from, inventory, subscriptions)
+        let from_where = source(one, settings, from, inventory, rows)
             .map_or_else(String::new, |source| format!(", from {source}"));
         return match settings
             .model(one.name)

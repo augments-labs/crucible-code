@@ -739,6 +739,16 @@ impl Rows {
             .find(|row| row.kind == kind && row.stored == name)
     }
 
+    /// Whether `provider` has a row a subscription is signed in on, which is
+    /// whether this build's login registry signs in to it: the answer a
+    /// reader gives that must build no login, held to the registry by a test.
+    #[must_use]
+    pub fn subscribes(&self, provider: &str) -> bool {
+        self.rows
+            .iter()
+            .any(|row| row.kind == Kind::Account && row.provider == provider)
+    }
+
     /// The row a key from `provider`'s variable belongs to.
     #[must_use]
     pub fn environment(&self, provider: &str) -> Option<&Row> {
@@ -1542,21 +1552,23 @@ pub fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option
         stored,
         subscriptions,
     } = auth;
-    sourced(one, settings, from, stored.held(one.name), subscriptions)
+    let subscribed = subscriptions.supports(one.name);
+    sourced(one, settings, from, stored.held(one.name), subscribed)
 }
 
 /// [`credential_source`], from what the store holds for `one` rather than
 /// from the store: `held` is the credential it is served by, by map and name,
-/// however that was found.
+/// however that was found, and `subscribed` is whether this build signs in to
+/// `one` by subscription, however that was asked.
 pub(crate) fn sourced(
     one: Served,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
     held: Option<Held>,
-    subscriptions: &Subscriptions,
+    subscribed: bool,
 ) -> Option<CredentialSource> {
     if settings.base_url(one.name).is_none()
-        && subscriptions.supports(one.name)
+        && subscribed
         && held.as_ref().is_some_and(|held| held.kind == Kind::Account)
     {
         return Some(CredentialSource::Subscription);

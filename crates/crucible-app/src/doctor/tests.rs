@@ -1,22 +1,15 @@
-//! What the doctor says, and what asking it must never do: dial out, ask for
-//! a credential it would have to renew, start a program, or write a byte.
+//! What the doctor says, and what asking it must never do: build a login
+//! that could renew a credential, start a program, or write a byte.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crucible_auth::{
-    LoginAttempt, LoginMethod, OAuthError, Store, StoredCredentials, SubscriptionLogin,
-};
 use crucible_client_api::Text;
 use crucible_client_api::doctor::{Report, Status};
 use crucible_config::{ConfigError, Home};
-use crucible_credentials::Credential;
-use crucible_provider::OpenAi;
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
@@ -28,7 +21,6 @@ use crucible_sandbox_local::{ObservedVersion, SandboxObservation};
 use super::{CHECKS, Host, examining, human, said};
 use crate::sample::{Sample, WRITTEN};
 use crate::sandbox::Observing;
-use crate::subscription::Subscriptions;
 
 /// A key exported for the run, spelled so that one copied anywhere shows.
 const CANARY: &str = "sk-doctor-canary-0d1c";
@@ -115,33 +107,6 @@ impl Observing for Counting {
     }
 }
 
-/// An account login whose credential can only be had by dialling `to`: the
-/// stand-in for a token that has to be renewed before it can be applied.
-#[derive(Debug)]
-struct Dialing {
-    to: SocketAddr,
-}
-
-impl SubscriptionLogin for Dialing {
-    fn provider(&self) -> &'static str {
-        "openai"
-    }
-
-    fn start(&self, _method: LoginMethod, _store: Store) -> Result<LoginAttempt, OAuthError> {
-        Err(OAuthError::Method)
-    }
-
-    fn credential(&self, _stored: &StoredCredentials) -> Option<Box<dyn Credential>> {
-        drop(TcpStream::connect(self.to));
-        None
-    }
-}
-
-/// No account login at all, so that nothing a test does could reach one.
-fn none() -> Subscriptions {
-    Subscriptions::new(Vec::new(), Vec::new())
-}
-
 /// This tree's home directory as crucible would find it.
 fn home(sample: &Sample) -> Result<Home, ConfigError> {
     Home::find(&|name: &str| (name == crucible_config::HOME).then(|| OsString::from(sample.home())))
@@ -157,18 +122,12 @@ fn exported(name: &str) -> Option<String> {
     (name == "OPENAI_API_KEY").then(|| CANARY.to_owned())
 }
 
-/// What the doctor says of `sample`, asked of `service` and `subscriptions`.
-fn examined(
-    sample: &Sample,
-    service: &Counting,
-    subscriptions: &Subscriptions,
-    from: &dyn Fn(&str) -> Option<String>,
-) -> Report {
+/// What the doctor says of `sample`, asked of `service`.
+fn examined(sample: &Sample, service: &Counting, from: &dyn Fn(&str) -> Option<String>) -> Report {
     let found = home(sample);
     let root = sample.root();
     examining(
         service,
-        subscriptions,
         Host {
             here: Some(&root),
             home: found.as_ref(),
@@ -268,28 +227,26 @@ fn chmod(path: &Path, mode: u32) {
 }
 
 #[test]
-fn the_doctor_never_asks_for_an_applied_credential_so_nothing_is_dialled() {
-    let sample = Sample::new("doctor-denied-network");
-    signed_in(&sample);
-    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-    let to = listener.local_addr().expect("its address");
-    let subscriptions = Subscriptions::new(
-        vec![(Arc::new(Dialing { to }), OpenAi::SUBSCRIPTION)],
-        Vec::new(),
-    );
-
-    let report = examined(&sample, &Counting::default(), &subscriptions, &bare);
-
-    listener
-        .set_nonblocking(true)
-        .expect("a nonblocking listener");
-    match listener.accept() {
-        Err(problem) if problem.kind() == std::io::ErrorKind::WouldBlock => {}
-        Ok(_) => panic!("the doctor dialled out: it asked for a credential to apply"),
-        Err(problem) => panic!("the listener failed: {problem}"),
+fn the_doctor_builds_no_login_so_nothing_it_holds_can_renew_a_credential_or_send() {
+    // An account login's credential is renewed on its way out, and renewing
+    // is a request. A registry of logins built here would be one call away
+    // from sending, with no hold on it, so the doctor builds none: whether a
+    // provider signs in by subscription is read off the `/login` rows, which
+    // are names, and the rows are held to the registry a start builds by a
+    // test of their own.
+    let source = include_str!("../doctor.rs");
+    let shipped = source
+        .split_once("#[cfg(test)]")
+        .map_or(source, |(code, _)| code);
+    for reach in ["Subscriptions", "Renewals", "SubscriptionLogin", "OAuth"] {
+        assert!(!shipped.contains(reach), "the doctor names {reach}");
     }
-    // The login is still seen for what it is: held, and the source a launch
-    // would use, read off the store's names alone.
+
+    // A stored account login is still seen for what it is, as a start sees
+    // it, from the store's names alone.
+    let sample = Sample::new("doctor-no-login");
+    signed_in(&sample);
+    let report = examined(&sample, &Counting::default(), &bare);
     assert_eq!(status(&report, "credentials"), Status::Ok);
     assert!(
         reason(&report, "credentials").contains("openai from a stored account login"),
@@ -310,7 +267,7 @@ fn the_doctor_writes_nothing_not_even_to_tighten_what_it_reports_as_open() {
     chmod(&sample.user_file(), 0o644);
     let before = (tree(&sample.root()), tree(&sample.home()));
 
-    let report = examined(&sample, &Counting::default(), &none(), &bare);
+    let report = examined(&sample, &Counting::default(), &bare);
 
     assert!(
         before == (tree(&sample.root()), tree(&sample.home())),
@@ -332,7 +289,7 @@ fn the_doctor_starts_nothing_neither_a_backend_nor_a_declared_server() {
     )));
     let service = Counting::default();
 
-    let report = examined(&sample, &service, &none(), &bare);
+    let report = examined(&sample, &service, &bare);
 
     assert_eq!(
         service.probed.load(Ordering::SeqCst),
@@ -362,7 +319,7 @@ fn no_credential_value_reaches_either_form_of_the_report() {
     drop(sample.stored("anthropic"));
     drop(sample.user(r#"{"provider":"openai","providers":{"openai":{"model":"gpt-5"}}}"#));
 
-    let report = examined(&sample, &Counting::default(), &none(), &exported);
+    let report = examined(&sample, &Counting::default(), &exported);
     let said = human(&report);
     let document = String::from_utf8(report.encode().expect("an encodable report"))
         .expect("a document in text");
@@ -394,7 +351,7 @@ fn a_configuration_that_cannot_be_read_leaves_the_checks_that_need_it_unavailabl
     let sample = Sample::new("doctor-config-broken");
     put(&sample.root().join(".crucible/config.json"), "{ not json");
 
-    let report = examined(&sample, &Counting::default(), &none(), &bare);
+    let report = examined(&sample, &Counting::default(), &bare);
     let found = statuses(&report);
 
     assert_eq!(found.get("config"), Some(&Status::Failed), "{found:?}");
@@ -445,8 +402,8 @@ fn every_check_is_made_under_its_own_id_in_one_order_whatever_happens() {
     let broken = Sample::new("doctor-ids-broken");
     put(&broken.root().join(".crucible/config.json"), "[]");
     for report in [
-        examined(&healthy, &Counting::default(), &none(), &exported),
-        examined(&broken, &Counting::default(), &none(), &bare),
+        examined(&healthy, &Counting::default(), &exported),
+        examined(&broken, &Counting::default(), &bare),
     ] {
         let ids: Vec<&str> = report
             .checks
@@ -467,7 +424,6 @@ fn without_a_home_or_a_directory_what_rests_on_them_is_unavailable_and_the_rest_
 
     let report = examining(
         &service,
-        &none(),
         Host {
             here: Some(&root),
             home: homeless.as_ref(),
@@ -495,7 +451,6 @@ fn without_a_home_or_a_directory_what_rests_on_them_is_unavailable_and_the_rest_
     let found = home(&sample);
     let report = examining(
         &service,
-        &none(),
         Host {
             here: None,
             home: found.as_ref(),
@@ -536,7 +491,7 @@ fn the_exit_is_zero_when_healthy_one_for_a_warning_and_two_for_a_failure() {
     drop(ready.user(r#"{"provider":"openai","providers":{"openai":{"model":"gpt-5"}}}"#));
     chmod(&ready.home(), 0o700);
     chmod(&ready.user_file(), 0o600);
-    let report = examined(&ready, &Counting::default(), &none(), &exported);
+    let report = examined(&ready, &Counting::default(), &exported);
     let left: Vec<_> = report
         .checks
         .iter()
@@ -553,13 +508,13 @@ fn the_exit_is_zero_when_healthy_one_for_a_warning_and_two_for_a_failure() {
     drop(unchosen.user(r#"{"provider":"openai"}"#));
     chmod(&unchosen.home(), 0o700);
     chmod(&unchosen.user_file(), 0o600);
-    let report = examined(&unchosen, &Counting::default(), &none(), &exported);
+    let report = examined(&unchosen, &Counting::default(), &exported);
     assert_eq!(status(&report, "provider"), Status::Warning);
     assert_eq!((report.exit(), report.status()), (1, "warnings"));
 
     // Nothing to ask anyone with is a conversation that cannot start.
     let empty = Sample::new("doctor-exit-failed");
-    let report = examined(&empty, &Counting::default(), &none(), &bare);
+    let report = examined(&empty, &Counting::default(), &bare);
     assert_eq!(status(&report, "provider"), Status::Failed);
     assert_eq!((report.exit(), report.status()), (2, "failed"));
     for check in &report.checks {
@@ -578,7 +533,7 @@ fn a_provider_this_build_does_not_serve_is_a_failure_that_names_the_ones_it_does
     let sample = Sample::new("doctor-unknown-provider");
     drop(sample.user(r#"{"provider":"nobody"}"#));
 
-    let report = examined(&sample, &Counting::default(), &none(), &exported);
+    let report = examined(&sample, &Counting::default(), &exported);
 
     assert_eq!(status(&report, "provider"), Status::Failed);
     assert!(
@@ -599,7 +554,7 @@ fn an_extension_turned_on_without_a_digest_is_a_warning_that_names_nobody() {
     );
     drop(sample.user(r#"{"extensions":{"acme.reviewer":{"enabled":true}}}"#));
 
-    let report = examined(&sample, &Counting::default(), &none(), &exported);
+    let report = examined(&sample, &Counting::default(), &exported);
 
     assert_eq!(status(&report, "extension-discovery"), Status::Ok);
     assert_eq!(status(&report, "extension-trust"), Status::Warning);
@@ -616,7 +571,7 @@ fn words_from_a_configuration_file_reach_either_form_without_their_control_or_fo
         r#"{"provider":"openai","providers":{"openai":{"model":"red\u001b[31mmodel\u0007\u202eledom\u2066\u200b\ufeff\u2028\u2029end"}}}"#,
     ));
 
-    let report = examined(&sample, &Counting::default(), &none(), &exported);
+    let report = examined(&sample, &Counting::default(), &exported);
     let said = human(&report);
     let document = String::from_utf8(report.encode().expect("an encodable report"))
         .expect("a document in text");
@@ -678,7 +633,7 @@ fn words_cut_at_their_ceiling_are_marked_as_cut_in_the_text_form() {
     let long = format!("{}TAIL", "p".repeat(20_000));
     drop(sample.user(&format!(r#"{{"provider":"{long}"}}"#)));
 
-    let report = examined(&sample, &Counting::default(), &none(), &exported);
+    let report = examined(&sample, &Counting::default(), &exported);
     let said = human(&report);
 
     let provider = said
@@ -722,7 +677,7 @@ fn words_cut_at_their_ceiling_are_marked_as_cut_in_the_text_form() {
             .is_some_and(|line| line.ends_with("r [cut]"))
     );
     let whole = human(
-        &examined(&sample, &Counting::default(), &none(), &bare)
+        &examined(&sample, &Counting::default(), &bare)
             .checks
             .first()
             .map(|home| Report {
