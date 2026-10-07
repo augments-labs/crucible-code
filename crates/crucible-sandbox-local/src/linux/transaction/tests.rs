@@ -995,6 +995,32 @@ fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
 /// is this build's own, which every other test of this checkout shares.
 struct AnotherCheckout(PathBuf);
 
+impl AnotherCheckout {
+    /// The state directory a checkout beside this one would use, named for
+    /// this test process and this test as well: every test process of this
+    /// checkout makes one and removes it when its test ends, so a name for the
+    /// checkout alone had one process remove the directory another was still
+    /// reading.
+    fn beside_this_one() -> Self {
+        static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let made = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(
+            state_base_named(&checkout_state_name(
+                &format!(
+                    "crucible-code-sandbox-{}-v1",
+                    rustix::process::getuid().as_raw()
+                ),
+                &format!(
+                    "{}/another-checkout-{}-{made}",
+                    env!("CARGO_MANIFEST_DIR"),
+                    std::process::id()
+                ),
+            ))
+            .expect("another checkout's state directory"),
+        )
+    }
+}
+
 impl Drop for AnotherCheckout {
     fn drop(&mut self) {
         if state_base().ok().as_deref() != Some(self.0.as_path()) {
@@ -1168,21 +1194,43 @@ fn a_lease_waits_out_a_change_another_test_process_holds() {
 }
 
 #[test]
+fn another_test_process_makes_another_checkouts_state() {
+    // A helper: in an ordinary run it does nothing.
+    if !started_by_another_test_process() {
+        return;
+    }
+    let other = AnotherCheckout::beside_this_one();
+    create_state_directory(&other.0).expect("another checkout's state directory");
+    held_by_another_test_process();
+    drop(other);
+}
+
+#[test]
+fn another_checkouts_state_outlasts_the_same_test_in_another_test_process() {
+    // Every test process of this checkout runs the test that makes another
+    // checkout's state directory, and each removes the one it made when it
+    // ends: four concurrent runs had one remove another's while it was still
+    // being read, which then refused it as missing.
+    let other = AnotherCheckout::beside_this_one();
+    create_state_directory(&other.0).expect("another checkout's state directory");
+    AnotherTestProcess::holding(
+        "linux::transaction::tests::another_test_process_makes_another_checkouts_state",
+    )
+    .let_go();
+    assert!(
+        other.0.is_dir(),
+        "another test process removed the state directory this one made: {}",
+        other.0.display()
+    );
+}
+
+#[test]
 fn a_checkout_neither_refuses_nor_recovers_another_checkouts_sandbox_state() {
     // Two checkouts testing at once: this build, and one compiled from another
     // directory. The other is named under this checkout, so the same test
     // running from a third checkout names a directory of its own.
     let own = state_base().expect("this build's state directory");
-    let other = AnotherCheckout(
-        state_base_named(&checkout_state_name(
-            &format!(
-                "crucible-code-sandbox-{}-v1",
-                rustix::process::getuid().as_raw()
-            ),
-            concat!(env!("CARGO_MANIFEST_DIR"), "/another-checkout"),
-        ))
-        .expect("another checkout's state directory"),
-    );
+    let other = AnotherCheckout::beside_this_one();
     create_state_directory(&own).expect("this build's state directory");
     create_state_directory(&other.0).expect("another checkout's state directory");
 
