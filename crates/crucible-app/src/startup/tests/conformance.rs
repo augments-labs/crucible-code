@@ -274,7 +274,7 @@ fn case(name: &str) -> Result<Case, String> {
         "ask_user" => Case {
             args: r#"{"questions":[{"heading":"Choice","question":"Pick one","answers":[{"answer":"yes"},{"answer":"no"}]}]}"#,
             kind: "read-only",
-            detail: "read a path it could not resolve",
+            detail: "act on no file",
             outcome: Outcome::Succeeded("yes"),
         },
         "bash" => Case {
@@ -286,7 +286,7 @@ fn case(name: &str) -> Result<Case, String> {
         "bash_output" => Case {
             args: r#"{"number":1}"#,
             kind: "read-only",
-            detail: "read a path it could not resolve",
+            detail: "act on no file",
             outcome: Outcome::Failed("nothing is running as #1"),
         },
         "edit" => Case {
@@ -316,13 +316,13 @@ fn case(name: &str) -> Result<Case, String> {
         "todo_write" => Case {
             args: r#"{"tasks":[{"task":"conformance","state":"open"}]}"#,
             kind: "read-only",
-            detail: "read a path it could not resolve",
+            detail: "act on no file",
             outcome: Outcome::Succeeded("open: conformance"),
         },
         "tool_search" => Case {
             args: r#"{"query":"web"}"#,
             kind: "read-only",
-            detail: "read a path it could not resolve",
+            detail: "act on no file",
             outcome: Outcome::Succeeded("web_search"),
         },
         "web_fetch" => Case {

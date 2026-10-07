@@ -690,6 +690,26 @@ fn the_question_names_what_is_about_to_happen() {
     );
 }
 
+#[test]
+fn a_call_naming_no_path_is_not_said_to_have_failed_to_resolve_one() {
+    // `todo_write` and `ask_user` name no path by design, so nothing failed.
+    assert_eq!(
+        Sensitivity::ReadOnly {
+            target: Target::pathless()
+        }
+        .to_string(),
+        "act on no file"
+    );
+    // A path that was asked for and did not resolve keeps its words.
+    assert_eq!(
+        Sensitivity::ReadOnly {
+            target: Target::unresolved()
+        }
+        .to_string(),
+        "read a path it could not resolve"
+    );
+}
+
 // The one refusal that precedes rules and modes: no tool writes the files
 // the engine is configured from.
 

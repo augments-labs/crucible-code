@@ -144,10 +144,11 @@ pub struct Target(Held);
 /// What a target holds: a path, a path that could not be resolved, or no path
 /// because the call names none.
 ///
-/// The last two match the same rules, which is only a blanket, and read the
-/// same in a question. They are told apart for a session-long yes: a call
-/// naming no path is the same call every time it is made, and a path that did
-/// not resolve could be any file at all.
+/// The last two match the same rules, which is only a blanket. They are told
+/// apart in a question, because a path that did not resolve says so and a call
+/// that names none has nothing to say failed, and for a session-long yes: a
+/// call naming no path is the same call every time it is made, and a path that
+/// did not resolve could be any file at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Held {
     /// A path the workspace resolved.
@@ -381,10 +382,14 @@ impl fmt::Display for Target {
         // both, so the last arm is a path that did not resolve, or none, rather
         // than one that was spelled sparingly. That arm reads the same for
         // every such call, which is why this is never what an answer about a
-        // file is remembered by.
+        // file is remembered by. A call that names no path is not one that
+        // failed to resolve it, so it does not borrow those words.
         match self.below_root().or_else(|| self.absolute()) {
             Some(shown) => f.write_str(shown),
-            None => f.write_str("a path it could not resolve"),
+            None => match self.0 {
+                Held::Pathless => f.write_str("no path"),
+                Held::Named(_) | Held::Unresolved => f.write_str("a path it could not resolve"),
+            },
         }
     }
 }
@@ -460,7 +465,12 @@ impl fmt::Display for Command {
 impl fmt::Display for Sensitivity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ReadOnly { target } => write!(f, "read {target}"),
+            // A call that names no path acts on something this process holds,
+            // so "read" with nothing after it would say a lookup came up empty.
+            Self::ReadOnly { target } => match target.held() {
+                Held::Pathless => f.write_str("act on no file"),
+                Held::Named(_) | Held::Unresolved => write!(f, "read {target}"),
+            },
             Self::ReadsOutside { target } => write!(f, "read {target}, outside the workspace"),
             Self::MutatesFile { target } => write!(f, "change {target}"),
             Self::SpawnsProcess { command } => write!(f, "run {command}"),
