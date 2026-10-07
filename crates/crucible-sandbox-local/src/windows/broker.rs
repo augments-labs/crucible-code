@@ -116,3 +116,150 @@ fn unavailable(reason: &'static str) -> SandboxError {
         reason: reason.into(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The file a copy of this test binary, started by [`found_by_process`],
+    /// writes the broker it found to.
+    const LOOKUP_REPORT: &str = "CRUCIBLE_TEST_BROKER_LOOKUP_REPORT";
+
+    /// The test a started copy of this binary runs.
+    const LOOKUP_HELPER: &str = "windows::broker::tests::broker_lookup_helper_process";
+
+    /// An install or a build laid out on disk the way its installer or cargo
+    /// leaves one, with this test binary standing in for `crucible.exe`.
+    ///
+    /// It is made below the directory this test binary is in, where a hard
+    /// link to the running binary is on the same volume.
+    struct Layout {
+        root: PathBuf,
+    }
+
+    impl Layout {
+        fn new(name: &str) -> Self {
+            static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let made = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let binary = std::env::current_exe().expect("this test binary's path");
+            let root = binary.parent().expect("a directory").join(format!(
+                "crucible-broker-lookup-{name}-{}-{made}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("a directory for the layout");
+            Self { root }
+        }
+
+        fn at(&self, path: &str) -> PathBuf {
+            self.root.join(path)
+        }
+
+        /// This test binary, at `path`, as the program the layout runs.
+        fn program(&self, path: &str) -> PathBuf {
+            let program = self.at(path);
+            std::fs::create_dir_all(program.parent().expect("a directory"))
+                .expect("a directory for the program");
+            let binary = std::env::current_exe().expect("this test binary");
+            if std::fs::hard_link(&binary, &program).is_err() {
+                std::fs::copy(&binary, &program).expect("a copy of this test binary");
+            }
+            program
+        }
+
+        /// A broker image at `path`, which a lookup that finds it names this way.
+        fn broker(&self, path: &str) -> PathBuf {
+            let broker = self.at(path);
+            std::fs::create_dir_all(broker.parent().expect("a directory"))
+                .expect("a directory for the broker");
+            std::fs::write(&broker, b"a broker fixture").expect("a broker fixture");
+            broker.canonicalize().expect("the broker fixture's path")
+        }
+    }
+
+    impl Drop for Layout {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// The broker a process started as `launch` finds.
+    ///
+    /// A real process, because what is being asked is what the operating
+    /// system says the running executable is.
+    fn found_by_process(layout: &Layout, launch: &Path) -> PathBuf {
+        let report = layout.at("lookup-report");
+        let status = std::process::Command::new(launch)
+            .args(["--exact", LOOKUP_HELPER, "--test-threads=1"])
+            .env(LOOKUP_REPORT, &report)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("a copy of this test binary ran");
+        assert!(status.success(), "the started copy failed");
+        let said = std::fs::read_to_string(&report).expect("the helper's report");
+        let Some(found) = said.strip_prefix("found ") else {
+            panic!("the started copy found no broker: {said}");
+        };
+        PathBuf::from(found)
+    }
+
+    /// What a copy of this binary started by [`found_by_process`] runs: it
+    /// writes down the broker it finds.
+    #[test]
+    fn broker_lookup_helper_process() {
+        let Some(report) = std::env::var_os(LOOKUP_REPORT).map(PathBuf::from) else {
+            return;
+        };
+        let said = match Broker::find(&[]) {
+            Ok(broker) => format!("found {}", broker.path().display()),
+            Err(refused) => format!("refused {refused}"),
+        };
+        std::fs::write(&report, said).expect("the report");
+    }
+
+    #[test]
+    fn a_flat_install_finds_the_broker_beside_the_executable() {
+        // How `install.ps1` leaves an install, its alias a copy of the
+        // command, and how `cargo install` leaves one.
+        for (directory, launch) in [
+            ("bin", "bin/crucible.exe"),
+            ("bin", "bin/cru.exe"),
+            (".cargo/bin", ".cargo/bin/crucible.exe"),
+        ] {
+            let layout = Layout::new("flat");
+            layout.program(&format!("{directory}/crucible.exe"));
+            layout.program(&format!("{directory}/cru.exe"));
+            let beside = layout.broker(&format!("{directory}/crucible-sandbox-broker.exe"));
+            let found = found_by_process(&layout, &layout.at(launch));
+            assert_eq!(found, beside, "started as {launch}");
+        }
+    }
+
+    #[test]
+    fn a_build_finds_the_broker_it_built() {
+        // `crucible.exe` beside its broker in each profile's directory, and a
+        // test binary one directory below it, which is what the second place
+        // is for.
+        for (program, broker) in [
+            (
+                "target/debug/crucible.exe",
+                "target/debug/crucible-sandbox-broker.exe",
+            ),
+            (
+                "target/release/crucible.exe",
+                "target/release/crucible-sandbox-broker.exe",
+            ),
+            (
+                "target/debug/deps/tests-0123.exe",
+                "target/debug/crucible-sandbox-broker.exe",
+            ),
+        ] {
+            let layout = Layout::new("build");
+            let program = layout.program(program);
+            let built = layout.broker(broker);
+            let found = found_by_process(&layout, &program);
+            assert_eq!(found, built, "started as {}", program.display());
+        }
+    }
+}
