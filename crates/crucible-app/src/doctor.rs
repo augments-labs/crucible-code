@@ -25,8 +25,8 @@
 //!
 //! Every reason is a sentence that names no path and no value read from the
 //! environment, so the report can be pasted where people will read it; a
-//! name from a configuration file may appear, with its control characters
-//! replaced, bounded like every other word here by [`Text`].
+//! name from a configuration file may appear, with its control and format
+//! characters replaced, bounded like every other word here by [`Text`].
 
 use std::path::Path;
 
@@ -254,8 +254,8 @@ impl Read {
 
 /// Run a check's words through the bound as one line: words written over
 /// several lines, as the sandbox probe writes what it refused, are joined in
-/// order, and any other control character is replaced, so that no file's
-/// bytes can move a cursor or end a line.
+/// order, and every other character that could move a cursor, end a line, or
+/// reorder or hide what is read is replaced, as [`unshown`] lists them.
 fn said(words: &str) -> Text {
     let mut line = String::new();
     for part in words.lines().map(str::trim).filter(|part| !part.is_empty()) {
@@ -270,8 +270,47 @@ fn said(words: &str) -> Text {
 fn clean(words: &str) -> String {
     words
         .chars()
-        .map(|one| if one.is_control() { '\u{fffd}' } else { one })
+        .map(|one| if unshown(one) { '\u{fffd}' } else { one })
         .collect()
+}
+
+/// Whether `character` is replaced before a person reads it: a control
+/// character; a Unicode format character (general category `Cf`), the bidi
+/// marks, embeddings, overrides and isolates, the zero-width characters and
+/// the byte order mark among them, any of which reorders or hides the text
+/// around it; or the line or paragraph separator, which some terminals and
+/// viewers end a line at. U+2065, unassigned between the invisible operators
+/// and the isolates, is taken with them.
+///
+/// The format characters are the ones a limit's name drops, listed by hand
+/// as it lists them, since the standard library has no Unicode table; a test
+/// beside this holds the two lists to each other.
+const fn unshown(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{ad}'
+                | '\u{600}'..='\u{605}'
+                | '\u{61c}'
+                | '\u{6dd}'
+                | '\u{70f}'
+                | '\u{890}'..='\u{891}'
+                | '\u{8e2}'
+                | '\u{180e}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{2029}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}'
+                | '\u{110bd}'
+                | '\u{110cd}'
+                | '\u{13430}'..='\u{1343f}'
+                | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}'
+                | '\u{e0001}'
+                | '\u{e0020}'..='\u{e007f}'
+        )
 }
 
 const NO_HOME: &str = "crucible's home directory was not found";

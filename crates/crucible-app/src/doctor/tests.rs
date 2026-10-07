@@ -606,21 +606,67 @@ fn an_extension_turned_on_without_a_digest_is_a_warning_that_names_nobody() {
 }
 
 #[test]
-fn words_from_a_configuration_file_reach_the_text_form_without_their_control_characters() {
+fn words_from_a_configuration_file_reach_either_form_without_their_control_or_format_characters() {
     let sample = Sample::new("doctor-hostile-words");
+    // An escape and a bell, then what reorders or hides text without being a
+    // control character: a right-to-left override, an isolate, a zero-width
+    // space, a byte order mark, and the line and paragraph separators.
     drop(sample.user(
-        r#"{"provider":"openai","providers":{"openai":{"model":"red\u001b[31mmodel\u0007"}}}"#,
+        r#"{"provider":"openai","providers":{"openai":{"model":"red\u001b[31mmodel\u0007\u202eledom\u2066\u200b\ufeff\u2028\u2029end"}}}"#,
     ));
 
     let report = examined(&sample, &Counting::default(), &none(), &exported);
     let said = human(&report);
+    let document = String::from_utf8(report.encode().expect("an encodable report"))
+        .expect("a document in text");
 
     assert!(said.contains("provider:"), "{said:?}");
     assert!(said.contains("red"), "{said:?}");
-    assert!(
-        !said.contains('\u{1b}') && !said.contains('\u{7}'),
-        "{said:?}"
-    );
+    assert!(said.contains("end"), "{said:?}");
+    for (form, words) in [("text", &said), ("document", &document)] {
+        for hostile in [
+            '\u{1b}', '\u{7}', '\u{202e}', '\u{2066}', '\u{200b}', '\u{feff}', '\u{2028}',
+            '\u{2029}',
+        ] {
+            assert!(
+                !words.contains(hostile),
+                "U+{:04X} reached the {form} form: {words:?}",
+                u32::from(hostile)
+            );
+        }
+    }
+}
+
+#[test]
+fn the_doctor_replaces_every_character_a_limit_name_drops_and_the_two_separators() {
+    // The format characters are listed by hand, as a limit's name lists them,
+    // since no Unicode table is in the standard library; this holds the two
+    // lists to each other. The line and paragraph separators end a line in
+    // some terminals and viewers, and a reason is one line.
+    const SEPARATORS: [char; 2] = ['\u{2028}', '\u{2029}'];
+    // A line feed is where a reason's lines are joined, which the test below
+    // holds.
+    for character in (0..=u32::from(char::MAX))
+        .filter_map(char::from_u32)
+        .filter(|character| *character != '\n')
+    {
+        let words = format!("a{character}b");
+        let line = said(&words);
+        let replaced = line.as_str() != words;
+        assert!(
+            !replaced || line.as_str() == "a\u{fffd}b",
+            "U+{:04X}",
+            u32::from(character)
+        );
+        let dropped =
+            crucible_types::GroupName::new(&words).is_some_and(|name| name.as_str() == "ab");
+        assert_eq!(
+            replaced,
+            dropped || SEPARATORS.contains(&character),
+            "U+{:04X}",
+            u32::from(character)
+        );
+    }
 }
 
 #[test]
