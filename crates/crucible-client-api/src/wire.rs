@@ -20,10 +20,11 @@
 //! so this build never sends what it would refuse to read.
 //!
 //! A string is written with every control character escaped, DEL and the C1
-//! range included, and every Unicode format character too, which the JSON
-//! grammar allows but does not require: a document is often read off a
-//! terminal, a terminal acts on U+009B as it acts on ESC `[`, and a
-//! right-to-left override reorders what is drawn after it.
+//! range included, and every Unicode format character and the line and
+//! paragraph separators too, which the JSON grammar allows but does not
+//! require: a document is often read off a terminal, a terminal acts on
+//! U+009B as it acts on ESC `[`, a right-to-left override reorders what is
+//! drawn after it, and some terminals and viewers end a line at a separator.
 //! [`crucible_types::shown`] owns the escape, which reads back as the same
 //! character, so nothing a reader decodes changes.
 

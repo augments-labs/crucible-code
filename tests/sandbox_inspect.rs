@@ -363,9 +363,15 @@ const HOSTILE_KEY: &str = "a\u{9b}2J\u{1b}[31m\n  schema: forged\u{202e}b";
 /// [`asked`] of `config check`, `args` after it, in a project whose
 /// configuration is [`HOSTILE_KEY`] alone.
 fn checked_hostile(probe: &str, args: &[&str]) -> Output {
+    checked_key(probe, HOSTILE_KEY, args)
+}
+
+/// [`asked`] of `config check`, `args` after it, in a project whose
+/// configuration is `key` alone.
+fn checked_key(probe: &str, key: &str, args: &[&str]) -> Output {
     let scratch = Scratch::new(probe);
     fs::create_dir_all(scratch.work().join(".crucible")).expect("a project directory");
-    let document = serde_json::json!({ HOSTILE_KEY: true }).to_string();
+    let document = serde_json::json!({ key: true }).to_string();
     fs::write(scratch.work().join(".crucible/config.json"), document).expect("a project file");
     let mut asking = vec!["config", "check"];
     asking.extend_from_slice(args);
@@ -425,6 +431,41 @@ fn a_configuration_check_that_fails_says_why_with_the_override_shown() {
     let said = String::from_utf8(text.stderr).expect("UTF-8");
     assert_eq!(unshown_in(&said, true), Vec::<char>::new(), "{said:?}");
     assert!(said.contains(r"forged\u{202e}b"), "{said}");
+}
+
+#[test]
+fn a_configuration_check_shows_a_line_or_paragraph_separator_in_a_key_as_its_escape() {
+    // Some terminals and viewers end a line at either separator, so one left
+    // raw would start a report line the key was never given.
+    const KEY: &str = "a\u{2028}  schema: forged\u{2029}b";
+    let separators = |said: &str| {
+        said.chars()
+            .filter(|character| matches!(character, '\u{2028}' | '\u{2029}'))
+            .collect::<Vec<_>>()
+    };
+
+    let text = checked_key("separator-check-text", KEY, &[]);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    let said = String::from_utf8(text.stdout).expect("UTF-8");
+    let told = String::from_utf8(text.stderr).expect("UTF-8");
+    assert_eq!(separators(&said), Vec::<char>::new(), "{said:?}");
+    assert_eq!(separators(&told), Vec::<char>::new(), "{told:?}");
+    assert!(
+        said.contains(r"a\u{2028}  schema: forged\u{2029}b"),
+        "{said}"
+    );
+
+    let json = checked_key("separator-check-json", KEY, &["--json"]);
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    let said = String::from_utf8(json.stdout).expect("UTF-8");
+    assert_eq!(separators(&said), Vec::<char>::new(), "{said:?}");
+    assert!(said.contains(r"a\u2028  schema: forged\u2029b"), "{said}");
+    let read: serde_json::Value = serde_json::from_str(said.trim_end()).expect("one JSON document");
+    let message = read
+        .pointer("/failures/0/message")
+        .and_then(serde_json::Value::as_str)
+        .expect("a failure");
+    assert!(message.contains(KEY), "{message:?}");
 }
 
 #[cfg(unix)]

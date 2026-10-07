@@ -3,7 +3,8 @@
 //!
 //! A terminal acts on a control character rather than drawing it: ESC and the
 //! C1 controls, U+009B among them as ESC `[`, can retitle the window or clear
-//! the screen, and a line break starts a line the text was never given. A
+//! the screen, and a line break starts a line the text was never given, as
+//! the line and paragraph separators do in some terminals and viewers. A
 //! Unicode format character, a right-to-left override among them, reorders or
 //! hides what is drawn around it. So text that is quoted rather than written
 //! by crucible leaves with each of these as an escape a person can read, the
@@ -22,16 +23,19 @@ use std::io;
 
 use serde_json::ser::{CompactFormatter, Formatter};
 
-/// Whether `character` is a control character, or a Unicode format character
-/// (general category `Cf`): the bidi marks, embeddings, overrides and
-/// isolates, the zero-width characters and the byte order mark among them.
-/// Drawn, either reorders or hides the text around it. U+2065, unassigned
-/// between the invisible operators and the isolates, is taken with them.
+/// Whether `character` is a control character; a Unicode format character
+/// (general category `Cf`), the bidi marks, embeddings, overrides and
+/// isolates, the zero-width characters and the byte order mark among them,
+/// any of which reorders or hides the text around it when drawn; or the line
+/// or paragraph separator, which some terminals and viewers end a line at.
+/// U+2065, unassigned between the invisible operators and the isolates, is
+/// taken with them.
 ///
 /// The terminal drops the same format characters from everything it draws,
 /// except the zero-width non-joiner and joiner, which join characters on
-/// screen. Neither crate may name the other, so a test in the command line
-/// holds the two lists to each other.
+/// screen, and it draws the two separators, a column each. Neither crate may
+/// name the other, so a test in the command line holds the two lists to each
+/// other.
 #[must_use]
 pub const fn unshown(character: char) -> bool {
     character.is_control()
@@ -46,6 +50,7 @@ pub const fn unshown(character: char) -> bool {
                 | '\u{8e2}'
                 | '\u{180e}'
                 | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{2029}'
                 | '\u{202a}'..='\u{202e}'
                 | '\u{2060}'..='\u{206f}'
                 | '\u{feff}'
@@ -62,8 +67,9 @@ pub const fn unshown(character: char) -> bool {
 
 /// `text` with every [`unshown`] character but the two joiners below, a line
 /// break among them, written as its escape: `\u{1b}` for ESC, `\n` for a line
-/// break, `\u{202e}` for a right-to-left override. Escaped, it is still the
-/// name, and the person who sees it can tell which directory or key it was.
+/// break, `\u{2028}` for a line separator, `\u{202e}` for a right-to-left
+/// override. Escaped, it is still the name, and the person who sees it can
+/// tell which directory or key it was.
 ///
 /// The zero-width non-joiner and joiner, U+200C and U+200D, are kept, as the
 /// terminal keeps them: they shape Persian and Indic script and join an emoji
@@ -88,9 +94,10 @@ pub fn escaped(text: &str) -> String {
 const JOINERS: [char; 2] = ['\u{200c}', '\u{200d}'];
 
 /// Compact JSON whose strings carry every [`unshown`] character as a `\u`
-/// escape: DEL, the C1 controls and the format characters as well as the C0
-/// controls `serde_json` escapes already. One beyond the Basic Multilingual
-/// Plane is written as its two UTF-16 halves, as the JSON grammar spells it.
+/// escape: DEL, the C1 controls, the format characters and the line and
+/// paragraph separators as well as the C0 controls `serde_json` escapes
+/// already. One beyond the Basic Multilingual Plane is written as its two
+/// UTF-16 halves, as the JSON grammar spells it.
 #[derive(Debug, Clone, Copy)]
 pub struct Escaping;
 

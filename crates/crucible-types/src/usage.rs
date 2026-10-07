@@ -652,9 +652,10 @@ pub const MAX_GROUP_WINDOWS: usize = 6;
 /// group from another; which requests a group holds back is its
 /// [`ModelKey`]'s to say.
 ///
-/// It is text a response chose, so it is never read for meaning: control
-/// characters and Unicode format characters, which would reorder or hide what
-/// is drawn, are taken out, it is cut to [`MAX_LIMIT_NAME_BYTES`] on a
+/// It is text a response chose, so it is never read for meaning: every
+/// character [`unshown`] lists, the controls, the Unicode format characters
+/// and the line and paragraph separators, which would move, reorder or hide
+/// what is drawn, is taken out, it is cut to [`MAX_LIMIT_NAME_BYTES`] on a
 /// character's boundary and ends in `…` where it was, and a name with nothing
 /// left is not one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -725,7 +726,7 @@ enum Matching {
 
 impl ModelKey {
     /// The model whose id is exactly `id`; `None` for an id that is empty,
-    /// holds a control or a Unicode format character, or is longer than
+    /// holds a character [`unshown`] lists, or is longer than
     /// [`MAX_LIMIT_NAME_BYTES`]: no model's id is, and one cut to fit would be
     /// another model's.
     #[must_use]
@@ -736,11 +737,10 @@ impl ModelKey {
 
     /// Every model whose id starts with what comes before the `*` that ends
     /// `pattern`; `None` for a pattern that does not end in `*`, has another
-    /// `*` or nothing before it, holds a control or a Unicode format
-    /// character, or is longer than [`MAX_LIMIT_NAME_BYTES`]. The one star at
-    /// the end is the only pattern read: a vendor's name with any other is
-    /// no model's, and a guess at what it meant could hold back one it does
-    /// not.
+    /// `*` or nothing before it, holds a character [`unshown`] lists, or is
+    /// longer than [`MAX_LIMIT_NAME_BYTES`]. The one star at the end is the
+    /// only pattern read: a vendor's name with any other is no model's, and a
+    /// guess at what it meant could hold back one it does not.
     #[must_use]
     pub fn prefixed(pattern: &str) -> Option<Self> {
         let prefix = pattern.strip_suffix('*')?;
