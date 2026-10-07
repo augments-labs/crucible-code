@@ -743,7 +743,7 @@ impl Rows {
     /// whether this build's login registry signs in to it: the answer a
     /// reader gives that must build no login, held to the registry by a test.
     #[must_use]
-    pub fn subscribes(&self, provider: &str) -> bool {
+    pub(crate) fn subscribes(&self, provider: &str) -> bool {
         self.rows
             .iter()
             .any(|row| row.kind == Kind::Account && row.provider == provider)
