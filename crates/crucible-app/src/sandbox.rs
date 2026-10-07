@@ -173,7 +173,11 @@ pub fn inspection(here: &Path, home: &Home) -> Result<Observed, AppError> {
 
 /// [`inspection`], asked of a service handed in so that one which counts what
 /// it is asked can stand in for this machine's.
-fn inspecting(service: &dyn Observing, here: &Path, home: &Home) -> Result<Observed, AppError> {
+pub(crate) fn inspecting(
+    service: &dyn Observing,
+    here: &Path,
+    home: &Home,
+) -> Result<Observed, AppError> {
     let workspace = Workspace::open(here)?;
     let settings = Settings::read(home, workspace.root())?;
     // Widened the way a run widens it, and for the same reason the run gives:
@@ -181,15 +185,7 @@ fn inspecting(service: &dyn Observing, here: &Path, home: &Home) -> Result<Obser
     // out would understate what a command can touch.
     let workspace = workspace.reaching(settings.extra_directories())?;
     let policy = settings.sandbox().policy(&workspace)?;
-    let request = SandboxRequest::new(
-        SandboxId::new(),
-        Ancestry::new(),
-        // The call this policy would be built for. Nothing is called: the
-        // request needs a name and this is the honest one.
-        ToolId::new("sandbox"),
-        policy,
-        SandboxManifest::empty(),
-    );
+    let request = asking(policy);
     let found = service
         .observe(&request)
         .map(|observation| Found::settled(observation, &request));
@@ -200,6 +196,20 @@ fn inspecting(service: &dyn Observing, here: &Path, home: &Home) -> Result<Obser
         request,
         found,
     })
+}
+
+/// The request a command under `policy` would be prepared from, as an
+/// inspection asks about it.
+pub(crate) fn asking(policy: SandboxPolicy) -> SandboxRequest {
+    SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        // The call this policy would be built for. Nothing is called: the
+        // request needs a name and this is the honest one.
+        ToolId::new("sandbox"),
+        policy,
+        SandboxManifest::empty(),
+    )
 }
 
 impl Observed {
@@ -284,7 +294,7 @@ impl Observed {
     }
 
     /// The report, as the document's value.
-    fn contract(&self) -> Result<Inspection, Refusal> {
+    pub(crate) fn contract(&self) -> Result<Inspection, Refusal> {
         let found = self.found.as_ref().ok();
         let capabilities = found.map(|found| found.observation.capabilities());
         let manifest = self.request.manifest();

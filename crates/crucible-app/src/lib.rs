@@ -29,6 +29,7 @@ pub mod branching;
 pub mod client;
 pub mod content_use;
 mod conversation;
+pub mod doctor;
 mod error;
 pub mod extensions;
 mod following;
