@@ -1065,7 +1065,7 @@ impl RegistryLease {
 
     fn acquire_at(path: &Path) -> io::Result<Self> {
         #[cfg(test)]
-        let _reading = TestStateChange::read();
+        let _reading = TestStateChange::read()?;
         create_state_directory(path)?;
         let state = open_state_directory(path)?;
         let lock = open_lock(&state, REGISTRY_LOCK)?;
@@ -1159,7 +1159,7 @@ impl Lease {
     /// later look.
     pub(super) fn try_acquire_in(state: &Path) -> io::Result<Option<Self>> {
         #[cfg(test)]
-        let _reading = TestStateChange::read();
+        let _reading = TestStateChange::read()?;
         create_state_directory(state)?;
         let directory = open_state_directory(state)?;
         let lock = open_lock(&directory, WRITABLE_LOCK)?;
@@ -1207,9 +1207,22 @@ impl Lease {
     }
 }
 
+/// Under test, what keeps writers from running side by side: in this process,
+/// one thread's at a time, and across every test process of this checkout,
+/// one process's at a time.
+///
+/// Every test process of a checkout shares its state directory, and with it the
+/// publication lock, so a test holding that lock past a preparation's patience
+/// would otherwise have another `cargo test`'s writer refused as concurrent. The
+/// lease is the thread's own: asked for again by the thread that holds it, it is
+/// taken at once and lets go of nothing. A test process started with the lease
+/// lent to it by its parent, which holds it while waiting on that child, takes
+/// only the thread's part, since the other would wait on the parent for ever.
 #[cfg(test)]
 pub(super) struct TestSerialLease {
     held: bool,
+    /// This checkout's writers' lock, held while `held`, unless lent.
+    across: Option<File>,
 }
 
 #[cfg(test)]
@@ -1218,29 +1231,67 @@ static TEST_SERIAL_OWNER: std::sync::LazyLock<(
     std::sync::Condvar,
 )> = std::sync::LazyLock::new(|| (std::sync::Mutex::new(None), std::sync::Condvar::new()));
 
+/// Names, in a child test process, the parent that lent it the writers' lease.
+#[cfg(test)]
+pub(super) const TEST_SERIAL_LENT_BY: &str = "CRUCIBLE_TEST_SERIAL_LENT_BY";
+
 #[cfg(test)]
 impl TestSerialLease {
     pub(super) fn acquire() -> io::Result<Self> {
         let current = std::thread::current().id();
         let (owner, available) = &*TEST_SERIAL_OWNER;
-        let mut owner = owner
-            .lock()
-            .map_err(|_| invalid("sandbox test writer coordination was poisoned"))?;
-        loop {
-            match *owner {
-                None => {
-                    *owner = Some(current);
-                    return Ok(Self { held: true });
-                }
-                Some(active) if active == current => return Ok(Self { held: false }),
-                Some(_) => {
-                    owner = available
-                        .wait(owner)
-                        .map_err(|_| invalid("sandbox test writer coordination was poisoned"))?;
+        {
+            let mut owner = owner
+                .lock()
+                .map_err(|_| invalid("sandbox test writer coordination was poisoned"))?;
+            loop {
+                match *owner {
+                    None => {
+                        *owner = Some(current);
+                        break;
+                    }
+                    Some(active) if active == current => {
+                        return Ok(Self {
+                            held: false,
+                            across: None,
+                        });
+                    }
+                    Some(_) => {
+                        owner = available.wait(owner).map_err(|_| {
+                            invalid("sandbox test writer coordination was poisoned")
+                        })?;
+                    }
                 }
             }
         }
+        // Waited for outside this process's lock, so a reading or another
+        // writer of this process is not held up by another process's writer.
+        let across = if lent_by_parent() {
+            Ok(None)
+        } else {
+            test_checkout_lock(".test-writers.lock", FlockOperation::LockExclusive).map(Some)
+        };
+        match across {
+            Ok(across) => Ok(Self { held: true, across }),
+            Err(problem) => {
+                if let Ok(mut owner) = owner.lock() {
+                    *owner = None;
+                    available.notify_all();
+                }
+                Err(problem)
+            }
+        }
     }
+}
+
+/// Whether this process's parent lent it the writers' lease: named by pid, so a
+/// variable inherited further than the child it was set for lends nothing.
+#[cfg(test)]
+fn lent_by_parent() -> bool {
+    std::env::var(TEST_SERIAL_LENT_BY)
+        .ok()
+        .and_then(|lender| lender.parse::<u32>().ok())
+        .is_some_and(|lender| lender == std::os::unix::process::parent_id())
 }
 
 #[cfg(test)]
@@ -1249,6 +1300,7 @@ impl Drop for TestSerialLease {
         if !self.held {
             return;
         }
+        drop(self.across.take());
         let (owner, available) = &*TEST_SERIAL_OWNER;
         if let Ok(mut owner) = owner.lock() {
             *owner = None;
@@ -1257,16 +1309,44 @@ impl Drop for TestSerialLease {
     }
 }
 
+/// Under test, this checkout's lock file `suffix`, beside its state directory,
+/// taken with `operation`.
+///
+/// One file per checkout, as the state directory is one, and left in place
+/// with it: removing a lock file another process holds would let a third take
+/// a fresh one beside it.
+#[cfg(test)]
+fn test_checkout_lock(suffix: &str, operation: FlockOperation) -> io::Result<File> {
+    let mut path = state_base().map_err(io::Error::other)?.into_os_string();
+    path.push(suffix);
+    let lock = File::from(rustix::fs::open(
+        &path,
+        OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR,
+    )?);
+    let metadata = lock.metadata()?;
+    if !metadata.is_file() || metadata.uid() != rustix::process::getuid().as_raw() {
+        return Err(invalid(
+            "a sandbox test coordination lock is not this user's file",
+        ));
+    }
+    rustix::fs::flock(&lock, operation)?;
+    Ok(lock)
+}
+
 /// Under test, what keeps a lease from reading a state directory while another
-/// test of the process holds this user's changed to watch a refusal.
+/// test, of this process or another of this checkout, holds this user's
+/// changed to watch a refusal.
 ///
 /// Taking the registry or the publication lock, in whatever state directory,
 /// takes a reading for as long as the taking lasts; a test takes the change for
 /// as long as the directory or a lock in it stands changed, once the readings
-/// under way have finished. The thread holding the change reads through it —
-/// which is how its own refusal is watched — and may ask for it again. A thread
-/// holding a reading drops it before asking for the change, which would
-/// otherwise wait on that reading for ever.
+/// under way, in every test process of this checkout, have finished. The
+/// thread holding the change reads through it — which is how its own refusal
+/// is watched — and may ask for it again. A thread holding a reading drops it
+/// before asking for the change, which would otherwise wait on that reading for
+/// ever, and a test that holds the writers' lease takes it before the change,
+/// never after.
 ///
 /// Neither side knows a deadline: a lease taken under test may first wait out a
 /// change for as long as the test holds it, beyond whatever patience its caller
@@ -1275,6 +1355,9 @@ impl Drop for TestSerialLease {
 #[cfg(test)]
 pub(super) struct TestStateChange {
     hold: StateHold,
+    /// This checkout's state lock: shared for a reading, exclusive for the
+    /// change, and not taken by a thread reading through its own change.
+    across: Option<File>,
 }
 
 /// What one [`TestStateChange`] holds.
@@ -1282,17 +1365,22 @@ pub(super) struct TestStateChange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StateHold {
     Reading,
+    /// A reading through this thread's own change, or that of the thread it
+    /// reads for.
+    Through,
     Change,
     /// The change asked for again by the thread already holding it.
     Again,
 }
 
-/// Who holds this user's state directory changed, and how many readings are
-/// under way.
+/// Who holds this user's state directory changed, whether every other test
+/// process has let it go yet, and how many readings are under way.
 #[cfg(test)]
 #[derive(Default)]
 struct StateUse {
     changer: Option<std::thread::ThreadId>,
+    /// Whether `changer` holds the change across processes as well.
+    held: bool,
     readers: usize,
 }
 
@@ -1318,50 +1406,103 @@ pub(super) fn read_for(thread: std::thread::ThreadId) {
 }
 
 #[cfg(test)]
+const TEST_STATE_LOCK: &str = ".test-state.lock";
+
+#[cfg(test)]
 impl TestStateChange {
-    /// A reading, once no other thread holds the change.
+    /// A reading, once no other thread of any test process of this checkout
+    /// holds the change.
     ///
     /// Taken for the thread this one reads for, where it reads for another;
     /// see [`read_for`].
-    pub(super) fn read() -> Self {
+    pub(super) fn read() -> io::Result<Self> {
         let current = READING_FOR
             .with(std::cell::Cell::get)
             .unwrap_or_else(|| std::thread::current().id());
         let (state, settled) = &*TEST_STATE_USE;
-        let mut state = state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while state.changer.is_some_and(|changer| changer != current) {
-            state = settled
-                .wait(state)
+        {
+            let mut state = state
+                .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            loop {
+                match state.changer {
+                    Some(changer) if changer == current && state.held => {
+                        return Ok(Self {
+                            hold: StateHold::Through,
+                            across: None,
+                        });
+                    }
+                    None => break,
+                    // Another thread's change, or this one's still waiting
+                    // for the other processes' readings.
+                    Some(_) => {
+                        state = settled
+                            .wait(state)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    }
+                }
+            }
+            state.readers += 1;
         }
-        state.readers += 1;
-        Self {
-            hold: StateHold::Reading,
+        match test_checkout_lock(TEST_STATE_LOCK, FlockOperation::LockShared) {
+            Ok(across) => Ok(Self {
+                hold: StateHold::Reading,
+                across: Some(across),
+            }),
+            Err(problem) => {
+                let mut state = state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.readers = state.readers.saturating_sub(1);
+                settled.notify_all();
+                Err(problem)
+            }
         }
     }
 
-    /// The change, once no other thread holds it and no reading is under way.
+    /// The change, once no other thread holds it and no reading is under way
+    /// in any test process of this checkout.
     pub(super) fn change() -> Self {
         let current = std::thread::current().id();
         let (state, settled) = &*TEST_STATE_USE;
+        {
+            let mut state = state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if state.changer == Some(current) {
+                return Self {
+                    hold: StateHold::Again,
+                    across: None,
+                };
+            }
+            while state.changer.is_some() || state.readers > 0 {
+                state = settled
+                    .wait(state)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+            state.changer = Some(current);
+        }
+        // Readings of this process wait on `changer` meanwhile; those of the
+        // others are what this waits out.
+        let across = test_checkout_lock(TEST_STATE_LOCK, FlockOperation::LockExclusive);
         let mut state = state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.changer == Some(current) {
-            return Self {
-                hold: StateHold::Again,
-            };
-        }
-        while state.changer.is_some() || state.readers > 0 {
-            state = settled
-                .wait(state)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-        state.changer = Some(current);
-        Self {
-            hold: StateHold::Change,
+        match across {
+            Ok(across) => {
+                state.held = true;
+                settled.notify_all();
+                Self {
+                    hold: StateHold::Change,
+                    across: Some(across),
+                }
+            }
+            Err(problem) => {
+                state.changer = None;
+                settled.notify_all();
+                drop(state);
+                panic!("this checkout's sandbox test state lock is unavailable: {problem}");
+            }
         }
     }
 }
@@ -1369,14 +1510,20 @@ impl TestStateChange {
 #[cfg(test)]
 impl Drop for TestStateChange {
     fn drop(&mut self) {
+        // Let go across processes first, so that whoever this wakes does not
+        // wait on what this still holds.
+        drop(self.across.take());
         let (state, settled) = &*TEST_STATE_USE;
         let mut state = state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match self.hold {
             StateHold::Reading => state.readers = state.readers.saturating_sub(1),
-            StateHold::Change => state.changer = None,
-            StateHold::Again => {}
+            StateHold::Change => {
+                state.changer = None;
+                state.held = false;
+            }
+            StateHold::Through | StateHold::Again => {}
         }
         settled.notify_all();
     }

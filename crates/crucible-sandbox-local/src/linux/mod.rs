@@ -105,9 +105,11 @@ pub(super) fn prepare(
         }
     })?;
     drop(registry);
-    // Writers in one test process run one at a time, as those tests assume. Taken
-    // here, after the registry is let go and before anything a test times, and
-    // carried with the command until its process is let go.
+    // Writers under test run one at a time, in this process and across the test
+    // processes of this checkout, as those tests assume. Taken here, after the
+    // registry is let go and before anything a test times, since it may wait out
+    // another process's tests, and carried with the command until its process is
+    // let go.
     #[cfg(test)]
     let serial = if request
         .policy()

@@ -1747,6 +1747,12 @@ fn abrupt_host_loss_kills_the_scope_and_the_next_prepare_reconciles_its_wal() {
         .env(CRASH_HELPER_SANDBOX, sandbox.to_string())
         .env(CRASH_HELPER_MARKER, &marker)
         .env(CRASH_HELPER_READY, &ready)
+        // The helper prepares a writer while this test holds the writers'
+        // lease and waits on it, so the lease is lent rather than waited for.
+        .env(
+            super::transaction::TEST_SERIAL_LENT_BY,
+            std::process::id().to_string(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .spawn()
