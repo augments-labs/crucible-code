@@ -59,6 +59,8 @@ pub fn hold_broker_directory() {
     linux::hold_broker_directory();
     #[cfg(target_os = "macos")]
     macos::hold_broker_directory();
+    #[cfg(target_os = "windows")]
+    windows::hold_broker_directory();
 }
 
 #[cfg(test)]

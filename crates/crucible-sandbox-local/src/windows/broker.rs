@@ -1,9 +1,10 @@
 //! Discovery and provenance of the packaged native-Windows broker.
 
 use std::fs::File;
-use std::io::Read as _;
+use std::io::{self, Read as _};
 use std::os::windows::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxError,
@@ -17,6 +18,57 @@ const MAX_BROKER_BYTES: u64 = 32 * 1024 * 1024;
 /// name, so a preparation and an inspection state it without asking anything.
 pub(super) const VERSION: &str = "account-wfp-token-v1";
 
+/// The name of the broker in a release, beside `crucible.exe`.
+const BROKER: &str = "crucible-sandbox-broker.exe";
+
+/// The directory this process's broker is looked for in.
+static HELD: Held = Held::new();
+
+/// Settles, once, the directory this process's broker is looked for in.
+pub(crate) fn hold_broker_directory() {
+    let _ = HELD.directory(std::env::current_exe);
+}
+
+/// The directory a process's broker is looked for in, settled the first time
+/// it is asked for and never again.
+struct Held(OnceLock<Result<PathBuf, &'static str>>);
+
+impl Held {
+    const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+
+    fn directory(
+        &self,
+        executable: impl FnOnce() -> io::Result<PathBuf>,
+    ) -> Result<PathBuf, &'static str> {
+        self.0.get_or_init(|| resolved(executable())).clone()
+    }
+}
+
+/// The directory of the running executable, once every link in its path is
+/// resolved.
+fn resolved(executable: io::Result<PathBuf>) -> Result<PathBuf, &'static str> {
+    let executable = executable.map_err(|_| "could not locate the Crucible executable")?;
+    let executable = executable
+        .canonicalize()
+        .map_err(|_| "could not resolve where the Crucible executable is")?;
+    executable
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or("the Crucible executable is in no directory")
+}
+
+/// Where a broker is looked for, in the order it is looked for there: beside
+/// the executable, then in the directory above, where a build puts its helpers.
+fn candidates(directory: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![directory.join(BROKER)];
+    if let Some(above) = directory.parent() {
+        candidates.push(above.join(BROKER));
+    }
+    candidates
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct Broker {
     path: PathBuf,
@@ -25,17 +77,11 @@ pub(super) struct Broker {
 
 impl Broker {
     pub(super) fn find(excluded: &[&Path]) -> Result<Self, SandboxError> {
-        let executable = std::env::current_exe()
-            .map_err(|_| unavailable("could not locate the Crucible executable"))?;
-        let mut candidates = Vec::new();
-        if let Some(parent) = executable.parent() {
-            candidates.push(parent.join("crucible-sandbox-broker.exe"));
-            if let Some(build_root) = parent.parent() {
-                candidates.push(build_root.join("crucible-sandbox-broker.exe"));
-            }
-        }
-        candidates.sort();
-        candidates.dedup();
+        let directory = HELD.directory(std::env::current_exe).map_err(unavailable)?;
+        Self::first_trusted(candidates(&directory), excluded)
+    }
+
+    fn first_trusted(candidates: Vec<PathBuf>, excluded: &[&Path]) -> Result<Self, SandboxError> {
         for candidate in candidates {
             let Ok(path) = candidate.canonicalize() else {
                 continue;
@@ -261,5 +307,59 @@ mod tests {
             let found = found_by_process(&layout, &program);
             assert_eq!(found, built, "started as {}", program.display());
         }
+    }
+
+    #[test]
+    fn the_held_directory_is_not_resolved_again() {
+        let layout = Layout::new("held");
+        let started = layout.program("bin/crucible.exe");
+        let directory = layout.at("bin").canonicalize().expect("the install");
+        let asked = std::cell::Cell::new(0);
+        let executable = || {
+            asked.set(asked.get() + 1);
+            Ok(started.clone())
+        };
+
+        let held = Held::new();
+        assert_eq!(held.directory(executable), Ok(directory.clone()));
+        assert_eq!(held.directory(executable), Ok(directory));
+        assert_eq!(asked.get(), 1, "the executable was asked for again");
+    }
+
+    #[test]
+    fn a_directory_that_could_not_be_resolved_is_each_lookup_s_refusal() {
+        let layout = Layout::new("unresolved");
+        let program = layout.program("bin/crucible.exe");
+        let held = Held::new();
+        assert_eq!(
+            held.directory(|| Ok(layout.at("bin/gone.exe"))),
+            Err("could not resolve where the Crucible executable is")
+        );
+        assert_eq!(
+            held.directory(|| Ok(program)),
+            Err("could not resolve where the Crucible executable is"),
+            "a later lookup looked somewhere else"
+        );
+        let unlocated = Held::new();
+        assert_eq!(
+            unlocated.directory(|| Err(io::Error::other("no executable"))),
+            Err("could not locate the Crucible executable")
+        );
+    }
+
+    #[test]
+    fn the_unit_s_own_broker_is_tried_first() {
+        // A directory whose name sorts after the broker's, so a lookup that
+        // ordered its candidates by path would try the one above first.
+        let layout = Layout::new("own-first");
+        let own = layout.broker("target/release/crucible-sandbox-broker.exe");
+        layout.broker("target/crucible-sandbox-broker.exe");
+        let directory = layout.at("target/release");
+        assert_eq!(
+            candidates(&directory),
+            [directory.join(BROKER), layout.at("target").join(BROKER)]
+        );
+        let found = Broker::first_trusted(candidates(&directory), &[]).expect("a trusted broker");
+        assert_eq!(found.path, own);
     }
 }
