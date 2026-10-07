@@ -576,6 +576,7 @@ fn every_place_an_argument_can_carry_a_secret_is_shown_without_it() {
         .iter()
         .filter_map(|(args, expected)| shown_wrong(args, expected))
         .chain(shown_wrong_where_a_password_holds_what_ends_a_url())
+        .chain(shown_wrong_where_an_at_sign_is_not_where_a_user_ends())
         .collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
@@ -719,6 +720,120 @@ fn shown_wrong_where_a_password_holds_what_ends_a_url() -> Vec<String> {
         .collect()
 }
 
+/// The shapes of the test above where the last `@` before a URL's host ends,
+/// or a `user:password@host` written with no scheme, is not where its user
+/// ends, each shown wrong.
+fn shown_wrong_where_an_at_sign_is_not_where_a_user_ends() -> Vec<String> {
+    let word = WORD;
+    let cases: [(&[&str], &[&str]); 20] = [
+        // A pair named for a secret after a URL with no path, its value
+        // holding an `@`, is a pair rather than the URL's user.
+        (
+            &[&format!(
+                "jdbc:sqlserver://db.example.test:1433;databaseName=app;user=sa;password=Pa@{word}"
+            )],
+            &["jdbc:sqlserver://db.example.test:1433;databaseName=app;user=sa;password=<redacted>"],
+        ),
+        (
+            &[&format!(
+                "Server=https://h.example.test;Password=abc@{word}"
+            )],
+            &["Server=https://h.example.test;Password=<redacted>"],
+        ),
+        (
+            &[&format!("x=https://h.example.test,token=a@{word}")],
+            &["x=https://h.example.test,token=<redacted>"],
+        ),
+        (
+            &[&format!(
+                r#"{{"dsn":"Server=https://h.example.test;Password=abc@{word}"}}"#
+            )],
+            &[r#"{"dsn":"Server=https://h.example.test;Password=<redacted>"#],
+        ),
+        (
+            &[&format!("https://someone@h.example.test;password=a@{word}")],
+            &["https://<redacted>@h.example.test;password=<redacted>"],
+        ),
+        // A password written with no scheme is hidden whatever it holds.
+        (
+            &[&format!("someone:pa;{word}@db.example.test:5432")],
+            &["someone:<redacted>@db.example.test:5432"],
+        ),
+        (
+            &[&format!("someone:pa,{word}@db.example.test:5432")],
+            &["someone:<redacted>@db.example.test:5432"],
+        ),
+        (
+            &[&format!("someone:pa&{word}@db.example.test:5432")],
+            &["someone:<redacted>@db.example.test:5432"],
+        ),
+        (
+            &[&format!("someone:pa={word}@db.example.test:5432")],
+            &["someone:<redacted>@db.example.test:5432"],
+        ),
+        (
+            &[&format!("someone:{word}:pa@db.example.test:5432")],
+            &["someone:<redacted>@db.example.test:5432"],
+        ),
+        (
+            &[&format!("someone:pa:{word}@db.example.test:5432")],
+            &["someone:<redacted>@db.example.test:5432"],
+        ),
+        (
+            &[&format!(
+                "--dsn=someone:pa;{word}@tcp(db.example.test:3306)/app"
+            )],
+            &["--dsn=someone:<redacted>@tcp(db.example.test:3306)/app"],
+        ),
+        (
+            &[&format!(
+                r#"{{"dsn":"someone:pa;{word}@db.example.test:5432"}}"#
+            )],
+            &[r#"{"dsn":"someone:<redacted>@db.example.test:5432"}"#],
+        ),
+        // And a pair named for a secret before that `@` is still a pair.
+        (
+            &[&format!("someone:sa;password=a@{word}")],
+            &["someone:sa;password=<redacted>"],
+        ),
+        (
+            &[&format!("someone:pa@h;token=a@{word}")],
+            &["someone:<redacted>@h;token=<redacted>"],
+        ),
+        // Where a user ends before that pair, the user is still hidden.
+        (
+            &[&format!(
+                "https://someone:pa,{word}@h.example.test;token=a@b"
+            )],
+            &["https://<redacted>@h.example.test;token=<redacted>"],
+        ),
+        (
+            &[&format!("someone:pa,{word}@h.example.test;token=a@b")],
+            &["someone:<redacted>@h.example.test;token=<redacted>"],
+        ),
+        (
+            &[&format!(
+                "https://someone:pa,b@h.example.test&token={word},c@d"
+            )],
+            &["https://<redacted>@h.example.test&token=<redacted>"],
+        ),
+        // What is not a user and a password is shown as it was.
+        (
+            &["git+ssh://git@github.example.test/org/repo.git"],
+            &["git+ssh://<redacted>@github.example.test/org/repo.git"],
+        ),
+        (
+            &[r#"["someone:pa","a@b.example.test"]"#],
+            &[r#"["someone:pa","a@b.example.test"]"#],
+        ),
+    ];
+
+    cases
+        .iter()
+        .filter_map(|(args, expected)| shown_wrong(args, expected))
+        .collect()
+}
+
 #[test]
 fn an_argument_with_nothing_secret_about_it_is_shown_as_written() {
     let plain = [
@@ -732,6 +847,10 @@ fn an_argument_with_nothing_secret_about_it_is_shown_as_written() {
         "https://mcp.example.test/sse",
         "https://registry.example.test/@scope/pkg",
         "git@github.example.test:org/repo.git",
+        "@scope/pkg@1.2.3",
+        "/srv/cache/@scope/pkg",
+        "--log-level:debug",
+        "region:us",
         "/srv/docs",
         "--log-level",
         "debug",

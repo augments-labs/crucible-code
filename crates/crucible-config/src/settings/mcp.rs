@@ -183,14 +183,19 @@ impl McpServer {
     /// argument too where what was hidden ends on a scheme word such as
     /// `Bearer`. A URL, wherever in a word its `scheme://` starts, is shown
     /// without its user, query and fragment, as `user:password@host` is shown
-    /// without its password. The user is hidden whatever its password holds:
-    /// a `;`, `,`, quote or other character that ends a URL ends one only
-    /// after its user, but for the quote that closes a string the URL opens,
-    /// as `"url":"https://...` opens one, and a shell's `'"'"'` or `'\''`
-    /// writes a quote rather than closing one. And a word, or a piece of one,
-    /// shaped like a token is hidden. A value after a flag whose name says nothing, as `-p`,
-    /// is shown. More is hidden than is secret, on purpose: a value shown in
-    /// error is the one that cannot be taken back.
+    /// without its password. Either password is hidden whatever it holds, up
+    /// to its last `@` before a `/` (for a URL, a `?` or `#` too) or the quote
+    /// that closes a string the user opens, as `"url":"https://...` opens
+    /// one: a `;`, `,` or other character that ends a URL ends one only after
+    /// its user, and a shell's `'"'"'` or `'\''` writes a quote rather than
+    /// closing one. But a pair named for a secret after such a character, as
+    /// in `https://host;password=a@b`, is that pair rather than part of a
+    /// user: the user ends at the last `@` before it, and a URL no later than
+    /// where it starts, so its value is hidden as any pair's is. And a word,
+    /// or a piece of one, shaped like a token is hidden. A value after a flag
+    /// whose name says nothing, as `-p`, is shown. More is hidden than is
+    /// secret, on purpose: a value shown in error is the one that cannot be
+    /// taken back.
     #[must_use]
     pub fn shown_args(&self) -> Vec<String> {
         let mut withheld = false;
@@ -412,12 +417,13 @@ fn worded(word: &str) -> (String, Option<&str>) {
 /// `last` is whether `text` ends the word, where a flag or a scheme word on
 /// its own names whatever comes after it.
 fn paired(text: &str, last: bool, shown: &mut String) -> Option<usize> {
+    let mut reached = [None; 3];
     let mut at = 0;
     while let Some(rest) = text.get(at..)
         && let Some(found) = rest.find(MARKS)
     {
         let (piece, marked) = rest.split_at(found);
-        let (mark, after) = marked.split_at(1);
+        let (mark, _) = marked.split_at(1);
         if matches!(mark, "=" | ":") && secret(piece) {
             shown.push_str(piece);
             shown.push_str(mark);
@@ -427,14 +433,11 @@ fn paired(text: &str, last: bool, shown: &mut String) -> Option<usize> {
         shown.push_str(mark);
         at += found + 1;
         // `user:password@host`, with no scheme in front to say it is a URL.
-        if mark == ":" {
-            let value = after
-                .find(MARKS)
-                .map_or(after, |end| after.get(..end).unwrap_or_default());
-            if let Some(sign) = value.rfind('@') {
-                shown.push_str(HIDDEN);
-                at += sign;
-            }
+        if mark == ":"
+            && let Some(sign) = user(text, at, piece, &mut reached)
+        {
+            shown.push_str(HIDDEN);
+            at = sign;
         }
     }
     let tail = text.get(at..).unwrap_or_default();
@@ -444,6 +447,84 @@ fn paired(text: &str, last: bool, shown: &mut String) -> Option<usize> {
         return Some(text.len());
     }
     shown.push_str(&token(tail));
+    None
+}
+
+/// How far a `user:password@host` written with no scheme runs, read from just
+/// after one `:`: where its reading stopped, and the `@` that ends its user,
+/// if it has one there. Kept for each quote a user can be opened with, so the
+/// `:` after it is read without reading the text again.
+#[derive(Clone, Copy)]
+struct Reached {
+    end: usize,
+    sign: Option<usize>,
+}
+
+/// Where in `text` the user ends that is written before the `:` just before
+/// `from`, with `piece` the text before that `:`: the `@` its password is
+/// hidden up to, or `None` where nothing after it reads as a user.
+///
+/// The password runs to the last `@` before a `/` or the quote that closes the
+/// string the user opens, whatever it holds; but a pair named for a secret is
+/// a pair rather than part of a password, so the password runs only to the
+/// last `@` before the first such pair, and [`paired`] hides that pair's value
+/// as any other. A password that runs only to the next mark is hidden either
+/// way, as it was before it could run further.
+fn user(text: &str, from: usize, piece: &str, reached: &mut [Option<Reached>; 3]) -> Option<usize> {
+    let after = text.get(from..).unwrap_or_default();
+    let near = after
+        .find(MARKS)
+        .map_or(after, |end| after.get(..end).unwrap_or_default())
+        .rfind('@')
+        .map(|sign| from + sign);
+    let opened = piece
+        .trim_start_matches(['{', '['])
+        .chars()
+        .next()
+        .filter(|c| matches!(c, '"' | '\''));
+    let slot = match opened {
+        None => 0,
+        Some('"') => 1,
+        Some(_) => 2,
+    };
+    // Every `:` up to where a reading stopped stops it in the same place, so
+    // one reading answers all of them and a long word is read once. One past
+    // the pair named for a secret that bounded the reading, which `paired`
+    // stops at, takes no `@` from it, only the next mark's.
+    let known = reached
+        .get(slot)
+        .copied()
+        .flatten()
+        .filter(|known| from <= known.end);
+    let far = known.unwrap_or_else(|| {
+        let end = reach(after, opened, |c| c == '/');
+        let value = after.get(..end).unwrap_or_default();
+        let sign = value
+            .get(..secret_pair(value).unwrap_or(value.len()))
+            .and_then(|user| user.rfind('@'))
+            .map(|sign| from + sign);
+        let found = Reached {
+            end: from + end,
+            sign,
+        };
+        if let Some(held) = reached.get_mut(slot) {
+            *held = Some(found);
+        }
+        found
+    });
+    far.sign.filter(|sign| *sign >= from).max(near)
+}
+
+/// Where in `text` the first pair starts whose name is a secret's, read as
+/// [`paired`] reads one: a name before `=` or `:`, from the mark before it.
+fn secret_pair(text: &str) -> Option<usize> {
+    let mut at = 0;
+    for piece in text.split_inclusive(MARKS) {
+        if piece.strip_suffix(['=', ':']).is_some_and(secret) {
+            return Some(at);
+        }
+        at += piece.len();
+    }
     None
 }
 
@@ -466,6 +547,13 @@ fn token(piece: &str) -> String {
 /// the last `@` before the authority ends: at a `/`, `?`, `#`, or the quote
 /// that closes the string the URL opens, as `"url":"https://...` opens one.
 /// Where that runs on into a later `@`, more is hidden than the user.
+///
+/// But a pair named for a secret after the first of those ends, as
+/// `https://host;password=a@b` writes one, is a pair and not part of a user:
+/// the user runs only to the last `@` before that pair, and the URL ends no
+/// later than where the pair starts, so [`paired`] hides its value. A
+/// password that itself holds such a pair is read as the pairs it holds, so
+/// what of it comes before that pair can be shown.
 ///
 /// `None` where `text` holds no URL.
 fn url(text: &str) -> Option<(usize, usize)> {
@@ -491,14 +579,27 @@ fn url(text: &str) -> Option<(usize, usize)> {
                 .and_then(|head| head.chars().next_back())
                 .filter(|c| matches!(c, '"' | '\''));
             let rest = text.get(after..).unwrap_or_default();
+            let reach = authority(rest, opened);
+            let pair = rest
+                .find(ENDS)
+                .filter(|first| *first < reach)
+                .and_then(|first| {
+                    rest.get(first..reach)
+                        .and_then(secret_pair)
+                        .map(|pair| first + pair)
+                });
             let user = rest
-                .get(..authority(rest, opened))
+                .get(..pair.unwrap_or(reach))
                 .and_then(|authority| authority.rfind('@'))
                 .map_or(0, |sign| sign + 1);
             let end = rest
                 .get(user..)
                 .and_then(|host| host.find(ENDS))
-                .map_or(text.len(), |end| after + user + end);
+                .map(|end| user + end)
+                .into_iter()
+                .chain(pair)
+                .min()
+                .map_or(text.len(), |end| after + end);
             return Some((start, end));
         }
         from = after;
@@ -510,9 +611,17 @@ fn url(text: &str) -> Option<(usize, usize)> {
 /// opened with, where it is not escaped.
 ///
 /// A quote next to another quote, or before a backslash, closes nothing: that
-/// is a shell writing a quote into the string, as `'"'"'` and `'\''` do, and
-/// JSON never writes a closing quote beside either.
+/// is a shell writing a quote into the string, as `'"'"'` and `'\''` do.
+/// Where the quote that does close the string sits beside a quote or a
+/// backslash, as in `"https://h.test'"` or after an escaped `\"`, the
+/// authority runs on to the next key's quote, and more is hidden.
 fn authority(rest: &str, opened: Option<char>) -> usize {
+    reach(rest, opened, |c| matches!(c, '/' | '?' | '#'))
+}
+
+/// How far into `rest` a part of a word runs that one of `ends`, whitespace,
+/// or `opened` where it closes, as [`authority`] says, ends.
+fn reach(rest: &str, opened: Option<char>, ends: impl Fn(char) -> bool) -> usize {
     let quote = |c: &char| matches!(c, '"' | '\'');
     let mut escaped = false;
     let mut before = None;
@@ -524,7 +633,7 @@ fn authority(rest: &str, opened: Option<char>) -> usize {
             && !chars
                 .peek()
                 .is_some_and(|(_, next)| quote(next) || *next == '\\');
-        if matches!(c, '/' | '?' | '#') || c.is_whitespace() || closes {
+        if ends(c) || c.is_whitespace() || closes {
             return at;
         }
         escaped = c == '\\' && !escaped;

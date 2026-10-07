@@ -197,11 +197,15 @@ could be. That is everything after a flag, a header or a name before `=` or
 when what was hidden ends on a word such as `Bearer`. Every such name in an
 argument counts, including one inside a value (`--env=DB_PASSWORD=…`), one in
 pairs run together with `;`, `&` or `,` as a connection string writes them,
-and a key in a JSON object. It is also a URL's user, whatever its password
-holds, and its query and fragment, wherever in the argument the URL starts;
-the password in `user:password@host`; and a word shaped like a token. A value
-after a flag whose name says nothing about it, such as `-p`, is shown. More is
-hidden than is secret, on purpose.
+and a key in a JSON object. It is also a URL's user and its query and
+fragment, wherever in the argument the URL starts; the password in
+`user:password@host`; and a word shaped like a token. Either password is
+hidden whatever it holds short of a `/` (for a URL, a `?` or `#` too), a space
+or the quote that closes its string, except what reads as another pair naming
+a key, as `;password=` does: that pair's value is hidden, and what of the
+password comes before it can be shown. A value after a flag whose name says
+nothing about it, such as `-p`, is shown. More is hidden than is secret, on
+purpose.
 
 ```
   command    docs-mcp
