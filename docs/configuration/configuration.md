@@ -1378,6 +1378,8 @@ path, a rule or a rejected value an error quotes appears as it does above.
 In the report, a control character, a line break or a Unicode format character
 such as a right-to-left override in a key, a value or a path is shown as its
 escape, `\n` or `\u{202e}`, rather than sent to the terminal, so a checkout
-cannot add a line to the report or rewrite the screen. In `--json` each is a
+cannot add a line to the report or rewrite the screen. The zero-width joiner
+and non-joiner are kept there, as the terminal keeps them, because they shape a
+word and move nothing. In `--json` each is a
 JSON escape, `\n` or `\u202e`, which a JSON reader decodes back to the same
 character.
