@@ -555,7 +555,13 @@ impl Observing for Counting {
     }
 }
 
-/// Every file under `root`, with its bytes and when it last changed.
+/// Every file under `root`, with its bytes and when it last changed, and every
+/// directory by its presence alone.
+///
+/// A directory's own time is left out because Windows can file the time of a
+/// write inside it after the write has returned, so a snapshot taken at once
+/// may see it move with nothing else touching the tree. A file written,
+/// created or removed still changes what this returns.
 fn tree(root: &Path) -> BTreeMap<PathBuf, (Vec<u8>, Option<std::time::SystemTime>)> {
     let mut seen = BTreeMap::new();
     let mut left = vec![root.to_path_buf()];
@@ -569,7 +575,7 @@ fn tree(root: &Path) -> BTreeMap<PathBuf, (Vec<u8>, Option<std::time::SystemTime
             let metadata = entry.metadata().expect("its metadata");
             let changed = metadata.modified().ok();
             if metadata.is_dir() {
-                seen.insert(at.clone(), (Vec::new(), changed));
+                seen.insert(at.clone(), (Vec::new(), None));
                 left.push(at);
             } else {
                 seen.insert(
