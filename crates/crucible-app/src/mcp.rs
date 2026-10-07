@@ -54,7 +54,7 @@ pub fn list(home: &Home) -> Result<String, AppError> {
 ///
 /// The home configuration could not be read, or writes down no server called
 /// `name`: [`AppError::NoServer`], the refusal `--with-mcp` gives the same
-/// name.
+/// name, word for word, since both name what there is through one list.
 pub fn get(home: &Home, name: &str) -> Result<String, AppError> {
     let settings = Settings::read_home(home)?;
     described(&settings, &crucible_config::user(home), name)
@@ -94,16 +94,7 @@ pub fn described(settings: &Settings, at: &Path, name: &str) -> Result<String, A
     let Some(server) = servers.iter().find(|server| server.name() == name) else {
         return Err(AppError::NoServer {
             named: name.into(),
-            has: if servers.is_empty() {
-                "none".into()
-            } else {
-                servers
-                    .iter()
-                    .map(McpServer::name)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-                    .into()
-            },
+            has: crate::selecting::written(&servers),
         });
     };
 

@@ -89,11 +89,12 @@ fn a_server_nobody_wrote_down_is_refused_by_name_with_the_names_there_are() {
         "no mcp server called dosc; this configuration has docs, notes"
     );
 
+    // Word for word what `--with-mcp docs` says to the same configuration.
     let empty = sample.user("{}");
     let refused = described(&empty, &sample.user_file(), "docs").expect_err("there are none");
     assert_eq!(
         refused.to_string(),
-        "no mcp server called docs; this configuration has none"
+        "no mcp server called docs; this configuration has none under mcp.servers"
     );
 }
 
