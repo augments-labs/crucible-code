@@ -252,10 +252,19 @@ impl Read {
     }
 }
 
-/// Run a check's words through the bound, with control characters replaced
-/// so that no file's bytes can move a cursor or end a line.
+/// Run a check's words through the bound as one line: words written over
+/// several lines, as the sandbox probe writes what it refused, are joined in
+/// order, and any other control character is replaced, so that no file's
+/// bytes can move a cursor or end a line.
 fn said(words: &str) -> Text {
-    Text::cut(&clean(words))
+    let mut line = String::new();
+    for part in words.lines().map(str::trim).filter(|part| !part.is_empty()) {
+        if !line.is_empty() {
+            line.push_str(if line.ends_with(':') { " " } else { "; " });
+        }
+        line.push_str(&clean(part));
+    }
+    Text::cut(&line)
 }
 
 fn clean(words: &str) -> String {

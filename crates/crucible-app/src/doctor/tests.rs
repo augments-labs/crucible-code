@@ -24,7 +24,7 @@ use crucible_sandbox::{
 };
 use crucible_sandbox_local::{ObservedVersion, SandboxObservation};
 
-use super::{CHECKS, Host, examining, human};
+use super::{CHECKS, Host, examining, human, said};
 use crate::sample::{Sample, WRITTEN};
 use crate::sandbox::Observing;
 use crate::subscription::Subscriptions;
@@ -621,4 +621,36 @@ fn words_from_a_configuration_file_reach_the_text_form_without_their_control_cha
         !said.contains('\u{1b}') && !said.contains('\u{7}'),
         "{said:?}"
     );
+}
+
+#[test]
+fn words_written_over_several_lines_are_one_line_of_the_report() {
+    // The probe says what it refused one line each, indented under the
+    // first; a check's reason is one line, so its lines are joined in order.
+    let joined = said("not found; refused:\n  the first place\n  the second place\n");
+    assert_eq!(
+        joined.as_str(),
+        "not found; refused: the first place; the second place"
+    );
+    // Any other control character is still replaced where it stands.
+    assert_eq!(said("a\u{1b}b").as_str(), "a\u{fffd}b");
+}
+
+#[test]
+fn the_command_line_reference_names_every_check_the_doctor_makes() {
+    let reference = include_str!("../../../../docs/reference/cli.md");
+    let section = reference
+        .split_once("### `doctor [--json]`")
+        .map(|(_, after)| {
+            after
+                .split_once("\n## ")
+                .map_or(after, |(within, _)| within)
+        })
+        .expect("a section for the doctor");
+    let missing: Vec<&str> = CHECKS
+        .iter()
+        .copied()
+        .filter(|id| !section.contains(&format!("| `{id}` |")))
+        .collect();
+    assert_eq!(missing, Vec::<&str>::new());
 }

@@ -440,6 +440,30 @@ fn config_check_is_a_read_only_early_action_with_an_optional_json_report() {
     }
 }
 
+#[test]
+fn doctor_is_an_early_action_with_an_optional_json_report() {
+    // `crucible doctor [--json]`: one spelling, human by default.
+    let human = Cli::try_parse_from(["crucible", "doctor"]).expect("the human report");
+    assert!(matches!(
+        human.command,
+        Some(Command::Doctor { json: false })
+    ));
+    let machine = Cli::try_parse_from(["crucible", "doctor", "--json"]).expect("the JSON report");
+    assert!(matches!(
+        machine.command,
+        Some(Command::Doctor { json: true })
+    ));
+
+    // Anything else is usage, answered by the parser before anything is
+    // looked at.
+    for invalid in [
+        vec!["crucible", "doctor", "extra"],
+        vec!["crucible", "doctor", "--bogus"],
+    ] {
+        assert!(Cli::try_parse_from(invalid).is_err());
+    }
+}
+
 /// A store 0.43.3 left after a roll back: its kimi.com key beside the kimi.ai
 /// sign-in the release after it wrote. Fabricated.
 const TWO_HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
