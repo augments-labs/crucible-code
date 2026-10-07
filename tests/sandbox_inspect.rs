@@ -1,5 +1,6 @@
 //! What `crucible sandbox inspect` and `--sandbox` answer on this machine, and
-//! the exit each answer ends with.
+//! the exit each answer ends with; and, beside them, what `crucible config
+//! check` makes of the same hostile configuration key.
 //!
 //! The built binary is run in a directory and a home of the test's own, with
 //! an environment cleared down to what it needs, so nothing the machine running
@@ -326,6 +327,27 @@ fn a_configuration_key_that_carries_escapes_is_named_with_them_shown() {
     assert_eq!(text.status.code(), Some(1), "{text:?}");
     assert_eq!(controls_in(&text.stderr), Vec::<char>::new(), "{text:?}");
     let said = String::from_utf8_lossy(&text.stderr);
+    assert!(
+        said.contains(r"\u{1b}]0;PWNED\u{7}\u{1b}[31mred\u{9b}2J"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_configuration_check_names_a_key_that_carries_escapes_with_them_shown() {
+    let scratch = Scratch::new("hostile-check");
+    fs::create_dir_all(scratch.work().join(".crucible")).expect("a project directory");
+    fs::write(
+        scratch.work().join(".crucible/config.json"),
+        r#"{"\u001b]0;PWNED\u0007\u001b[31mred\u009b2J":true}"#,
+    )
+    .expect("a project file");
+
+    let text = asked(&scratch, &["config", "check"], false);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    assert_eq!(controls_in(&text.stdout), Vec::<char>::new(), "{text:?}");
+    let said = String::from_utf8_lossy(&text.stdout);
+    assert!(said.starts_with("configuration invalid\n"), "{said}");
     assert!(
         said.contains(r"\u{1b}]0;PWNED\u{7}\u{1b}[31mred\u{9b}2J"),
         "{said}"

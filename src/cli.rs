@@ -441,14 +441,19 @@ fn maintain_sandbox(_action: &SandboxMaintenance) -> Result<(), Fatal> {
 /// A write that fails is dropped for the reason [`listed`] drops one. Where
 /// the files do not hold, the first refusal leaves as the process's failure;
 /// a command line that does not parse never reaches here, and the parser
-/// answers those with its own usage exit.
+/// answers those with its own usage exit. The text quotes what the files
+/// said, keys a checkout chose among it, so it is written [`visible`].
 fn checked(json: bool) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
     let workspace = Workspace::open(here)?;
     let home = Home::find(&|name| std::env::var_os(name))?;
     let report = crucible_config::check(&home, workspace.root());
 
-    let said = if json { report.json() } else { report.human() };
+    let said = if json {
+        report.json()
+    } else {
+        visible(&report.human())
+    };
     let _ = io::stdout().write_all(said.as_bytes());
 
     report.into_result()?;
