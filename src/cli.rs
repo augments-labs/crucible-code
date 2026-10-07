@@ -154,11 +154,13 @@ manifest asks to be allowed to do and the digest crucible took over its bytes, \
 and stops. Nothing installed is run to produce that list, which is the point of \
 being able to read it.
 
---sandbox prints the confinement a command in this directory would run under — \
-which backend enforces it, what that backend can and cannot hold, the reach and \
-ceilings a command would get, and anything given up along the way — and stops. \
-No command is run to produce it, and every path in it but the workspace root \
-is a digest.
+sandbox inspect prints the confinement a command in this directory would run \
+under — which backend would enforce it, what that backend can and cannot hold, \
+the reach and ceilings a command would get, and why it would be refused — and \
+stops; --json writes it as one JSON document instead. Nothing is started to \
+produce it, so what only starting the backend could tell is said to be \
+unverified, and every path in it but the workspace root is a digest. --sandbox \
+is the same report as text.
 
 --with-mcp names a server written down under mcp.servers and hosts it for this \
 run, and may be repeated. A configuration file is a list of servers you could \
@@ -203,7 +205,7 @@ struct Cli {
     extensions: bool,
 
     /// Print the confinement a command in this directory would run under and
-    /// stop, without running one.
+    /// stop, without starting anything. The same as `sandbox inspect`.
     #[arg(
         long,
         conflicts_with_all = ["continue", "resume", "model", "effort", "with_mcp", "extensions"]
@@ -217,10 +219,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Provision or remove native sandbox support.
+    /// Inspect confinement here, or provision or remove native sandbox
+    /// support.
     Sandbox {
         #[command(subcommand)]
-        action: SandboxMaintenance,
+        action: SandboxAction,
     },
     /// Parse and validate the effective configuration, and stop.
     Config {
@@ -237,6 +240,19 @@ enum ConfigAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum SandboxAction {
+    /// Print the confinement a command in this directory would run under, and
+    /// stop, without starting anything.
+    Inspect {
+        /// Print one JSON document to stdout instead of the human report.
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(flatten)]
+    Maintenance(SandboxMaintenance),
 }
 
 #[derive(Debug, Subcommand)]
@@ -273,6 +289,11 @@ pub(crate) enum Fatal {
     /// Native sandbox provisioning or removal could not complete.
     #[error("Windows sandbox maintenance failed: {0}")]
     SandboxMaintenance(io::Error),
+
+    /// A sandbox inspection was made, and the document it would be written as
+    /// could not carry it.
+    #[error(transparent)]
+    Inspection(crucible_app::sandbox::Unwritten),
 
     /// The terminal could not be drawn on.
     #[error(transparent)]
@@ -361,12 +382,15 @@ pub(crate) fn start() -> ExitCode {
     let cli = Cli::parse();
 
     let done = match (&cli.command, cli.extensions, cli.sandbox) {
-        (Some(Command::Sandbox { action }), _, _) => maintain_sandbox(action),
+        (Some(Command::Sandbox { action }), _, _) => match action {
+            SandboxAction::Inspect { json } => inspected(*json),
+            SandboxAction::Maintenance(action) => maintain_sandbox(action),
+        },
         (Some(Command::Config { action }), _, _) => match action {
             ConfigAction::Check { json } => checked(*json),
         },
         (None, true, _) => listed(),
-        (None, _, true) => confined(),
+        (None, _, true) => inspected(false),
         (None, _, _) => run(&cli),
     };
 
@@ -452,49 +476,48 @@ fn listed() -> Result<(), Fatal> {
 
 /// Writes the confinement a command here would run under, and stops.
 ///
-/// What the report is made of, and why a backend's refusal is an answer rather
-/// than a failure, is [`crucible_app::sandbox::confinement`]'s to say. The
-/// backend is asked on the application's runtime, and what a shutdown of it
-/// that ran out of time does to the answer is [`reported`]'s to say.
-fn confined() -> Result<(), Fatal> {
-    let here = std::env::current_dir().map_err(Fatal::Here)?;
-    let home = Home::find(&|name| std::env::var_os(name))?;
-    let (said, stopped) = crucible_app::services::serving(|services| {
-        let runtime = services.runtime().handle().map_err(AppError::from)?;
-        runtime.block_on(crucible_app::sandbox::confinement(&here, &home))
-    });
-    reported(
-        said.map_err(Fatal::from),
-        stopped.map_err(|unstopped| AppError::from(unstopped).into()),
-        &mut io::stdout(),
-    )
-}
-
-/// Writes a report to `out` where one was made, and answers with how the run
-/// ends once its services have been shut down.
+/// What the report is made of, why a backend's refusal is an answer rather
+/// than a failure, and why nothing is started to make it, is
+/// [`crucible_app::sandbox::inspection`]'s to say. Answered here rather than
+/// inside [`run`], before anything is built, for the reason [`checked`] gives.
 ///
-/// A report that was made is written whether or not the shutdown after it
-/// finished: it is the answer the flag was asked for, and a cleanup that failed
-/// once it existed does not make it untrue. The run still ends on that
-/// failure, so the exit status says it. Where no report was made, the report's
-/// own failure is the one the run ends with, and a cleanup that failed as well
-/// is said first, the way [`run`] says one. A write that fails is dropped for
-/// the reason [`listed`] drops one.
-fn reported(
-    said: Result<String, Fatal>,
-    stopped: Result<(), Fatal>,
-    out: &mut impl io::Write,
-) -> Result<(), Fatal> {
-    match (said, stopped) {
-        (Ok(said), stopped) => {
-            let _ = out.write_all(said.as_bytes());
-            stopped
+/// A report that was made is written and the run succeeds, whatever it says:
+/// "no command could be run here" is the answer that was asked for. Where no
+/// report could be made, `json` still writes one document, a failed one in the
+/// words the run then ends with, so a script reading standard output never
+/// finds it empty. A write that fails is dropped for the reason [`listed`]
+/// drops one.
+fn inspected(json: bool) -> Result<(), Fatal> {
+    let observed = std::env::current_dir()
+        .map_err(Fatal::Here)
+        .and_then(|here| {
+            let home = Home::find(&|name| std::env::var_os(name))?;
+            Ok(crucible_app::sandbox::inspection(&here, &home)?)
+        });
+    if !json {
+        let _ = io::stdout().write_all(observed?.human().as_bytes());
+        return Ok(());
+    }
+
+    let (written, ended) = match observed.map(|observed| observed.json()) {
+        Ok(Ok(written)) => (Ok(written), Ok(())),
+        Ok(Err(unwritten)) => (
+            crucible_app::sandbox::failure(&unwritten.to_string()),
+            Err(Fatal::Inspection(unwritten)),
+        ),
+        Err(problem) => (
+            crucible_app::sandbox::failure(&problem.to_string()),
+            Err(problem),
+        ),
+    };
+    match written {
+        Ok(written) => {
+            let _ = io::stdout().write_all(&written);
+            ended
         }
-        (Err(first), Ok(())) => Err(first),
-        (Err(first), Err(unstopped)) => {
-            let _ = fail(&unstopped);
-            Err(first)
-        }
+        // Only a failure's own document is left, and it is one sentence cut to
+        // its bound, which is always written; this is the refusal said anyway.
+        Err(unwritten) => ended.and(Err(Fatal::Inspection(unwritten))),
     }
 }
 

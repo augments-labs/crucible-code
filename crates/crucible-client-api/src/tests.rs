@@ -154,6 +154,41 @@ const MORE_KEYS: [&str; 52] = [
     "left_running",
 ];
 
+/// The field names of the inspection document, kept apart for the same reason.
+const INSPECTION_KEYS: [&str; 31] = [
+    "access",
+    "allowed",
+    "amount",
+    "backend",
+    "build",
+    "ceilings",
+    "claim",
+    "confined",
+    "cwd",
+    "denied",
+    "effective",
+    "feature",
+    "format_version",
+    "hidden",
+    "identity",
+    "local_binding",
+    "nanos",
+    "network",
+    "omitted",
+    "persistent",
+    "policy",
+    "provenance",
+    "refusal",
+    "requested",
+    "roots",
+    "snapshots",
+    "staged",
+    "status",
+    "unchecked",
+    "unit",
+    "unix_sockets",
+];
+
 /// What a field name may not say, whatever else it says.
 ///
 /// A field called any of these is a field holding authority: a secret, a place
@@ -863,6 +898,16 @@ fn specimens() -> Vec<Specimen> {
         });
     }
 
+    for one in inspection::tests::inspections(&marked()) {
+        let frame = one.encode().unwrap();
+        assert_eq!(inspection::Inspection::decode(&frame).unwrap(), one);
+        all.push(Specimen {
+            what: format!("inspection {}", one.status()),
+            debug: format!("{one:?}"),
+            frame,
+        });
+    }
+
     all
 }
 
@@ -1092,6 +1137,89 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
     }
 }
 
+/// Every arm of every enum the inspection document carries, and each of its
+/// optional fields with and without, as `seen` counts them.
+fn inspection_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
+    use inspection::{BackendVersion, Claim, Inspection, Network, Requirement, Unit};
+
+    let mut count = |what: &str, (arm, of): (usize, usize)| {
+        seen.insert((what.to_owned(), arm, of));
+    };
+    let claim = |claim: Claim| match claim {
+        Claim::Enforced => (0, 3),
+        Claim::Observed => (1, 3),
+        Claim::Unsupported => (2, 3),
+    };
+    for one in inspection::tests::inspections(&marked()) {
+        let inspected = match one {
+            Inspection::Inspected(inspected) => {
+                count("inspection", (0, 2));
+                inspected
+            }
+            Inspection::Failed(_) => {
+                count("inspection", (1, 2));
+                continue;
+            }
+        };
+        count(
+            "inspection.mode",
+            match inspected.mode {
+                Requirement::Optional => (0, 2),
+                Requirement::Required => (1, 2),
+            },
+        );
+        count(
+            "inspection.backend",
+            (usize::from(inspected.backend.is_some()), 2),
+        );
+        count(
+            "inspection.unchecked",
+            (usize::from(inspected.unchecked.is_some()), 2),
+        );
+        count(
+            "inspection.refusal",
+            (usize::from(inspected.refusal.is_some()), 2),
+        );
+        for plan in [&inspected.requested, &inspected.effective] {
+            count(
+                "inspection.network",
+                match plan.network {
+                    Network::Closed => (0, 2),
+                    Network::Domains { .. } => (1, 2),
+                },
+            );
+            for ceiling in &plan.ceilings {
+                count("inspection.ceiling.claim", claim(ceiling.claim));
+                count(
+                    "inspection.unit",
+                    match ceiling.unit {
+                        Unit::Seconds => (0, 4),
+                        Unit::Bytes => (1, 4),
+                        Unit::Count => (2, 4),
+                        Unit::Micros => (3, 4),
+                    },
+                );
+            }
+        }
+        if let Some(backend) = inspected.backend {
+            count(
+                "inspection.build",
+                (usize::from(backend.build.is_some()), 2),
+            );
+            count(
+                "inspection.version",
+                match backend.version {
+                    BackendVersion::Stated(_) => (0, 2),
+                    BackendVersion::Unverified(_) => (1, 2),
+                },
+            );
+            for capability in backend.capabilities {
+                count("inspection.capability.claim", claim(capability.claim));
+            }
+        }
+    }
+}
+
 /// Fails unless `seen` holds every arm `0..of` for each name in it.
 fn whole(seen: &BTreeSet<(String, usize, usize)>) {
     for (what, _, of) in seen {
@@ -1180,6 +1308,7 @@ fn every_arm_that_crosses_has_a_specimen() {
         let (arm, of) = decision_arm(&decision);
         seen.insert(("decision".to_owned(), arm, of));
     }
+    inspection_arms(&mut seen);
     for snapshot in snapshots() {
         if let Some(pending) = &snapshot.pending {
             let (arm, of) = pending_arm(pending);
@@ -1195,7 +1324,11 @@ fn every_arm_that_crosses_has_a_specimen() {
 
 #[test]
 fn no_value_that_crosses_names_a_field_for_a_secret_a_path_or_a_handle() {
-    let allowed: BTreeSet<&str> = KEYS.into_iter().chain(MORE_KEYS).collect();
+    let allowed: BTreeSet<&str> = KEYS
+        .into_iter()
+        .chain(MORE_KEYS)
+        .chain(INSPECTION_KEYS)
+        .collect();
     for word in &allowed {
         for stem in FORBIDDEN {
             assert!(!word.contains(stem), "the allowed field {word} says {stem}");
@@ -1973,7 +2106,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (3, 13_612_340_515_065_506_504),
+        (3, 6_243_350_492_112_149_509),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

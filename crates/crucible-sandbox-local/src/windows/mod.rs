@@ -29,6 +29,45 @@ pub(super) fn probe() -> Result<(SandboxBackendIdentity, SandboxCapabilities), S
     Ok((broker.identity().clone(), declared_capabilities()))
 }
 
+/// The broker [`prepare`] would use, found by the trust checks it applies and
+/// started for nothing. The machine setup check is left undone: it reads the
+/// sandbox account's stored credential, and an inspection reads no credential.
+pub(super) fn observe(
+    request: &SandboxRequest,
+    excluded: &[&Path],
+) -> Result<crate::SandboxObservation, SandboxError> {
+    let broker = broker::Broker::find(excluded)?;
+    let identity = broker.identity();
+    let mut observed = crate::SandboxObservation::new(
+        identity.id().clone(),
+        identity.provenance(),
+        identity.digest(),
+        crate::ObservedVersion::Unverified(
+            "confirming the account and network setup would read the sandbox account's stored credential",
+        ),
+        declared_capabilities(),
+    );
+    if !matches!(request.policy().network(), SandboxNetworkPolicy::Closed) {
+        observed = observed.refusing(SandboxError::Unsupported {
+            feature: SandboxFeature::NetworkAllowlist,
+        });
+    }
+    if !request.policy().unreadable_patterns().is_empty()
+        || request
+            .policy()
+            .filesystem()
+            .iter()
+            .any(|rule| rule.access() == SandboxFilesystemAccess::Unreadable)
+    {
+        observed = observed.refusing(SandboxError::Unsupported {
+            feature: SandboxFeature::Filesystem,
+        });
+    }
+    Ok(observed.leaving(
+        "whether this machine's sandbox account and network setup are installed and current, and whether each root passes the checks a command's preparation makes",
+    ))
+}
+
 pub(super) fn declared_capabilities() -> SandboxCapabilities {
     let enforced = SandboxCapability::Enforced;
     SandboxCapabilities::none()

@@ -42,7 +42,7 @@ mod windows;
 #[path = "windows/helper.rs"]
 mod windows_helper;
 
-pub use local::LocalSandbox;
+pub use local::{LocalSandbox, ObservedVersion, SandboxObservation};
 
 #[cfg(test)]
 mod sample;

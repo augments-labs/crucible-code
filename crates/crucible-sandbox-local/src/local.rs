@@ -122,6 +122,191 @@ impl LocalSandbox {
     }
 }
 
+impl LocalSandbox {
+    /// What would confine `request` on this machine, found without starting
+    /// a process, materializing anything or reading a credential.
+    ///
+    /// The backend is the one [`SandboxService::prepare`] would use, located
+    /// with the trust checks it applies: outside every root `request` may
+    /// write, owned and writable only as preparation demands, and measured by
+    /// digest. What preparation learns only by running the backend — that it
+    /// starts, what version it reports, whether this host's account and
+    /// network setup still hold — is not learned here, so a native backend's
+    /// version is [`ObservedVersion::Unverified`]. Whether the backend's
+    /// declared matrix takes the policy is answered by
+    /// [`SandboxObservation::refusal`].
+    ///
+    /// An associated function rather than a method, because nothing a service
+    /// holds is consulted: its runtime and its count of running commands are
+    /// what starting something needs.
+    ///
+    /// # Errors
+    ///
+    /// [`SandboxError::BackendUnavailable`] where no trusted backend is found,
+    /// in the words preparation would have used.
+    pub fn observe(request: &SandboxRequest) -> Result<SandboxObservation, SandboxError> {
+        let observed = if request.policy().enabled() {
+            enforcing_observation(request)?
+        } else {
+            let (backend, capabilities) = compatibility_capabilities()?;
+            SandboxObservation::new(
+                backend.id().clone(),
+                backend.provenance(),
+                backend.digest(),
+                ObservedVersion::Stated("1"),
+                capabilities,
+            )
+        };
+        Ok(match request.negotiate(observed.capabilities()) {
+            Ok(()) => observed,
+            Err(why) => observed.refusing(why),
+        })
+    }
+}
+
+/// What [`LocalSandbox::observe`] found.
+///
+/// Built from the same claims a preparation negotiates against, so the matrix
+/// it carries is the one a command would be held to; never from running the
+/// backend, so it is not proof that the backend still works.
+#[derive(Debug)]
+pub struct SandboxObservation {
+    id: SandboxBackendId,
+    provenance: SandboxBackendProvenance,
+    digest: Option<[u8; 32]>,
+    version: ObservedVersion,
+    capabilities: SandboxCapabilities,
+    refusal: Option<SandboxError>,
+    unchecked: Option<&'static str>,
+}
+
+impl SandboxObservation {
+    /// A backend that would take the policy it was observed for.
+    #[must_use]
+    pub const fn new(
+        id: SandboxBackendId,
+        provenance: SandboxBackendProvenance,
+        digest: Option<[u8; 32]>,
+        version: ObservedVersion,
+        capabilities: SandboxCapabilities,
+    ) -> Self {
+        Self {
+            id,
+            provenance,
+            digest,
+            version,
+            capabilities,
+            refusal: None,
+            unchecked: None,
+        }
+    }
+
+    /// The same backend, refusing the policy for `why`.
+    ///
+    /// The first refusal is the one kept: a backend that turns a policy away
+    /// before negotiating it says why in its own words, and the negotiation
+    /// after it has nothing to add.
+    #[must_use]
+    pub fn refusing(mut self, why: SandboxError) -> Self {
+        if self.refusal.is_none() {
+            self.refusal = Some(why);
+        }
+        self
+    }
+
+    /// The same backend, naming what a preparation checks that observing did
+    /// not.
+    #[must_use]
+    pub const fn leaving(mut self, unchecked: &'static str) -> Self {
+        self.unchecked = Some(unchecked);
+        self
+    }
+
+    /// The backend's stable name.
+    #[must_use]
+    pub const fn id(&self) -> &SandboxBackendId {
+        &self.id
+    }
+
+    /// Where the backend came from.
+    #[must_use]
+    pub const fn provenance(&self) -> SandboxBackendProvenance {
+        self.provenance
+    }
+
+    /// The SHA-256 of the executable found, where one was measured.
+    #[must_use]
+    pub const fn digest(&self) -> Option<[u8; 32]> {
+        self.digest
+    }
+
+    /// The backend's version, or why it was not read.
+    #[must_use]
+    pub const fn version(&self) -> ObservedVersion {
+        self.version
+    }
+
+    /// Every feature, as the backend declares it.
+    #[must_use]
+    pub const fn capabilities(&self) -> &SandboxCapabilities {
+        &self.capabilities
+    }
+
+    /// Why the backend would not take the policy, where it would not.
+    #[must_use]
+    pub const fn refusal(&self) -> Option<&SandboxError> {
+        self.refusal.as_ref()
+    }
+
+    /// What a preparation checks on this host that observing did not, where
+    /// there is something.
+    #[must_use]
+    pub const fn unchecked(&self) -> Option<&'static str> {
+        self.unchecked
+    }
+}
+
+/// A backend's version, as observing it could tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservedVersion {
+    /// The version crucible gives a backend it is itself, known without
+    /// asking anything.
+    Stated(&'static str),
+    /// Not read, because reading it would start something; this says what.
+    Unverified(&'static str),
+}
+
+/// The enforcing backend this operating system would prepare `request` with.
+fn enforcing_observation(request: &SandboxRequest) -> Result<SandboxObservation, SandboxError> {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    let excluded: Vec<_> = request
+        .policy()
+        .filesystem()
+        .iter()
+        .filter(|rule| rule.access() == crucible_sandbox::SandboxFilesystemAccess::ReadWrite)
+        .map(crucible_sandbox::SandboxFilesystemRule::path)
+        .collect();
+    #[cfg(target_os = "linux")]
+    {
+        super::linux::observe(&excluded)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        super::macos::observe(&excluded)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        super::windows::observe(request, &excluded)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = request;
+        Err(SandboxError::BackendUnavailable {
+            reason: "required confinement is unsupported on this operating system".into(),
+        })
+    }
+}
+
 impl SandboxService for LocalSandbox {
     fn probe(
         &self,

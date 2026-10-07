@@ -1,4 +1,5 @@
-//! Provenance and functional probes for the native macOS backend.
+//! Provenance and functional probes for the native macOS backend, and the
+//! discovery an inspection makes without running anything.
 
 use std::fs::File;
 use std::io::Read as _;
@@ -15,6 +16,7 @@ use crucible_sandbox::{
 use sha2::{Digest as _, Sha256};
 
 use super::broker::Broker;
+use crate::{ObservedVersion, SandboxObservation};
 
 const SEATBELT: &str = "/usr/bin/sandbox-exec";
 const MAX_BACKEND_BYTES: u64 = 16 * 1024 * 1024;
@@ -28,28 +30,13 @@ pub(super) struct Seatbelt {
 
 impl Seatbelt {
     pub(super) fn find(broker: &Broker) -> Result<Self, SandboxError> {
-        let path = PathBuf::from(SEATBELT);
-        let metadata = path
-            .metadata()
-            .map_err(|_| unavailable("the system Seatbelt launcher is unavailable"))?;
-        if !metadata.is_file()
-            || metadata.len() == 0
-            || metadata.len() > MAX_BACKEND_BYTES
-            || metadata.uid() != 0
-            || metadata.permissions().mode() & 0o022 != 0
-        {
-            return Err(unavailable(
-                "the system Seatbelt launcher is not root-owned and non-writable",
-            ));
-        }
+        let (path, length) = trusted()?;
         functional_probe(broker)?;
-        let id = SandboxBackendId::new("macos-seatbelt")
-            .map_err(|_| unavailable("invalid built-in macOS backend identity"))?;
         let identity = SandboxBackendIdentity::new(
-            id,
+            backend_id()?,
             "seatbelt-v1",
             SandboxBackendProvenance::System,
-            Some(digest(&path, metadata.len())?),
+            Some(digest(&path, length)?),
         )
         .map_err(|_| unavailable("invalid built-in macOS backend version"))?;
         Ok(Self {
@@ -65,6 +52,47 @@ impl Seatbelt {
     pub(super) const fn capabilities(&self) -> &SandboxCapabilities {
         &self.capabilities
     }
+}
+
+/// The launcher [`Seatbelt::find`] would accept, checked and measured the same
+/// way but with no functional probe: that probe starts the broker, and an
+/// inspection starts nothing.
+pub(super) fn locate() -> Result<SandboxObservation, SandboxError> {
+    let (path, length) = trusted()?;
+    Ok(SandboxObservation::new(
+        backend_id()?,
+        SandboxBackendProvenance::System,
+        Some(digest(&path, length)?),
+        ObservedVersion::Unverified(
+            "confirming it would start the sandbox broker, and inspecting starts nothing",
+        ),
+        capabilities(),
+    ))
+}
+
+/// The system launcher and its length, where it is a root-owned file nobody
+/// else can write.
+fn trusted() -> Result<(PathBuf, u64), SandboxError> {
+    let path = PathBuf::from(SEATBELT);
+    let metadata = path
+        .metadata()
+        .map_err(|_| unavailable("the system Seatbelt launcher is unavailable"))?;
+    if !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_BACKEND_BYTES
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err(unavailable(
+            "the system Seatbelt launcher is not root-owned and non-writable",
+        ));
+    }
+    Ok((path, metadata.len()))
+}
+
+fn backend_id() -> Result<SandboxBackendId, SandboxError> {
+    SandboxBackendId::new("macos-seatbelt")
+        .map_err(|_| unavailable("invalid built-in macOS backend identity"))
 }
 
 pub(super) fn capabilities() -> SandboxCapabilities {

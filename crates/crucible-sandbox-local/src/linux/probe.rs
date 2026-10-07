@@ -1,4 +1,5 @@
-//! Discovery, provenance, version, and functional backend probes.
+//! Discovery, provenance, version, and functional backend probes, and the
+//! discovery an inspection makes without running anything.
 
 use std::fs::File;
 use std::io::{Read, Seek};
@@ -13,6 +14,8 @@ use crucible_sandbox::{
     SandboxCapability, SandboxError, SandboxFeature,
 };
 use sha2::{Digest, Sha256};
+
+use crate::{ObservedVersion, SandboxObservation};
 
 /// Largest local backend artifact hashed during discovery.
 const MAX_BACKEND_BYTES: u64 = 64 * 1024 * 1024;
@@ -70,52 +73,11 @@ pub(super) struct Bwrap {
 
 impl Bwrap {
     pub(super) fn find(excluded: &[&Path]) -> Result<Self, SandboxError> {
-        let search = std::env::var_os("PATH").ok_or_else(|| {
-            unavailable("PATH is unavailable while discovering system Bubblewrap")
-        })?;
-        let current = std::env::current_dir()
-            .ok()
-            .and_then(|path| path.canonicalize().ok());
-        let candidates =
-            discover_candidates(std::env::split_paths(&search), current.as_deref(), excluded);
-        if candidates.is_empty() {
-            return Err(unavailable(
-                "no suitable system Bubblewrap was found outside writable roots; bundled backend unavailable",
-            ));
-        }
-        // The last candidate's verification failure is the reason worth
-        // reporting: a summary that names every possible cause explains none.
-        let mut last_failure = None;
-        first_verified(candidates, |path| match Self::verify(path) {
-            Ok(backend) => Some(backend),
-            Err(problem) => {
-                last_failure = Some(problem);
-                None
-            }
-        })
-        .ok_or_else(|| {
-            last_failure.unwrap_or_else(|| {
-                unavailable(
-                    "discovered system Bubblewrap candidates failed provenance, feature, version, or namespace verification; bundled backend unavailable",
-                )
-            })
-        })
+        first_trusted(excluded, Self::verify)
     }
 
     fn verify(path: PathBuf) -> Result<Self, SandboxError> {
-        let metadata = path
-            .metadata()
-            .map_err(|_| unavailable("could not inspect the system Bubblewrap executable"))?;
-        if !metadata.is_file()
-            || metadata.len() > MAX_BACKEND_BYTES
-            || metadata.uid() != 0
-            || metadata.permissions().mode() & 0o022 != 0
-            || !trusted_parent_chain(&path)
-        {
-            return Err(unavailable(
-                "system Bubblewrap or its parent path is not root-owned and non-writable",
-            ));
-        }
+        let length = trusted(&path)?;
 
         let help = Command::new(&path)
             .arg("--help")
@@ -133,11 +95,9 @@ impl Bwrap {
         let version = version(&path)?;
 
         functional_probe(&path)?;
-        let digest = digest(&path, metadata.len())?;
-        let id = SandboxBackendId::new("linux-bubblewrap")
-            .map_err(|_| unavailable("invalid built-in Linux backend identity"))?;
+        let digest = digest(&path, length)?;
         let identity = SandboxBackendIdentity::new(
-            id,
+            backend_id()?,
             version,
             SandboxBackendProvenance::System,
             Some(digest),
@@ -158,11 +118,13 @@ impl Bwrap {
     /// running it — that is the very thing it cannot assume.
     #[cfg(test)]
     pub(super) fn unspawned(path: PathBuf) -> Result<Self, SandboxError> {
-        let id = SandboxBackendId::new("linux-bubblewrap")
-            .map_err(|_| unavailable("invalid built-in Linux backend identity"))?;
-        let identity =
-            SandboxBackendIdentity::new(id, "0.0.0", SandboxBackendProvenance::System, None)
-                .map_err(|_| unavailable("invalid test backend identity"))?;
+        let identity = SandboxBackendIdentity::new(
+            backend_id()?,
+            "0.0.0",
+            SandboxBackendProvenance::System,
+            None,
+        )
+        .map_err(|_| unavailable("invalid test backend identity"))?;
         Ok(Self {
             path,
             identity,
@@ -181,6 +143,88 @@ impl Bwrap {
     pub(super) const fn capabilities(&self) -> &SandboxCapabilities {
         &self.capabilities
     }
+}
+
+/// The Bubblewrap a preparation would look for, found and measured without
+/// being started.
+///
+/// The search and the trust checks are [`Bwrap::find`]'s own: the same `PATH`,
+/// the same exclusions, the same ownership of the executable and every
+/// directory above it. What is left out is everything `find` learns by running
+/// it — its options, its version and whether it can make its namespaces here —
+/// so the first trusted candidate is the one reported, where `find` would pass
+/// over one that failed to run.
+pub(super) fn locate(excluded: &[&Path]) -> Result<SandboxObservation, SandboxError> {
+    let digest = first_trusted(excluded, |path| digest(&path, trusted(&path)?))?;
+    Ok(SandboxObservation::new(
+        backend_id()?,
+        SandboxBackendProvenance::System,
+        Some(digest),
+        ObservedVersion::Unverified(
+            "reading it would start Bubblewrap, and inspecting starts nothing",
+        ),
+        capabilities(),
+    ))
+}
+
+/// The first candidate on `PATH` that `check` accepts, or why none was.
+fn first_trusted<T>(
+    excluded: &[&Path],
+    mut check: impl FnMut(PathBuf) -> Result<T, SandboxError>,
+) -> Result<T, SandboxError> {
+    let search = std::env::var_os("PATH")
+        .ok_or_else(|| unavailable("PATH is unavailable while discovering system Bubblewrap"))?;
+    let current = std::env::current_dir()
+        .ok()
+        .and_then(|path| path.canonicalize().ok());
+    let candidates =
+        discover_candidates(std::env::split_paths(&search), current.as_deref(), excluded);
+    if candidates.is_empty() {
+        return Err(unavailable(
+            "no suitable system Bubblewrap was found outside writable roots; bundled backend unavailable",
+        ));
+    }
+    // The last candidate's verification failure is the reason worth
+    // reporting: a summary that names every possible cause explains none.
+    let mut last_failure = None;
+    first_verified(candidates, |path| match check(path) {
+        Ok(found) => Some(found),
+        Err(problem) => {
+            last_failure = Some(problem);
+            None
+        }
+    })
+    .ok_or_else(|| {
+        last_failure.unwrap_or_else(|| {
+            unavailable(
+                "discovered system Bubblewrap candidates failed provenance, feature, version, or namespace verification; bundled backend unavailable",
+            )
+        })
+    })
+}
+
+/// The length of the executable at `path`, where it and every directory above
+/// it are root-owned and writable by nobody else.
+fn trusted(path: &Path) -> Result<u64, SandboxError> {
+    let metadata = path
+        .metadata()
+        .map_err(|_| unavailable("could not inspect the system Bubblewrap executable"))?;
+    if !metadata.is_file()
+        || metadata.len() > MAX_BACKEND_BYTES
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+        || !trusted_parent_chain(path)
+    {
+        return Err(unavailable(
+            "system Bubblewrap or its parent path is not root-owned and non-writable",
+        ));
+    }
+    Ok(metadata.len())
+}
+
+fn backend_id() -> Result<SandboxBackendId, SandboxError> {
+    SandboxBackendId::new("linux-bubblewrap")
+        .map_err(|_| unavailable("invalid built-in Linux backend identity"))
 }
 
 fn discover_candidates(

@@ -1,159 +1,756 @@
-//! What `--sandbox` prints.
+//! What `crucible sandbox inspect` and `--sandbox` print.
 //!
 //! The confinement a command would be run under, written out before any
-//! command is run under it. The flag exists for the question nobody can
+//! command is run under it. The command exists for the question nobody can
 //! currently answer from outside crucible — *is the thing that says it confines
 //! actually confining, and what did it settle for where it could not?* — and
 //! that question is only worth asking if it can be asked without starting
-//! anything. So [`confinement`] prepares a session and reads it; nothing is
-//! materialized, no program is spawned, and the session is dropped where the
-//! report is built.
+//! anything. So [`inspection`] observes rather than prepares or probes: the
+//! backend a preparation would use is found by the trust checks preparation
+//! applies and measured by digest, its declared matrix is negotiated against
+//! this directory's policy, and no process is started, no manifest is
+//! materialized and no credential is read. Proving a backend can mean starting
+//! it, so what only running it could tell — its version, that it starts on
+//! this host — is reported as unverified, with the reason, rather than learned.
 //!
 //! Every path in the report is a digest. The record this is written from
 //! redacts them at the source, and that is the right bargain rather than an
 //! inconvenience: this is a listing people paste into an issue, and a home
 //! directory is a name.
 //!
-//! Built as one string and written once, like the extension listing beside it:
-//! by the time this runs there is no session, no screen and nothing to protect.
+//! One [`Observed`] is written two ways. [`Observed::human`] is one string
+//! written once, like the extension listing beside it: by the time this runs
+//! there is no session, no screen and nothing to protect.
+//! [`Observed::contract`] is the `crucible_client_api` inspection document a
+//! script reads, translated field by field by hand.
 //!
 //! And what `/sandbox enable` and `/sandbox disable` decide, in [`choosing`]:
 //! whether the choice is allowed, whether this machine can enforce it, whether
 //! it could be written down, and only then the switch itself.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crucible_client_api::bounds::ITEMS;
+use crucible_client_api::inspection::{
+    Backend, BackendVersion, Capability, Ceiling, Claim, Digest, Inspected, Inspection, Network,
+    Plan, Requirement, Root, Unit,
+};
+use crucible_client_api::{Name, Refusal, Text};
 use crucible_config::{Home, Settings};
 use crucible_sandbox::{
-    SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxCleanup,
-    SandboxEnablement, SandboxError, SandboxFeature, SandboxInspection, SandboxManifest,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxEnablement,
+    SandboxError, SandboxFeature, SandboxInspection, SandboxManifest, SandboxNetworkInspection,
     SandboxPlanInspection, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
+    confined_inspection, plan_inspection, unconfined_inspection,
 };
-use crucible_sandbox_local::LocalSandbox;
+use crucible_sandbox_local::{LocalSandbox, ObservedVersion, SandboxObservation};
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use crucible_workspace::Workspace;
 
 use crate::{AppError, remember};
 
-/// How far the backend got when it was asked about this workspace.
+/// A sandbox service that can say what would confine a request without
+/// starting anything.
 ///
-/// Three answers rather than a `Result`, because the middle one is the
-/// interesting one and it is not a failure to probe: a backend that is present,
-/// says what it can hold, and still will not take this policy is exactly what
-/// somebody reaches for this flag to see. Folding it into either neighbour
-/// would lose the capability matrix that explains it.
-#[derive(Debug)]
-pub enum Probe<'a> {
-    /// A session was negotiated, and this is what it settled on.
-    Prepared(&'a SandboxInspection),
-    /// The backend answered, but would not take this workspace's policy.
-    Refused {
-        /// Who answered.
-        backend: &'a SandboxBackendIdentity,
-        /// What it said it could hold, which is what explains the refusal.
-        capabilities: &'a SandboxCapabilities,
-        /// What it refused, in its own words.
-        why: &'a SandboxError,
-    },
-    /// Nothing answered, so there is no matrix and no plan to print.
-    Absent(&'a SandboxError),
+/// The service itself rather than a finder beside it, because the service is
+/// what an inspection must be shown never to drive: whatever observes could
+/// also probe and prepare, and the tests hold [`inspection`] to doing neither.
+pub trait Observing: SandboxService {
+    /// What would confine `request`, found without starting a process,
+    /// materializing anything or reading a credential.
+    ///
+    /// # Errors
+    ///
+    /// No backend would be found, in the words preparation would use.
+    fn observe(&self, request: &SandboxRequest) -> Result<SandboxObservation, SandboxError>;
 }
 
-/// The confinement a command started in `here` would run under, as a report.
+impl Observing for LocalSandbox {
+    fn observe(&self, request: &SandboxRequest) -> Result<SandboxObservation, SandboxError> {
+        Self::observe(request)
+    }
+}
+
+/// The reason a preparation records for a policy that turns confinement off.
+const DISABLED: &str = "sandbox disabled by effective policy";
+
+/// What an inspection of one directory found.
+#[derive(Debug)]
+pub struct Observed {
+    /// The workspace root, the one path either form names.
+    at: PathBuf,
+    /// Whether configuration turns confinement on.
+    enabled: bool,
+    /// Whether the project's configuration forbids turning it off.
+    required: bool,
+    /// The request a command here would be prepared from.
+    request: SandboxRequest,
+    /// The backend that would confine it, or why none was found.
+    found: Result<Found, SandboxError>,
+}
+
+/// A backend found, and what a preparation that it accepted would record.
+#[derive(Debug)]
+struct Found {
+    observation: SandboxObservation,
+    /// What a command would run under, where the backend takes the policy.
+    settled: Option<SandboxInspection>,
+    /// Why the record could not be made, where the matrix took the policy and
+    /// the record's own rule did not.
+    unrecorded: Option<SandboxError>,
+}
+
+impl Found {
+    /// `observation`, settled against `request` the way a preparation settles
+    /// a backend that negotiated: the record's own rule decides `confined`.
+    fn settled(observation: SandboxObservation, request: &SandboxRequest) -> Self {
+        if observation.refusal().is_some() {
+            return Self {
+                observation,
+                settled: None,
+                unrecorded: None,
+            };
+        }
+        let version = match observation.version() {
+            ObservedVersion::Stated(version) => version,
+            ObservedVersion::Unverified(_) => "unverified",
+        };
+        let capabilities = observation.capabilities().clone();
+        let recorded = SandboxBackendIdentity::new(
+            observation.id().clone(),
+            version,
+            observation.provenance(),
+            observation.digest(),
+        )
+        .map_err(|_| SandboxError::InvalidInspection)
+        .and_then(|identity| {
+            if request.policy().enabled() {
+                confined_inspection(identity, capabilities, request)
+            } else {
+                unconfined_inspection(identity, capabilities, request, DISABLED)
+            }
+        });
+        let (settled, unrecorded) = match recorded {
+            Ok(inspection) => (Some(inspection), None),
+            Err(why) => (None, Some(why)),
+        };
+        Self {
+            observation,
+            settled,
+            unrecorded,
+        }
+    }
+
+    /// Why no command could be run, where none could.
+    fn refusal(&self) -> Option<&SandboxError> {
+        self.observation.refusal().or(self.unrecorded.as_ref())
+    }
+}
+
+/// What would confine a command started in `here`, found on this machine
+/// without starting anything.
 ///
-/// The workspace is opened because the confinement is made out of it: the roots
-/// a command may reach are this checkout's roots, and a report assembled
-/// without one would be describing a sandbox nobody is going to get. Nothing
-/// beyond that is built — no credential is read, no session file is written, no
-/// manifest is materialized and no program is spawned. The sandbox session
-/// exists to be asked what it negotiated and is dropped on the way out.
+/// The workspace is opened because the confinement is made out of it: the
+/// roots a command may reach are this checkout's roots, and a report assembled
+/// without one would be describing a sandbox nobody is going to get. Beyond
+/// that, crucible's configuration is read and nothing else: no credential, no
+/// session file, no manifest and no program.
 ///
-/// A backend that will not take this policy is not a failure. It is the
-/// answer, so it is part of the report with everything that explains it;
-/// somebody asking because their commands are being refused would learn nothing
-/// from the same refusal arriving again as an error.
+/// A backend that will not take this policy, and no backend at all, are not
+/// failures. They are the answer, so they are part of the report with
+/// everything that explains them.
 ///
 /// # Errors
 ///
 /// The directory cannot be worked in, crucible's files cannot be read, no
 /// policy can be built for the directory at all.
-pub async fn confinement(here: &Path, home: &Home) -> Result<String, AppError> {
+pub fn inspection(here: &Path, home: &Home) -> Result<Observed, AppError> {
+    inspecting(&LocalSandbox::new(), here, home)
+}
+
+/// [`inspection`], asked of a service handed in so that one which counts what
+/// it is asked can stand in for this machine's.
+fn inspecting(service: &dyn Observing, here: &Path, home: &Home) -> Result<Observed, AppError> {
     let workspace = Workspace::open(here)?;
     let settings = Settings::read(home, workspace.root())?;
     // Widened the way a run widens it, and for the same reason the run gives:
     // the extra directories are part of the reach, so a report that left them
     // out would understate what a command can touch.
     let workspace = workspace.reaching(settings.extra_directories())?;
-
-    let service = LocalSandbox::new();
-    let probed = service.probe().await;
     let policy = settings.sandbox().policy(&workspace)?;
-    let prepared = service
-        .prepare(SandboxRequest::new(
-            SandboxId::new(),
-            Ancestry::new(),
-            // The call this policy would be built for. Nothing is called: the
-            // request needs a name and this is the honest one.
-            ToolId::new("sandbox"),
-            policy,
-            SandboxManifest::empty(),
-        ))
-        .await;
-
-    let probe = match (&prepared, &probed) {
-        (Ok(session), _) => Probe::Prepared(session.inspection()),
-        (Err(why), Ok((backend, capabilities))) => Probe::Refused {
-            backend,
-            capabilities,
-            why,
-        },
-        (Err(_), Err(why)) => Probe::Absent(why),
-    };
-    Ok(report(workspace.root(), settings.sandbox_enabled(), &probe))
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        // The call this policy would be built for. Nothing is called: the
+        // request needs a name and this is the honest one.
+        ToolId::new("sandbox"),
+        policy,
+        SandboxManifest::empty(),
+    );
+    let found = service
+        .observe(&request)
+        .map(|observation| Found::settled(observation, &request));
+    Ok(Observed {
+        at: workspace.root().to_owned(),
+        enabled: settings.sandbox_enabled(),
+        required: settings.sandbox().enablement().required(),
+        request,
+        found,
+    })
 }
 
-/// The report, as one block of text ending in a newline.
-///
-/// `at` is the workspace root, and it is the one path printed unredacted: it is
-/// the directory the person running this is standing in, so it tells them which
-/// checkout they asked about rather than telling anybody something they did not
-/// already have.
-pub fn report(at: &Path, enabled: bool, probe: &Probe<'_>) -> String {
-    let mut said = String::new();
-    let _ = writeln!(
-        said,
-        "sandbox {} in {}",
-        if enabled { "enabled" } else { "disabled" },
-        at.display()
-    );
+impl Observed {
+    /// The report, as one block of text ending in a newline.
+    ///
+    /// The workspace root is the one path printed unredacted: it is the
+    /// directory the person running this is standing in, so it tells them
+    /// which checkout they asked about rather than telling anybody something
+    /// they did not already have.
+    #[must_use]
+    pub fn human(&self) -> String {
+        let mut said = String::new();
+        let _ = writeln!(
+            said,
+            "sandbox {} in {}",
+            if self.enabled { "enabled" } else { "disabled" },
+            self.at.display()
+        );
+        let _ = writeln!(
+            said,
+            "  mode      {}",
+            if self.required {
+                "required by project configuration"
+            } else {
+                "optional"
+            }
+        );
 
-    match probe {
-        Probe::Prepared(inspection) => {
-            backend(&mut said, inspection.backend());
-            matrix(&mut said, inspection.capabilities());
-            settled(&mut said, inspection);
+        let found = match &self.found {
+            Ok(found) => found,
+            Err(why) => {
+                // No matrix, because there is nobody whose claims those would
+                // be. An empty one would read as a backend that holds nothing,
+                // which is a different and much worse thing to be told.
+                let _ = writeln!(said, "\nno sandbox backend was found\n  {why}");
+                return said;
+            }
+        };
+        backend(&mut said, &found.observation);
+        matrix(&mut said, found.observation.capabilities());
+        match (&found.settled, found.refusal()) {
+            (Some(inspection), _) => settled(&mut said, inspection),
+            (None, why) => {
+                let _ = writeln!(said, "\nwhat was asked for:");
+                plan(
+                    &mut said,
+                    &plan_inspection(self.request.requested_policy(), self.request.manifest()),
+                    found.observation.capabilities(),
+                );
+                // The matrix above is the explanation, so the refusal is
+                // printed after it rather than at the top: a feature this
+                // backend calls unsupported and the policy asks to be enforced
+                // is the whole of most refusals, and it reads as an answer only
+                // in that order.
+                let _ = write!(said, "\nno command could be run here");
+                match why {
+                    Some(why) => {
+                        let _ = writeln!(said, "\n  {why}");
+                    }
+                    None => said.push('\n'),
+                }
+            }
         }
-        Probe::Refused {
-            backend: identity,
-            capabilities,
-            why,
-        } => {
-            backend(&mut said, identity);
-            matrix(&mut said, capabilities);
-            // The matrix above is the explanation, so the refusal is printed
-            // after it rather than at the top: a feature this backend calls
-            // unsupported and the policy asks to be enforced is the whole of
-            // most refusals, and it reads as an answer only in that order.
-            let _ = writeln!(said, "\nno command could be run here\n  {why}");
+        if let Some(unchecked) = found.observation.unchecked() {
+            let _ = writeln!(
+                said,
+                "\nnot checked, since checking would start something:\n  {unchecked}"
+            );
         }
-        Probe::Absent(why) => {
-            let _ = writeln!(said, "\nno sandbox backend answered\n  {why}");
-        }
+        said
     }
 
-    said
+    /// The report as `crucible sandbox inspect --json` writes it: one JSON
+    /// document on one line, ending in a newline.
+    ///
+    /// # Errors
+    ///
+    /// [`Unwritten`] for a report the document cannot carry: a word from the
+    /// sandbox that is not a name, or a list over the contract's bound.
+    pub fn json(&self) -> Result<Vec<u8>, Unwritten> {
+        Ok(self.contract()?.encode()?)
+    }
+
+    /// The report, as the document's value.
+    fn contract(&self) -> Result<Inspection, Refusal> {
+        let found = self.found.as_ref().ok();
+        let capabilities = found.map(|found| found.observation.capabilities());
+        let manifest = self.request.manifest();
+        let requested = self.request.requested_policy();
+        let effective = self.request.policy();
+        let refusal = match &self.found {
+            Ok(found) => found.refusal(),
+            Err(why) => Some(why),
+        };
+        Ok(Inspection::Inspected(Box::new(Inspected {
+            enabled: self.enabled,
+            mode: if self.required {
+                Requirement::Required
+            } else {
+                Requirement::Optional
+            },
+            requested: drafted(
+                &plan_inspection(requested, manifest),
+                requested.digest(),
+                capabilities,
+            )?,
+            effective: drafted(
+                &plan_inspection(effective, manifest),
+                effective.digest(),
+                capabilities,
+            )?,
+            backend: found
+                .map(|found| described(&found.observation))
+                .transpose()?,
+            unchecked: found
+                .and_then(|found| found.observation.unchecked())
+                .map(Text::cut),
+            refusal: refusal.map(|why| Text::cut(&why.to_string())),
+            confined: found
+                .and_then(|found| found.settled.as_ref())
+                .is_some_and(SandboxInspection::confined),
+        })))
+    }
+}
+
+/// The document a failure to inspect at all is written as, in the sentence a
+/// person would have been shown, so a script reading standard output is never
+/// left with nothing.
+///
+/// # Errors
+///
+/// [`Unwritten`] if even that could not be framed; the sentence is cut to its
+/// bound first, so this is the refusal said rather than one expected.
+pub fn failure(problem: &str) -> Result<Vec<u8>, Unwritten> {
+    Ok(Inspection::Failed(Text::cut(problem)).encode()?)
+}
+
+/// A report that was made and could not be written as its document.
+///
+/// It carries the contract's refusal, which names a code and nothing of the
+/// report, so it can be said wherever the report itself could have been.
+#[derive(Debug, thiserror::Error)]
+#[error("the sandbox inspection could not be written: {0}")]
+pub struct Unwritten(#[from] Refusal);
+
+/// A word the sandbox bounded, as the contract carries it.
+fn named(word: &str) -> Result<Name, Refusal> {
+    Name::new(word)
+}
+
+/// A claim, in the contract's words.
+const fn claimed(claim: SandboxCapability) -> Claim {
+    match claim {
+        SandboxCapability::Enforced => Claim::Enforced,
+        SandboxCapability::Observed => Claim::Observed,
+        SandboxCapability::Unsupported => Claim::Unsupported,
+    }
+}
+
+/// Who would confine, in the contract's words.
+fn described(observation: &SandboxObservation) -> Result<Backend, Refusal> {
+    Ok(Backend {
+        name: named(observation.id().as_str())?,
+        version: match observation.version() {
+            ObservedVersion::Stated(version) => BackendVersion::Stated(named(version)?),
+            ObservedVersion::Unverified(why) => BackendVersion::Unverified(Text::cut(why)),
+        },
+        provenance: named(observation.provenance().as_str())?,
+        build: observation.digest().map(Digest),
+        capabilities: observation
+            .capabilities()
+            .iter()
+            .map(|(feature, claim)| {
+                Ok(Capability {
+                    feature: named(feature.as_str())?,
+                    claim: claimed(claim),
+                })
+            })
+            .collect::<Result<_, Refusal>>()?,
+    })
+}
+
+/// One plan, in the contract's words: at most [`ITEMS`] roots and a count of
+/// the rest, and each ceiling with the claim it rests on, unsupported where no
+/// backend was found to hold it.
+fn drafted(
+    plan: &SandboxPlanInspection,
+    policy: [u8; 32],
+    capabilities: Option<&SandboxCapabilities>,
+) -> Result<Plan, Refusal> {
+    let roots = plan
+        .roots()
+        .iter()
+        .take(ITEMS)
+        .map(|root| {
+            Ok(Root {
+                access: named(root.access().as_str())?,
+                provenance: named(root.provenance().as_str())?,
+                identity: Digest(root.identity()),
+            })
+        })
+        .collect::<Result<Vec<_>, Refusal>>()?;
+    let ceilings = stated(plan.limits())
+        .into_iter()
+        .map(|ceiling| {
+            let (amount, nanos, unit) = match ceiling.amount {
+                Amount::Span(span) => (span.as_secs(), span.subsec_nanos(), Unit::Seconds),
+                Amount::Bytes(count) => (count, 0, Unit::Bytes),
+                Amount::Count(count) => (count, 0, Unit::Count),
+                Amount::Micros(count) => (count, 0, Unit::Micros),
+            };
+            Ok(Ceiling {
+                feature: named(ceiling.feature.as_str())?,
+                amount,
+                nanos,
+                unit,
+                claim: capabilities.map_or(Claim::Unsupported, |held| {
+                    claimed(held.claim(ceiling.feature))
+                }),
+            })
+        })
+        .collect::<Result<Vec<_>, Refusal>>()?;
+    let count = |count: usize| u64::try_from(count).unwrap_or(u64::MAX);
+    Ok(Plan {
+        enabled: plan.enabled(),
+        policy: Digest(policy),
+        cwd: Digest(plan.working_directory()),
+        omitted: count(plan.roots().len().saturating_sub(roots.len())),
+        roots,
+        hidden: count(plan.unreadable_patterns()),
+        network: match plan.network() {
+            SandboxNetworkInspection::Closed => Network::Closed,
+            SandboxNetworkInspection::Domains {
+                allowed,
+                denied,
+                local_binding,
+                unix_sockets,
+            } => Network::Domains {
+                allowed: count(allowed),
+                denied: count(denied),
+                local_binding,
+                unix_sockets: count(unix_sockets),
+            },
+        },
+        ceilings,
+        commands: Digest(plan.command_policy()),
+        staged: count(plan.manifest_entries()),
+        persistent: plan.persistent(),
+        snapshots: plan.snapshots(),
+    })
+}
+
+/// Who would be doing the confining, and whether crucible measured it.
+fn backend(said: &mut String, observation: &SandboxObservation) {
+    let _ = writeln!(
+        said,
+        "  backend   {}, {}",
+        observation.id().as_str(),
+        observation.provenance().as_str(),
+    );
+    let _ = writeln!(
+        said,
+        "  version   {}",
+        match observation.version() {
+            ObservedVersion::Stated(version) => String::from(version),
+            ObservedVersion::Unverified(why) => format!("unverified; {why}"),
+        }
+    );
+    // A backend crucible took a digest over is one it can say it is still
+    // looking at; one it did not is not an accusation, it is a fact about how
+    // this backend was found, and leaving the line out would read like the
+    // digest matched.
+    let _ = writeln!(
+        said,
+        "  build     {}",
+        match observation.digest() {
+            Some(digest) => hex(digest),
+            None => String::from("not measured"),
+        }
+    );
+}
+
+/// Every feature, and how strongly this backend claims it.
+///
+/// All of them, including the ones this policy never asks for. The matrix is
+/// what makes a later "enforced" claim mean anything: a report that printed
+/// only the claims a passing policy relied on would be a report that could not
+/// have said no, and this command exists to be able to say no.
+fn matrix(said: &mut String, capabilities: &SandboxCapabilities) {
+    let _ = writeln!(said, "\nwhat this backend can hold:");
+    for (feature, claim) in capabilities.iter() {
+        let _ = writeln!(said, "  {:<21} {}", feature.as_str(), claim.as_str());
+    }
+}
+
+/// What a command would actually run under, and what it was asked to be.
+fn settled(said: &mut String, inspection: &SandboxInspection) {
+    let _ = writeln!(said, "\nwhat a command would run under:");
+    plan(said, inspection.plan(), inspection.capabilities());
+
+    let _ = writeln!(
+        said,
+        "  confined  {}",
+        if inspection.confined() { "yes" } else { "no" },
+    );
+    if let Some(reason) = inspection.disabled_reason() {
+        let _ = writeln!(said, "  disabled  {reason}");
+    }
+    let _ = writeln!(said, "  policy    {}", hex(inspection.policy_digest()));
+    let _ = writeln!(said, "  manifest  {}", hex(inspection.manifest_digest()));
+
+    // Only where the two differ. Here they never do — the policy is built here
+    // and handed straight over — but the record carries both, and a report
+    // that printed only the effective half would be unable to show a narrowing
+    // on the day something starts narrowing.
+    if inspection.requested_policy_digest() != inspection.policy_digest() {
+        let _ = writeln!(
+            said,
+            "\nwhat was asked for, which is not what it settled on:"
+        );
+        plan(said, inspection.requested_plan(), inspection.capabilities());
+        let _ = writeln!(
+            said,
+            "  policy    {}",
+            hex(inspection.requested_policy_digest())
+        );
+    }
+}
+
+/// One plan: reach, network, ceilings and what is staged into it.
+fn plan(said: &mut String, plan: &SandboxPlanInspection, capabilities: &SandboxCapabilities) {
+    let _ = writeln!(said, "  enabled   {}", plan.enabled());
+    let _ = writeln!(said, "  cwd       {}", hex(plan.working_directory()));
+
+    // The digest is not a path anybody can read back, which is the point; the
+    // access and the reason are the part a person judges, and they are what a
+    // wrong reach looks wrong in.
+    let _ = writeln!(
+        said,
+        "  reach     {}",
+        match plan.roots().len() {
+            0 => String::from("nowhere"),
+            1 => String::from("1 place, named by digest"),
+            many => format!("{many} places, named by digest"),
+        }
+    );
+    for root in plan.roots() {
+        let _ = writeln!(
+            said,
+            "    {:<12}{:<20}{}",
+            root.access().as_str(),
+            root.provenance().as_str(),
+            hex(root.identity()),
+        );
+    }
+    let _ = writeln!(
+        said,
+        "  hidden    {}",
+        match plan.unreadable_patterns() {
+            1 => String::from("1 pattern"),
+            many => format!("{many} patterns"),
+        }
+    );
+
+    let network = plan.network();
+    let _ = writeln!(
+        said,
+        "  network   {}{}",
+        network.as_str(),
+        match network {
+            SandboxNetworkInspection::Closed => String::new(),
+            SandboxNetworkInspection::Domains {
+                allowed,
+                denied,
+                local_binding,
+                unix_sockets,
+            } => format!(
+                ", {allowed} allowed, {denied} denied, local binding {}, {unix_sockets} Unix sockets",
+                yes(local_binding)
+            ),
+        }
+    );
+
+    ceilings(said, plan.limits(), capabilities);
+
+    let _ = writeln!(
+        said,
+        "  staged    {}",
+        match plan.manifest_entries() {
+            0 => String::from("nothing"),
+            1 => String::from("1 entry"),
+            many => format!("{many} entries"),
+        }
+    );
+    let _ = writeln!(said, "  outlives  {}", yes(plan.persistent()));
+    let _ = writeln!(said, "  snapshots {}", yes(plan.snapshots()));
+}
+
+/// Each ceiling this plan states, beside the claim it rests on.
+///
+/// The pairing is the whole point of the section. A number on its own says what
+/// was asked for; a number the backend only observes is a number a command can
+/// walk past while a supervisor writes it down, and the two read identically
+/// until they are printed on one line.
+fn ceilings(said: &mut String, limits: SandboxResourceLimits, capabilities: &SandboxCapabilities) {
+    let stated = stated(limits);
+    if stated.is_empty() {
+        // A policy with no ceilings at all is a real configuration and not an
+        // error, and it is worth a word rather than a blank: nothing here
+        // bounds a runaway.
+        let _ = writeln!(said, "  ceilings  none");
+        return;
+    }
+
+    let _ = writeln!(said, "  ceilings");
+    for ceiling in stated {
+        let claim = capabilities.claim(ceiling.feature);
+        let _ = writeln!(
+            said,
+            "    {:<24}{}{}",
+            ceiling.written,
+            claim.as_str(),
+            match claim {
+                // Named where it matters and nowhere else. "observed" is a word
+                // somebody could read as a weaker kind of ceiling rather than
+                // as no ceiling, and this is the one place to settle that.
+                SandboxCapability::Observed => ", so it is recorded rather than imposed",
+                SandboxCapability::Unsupported => ", so this number does nothing",
+                SandboxCapability::Enforced => "",
+            }
+        );
+    }
+}
+
+/// How much a ceiling allows, in the unit it is stated in.
+#[derive(Debug, Clone, Copy)]
+enum Amount {
+    /// A span of time.
+    Span(Duration),
+    /// A number of bytes.
+    Bytes(u64),
+    /// A number of things.
+    Count(u64),
+    /// A cost, in millionths of its currency.
+    Micros(u64),
+}
+
+/// One ceiling a plan states.
+struct Stated {
+    /// The capability that decides whether the number does anything.
+    feature: SandboxFeature,
+    /// The number, for the document.
+    amount: Amount,
+    /// The number, for a person.
+    written: String,
+}
+
+/// Every ceiling `limits` states, in one table both forms of the report are
+/// written from, so the two cannot come to disagree about which exist.
+fn stated(limits: SandboxResourceLimits) -> Vec<Stated> {
+    let count = |of: Option<u64>, feature, write: fn(u64) -> String| {
+        of.map(|count| (feature, Amount::Count(count), write(count)))
+    };
+    let size = |of: Option<u64>, feature, write: fn(u64) -> String| {
+        of.map(|count| (feature, Amount::Bytes(count), write(count)))
+    };
+    let span = |of: Option<Duration>, feature, per: &str| {
+        of.map(|span| (feature, Amount::Span(span), wall(span, per)))
+    };
+    [
+        limits.cpu_seconds.map(|count| {
+            (
+                SandboxFeature::CpuLimit,
+                Amount::Span(Duration::from_secs(count)),
+                format!("cpu {}", seconds(count)),
+            )
+        }),
+        size(limits.memory_bytes, SandboxFeature::MemoryLimit, |count| {
+            format!("memory {}", bytes(count))
+        }),
+        size(limits.disk_bytes, SandboxFeature::DiskLimit, |count| {
+            format!("disk {}", bytes(count))
+        }),
+        count(limits.processes, SandboxFeature::ProcessLimit, |count| {
+            format!("{count} processes")
+        }),
+        count(limits.open_files, SandboxFeature::OpenFileLimit, |count| {
+            format!("{count} open files")
+        }),
+        size(
+            limits.outbound_bytes,
+            SandboxFeature::OutboundByteLimit,
+            |count| format!("{} out", bytes(count)),
+        ),
+        size(limits.output_bytes, SandboxFeature::OutputLimit, |count| {
+            format!("{} captured", bytes(count))
+        }),
+        count(
+            limits.concurrent_commands,
+            SandboxFeature::ConcurrencyLimit,
+            |count| format!("{count} at once"),
+        ),
+        span(
+            limits.command_time,
+            SandboxFeature::CommandTimeLimit,
+            "per command",
+        ),
+        span(
+            limits.session_time,
+            SandboxFeature::SessionTimeLimit,
+            "per session",
+        ),
+        limits.cost_micros.map(|cost| {
+            (
+                SandboxFeature::CostLimit,
+                Amount::Micros(cost),
+                format!("{cost} cost micros"),
+            )
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|(feature, amount, written)| Stated {
+        feature,
+        amount,
+        written,
+    })
+    .collect()
+}
+
+/// A wall-clock span without rounding, and what it is a span of.
+fn wall(span: Duration, of: &str) -> String {
+    if span.subsec_nanos() == 0 {
+        return format!("{} {of}", seconds(span.as_secs()));
+    }
+
+    // Integer fields preserve both nanoseconds and large durations; converting
+    // to floating-point seconds could round a stated ceiling to another value.
+    let fraction = format!("{:09}", span.subsec_nanos());
+    format!(
+        "{}.{}s {of}",
+        span.as_secs(),
+        fraction.trim_end_matches('0')
+    )
+}
+
+/// Whole seconds, in minutes where they divide evenly into them.
+fn seconds(count: u64) -> String {
+    match count {
+        count if count >= 60 && count % 60 == 0 => format!("{}m", count / 60),
+        count => format!("{count}s"),
+    }
 }
 
 /// Turns confinement on or off for the commands and hosted processes
@@ -243,277 +840,6 @@ async fn admitted(service: &dyn SandboxService, policy: SandboxPolicy) -> Result
         .map_err(|problem| Unchanged::Stopped(problem.to_string()))?;
     drop(prepared);
     Ok(())
-}
-
-/// Who is doing the confining, and whether crucible measured it.
-fn backend(said: &mut String, identity: &SandboxBackendIdentity) {
-    let _ = writeln!(
-        said,
-        "  backend   {} {}, {}",
-        identity.id().as_str(),
-        identity.version(),
-        identity.provenance().as_str(),
-    );
-    // A backend crucible took a digest over is one it can say it is still
-    // looking at; one it did not is not an accusation, it is a fact about how
-    // this backend was found, and leaving the line out would read like the
-    // digest matched.
-    let _ = writeln!(
-        said,
-        "  build     {}",
-        match identity.digest() {
-            Some(digest) => hex(digest),
-            None => String::from("not measured"),
-        }
-    );
-}
-
-/// Every feature, and how strongly this backend claims it.
-///
-/// All of them, including the ones this policy never asks for. The matrix is
-/// what makes a later "enforced" claim mean anything: a report that printed
-/// only the claims a passing policy relied on would be a report that could not
-/// have said no, and this flag exists to be able to say no.
-fn matrix(said: &mut String, capabilities: &SandboxCapabilities) {
-    let _ = writeln!(said, "\nwhat this backend can hold:");
-    for (feature, claim) in capabilities.iter() {
-        let _ = writeln!(said, "  {:<21} {}", feature.as_str(), claim.as_str());
-    }
-}
-
-/// What a command would actually run under, and what it was asked to be.
-fn settled(said: &mut String, inspection: &SandboxInspection) {
-    let _ = writeln!(said, "\nwhat a command would run under:");
-    plan(said, inspection.plan(), inspection.capabilities());
-
-    let _ = writeln!(
-        said,
-        "  confined  {}",
-        if inspection.confined() { "yes" } else { "no" },
-    );
-    if let Some(reason) = inspection.disabled_reason() {
-        let _ = writeln!(said, "  disabled  {reason}");
-    }
-    let _ = writeln!(
-        said,
-        "  cleanup   {}",
-        match inspection.cleanup() {
-            // The usual answer here, and not a complaint: this session was
-            // prepared to be read and is dropped as this line is written, so
-            // there is nothing yet to have finished cleaning.
-            SandboxCleanup::Pending => "pending; nothing was run and nothing was staged",
-            SandboxCleanup::Complete => "complete",
-            SandboxCleanup::Failed => "could not be confirmed",
-        }
-    );
-    let _ = writeln!(said, "  policy    {}", hex(inspection.policy_digest()));
-    let _ = writeln!(said, "  manifest  {}", hex(inspection.manifest_digest()));
-
-    // Only where the two differ. On this flag they never do — the policy is
-    // built here and handed straight over — but the record carries both, and a
-    // report that printed only the effective half would be unable to show a
-    // narrowing on the day something starts narrowing.
-    if inspection.requested_policy_digest() != inspection.policy_digest() {
-        let _ = writeln!(
-            said,
-            "\nwhat was asked for, which is not what it settled on:"
-        );
-        plan(said, inspection.requested_plan(), inspection.capabilities());
-        let _ = writeln!(
-            said,
-            "  policy    {}",
-            hex(inspection.requested_policy_digest())
-        );
-    }
-}
-
-/// One plan: reach, network, ceilings and what is staged into it.
-fn plan(said: &mut String, plan: &SandboxPlanInspection, capabilities: &SandboxCapabilities) {
-    let _ = writeln!(said, "  enabled   {}", plan.enabled());
-    let _ = writeln!(said, "  cwd       {}", hex(plan.working_directory()));
-
-    // The digest is not a path anybody can read back, which is the point; the
-    // access and the reason are the part a person judges, and they are what a
-    // wrong reach looks wrong in.
-    let _ = writeln!(
-        said,
-        "  reach     {}",
-        match plan.roots().len() {
-            0 => String::from("nowhere"),
-            1 => String::from("1 place, named by digest"),
-            many => format!("{many} places, named by digest"),
-        }
-    );
-    for root in plan.roots() {
-        let _ = writeln!(
-            said,
-            "    {:<12}{:<20}{}",
-            root.access().as_str(),
-            root.provenance().as_str(),
-            hex(root.identity()),
-        );
-    }
-    let _ = writeln!(
-        said,
-        "  hidden    {}",
-        match plan.unreadable_patterns() {
-            1 => String::from("1 pattern"),
-            many => format!("{many} patterns"),
-        }
-    );
-
-    let network = plan.network();
-    let _ = writeln!(
-        said,
-        "  network   {}{}",
-        network.as_str(),
-        match network {
-            crucible_sandbox::SandboxNetworkInspection::Closed => String::new(),
-            crucible_sandbox::SandboxNetworkInspection::Domains {
-                allowed,
-                denied,
-                local_binding,
-                unix_sockets,
-            } => format!(
-                ", {allowed} allowed, {denied} denied, local binding {}, {unix_sockets} Unix sockets",
-                yes(local_binding)
-            ),
-        }
-    );
-
-    ceilings(said, plan.limits(), capabilities);
-
-    let _ = writeln!(
-        said,
-        "  staged    {}",
-        match plan.manifest_entries() {
-            0 => String::from("nothing"),
-            1 => String::from("1 entry"),
-            many => format!("{many} entries"),
-        }
-    );
-    let _ = writeln!(said, "  outlives  {}", yes(plan.persistent()));
-    let _ = writeln!(said, "  snapshots {}", yes(plan.snapshots()));
-}
-
-/// Each ceiling this plan states, beside the claim it rests on.
-///
-/// The pairing is the whole point of the section. A number on its own says what
-/// was asked for; a number the backend only observes is a number a command can
-/// walk past while a supervisor writes it down, and the two read identically
-/// until they are printed on one line.
-fn ceilings(said: &mut String, limits: SandboxResourceLimits, capabilities: &SandboxCapabilities) {
-    let stated: Vec<(String, SandboxFeature)> = [
-        (
-            limits
-                .cpu_seconds
-                .map(|count| format!("cpu {}", seconds(count))),
-            SandboxFeature::CpuLimit,
-        ),
-        (
-            limits
-                .memory_bytes
-                .map(|count| format!("memory {}", bytes(count))),
-            SandboxFeature::MemoryLimit,
-        ),
-        (
-            limits
-                .disk_bytes
-                .map(|count| format!("disk {}", bytes(count))),
-            SandboxFeature::DiskLimit,
-        ),
-        (
-            limits.processes.map(|count| format!("{count} processes")),
-            SandboxFeature::ProcessLimit,
-        ),
-        (
-            limits.open_files.map(|count| format!("{count} open files")),
-            SandboxFeature::OpenFileLimit,
-        ),
-        (
-            limits
-                .outbound_bytes
-                .map(|count| format!("{} out", bytes(count))),
-            SandboxFeature::OutboundByteLimit,
-        ),
-        (
-            limits
-                .output_bytes
-                .map(|count| format!("{} captured", bytes(count))),
-            SandboxFeature::OutputLimit,
-        ),
-        (
-            limits
-                .concurrent_commands
-                .map(|count| format!("{count} at once")),
-            SandboxFeature::ConcurrencyLimit,
-        ),
-        (
-            limits.command_time.map(|span| wall(span, "per command")),
-            SandboxFeature::CommandTimeLimit,
-        ),
-        (
-            limits.session_time.map(|span| wall(span, "per session")),
-            SandboxFeature::SessionTimeLimit,
-        ),
-        (
-            limits.cost_micros.map(|cost| format!("{cost} cost micros")),
-            SandboxFeature::CostLimit,
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(stated, feature)| stated.map(|stated| (stated, feature)))
-    .collect();
-
-    if stated.is_empty() {
-        // A policy with no ceilings at all is a real configuration and not an
-        // error, and it is worth a word rather than a blank: nothing here
-        // bounds a runaway.
-        let _ = writeln!(said, "  ceilings  none");
-        return;
-    }
-
-    let _ = writeln!(said, "  ceilings");
-    for (written, feature) in stated {
-        let claim = capabilities.claim(feature);
-        let _ = writeln!(
-            said,
-            "    {written:<24}{}{}",
-            claim.as_str(),
-            match claim {
-                // Named where it matters and nowhere else. "observed" is a word
-                // somebody could read as a weaker kind of ceiling rather than
-                // as no ceiling, and this is the one place to settle that.
-                SandboxCapability::Observed => ", so it is recorded rather than imposed",
-                SandboxCapability::Unsupported => ", so this number does nothing",
-                SandboxCapability::Enforced => "",
-            }
-        );
-    }
-}
-
-/// A wall-clock span without rounding, and what it is a span of.
-fn wall(span: Duration, of: &str) -> String {
-    if span.subsec_nanos() == 0 {
-        return format!("{} {of}", seconds(span.as_secs()));
-    }
-
-    // Integer fields preserve both nanoseconds and large durations; converting
-    // to floating-point seconds could round a stated ceiling to another value.
-    let fraction = format!("{:09}", span.subsec_nanos());
-    format!(
-        "{}.{}s {of}",
-        span.as_secs(),
-        fraction.trim_end_matches('0')
-    )
-}
-
-/// Whole seconds, in minutes where they divide evenly into them.
-fn seconds(count: u64) -> String {
-    match count {
-        count if count >= 60 && count % 60 == 0 => format!("{}m", count / 60),
-        count => format!("{count}s"),
-    }
 }
 
 /// A byte count, in the largest binary unit it divides evenly into.
