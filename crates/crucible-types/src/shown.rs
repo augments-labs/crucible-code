@@ -6,10 +6,11 @@
 //! the screen, and a line break starts a line the text was never given. A
 //! Unicode format character, a right-to-left override among them, reorders or
 //! hides what is drawn around it. So text that is quoted rather than written
-//! by crucible leaves with each of these as an escape a person can read, and a
-//! JSON document leaves with each as a JSON escape, `\n` for a line break and
-//! `\u202e` for an override, which reads back as the same character, so nothing
-//! a reader decodes changes.
+//! by crucible leaves with each of these as an escape a person can read, the
+//! two joiners that only shape a word aside. A JSON document leaves with every
+//! one as a JSON escape, `\n` for a line break and `\u202e` for an override,
+//! which reads back as the same character, so nothing a reader decodes
+//! changes.
 //!
 //! Owned here because the two writers of such text, a configuration report and
 //! a client-contract document, may not name each other.
@@ -59,10 +60,10 @@ pub const fn unshown(character: char) -> bool {
         )
 }
 
-/// `text` with every [`unshown`] character, a line break among them, written
-/// as its escape: `\u{1b}` for ESC, `\n` for a line break, `\u{202e}` for a
-/// right-to-left override. Escaped, it is still the name, and the person who
-/// sees it can tell which directory or key it was.
+/// `text` with every [`unshown`] character but the two joiners below, a line
+/// break among them, written as its escape: `\u{1b}` for ESC, `\n` for a line
+/// break, `\u{202e}` for a right-to-left override. Escaped, it is still the
+/// name, and the person who sees it can tell which directory or key it was.
 ///
 /// The zero-width non-joiner and joiner, U+200C and U+200D, are kept, as the
 /// terminal keeps them: they shape Persian and Indic script and join an emoji

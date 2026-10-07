@@ -1143,9 +1143,9 @@ fn fail(problem: &Fatal) -> ExitCode {
 }
 
 /// `text` as it may reach a terminal outside the renderer: every control
-/// character but a line break, and every Unicode format character, written
-/// as its escape, `\u{1b}` for ESC and `\u{202e}` for a right-to-left
-/// override.
+/// character but a line break, and every Unicode format character but the
+/// zero-width joiner and non-joiner, written as its escape, `\u{1b}` for ESC
+/// and `\u{202e}` for a right-to-left override.
 ///
 /// A terminal acts on ESC, BEL and the C1 controls rather than drawing them,
 /// so a name that carries one could retitle the window or clear the screen
