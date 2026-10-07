@@ -431,10 +431,10 @@ const DEAF: &str = "for /l %i in (0,0,1) do @rem";
 /// again, the thread lets go of the pipe within the bound while the command
 /// still runs, and the command's owner then joins it.
 ///
-/// The drop is not timed. How long it takes on a shared host is that host's
-/// scheduling, and a busy Windows runner, with this command spinning on a
-/// core of its own, has held it past 70 ms; a drop that waited on the thread
-/// would pass any timing whenever the thread answered quickly.
+/// The drop is not timed. A drop that waits for the thread, as one that asked
+/// for the write's cancellation from the dropping thread did, passes any
+/// timing whenever the host runs that thread quickly, and failed one only on a
+/// busy runner that did not.
 #[cfg(windows)]
 #[test]
 fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {

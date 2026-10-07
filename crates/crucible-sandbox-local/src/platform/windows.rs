@@ -9,7 +9,9 @@
 //! A pipe read or written asynchronously is handed to a thread of its own
 //! (the `owned` module), because no runtime here is told when an anonymous pipe
 //! becomes ready. A write that thread is parked in is abandoned by cancelling
-//! the pipe's pending I/O, which is what dropping the writer asks for.
+//! the pipe's pending I/O, which is what dropping the writer asks for. The
+//! cancellation runs on the writing thread itself, because one asked for from
+//! another thread returns only once the writing thread has run.
 #![allow(
     unsafe_code,
     reason = "Windows exposes job objects and anonymous-pipe polling only through its system API"
@@ -45,7 +47,7 @@ use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 #[cfg(test)]
 use windows_sys::Win32::System::Threading::SuspendThread;
 use windows_sys::Win32::System::Threading::{
-    CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+    CREATE_SUSPENDED, OpenThread, QueueUserAPC, ResumeThread, THREAD_SUSPEND_RESUME,
 };
 
 use super::ReadState;
@@ -480,25 +482,49 @@ impl Write for Shared {
     }
 }
 
-/// Abandons whatever write `thread` is parked in on `pipe`.
+/// Abandons whatever write `thread` is parked in on `pipe`, waiting for
+/// nothing.
 ///
 /// The interruption calls this with the pipe held for the call, so the handle
 /// it names is open throughout.
 ///
-/// The standard library writes a child's input through an overlapped handle,
-/// which `CancelIoEx` reaches from any thread; a synchronous write, which the
-/// handle could also be given, is reached by `CancelSynchronousIo` on the
-/// thread instead. Either answers failure when nothing is pending, which is
-/// the case the caller retries.
+/// The standard library writes a child's input through an overlapped handle
+/// and waits for the write alertably. `CancelIoEx` reaches that write, but
+/// called from another thread it returns only once the thread that issued the
+/// write has run, so a writing thread the scheduler holds off would hold the
+/// caller too. The cancellation is therefore queued to the writing thread, which
+/// runs it in that wait; queuing it waits for nothing. A synchronous write,
+/// which the handle could also be given, waits without being alerted and is
+/// reached by `CancelSynchronousIo` on the thread instead. Either answers
+/// failure when nothing is pending, which is the case the caller retries.
 fn abandon(pipe: &ChildStdin, thread: &JoinHandle<()>) {
-    // SAFETY: `pipe` is borrowed from an `Arc` the caller upgraded and holds
-    // for the call, so its handle is open throughout, and `thread` is borrowed
-    // from the join handle that owns the thread's handle. Neither call writes through a pointer, and a
-    // null `OVERLAPPED` asks for every pending request on the handle.
+    let thread = thread.as_raw_handle() as HANDLE;
+    // SAFETY: `thread` is borrowed from the join handle that owns the thread's
+    // handle, opened with every access, so it is open for both calls. The
+    // queued routine dereferences nothing: it hands the pipe's handle back to
+    // `CancelIoEx` on the writing thread, and runs only in an alertable wait
+    // there. The only such wait is a write through `pipe`, which the thread
+    // holds open for as long as it runs; whatever is still queued when the
+    // thread returns is discarded unrun. Neither call here writes through a
+    // pointer.
     unsafe {
-        CancelIoEx(raw(pipe), std::ptr::null());
-        CancelSynchronousIo(thread.as_raw_handle() as HANDLE);
+        QueueUserAPC(Some(cancel_here), thread, raw(pipe).expose_provenance());
+        CancelSynchronousIo(thread);
     }
+}
+
+/// Cancels every request pending on the pipe whose handle is `pipe`; queued
+/// by [`abandon`] to run on the thread that writes it.
+unsafe extern "system" fn cancel_here(pipe: usize) {
+    // SAFETY: as [`abandon`] says, this runs on the writing thread while it
+    // holds the pipe open, and a null `OVERLAPPED` asks for every pending
+    // request on the handle.
+    unsafe {
+        CancelIoEx(
+            std::ptr::with_exposed_provenance_mut(pipe),
+            std::ptr::null(),
+        )
+    };
 }
 
 fn lost() -> io::Error {
