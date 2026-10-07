@@ -17,16 +17,35 @@ on:
 permissions:
   contents: read
 
+# Line tables are what a backtrace reads; the rest of the debug information
+# only makes every test binary slower to link and every cache larger.
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+# The gate is spread over machines so that a run waits for its slowest part
+# rather than for the sum of them. Each machine builds the tests it runs for
+# itself, which costs less than handing it binaries built elsewhere. A part of
+# the suite is chosen by hashing each test's name, so a test added lands in one
+# part without anyone listing it, and a section added to the Rust gate is run
+# by the job that names only what it leaves out.
 jobs:
-  linux:
-    name: Linux
+  linux-tests:
+    name: Linux tests ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Every part builds the same tests, so one of them saves what it built.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: tests-ubuntu-latest
+          save-if: ${{ matrix.shard == 1 }}
       # A prebuilt cargo-nextest, checked against its published checksum, in
       # seconds rather than the minutes building it would take.
       - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
@@ -36,22 +55,114 @@ jobs:
       # The gate runs on the enforcing sandbox host, and a missing backend is
       # a failure rather than a skip; the action says why.
       - uses: ./.github/actions/enforcing-sandbox
-      - run: scripts/sh/rust-checks.sh
+      - run: scripts/sh/rust-checks.sh --only tests --partition hash:${{ matrix.shard }}/4
+        env:
+          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
+      # A test that regenerated a committed file found it stale.
+      - uses: ./.github/actions/check-clean-worktree
+
+  # The required cases rerun sandbox tests among others, so this job runs on
+  # the enforcing host too.
+  linux-required:
+    name: Linux required cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: tests-ubuntu-latest
+          save-if: false
+      - uses: ./.github/actions/enforcing-sandbox
+      - run: scripts/sh/rust-checks.sh --only examples,required
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - uses: ./.github/actions/check-clean-worktree
 
-  platforms:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    # The macOS Intel job runs 12 to 19 minutes and has gone past 20 under
-    # load. The limit is there to catch a hang, not to time the suite.
+  linux-checks:
+    name: Linux checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: checks-ubuntu-latest
+      - run: scripts/sh/rust-checks.sh --skip tests,examples,required
+      - uses: ./.github/actions/check-clean-worktree
+
+  platform-tests:
+    name: ${{ matrix.platform.name }} tests ${{ matrix.shard }}/2
+    runs-on: ${{ matrix.platform.os }}
+    # The macOS Intel tests have run 12 to 19 minutes in one job and gone past
+    # 20 under load. The limit is there to catch a hang, not to time the suite.
     timeout-minutes: 30
     strategy:
       fail-fast: false
       # macOS Intel and Windows ARM64 are the slowest platforms to test, so a
       # pull request leaves them to the run on dev that follows its merge,
       # and compiles for Windows ARM64 in the job below instead.
+      matrix:
+        platform: >-
+          ${{ fromJSON(inputs.all-platforms && '[
+          {"name": "macOS Intel", "os": "macos-15-intel"},
+          {"name": "macOS Apple silicon", "os": "macos-26"},
+          {"name": "Windows x86_64", "os": "windows-latest"},
+          {"name": "Windows ARM64", "os": "windows-11-arm"}]' || '[
+          {"name": "macOS Apple silicon", "os": "macos-26"},
+          {"name": "Windows x86_64", "os": "windows-latest"}]') }}
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: tests-${{ matrix.platform.os }}
+          save-if: ${{ matrix.shard == 1 }}
+      # A prebuilt cargo-nextest, checked against its published checksum, in
+      # seconds rather than the minutes building it would take.
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest@0.9.146
+      - if: ${{ runner.os == 'Windows' }}
+        name: Build and provision the native Windows sandbox
+        shell: pwsh
+        run: |
+          cargo build -p crucible-sandbox-broker --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # On Windows, a common initialized MSYS parent prevents concurrent Git
+      # Bash children from racing while creating their shared mount table
+      # (add_item EPERM). The documentation examples run beside the first part.
+      - shell: bash
+        run: |
+          cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/2
+          if [[ ${{ matrix.shard }} == 1 ]]; then cargo test --workspace --locked --doc; fi
+        env:
+          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
+      - if: ${{ runner.os == 'Windows' && always() }}
+        name: Remove the native Windows sandbox setup
+        shell: pwsh
+        run: |
+          if (Test-Path .\target\debug\crucible-sandbox-broker.exe) {
+            & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-uninstall
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - uses: ./.github/actions/check-clean-worktree
+
+  platform-checks:
+    name: ${{ matrix.name }} checks
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # The same platforms as the tests above.
       matrix:
         include: >-
           ${{ fromJSON(inputs.all-platforms && '[
@@ -67,40 +178,8 @@ jobs:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: platforms-${{ matrix.os }}
-      # A prebuilt cargo-nextest, checked against its published checksum, in
-      # seconds rather than the minutes building it would take.
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
-        with:
-          tool: cargo-nextest@0.9.146
+          shared-key: checks-${{ matrix.os }}
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - if: ${{ runner.os == 'Windows' && !cancelled() }}
-        name: Build and provision the native Windows sandbox
-        shell: pwsh
-        run: |
-          cargo build -p crucible-sandbox-broker --locked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-setup
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - if: ${{ runner.os == 'macOS' && !cancelled() }}
-        run: |
-          cargo nextest run --workspace --locked --no-fail-fast
-          cargo test --workspace --locked --doc
-        env:
-          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
-      - if: ${{ runner.os == 'Windows' && !cancelled() }}
-        # A common initialized MSYS parent prevents concurrent Git Bash children
-        # from racing while creating their shared mount table (add_item EPERM).
-        shell: bash
-        run: |
-          cargo nextest run --workspace --locked --no-fail-fast
-          cargo test --workspace --locked --doc
-        env:
-          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
-      - if: ${{ runner.os != 'macOS' && runner.os != 'Windows' && !cancelled() }}
-        run: |
-          cargo nextest run --workspace --locked --no-fail-fast
-          cargo test --workspace --locked --doc
       - if: ${{ !cancelled() }}
         run: cargo doc --workspace --all-features --no-deps --locked
         env:
@@ -116,14 +195,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/ps1/install-tests.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - if: ${{ runner.os == 'Windows' && always() }}
-        name: Remove the native Windows sandbox setup
-        shell: pwsh
-        run: |
-          if (Test-Path .\target\debug\crucible-sandbox-broker.exe) {
-            & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-uninstall
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
       - uses: ./.github/actions/check-clean-worktree
 
   # FreeBSD's mv, ln, install, sync and checksum tools differ from both GNU and
@@ -160,7 +231,7 @@ jobs:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: platforms-windows-11-arm
+          shared-key: checks-windows-11-arm
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - uses: ./.github/actions/check-clean-worktree
 

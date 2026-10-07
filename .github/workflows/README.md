@@ -15,7 +15,7 @@ the push run on `main` passes.
 
 | Workflow | Owns |
 | --- | --- |
-| `rust-ci.yml` | Rust formatting on Linux; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS and in a FreeBSD guest, and the Windows installer's tests under Windows PowerShell 5.1 and PowerShell 7; the rollback drill and its self-test; which of the five platforms a run covers, through its `all-platforms` input |
+| `rust-ci.yml` | Rust formatting on Linux; the tests in hashed parts, one machine each; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS and in a FreeBSD guest, and the Windows installer's tests under Windows PowerShell 5.1 and PowerShell 7; the rollback drill and its self-test; which of the five platforms a run covers, through its `all-platforms` input |
 | `repo-checks.yml` | Deterministic cross-file repository policy |
 | `python-ci.yml` | Python canary and campaign harness syntax, fixtures and report validation |
 | `dependency-policy.yml` | Blocking Cargo usage, license, source and ban policy |
@@ -36,7 +36,7 @@ Successful read-only jobs finish with
 `.github/actions/check-clean-worktree`, which rejects tracked edits or untracked
 files left by a check. Ignored build output is outside that invariant.
 
-Every Linux job that runs the Rust gate first runs
+Every Linux job that runs the Rust tests first runs
 `.github/actions/enforcing-sandbox` and sets
 `CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX`, so the enforcing sandbox tests are
 exercised there rather than skipped. The macOS jobs that run the tests (Apple
