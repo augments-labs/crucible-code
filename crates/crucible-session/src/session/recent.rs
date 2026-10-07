@@ -306,7 +306,8 @@ impl Discovery {
         self.full
     }
 
-    /// Whether there is a sessions directory and no index in it yet.
+    /// Whether there is a sessions directory with a log in it and no index
+    /// in it yet.
     #[must_use]
     pub const fn unindexed(&self) -> bool {
         self.unindexed
@@ -323,6 +324,8 @@ impl Discovery {
 /// lock is taken and nothing is written: an older directory with no index is
 /// said to be one, rather than indexed here, and the index is a fixed window of
 /// the newest sessions, so a full one says older sessions may be left out.
+/// Where there is no index, the directory's names are looked at, a bounded
+/// number of them, only to tell one holding a log from one holding none.
 ///
 /// A name the index holds with no log beside it is a session starting this
 /// instant, or one removed, and is left out uncounted. A log whose first line
@@ -340,7 +343,7 @@ pub fn discovered(
 ) -> Result<Discovery, SessionError> {
     let Some(entries) = index::written(directory, index::ENTRIES)? else {
         return Ok(Discovery {
-            unindexed: directory.is_dir(),
+            unindexed: logged(directory),
             ..Discovery::default()
         });
     };
@@ -379,6 +382,35 @@ enum Heading {
     Elsewhere,
     /// It was recorded in one of the roots, on this branch where it says.
     Here { branch: Option<Box<str>> },
+}
+
+/// How many entries of a directory with no index [`logged`] looks at.
+const LOOKED: usize = 1024;
+
+/// Whether a directory with no index holds a session log, so that a list of
+/// none would leave some out.
+///
+/// It stops at the first log, and at [`LOOKED`] entries: a directory that holds
+/// more than that with no log among them, or that cannot be read through, is
+/// taken to hold one, so the list says it may be leaving some out rather than
+/// that there are none.
+fn logged(directory: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return directory.is_dir();
+    };
+    for (looked, entry) in entries.enumerate() {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        if looked >= LOOKED
+            || Path::new(&entry.file_name())
+                .extension()
+                .is_some_and(|suffix| suffix == super::SUFFIX)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// The first line of the log at `path`, read no further than [`READ`] bytes.

@@ -855,3 +855,21 @@ fn a_branch_longer_than_a_title_is_listed_as_its_header_wrote_it() {
     let listed: Vec<Option<&str>> = found.sessions().iter().map(Discovered::branch).collect();
     assert_eq!(listed, [Some(branch.as_str())]);
 }
+
+#[test]
+fn a_sessions_directory_with_no_log_in_it_is_nothing_recorded_rather_than_unindexed() {
+    let sample = Sample::new("discovered-empty");
+    assert_eq!(discovering_unindexed(&sample), Discovery::default());
+
+    // What is beside the logs is not a log: a session's results, a lock.
+    std::fs::create_dir(sample.logs().join(format!("{}.results", nth(1))))
+        .expect("a results directory");
+    std::fs::write(sample.logs().join("notes.txt"), "not a session").expect("a file");
+    assert_eq!(discovering_unindexed(&sample), Discovery::default());
+}
+
+/// What a listing finds in a directory the index has not been written to.
+fn discovering_unindexed(sample: &Sample) -> Discovery {
+    assert!(!sample.logs().join("recent.sessions").exists());
+    discovering(sample, 8)
+}
