@@ -102,10 +102,23 @@ done
 # total nobody reads.
 readonly TEST_SELECTION=(--workspace --locked)
 
+# cargo-nextest runs each test in a process of its own, as many at once as
+# there are cores, and `.config/nextest.toml` names the tests that share state
+# and so wait for each other. It runs no documentation example, so rustdoc's
+# own harness runs those.
 section "tests"
-if ! cargo test "${TEST_SELECTION[@]}"; then
-    printf '    FAIL read the assertion, not the count\n'
+if ! cargo nextest --version >/dev/null 2>&1; then
+    printf '    FAIL cargo-nextest is not installed; CONTRIBUTING.md says how to install it\n'
     failed=1
+else
+    if ! cargo nextest run "${TEST_SELECTION[@]}" --no-fail-fast; then
+        printf '    FAIL read the assertion, not the count\n'
+        failed=1
+    fi
+    if ! cargo test "${TEST_SELECTION[@]}" --doc; then
+        printf '    FAIL a documentation example failed\n'
+        failed=1
+    fi
 fi
 
 section "required cases"

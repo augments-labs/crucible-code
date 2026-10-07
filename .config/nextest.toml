@@ -1,0 +1,18 @@
+# cargo-nextest runs each test in a process of its own, so a lock a test binary
+# holds in memory no longer keeps its tests apart. The sandbox crate's tests
+# share one state directory, coordinate inside a single process, and take it
+# from under any other test for a moment. The bash tool's tests take a turn in
+# memory so that confined commands of this user never launch at once, and the
+# hosted-server test starts confined commands of its own. Under `cargo test`
+# none of these binaries ever ran beside another. Here they run one test at a
+# time in one group, while every other test runs beside them.
+[test-groups]
+confined = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = '''
+package(crucible-sandbox-local)
+| (package(crucible-builtins) & test(/^bash::tests::/))
+| (package(crucible-app) & binary(hosted_server))
+'''
+test-group = 'confined'

@@ -16,6 +16,14 @@ cargo build
 cargo run -- --help
 ```
 
+The gate runs the tests through [cargo-nextest](https://nexte.st), which runs
+each test in a process of its own and many at once. Install the version CI
+uses:
+
+```bash
+cargo install cargo-nextest --version '=0.9.146' --locked
+```
+
 On Linux, clone and build under `umask 022`. Many distributions default to
 `umask 002`, which leaves the checkout and `target/` group-writable, and the
 sandbox refuses a broker image that a group member could rewrite, checking every

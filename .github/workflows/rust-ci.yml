@@ -27,6 +27,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # A prebuilt cargo-nextest, checked against its published checksum, in
+      # seconds rather than the minutes building it would take.
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest@0.9.146
 
       # The gate runs on the enforcing sandbox host, and a missing backend is
       # a failure rather than a skip; the action says why.
@@ -63,6 +68,11 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: platforms-${{ matrix.os }}
+      # A prebuilt cargo-nextest, checked against its published checksum, in
+      # seconds rather than the minutes building it would take.
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest@0.9.146
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - if: ${{ runner.os == 'Windows' && !cancelled() }}
         name: Build and provision the native Windows sandbox
@@ -73,18 +83,24 @@ jobs:
           & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-setup
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - if: ${{ runner.os == 'macOS' && !cancelled() }}
-        run: cargo test --workspace --locked
+        run: |
+          cargo nextest run --workspace --locked --no-fail-fast
+          cargo test --workspace --locked --doc
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - if: ${{ runner.os == 'Windows' && !cancelled() }}
         # A common initialized MSYS parent prevents concurrent Git Bash children
         # from racing while creating their shared mount table (add_item EPERM).
         shell: bash
-        run: cargo test --workspace --locked
+        run: |
+          cargo nextest run --workspace --locked --no-fail-fast
+          cargo test --workspace --locked --doc
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - if: ${{ runner.os != 'macOS' && runner.os != 'Windows' && !cancelled() }}
-        run: cargo test --workspace --locked
+        run: |
+          cargo nextest run --workspace --locked --no-fail-fast
+          cargo test --workspace --locked --doc
       - if: ${{ !cancelled() }}
         run: cargo doc --workspace --all-features --no-deps --locked
         env:
