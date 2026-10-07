@@ -426,8 +426,15 @@ const DEAF: &str = "for /l %i in (0,0,1) do @rem";
 
 /// A write parked in a real pipe a command never reads is abandoned by the
 /// drop of the input through the platform's own cancellation, not a stand-in
-/// for it: the thread lets go of the pipe within the bound while the command
-/// still runs, and the command's owner then joins it at once.
+/// for it. The drop waits for nothing: it returns while the thread is kept off
+/// the processor, so it cannot be waiting on the thread or the write. Let run
+/// again, the thread lets go of the pipe within the bound while the command
+/// still runs, and the command's owner then joins it.
+///
+/// The drop is not timed. A drop that waits for the thread, as one that asked
+/// for the write's cancellation from the dropping thread did, passes any
+/// timing whenever the host runs that thread quickly, and failed one only on a
+/// busy runner that did not.
 #[cfg(windows)]
 #[test]
 fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
@@ -449,9 +456,24 @@ fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
     });
     assert!(parked, "the pipe never filled");
 
-    let dropping = Instant::now();
-    drop(input);
-    let took = dropping.elapsed();
+    let held = thread
+        .with_thread(windows::Suspended::new)
+        .expect("the writer's thread")
+        .expect("the writer's thread suspended");
+    let (dropped, returned) = std::sync::mpsc::channel();
+    let dropping = std::thread::spawn(move || {
+        drop(input);
+        let _ = dropped.send(());
+    });
+    // Bounded only so that a drop waiting on the held thread fails rather
+    // than hangs; one that waits for nothing returns whatever the host's load.
+    assert!(
+        returned.recv_timeout(WAIT).is_ok(),
+        "dropping the input waited on its thread"
+    );
+    dropping.join().expect("the dropping thread");
+    assert!(!thread.finished(), "the suspended thread returned");
+    drop(held);
     let deadline = Instant::now() + Duration::from_secs(1);
     while !thread.finished() {
         assert!(
@@ -461,14 +483,12 @@ fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
         std::thread::sleep(Duration::from_millis(1));
     }
 
-    assert!(took < Duration::from_millis(50), "dropping took {took:?}");
     assert!(
         child.try_wait().expect("a status").is_none(),
         "the command ended, so the pipe closing proves nothing"
     );
-    let ending = Instant::now();
     thread.end().expect("the thread ended");
-    assert!(ending.elapsed() < Duration::from_millis(50));
+    assert!(thread.joined(), "the ended thread was not joined");
     child.kill().expect("the command stopped");
     reaped(child);
 }
