@@ -179,6 +179,7 @@ fn a_rotation_and_a_login_request_at_once_hold_one_blocking_thread_between_them(
     let runtime = runtime();
     let renewals = Renewals::new();
     renewals.runs_on(runtime.handle().clone());
+    renewals.holds(Arc::new(Nowhere));
 
     let scratch = Scratch::new("one-blocking-thread");
     let store = Store::in_home(scratch.path());
@@ -358,4 +359,27 @@ fn an_account_request_the_application_holds_is_never_sent() {
         matches!(&sent, Err(OAuthError::Held(route)) if &**route == "subscription:fabricated"),
         "{sent:?}"
     );
+}
+
+/// An owner never given a hold has nothing to ask before an account request
+/// leaves, so it sends none: the listener standing where the authorization
+/// service would be accepts no connection, and the request fails saying no
+/// hold was given rather than going out unasked.
+#[test]
+fn an_account_request_with_no_hold_given_is_never_sent() {
+    let runtime = runtime();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/oauth/token", listener.local_addr().unwrap());
+    let renewals = Renewals::new();
+    renewals.runs_on(runtime.handle().clone());
+
+    let sent = runtime.block_on(renewals.post(&url, Outgoing::new(), String::new(), PATIENCE));
+
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        listener.accept().is_err(),
+        "an account request with no hold given was dialled"
+    );
+    assert!(matches!(sent, Err(OAuthError::NoHold)), "{sent:?}");
 }
