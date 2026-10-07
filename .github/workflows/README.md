@@ -39,11 +39,12 @@ files left by a check. Ignored build output is outside that invariant.
 Every Linux job that runs the Rust gate first runs
 `.github/actions/enforcing-sandbox` and sets
 `CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX`, so the enforcing sandbox tests are
-exercised there rather than skipped. The Intel and Apple silicon macOS jobs set
-the same requirement and exercise the built-in Seatbelt backend. The x86_64 and
-ARM64 Windows jobs provision their versioned dedicated sandbox account and WFP
-policy, require the native backend for the full test run, and remove that
-machine state in an always-run cleanup step. The release gate and `rust-ci.yml`
+exercised there rather than skipped. The macOS jobs that run the tests (Apple
+silicon on every run, Intel on a push) set the same requirement and exercise
+the built-in Seatbelt backend. The Windows jobs that run the tests (x86_64 on
+every run, ARM64 on a push) provision their versioned dedicated sandbox account
+and WFP policy, require the native backend for the full test run, and remove
+that machine state in an always-run cleanup step. The release gate and `rust-ci.yml`
 share the Linux setup action so they cannot drift apart.
 
 Windows tests run under Git Bash so their concurrent shell children share an
