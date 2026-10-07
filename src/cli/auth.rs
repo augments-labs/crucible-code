@@ -247,23 +247,26 @@ fn typed(desk: &Desk, way: &Way) -> Result<String, Unstored> {
 fn hidden(shown: &str) -> Result<Option<String>, Unstored> {
     let ending = Ending::listening(true);
     let hiding = ending.hiding();
-    let raw = match Raw::enter() {
-        Ok(Some(raw)) => raw,
-        Ok(None) => return Err(Ends::now().unhidden().unwrap_or(UNASKED).to_owned().into()),
-        Err(problem) => {
-            return Err(format!("the terminal would not hide what is typed: {problem}").into());
+    let outcome = match Raw::enter() {
+        Ok(Some(raw)) => {
+            said(&format!(
+                "{shown} API key (it does not show; Enter to store it, Esc to cancel): "
+            ));
+            let outcome = typing(ending.presses());
+            drop(raw);
+            said("\n");
+            outcome
         }
+        Ok(None) => Err(Ends::now().unhidden().unwrap_or(UNASKED).to_owned()),
+        Err(problem) => Err(format!(
+            "the terminal would not hide what is typed: {problem}"
+        )),
     };
-    said(&format!(
-        "{shown} API key (it does not show; Enter to store it, Esc to cancel): "
-    ));
-    let outcome = typing(ending.presses());
-    drop(raw);
     drop(hiding);
-    said("\n");
-    // Read after the prompt is put away, and ahead of what it came to: a
-    // window that closed fails the read and hangs up, and it is the hang-up
-    // that says how the process should be seen to end.
+    // Read after the prompt is put away, and ahead of what it came to, the
+    // prompt that never stood included: a window that closed fails the read
+    // and hangs up, and it is the hang-up that says how the process should be
+    // seen to end.
     match ending.told() {
         Some(told) => Err(Unstored::Ended(told)),
         None => Ok(outcome?),

@@ -173,3 +173,26 @@ fn a_signal_noted_beside_a_failure_is_how_the_turn_is_said_to_have_ended() {
     assert!(matches!(ended, Err(Fatal::Ended(told)) if told == Told(1)));
     assert!(finished.get() >= 1);
 }
+
+#[test]
+fn a_hidden_prompt_ends_over_a_note_without_spending_it_while_the_terminal_is_still_raw() {
+    let ending = heard();
+    let hiding = ending.hiding();
+    ending.tell(15);
+
+    // The note ends the presses without a key being waited on, and it is left
+    // unread: the terminal is still raw until the prompt's guard drops, and a
+    // second signal obeyed before then would leave it so.
+    assert!(
+        ending.presses().next().is_none(),
+        "a noted signal let the prompt stand"
+    );
+    assert!(
+        !at_once(&ending),
+        "a second signal would be obeyed with the terminal still raw"
+    );
+
+    drop(hiding);
+    assert!(at_once(&ending), "the run after the prompt notes nothing");
+    assert_eq!(ending.told(), Some(Told(15)));
+}

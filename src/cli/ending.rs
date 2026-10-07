@@ -39,10 +39,12 @@
 //! typed is not shown, and a signal obeyed where it landed would end the
 //! process with no guard's `Drop` run, leaving the shell after it showing
 //! nothing that is typed. So the prompt waits on the keyboard a beat at a
-//! time, through [`Ending::presses`], and ends where a note is found; its guard
-//! hands the terminal back, and only then is the signal obeyed. That prompt is
-//! the only reason a run with no session installs the handlers, and it does so
-//! as the prompt opens: before it, and after it, they obey at once.
+//! time, through [`Ending::presses`], and ends where a note is found, leaving
+//! it unread; its guard hands the terminal back, and only then is the note
+//! read and the signal obeyed. A second signal before then is held back the
+//! same way. That prompt is the only reason a run with no session installs
+//! the handlers, and it does so as the prompt opens: before it, and after it,
+//! they obey at once.
 //!
 //! The handler cannot see which stretch it is in without being told, so the
 //! one flag that says is stored by this thread and read by the handler, either
@@ -70,8 +72,7 @@ use std::time::Duration;
 use crucible_tui::{Pressed, TerminalError};
 
 /// How long [`Ending::presses`] waits on the keyboard before it looks for a
-/// note again: the beat the list of running commands is looked at on, so a
-/// signal at a prompt is obeyed as soon as one noted under that list is.
+/// note again, and so the longest a signal at the prompt is held back.
 const BEAT: Duration = Duration::from_millis(250);
 
 /// What this process has been told from outside, and when it may act on it.
@@ -89,7 +90,7 @@ pub(crate) struct Ending {
     listening: bool,
 }
 
-/// The signal a turn was ended by.
+/// The signal a turn, or the prompt that hides a key, was ended by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Told(i32);
 
@@ -178,11 +179,13 @@ impl Ending {
     /// What a prompt that hides what is typed reads from inside
     /// [`Ending::hiding`]: the prompt ends where the presses do, its guard
     /// hands the terminal back on the way out, and [`Ending::told`] then says
-    /// whether it was a signal that ended them.
+    /// whether it was a signal that ended them. The note is looked at here and
+    /// not read: reading it would have a second signal obeyed where it lands
+    /// while the terminal is still raw.
     pub(crate) fn presses(&self) -> impl Iterator<Item = Result<Pressed, TerminalError>> + '_ {
         std::iter::from_fn(|| {
             loop {
-                if self.told().is_some() {
+                if self.told.load(Ordering::SeqCst) != 0 {
                     return None;
                 }
                 match crucible_tui::waiting(BEAT) {
