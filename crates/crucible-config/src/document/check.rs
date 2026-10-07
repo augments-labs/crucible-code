@@ -12,11 +12,15 @@ mod tests;
 use std::fmt::Write as _;
 use std::path::Path;
 
+use crucible_types::shown::{Escaping, escaped};
+use serde_core::Serialize as _;
+use serde_json::Value;
+use serde_json::ser::Serializer;
+
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
 use crate::settings;
 use crate::shape::{Shape, whole};
-use serde_json::Value;
 
 use super::Origin;
 
@@ -727,6 +731,12 @@ impl CheckReport {
     /// secret-sentinel test beside this one plants one and looks for it.
     /// Non-secret values do arrive in failure sentences — a path, a rule's
     /// text, a rejected choice — quoted by the refusal, by design.
+    ///
+    /// What a file or its directory chose, a file's name and each sentence,
+    /// is written [`escaped`]: a key that carries a line break shows it as
+    /// `\n` rather than opening a line of the report, and one that carries
+    /// ESC or a right-to-left override shows its escape rather than acting on
+    /// the terminal. Every line break here is the report's own.
     #[must_use]
     pub fn human(&self) -> String {
         let mut said = String::from(if self.valid() {
@@ -740,10 +750,15 @@ impl CheckReport {
                 FileState::Valid => "valid",
                 FileState::Invalid => "invalid",
             };
-            let _ = writeln!(said, "  {} config {}: {state}", file.layer, file.file);
+            let _ = writeln!(
+                said,
+                "  {} config {}: {state}",
+                file.layer,
+                escaped(&file.file)
+            );
         }
         for failure in &self.failures {
-            let _ = writeln!(said, "  {}", failure.message);
+            let _ = writeln!(said, "  {}", escaped(&failure.message));
         }
         let _ = writeln!(said, "  schema: {}", self.schema_id());
         said
@@ -758,7 +773,9 @@ impl CheckReport {
     ///
     /// The same redaction as [`human`](Self::human): names and redacted
     /// sentences, with no secret or credential values; the non-secret values
-    /// a failure sentence quotes arrive here too.
+    /// a failure sentence quotes arrive here too. Strings are written through
+    /// [`Escaping`], so DEL, the C1 controls and the format characters a file
+    /// chose leave as `\u` escapes, which read back as the same characters.
     #[must_use]
     pub fn json(&self) -> String {
         let files: Vec<serde_json::Value> = self
@@ -787,7 +804,7 @@ impl CheckReport {
                 })
             })
             .collect();
-        let mut text = serde_json::json!({
+        let document = serde_json::json!({
             "failures": failures,
             "files": files,
             "format_version": 1,
@@ -795,8 +812,13 @@ impl CheckReport {
             "schema": {"id": self.schema_id()},
             "status": if self.valid() { "valid" } else { "invalid" },
             "truncated": self.failures.iter().any(|failure| failure.truncated),
-        })
-        .to_string();
+        });
+        let mut written = Vec::new();
+        // Into memory a `Value` is always written: its keys are strings, its
+        // numbers finite, and a `Vec` refuses no byte. What is written is
+        // UTF-8, since every escape is ASCII and every fragment a `str`.
+        let _ = document.serialize(&mut Serializer::with_formatter(&mut written, Escaping));
+        let mut text = String::from_utf8_lossy(&written).into_owned();
         text.push('\n');
         text
     }

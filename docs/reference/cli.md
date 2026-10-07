@@ -263,7 +263,9 @@ crucible config check --json
 It exits 0 when everything holds and 1 otherwise, saying the first failure
 again on standard error. `--json` prints one JSON document to standard output
 instead, with `format_version` 1, `kind` `config-check`, `status`, `files`,
-`failures`, `schema` and a `truncated` flag. `config` on its own, without
+`failures`, `schema` and a `truncated` flag. In either report, a control
+character, line break or Unicode format character a file chose is written as
+its escape rather than sent to the terminal. `config` on its own, without
 `check`, is a usage error.
 
 The check reads each value's shape and the file it may come from. It does not

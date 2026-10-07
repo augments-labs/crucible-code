@@ -449,19 +449,17 @@ fn maintain_sandbox(_action: &SandboxMaintenance) -> Result<(), Fatal> {
 /// A write that fails is dropped for the reason [`listed`] drops one. Where
 /// the files do not hold, the first refusal leaves as the process's failure;
 /// a command line that does not parse never reaches here, and the parser
-/// answers those with its own usage exit. The text quotes what the files
-/// said, keys a checkout chose among it, so it is written [`visible`].
+/// answers those with its own usage exit. The report quotes what the files
+/// said, keys a checkout chose among it, and is written by
+/// [`crucible_config::CheckReport`] with what a terminal would act on shown
+/// as its escape, so it is written here as it stands.
 fn checked(json: bool) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
     let workspace = Workspace::open(here)?;
     let home = Home::find(&|name| std::env::var_os(name))?;
     let report = crucible_config::check(&home, workspace.root());
 
-    let said = if json {
-        report.json()
-    } else {
-        visible(&report.human())
-    };
+    let said = if json { report.json() } else { report.human() };
     let _ = io::stdout().write_all(said.as_bytes());
 
     report.into_result()?;
@@ -1145,23 +1143,22 @@ fn fail(problem: &Fatal) -> ExitCode {
 }
 
 /// `text` as it may reach a terminal outside the renderer: every control
-/// character but a line break written as its escape, `\u{1b}` for ESC.
+/// character but a line break, and every Unicode format character, written
+/// as its escape, `\u{1b}` for ESC and `\u{202e}` for a right-to-left
+/// override.
 ///
 /// A terminal acts on ESC, BEL and the C1 controls rather than drawing them,
 /// so a name that carries one could retitle the window or clear the screen
-/// instead of being read. Escaped, it is still the name, and the person who
-/// sees it can tell which directory or key it was. A line break is kept
-/// because the sentences written this way run over lines of their own.
+/// instead of being read, and an override reorders what is drawn after it.
+/// Escaped, it is still the name, and the person who sees it can tell which
+/// directory or key it was; [`crucible_types::shown`] owns the escape. A line
+/// break is kept because the sentences written this way run over lines of
+/// their own.
 fn visible(text: &str) -> String {
-    text.chars()
-        .fold(String::with_capacity(text.len()), |mut shown, character| {
-            if character.is_control() && character != '\n' {
-                shown.extend(character.escape_debug());
-            } else {
-                shown.push(character);
-            }
-            shown
-        })
+    text.split('\n')
+        .map(crucible_types::shown::escaped)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// What a start reads its credentials from `home` as, and the one sentence

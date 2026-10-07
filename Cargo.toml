@@ -263,7 +263,8 @@ serde_json = "=1.0.151"
 # a client is hostile input, and the only way to stop reading one at the entry,
 # level or value that goes over its bound, or at a key said twice — rather
 # than after the whole tree is in memory — is to hand the reader a visitor that
-# counts. `serde_json` does not re-export the traits a visitor implements.
+# counts. `serde_json` does not re-export the traits a visitor implements, nor
+# the one a document written through a formatter of its own is driven by.
 # Already in the graph as its dependency, at this version.
 serde_core = "=1.0.229"
 

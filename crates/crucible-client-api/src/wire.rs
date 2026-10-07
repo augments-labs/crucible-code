@@ -20,18 +20,20 @@
 //! so this build never sends what it would refuse to read.
 //!
 //! A string is written with every control character escaped, DEL and the C1
-//! range included, which the JSON grammar allows but does not require: a
-//! document is often read off a terminal, and a terminal acts on U+009B as it
-//! acts on ESC `[`. The escape reads back as the same character, so nothing a reader
-//! decodes changes.
+//! range included, and every Unicode format character too, which the JSON
+//! grammar allows but does not require: a document is often read off a
+//! terminal, a terminal acts on U+009B as it acts on ESC `[`, and a
+//! right-to-left override reorders what is drawn after it.
+//! [`crucible_types::shown`] owns the escape, which reads back as the same
+//! character, so nothing a reader decodes changes.
 
 use std::cell::Cell;
 use std::fmt;
-use std::io;
 
+use crucible_types::shown::Escaping;
 use serde_core::Serialize as _;
 use serde_core::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use serde_json::ser::{CompactFormatter, Formatter, Serializer};
+use serde_json::ser::Serializer;
 use serde_json::{Map, Number, Value};
 
 use crate::bounds::{DEPTH, FRAME_BYTES, ITEMS, Name, Said, Text, VALUES};
@@ -224,30 +226,6 @@ pub(crate) fn frame(value: &Value) -> Result<Vec<u8>, Refusal> {
         return Err(ErrorCode::TooLarge.into());
     }
     Ok(bytes)
-}
-
-/// Compact JSON whose strings carry DEL and the C1 controls, U+007F to U+009F,
-/// as `\u00XX` escapes as well as the C0 ones `serde_json` escapes already.
-struct Escaping;
-
-impl Formatter for Escaping {
-    fn write_string_fragment<W: ?Sized + io::Write>(
-        &mut self,
-        writer: &mut W,
-        fragment: &str,
-    ) -> io::Result<()> {
-        let mut rest = fragment;
-        while let Some((at, control)) = rest
-            .char_indices()
-            .find(|(_, character)| ('\u{7f}'..='\u{9f}').contains(character))
-        {
-            let (before, after) = rest.split_at(at);
-            CompactFormatter.write_string_fragment(writer, before)?;
-            write!(writer, "\\u{:04x}", u32::from(control))?;
-            rest = after.get(control.len_utf8()..).unwrap_or_default();
-        }
-        CompactFormatter.write_string_fragment(writer, rest)
-    }
 }
 
 /// The value `bytes` spell: refused by length before anything parses them, and

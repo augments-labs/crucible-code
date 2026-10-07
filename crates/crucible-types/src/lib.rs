@@ -24,6 +24,7 @@ pub mod ids;
 pub mod modality;
 pub mod output;
 pub mod run;
+pub mod shown;
 pub mod tone;
 pub mod transcript;
 pub mod usage;
