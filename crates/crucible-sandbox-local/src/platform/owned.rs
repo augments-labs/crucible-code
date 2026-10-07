@@ -347,8 +347,24 @@ impl Drop for Writer {
         self.written.close();
         let _ = self.chunks.try_send(Message::HangUp);
         self.shared.interrupt();
+        // PROBE, do not merge: the round-0 fault, switched on by one test.
+        #[cfg(test)]
+        while PROBE_WAIT_IN_DROP.load(std::sync::atomic::Ordering::SeqCst)
+            && self
+                .shared
+                .thread
+                .lock()
+                .is_ok_and(|thread| thread.as_ref().is_some_and(|thread| !thread.is_finished()))
+        {
+            thread::sleep(Duration::from_millis(1));
+        }
     }
 }
+
+/// PROBE, do not merge: makes a writer's drop wait for its thread to return.
+#[cfg(test)]
+pub(crate) static PROBE_WAIT_IN_DROP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 impl std::fmt::Debug for Writer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -492,3 +492,21 @@ fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
     child.kill().expect("the command stopped");
     reaped(child);
 }
+
+/// PROBE, do not merge: the fixed test, twenty times over.
+#[cfg(windows)]
+#[test]
+fn g109_probe_fixed_drop_twenty_times() {
+    for _ in 0..20 {
+        dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound();
+    }
+}
+
+/// PROBE, do not merge: with the round-0 fault on, the test must fail with
+/// "dropping the input waited on its thread".
+#[cfg(windows)]
+#[test]
+fn g109_probe_faulted_drop_is_caught() {
+    owned::PROBE_WAIT_IN_DROP.store(true, std::sync::atomic::Ordering::SeqCst);
+    dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound();
+}
