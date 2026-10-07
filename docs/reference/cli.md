@@ -281,9 +281,9 @@ At most 128 sessions are listed. The list says, after the sessions, when it is
 not the whole of what was recorded: how many older sessions were left out, how
 many logs could not be read, that the index already holds as many sessions as
 it keeps so older ones may be missing, or that no index has been written yet,
-which the next session started or continued here writes. Titles and branches
-are cut to their bound and written with what a terminal would act on as its
-escape.
+which the next session started or continued here writes. A title or branch
+is written with what a terminal would act on as its escape, and one longer
+than 16 KiB is cut there, ends `… (cut)` and leaves the list incomplete.
 
 `--json` prints one JSON document on one line to standard output instead,
 with `format_version` 1, `kind` `sessions`, `status` and a `truncated` flag.

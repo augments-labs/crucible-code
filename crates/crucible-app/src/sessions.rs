@@ -19,7 +19,9 @@
 //!
 //! The title and the branch are a file's words, so the text writes what a
 //! terminal would act on in them as its escape and the document carries them
-//! as they are, for the JSON writer to escape. A failure's document names the
+//! as they are, for the JSON writer to escape. Each is cut to the contract's
+//! bound for text, and where it was the text ends it `… (cut)` and the
+//! document marks it truncated, so the list is incomplete. A failure's document names the
 //! step that stopped and no path, as `crucible sandbox inspect --json` does,
 //! and the whole sentence goes to standard error.
 
@@ -129,11 +131,11 @@ pub(crate) fn human(at: &Path, listing: &Listing, ago: &dyn Fn(SystemTime) -> St
             }
         );
         if let Some(branch) = &session.branch {
-            let _ = write!(row, "  on {}", escaped(branch.as_str()));
+            let _ = write!(row, "  on {}", shown(branch));
         }
         match &session.title {
             Some(title) => {
-                let _ = write!(row, "  {}", escaped(title.as_str()));
+                let _ = write!(row, "  {}", shown(title));
             }
             None => row.push_str("  untitled"),
         }
@@ -188,6 +190,17 @@ pub(crate) fn human(at: &Path, listing: &Listing, ago: &dyn Fn(SystemTime) -> St
         let _ = writeln!(said, "\n`crucible --resume ID` carries one on");
     }
     said
+}
+
+/// A branch or title as a terminal is shown it: with every character a
+/// terminal would act on or hide written as its escape, and ending `… (cut)`
+/// where the list holds less of it than the session does.
+fn shown(text: &Text) -> String {
+    if text.truncated() {
+        format!("{}… (cut)", escaped(text.as_str()))
+    } else {
+        escaped(text.as_str())
+    }
 }
 
 /// Why no list could be made, as far as the failed document says it.

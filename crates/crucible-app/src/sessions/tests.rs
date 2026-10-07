@@ -261,3 +261,20 @@ fn a_directory_that_cannot_be_worked_in_fails_naming_the_step_and_no_path() {
         "the directory crucible was started in could not be read"
     );
 }
+
+#[test]
+fn a_branch_too_long_to_show_whole_is_cut_where_it_says_so_and_leaves_the_list_incomplete() {
+    let sample = Sample::new("sessions-long-branch");
+    let long = "b".repeat(crucible_client_api::bounds::TEXT_BYTES + 64);
+    recorded(&sample, Some(&long), None);
+
+    let listed = listing(&sample.root(), &sample.logs()).expect("a listing");
+
+    assert_eq!(listed.contract().status(), "incomplete");
+    let text = listed.human(&ago);
+    let shown = format!(
+        "on {}… (cut)  untitled\n",
+        "b".repeat(crucible_client_api::bounds::TEXT_BYTES)
+    );
+    assert!(text.contains(&shown), "{text}");
+}

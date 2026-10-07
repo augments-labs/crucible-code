@@ -251,7 +251,8 @@ impl Discovered {
         self.id.started()
     }
 
-    /// The branch the session began on, where its header says.
+    /// The branch the session began on, where its header says, as the header
+    /// wrote it: not flattened or cut, and so not yet fit for a terminal.
     #[must_use]
     pub fn branch(&self) -> Option<&str> {
         self.branch.as_deref()
@@ -401,12 +402,13 @@ fn heading(path: &Path, roots: Roots<'_>) -> Heading {
         Heading::Unreadable
     } else {
         Heading::Here {
-            // Flattened as `recent` flattens it: a file can claim anything.
+            // As the header wrote it, bounded by the line it was read from:
+            // whoever shows it escapes it and says where they cut it, which
+            // `single` would do without saying so.
             branch: opening
                 .branch
-                .as_deref()
-                .map(single)
-                .filter(|branch| !branch.is_empty()),
+                .filter(|branch| !branch.is_empty())
+                .map(String::into_boxed_str),
         }
     }
 }

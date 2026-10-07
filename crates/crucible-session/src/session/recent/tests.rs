@@ -842,3 +842,16 @@ fn an_index_that_does_not_read_is_refused_without_quoting_it() {
     assert!(matches!(refused, SessionError::Index { .. }), "{refused:?}");
     assert!(!refused.to_string().contains(PROMPT), "{refused}");
 }
+
+#[test]
+fn a_branch_longer_than_a_title_is_listed_as_its_header_wrote_it() {
+    let sample = Sample::new("discovered-long-branch");
+    let branch = format!("feature/{}", "b".repeat(TITLE * 2));
+    headed(&sample, &sample.workspace(), &nth(1), Some(&branch));
+    indexed(&sample, &[(&nth(1), 1, None)]);
+
+    let found = discovering(&sample, 8);
+
+    let listed: Vec<Option<&str>> = found.sessions().iter().map(Discovered::branch).collect();
+    assert_eq!(listed, [Some(branch.as_str())]);
+}
