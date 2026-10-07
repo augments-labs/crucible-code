@@ -18,13 +18,13 @@
 //! its `Drop`, and only then is the signal obeyed, by [`Told::obeyed`], so
 //! whoever sent it sees the death it asked for.
 //!
-//! Everywhere else the signal does at once what it always did. Between turns
-//! there is no answer in flight, and the prompt waits on the keyboard with no
-//! clock, so nothing would read a note left there. The same is true inside a
-//! turn wherever this thread waits on a key with no clock — a permission
-//! question, a panel — and [`Ending::unclocked`] marks those stretches: a
-//! signal that was only noted there would be a `kill` that did nothing until
-//! somebody pressed a key. The wait for the log that ends a turn is one more:
+//! Everywhere else in a session the signal does at once what it always did.
+//! Between turns there is no answer in flight, and the prompt waits on the
+//! keyboard with no clock, so nothing would read a note left there. The same
+//! is true inside a turn wherever this thread waits on a key with no clock — a
+//! permission question, a panel — and [`Ending::unclocked`] marks those
+//! stretches: a signal that was only noted there would be a `kill` that did
+//! nothing until somebody pressed a key. The wait for the log that ends a turn is one more:
 //! its worker has handed over everything it held by then, and a log that had
 //! stopped answering would otherwise hold the process against every `kill`.
 //! Once one signal has been read, the next is obeyed at once too, so a turn
@@ -33,6 +33,16 @@
 //! The list of running commands is the one panel a turn can stand that is not
 //! such a stretch: it already wakes on a beat to follow the commands in it, so
 //! it reads the note there and closes, and the turn behind it ends as above.
+//!
+//! The prompt `crucible auth login` hides a key at is the one stretch outside a
+//! session where a signal is noted. It holds the terminal raw so that what is
+//! typed is not shown, and a signal obeyed where it landed would end the
+//! process with no guard's `Drop` run, leaving the shell after it showing
+//! nothing that is typed. So the prompt waits on the keyboard a beat at a
+//! time, through [`Ending::presses`], and ends where a note is found; its guard
+//! hands the terminal back, and only then is the signal obeyed. That prompt is
+//! the only reason a run with no session installs the handlers, and it does so
+//! as the prompt opens: before it, and after it, they obey at once.
 //!
 //! The handler cannot see which stretch it is in without being told, so the
 //! one flag that says is stored by this thread and read by the handler, either
@@ -55,6 +65,14 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
+
+use crucible_tui::{Pressed, TerminalError};
+
+/// How long [`Ending::presses`] waits on the keyboard before it looks for a
+/// note again: the beat the list of running commands is looked at on, so a
+/// signal at a prompt is obeyed as soon as one noted under that list is.
+const BEAT: Duration = Duration::from_millis(250);
 
 /// What this process has been told from outside, and when it may act on it.
 ///
@@ -146,6 +164,34 @@ impl Ending {
     /// The stretch a turn runs for, in which a signal is noted for the loop.
     pub(crate) fn turn(&self) -> Stretch<'_> {
         self.stretch(false)
+    }
+
+    /// The stretch a prompt that hides what is typed stands for, in which a
+    /// signal is noted for [`Ending::presses`] to find.
+    pub(crate) fn hiding(&self) -> Stretch<'_> {
+        self.stretch(false)
+    }
+
+    /// Keys as they are pressed, waited on a beat at a time, and no more once
+    /// a signal has been noted.
+    ///
+    /// What a prompt that hides what is typed reads from inside
+    /// [`Ending::hiding`]: the prompt ends where the presses do, its guard
+    /// hands the terminal back on the way out, and [`Ending::told`] then says
+    /// whether it was a signal that ended them.
+    pub(crate) fn presses(&self) -> impl Iterator<Item = Result<Pressed, TerminalError>> + '_ {
+        std::iter::from_fn(|| {
+            loop {
+                if self.told().is_some() {
+                    return None;
+                }
+                match crucible_tui::waiting(BEAT) {
+                    Ok(true) => return Some(crucible_tui::pressed()),
+                    Ok(false) => {}
+                    Err(problem) => return Some(Err(problem)),
+                }
+            }
+        })
     }
 
     /// A stretch inside a turn where this thread waits on a key with no clock,
