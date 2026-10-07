@@ -1,7 +1,7 @@
 # Command line
 
-`crucible --help` prints the flags and the subcommands `sandbox`, `config` and
-`help`, under a longer introduction; `crucible -h` prints the same under the
+`crucible --help` prints the flags and the subcommands `sandbox`, `config`,
+`doctor` and `help`, under a longer introduction; `crucible -h` prints the same under the
 one-line introduction. Each subcommand has its own help, such as `crucible
 config --help` and `crucible sandbox setup --help`, and `crucible help` and
 `crucible help <command>` print the same pages. `crucible --version` (or `-V`)
@@ -11,7 +11,7 @@ are answered by the parser, before a file is read or anything is started.
 Run with nothing after it, `crucible` opens a session in the directory you are
 standing in, as [Run it](../getting-started/first-session.md#run-it)
 describes. The flags change what that session is. `--extensions`, `--sandbox`
-and the two subcommands do one thing and stop, and none of them can be
+and the subcommands do one thing and stop, and none of them can be
 combined with a session flag. crucible takes no prompt on the command line: a
 bare word, as in `crucible "fix the bug"`, is refused as `unrecognized
 subcommand 'fix the bug'` and the run ends 2. The installer also links `cru`
@@ -271,6 +271,61 @@ ask whether a provider name is one this build serves or whether a `baseUrl` is
 an address crucible will send a key to: an `http` address that is not loopback
 passes here, and the next start refuses it.
 
+### `doctor [--json]`
+
+Checks whether this machine is ready to run a conversation, and stops. It is
+offline: nothing is sent to a provider, no account login is renewed, no
+backend, extension or server is started, and no file is written, not even to
+tighten one it reports as open. A stored credential is never used, renewed
+or shown: the store is read only for the names its credentials are held
+under, and no reason names a path or a value from the environment, so the
+report can be pasted into an issue whole.
+
+```bash
+crucible doctor
+crucible doctor --json
+```
+
+The report opens with `crucible doctor: healthy`, `warnings` or `failed`,
+then one line per check: its status (`ok`, `warning`, `failed` or
+`unavailable`), its id and the reason, with what to do about it on the line
+under any check that is not `ok`. A reason or remedy longer than 16 KiB is cut
+there and ends in `[cut]`, and a report with one says so on the line after
+the first. The checks are always these, in this order, and an id never
+changes:
+
+| Id | What it looks at |
+| --- | --- |
+| `home` | Whether crucible's home directory was found, from `HOME` or `CRUCIBLE_CODE_HOME`. |
+| `workspace` | Whether the directory crucible was started in exists and can be worked in. |
+| `config` | Whether the user, project and project-local configuration files parse and resolve, file by file, as `config check` reads them. |
+| `private-state` | Whether others can read or write the home directory, the sessions directory, the user configuration file or the credential store. Not checked on Windows. |
+| `credential-store` | Whether the stored credentials can be used, and how many there are. |
+| `credentials` | Which provider would take its credential from where: an environment variable, the store or an account login, settled as a start settles it. |
+| `provider` | Which provider and model a start would open, and whether one could be asked anything. Whether the vendor accepts the credential is not known, since nothing is sent. |
+| `sandbox-backend` | Whether a backend that confines commands was found here, observed the way `sandbox inspect` observes it, without starting it. |
+| `sandbox-policy` | Whether the policy this directory's configuration asks for would confine a command, as `sandbox inspect` settles it. |
+| `extension-discovery` | Whether the extensions directory could be read, and how many extensions are installed. |
+| `extension-trust` | How many extensions may run, are not turned on, are turned on without a digest that matches, or need another crucible. |
+| `mcp` | How many MCP servers are declared, and how many required. None is started, so whether each starts is not checked. |
+
+A check that rests on one which failed is `unavailable` and says what it
+rests on: with no configuration that reads, `credentials`, `provider`,
+`sandbox-policy` and `mcp` are, while the home, the store, the backend and
+the extensions are still looked at. `extension-trust` is also `unavailable`
+when the user configuration file does not read, since what was decided about
+each extension is kept there; the extensions are still discovered.
+`crucible --extensions`, `config check` and `sandbox inspect` say more about
+the checks that point to them.
+
+It exits 0 when every check is `ok` or `unavailable`, 1 when any is a
+`warning` and none `failed`, and 2 when any `failed`. A problem it finds is
+part of the report, not a failure of the run, so standard error stays empty.
+`--json` prints one JSON document on one line to standard output instead,
+with `format_version` 1, `kind` `doctor`, `status` (`healthy`, `warnings` or
+`failed`), a `truncated` flag and `checks`, each with its `id`, `status`,
+`reason` and, for anything but `ok`, a `remedy`.
+
 ## Windows sandbox maintenance
 
 Native confinement on Windows needs a local account and firewall policy that
@@ -360,9 +415,9 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, and `sandbox inspect` or `--sandbox` whatever the backend answered, both end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold, and a `sandbox inspect` that could not be made, end here. |
-| 2 | The command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error. `--help` and `--version` are the parser's too, and end 0. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, and a `doctor` with nothing to warn about end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold, and a `sandbox inspect` that could not be made, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. |
+| 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error. `--help` and `--version` are the parser's too, and end 0. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
 
 Flags that exclude each other are refused with a line saying one `cannot be

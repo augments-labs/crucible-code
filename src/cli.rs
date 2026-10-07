@@ -230,6 +230,13 @@ enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Check whether this machine is ready to run a conversation, offline,
+    /// and stop.
+    Doctor {
+        /// Print one JSON document to stdout instead of the human report.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -389,6 +396,7 @@ pub(crate) fn start() -> ExitCode {
         (Some(Command::Config { action }), _, _) => match action {
             ConfigAction::Check { json } => checked(*json),
         },
+        (Some(Command::Doctor { json }), _, _) => return diagnosed(*json),
         (None, true, _) => listed(),
         (None, _, true) => inspected(false),
         (None, _, _) => run(&cli),
@@ -458,6 +466,46 @@ fn checked(json: bool) -> Result<(), Fatal> {
 
     report.into_result()?;
     Ok(())
+}
+
+/// Writes whether this machine is ready to run a conversation, and exits with
+/// what the report says: 0 healthy, 1 for warnings alone, 2 for a failure.
+///
+/// Answered here rather than inside [`run`] for the reason [`checked`] is, and
+/// further than it: a configuration that does not parse, a missing home or a
+/// directory that cannot be read is a check the report fails, not a failure of
+/// the run, so the report always comes and standard error stays empty.
+/// [`crucible_app::doctor`] owns what is looked at and promises that nothing
+/// is written, launched, refreshed or dialled while it is.
+///
+/// A write that fails is dropped for the reason [`listed`] drops one. A
+/// report that could not be written as a document is said where a failure is
+/// said, and exits as a failure.
+fn diagnosed(json: bool) -> ExitCode {
+    let here = std::env::current_dir().ok();
+    let home = Home::find(&|name| std::env::var_os(name));
+    let report = crucible_app::doctor::examine(crucible_app::doctor::Host {
+        here: here.as_deref(),
+        home: home.as_ref(),
+        from: &|name| std::env::var(name).ok(),
+        running: env!("CARGO_PKG_VERSION"),
+    });
+    let written = if json {
+        report.encode()
+    } else {
+        Ok(crucible_app::doctor::human(&report).into_bytes())
+    };
+    match written {
+        Ok(bytes) => {
+            let _ = io::stdout().write_all(&bytes);
+            ExitCode::from(report.exit())
+        }
+        Err(refused) => {
+            let line = format!("crucible: the doctor's report could not be written: {refused}\n");
+            let _ = io::stderr().write_all(line.as_bytes());
+            ExitCode::from(2)
+        }
+    }
 }
 
 /// Writes what is installed to standard output, and stops.

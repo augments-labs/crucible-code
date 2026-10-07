@@ -1088,3 +1088,146 @@ fn a_refusal_before_a_credential_moves_leaves_the_store_as_it_was() {
         .unwrap_or_default();
     assert!(said.contains("the speed could not be taken out"), "{said}");
 }
+
+/// Every file under `home`, with a digest of its bytes and, where modes
+/// exist, its mode: what taking stock of a store must leave exactly as it
+/// found it. A digest, so a failure prints no fabricated credential either.
+fn everything(home: &Path) -> Vec<(PathBuf, u64, u32)> {
+    use std::hash::{Hash as _, Hasher as _};
+
+    let digest = |bytes: Vec<u8>| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        hasher.finish()
+    };
+    let mode = |path: &Path| -> u32 {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::symlink_metadata(path).unwrap().permissions().mode()
+        }
+        #[cfg(not(unix))]
+        {
+            u32::from(fs::symlink_metadata(path).unwrap().permissions().readonly())
+        }
+    };
+    let mut found = vec![(home.to_path_buf(), 0, mode(home))];
+    for entry in fs::read_dir(home).unwrap() {
+        let path = entry.unwrap().path();
+        let bytes = digest(fs::read(&path).unwrap_or_default());
+        found.push((path.clone(), bytes, mode(&path)));
+    }
+    found.sort();
+    found
+}
+
+/// A store holding a key and an account, both fabricated, at the default mode
+/// a file is written at, in a directory others can list.
+fn open_store(scratch: &Scratch) -> Store {
+    let store = scratch.holding(&format!(
+        r#"{{"version":2,"keys":{{"moonshot":"{SECRET}"}},"subscriptions":{{"moonshot@kimi.ai":{{"access_token":"access-{SECRET}","refresh_token":"refresh-{SECRET}","details":{{}},"expires_at":4102444800,"refreshed_at":1790000000}}}},"identities":{{}}}}"#
+    ));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(scratch.home(), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(scratch.home().join(FILE), fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    store.naming(named())
+}
+
+#[test]
+fn taking_stock_of_a_store_writes_nothing_and_tightens_nothing() {
+    let scratch = Scratch::new("stock-inert");
+    let store = open_store(&scratch);
+    let before = everything(scratch.home());
+
+    let stock = store.inventory();
+
+    assert_eq!(everything(scratch.home()), before);
+    assert!(stock.present());
+    assert_eq!(stock.trouble(), None);
+    #[cfg(unix)]
+    assert_eq!(stock.exposed(), Some(true));
+}
+
+#[test]
+fn taking_stock_names_what_is_held_and_never_a_value() {
+    let scratch = Scratch::new("stock-names");
+    let stock = open_store(&scratch).inventory();
+
+    assert_eq!(stock.count(), 2);
+    assert_eq!(
+        stock.held("moonshot"),
+        Some(Held::new(Kind::Key, "moonshot"))
+    );
+    assert_eq!(stock.held("openai"), None);
+    let shown = format!("{stock:?}");
+    assert!(!shown.contains(SECRET), "{shown}");
+
+    // The same answer reading the store gives, from the same names.
+    let read = Store::in_home(scratch.home()).naming(named()).read();
+    for provider in ["moonshot", "openai", "anthropic"] {
+        assert_eq!(stock.held(provider), read.held(provider), "{provider}");
+    }
+}
+
+#[test]
+fn taking_stock_of_a_store_that_is_not_there_makes_no_directory() {
+    let scratch = Scratch::new("stock-absent");
+    let home = scratch.home().join("not-yet");
+
+    let stock = Store::in_home(&home).inventory();
+
+    assert!(!home.exists());
+    assert!(!stock.present());
+    assert_eq!(
+        (stock.count(), stock.trouble(), stock.exposed()),
+        (0, None, None)
+    );
+}
+
+#[test]
+fn a_store_that_cannot_be_taken_stock_of_says_why_without_its_path() {
+    let scratch = Scratch::new("stock-trouble");
+    for text in [
+        "{not json".to_owned(),
+        r#"{"version":9,"keys":{},"subscriptions":{}}"#.to_owned(),
+        format!(
+            r#"{{"version":1,"keys":{{"a":"{}"}}}}"#,
+            "x".repeat(MAX_STORE)
+        ),
+    ] {
+        let store = scratch.holding(&text);
+        let before = everything(scratch.home());
+
+        let stock = store.inventory();
+
+        assert_eq!(everything(scratch.home()), before);
+        assert!(stock.present());
+        assert_eq!(stock.count(), 0);
+        let said = stock.trouble().unwrap_or_default();
+        assert!(said.contains(FILE), "{said}");
+        assert!(!said.contains(&*scratch.home().to_string_lossy()), "{said}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_store_that_is_a_symbolic_link_is_not_followed_when_stock_is_taken() {
+    let scratch = Scratch::new("stock-link");
+    let target = scratch.home().join("elsewhere.json");
+    fs::write(
+        &target,
+        format!(r#"{{"version":1,"keys":{{"openai":"{SECRET}"}}}}"#),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&target, scratch.home().join(FILE)).unwrap();
+    let before = everything(scratch.home());
+
+    let stock = Store::in_home(scratch.home()).inventory();
+
+    assert_eq!(everything(scratch.home()), before);
+    assert_eq!(stock.count(), 0);
+    assert!(stock.trouble().is_some());
+}
