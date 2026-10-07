@@ -1375,3 +1375,10 @@ It exits 0 when everything holds and 1 otherwise, repeating the first error on
 standard error. `--json` prints one JSON document instead, with the same
 `status`, `files`, `failures` and `schema`. Neither report carries a secret; a
 path, a rule or a rejected value an error quotes appears as it does above.
+In the report, a control character, a line break or a Unicode format character
+such as a right-to-left override in a key, a value or a path is shown as its
+escape, `\n` or `\u{202e}`, rather than sent to the terminal, so a checkout
+cannot add a line to the report or rewrite the screen. The zero-width joiner
+and non-joiner are kept there, as the terminal keeps them, because they shape a
+word and move nothing. In `--json` each is a JSON escape, `\n` or `\u202e`,
+which a JSON reader decodes back to the same character.

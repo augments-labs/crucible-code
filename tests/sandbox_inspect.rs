@@ -353,3 +353,99 @@ fn a_configuration_check_names_a_key_that_carries_escapes_with_them_shown() {
         "{said}"
     );
 }
+
+/// A project configuration whose one key carries an 8-bit CSI, an ESC, a line
+/// break that would open a report line of its own, and a right-to-left
+/// override: everything a checkout could use to make a report say what it does
+/// not hold.
+const HOSTILE_KEY: &str = "a\u{9b}2J\u{1b}[31m\n  schema: forged\u{202e}b";
+
+/// [`asked`] of `config check`, `args` after it, in a project whose
+/// configuration is [`HOSTILE_KEY`] alone.
+fn checked_hostile(probe: &str, args: &[&str]) -> Output {
+    let scratch = Scratch::new(probe);
+    fs::create_dir_all(scratch.work().join(".crucible")).expect("a project directory");
+    let document = serde_json::json!({ HOSTILE_KEY: true }).to_string();
+    fs::write(scratch.work().join(".crucible/config.json"), document).expect("a project file");
+    let mut asking = vec!["config", "check"];
+    asking.extend_from_slice(args);
+    asked(&scratch, &asking, false)
+}
+
+/// Every character in `written` that a terminal would act on, or that would
+/// reorder or hide what is drawn, other than the line breaks in `breaks`.
+fn unshown_in(written: &str, breaks: bool) -> Vec<char> {
+    written
+        .chars()
+        .filter(|&character| {
+            (character.is_control() && !(breaks && character == '\n'))
+                || matches!(character, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
+        .collect()
+}
+
+#[test]
+fn a_configuration_check_written_as_json_escapes_what_a_terminal_would_act_on() {
+    let json = checked_hostile("hostile-check-json", &["--json"]);
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    let said = String::from_utf8(json.stdout).expect("UTF-8");
+    let (document, rest) = said.split_once('\n').expect("one line");
+    assert_eq!(rest, "", "{said:?}");
+    assert_eq!(unshown_in(document, false), Vec::<char>::new(), "{said:?}");
+
+    let read: serde_json::Value = serde_json::from_str(document).expect("one JSON document");
+    let message = read
+        .pointer("/failures/0/message")
+        .and_then(serde_json::Value::as_str)
+        .expect("a failure");
+    assert!(message.contains(HOSTILE_KEY), "{message:?}");
+}
+
+#[test]
+fn a_configuration_check_shows_a_hostile_key_on_its_own_line() {
+    let text = checked_hostile("hostile-check-text", &[]);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    let said = String::from_utf8(text.stdout).expect("UTF-8");
+    assert_eq!(unshown_in(&said, true), Vec::<char>::new(), "{said:?}");
+    let schemas = said
+        .lines()
+        .filter(|line| line.trim_start().starts_with("schema:"))
+        .count();
+    assert_eq!(schemas, 1, "{said}");
+    assert!(
+        said.contains(r"a\u{9b}2J\u{1b}[31m\n  schema: forged\u{202e}b"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_configuration_check_that_fails_says_why_with_the_override_shown() {
+    let text = checked_hostile("hostile-check-stderr", &[]);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    let said = String::from_utf8(text.stderr).expect("UTF-8");
+    assert_eq!(unshown_in(&said, true), Vec::<char>::new(), "{said:?}");
+    assert!(said.contains(r"forged\u{202e}b"), "{said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_configuration_check_names_a_hostile_directory_with_its_escapes_shown() {
+    let scratch = Scratch::new("hostile-check-root");
+    let here = scratch.work().join("sub\u{1b}]0;T\u{7}\u{202e}");
+    fs::create_dir_all(&here).expect("a directory with a hostile name");
+
+    let text = asked_in(
+        Path::new(env!("CARGO_BIN_EXE_crucible")),
+        &scratch,
+        &here,
+        &["config", "check"],
+        false,
+    );
+    assert_eq!(text.status.code(), Some(0), "{text:?}");
+    let said = String::from_utf8(text.stdout).expect("UTF-8");
+    assert_eq!(unshown_in(&said, true), Vec::<char>::new(), "{said:?}");
+    assert!(
+        said.contains(r"sub\u{1b}]0;T\u{7}\u{202e}/.crucible/config.json: absent"),
+        "{said}"
+    );
+}

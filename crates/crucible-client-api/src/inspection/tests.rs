@@ -227,6 +227,20 @@ fn a_control_character_crosses_as_its_escape_and_reads_back_as_itself() {
 }
 
 #[test]
+fn a_format_character_crosses_as_its_escape_and_reads_back_as_itself() {
+    // A directory a checkout named with a right-to-left override and a
+    // zero-width space: drawn, the line would read in another order.
+    let hostile = "work\u{202e}txt.exe\u{200b}";
+    let inspection = Inspection::Failed(Text::cut(hostile));
+
+    let written = inspection.encode().unwrap();
+    let line = String::from_utf8_lossy(&written);
+    assert!(!line.contains(['\u{202e}', '\u{200b}']), "{written:?}");
+    assert!(line.contains(r"work\u202etxt.exe\u200b"), "{line}");
+    assert_eq!(Inspection::decode(&written).unwrap(), inspection);
+}
+
+#[test]
 fn another_format_version_is_refused_by_name() {
     for version in [0, 2, u64::MAX] {
         let other = with(document(0), "/format_version", json!(version));

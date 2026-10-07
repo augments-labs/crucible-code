@@ -9,6 +9,7 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cache::{PromptCacheOutcome, PromptCacheUsageReporting};
+use crate::shown::unshown;
 
 /// Maximum provider-labelled numeric details retained for one usage report.
 pub const MAX_PROVIDER_USAGE_DETAILS: usize = 16;
@@ -688,43 +689,6 @@ impl GroupName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-}
-
-/// Whether `character` is a control character, or a Unicode format character
-/// (general category `Cf`): the bidi marks, embeddings, overrides and
-/// isolates, the zero-width characters and the byte order mark among them.
-/// Drawn, either reorders or hides the text around it. U+2065, unassigned
-/// between the invisible operators and the isolates, is taken with them.
-///
-/// The terminal drops the same format characters from everything it draws,
-/// except the zero-width non-joiner and joiner, which join characters on
-/// screen. Neither crate may name the other, so a test in the command line
-/// holds the two lists to each other.
-const fn unshown(character: char) -> bool {
-    character.is_control()
-        || matches!(
-            character,
-            '\u{ad}'
-                | '\u{600}'..='\u{605}'
-                | '\u{61c}'
-                | '\u{6dd}'
-                | '\u{70f}'
-                | '\u{890}'..='\u{891}'
-                | '\u{8e2}'
-                | '\u{180e}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2060}'..='\u{206f}'
-                | '\u{feff}'
-                | '\u{fff9}'..='\u{fffb}'
-                | '\u{110bd}'
-                | '\u{110cd}'
-                | '\u{13430}'..='\u{1343f}'
-                | '\u{1bca0}'..='\u{1bca3}'
-                | '\u{1d173}'..='\u{1d17a}'
-                | '\u{e0001}'
-                | '\u{e0020}'..='\u{e007f}'
-        )
 }
 
 /// Which requests a model's group of limits holds back, as the provider

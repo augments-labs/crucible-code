@@ -499,6 +499,7 @@ dependencies = [
  "crucible-types",
  "crucible-workspace",
  "libc",
+ "serde_core",
  "serde_json",
  "thiserror",
 ]
