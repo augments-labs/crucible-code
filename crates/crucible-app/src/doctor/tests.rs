@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crucible_client_api::Text;
@@ -183,7 +183,10 @@ fn signed_in(sample: &Sample) {
 
 /// Every file under `root`, with its bytes, when it last changed and its
 /// permissions, and every directory by its presence and permissions.
-fn tree(root: &Path) -> BTreeMap<PathBuf, (Vec<u8>, Option<std::time::SystemTime>, u32)> {
+#[cfg(unix)]
+fn tree(
+    root: &Path,
+) -> BTreeMap<std::path::PathBuf, (Vec<u8>, Option<std::time::SystemTime>, u32)> {
     let mut seen = BTreeMap::new();
     let mut left = vec![root.to_path_buf()];
     while let Some(directory) = left.pop() {
@@ -213,11 +216,6 @@ fn tree(root: &Path) -> BTreeMap<PathBuf, (Vec<u8>, Option<std::time::SystemTime
 fn permissions(metadata: &fs::Metadata) -> u32 {
     use std::os::unix::fs::PermissionsExt as _;
     metadata.permissions().mode()
-}
-
-#[cfg(not(unix))]
-fn permissions(metadata: &fs::Metadata) -> u32 {
-    u32::from(metadata.permissions().readonly())
 }
 
 #[cfg(unix)]
@@ -360,6 +358,16 @@ fn a_configuration_that_cannot_be_read_leaves_the_checks_that_need_it_unavailabl
     }
     for id in INDEPENDENT {
         let got = found.get(id).copied();
+        if cfg!(not(unix)) && id == "private-state" {
+            // Off Unix an access list says who may read a file, and the check
+            // does not read one, so it says it did not look.
+            assert_eq!(got, Some(Status::Unavailable), "{found:?}");
+            assert_eq!(
+                reason(&report, id),
+                "not checked: this platform says who may read a file with an access list"
+            );
+            continue;
+        }
         assert!(
             got.is_some() && got != Some(Status::Unavailable),
             "{id} did not run: {found:?}"
