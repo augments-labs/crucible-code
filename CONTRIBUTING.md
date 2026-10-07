@@ -145,7 +145,8 @@ taken from the checkout's path when the build is compiled. Two checkouts, such
 as two worktrees, can then run their tests at once without locking, recovering
 or changing each other's state. `cargo test --workspace` and a narrow
 `cargo test -p` of a package that uses the sandbox turn this on for you, and
-so does `scripts/sh/rust-checks.sh` when it reruns a required case on its own.
+`scripts/sh/rust-checks.sh` reruns a required case in the binary that
+`--workspace` build made.
 A narrow run of the sandbox crate itself has to ask for it, and needs the
 broker built first: its enforcing tests look for `crucible-sandbox-broker`
 in the test binary's directory and the one above it (`target/debug/`), and a
@@ -174,7 +175,8 @@ hand if you want it gone.
 `scripts/required-cases.json` names the obligations that must keep running
 whatever the tests are called: `scripts/sh/rust-checks.sh` checks that each one
 is still discovered by the same selection the suite runs under, is not ignored,
-still hashes to the source recorded for it, and passes when run by exact name.
+still hashes to the source recorded for it, and passes when run by exact name
+in the test binary that selection built, so the check builds nothing of its own.
 Moving a case is a `source` edit. Changing what one asserts is a `body_sha256`
 edit, and the reviewer is agreeing to the new assertion, not to a green total.
 
