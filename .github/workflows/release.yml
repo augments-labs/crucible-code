@@ -58,7 +58,12 @@ jobs:
       # Re-run the deterministic local aggregate on the same enforcing sandbox
       # host CI proved it on, so the sandbox tests run here rather than skip.
       # Blocking CI already checked dependency policy and performance before
-      # this commit reached main.
+      # this commit reached main. check.sh runs the suites through
+      # cargo-nextest, the prebuilt one rust-ci.yml installs. Nothing here
+      # restores a cache: a release is built from nothing another ref wrote.
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest@0.9.146
       - uses: ./.github/actions/enforcing-sandbox
       - run: scripts/sh/check.sh
         env:

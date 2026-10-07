@@ -1741,6 +1741,33 @@ else
         staging_fail "release.yml's default token can do more than read"
     fi
 
+    # The gate runs scripts/sh/check.sh, which runs the suites through
+    # cargo-nextest, so it installs the cargo-nextest rust-ci.yml installs,
+    # before check.sh runs. Nothing a release runs restores a cache: a release
+    # is built from nothing another ref wrote.
+    gate_job=$(staging_job gate)
+    nextest_step=$(grep -m1 -A2 -F 'uses: taiki-e/install-action@' .github/workflows/rust-ci.yml)
+    if [[ $nextest_step != *'tool: cargo-nextest@'* ]]; then
+        staging_fail "rust-ci.yml installs no cargo-nextest for this check to hold the release gate to"
+    else
+        nextest_at=$(grep -nxF -- "$(head -n1 <<<"$nextest_step")" <<<"$gate_job" | head -n1 | cut -d: -f1)
+        check_at=$(grep -nE '^ +- run: scripts/sh/check\.sh$' <<<"$gate_job" | head -n1 | cut -d: -f1)
+        if [[ -z $nextest_at || $(sed -n "${nextest_at},$((nextest_at + 2))p" <<<"$gate_job") != "$nextest_step" ]]; then
+            staging_fail "the release gate does not install cargo-nextest as rust-ci.yml does:"
+            printf '%s\n' "$nextest_step"
+        elif [[ -z $check_at ]] || ((check_at < nextest_at)); then
+            staging_fail "the release gate runs check.sh before it installs cargo-nextest"
+        fi
+    fi
+    staging_actions=("$staging_workflow")
+    while IFS= read -r local_action; do
+        staging_actions+=("$local_action/action.yml")
+    done < <(sed -n 's|^ *-\{0,1\} *uses: *\./\([^ ]*\).*$|\1|p' "$staging_workflow" | sort -u)
+    if cached=$(grep -nE 'uses: *(actions/cache|Swatinem/rust-cache)' "${staging_actions[@]}"); then
+        staging_fail "a release restores a cache another ref may have written: $cached"
+    fi
+
+
     # Publication is one job, and that job never runs on a branch. Another job
     # may download a published release, which is how a cell installs the one it
     # upgrades from; it may do nothing else with one.
