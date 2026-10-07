@@ -1231,3 +1231,65 @@ fn a_store_that_is_a_symbolic_link_is_not_followed_when_stock_is_taken() {
     assert_eq!(stock.count(), 0);
     assert!(stock.trouble().is_some());
 }
+
+#[test]
+fn taking_stock_says_when_each_account_login_lapses_and_nothing_else_of_it() {
+    let scratch = Scratch::new("stock-lapses");
+    let stock = open_store(&scratch).inventory();
+
+    assert_eq!(stock.lapses("moonshot@kimi.ai"), Some(4_102_444_800));
+    // A key has no time to lapse at, and a name nothing holds has none.
+    assert_eq!(stock.lapses("moonshot"), None);
+    assert_eq!(stock.lapses("openai"), None);
+    assert!(stock.holds(Kind::Account, "moonshot@kimi.ai"));
+    assert!(stock.holds(Kind::Key, "moonshot"));
+    assert!(!stock.holds(Kind::Key, "moonshot@kimi.ai"));
+    let shown = format!("{stock:?}");
+    assert!(!shown.contains(SECRET), "{shown}");
+}
+
+#[test]
+fn forgetting_says_what_went_and_keeps_every_other_name_and_identity() {
+    let scratch = Scratch::new("forgotten-names");
+    let store = scratch
+        .holding(
+            r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key","moonshot@kimi.cn":"fabricated-later-key","openai":"fabricated-openai-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{"moonshot@kimi.ai":"00000000-0000-4000-8000-000000000000"}}"#,
+        )
+        .naming(named());
+
+    let went = store.forgotten("moonshot").expect("a writable store");
+
+    assert_eq!(
+        went,
+        [
+            Held::new(Kind::Key, "moonshot"),
+            Held::new(Kind::Account, "moonshot@kimi.ai"),
+        ]
+    );
+    let text = on_disk(&scratch);
+    assert!(!text.contains("fabricated-moonshot-key"));
+    assert!(!text.contains("fabricated-access"));
+    // A name this build does not write, another provider and an identity
+    // nothing here owns stay where they were.
+    assert!(text.contains(r#""moonshot@kimi.cn":"fabricated-later-key""#));
+    assert!(text.contains(r#""openai":"fabricated-openai-key""#));
+    assert!(text.contains("00000000-0000-4000-8000-000000000000"));
+
+    // Nothing left to forget is no write at all.
+    let before = everything(scratch.home());
+    assert_eq!(store.forgotten("moonshot").expect("a writable store"), []);
+    assert_eq!(everything(scratch.home()), before);
+}
+
+#[test]
+fn forgetting_while_another_crucible_writes_waits_and_then_takes_nothing() {
+    let scratch = Scratch::new("forgotten-busy");
+    let store = open_store(&scratch);
+    let before = on_disk(&scratch);
+    let _held = another_crucible_writing(&scratch);
+
+    let refused = store.forgotten("moonshot");
+
+    assert!(matches!(refused, Err(AuthError::Busy { .. })), "{refused:?}");
+    assert_eq!(on_disk(&scratch), before);
+}
