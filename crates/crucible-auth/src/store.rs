@@ -266,13 +266,15 @@ impl Store {
     /// write: it makes the directory, tightens the file and says it did. A
     /// report about whether the store is private has to see it as it is, so
     /// this takes no lock, makes no directory, tightens nothing and follows no
-    /// link, and keeps the names it read and no key or token. What could not
-    /// be read is one sentence that names the store by its file name alone.
+    /// link, and keeps the names it read, and the time each account login
+    /// lapses, and no key or token. What could not be read is one sentence
+    /// that names the store by its file name alone.
     #[must_use]
     pub fn inventory(&self) -> Inventory {
         let mut stock = Inventory {
             names: self.names.clone(),
             held: BTreeSet::new(),
+            lapses: BTreeMap::new(),
             present: true,
             exposed: None,
             trouble: None,
@@ -309,6 +311,11 @@ impl Store {
                 Ok(text) => match document::parse(&text) {
                     Ok(document) => {
                         stock.held = held_in(&document);
+                        stock.lapses = document
+                            .subscriptions
+                            .iter()
+                            .map(|(name, tokens)| (name.clone(), tokens.times().0))
+                            .collect();
                         None
                     }
                     Err(problem) => Some(problem.to_string()),
@@ -408,16 +415,32 @@ impl Store {
     /// Every name this build writes the provider's credential under goes, so a
     /// provider left holding two by a roll back is left holding none.
     pub fn forget(&self, provider: &str) -> Result<bool, AuthError> {
-        let mut had = false;
+        Ok(!self.forgotten(provider)?.is_empty())
+    }
+
+    /// [`Store::forget`], saying by map and name what went: nothing where the
+    /// provider held nothing, and never a name this build does not write the
+    /// provider's credential under.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] as [`Store::keep`].
+    ///
+    /// It is one write under the lock a renewal holds while it asks for its
+    /// rotation, so a renewal running when this is called finishes, and is
+    /// then taken out with the rest, rather than writing its rotation back
+    /// after this went.
+    pub fn forgotten(&self, provider: &str) -> Result<Vec<Held>, AuthError> {
+        let mut went = Vec::new();
         let names = self.names.clone();
         self.change(|document| {
             for name in names.of(provider) {
-                had |= !document.take(name, None).is_empty();
+                went.extend(document.take(name, None));
             }
-            had
+            !went.is_empty()
         })?;
 
-        Ok(had)
+        Ok(went)
     }
 
     /// The read-modify-write, under the lock, once.
@@ -810,13 +833,17 @@ impl StoredCredentials {
 /// What a store holds by name, and whether others could read it, as
 /// [`Store::inventory`] found it without changing it.
 ///
-/// No key or token is in here: only the map each credential sits in and the
-/// name it is under, which is what a `/login` row is called.
+/// No key or token is in here: only the map each credential sits in, the
+/// name it is under, which is what a `/login` row is called, and when each
+/// account login's access lapses.
 pub struct Inventory {
     /// The names this build writes each provider's credential under.
     names: Names,
     /// Every credential the store holds, by map and name.
     held: BTreeSet<Held>,
+    /// When the access of each account login lapses, in seconds since the
+    /// Unix epoch, by name.
+    lapses: BTreeMap<String, u64>,
     /// Whether there is a store at all.
     present: bool,
     /// Whether anyone but its owner may read or write the file, where that
@@ -846,6 +873,23 @@ impl Inventory {
         serving(&self.names, provider, |held| self.held.contains(held))
     }
 
+    /// Whether it holds a credential in `kind`'s map under `name`.
+    #[must_use]
+    pub fn holds(&self, kind: Kind, name: &str) -> bool {
+        self.held.contains(&Held::new(kind, name))
+    }
+
+    /// When the access of the account login under `name` lapses, in seconds
+    /// since the Unix epoch: `None` where no account login is under it.
+    ///
+    /// The time the store says, and no more: a login past it is renewed at
+    /// its next use where its account still allows it, which only asking the
+    /// vendor could tell.
+    #[must_use]
+    pub fn lapses(&self, name: &str) -> Option<u64> {
+        self.lapses.get(name).copied()
+    }
+
     /// Whether anyone but its owner may read or write the file: `None` where
     /// that was not looked at, because there is no store, it did not open, or
     /// this platform says it with something other than a mode.
@@ -866,6 +910,7 @@ impl fmt::Debug for Inventory {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("Inventory")
             .field("held", &self.held)
+            .field("lapses", &self.lapses)
             .field("present", &self.present)
             .field("exposed", &self.exposed)
             .field("trouble", &self.trouble)

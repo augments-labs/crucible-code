@@ -12,6 +12,7 @@
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
 
+mod auth;
 mod browser;
 mod choice;
 mod client;
@@ -237,6 +238,43 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Say, store or remove the credentials crucible signs providers in
+    /// with, offline but for a sign-in.
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthAction {
+    /// Say which credential a launch would sign each provider in with,
+    /// without sending or renewing anything, and stop.
+    Status {
+        /// A provider, or a /login row's stored name such as
+        /// moonshot@kimi.ai. Left off, every provider.
+        provider: Option<String>,
+        /// Print one JSON document to stdout instead of the human report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Store a key for a provider, or sign in to its account, the way /login
+    /// does.
+    Login {
+        /// A provider, or a /login row's stored name such as
+        /// moonshot@kimi.ai.
+        provider: String,
+        /// Read the key from standard input rather than a hidden prompt.
+        /// A key is never an argument.
+        #[arg(long)]
+        api_key_stdin: bool,
+    },
+    /// Take the credentials crucible stored for a provider out of its login
+    /// store, the way /logout does.
+    Logout {
+        /// A provider, or a /login row's stored name.
+        provider: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -386,7 +424,10 @@ through_the_application!(
 /// Reads the command line and does what it says.
 pub(crate) fn start() -> ExitCode {
     freed::handed_back();
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(refused) => return unparsed(&refused),
+    };
 
     let done = match (&cli.command, cli.extensions, cli.sandbox) {
         (Some(Command::Sandbox { action }), _, _) => match action {
@@ -397,6 +438,16 @@ pub(crate) fn start() -> ExitCode {
             ConfigAction::Check { json } => checked(*json),
         },
         (Some(Command::Doctor { json }), _, _) => return diagnosed(*json),
+        (Some(Command::Auth { action }), _, _) => {
+            return match action {
+                AuthAction::Status { provider, json } => auth::status(provider.as_deref(), *json),
+                AuthAction::Login {
+                    provider,
+                    api_key_stdin,
+                } => auth::login(provider, *api_key_stdin),
+                AuthAction::Logout { provider } => auth::logout(provider),
+            };
+        }
         (None, true, _) => listed(),
         (None, _, true) => inspected(false),
         (None, _, _) => run(&cli),
@@ -410,6 +461,38 @@ pub(crate) fn start() -> ExitCode {
         Err(Fatal::Ended(told)) => told.obeyed(),
         Err(problem) => fail(&problem),
     }
+}
+
+/// Says why the command line did not parse, and exits as the parser would.
+///
+/// The parser's own sentence quotes the word it did not expect, and on an
+/// `auth` command line that word may be a key somebody typed where it is not
+/// taken. There the sentence is replaced by one that quotes nothing, unless it
+/// is help, a version, or a missing argument, none of which repeats a word.
+fn unparsed(refused: &clap::Error) -> ExitCode {
+    use clap::error::ErrorKind;
+
+    let code = u8::try_from(refused.exit_code()).unwrap_or(2);
+    let quotes_nothing = matches!(
+        refused.kind(),
+        ErrorKind::DisplayHelp
+            | ErrorKind::DisplayVersion
+            | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            | ErrorKind::MissingRequiredArgument
+            | ErrorKind::MissingSubcommand
+    );
+    if quotes_nothing || !std::env::args_os().skip(1).any(|word| word == "auth") {
+        let _ = refused.print();
+        return ExitCode::from(code);
+    }
+    let _ = io::stderr().write_all(
+        b"error: crucible auth was given a word it does not take, which is not repeated here \
+          in case it was a key\n\n\
+          A key is never an argument: pipe it to `crucible auth login PROVIDER --api-key-stdin`, \
+          or leave the flag off in a terminal to be asked for it.\n\n\
+          For more information, try 'crucible auth --help'.\n",
+    );
+    ExitCode::from(code)
 }
 
 #[cfg(target_os = "windows")]
