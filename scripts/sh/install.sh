@@ -16,11 +16,22 @@ usage() {
 Usage: scripts/sh/install.sh [--version VERSION] [--dir DIRECTORY] [--dry-run]
                           [--archive FILE --checksums FILE]
 
-Downloads and verifies a crucible release, then installs `crucible` and the
-`cru` alias. Linux and macOS archives also carry `crucible-sandbox-broker`, the
-native confinement helper; it is installed beside `crucible`. A local
-archive still requires its matching SHA256SUMS file.
+Downloads and verifies a crucible release, installs it in a directory of its
+own under DIRECTORY/.crucible-install, makes it the active release, and links
+`crucible` and the `cru` alias in DIRECTORY to it. Linux and macOS archives
+also carry `crucible-sandbox-broker`, the native confinement helper; it is
+installed beside `crucible` in the release's directory. A local archive still
+requires its matching SHA256SUMS file.
 USAGE
+}
+
+# Whether a name holds a byte that is not printable: the receipt that records
+# the installation directory refuses one, and so does what reads it back. A name
+# the check could not read through is taken to hold one.
+has_control() {
+    local count
+    count=$(printf '%s' "$1" | LC_ALL=C tr -d '\040-\176\200-\377' | wc -c) || return 0
+    ((count != 0))
 }
 
 while (($#)); do
@@ -45,6 +56,10 @@ case "/$destination/" in
     exit 2
     ;;
 esac
+if has_control "$destination"; then
+    echo 'install: the installation directory is unsafe' >&2
+    exit 2
+fi
 if [[ -n $archive || -n $checksums ]]; then
     [[ -n $archive && -n $checksums && -n $version ]] || {
         echo 'install: --archive requires --checksums and --version' >&2
@@ -319,11 +334,14 @@ if [[ -z $archive ]]; then
     fi
 fi
 version=${version#v}
-# The classes are spelled out: a range such as [0-9] or [A-Za-z] follows the
-# locale, and under a UTF-8 one takes non-ASCII digits and letters too.
+# The class is spelled out: a range such as [0-9] follows the locale, and under
+# a UTF-8 one takes non-ASCII digits too. A release is three numbers with no
+# leading zero and no suffix, the only form its receipt can record.
 digit=0123456789
-alnum=${digit}ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
-[[ $version =~ ^[$digit]+\.[$digit]+\.[$digit]+([.-][$alnum.-]+)?$ ]] || {
+hex=${digit}abcdef
+release_part="(0|[${digit#0}][$digit]*)"
+release_number="^$release_part\\.$release_part\\.$release_part\$"
+[[ $version =~ $release_number ]] || {
     printf 'install: invalid version %q\n' "$version" >&2
     exit 2
 }
@@ -403,15 +421,29 @@ expected=$(awk -v name="$(basename "$archive")" '
     ${#expected} == 64 ]] ||
     fail 1 'SHA256SUMS must contain exactly one valid line for the archive'
 if command -v sha256sum >/dev/null; then
-    actual=$(sha256sum "$archive" | awk '{ print $1 }')
+    hasher=sha256sum
 elif command -v shasum >/dev/null; then
-    actual=$(shasum -a 256 "$archive" | awk '{ print $1 }')
+    hasher=shasum
 elif command -v sha256 >/dev/null; then
-    actual=$(sha256 -q "$archive")
+    hasher=sha256
 else
     fail 1 'sha256sum, shasum, or sha256 is required'
 fi
-actual=$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')
+# The SHA-256 of a file in lowercase hex, or a failure when none was printed.
+# The file is read from standard input, since a tool handed a name with a
+# backslash in it escapes the sum it prints.
+sha256_of() {
+    local sum
+    case $hasher in
+    sha256sum) sum=$(sha256sum <"$1" | awk '{ print $1 }') || return 1 ;;
+    shasum) sum=$(shasum -a 256 <"$1" | awk '{ print $1 }') || return 1 ;;
+    sha256) sum=$(sha256 -q <"$1") || return 1 ;;
+    esac
+    sum=$(printf '%s' "$sum" | tr '[:upper:]' '[:lower:]')
+    [[ $sum =~ ^[$hex]{64}$ ]] || return 1
+    printf '%s' "$sum"
+}
+actual=$(sha256_of "$archive") || actual=
 [[ $actual == "$expected" ]] || fail 1 'archive checksum does not match SHA256SUMS'
 step_done "$(basename "$checksums")" ok
 
@@ -463,26 +495,464 @@ if ((broker_members)); then
 fi
 step_done '' ok
 
+# --- receipt reader: begin ---
+# A copy of tests/fixtures/installer/receipt.sh, the reader crucible-update is
+# held to; the installer tests fail when the two differ.
+crucible_receipt_read() {
+    receipt_file=$1
+    receipt_installation=
+    receipt_target=
+    receipt_prefix=
+    receipt_version=
+    receipt_crucible=
+    receipt_broker=
+    receipt_line=0
+
+    if ! receipt_size=$(wc -c <"$receipt_file"); then
+        crucible_receipt_refuse 'the receipt could not be measured'
+        return 1
+    fi
+    if [ "$((receipt_size))" -gt 8192 ]; then
+        crucible_receipt_refuse 'the receipt is larger than 8192 bytes'
+        return 1
+    fi
+    # A pipeline's status is its last command's, so a `tr` that fails adds a
+    # byte of its own to what is counted rather than going unseen.
+    if ! receipt_controls=$(
+        { LC_ALL=C tr -d '\n\040-\176\200-\377' <"$receipt_file" || printf x; } | wc -c
+    ); then
+        crucible_receipt_refuse 'the receipt could not be checked for control characters'
+        return 1
+    fi
+    if [ "$((receipt_controls))" -ne 0 ]; then
+        crucible_receipt_refuse 'the receipt holds a control character or could not be read'
+        return 1
+    fi
+    # The `x` keeps the newline from being stripped. A `tail` that fails
+    # leaves it out, and the substitution's status then refuses.
+    receipt_newline='
+x'
+    if [ "$((receipt_size))" -gt 0 ]; then
+        if ! receipt_last=$(tail -c 1 <"$receipt_file" && printf x); then
+            crucible_receipt_refuse 'the end of the receipt could not be read'
+            return 1
+        fi
+        if [ "$receipt_last" != "$receipt_newline" ]; then
+            crucible_receipt_refuse 'the last line of the receipt does not end'
+            return 1
+        fi
+    fi
+
+    while IFS= read -r receipt_text; do
+        receipt_line=$((receipt_line + 1))
+        case $receipt_line in
+        1)
+            case $receipt_text in
+            'crucible-installer-receipt 1') ;;
+            'crucible-installer-receipt '[1-9]*)
+                case ${receipt_text#crucible-installer-receipt } in
+                *[!0-9]*)
+                    crucible_receipt_refuse 'this is not an installer receipt'
+                    return 1
+                    ;;
+                esac
+                crucible_receipt_refuse 'the receipt was written by a newer installer'
+                return 1
+                ;;
+            *)
+                crucible_receipt_refuse 'this is not an installer receipt'
+                return 1
+                ;;
+            esac
+            ;;
+        2)
+            crucible_receipt_value manager || return 1
+            if [ "$receipt_value" != crucible-installer ]; then
+                crucible_receipt_refuse 'manager is not crucible-installer'
+                return 1
+            fi
+            ;;
+        3)
+            crucible_receipt_value installation || return 1
+            crucible_receipt_hex 32 installation || return 1
+            receipt_installation=$receipt_value
+            ;;
+        4)
+            crucible_receipt_value target || return 1
+            case $receipt_value in
+            linux-x86_64 | linux-aarch64 | macos-x86_64 | macos-aarch64 | freebsd-x86_64) ;;
+            *)
+                crucible_receipt_refuse 'target names no platform the installer supports'
+                return 1
+                ;;
+            esac
+            receipt_target=$receipt_value
+            ;;
+        5)
+            crucible_receipt_value layout || return 1
+            if [ "$receipt_value" != versioned ]; then
+                crucible_receipt_refuse 'layout is not versioned'
+                return 1
+            fi
+            ;;
+        6)
+            crucible_receipt_value prefix || return 1
+            case $receipt_value in
+            /*) ;;
+            *)
+                crucible_receipt_refuse 'prefix is not an absolute path'
+                return 1
+                ;;
+            esac
+            case $receipt_value in
+            */ | *//* | */./* | */. | */../* | */..)
+                crucible_receipt_refuse 'prefix is not a canonical path'
+                return 1
+                ;;
+            esac
+            receipt_prefix=$receipt_value
+            ;;
+        7)
+            crucible_receipt_value version || return 1
+            receipt_rest=${receipt_value#*.}
+            case $receipt_value in
+            *.*) ;;
+            *) receipt_rest= ;;
+            esac
+            case $receipt_rest in
+            *.*) ;;
+            *) receipt_rest= ;;
+            esac
+            if [ -z "$receipt_rest" ] ||
+                ! crucible_receipt_number "${receipt_value%%.*}" ||
+                ! crucible_receipt_number "${receipt_rest%%.*}" ||
+                ! crucible_receipt_number "${receipt_rest#*.}"; then
+                crucible_receipt_refuse 'version is not a release number'
+                return 1
+            fi
+            receipt_version=$receipt_value
+            ;;
+        8)
+            crucible_receipt_value sha256.crucible || return 1
+            crucible_receipt_hex 64 sha256.crucible || return 1
+            receipt_crucible=$receipt_value
+            ;;
+        9)
+            crucible_receipt_value sha256.crucible-sandbox-broker || return 1
+            crucible_receipt_hex 64 sha256.crucible-sandbox-broker || return 1
+            receipt_broker=$receipt_value
+            ;;
+        *)
+            crucible_receipt_refuse 'nothing may follow the last key'
+            return 1
+            ;;
+        esac
+    done <"$receipt_file"
+
+    if [ "$receipt_line" -lt 8 ]; then
+        crucible_receipt_refuse 'the receipt ends before its last key'
+        return 1
+    fi
+}
+
+# Takes the value of line `receipt_text` into `receipt_value` when the line
+# names key `$1`.
+crucible_receipt_value() {
+    case $receipt_text in
+    "$1="*) receipt_value=${receipt_text#"$1="} ;;
+    *)
+        crucible_receipt_refuse "line $receipt_line is not $1"
+        return 1
+        ;;
+    esac
+}
+
+# Whether `receipt_value` is exactly `$1` lowercase hex digits.
+crucible_receipt_hex() {
+    case $receipt_value in
+    '' | *[!0-9a-f]*)
+        crucible_receipt_refuse "$2 is not lowercase hex"
+        return 1
+        ;;
+    esac
+    if [ "${#receipt_value}" -ne "$1" ]; then
+        crucible_receipt_refuse "$2 is not $1 hex digits"
+        return 1
+    fi
+}
+
+# Whether `$1` is a decimal number written without a leading zero.
+crucible_receipt_number() {
+    case $1 in
+    '' | 0?* | *[!0-9]*) return 1 ;;
+    esac
+}
+
+crucible_receipt_refuse() {
+    if [ "$receipt_line" -gt 0 ]; then
+        printf 'refused: line %s: %s\n' "$receipt_line" "$1" >&2
+    else
+        printf 'refused: %s\n' "$1" >&2
+    fi
+}
+# --- receipt reader: end ---
+
 step_begin install
+
+# The layout, under the directory the installer was given:
+#
+#     crucible -> .crucible-install/current/crucible
+#     cru -> crucible
+#     .crucible-install/
+#         current -> releases/<version>
+#         lock -> <process id>@<host name>
+#         releases/<version>/crucible
+#         releases/<version>/crucible-sandbox-broker   (when the release has one)
+#         releases/<version>/receipt
+#
+# A release is staged in a hidden directory beside the others, its receipt
+# written last, and is renamed into place whole; then `current` is replaced by
+# one rename of a new link over it. A crash at any point leaves the release
+# that was active still active, or the new one active and complete. No release
+# is ever removed. One install at a time holds the lock, and the next one waits
+# for it, or refuses when the install that took it is gone.
+readonly link_target=.crucible-install/current/crucible
+me=$(id -u)
+
+layout_paths() {
+    prefix=$destination/.crucible-install
+    releases=$prefix/releases
+    current=$prefix/current
+    lock=$prefix/lock
+    unit=$releases/$version
+    link_path=$destination/crucible
+    alias_path=$destination/cru
+    broker_path=$unit/crucible-sandbox-broker
+}
+
+owner_of() { stat -c '%u' -- "$1" 2>/dev/null || stat -f '%u' -- "$1"; }
+mode_of() { stat -c '%a' -- "$1" 2>/dev/null || stat -f '%Lp' -- "$1"; }
+# Whether a mode as `mode_of` prints it lets group or others write. The mode is
+# printed without leading zeros, so it is read whole, and one that is not octal
+# is taken to let them.
+others_can_write() { [[ $1 =~ ^[0-7]+$ ]] || return 0; ((8#$1 & 8#022)); }
+
+# A directory of the layout is used only when it is one, is not a link, and
+# belongs to root or to this user with nobody else able to write it, which is
+# what crucible holds the layout to when it reads it.
+trusted_directory() {
+    local dir=$1 owner mode
+    [[ -d $dir && ! -L $dir ]] || fail 1 "refusing to use $dir, which is not a directory"
+    owner=$(owner_of "$dir")
+    mode=$(mode_of "$dir")
+    [[ $owner == 0 || $owner == "$me" ]] ||
+        fail 1 "refusing to use $dir, which belongs to another user"
+    if others_can_write "$mode"; then
+        fail 1 "refusing to use $dir, which group or others can write; run chmod go-w $dir"
+    fi
+}
+
+# Reads a receipt, failing with the reader's reason.
+read_receipt() {
+    local file=$1 reason
+    [[ -f $file && ! -L $file ]] || fail 1 "refusing to use $file, which is not a receipt"
+    LC_ALL=C crucible_receipt_read "$file" 2>"$work/refusal" && return 0
+    reason=$(head -n 1 "$work/refusal")
+    fail 1 "refusing to use $file: ${reason#refused: }"
+}
+
+# What is there already, read and changed in nothing: the links in the
+# directory must be this installer's, and the active release and its receipt
+# whole. It runs before a dry run reports, and again once the lock is held.
+inspect() {
+    local target
+    installation=
+    if [[ -e $alias_path || -L $alias_path ]]; then
+        [[ -L $alias_path && $(readlink -- "$alias_path") == crucible ]] ||
+            fail 1 "refusing to replace unrelated $alias_path"
+    fi
+    if [[ -e $link_path || -L $link_path ]]; then
+        [[ -L $link_path && $(readlink -- "$link_path") == "$link_target" ]] ||
+            fail 1 "refusing to replace $link_path, which is not this installer's link into $prefix"
+    fi
+    [[ -e $prefix || -L $prefix ]] || return 0
+    trusted_directory "$prefix"
+    [[ ! -e $releases && ! -L $releases ]] || trusted_directory "$releases"
+    [[ -e $current || -L $current ]] || return 0
+    [[ -L $current ]] || fail 1 "refusing to use $current, which is not a link"
+    target=$(readlink -- "$current")
+    [[ $target == releases/* && ${target#releases/} =~ $release_number ]] ||
+        fail 1 "refusing to use $current, which names no release"
+    trusted_directory "$prefix/$target"
+    read_receipt "$prefix/$target/receipt"
+    [[ $receipt_prefix == "$prefix" && $receipt_version == "${target#releases/}" ]] ||
+        fail 1 "refusing to use $prefix/$target/receipt, which describes another release"
+    installation=$receipt_installation
+}
+
+lock_owner=
+locked=0
+# The lock is a link whose text names the install that holds it, so taking it
+# is one call that fails while it exists, on every platform this runs on.
+take_lock() {
+    local tries=0 owner pid host
+    lock_owner="$$@$(uname -n)"
+    [[ ! -d $lock || -L $lock ]] || fail 1 "refusing to use $lock, which is a directory"
+    until ln -sn -- "$lock_owner" "$lock" 2>/dev/null; do
+        if owner=$(readlink -- "$lock" 2>/dev/null); then
+            pid=${owner%%@*}
+            host=${owner#*@}
+            # Stale only when neither signal 0 nor ps finds the process, since
+            # signal 0 cannot reach another user's and ps may be missing.
+            if [[ $host == "${lock_owner#*@}" && $pid =~ ^[$digit]+$ ]] &&
+                ! kill -0 "$pid" 2>/dev/null && ! ps -p "$pid" >/dev/null 2>&1; then
+                fail 1 "an install that stopped before it finished left $lock behind; once no install is running, remove it and run the install again"
+            fi
+        elif [[ -e $lock || -L $lock ]]; then
+            fail 1 "refusing to use $lock, which is not a link"
+        elif [[ ! -w $prefix ]]; then
+            fail 1 "$lock could not be created, since $prefix is not writable"
+        fi
+        tries=$((tries + 1))
+        ((tries < 300)) ||
+            fail 1 "another install, ${owner:-unknown}, still holds $lock after a minute; if no install is running, remove it and run the install again"
+        sleep 0.2
+    done
+    locked=1
+}
+
+# Writes what was written so far to disk where the platform's sync can say
+# which files: GNU sync flushes each one it is given, and the BSDs' and
+# macOS's take no names and schedule every write.
+flush() {
+    sync -- "$@" 2>/dev/null || sync
+}
+
+staging=
+next_current=
+cleanup_install() {
+    [[ -z $staging ]] || rm -rf -- "$staging"
+    [[ -z $next_current ]] || rm -f -- "$next_current"
+    if ((locked)); then
+        rm -f -- "$lock"
+        locked=0
+    fi
+}
+
+# What an install that stopped left behind, removed only under the lock.
+remove_leftovers() {
+    local left
+    for left in "$releases"/.incoming.* "$prefix"/.current.*; do
+        [[ ! -e $left && ! -L $left ]] || rm -rf -- "$left"
+    done
+}
+
+# The receipt of a release, from the executables already staged in `$1`.
+write_receipt() {
+    local at=$1 crucible_sum broker_sum=
+    crucible_sum=$(sha256_of "$at/crucible") || fail 1 "the staged crucible could not be hashed"
+    if [[ -n $broker ]]; then
+        broker_sum=$(sha256_of "$at/crucible-sandbox-broker") ||
+            fail 1 "the staged sandbox broker could not be hashed"
+    fi
+    {
+        printf 'crucible-installer-receipt 1\n'
+        printf 'manager=crucible-installer\n'
+        printf 'installation=%s\n' "$installation"
+        printf 'target=%s\n' "$platform-$architecture"
+        printf 'layout=versioned\n'
+        printf 'prefix=%s\n' "$prefix"
+        printf 'version=%s\n' "$version"
+        printf 'sha256.crucible=%s\n' "$crucible_sum"
+        [[ -z $broker_sum ]] || printf 'sha256.crucible-sandbox-broker=%s\n' "$broker_sum"
+    } >"$at/receipt"
+    chmod 644 "$at/receipt"
+    # The same reader as crucible's must take what was written.
+    read_receipt "$at/receipt"
+}
+
+stage_unit() {
+    local said
+    if [[ -z $installation ]]; then
+        installation=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+        [[ $installation =~ ^[$hex]{32}$ ]] ||
+            fail 1 'no installation identifier could be read from /dev/urandom'
+    fi
+    # mktemp makes it owner-only, and it stays so until the receipt is final,
+    # since a umask of 002 or 000 would let others write what is made in it.
+    staging=$(mktemp -d "$releases/.incoming.XXXXXX")
+    install -m 755 "$binary" "$staging/crucible"
+    [[ -z $broker ]] || install -m 755 "$broker" "$staging/crucible-sandbox-broker"
+    if ! said=$("$staging/crucible" --version) || [[ $said != "crucible $version" ]]; then
+        printf -v problem 'installed binary reported %q, expected %q' \
+            "${said:-nothing}" "crucible $version"
+        fail 1 "$problem"
+    fi
+    write_receipt "$staging"
+    chmod 755 "$staging"
+    if [[ -n $broker ]]; then
+        flush "$staging/crucible" "$staging/crucible-sandbox-broker" "$staging/receipt" "$staging"
+    else
+        flush "$staging/crucible" "$staging/receipt" "$staging"
+    fi
+    mv -- "$staging" "$unit"
+    staging=
+    flush "$releases"
+}
+
+# A release already in place is used again only when it is this one: the same
+# installation, platform and build, and nothing in it the receipt does not
+# account for. Any other is refused and left as it is.
+reuse_unit() {
+    local differs="refusing to replace $unit, which holds another build of crucible $version"
+    local entries expected=$'crucible\nreceipt' sum
+    trusted_directory "$unit"
+    read_receipt "$unit/receipt"
+    [[ $receipt_prefix == "$prefix" && $receipt_version == "$version" &&
+        $receipt_target == "$platform-$architecture" ]] || fail 1 "$differs"
+    [[ -z $installation || $receipt_installation == "$installation" ]] || fail 1 "$differs"
+    installation=$receipt_installation
+    [[ -f $unit/crucible && ! -L $unit/crucible ]] || fail 1 "$differs"
+    sum=$(sha256_of "$binary") && [[ $sum == "$receipt_crucible" ]] || fail 1 "$differs"
+    sum=$(sha256_of "$unit/crucible") && [[ $sum == "$receipt_crucible" ]] || fail 1 "$differs"
+    if [[ -n $broker ]]; then
+        expected=$'crucible\ncrucible-sandbox-broker\nreceipt'
+        [[ -f $broker_path && ! -L $broker_path ]] || fail 1 "$differs"
+        sum=$(sha256_of "$broker") && [[ $sum == "$receipt_broker" ]] || fail 1 "$differs"
+        sum=$(sha256_of "$broker_path") && [[ $sum == "$receipt_broker" ]] || fail 1 "$differs"
+    else
+        [[ -z $receipt_broker ]] || fail 1 "$differs"
+    fi
+    entries=$(cd -- "$unit" && LC_ALL=C ls -A)
+    [[ $entries == "$expected" ]] || fail 1 "$differs"
+}
+
+# `current` is replaced by renaming a new link over it. GNU and BusyBox mv say
+# so with -T, the BSDs and macOS with -h; without either, mv would move the new
+# link into the release `current` names. -f keeps mv from stopping to ask.
+activate() {
+    next_current=$prefix/.current.$$
+    ln -sn -- "releases/$version" "$next_current"
+    if ((rename_flag_t)); then
+        mv -fT -- "$next_current" "$current"
+    else
+        mv -fh -- "$next_current" "$current"
+    fi
+    next_current=
+    flush "$prefix"
+}
 
 if [[ -d $destination ]]; then
     destination=$(cd -- "$destination" && pwd -P)
     [[ $destination != / ]] || fail 2 'the installation directory resolves to root'
+    ! has_control "$destination" || fail 2 'the installation directory is unsafe'
 fi
-alias_path=$destination/cru
-if [[ -e $alias_path || -L $alias_path ]]; then
-    [[ -L $alias_path && $(readlink "$alias_path") == crucible ]] ||
-        fail 1 "refusing to replace unrelated $alias_path"
-fi
-broker_path=$destination/crucible-sandbox-broker
-if [[ -n $broker && (-e $broker_path || -L $broker_path) ]]; then
-    [[ -f $broker_path && ! -L $broker_path ]] ||
-        fail 1 "refusing to replace non-regular $broker_path"
-fi
+layout_paths
+inspect
 if ((dry_run)); then
     step_done "$(shown "$destination") (dry run)" "$(shown "$destination") (dry run)"
-    printf 'Would install crucible %s in %s and create %s -> crucible\n' \
-        "$version" "$destination" "$alias_path"
+    printf 'Would install crucible %s in %s and create %s -> %s and %s -> crucible\n' \
+        "$version" "$unit" "$link_path" "$link_target" "$alias_path"
     [[ -z $broker ]] || printf 'Would install %s beside it\n' "$broker_path"
     exit 0
 fi
@@ -492,14 +962,13 @@ fi
 # directory is named here with its remedy rather than discovered when the first
 # confined command refuses to start.
 warn_where_broker_is_untrusted() {
-    local dir=$destination owner mode me
-    me=$(id -u)
+    local dir=$unit owner mode
     while :; do
-        owner=$(stat -c '%u' -- "$dir" 2>/dev/null || stat -f '%u' -- "$dir")
-        mode=$(stat -c '%a' -- "$dir" 2>/dev/null || stat -f '%Lp' -- "$dir")
+        owner=$(owner_of "$dir")
+        mode=$(mode_of "$dir")
         if [[ $owner != 0 && $owner != "$me" ]]; then
             warn "$dir belongs to another user, so confined commands will not trust $broker_path"
-        elif ((8#${mode: -3} & 8#022)); then
+        elif others_can_write "$mode"; then
             warn "$dir is writable by group or others, so confined commands will not trust $broker_path; run chmod go-w $dir"
         fi
         [[ $dir != / ]] || break
@@ -507,79 +976,39 @@ warn_where_broker_is_untrusted() {
     done
 }
 
+on_exit='end_step $?; cleanup_install; rm -rf -- "$work"'
+trap "$on_exit" EXIT
+: >"$work/rename-test"
+rename_flag_t=0
+! mv -T -- "$work/rename-test" "$work/renamed" 2>/dev/null || rename_flag_t=1
+
 mkdir -p -- "$destination"
 destination=$(cd -- "$destination" && pwd -P)
 [[ $destination != / ]] || fail 2 'the installation directory resolves to root'
-incoming=$(mktemp "$destination/.crucible.incoming.XXXXXX")
-broker_incoming=
-[[ -z $broker ]] ||
-    broker_incoming=$(mktemp "$destination/.crucible-sandbox-broker.incoming.XXXXXX")
-previous=
-broker_previous=
-landed=0
-broker_landed=0
-# Either everything lands or nothing changes: a failure after the broker has
-# landed puts the previous broker back along with the previous executable.
-cleanup_install() {
-    rm -f -- "$incoming"
-    [[ -z $broker_incoming ]] || rm -f -- "$broker_incoming"
-    if ((broker_landed)); then
-        if [[ -n $broker_previous && -e $broker_previous ]]; then
-            mv -f -- "$broker_previous" "$broker_path"
-        else
-            rm -f -- "$broker_path"
-        fi
-    fi
-    if ((landed)); then
-        if [[ -n $previous && -e $previous ]]; then
-            mv -f -- "$previous" "$destination/crucible"
-        else
-            rm -f -- "$destination/crucible"
-        fi
-    fi
-}
-on_exit='end_step $?; cleanup_install; rm -rf -- "$work"'
-trap "$on_exit" EXIT
-install -m 755 "$binary" "$incoming"
-[[ -z $broker ]] || install -m 755 "$broker" "$broker_incoming"
-if [[ -e $destination/crucible || -L $destination/crucible ]]; then
-    [[ -f $destination/crucible && ! -L $destination/crucible ]] ||
-        fail 1 "refusing to replace non-regular $destination/crucible"
-    candidate=$(mktemp "$destination/.crucible.previous.XXXXXX")
-    if ! cp -p -- "$destination/crucible" "$candidate"; then
-        rm -f -- "$candidate"
-        exit 1
-    fi
-    previous=$candidate
+! has_control "$destination" || fail 2 'the installation directory is unsafe'
+layout_paths
+# Two first installs can both find no prefix; the one that loses the race to
+# create it uses the one the other made.
+mkdir -m 755 -- "$prefix" 2>/dev/null || [[ -d $prefix && ! -L $prefix ]] ||
+    fail 1 "$prefix could not be created"
+trusted_directory "$prefix"
+take_lock
+inspect
+remove_leftovers
+[[ -e $releases || -L $releases ]] || mkdir -m 755 -- "$releases"
+trusted_directory "$releases"
+if [[ -e $unit || -L $unit ]]; then
+    [[ -d $unit && ! -L $unit ]] ||
+        fail 1 "refusing to replace $unit, which is not a release directory"
+    reuse_unit
+else
+    stage_unit
 fi
-# The broker lands first so the executable never runs beside a stale broker.
-if [[ -n $broker ]]; then
-    if [[ -e $broker_path ]]; then
-        candidate=$(mktemp "$destination/.crucible-sandbox-broker.previous.XXXXXX")
-        if ! cp -p -- "$broker_path" "$candidate"; then
-            rm -f -- "$candidate"
-            exit 1
-        fi
-        broker_previous=$candidate
-    fi
-    mv -f -- "$broker_incoming" "$broker_path"
-    broker_landed=1
-fi
-mv -f -- "$incoming" "$destination/crucible"
-landed=1
-if ! said=$("$destination/crucible" --version) || [[ $said != "crucible $version" ]]; then
-    printf -v problem 'installed binary reported %q, expected %q' \
-        "${said:-nothing}" "crucible $version"
-    rm -f -- "$destination/crucible"
-    fail 1 "$problem"
-fi
-ln -sfn crucible "$alias_path"
-[[ -n $previous ]] && rm -f -- "$previous"
-[[ -n $broker_previous ]] && rm -f -- "$broker_previous"
-previous=
-broker_previous=
-landed=0
-broker_landed=0
+activate
+[[ -L $link_path ]] || ln -sn -- "$link_target" "$link_path"
+[[ -L $alias_path ]] || ln -sn -- crucible "$alias_path"
+flush "$destination"
+cleanup_install
 on_exit='end_step $?; rm -rf -- "$work"'
 trap "$on_exit" EXIT
 # The plain lines spell the directory as the step list does: `~` is what the

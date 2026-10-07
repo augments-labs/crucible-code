@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Stands in for one filesystem command while the crash probes run an install.
+#
+# The probes put a directory of links to this script first on the installer's
+# PATH, one link per command that changes the filesystem, and the link's name
+# says which command it is. Every call is counted and written to
+# `$KILL_POINT_DIR/calls` with its arguments, then handed to the real command
+# found on `$KILL_POINT_PATH`. On the call numbered `$KILL_POINT_AT`,
+# `$KILL_POINT_ACTION` decides what happens instead:
+#
+#   kill-before  the installer is killed and the command never runs
+#   kill-after   the command runs and the installer is killed as it returns
+#   hold-after   the command runs, then `held` appears in `$KILL_POINT_DIR`,
+#                and the call returns once `release` appears there
+#
+# A kill is SIGKILL, so no trap of the installer's runs and nothing it would do
+# next happens: what is left behind is what a crash at that point would leave.
+set -u
+
+name=${0##*/}
+count=0
+[[ ! -f $KILL_POINT_DIR/count ]] || read -r count <"$KILL_POINT_DIR/count"
+count=$((count + 1))
+printf '%s\n' "$count" >"$KILL_POINT_DIR/count"
+printf '%s %s' "$count" "$name" >>"$KILL_POINT_DIR/calls"
+printf ' %q' "$@" >>"$KILL_POINT_DIR/calls"
+printf '\n' >>"$KILL_POINT_DIR/calls"
+
+real=$(PATH=$KILL_POINT_PATH type -P -- "$name") || {
+    printf 'kill-point: no %s on the real PATH\n' "$name" >&2
+    exit 127
+}
+
+# A command run inside a subshell has that subshell for a parent, and the
+# subshell would carry on without the installer, so every process between this
+# one and the installer is killed with it. The installer goes first, so it never
+# sees one of its children die.
+kill_installer() {
+    local installer process parent ancestors=()
+    read -r installer <"$KILL_POINT_DIR/pid"
+    process=$PPID
+    while [[ $process != "$installer" ]] && ((process > 1)); do
+        ancestors+=("$process")
+        parent=$(PATH=$KILL_POINT_PATH ps -o ppid= -p "$process") || break
+        process=${parent//[[:space:]]/}
+    done
+    kill -KILL "$installer" 2>/dev/null
+    ((${#ancestors[@]} == 0)) || kill -KILL "${ancestors[@]}" 2>/dev/null
+    exit 137
+}
+
+if [[ $count != "${KILL_POINT_AT:-0}" ]]; then
+    exec "$real" "$@"
+fi
+case ${KILL_POINT_ACTION:-} in
+kill-before) kill_installer ;;
+kill-after)
+    "$real" "$@"
+    kill_installer
+    ;;
+hold-after)
+    status=0
+    "$real" "$@" || status=$?
+    : >"$KILL_POINT_DIR/held"
+    until [[ -e $KILL_POINT_DIR/release ]]; do
+        PATH=$KILL_POINT_PATH sleep 0.1
+    done
+    exit "$status"
+    ;;
+*)
+    printf 'kill-point: unknown action %s\n' "${KILL_POINT_ACTION:-}" >&2
+    exit 2
+    ;;
+esac

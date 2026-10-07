@@ -8,7 +8,7 @@ base.
 
 | Workflow | Owns |
 | --- | --- |
-| `rust-ci.yml` | Rust formatting on Linux; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS, and the Windows installer's tests under Windows PowerShell 5.1 and PowerShell 7; the rollback drill and its self-test on all five platforms |
+| `rust-ci.yml` | Rust formatting on Linux; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS and in a FreeBSD guest, and the Windows installer's tests under Windows PowerShell 5.1 and PowerShell 7; the rollback drill and its self-test on all five platforms |
 | `repo-checks.yml` | Deterministic cross-file repository policy |
 | `python-ci.yml` | Python canary and campaign harness syntax, fixtures and report validation |
 | `dependency-policy.yml` | Blocking Cargo usage, license, source and ban policy |
