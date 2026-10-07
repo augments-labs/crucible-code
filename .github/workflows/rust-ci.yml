@@ -7,6 +7,10 @@ on:
         description: Test on every platform, not only those a pull request waits for
         type: boolean
         default: true
+      docs-only:
+        description: The pull request changes only documentation, so macOS and Windows are left to its merge
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       all-platforms:
@@ -97,6 +101,7 @@ jobs:
 
   platform-tests:
     name: ${{ matrix.name }} tests ${{ matrix.shard }}/${{ matrix.shards }}
+    if: ${{ !inputs.docs-only }}
     runs-on: ${{ matrix.os }}
     # The macOS Intel tests have run 12 to 19 minutes in one job and gone past
     # 20 under load. The limit is there to catch a hang, not to time the suite.
@@ -163,6 +168,7 @@ jobs:
 
   platform-checks:
     name: ${{ matrix.name }} checks
+    if: ${{ !inputs.docs-only }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -234,7 +240,7 @@ jobs:
   # the cache the full run on dev saves.
   windows-arm64-build:
     name: Windows ARM64 build
-    if: ${{ !inputs.all-platforms }}
+    if: ${{ !inputs.all-platforms && !inputs.docs-only }}
     runs-on: windows-11-arm
     timeout-minutes: 30
     steps:
@@ -260,7 +266,8 @@ jobs:
           ${{ fromJSON(inputs.all-platforms && '[
           {"name": "Linux", "os": "ubuntu-latest"},
           {"name": "Windows x86_64", "os": "windows-latest"},
-          {"name": "Windows ARM64", "os": "windows-11-arm"}]' || '[
+          {"name": "Windows ARM64", "os": "windows-11-arm"}]' || inputs.docs-only && '[
+          {"name": "Linux", "os": "ubuntu-latest"}]' || '[
           {"name": "Linux", "os": "ubuntu-latest"},
           {"name": "Windows x86_64", "os": "windows-latest"}]') }}
     steps:
