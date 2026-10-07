@@ -210,10 +210,20 @@ fn amend(
 
 /// The newest indexed entries, newest first and at most `maximum`.
 pub(super) fn entries(directory: &Path, maximum: usize) -> Result<Vec<Entry>, SessionError> {
-    let path = named(directory);
-    let mut entries = read(&path)?.unwrap_or_default();
+    Ok(written(directory, maximum)?.unwrap_or_default())
+}
 
-    entries.truncate(maximum);
+/// The newest indexed entries, newest first and at most `maximum`, or `None`
+/// where no index has been written yet. Read without the lock and without
+/// writing, as [`entries`] is.
+pub(super) fn written(
+    directory: &Path,
+    maximum: usize,
+) -> Result<Option<Vec<Entry>>, SessionError> {
+    let mut entries = read(&named(directory))?;
+    if let Some(entries) = entries.as_mut() {
+        entries.truncate(maximum);
+    }
     Ok(entries)
 }
 
