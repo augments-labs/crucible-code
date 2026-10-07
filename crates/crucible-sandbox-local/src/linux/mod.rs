@@ -42,6 +42,7 @@ use crucible_sandbox::{
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 
+pub(crate) use broker::hold_broker_directory;
 pub(super) use projection::BoundedPublication;
 
 pub(super) fn probe(
