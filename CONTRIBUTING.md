@@ -117,6 +117,11 @@ scripts/sh/repo-checks.sh     # cross-file repository policy and crate layering
 scripts/sh/python-checks.sh   # harness fixtures, campaign reports and this version's release notes
 ```
 
+`scripts/sh/rust-checks.sh --only tests` runs one section, `--skip tests`
+every section but that one, and `--only tests --partition hash:1/4` the first
+quarter of the suite. CI spreads the gate over machines this way; run without
+arguments, it is the whole gate.
+
 `scripts/sh/repo-checks.sh` needs `python3` 3.11 or later: its crate-layering
 check reads Cargo manifests and configuration with the standard library's
 `tomllib`.
