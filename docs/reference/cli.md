@@ -276,9 +276,10 @@ passes here, and the next start refuses it.
 Checks whether this machine is ready to run a conversation, and stops. It is
 offline: nothing is sent to a provider, no account login is renewed, no
 backend, extension or server is started, and no file is written, not even to
-tighten one it reports as open. A stored credential is known by its name
-alone and never read, and no reason names a path or a value from the
-environment, so the report can be pasted into an issue whole.
+tighten one it reports as open. A stored credential is never used, renewed
+or shown: the store is read only for the names its credentials are held
+under, and no reason names a path or a value from the environment, so the
+report can be pasted into an issue whole.
 
 ```bash
 crucible doctor
@@ -311,8 +312,11 @@ changes:
 A check that rests on one which failed is `unavailable` and says what it
 rests on: with no configuration that reads, `credentials`, `provider`,
 `sandbox-policy` and `mcp` are, while the home, the store, the backend and
-the extensions are still looked at. `crucible --extensions`, `config check`
-and `sandbox inspect` say more about the checks that point to them.
+the extensions are still looked at. `extension-trust` is also `unavailable`
+when the user configuration file does not read, since what was decided about
+each extension is kept there; the extensions are still discovered.
+`crucible --extensions`, `config check` and `sandbox inspect` say more about
+the checks that point to them.
 
 It exits 0 when every check is `ok` or `unavailable`, 1 when any is a
 `warning` and none `failed`, and 2 when any `failed`. A problem it finds is
