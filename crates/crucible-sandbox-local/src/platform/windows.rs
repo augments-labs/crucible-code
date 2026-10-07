@@ -42,6 +42,8 @@ use windows_sys::Win32::System::JobObjects::{
     TerminateJobObject,
 };
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+#[cfg(test)]
+use windows_sys::Win32::System::Threading::SuspendThread;
 use windows_sys::Win32::System::Threading::{
     CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
 };
@@ -501,6 +503,38 @@ fn abandon(pipe: &ChildStdin, thread: &JoinHandle<()>) {
 
 fn lost() -> io::Error {
     io::Error::other("the command's pipe is no longer held here")
+}
+
+/// A thread kept off the processor until this is dropped, which lets a test
+/// tell a drop that waits for the thread from one that waits for nothing.
+///
+/// `SuspendThread` can return before the thread stops, but a thread parked in
+/// the kernel takes the suspension before it next runs code of its own.
+#[cfg(test)]
+pub(super) struct Suspended(HANDLE);
+
+#[cfg(test)]
+impl Suspended {
+    /// Suspends `thread`, borrowed from the join handle that owns it, which
+    /// must outlive the guard.
+    pub(super) fn new(thread: &JoinHandle<()>) -> io::Result<Self> {
+        let handle = thread.as_raw_handle() as HANDLE;
+        // SAFETY: the handle is owned by the borrowed join handle, opened with
+        // every access, and stays open while the caller keeps it.
+        if unsafe { SuspendThread(handle) } == u32::MAX {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Self(handle))
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for Suspended {
+    fn drop(&mut self) {
+        // SAFETY: the join handle that owns this handle outlives the guard.
+        unsafe { ResumeThread(self.0) };
+    }
 }
 
 #[cfg(test)]
