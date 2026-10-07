@@ -12,6 +12,11 @@
 //! where Linux refuses every thread and child the process asks for, so a list
 //! that started anything would fail to answer, and once with no limit at all,
 //! where a list that started the server would leave its file behind.
+//!
+//! Sessions are recorded by the session crate itself, asked something no list
+//! may repeat, and the home they are kept in is compared byte for byte before
+//! and after the list, so a list that resumed, appended to or indexed one would
+//! show.
 
 #![cfg(target_os = "linux")]
 #![allow(clippy::expect_used, clippy::panic)]
@@ -298,4 +303,167 @@ fn extensions_list_and_the_flag_it_replaces_print_the_same_list_and_start_nothin
         "{text}"
     );
     assert_eq!(tree(&scratch.home()), before, "a list wrote to the home");
+}
+
+/// What a recorded session was asked, which no list may say.
+const PROMPT: &str = "prompt-sentinel-never-listed";
+
+/// A session recorded in `root`, asked [`PROMPT`], with `title` saved over it
+/// where there is one.
+fn recorded(scratch: &Scratch, root: &Path, title: Option<&str>) -> String {
+    let logs = scratch.crucible().join("sessions");
+    let workspace = crucible_workspace::Workspace::open(root).expect("a workspace");
+    let session =
+        crucible_session::Session::start(&logs, &workspace, Some("main")).expect("a new session");
+    session.append(&crucible_types::Message::said(PROMPT));
+    let id = session.id().expect("a recorded session").clone();
+    drop(session);
+    if let Some(title) = title {
+        crucible_session::retitle(&logs, &id, title).expect("a saved title");
+    }
+    id.as_str().to_owned()
+}
+
+/// The one document `answered` wrote, read.
+fn document(answered: &Output) -> serde_json::Value {
+    let written = answered
+        .stdout
+        .strip_suffix(b"\n")
+        .unwrap_or_else(|| panic!("one line ending in a newline: {}", said(answered)));
+    assert!(!written.contains(&b'\n'), "{}", said(answered));
+    serde_json::from_slice(written).unwrap_or_else(|_| panic!("JSON: {}", said(answered)))
+}
+
+/// What a document holds at `pointer`, or a failure saying it holds nothing
+/// there.
+fn field<'a>(document: &'a serde_json::Value, pointer: &str) -> &'a serde_json::Value {
+    document
+        .pointer(pointer)
+        .unwrap_or_else(|| panic!("nothing at {pointer} in {document}"))
+}
+
+#[test]
+fn sessions_list_says_what_was_recorded_here_and_changes_nothing() {
+    let scratch = Scratch::new("sessions");
+    let elsewhere = scratch.0.join("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("another directory");
+    let titled = recorded(&scratch, &scratch.work(), Some("fix the parser"));
+    let plain = recorded(&scratch, &scratch.work(), None);
+    let other = recorded(&scratch, &elsewhere, None);
+    let before = tree(&scratch.home());
+
+    let text = asked(&scratch, &["sessions", "list"], false);
+    let json = asked(&scratch, &["sessions", "list", "--json"], false);
+
+    assert_eq!(tree(&scratch.home()), before, "a list wrote to the home");
+    for answered in [&text, &json] {
+        assert!(answered.status.success(), "{}", said(answered));
+        assert!(answered.stderr.is_empty(), "{}", said(answered));
+        let both = said(answered);
+        assert!(!both.contains(PROMPT), "{both}");
+        assert!(!both.contains(&other), "{both}");
+    }
+    let shown = String::from_utf8_lossy(&text.stdout);
+    assert!(shown.starts_with("2 sessions recorded for "), "{shown}");
+    assert!(
+        shown.contains(&format!(
+            "  {titled}  just now  1 message  on main  fix the parser\n"
+        )),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(&format!(
+            "  {plain}  just now  1 message  on main  untitled\n"
+        )),
+        "{shown}"
+    );
+
+    let document = document(&json);
+    assert_eq!(field(&document, "/format_version"), 1);
+    assert_eq!(field(&document, "/kind"), "sessions");
+    assert_eq!(field(&document, "/status"), "complete");
+    assert_eq!(field(&document, "/truncated"), false);
+    assert_eq!(field(&document, "/omitted"), 0);
+    let ids: Vec<&str> = field(&document, "/sessions")
+        .as_array()
+        .expect("a list of sessions")
+        .iter()
+        .map(|one| field(one, "/id").as_str().expect("an id"))
+        .collect();
+    assert_eq!(ids, [plain.as_str(), titled.as_str()]);
+    assert_eq!(field(&document, "/sessions/1/title/text"), "fix the parser");
+    assert_eq!(field(&document, "/sessions/1/branch/text"), "main");
+}
+
+#[test]
+fn a_session_directory_with_no_index_is_listed_as_incomplete() {
+    let scratch = Scratch::new("sessions-unindexed");
+    fs::create_dir_all(scratch.crucible().join("sessions")).expect("a session directory");
+    let before = tree(&scratch.home());
+
+    let json = asked(&scratch, &["sessions", "list", "--json"], false);
+
+    assert!(json.status.success(), "{}", said(&json));
+    let document = document(&json);
+    assert_eq!(field(&document, "/status"), "incomplete");
+    assert_eq!(field(&document, "/unindexed"), true);
+    assert_eq!(tree(&scratch.home()), before, "a list wrote an index");
+}
+
+#[test]
+fn a_session_index_that_does_not_read_fails_without_quoting_it_or_naming_it_in_the_document() {
+    let scratch = Scratch::new("sessions-malformed");
+    let logs = scratch.crucible().join("sessions");
+    fs::create_dir_all(&logs).expect("a session directory");
+    fs::write(logs.join("recent.sessions"), format!("{PROMPT}\n")).expect("an index");
+
+    let json = asked(&scratch, &["sessions", "list", "--json"], false);
+    let text = asked(&scratch, &["sessions", "list"], false);
+
+    assert_eq!(json.status.code(), Some(1), "{}", said(&json));
+    let document = document(&json);
+    assert_eq!(field(&document, "/format_version"), 1);
+    assert_eq!(field(&document, "/kind"), "sessions");
+    assert_eq!(field(&document, "/status"), "failed");
+    assert_eq!(
+        field(&document, "/problem/text"),
+        "the session index could not be read; standard error says why"
+    );
+    assert!(
+        !String::from_utf8_lossy(&json.stdout).contains(&*scratch.0.to_string_lossy()),
+        "{}",
+        said(&json)
+    );
+
+    assert_eq!(text.status.code(), Some(1), "{}", said(&text));
+    assert!(text.stdout.is_empty(), "{}", said(&text));
+    for answered in [&json, &text] {
+        let stderr = String::from_utf8_lossy(&answered.stderr);
+        assert!(
+            stderr.starts_with("crucible: could not use the session index "),
+            "{stderr}"
+        );
+        assert!(!said(answered).contains(PROMPT), "{}", said(answered));
+    }
+}
+
+#[test]
+fn a_sessions_list_asked_with_what_it_does_not_take_is_usage() {
+    let scratch = Scratch::new("sessions-usage");
+
+    for args in [
+        &["sessions", "list", "extra"][..],
+        &["sessions", "list", "--resume", "some-id"][..],
+        &["--continue", "sessions", "list"][..],
+        &["sessions"][..],
+    ] {
+        let answered = asked(&scratch, args, false);
+        assert_eq!(
+            answered.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            said(&answered)
+        );
+        assert!(answered.stdout.is_empty(), "{args:?}: {}", said(&answered));
+    }
 }

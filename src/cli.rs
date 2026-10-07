@@ -147,7 +147,12 @@ started in. Nearer wins; the command line is nearer than all of them.
 Sessions are written one file per session, and --continue picks up the most \
 recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
-/resume inside a session lists the rest.
+/resume inside a session lists the rest. sessions list says which sessions \
+were recorded for this directory, newest first, with when each started, how \
+many messages it holds, its branch and its saved title, and stops; --json \
+writes it as one JSON document instead. It reads the session index and the \
+first line of each log, so nothing anybody wrote in a session is shown, and \
+no session is opened, resumed or written to.
 
 extensions list says what is installed in ~/.crucible/extensions (or the \
 extensions directory under CRUCIBLE_CODE_HOME), with what each \
@@ -259,6 +264,22 @@ enum Command {
     Extensions {
         #[command(subcommand)]
         action: ExtensionsAction,
+    },
+    /// Say which sessions were recorded for this directory, without opening
+    /// any of them, and stop.
+    Sessions {
+        #[command(subcommand)]
+        action: SessionsAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionsAction {
+    /// List the sessions recorded for this directory, newest first, and stop.
+    List {
+        /// Print one JSON document to stdout instead of the human list.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -373,6 +394,11 @@ pub(crate) enum Fatal {
     #[error(transparent)]
     Inspection(crucible_app::sandbox::Unwritten),
 
+    /// A sessions list was made, and the document it would be written as
+    /// could not carry it.
+    #[error(transparent)]
+    Sessions(crucible_app::sessions::Unwritten),
+
     /// The terminal could not be drawn on.
     #[error(transparent)]
     Terminal(#[from] TerminalError),
@@ -482,6 +508,13 @@ pub(crate) fn start() -> ExitCode {
             };
         }
         (Some(Command::Mcp { action }), _, _) => declared(action),
+        (
+            Some(Command::Sessions {
+                action: SessionsAction::List { json },
+            }),
+            _,
+            _,
+        ) => recalled(*json),
         (
             Some(Command::Extensions {
                 action: ExtensionsAction::List,
@@ -660,6 +693,57 @@ fn declared(action: &McpAction) -> Result<(), Fatal> {
     };
     let _ = io::stdout().write_all(said.as_bytes());
     Ok(())
+}
+
+/// Writes the sessions recorded for this directory, and stops.
+///
+/// What is read, and why nothing a session recorded can reach the list, is
+/// [`crucible_app::sessions::list`]'s to say. Answered here rather than inside
+/// [`run`] for the reason [`listed`] gives: no session is started, resumed or
+/// appended to on the way.
+///
+/// A list that was made is written and the run succeeds, an incomplete one
+/// included, since what kept it from being whole is part of it. Where none
+/// could be made, `json` still writes one document, a failed one naming the
+/// step that stopped and no path, and the run ends with the whole error on
+/// standard error, as [`inspected`] does. The text escapes every word read
+/// from a file itself, so it is written as it stands.
+fn recalled(json: bool) -> Result<(), Fatal> {
+    use crucible_app::sessions::{Unmade, failure};
+
+    let listed = std::env::current_dir().map(|here| {
+        Home::find(&|name| std::env::var_os(name))
+            .map_err(AppError::from)
+            .and_then(|home| crucible_app::sessions::list(&here, &home))
+    });
+    if !json {
+        let listed = listed.map_err(Fatal::Here)??;
+        let now = std::time::SystemTime::now();
+        let said = listed.human(&|started| draw::when::ago(started, now));
+        let _ = io::stdout().write_all(said.as_bytes());
+        return Ok(());
+    }
+
+    let (written, ended) = match listed {
+        Err(why) => (failure(Unmade::Here), Err(Fatal::Here(why))),
+        Ok(Err(why)) => (failure(Unmade::Listing(&why)), Err(Fatal::App(why))),
+        Ok(Ok(listed)) => match listed.json() {
+            Ok(written) => (Ok(written), Ok(())),
+            Err(unwritten) => (
+                failure(Unmade::Unwritten(&unwritten)),
+                Err(Fatal::Sessions(unwritten)),
+            ),
+        },
+    };
+    match written {
+        Ok(written) => {
+            let _ = io::stdout().write_all(&written);
+            ended
+        }
+        // Only a failure's own document is left, and it is one sentence cut to
+        // its bound, which is always written; this is the refusal said anyway.
+        Err(unwritten) => ended.and(Err(Fatal::Sessions(unwritten))),
+    }
 }
 
 /// Writes the confinement a command here would run under, and stops.

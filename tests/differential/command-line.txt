@@ -19,6 +19,7 @@ Commands:
   auth        Say, store or remove the credentials crucible signs providers in with, offline but for a sign-in
   mcp         Say which MCP servers your configuration writes down, without starting any of them, and stop
   extensions  Say what is installed in crucible's extensions directory, without running any of it, and stop
+  sessions    Say which sessions were recorded for this directory, without opening any of them, and stop
   help        Print this message or the help of the given subcommand(s)
 
 Options:
@@ -52,7 +53,7 @@ There is no model built in. Left off, or given as a provider and a bare slash, t
 
 crucible keeps its own files in ~/.crucible (or the directory CRUCIBLE_CODE_HOME names), and reads config.json there, then .crucible/config.json and .crucible/config.local.json in the directory it was started in. Nearer wins; the command line is nearer than all of them.
 
-Sessions are written one file per session, and --continue picks up the most recent one for this directory. --resume picks up the exact session an id names instead; a quitting session prints its own id on the way out, and /resume inside a session lists the rest.
+Sessions are written one file per session, and --continue picks up the most recent one for this directory. --resume picks up the exact session an id names instead; a quitting session prints its own id on the way out, and /resume inside a session lists the rest. sessions list says which sessions were recorded for this directory, newest first, with when each started, how many messages it holds, its branch and its saved title, and stops; --json writes it as one JSON document instead. It reads the session index and the first line of each log, so nothing anybody wrote in a session is shown, and no session is opened, resumed or written to.
 
 extensions list says what is installed in ~/.crucible/extensions (or the extensions directory under CRUCIBLE_CODE_HOME), with what each manifest asks to be allowed to do and the digest crucible took over its bytes, and stops; --extensions is the same list. Nothing installed is run to produce that list, which is the point of being able to read it.
 
@@ -72,6 +73,7 @@ Commands:
   auth        Say, store or remove the credentials crucible signs providers in with, offline but for a sign-in
   mcp         Say which MCP servers your configuration writes down, without starting any of them, and stop
   extensions  Say what is installed in crucible's extensions directory, without running any of it, and stop
+  sessions    Say which sessions were recorded for this directory, without opening any of them, and stop
   help        Print this message or the help of the given subcommand(s)
 
 Options:

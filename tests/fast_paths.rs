@@ -2,9 +2,10 @@
 //! application's runtime.
 //!
 //! `--help` and `--version` are answered while the arguments are parsed, and
-//! `--extensions`, `extensions list`, `mcp list` and `config check` before
-//! anything a run is made of is opened. Shell completion, installers and somebody checking their files reach
-//! for them, and `bench-cli-exit` holds the first two to a startup budget. The
+//! `--extensions`, `extensions list`, `mcp list`, `sessions list` and
+//! `config check` before anything a run is made of is opened. Shell
+//! completion, installers and somebody checking their files reach for them,
+//! and `bench-cli-exit` holds the first two to a startup budget. The
 //! runtime is built the first time a run asks for it, and building it starts
 //! its threads, so a path that built it on the way would start threads.
 //!
@@ -120,6 +121,7 @@ fn every_fast_path_answers_without_starting_a_thread() {
         (&["--extensions"][..], "no extensions in"),
         (&["extensions", "list"][..], "no extensions in"),
         (&["mcp", "list"][..], "no MCP servers written down in"),
+        (&["sessions", "list"][..], "no sessions recorded for"),
         (&["config", "check"][..], "configuration valid"),
     ] {
         let answered = threadless(scratch.path(), crucible, args);
