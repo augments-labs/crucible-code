@@ -33,7 +33,8 @@
 //! makes durable across a crash of the process or the system on Linux and the
 //! BSDs, and on macOS through the full flush `std` asks for. Whether a file
 //! system keeps that promise across a loss of power is its own; the tests kill
-//! the process, not the machine.
+//! the process, not the machine. A switch made but not synced is reported
+//! apart from one not made, so the caller knows which release is active.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -120,6 +121,12 @@ pub enum ActivationError {
     /// The staged unit was not staged into this install.
     #[error("the staged release was staged for another install")]
     Foreign,
+    /// The active release was switched, but the switch could not be synced,
+    /// so a crash of the system may still undo it.
+    #[error(
+        "switched the active release, but could not make the switch durable; a crash of the system may undo it"
+    )]
+    Unsynced(#[source] io::Error),
     /// A step could not be taken.
     #[error("could not {step}")]
     Io {
@@ -222,7 +229,10 @@ impl RecoverableActivation {
     ///
     /// [`ActivationError`] when the unit is not whole, was staged for another
     /// install, or another build of its release is already in place, or when
-    /// a step cannot be taken. The active release is then the one that was.
+    /// a step cannot be taken. The active release is then the one that was,
+    /// except after [`ActivationError::Unsynced`]: the staged release is then
+    /// active, but a crash of the system may still make the one before active
+    /// again.
     pub fn activate(self, staged: StagedUnit) -> Result<Activated, ActivationError> {
         let prefix = self.layout.prefix();
         let releases = prefix.join(RELEASES);
@@ -300,7 +310,10 @@ impl Activated {
     ///
     /// [`ActivationError`] when the previous release is no longer whole or
     /// the same build, or when the switch cannot be made. The release just
-    /// activated is then still the active one.
+    /// activated is then still the active one, except after
+    /// [`ActivationError::Unsynced`]: the previous release is then active
+    /// again, but a crash of the system may still make the one just
+    /// activated active.
     pub fn roll_back(self) -> Result<(), ActivationError> {
         let version = self.previous.version();
         let unit = self.prefix.join(RELEASES).join(version.as_str());
@@ -320,7 +333,9 @@ impl Activated {
     }
 }
 
-/// Makes `version` the active release by renaming a new link over `current`.
+/// Makes `version` the active release by renaming a new link over `current`,
+/// and syncs the switch, which [`ActivationError::Unsynced`] says was made
+/// when it cannot be synced.
 fn switch(prefix: &Path, version: &Version) -> Result<(), ActivationError> {
     let step = ActivationStep::Switch;
     let next = prefix.join(format!("{NEXT_CURRENT}{}", std::process::id()));
@@ -330,7 +345,7 @@ fn switch(prefix: &Path, version: &Version) -> Result<(), ActivationError> {
         let _ = fs::remove_file(&next);
         return Err(ActivationError::Io { step, source });
     }
-    synced(&next, step)?;
+    sync(&next).map_err(ActivationError::Unsynced)?;
     crossed("switched the active release");
     Ok(())
 }
@@ -461,10 +476,14 @@ fn host() -> Vec<u8> {
 
 /// Makes the change to the name `at` durable by syncing its directory.
 fn synced(at: &Path, step: ActivationStep) -> Result<(), ActivationError> {
-    crucible_privacy::sync_parent(at).map_err(|error| ActivationError::Io {
-        step,
-        source: error.into_io(),
-    })
+    sync(at).map_err(|source| ActivationError::Io { step, source })
+}
+
+/// Syncs the directory holding the name `at`.
+fn sync(at: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    super::boundary::refuse_sync(at)?;
+    crucible_privacy::sync_parent(at).map_err(crucible_privacy::PrivacyError::into_io)
 }
 
 /// The refusal for a failure to take `step`.

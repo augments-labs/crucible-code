@@ -10,7 +10,7 @@ use flate2::write::GzEncoder;
 use sha2::{Digest as _, Sha256};
 use tar::{Builder, EntryType, Header};
 
-use super::super::boundary::{CROSSED, KILL_AT};
+use super::super::boundary::{CROSSED, KILL_AT, refusing_sync};
 use super::super::layout::{BROKER, CRUCIBLE, PREFIX, RECEIPT};
 use super::super::{Digest, Target};
 use super::*;
@@ -590,6 +590,78 @@ fn a_kill_at_every_boundary_of_a_rollback_leaves_one_whole_release_it_recovers_f
         boundaries(run),
         "the matrix does not kill at every boundary the rollback crosses"
     );
+}
+
+/// Stages the next release into `install` under its lock.
+fn staged(install: &Install) -> (RecoverableActivation, StagedUnit) {
+    let activation = RecoverableActivation::begin(&install.layout()).expect("the lock");
+    let (archive, checksums) = install.published(NEXT);
+    let next = Version::parse(NEXT.as_bytes()).expect("a version");
+    let staged = activation
+        .stage(&next, &archive, &checksums)
+        .expect("staged");
+    (activation, staged)
+}
+
+#[test]
+fn a_switch_that_cannot_be_synced_says_the_next_release_is_active() {
+    let install = Install::new("unsynced-switch");
+    let (activation, staged) = staged(&install);
+
+    refusing_sync(Some(install.prefix()));
+    let refused = activation.activate(staged);
+    refusing_sync(None);
+
+    assert!(
+        matches!(refused, Err(ActivationError::Unsynced(_))),
+        "{refused:?}"
+    );
+    assert_eq!(install.active(), NEXT);
+    assert_eq!(install.inconsistent(&[NEXT]), None);
+    assert_eq!(install.leftovers(), Vec::<String>::new());
+}
+
+#[test]
+fn a_rollback_whose_switch_cannot_be_synced_says_the_release_before_is_active() {
+    let install = Install::new("unsynced-rollback");
+    let (activation, staged) = staged(&install);
+    let activated = activation.activate(staged).expect("activated");
+
+    refusing_sync(Some(install.prefix()));
+    let refused = activated.roll_back();
+    refusing_sync(None);
+
+    assert!(
+        matches!(refused, Err(ActivationError::Unsynced(_))),
+        "{refused:?}"
+    );
+    assert_eq!(install.active(), ACTIVE);
+    assert_eq!(install.inconsistent(&[ACTIVE]), None);
+    assert_eq!(install.leftovers(), Vec::<String>::new());
+}
+
+#[test]
+fn a_release_moved_into_place_that_cannot_be_synced_is_not_activated() {
+    let install = Install::new("unsynced-place");
+    let (activation, staged) = staged(&install);
+
+    refusing_sync(Some(install.releases()));
+    let refused = activation.activate(staged);
+    refusing_sync(None);
+
+    assert!(
+        matches!(
+            refused,
+            Err(ActivationError::Io {
+                step: ActivationStep::Place,
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(install.active(), ACTIVE);
+    assert_eq!(install.inconsistent(&[ACTIVE]), None);
+    assert_eq!(install.leftovers(), Vec::<String>::new());
 }
 
 #[test]

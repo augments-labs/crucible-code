@@ -9,6 +9,10 @@
 //! moment it crosses a chosen boundary, once for each boundary there is, and
 //! hold what that process left to the same rule a person relies on: one whole
 //! release active, and an install the next update recovers.
+//!
+//! The tests can also have activation's sync of one directory refused on
+//! their own thread, standing in for a file system that cannot sync it,
+//! which a shipped build never does.
 
 /// Says that `boundary` has just been crossed.
 #[cfg(not(test))]
@@ -54,3 +58,30 @@ pub(super) const CROSSED: &str = "CRUCIBLE_TEST_UPDATE_CROSSED";
 /// The crossing, counted from one, at which the process kills itself.
 #[cfg(test)]
 pub(super) const KILL_AT: &str = "CRUCIBLE_TEST_UPDATE_KILL_AT";
+
+/// Refuses to sync the directory holding the name `at` when it is the one
+/// [`refusing_sync`] named on this thread, standing in for a file system
+/// that cannot sync it.
+#[cfg(test)]
+pub(super) fn refuse_sync(at: &std::path::Path) -> std::io::Result<()> {
+    UNSYNCABLE.with_borrow(|refused| match refused {
+        Some(refused) if at.parent() == Some(refused.as_path()) => Err(std::io::Error::other(
+            "the test refuses to sync this directory",
+        )),
+        _ => Ok(()),
+    })
+}
+
+/// Makes [`refuse_sync`] refuse `directory` on this thread from now on, or
+/// nothing with `None`.
+#[cfg(test)]
+pub(super) fn refusing_sync(directory: Option<std::path::PathBuf>) {
+    UNSYNCABLE.set(directory);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The directory this thread's test refuses to sync.
+    static UNSYNCABLE: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
