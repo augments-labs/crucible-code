@@ -56,9 +56,11 @@ pub fn written(path: &Path) -> String {
     plain.unwrap_or(&path).replace('\\', "/")
 }
 
-/// A path spelled the way one is written, which is the way it already is. A
-/// backslash here is a character in a filename rather than a separator, and
-/// anything minted from such a file has to keep it.
+/// A path spelled the way one is written, which is the way it already is
+/// unless part of it is not text: those bytes come out as the replacement
+/// character, as the module documentation says. A backslash here is a
+/// character in a filename rather than a separator, and anything minted from
+/// such a file has to keep it.
 #[cfg(not(windows))]
 #[must_use]
 pub fn written(path: &Path) -> String {
