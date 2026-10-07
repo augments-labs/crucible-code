@@ -1,7 +1,7 @@
 # Command line
 
 `crucible --help` prints the flags and the subcommands `sandbox`, `config`,
-`doctor` and `help`, under a longer introduction; `crucible -h` prints the same under the
+`doctor`, `auth` and `help`, under a longer introduction; `crucible -h` prints the same under the
 one-line introduction. Each subcommand has its own help, such as `crucible
 config --help` and `crucible sandbox setup --help`, and `crucible help` and
 `crucible help <command>` print the same pages. `crucible --version` (or `-V`)
@@ -329,6 +329,103 @@ with `format_version` 1, `kind` `doctor`, `status` (`healthy`, `warnings` or
 `failed`), a `truncated` flag and `checks`, each with its `id`, `status`,
 `reason` and, for anything but `ok`, a `remedy`.
 
+## Credentials from the command line
+
+`crucible auth` says, stores and removes the credentials a launch signs
+providers in with, outside any session. Each command takes a provider, such as
+`anthropic`, or the name a `/login` row stores its credential under, such as
+`moonshot@kimi.ai` ([Providers](../providers/providers.md) lists the rows).
+A word that names neither is refused with the names this build serves, and the
+run ends 1. A key is never an argument: a word an `auth` command does not take
+is refused without being repeated, in case it was one, and the run ends 2.
+
+### `auth status [PROVIDER] [--json]`
+
+Says which credential a launch would sign each provider in with, or the one
+named, by the rule a start uses: a deliberately signed-in account, then the
+provider's variable, then a stored API key. It is offline: nothing is sent, no
+account login is renewed, the store's lock is not taken and nothing is
+written. The store is read for the names and lapse times its credentials are
+held under and never for a value, and a variable is only asked whether it is
+set.
+
+```bash
+crucible auth status
+crucible auth status openai --json
+```
+
+Each provider is `configured` (a launch would sign it in), `absent` (a launch
+would find nothing), `expired` (its stored account login's access has lapsed;
+a launch renews it where the account still allows, which only the vendor can
+say) or `unverified` (the store or the user configuration file could not be
+read, or an account login holds no lapse time, so it could not be settled).
+Whether a vendor accepts any credential is never checked, and the report says
+so.
+
+It exits 0 when every provider was settled, and 1 when one could not be or
+when the provider named has nothing to sign in with. `--json` prints one JSON
+document on one line to standard output instead of the report, with
+`format_version` 1, `kind` `auth-status`, `status` (`complete`, `incomplete`
+or `failed`), `acceptance` `unchecked`, a `problem` sentence or null, a
+`truncated` flag, and `providers`, each with its `provider`, `state`,
+`source` (`environment`, `stored-key`, `account` or null), the `variable` it
+reads a key from with `variable_set` and `variable_configured` (whether
+`apiKeyEnv` named it), `base_url_configured`, what is `stored` for it by
+`name`, `kind` and `expires_at` (seconds since the Unix epoch, or null), and a
+`reason`. A run that settled nothing, such as one naming a provider nobody
+serves, still writes a `failed` document, and says why on standard error.
+
+### `auth login PROVIDER [--api-key-stdin]`
+
+Stores a key, or signs in to an account, through the route `/login` takes,
+and says under which name it was stored.
+
+```bash
+printf '%s\n' "$KEY" | crucible auth login anthropic --api-key-stdin
+crucible auth login openai
+```
+
+`--api-key-stdin` reads one key from a pipe: at most 16 KiB, with the
+whitespace around it set aside, and a longer one is refused rather than cut.
+Standard input that is a terminal is refused, since it would show the key as
+it is typed. The key is checked against its row the way the key box checks it
+and written under the row's stored name, replacing the provider's other stored
+credential as `/login` does. Nothing is sent to check it. Where the provider's
+variable is set, the line after says a launch uses the variable first, and
+where a vendor may use what it is sent, that crucible asks before the first
+request.
+
+Without the flag, in a terminal, a key row asks for the key at a prompt that
+does not show it, and an account row signs in the way `/login` does: OpenAI's
+by browser or by device code, Kimi's by device code, with the page to visit and
+any code written to standard error and the browser opened where it can be.
+Where the provider's `baseUrl` is set, the line after says a launch does not
+use the account while it is. A name that is both, such as `openai`, asks
+which. A sign-in whose vendor may use what it is sent shows the vendor's words
+and asks first, and nothing reaches the vendor before a yes. With no terminal to ask on, the run says what to run
+instead and ends 1 rather than waiting.
+
+It exits 0 once the credential is stored and 1 when nothing was: a key that
+does not fit, a sign-in that failed or was declined, or a store that could not
+be written. A login never signs another provider in.
+
+### `auth logout PROVIDER`
+
+Takes every credential crucible stored for the provider out of its store, in
+one write under the lock a renewal holds, and leaves every other provider and
+every name this build has no row for as they were. The yes given to a
+vendor's terms for that sign-in goes with it, as it does for `/logout`.
+
+```bash
+crucible auth logout anthropic
+```
+
+A variable that still holds a key is the shell's, not crucible's, and is never
+touched: the run names it and says to unset it there. It exits 0 once the
+provider's credentials are out of the store, or when it held none, and 1 when
+the store could not be changed, such as while another crucible is writing it,
+in which case nothing was.
+
 ## Windows sandbox maintenance
 
 Native confinement on Windows needs a local account and firewall policy that
@@ -418,9 +515,9 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, and a `doctor` with nothing to warn about end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold, and a `sandbox inspect` that could not be made, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. |
-| 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error. `--help` and `--version` are the parser's too, and end 0. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, a `doctor` with nothing to warn about, an `auth status` that settled every provider, and an `auth login` or `auth logout` that changed the store end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold, and a `sandbox inspect` that could not be made, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider or found nothing for the one named, with its report on standard output, and an `auth` command given a provider nobody serves. |
+| 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
 
 Flags that exclude each other are refused with a line saying one `cannot be
