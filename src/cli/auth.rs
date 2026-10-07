@@ -26,7 +26,9 @@ use std::io::{self, BufRead as _, IsTerminal as _, Read as _, Write as _};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crucible_app::auth::{self, Desk, Login, MAX_SECRET, Refused, Secret, Signed, Signer, Way};
+use crucible_app::auth::{
+    self, Desk, Login, MAX_SECRET, Refused, SURROUNDING, Secret, Signed, Signer, Way,
+};
 use crucible_app::content_use::Warned;
 use crucible_config::Home;
 use crucible_tui::{Key, Pressed, Raw};
@@ -276,19 +278,22 @@ fn hidden(shown: &str) -> Result<Option<String>, Unstored> {
 /// What `presses` type before Enter, or `None` where they leave with Esc,
 /// Ctrl-C or Ctrl-D.
 ///
-/// Held to one byte past [`MAX_SECRET`]. What arrives past that is not kept,
-/// and the key it belonged to is refused as too long when Enter is pressed,
-/// even after Backspace: the whitespace a trim would set aside may have made
-/// room, and what is held then is a key cut to fit, not the one typed.
+/// Held to the room `--api-key-stdin` gives a key: [`MAX_SECRET`] bytes and
+/// [`SURROUNDING`] more for the whitespace around it, so a key at the bound
+/// pasted with a line break or spaces on either side is taken. What arrives
+/// past that is not kept, and the key it belonged to is refused as too long
+/// when Enter is pressed, even after Backspace: the whitespace a trim would
+/// set aside may have made room, and what is held then is a key cut to fit,
+/// not the one typed.
 fn typing<E: std::fmt::Display>(
     presses: impl IntoIterator<Item = Result<Pressed, E>>,
 ) -> Result<Option<String>, String> {
-    let room = MAX_SECRET.saturating_add(1);
+    let room = MAX_SECRET.saturating_add(SURROUNDING);
     let mut typed = String::new();
     let mut overflowed = false;
     for pressed in presses {
         match pressed {
-            Ok(Pressed::Key(Key::Enter)) if overflowed => {
+            Ok(Pressed::Key(Key::Enter)) if overflowed || typed.len() > room => {
                 return Err(Refused::Oversized.to_string());
             }
             Ok(Pressed::Key(Key::Enter)) => return Ok(Some(typed)),
