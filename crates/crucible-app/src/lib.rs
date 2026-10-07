@@ -20,11 +20,17 @@
 //! command line may not: the few concrete names it still spells are a list the
 //! repository checks hold, and only let shrink.
 //!
+//! The login store is also reached outside any conversation, by [`auth`]:
+//! `crucible auth status`, `login` and `logout` read and change it through
+//! the routes `/login` and `/logout` take, and are local commands rather than
+//! requests of the client contract.
+//!
 //! Nothing in here reads the environment or the disk on its own account
 //! except through a parameter it was handed: the lookup, the home, the
 //! workspace. That is what lets a startup be failed every way it can fail
 //! without a key or a home directory anywhere near the test.
 
+pub mod auth;
 pub mod branching;
 pub mod client;
 pub mod content_use;
