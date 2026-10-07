@@ -512,6 +512,15 @@ impl WriterOwner {
             .lock()
             .is_ok_and(|owned| owned.thread.as_ref().is_some_and(WriterThread::finished))
     }
+
+    /// What `act` makes of the thread a writer was started on, while it is
+    /// held here unjoined.
+    #[cfg(all(test, windows))]
+    pub(crate) fn with_thread<T>(&self, act: impl FnOnce(&JoinHandle<()>) -> T) -> Option<T> {
+        let owned = self.0.lock().ok()?;
+        let thread = owned.thread.as_ref()?.shared.thread.lock().ok()?;
+        thread.as_ref().map(act)
+    }
 }
 
 impl std::fmt::Debug for WriterOwner {
