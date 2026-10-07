@@ -950,7 +950,7 @@ pub(crate) struct Fixed {
 }
 
 impl Fixed {
-    /// A read-only tool that succeeds.
+    /// A read-only tool that succeeds, and whose calls name no path.
     pub(crate) fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -959,7 +959,7 @@ impl Fixed {
             problem: None,
             cancels: false,
             sensitivity: Sensitivity::ReadOnly {
-                target: Target::unresolved(),
+                target: Target::pathless(),
             },
             diff: None,
             writes: Vec::new(),
@@ -1130,7 +1130,7 @@ impl Tool for Typing {
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
-            target: Target::unresolved(),
+            target: Target::pathless(),
         }
     }
 
@@ -1153,11 +1153,13 @@ impl Tool for Typing {
 /// A call that gets the user asked: a change to a file, which no mode waves
 /// through except `fullAccess`.
 ///
-/// The target is one nothing resolved, so no rule written about a path matches
-/// it and what the tests here exercise is the loop rather than the matcher.
+/// The target names no path, so no rule written about a path matches it and
+/// what the tests here exercise is the loop rather than the matcher. A yes for
+/// the session is remembered by the tool, which the loop's tests about
+/// remembered answers depend on.
 pub(crate) fn changing() -> Sensitivity {
     Sensitivity::MutatesFile {
-        target: Target::unresolved(),
+        target: Target::pathless(),
     }
 }
 

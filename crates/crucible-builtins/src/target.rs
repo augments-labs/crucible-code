@@ -17,7 +17,9 @@
 //! Anything that does not resolve becomes [`Target::unresolved`], which no rule
 //! matches. The call is asked about and then refused by the tool a moment
 //! later; what this buys is that it is never *allowed* by a rule somebody wrote
-//! about somewhere else.
+//! about somewhere else, and that a yes to it is never remembered for the next.
+//! A tool whose calls name no path at all says so with [`Target::pathless`]
+//! instead, and is never built here.
 
 use crucible_tools::{Approved, Sensitivity, Target};
 use crucible_types::ToolArgs;
@@ -116,6 +118,9 @@ fn agrees(approved: &Approved, requested: &str, now: &Target) -> Result<(), Stri
         }
     };
 
+    // A verdict about a path that named no file has none to hold this one to.
+    // One about a call naming no path is not about a file either, so a file
+    // found now is never the one it named.
     if *named == Target::unresolved() || named == now {
         Ok(())
     } else {

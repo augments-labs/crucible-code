@@ -308,10 +308,10 @@ impl Tool for TodoWrite {
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         // Not a file and not a process: what this changes is a value inside
-        // this process, and the target that resolves to nothing is the honest
-        // answer to what a rule could be written about.
+        // this process, and a target naming no path is the honest answer to
+        // what a rule could be written about.
         Sensitivity::ReadOnly {
-            target: Target::unresolved(),
+            target: Target::pathless(),
         }
     }
 
@@ -863,7 +863,7 @@ mod tests {
         assert_eq!(
             sensitivity,
             Sensitivity::ReadOnly {
-                target: Target::unresolved()
+                target: Target::pathless()
             }
         );
     }

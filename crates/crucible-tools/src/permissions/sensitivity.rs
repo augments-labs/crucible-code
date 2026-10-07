@@ -20,8 +20,8 @@ use crucible_workspace::{Workspace, WorkspacePath, written};
 pub enum Sensitivity {
     /// Changes nothing a rule could be written about. Reading a file is the
     /// usual case and the one the wording is drawn from; a call that only moves
-    /// something this session is holding is the other, and carries a target
-    /// that resolves to nothing because there is no path in it to name.
+    /// something this session is holding is the other, and carries
+    /// [`Target::pathless`] because there is no path in it to name.
     ///
     /// No mode prompts about one — a question nobody can act on is a question
     /// nobody reads — so the only way one reaches the user is an `ask` rule
@@ -139,7 +139,24 @@ impl fmt::Display for Host {
 /// Which of them a particular target holds is a `Wanted`, because one of
 /// these is built per file a walk reaches rather than per call.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Target(Option<Named>);
+pub struct Target(Held);
+
+/// What a target holds: a path, a path that could not be resolved, or no path
+/// because the call names none.
+///
+/// The last two match the same rules, which is only a blanket, and read the
+/// same in a question. They are told apart for a session-long yes: a call
+/// naming no path is the same call every time it is made, and a path that did
+/// not resolve could be any file at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Held {
+    /// A path the workspace resolved.
+    Named(Named),
+    /// A path the call asked for that the workspace could not resolve.
+    Unresolved,
+    /// No path: the call acts on nothing on disk.
+    Pathless,
+}
 
 /// A path that resolved, in the spellings something was going to read.
 ///
@@ -149,7 +166,7 @@ pub struct Target(Option<Named>);
 /// will read it, and why a target built with less than [`Wanted::BOTH`] goes
 /// straight to those patterns and is not kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Named {
+pub(super) struct Named {
     absolute: Option<Box<str>>,
     below_root: Option<Box<str>>,
 }
@@ -274,7 +291,7 @@ impl Target {
                 if below.is_empty() { ".".into() } else { below }
             });
 
-        Self(Some(Named {
+        Self(Held::Named(Named {
             absolute,
             below_root,
         }))
@@ -289,7 +306,7 @@ impl Target {
     /// a path outside every root has no spelling below one.
     #[must_use]
     pub fn outside(path: &WorkspacePath) -> Self {
-        Self(Some(Named {
+        Self(Held::Named(Named {
             absolute: Some(written(path.as_path()).into()),
             below_root: None,
         }))
@@ -301,24 +318,46 @@ impl Target {
     /// No rule matches it, so the mode's default arm decides and the call is
     /// asked about rather than waved through. The tool refuses it moments
     /// later anyway; what this buys is that it is never *allowed* by a rule
-    /// written about somewhere else.
+    /// written about somewhere else. A yes to it is never remembered, because
+    /// it names no file a later call could be the same as.
     #[must_use]
     pub fn unresolved() -> Self {
-        Self(None)
+        Self(Held::Unresolved)
+    }
+
+    /// The call names no path at all, by design: it acts on a value inside
+    /// this process, such as a plan or a background command's output.
+    ///
+    /// Not [`Self::unresolved`], although no rule but a blanket matches
+    /// either: nothing here failed to resolve. A session-long yes to such a
+    /// call is remembered for the tool, since every call of it is about the
+    /// same nothing.
+    #[must_use]
+    pub fn pathless() -> Self {
+        Self(Held::Pathless)
+    }
+
+    /// What this target holds.
+    pub(super) fn held(&self) -> &Held {
+        &self.0
     }
 
     /// The resolved path, absolute, when it was one of the spellings asked
     /// for.
     pub(super) fn absolute(&self) -> Option<&str> {
-        self.0.as_ref().and_then(|named| named.absolute.as_deref())
+        match &self.0 {
+            Held::Named(named) => named.absolute.as_deref(),
+            Held::Unresolved | Held::Pathless => None,
+        }
     }
 
     /// The resolved path relative to the workspace root, when it is under it
     /// and was one of the spellings asked for.
     pub(super) fn below_root(&self) -> Option<&str> {
-        self.0
-            .as_ref()
-            .and_then(|named| named.below_root.as_deref())
+        match &self.0 {
+            Held::Named(named) => named.below_root.as_deref(),
+            Held::Unresolved | Held::Pathless => None,
+        }
     }
 }
 
@@ -328,7 +367,7 @@ impl Target {
     /// about resolving. Not available outside them: a target that reached the
     /// engine without a workspace proving it would be the model's own text.
     pub(crate) fn at(absolute: &str, below_root: Option<&str>) -> Self {
-        Self(Some(Named {
+        Self(Held::Named(Named {
             absolute: Some(absolute.into()),
             below_root: below_root.map(Into::into),
         }))
@@ -339,8 +378,10 @@ impl fmt::Display for Target {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // The shorter spelling is the one the user recognises, and the prompt
         // is where recognition matters. Every target a prompt is given holds
-        // both, so the last arm is the path that did not resolve rather than
-        // one that was spelled sparingly.
+        // both, so the last arm is a path that did not resolve, or none, rather
+        // than one that was spelled sparingly. That arm reads the same for
+        // every such call, which is why this is never what an answer about a
+        // file is remembered by.
         match self.below_root().or_else(|| self.absolute()) {
             Some(shown) => f.write_str(shown),
             None => f.write_str("a path it could not resolve"),
