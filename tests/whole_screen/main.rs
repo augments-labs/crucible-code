@@ -1430,6 +1430,7 @@ fn the_queue_ctrl_s_holds_back_still_answers_its_keys_and_keeps_what_is_typed_fo
     );
     window.types_and_catches("\r", "2 queued");
 
+    vendor.ends_the_turn();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
     while !window.recorded().contains(WAITING[3]) {
         assert!(
@@ -1577,6 +1578,7 @@ fn a_prompt_waiting_while_the_reader_walks_the_panel_is_taken_by_the_turn() {
 
     window.types_and_catches("\x1b[B", "2 queued");
 
+    vendor.ends_the_turn();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
     while !window.recorded().contains(WAITING[1]) {
         assert!(
@@ -3416,8 +3418,26 @@ fn expanded_results_use_the_configured_wheel_speed() {
             writeln!(text, "wheel line {at:03}").unwrap();
         }
         std::fs::write(window.workspace().join("wheel.txt"), text).unwrap();
-        window.types_until("read the file\r", "Ready to inspect.");
-        window.types("\x0f");
+        if during {
+            // Opened under the turn, which then ends beneath it: what follows
+            // is read off the view the turn left standing.
+            window.types_and_catches("read the file\r", "Ready to inspect.");
+            window.types_and_catches("\x0f", "esc to close");
+            window.catches_where(
+                "the view opened",
+                "the view under the running turn",
+                |picture| picture.contains("esc to close") && picture.contains("esc to interrupt"),
+            );
+            vendor.ends_the_turn();
+            window.catches_where(
+                "the turn ended",
+                "the view standing with no working row over it",
+                |picture| picture.contains("esc to close") && !picture.contains("esc to interrupt"),
+            );
+        } else {
+            window.types_until("read the file\r", "Ready to inspect.");
+            window.types("\x0f");
+        }
         let initial = window.picture();
         window.types(&"\x1b[B".repeat(speed));
         let arrows = window.picture();

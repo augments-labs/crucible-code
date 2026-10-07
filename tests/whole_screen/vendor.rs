@@ -26,6 +26,8 @@
 
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -62,8 +64,9 @@ const PINGING: Duration = Duration::from_millis(250);
 ///
 /// Enough at [`PINGING`] to outlast the steps a case takes after that, and no
 /// more: the thread stops the moment crucible is gone, because the write it is
-/// on fails and `answer` returns. A case that waits them out sees the turn end
-/// the way a whole answer ends.
+/// on fails and `answer` returns. A case that needs the turn over says so with
+/// [`Vendor::ends_the_turn`] rather than waiting them out, so this is a ceiling
+/// on a case that forgot to, not a pace any case runs at.
 const HOLDING: usize = 40;
 
 /// How many hold a turn open for a case that queues five prompts behind it
@@ -80,6 +83,9 @@ pub(crate) struct Vendor {
     address: String,
     /// The thread answering them, joined on the way out.
     serving: Option<JoinHandle<()>>,
+    /// Whether the case has said a held turn is over, which every hold, the
+    /// one under way and any after it, ends at.
+    ended: Arc<AtomicBool>,
 }
 
 impl Vendor {
@@ -215,6 +221,8 @@ impl Vendor {
             .expect("the port that was bound")
             .port();
 
+        let ended = Arc::new(AtomicBool::new(false));
+        let ending = Arc::clone(&ended);
         let serving = thread::spawn(move || {
             // Every connection, not one: crucible opens a fresh one per
             // request, and a case that takes two would otherwise hang on the
@@ -222,7 +230,7 @@ impl Vendor {
             let mut asked = 0;
             while let Ok((connection, _)) = listener.accept() {
                 if let Some(body) = bodies.get(asked).or_else(|| bodies.last()) {
-                    answer(connection, body);
+                    answer(connection, body, &ending);
                 }
                 asked += 1;
             }
@@ -231,7 +239,19 @@ impl Vendor {
         Self {
             address: format!("http://127.0.0.1:{port}/v1/messages"),
             serving: Some(serving),
+            ended,
         }
+    }
+
+    /// Ends the turn being held open now, and every one held after it as soon
+    /// as its answer is whole.
+    ///
+    /// For a case that goes on to what happens once the turn is over. Waiting
+    /// out the keep-alives would get there too, but at a pace set by how long a
+    /// loaded machine might need for the steps before, which an idle one then
+    /// spends standing still.
+    pub(crate) fn ends_the_turn(&self) {
+        self.ended.store(true, Ordering::Release);
     }
 
     /// What `providers.anthropic.baseUrl` is set to for this case.
@@ -253,8 +273,9 @@ impl Drop for Vendor {
     }
 }
 
-/// Reads one request whole and writes the canned response back.
-fn answer(mut connection: TcpStream, body: &[String]) {
+/// Reads one request whole and writes the canned response back, leaving out
+/// whatever keep-alives are left once `ended` is set.
+fn answer(mut connection: TcpStream, body: &[String], ended: &AtomicBool) {
     // Read to the end of the headers, keeping the one field that says how much
     // follows them.
     let mut reading = BufReader::new(connection.try_clone().expect("a second handle"));
@@ -292,6 +313,9 @@ fn answer(mut connection: TcpStream, body: &[String]) {
     }
 
     for event in body {
+        if event == PINGED && ended.load(Ordering::Acquire) {
+            continue;
+        }
         if connection.write_all(event.as_bytes()).is_err() {
             return;
         }
