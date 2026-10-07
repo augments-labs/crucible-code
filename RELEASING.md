@@ -72,8 +72,8 @@ same way afterwards.
    probe with the reason written next to it, so the next person inherits a
    number somebody chose.
 4. **The changelog is real.** Each change since the last release left its
-   entry in a file of its own under `changelog.d/`, and `CHANGELOG.md` is
-   edited by this commit alone.
+   entry in a file of its own in this checkout's `changelog.d/`, which git
+   ignores, and `CHANGELOG.md` is edited by this commit alone.
    `python3 scripts/python/changelog-entries.py assemble --version X --date D`
    writes the version section with today's date from those files and deletes
    them; it refuses, changing nothing, when there is none, an entry or
@@ -328,7 +328,7 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    is unstable for the whole 0.x line — an editor is a hint, and the program is
    the authority.
 3. Leave `Unreleased` empty: `assemble` wrote the section beneath it, and
-   the next change on `dev` writes its entry under `changelog.d/`.
+   the next change merged into `dev` leaves its entry in `changelog.d/`.
 4. Point the rollback drill at the release just published, on `dev`: the tag
    in `scripts/sh/rollback-drill.sh`, which its self-test and CI read, and the
    sentence in `docs/building/building.md` that names it. The drill proves the
@@ -378,6 +378,6 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
 Yank is not available for a binary distribution, so:
 
 1. Mark the GitHub Release as a pre-release so it stops being "latest".
-2. Add a `### Removed` entry under `changelog.d/` saying what was wrong and
+2. Add a `### Removed` entry to `changelog.d/` saying what was wrong and
    which version supersedes it; the replacement's section carries it.
 3. Ship the replacement the same day if the defect risks data or credentials.

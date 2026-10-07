@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Changelog entries kept one file per change, and the section built from them.
 
-A pull request writes its entry to `changelog.d/<name>.md` instead of editing
-`CHANGELOG.md`, so two pull requests open at once never edit the same lines,
-and only a release commit writes the changelog. An entry file is one of the
-headings in `HEADINGS`, an empty line, and one or more list items, the first
-opening with a bold lead; it holds no other heading and is at most 4096
-bytes. `changelog.d/README.md` says so to whoever opens the directory and
-is the one file there that is not an entry.
+An entry is `changelog.d/<name>.md` in the checkout releases are cut from,
+which git ignores: entries are drafts for whoever writes the release, so no
+change carries one and only a release commit writes the changelog. An entry
+file is one of the headings in `HEADINGS`, an empty line, and one or more list
+items, the first opening with a bold lead; it holds no other heading and is at
+most 4096 bytes. `CONTRIBUTING.md` says so to whoever writes one.
 
-`check` holds every entry file to that shape and `## [Unreleased]` to staying
-empty, since an entry written there by hand is the conflict the directory
-exists to prevent. `assemble` writes a version section from the entries,
+`check` holds every entry file to that shape, where the directory exists at
+all, and `## [Unreleased]` to staying empty, since an entry written there by
+hand is a change editing the changelog. `assemble` writes a version section from the entries,
 directly under the empty `## [Unreleased]`, headings in the order of
 `HEADINGS` and entries under one heading in byte order of their names, then
 deletes the entry files. It writes the lists alone: the summary above them and the
@@ -31,7 +30,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 HEADINGS = ("Added", "Changed", "Fixed", "Removed", "Security", "Documentation", "Internal")
 ENTRIES = "changelog.d"
-README = "README.md"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]*\.md")
 MAX_BYTES = 4096
 VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]*")
@@ -95,8 +93,6 @@ def entries(root: pathlib.Path) -> tuple[list[tuple[str, bytes]], list[str]]:
     if not folder.is_dir():
         return found, problems
     for path in sorted(folder.iterdir(), key=lambda path: path.name.encode()):
-        if path.name == README:
-            continue
         label = f"{ENTRIES}/{path.name}"
         if not path.is_file() or path.is_symlink():
             problems.append(f"{label}: is not a regular file; {ENTRIES} holds only entry files")

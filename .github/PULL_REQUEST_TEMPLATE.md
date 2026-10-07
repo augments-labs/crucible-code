@@ -71,7 +71,10 @@ cannot recover from the diff alone.
   data or hot-path allocation.
 - Required-case obligations: every `body_sha256` in
   `scripts/required-cases.json` this change rewrites, and why the obligation
-  still holds. -->
+  still holds.
+- Changelog: the entry for a user-visible change, in the shape
+  `CONTRIBUTING.md` gives. It is never committed; whoever merges writes it to
+  `changelog.d/`. -->
 
 ## Prior PRs and issues
 
@@ -114,9 +117,9 @@ run it. -->
       updated where this change made a sentence false.
 - [ ] Nothing shipped under `src/`, `crates/`, `docs/` or `schema/` carries an
       internal planning identifier or a harness path.
-- [ ] The `changelog.d/` entry, the affected user documentation, the
-      first-run README surface and contributor setup were updated in this
-      same change, or nothing user-visible moved.
+- [ ] The affected user documentation, the first-run README surface and
+      contributor setup were updated in this same change, and the changelog
+      entry is given under the surfaces above, or nothing user-visible moved.
 
 ## New dependency (required only if this PR adds or widens one)
 
