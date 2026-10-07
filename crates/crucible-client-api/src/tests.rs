@@ -189,6 +189,9 @@ const INSPECTION_KEYS: [&str; 31] = [
     "unix_sockets",
 ];
 
+/// The field names of the doctor's report that no other value carries.
+const DOCTOR_KEYS: [&str; 3] = ["checks", "reason", "remedy"];
+
 /// What a field name may not say, whatever else it says.
 ///
 /// A field called any of these is a field holding authority: a secret, a place
@@ -908,6 +911,16 @@ fn specimens() -> Vec<Specimen> {
         });
     }
 
+    for one in doctor::tests::reports(&marked()) {
+        let frame = one.encode().unwrap();
+        assert_eq!(doctor::Report::decode(&frame).unwrap(), one);
+        all.push(Specimen {
+            what: format!("doctor {}", one.status()),
+            debug: format!("{one:?}"),
+            frame,
+        });
+    }
+
     all
 }
 
@@ -1220,6 +1233,29 @@ fn inspection_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
     }
 }
 
+/// Every arm of a doctor's check, and its remedy with and without, as `seen`
+/// counts them.
+fn doctor_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
+    use doctor::Status;
+
+    for report in doctor::tests::reports(&marked()) {
+        for check in report.checks {
+            let arm = match check.status {
+                Status::Ok => (0, 4),
+                Status::Warning => (1, 4),
+                Status::Failed => (2, 4),
+                Status::Unavailable => (3, 4),
+            };
+            seen.insert(("doctor.status".to_owned(), arm.0, arm.1));
+            seen.insert((
+                "doctor.remedy".to_owned(),
+                usize::from(check.remedy.is_some()),
+                2,
+            ));
+        }
+    }
+}
+
 /// Fails unless `seen` holds every arm `0..of` for each name in it.
 fn whole(seen: &BTreeSet<(String, usize, usize)>) {
     for (what, _, of) in seen {
@@ -1309,6 +1345,7 @@ fn every_arm_that_crosses_has_a_specimen() {
         seen.insert(("decision".to_owned(), arm, of));
     }
     inspection_arms(&mut seen);
+    doctor_arms(&mut seen);
     for snapshot in snapshots() {
         if let Some(pending) = &snapshot.pending {
             let (arm, of) = pending_arm(pending);
@@ -1328,6 +1365,7 @@ fn no_value_that_crosses_names_a_field_for_a_secret_a_path_or_a_handle() {
         .into_iter()
         .chain(MORE_KEYS)
         .chain(INSPECTION_KEYS)
+        .chain(DOCTOR_KEYS)
         .collect();
     for word in &allowed {
         for stem in FORBIDDEN {
@@ -2106,7 +2144,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (3, 6_243_350_492_112_149_509),
+        (3, 14_318_635_380_701_603_224),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

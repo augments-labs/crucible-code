@@ -5,9 +5,10 @@
 //! be written down: a [`Request`] carrying one [`Command`], the [`Response`]
 //! carrying what came of it, the [`Snapshot`] of what is now true, the
 //! [`Progress`] that is only true so far, and the [`Pending`] action a turn
-//! stops on until a [`Decision`] naming it arrives. Beside them is one report
-//! no request asks for: the [`inspection`] a script reads from
-//! `crucible sandbox inspect --json`, held to the same bounds.
+//! stops on until a [`Decision`] naming it arrives. Beside them are two reports
+//! no request asks for, held to the same bounds: the [`inspection`] a script
+//! reads from `crucible sandbox inspect --json`, and the [`doctor`]'s report
+//! from `crucible doctor --json`.
 //!
 //! Three things are decided here and nowhere else.
 //!
@@ -69,6 +70,7 @@
 pub mod bounds;
 pub mod command;
 pub mod context;
+pub mod doctor;
 pub mod error;
 pub mod inspection;
 pub mod outcome;
