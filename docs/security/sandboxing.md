@@ -523,14 +523,19 @@ and quarantines ambiguous publication instead of inventing cleanup or success.
 
 ## Reading the report
 
-`crucible --sandbox` prints that inspection report for the directory you are
-standing in and stops. No command is run to produce it: a session is negotiated,
-asked what it settled on, and dropped. Nothing is materialized and nothing is
-spawned.
+`crucible sandbox inspect` prints that inspection report for the directory you
+are standing in and stops; `crucible --sandbox` prints the same report. Nothing
+is started to produce it: not the backend, not its broker, not a command. No
+sandbox is prepared, nothing is materialized and nothing is written. The
+backend is found the way a command's preparation would find it, under the same
+trust checks on its owner and on who can write it, and `build` is the SHA-256
+of the file that was found.
 
 ```
-sandbox enabled in /tmp/project
-  backend   linux-bubblewrap bubblewrap 0.11.1, system
+sandbox enabled in <root>
+  mode      required by project configuration
+  backend   linux-bubblewrap, system
+  version   unverified; reading it would start Bubblewrap, and inspecting starts nothing
   build     sha256:523da3e7399044be5163aee6f57a77a6bef7454376e28f0a0627920bae1b76b6
 
 what this backend can hold:
@@ -563,10 +568,10 @@ what this backend can hold:
 
 what a command would run under:
   enabled   true
-  cwd       sha256:5379e97dd14ba7ad731dbe4b651f0446654e282dc864b5be0c12d242280e21e3
+  cwd       sha256:de761e35c85ea9a7615fe3e45e1fef07d6631d0f02c4de318c94d05f30813ca2
   reach     2 places, named by digest
-    read_write  workspace           sha256:2a95b86f4b582ee19fad51f7252cee135679f8ceda5ac1bed64f45be6fae05f6
-    protected   protected_metadata  sha256:a0eedc14820780d2addacee398e8defe2621e79a507f9f3aadc58637050b8948
+    read_write  workspace           sha256:cd490a63f17abf417975914cb065fde6035ea5875cc4e86e6c338842c0cd6262
+    protected   protected_metadata  sha256:1c6e26020fe934c29b865b19537f043598e19249d3a277492a790690551c8955
   hidden    0 patterns
   network   closed
   ceilings
@@ -579,10 +584,19 @@ what a command would run under:
   outlives  no
   snapshots no
   confined  yes
-  cleanup   pending; nothing was run and nothing was staged
-  policy    sha256:e6f3d0c483f0a5f4061ca6f711a9da725b85169f62c1f6c038eb1fe35a632c9e
+  policy    sha256:ad76ba3f9182bb58bad76fc0c8167c7d7170c2c662ad7521ac6a90ed837c90ef
   manifest  sha256:72c169df3655f6857b163163b2618631ec65982557eea70b57ea1cb983ae0890
+
+not checked, since checking would start something:
+  whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes
 ```
+
+What only starting the backend could tell is reported as unverified, with the
+reason, rather than guessed: the `version` line says so, and the last section
+lists what was left unchecked. Those are the questions a command's preparation
+answers when it starts the backend, so a report that says `confined  yes` says
+that the backend found claims this policy, not that it has been seen to start
+on this host. In the sample the workspace root is shown as `<root>`.
 
 Every ceiling is printed beside the claim it rests on, because a number the
 backend only observes is recorded after the fact rather than imposed, and the
@@ -599,11 +613,19 @@ pasted into an issue without pasting your tree with it. Two reports over the
 same directory produce the same digests, which is what makes them comparable
 between machines.
 
-Where a backend answers but will not take this workspace's policy, the matrix is
-printed and the refusal follows it. An `unsupported` row in the matrix is
-usually the whole explanation. Where nothing answers at all, the report says
-that rather than printing a matrix of claims belonging to nobody. Neither is an
-error: both are the answer, and the run ends successfully.
+Where a backend is found but its matrix will not hold this workspace's policy,
+the matrix is printed, then what was asked for, then `no command could be run
+here` with the reason. An `unsupported` row in the matrix is usually the whole
+explanation. Where no backend is found at all, the report says `no sandbox
+backend was found` with the reason, rather than printing a matrix of claims
+belonging to nobody. Neither is an error: both are the answer, and the run
+ends successfully.
+
+`crucible sandbox inspect --json` writes the same report as one JSON document
+on one line, with `format_version` 1, `kind` `sandbox-inspection`, and a
+`status` of `ready`, `refused`, `unavailable` or `failed`. It carries no path
+at all, not even the workspace root. Its fields and exit statuses are listed
+under [Command line](../reference/cli.md).
 
 ## Writable roots and publication
 
