@@ -402,7 +402,9 @@ request.
 Without the flag, in a terminal, a key row asks for the key at a prompt that
 does not show it, and an account row signs in the way `/login` does: OpenAI's
 by browser or by device code, Kimi's by device code, with the page to visit and
-any code written to standard error and the browser opened where it can be.
+any code written to standard error and the browser opened where it can be. A
+control character, line break or Unicode format character the vendor put in
+either is written as its escape, so neither can add a line to what is asked.
 Where the provider's `baseUrl` is set, the line after says a launch does not
 use the account while it is. A name that is both, such as `openai`, asks
 which. A sign-in whose vendor may use what it is sent shows the vendor's words

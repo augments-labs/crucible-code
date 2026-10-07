@@ -1248,8 +1248,8 @@ fn failing(problem: &str) -> String {
 /// it was; [`crucible_types::shown`] owns the escape. A line break is kept
 /// because the reports and prompts written this way run over lines of their
 /// own, so a break in a value one quotes is the quoting owner's to escape, as
-/// the configuration check and `auth status` reports do. A failure is one
-/// line, and is written [`failing`] instead.
+/// the configuration check and `auth status` reports and the sign-in prompt
+/// do. A failure is one line, and is written [`failing`] instead.
 fn visible(text: &str) -> String {
     text.split('\n')
         .map(crucible_types::shown::escaped)

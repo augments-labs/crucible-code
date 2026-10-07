@@ -32,6 +32,7 @@ use crucible_app::auth::{
 use crucible_app::content_use::Warned;
 use crucible_config::Home;
 use crucible_tui::{Key, Pressed, Raw};
+use crucible_types::shown::escaped;
 
 use super::ending::{Ending, Told};
 
@@ -171,6 +172,20 @@ fn said(text: &str) {
 fn refused(problem: &str) -> ExitCode {
     said(&format!("crucible: {problem}\n"));
     ExitCode::FAILURE
+}
+
+/// What sends the person to `page` to finish a sign-in, and gives them `code`
+/// to enter there, where the vendor has one.
+///
+/// Both are the vendor's to choose, so each is written [`escaped`] whole, a
+/// line break in it among the rest: kept, a break would start a line of the
+/// prompt that the vendor wrote rather than crucible.
+fn visiting(page: &str, code: Option<&str>) -> String {
+    let mut asked = format!("Finish signing in at {}\n", escaped(page));
+    if let Some(code) = code {
+        let _ = writeln!(asked, "  and enter the code {}", escaped(code));
+    }
+    asked
 }
 
 /// Stores the one key `input` holds under `way`, where it is not a terminal.
@@ -399,11 +414,7 @@ impl Signer for Asking {
     }
 
     fn visit(&mut self, page: &str, code: Option<&str>, browser: &str, withheld: &[&str]) {
-        let mut asked = format!("Finish signing in at {page}\n");
-        if let Some(code) = code {
-            let _ = writeln!(asked, "  and enter the code {code}");
-        }
-        said(&asked);
+        said(&visiting(page, code));
         if let Err(problem) = super::browser::open(browser, withheld.iter().copied()) {
             said(&format!(
                 "  no browser could be opened ({problem}); open the page yourself\n"

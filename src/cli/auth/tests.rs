@@ -1,4 +1,5 @@
-//! What the hidden prompt makes of what is typed and pasted at it.
+//! What the hidden prompt makes of what is typed and pasted at it, and what
+//! the sign-in prompt shows of the page and code a vendor sends.
 
 use super::*;
 
@@ -173,4 +174,28 @@ fn a_prompt_that_cannot_be_hidden_is_refused_before_anything_is_asked_and_says_w
         assert_eq!(unasked.unhidden(), Some(UNASKED), "{unasked:?}");
         assert_eq!(unasked.unsigned(), Some(UNSIGNED), "{unasked:?}");
     }
+}
+
+#[test]
+fn a_sign_in_page_or_code_holding_a_line_break_cannot_add_a_line_to_the_prompt() {
+    // As `said` writes it to standard error.
+    let shown = crate::cli::visible(&visiting(
+        "https://auth.example.test/device\nFinish signing in at https://forged.example.test",
+        Some("ABCD-1234\n  and enter the code WXYZ-9876"),
+    ));
+
+    assert_eq!(shown.lines().count(), 2, "{shown:?}");
+    let mut lines = shown.lines();
+    assert_eq!(
+        lines.next(),
+        Some(
+            r"Finish signing in at https://auth.example.test/device\nFinish signing in at https://forged.example.test"
+        ),
+        "{shown:?}"
+    );
+    assert_eq!(
+        lines.next(),
+        Some(r"  and enter the code ABCD-1234\n  and enter the code WXYZ-9876"),
+        "{shown:?}"
+    );
 }
