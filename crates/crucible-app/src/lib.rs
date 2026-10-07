@@ -39,6 +39,7 @@ pub mod doctor;
 mod error;
 pub mod extensions;
 mod following;
+pub mod mcp;
 mod models;
 pub mod providers;
 pub mod remember;

@@ -17,6 +17,7 @@ Commands:
   config   Parse and validate the effective configuration, and stop
   doctor   Check whether this machine is ready to run a conversation, offline, and stop
   auth     Say, store or remove the credentials crucible signs providers in with, offline but for a sign-in
+  mcp      Say which MCP servers your configuration writes down, without starting any of them, and stop
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -56,7 +57,7 @@ Sessions are written one file per session, and --continue picks up the most rece
 
 sandbox inspect prints the confinement a command in this directory would run under — which backend would enforce it, what that backend can and cannot hold, the reach and ceilings a command would get, and why it would be refused — and stops; --json writes it as one JSON document instead. Nothing is started to produce it, so what only starting the backend could tell is said to be unverified, and every path in it but the workspace root is a digest. --sandbox is the same report as text.
 
---with-mcp names a server written down under mcp.servers and hosts it for this run, and may be repeated. A configuration file is a list of servers you could run; nothing is started until a run names one. What a hosted server offers is called as mcp:<server>/<tool>, and it runs confined the way a command does.
+--with-mcp names a server written down under mcp.servers and hosts it for this run, and may be repeated. A configuration file is a list of servers you could run; nothing is started until a run names one. What a hosted server offers is called as mcp:<server>/<tool>, and it runs confined the way a command does. mcp list says which servers your home configuration writes down, and mcp get NAME how one would be started, with every variable's value and whatever in its arguments could be a secret left out, and stops. Neither starts a server, so neither says whether one would start.
 
 Flags, session files and config are unstable for the whole 0.x line.
 
@@ -68,6 +69,7 @@ Commands:
   config   Parse and validate the effective configuration, and stop
   doctor   Check whether this machine is ready to run a conversation, offline, and stop
   auth     Say, store or remove the credentials crucible signs providers in with, offline but for a sign-in
+  mcp      Say which MCP servers your configuration writes down, without starting any of them, and stop
   help     Print this message or the help of the given subcommand(s)
 
 Options:

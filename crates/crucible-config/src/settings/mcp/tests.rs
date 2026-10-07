@@ -412,3 +412,122 @@ fn printing_the_settings_shows_nothing_of_a_variable_written_under_a_server() {
     assert!(!printed.contains("hunter2"), "got {printed}");
     assert!(!printed.contains("hunter3"), "got {printed}");
 }
+
+/// A secret no rule could take for anything else: no digits, so only the
+/// place it is written in can say it is one.
+const WORD: &str = "swordfish-sentinel";
+
+/// A secret with nothing around it to say so, which only its own shape gives
+/// away.
+const TOKEN: &str = "Zq7Sentinel0451Secret9Kx";
+
+/// The arguments one server is given, shown, from a record written as JSON.
+fn shown(args: &[&str]) -> Vec<String> {
+    let args = serde_json::to_string(args).expect("a list of strings writes");
+    let found = read(&format!(
+        r#"{{"mcp": {{"servers": {{"docs": {{"command": "docs-mcp", "args": {args}}}}}}}}}"#
+    ));
+    let [server] = found.as_slice() else {
+        panic!("one server, got {found:?}");
+    };
+    server.shown_args()
+}
+
+#[test]
+fn every_place_an_argument_can_carry_a_secret_is_shown_without_it() {
+    let word = WORD;
+    let token = TOKEN;
+    let cases: [(&[&str], &[&str]); 14] = [
+        (&["--token", word], &["--token", HIDDEN]),
+        (
+            &["--api-key", word, "--port", "8080"],
+            &["--api-key", HIDDEN, "--port", "8080"],
+        ),
+        (&[&format!("--api-key={word}")], &["--api-key=<redacted>"]),
+        (&[&format!("API_KEY={word}")], &["API_KEY=<redacted>"]),
+        (
+            &[&format!("Authorization: Bearer {word}")],
+            &["Authorization: <redacted>"],
+        ),
+        (
+            &["-H", &format!("X-Api-Key: {word}")],
+            &["-H", "X-Api-Key: <redacted>"],
+        ),
+        (
+            &["--header", "Authorization:", "Bearer", word],
+            &["--header", "Authorization:", HIDDEN, HIDDEN],
+        ),
+        (
+            &[&format!("https://someone:{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://mcp.example.test/sse?key={word}&page=1")],
+            &["https://mcp.example.test/sse?<redacted>"],
+        ),
+        (
+            &[&format!("https://mcp.example.test/hook#{word}")],
+            &["https://mcp.example.test/hook#<redacted>"],
+        ),
+        (
+            &[&format!(
+                "--url=https://mcp.example.test/sse?access_token={word}"
+            )],
+            &["--url=https://mcp.example.test/sse?<redacted>"],
+        ),
+        (&[token], &[HIDDEN]),
+        (
+            &[&format!("https://hooks.example.test/services/{token}")],
+            &["https://hooks.example.test/services/<redacted>"],
+        ),
+        (
+            &[
+                "-c",
+                &format!("curl -H 'Authorization: Bearer {word}' https://mcp.example.test"),
+            ],
+            &["-c", "curl -H 'Authorization: <redacted>"],
+        ),
+    ];
+
+    for (args, expected) in cases {
+        let got = shown(args);
+        assert_eq!(got, expected, "for {args:?}");
+        for one in &got {
+            assert!(
+                !one.contains(WORD) && !one.contains(TOKEN),
+                "{args:?} showed {got:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_argument_with_nothing_secret_about_it_is_shown_as_written() {
+    let plain = [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "server-filesystem-2024",
+        "--catalogue",
+        "public",
+        "--port=8080",
+        "https://mcp.example.test/sse",
+        "/srv/docs",
+        "--log-level",
+        "debug",
+    ];
+
+    assert_eq!(shown(&plain), plain);
+}
+
+#[test]
+fn the_arguments_a_server_is_started_with_are_still_whole() {
+    let args = ["--token", WORD];
+    let found = read(&format!(
+        r#"{{"mcp": {{"servers": {{"docs": {{"command": "docs-mcp", "args": ["--token", "{WORD}"]}}}}}}}}"#
+    ));
+    let [server] = found.as_slice() else {
+        panic!("one server, got {found:?}");
+    };
+
+    assert_eq!(server.args().collect::<Vec<_>>(), args);
+}

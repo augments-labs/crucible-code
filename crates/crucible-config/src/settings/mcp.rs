@@ -41,6 +41,9 @@ pub(crate) const ARGS: usize = 256;
 /// The most environment entries one server may be given, in each block.
 pub(crate) const VARIABLES: usize = 256;
 
+/// What [`McpServer::shown_args`] writes where a secret could have been.
+const HIDDEN: &str = McpServer::HIDDEN;
+
 /// What each timeout is where the record does not say, in seconds.
 ///
 /// These are the numbers `shape` publishes as the defaults for their keys, and
@@ -144,6 +147,10 @@ impl fmt::Debug for McpServer {
 }
 
 impl McpServer {
+    /// What [`shown_args`](Self::shown_args) writes where a secret could have
+    /// been, and what a reader is shown in place of a variable's value.
+    pub const HIDDEN: &str = "<redacted>";
+
     /// The identifier this server's tools are qualified by.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -159,6 +166,36 @@ impl McpServer {
     /// What to pass it, applied verbatim.
     pub fn args(&self) -> impl Iterator<Item = &str> {
         self.args.iter().map(AsRef::as_ref)
+    }
+
+    /// What to pass it, as a reader is shown it: each argument with whatever
+    /// could carry a secret replaced by [`HIDDEN`](Self::HIDDEN).
+    ///
+    /// [`args`](Self::args) is what the server is started with and must stay
+    /// whole; this is for a list somebody reads, and could paste. A key is
+    /// often given to a server on its command line, so an argument is read for
+    /// the places one goes: after a flag or a header that names one, after `=`
+    /// or `:` where the name before it does, in a URL's user, query and
+    /// fragment, and as a word whose shape is a token's. More is hidden than
+    /// is secret, on purpose: a value shown in error is the one that cannot be
+    /// taken back.
+    #[must_use]
+    pub fn shown_args(&self) -> Vec<String> {
+        let mut withheld = false;
+        self.args
+            .iter()
+            .map(|arg| {
+                if withheld {
+                    // A scheme word is still the name of what comes after it,
+                    // as `Authorization:`, `Bearer`, then the token.
+                    withheld = scheme(arg.trim());
+                    return HIDDEN.to_owned();
+                }
+                let (shown, naming) = spoken(arg);
+                withheld = naming;
+                shown
+            })
+            .collect()
     }
 
     /// The absolute directory to start it in, where one was written.
@@ -278,6 +315,170 @@ fn block(record: &Value, key: &str) -> Vec<(Box<str>, Box<str>)> {
 /// A whole number of seconds, or the default the schema publishes for the key.
 fn seconds(record: &Value, key: &str, usual: u64) -> Duration {
     Duration::from_secs(record.get(key).and_then(whole).unwrap_or(usual))
+}
+
+/// One argument as a reader is shown it, and whether it ends on the name of a
+/// secret, so the next argument is that secret's value.
+///
+/// An argument a shell will split, as `sh -c '...'` is given, is read word by
+/// word, and once a word names a secret the rest of the argument is its value.
+fn spoken(arg: &str) -> (String, bool) {
+    let mut shown = String::with_capacity(arg.len());
+    let mut naming = false;
+    for piece in arg.split_inclusive(char::is_whitespace) {
+        let word = piece.trim_end();
+        let gap = piece.get(word.len()..).unwrap_or_default();
+        if word.is_empty() {
+            shown.push_str(gap);
+            continue;
+        }
+        if naming {
+            shown.push_str(HIDDEN);
+            return (shown, false);
+        }
+        let (said, names) = worded(word);
+        shown.push_str(&said);
+        shown.push_str(gap);
+        naming = names;
+    }
+    (shown, naming)
+}
+
+/// One word, and whether it names a secret the word after it holds.
+fn worded(word: &str) -> (String, bool) {
+    if let Some(shown) = located(word) {
+        return (shown, false);
+    }
+    match word.split_once('=') {
+        Some((name, _)) if secret(name) => (format!("{name}={HIDDEN}"), false),
+        Some((name, value)) => {
+            let (value, naming) = valued(value);
+            (format!("{name}={value}"), naming)
+        }
+        None => valued(word),
+    }
+}
+
+/// A word with no `=` left to read in it.
+fn valued(word: &str) -> (String, bool) {
+    if let Some(shown) = located(word) {
+        return (shown, false);
+    }
+    if let Some((name, value)) = word.split_once(':')
+        && secret(name)
+    {
+        return if value.is_empty() {
+            (word.to_owned(), true)
+        } else {
+            (format!("{name}:{HIDDEN}"), false)
+        };
+    }
+    let bare = unquoted(word);
+    if (bare.starts_with('-') && secret(bare)) || scheme(bare) {
+        return (word.to_owned(), true);
+    }
+    if opaque(bare) {
+        return (HIDDEN.to_owned(), false);
+    }
+    (word.to_owned(), false)
+}
+
+/// A URL as a reader is shown it: scheme, host and path, with the user, the
+/// query and the fragment hidden, and any path segment shaped like a token.
+///
+/// `None` where `word` is not a URL.
+fn located(word: &str) -> Option<String> {
+    let bare = unquoted(word);
+    let quotes = word.get(..word.len() - bare.len()).unwrap_or_default();
+    let (scheme, rest) = bare.split_once("://")?;
+    if scheme.is_empty()
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    {
+        return None;
+    }
+    let (rest, fragment) = rest
+        .split_once('#')
+        .map_or((rest, None), |(rest, fragment)| (rest, Some(fragment)));
+    let (rest, query) = rest
+        .split_once('?')
+        .map_or((rest, None), |(rest, query)| (rest, Some(query)));
+    let (authority, path) = rest.find('/').map_or((rest, ""), |at| rest.split_at(at));
+    let host = authority.rsplit_once('@').map(|(_, host)| host);
+
+    let mut shown = format!("{quotes}{scheme}://");
+    if let Some(host) = host {
+        shown.push_str(HIDDEN);
+        shown.push('@');
+        shown.push_str(host);
+    } else {
+        shown.push_str(authority);
+    }
+    let segments: Vec<&str> = path
+        .split('/')
+        .map(|segment| if opaque(segment) { HIDDEN } else { segment })
+        .collect();
+    shown.push_str(&segments.join("/"));
+    for (mark, part) in [('?', query), ('#', fragment)] {
+        if part.is_some() {
+            shown.push(mark);
+            shown.push_str(HIDDEN);
+        }
+    }
+    Some(shown)
+}
+
+/// Whether a name is one a secret is given under: a flag, a variable, a
+/// header or a query key.
+fn secret(name: &str) -> bool {
+    const STEMS: [&str; 12] = [
+        "token",
+        "key",
+        "secret",
+        "pass",
+        "pwd",
+        "auth",
+        "bearer",
+        "credential",
+        "cookie",
+        "session",
+        "private",
+        "signature",
+    ];
+    let name = unquoted(name).trim_start_matches('-').to_ascii_lowercase();
+    !name.is_empty() && STEMS.iter().any(|stem| name.contains(stem))
+}
+
+/// Whether a word is an authorization scheme, which a credential follows.
+fn scheme(word: &str) -> bool {
+    ["bearer", "basic", "token"]
+        .iter()
+        .any(|scheme| unquoted(word).eq_ignore_ascii_case(scheme))
+}
+
+/// Whether a word is shaped like a token: letters and digits run together,
+/// long enough that nobody typed it as a word.
+///
+/// A path, a package name and a version are not: each holds a character a
+/// token is not written with, or no run of letters and digits long enough.
+fn opaque(word: &str) -> bool {
+    const SEPARATORS: [char; 6] = ['-', '_', '.', '~', '+', '='];
+    let mixed = |part: &str| {
+        part.chars().any(|c| c.is_ascii_digit()) && part.chars().any(|c| c.is_ascii_alphabetic())
+    };
+    word.chars()
+        .all(|c| c.is_ascii_alphanumeric() || SEPARATORS.contains(&c))
+        && mixed(word)
+        && (word.len() >= 32
+            || word
+                .split(SEPARATORS)
+                .any(|part| part.len() >= 16 && mixed(part)))
+}
+
+/// A word with the quotes a shell would take off its front taken off.
+fn unquoted(word: &str) -> &str {
+    word.trim_start_matches(['\'', '"'])
 }
 
 /// Borrowed halves of a retained pair.

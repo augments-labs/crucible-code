@@ -166,7 +166,11 @@ is the same report as text.
 --with-mcp names a server written down under mcp.servers and hosts it for this \
 run, and may be repeated. A configuration file is a list of servers you could \
 run; nothing is started until a run names one. What a hosted server offers is \
-called as mcp:<server>/<tool>, and it runs confined the way a command does.
+called as mcp:<server>/<tool>, and it runs confined the way a command does. \
+mcp list says which servers your home configuration writes down, and mcp get \
+NAME how one would be started, with every variable's value and whatever in \
+its arguments could be a secret left out, and stops. Neither starts a server, \
+so neither says whether one would start.
 
 Flags, session files and config are unstable for the whole 0.x line.",
     args_conflicts_with_subcommands = true
@@ -243,6 +247,23 @@ enum Command {
     Auth {
         #[command(subcommand)]
         action: AuthAction,
+    },
+    /// Say which MCP servers your configuration writes down, without
+    /// starting any of them, and stop.
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum McpAction {
+    /// List every server written down under mcp.servers, and stop.
+    List,
+    /// Say how one server would be started, with secrets left out, and stop.
+    Get {
+        /// The server's name under mcp.servers.
+        name: String,
     },
 }
 
@@ -448,6 +469,7 @@ pub(crate) fn start() -> ExitCode {
                 AuthAction::Logout { provider } => auth::logout(provider),
             };
         }
+        (Some(Command::Mcp { action }), _, _) => declared(action),
         (None, true, _) => listed(),
         (None, _, true) => inspected(false),
         (None, _, _) => run(&cli),
@@ -605,6 +627,18 @@ fn listed() -> Result<(), Fatal> {
     let found = crucible_app::extensions::installed(&home, env!("CARGO_PKG_VERSION"))?;
 
     let _ = io::stdout().write_all(found.as_bytes());
+    Ok(())
+}
+
+/// Writes the MCP servers the home configuration declares, or the one asked
+/// for, and stops.
+fn declared(action: &McpAction) -> Result<(), Fatal> {
+    let home = Home::find(&|name| std::env::var_os(name))?;
+    let said = match action {
+        McpAction::List => crucible_app::mcp::list(&home)?,
+        McpAction::Get { name } => crucible_app::mcp::get(&home, name)?,
+    };
+    let _ = io::stdout().write_all(said.as_bytes());
     Ok(())
 }
 
