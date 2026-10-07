@@ -147,13 +147,18 @@ started in. Nearer wins; the command line is nearer than all of them.
 Sessions are written one file per session, and --continue picks up the most \
 recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
-/resume inside a session lists the rest.
+/resume inside a session lists the rest. sessions list says which sessions \
+were recorded for this directory, newest first, with when each started, how \
+many messages it holds, its branch and its saved title, and stops; --json \
+writes it as one JSON document instead. It reads the session index and the \
+first line of each log, so nothing anybody wrote in a session is shown, and \
+no session is opened, resumed or written to.
 
---extensions lists what is installed in ~/.crucible/extensions (or the \
+extensions list says what is installed in ~/.crucible/extensions (or the \
 extensions directory under CRUCIBLE_CODE_HOME), with what each \
 manifest asks to be allowed to do and the digest crucible took over its bytes, \
-and stops. Nothing installed is run to produce that list, which is the point of \
-being able to read it.
+and stops; --extensions is the same list. Nothing installed is run to produce \
+that list, which is the point of being able to read it.
 
 sandbox inspect prints the confinement a command in this directory would run \
 under — which backend would enforce it, what that backend can and cannot hold, \
@@ -166,7 +171,11 @@ is the same report as text.
 --with-mcp names a server written down under mcp.servers and hosts it for this \
 run, and may be repeated. A configuration file is a list of servers you could \
 run; nothing is started until a run names one. What a hosted server offers is \
-called as mcp:<server>/<tool>, and it runs confined the way a command does.
+called as mcp:<server>/<tool>, and it runs confined the way a command does. \
+mcp list says which servers your home configuration writes down, and mcp get \
+NAME how one would be started, with every variable's value and whatever in \
+its arguments could be a secret left out, and stops. Neither starts a server, \
+so neither says whether one would start.
 
 Flags, session files and config are unstable for the whole 0.x line.",
     args_conflicts_with_subcommands = true
@@ -243,6 +252,51 @@ enum Command {
     Auth {
         #[command(subcommand)]
         action: AuthAction,
+    },
+    /// Say which MCP servers your configuration writes down, without
+    /// starting any of them, and stop.
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+    /// Say what is installed in crucible's extensions directory, without
+    /// running any of it, and stop.
+    Extensions {
+        #[command(subcommand)]
+        action: ExtensionsAction,
+    },
+    /// Say which sessions were recorded for this directory, without opening
+    /// any of them, and stop.
+    Sessions {
+        #[command(subcommand)]
+        action: SessionsAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionsAction {
+    /// List the sessions recorded for this directory, newest first, and stop.
+    List {
+        /// Print one JSON document to stdout instead of the human list.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ExtensionsAction {
+    /// List every installed extension and stop. The same as `--extensions`.
+    List,
+}
+
+#[derive(Debug, Subcommand)]
+enum McpAction {
+    /// List every server written down under mcp.servers, and stop.
+    List,
+    /// Say how one server would be started, with secrets left out, and stop.
+    Get {
+        /// The server's name under mcp.servers.
+        name: String,
     },
 }
 
@@ -339,6 +393,11 @@ pub(crate) enum Fatal {
     /// could not carry it.
     #[error(transparent)]
     Inspection(crucible_app::sandbox::Unwritten),
+
+    /// A sessions list was made, and the document it would be written as
+    /// could not carry it.
+    #[error(transparent)]
+    Sessions(crucible_app::sessions::Unwritten),
 
     /// The terminal could not be drawn on.
     #[error(transparent)]
@@ -448,7 +507,22 @@ pub(crate) fn start() -> ExitCode {
                 AuthAction::Logout { provider } => auth::logout(provider),
             };
         }
-        (None, true, _) => listed(),
+        (Some(Command::Mcp { action }), _, _) => declared(action),
+        (
+            Some(Command::Sessions {
+                action: SessionsAction::List { json },
+            }),
+            _,
+            _,
+        ) => recalled(*json),
+        (
+            Some(Command::Extensions {
+                action: ExtensionsAction::List,
+            }),
+            _,
+            _,
+        )
+        | (None, true, _) => listed(),
         (None, _, true) => inspected(false),
         (None, _, _) => run(&cli),
     };
@@ -592,10 +666,11 @@ fn diagnosed(json: bool) -> ExitCode {
 /// Writes what is installed to standard output, and stops.
 ///
 /// Answered here rather than inside [`run`] so that it is answered before
-/// anything is built: the flag exists so somebody can read what crucible found
-/// *before* deciding whether any of it should ever run, and a listing that had
-/// opened a workspace, read a credential or started a session on the way would
-/// be a poor thing to reach for when an extension is the suspect.
+/// anything is built: `extensions list`, and `--extensions` before it, exist so
+/// somebody can read what crucible found *before* deciding whether any of it
+/// should ever run, and a listing that had opened a workspace, read a
+/// credential or started a session on the way would be a poor thing to reach
+/// for when an extension is the suspect.
 ///
 /// A write that fails is dropped the way [`fail`] drops one. Standard output
 /// closing early is a `head` on the other end of a pipe, and there is nothing
@@ -606,6 +681,69 @@ fn listed() -> Result<(), Fatal> {
 
     let _ = io::stdout().write_all(found.as_bytes());
     Ok(())
+}
+
+/// Writes the MCP servers the home configuration declares, or the one asked
+/// for, and stops.
+fn declared(action: &McpAction) -> Result<(), Fatal> {
+    let home = Home::find(&|name| std::env::var_os(name))?;
+    let said = match action {
+        McpAction::List => crucible_app::mcp::list(&home)?,
+        McpAction::Get { name } => crucible_app::mcp::get(&home, name)?,
+    };
+    let _ = io::stdout().write_all(said.as_bytes());
+    Ok(())
+}
+
+/// Writes the sessions recorded for this directory, and stops.
+///
+/// What is read, and why nothing a session recorded can reach the list, is
+/// [`crucible_app::sessions::list`]'s to say. Answered here rather than inside
+/// [`run`] for the reason [`listed`] gives: no session is started, resumed or
+/// appended to on the way.
+///
+/// A list that was made is written and the run succeeds, an incomplete one
+/// included, since what kept it from being whole is part of it. Where none
+/// could be made, `json` still writes one document, a failed one naming the
+/// step that stopped and no path, and the run ends with the whole error on
+/// standard error, as [`inspected`] does. The text escapes every word read
+/// from a file itself, so it is written as it stands.
+fn recalled(json: bool) -> Result<(), Fatal> {
+    use crucible_app::sessions::{Unmade, failure};
+
+    let listed = std::env::current_dir().map(|here| {
+        Home::find(&|name| std::env::var_os(name))
+            .map_err(AppError::from)
+            .and_then(|home| crucible_app::sessions::list(&here, &home))
+    });
+    if !json {
+        let listed = listed.map_err(Fatal::Here)??;
+        let now = std::time::SystemTime::now();
+        let said = listed.human(&|started| draw::when::ago(started, now));
+        let _ = io::stdout().write_all(said.as_bytes());
+        return Ok(());
+    }
+
+    let (written, ended) = match listed {
+        Err(why) => (failure(Unmade::Here), Err(Fatal::Here(why))),
+        Ok(Err(why)) => (failure(Unmade::Listing(&why)), Err(Fatal::App(why))),
+        Ok(Ok(listed)) => match listed.json() {
+            Ok(written) => (Ok(written), Ok(())),
+            Err(unwritten) => (
+                failure(Unmade::Unwritten(&unwritten)),
+                Err(Fatal::Sessions(unwritten)),
+            ),
+        },
+    };
+    match written {
+        Ok(written) => {
+            let _ = io::stdout().write_all(&written);
+            ended
+        }
+        // Only a failure's own document is left, and it is one sentence cut to
+        // its bound, which is always written; this is the refusal said anyway.
+        Err(unwritten) => ended.and(Err(Fatal::Sessions(unwritten))),
+    }
 }
 
 /// Writes the confinement a command here would run under, and stops.

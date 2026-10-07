@@ -540,3 +540,393 @@ fn a_session_never_asked_anything_is_no_row_whichever_directories_are_admitted()
     let asked: Vec<&str> = listed.iter().map(Recorded::asked).collect();
     assert_eq!(asked, ["a real one"]);
 }
+
+/// What the first prompt of every planted session says, so a listing that
+/// read past a header would be caught carrying it.
+const PROMPT: &str = "prompt-sentinel-never-listed";
+
+/// A log for `workspace` whose header names `branch`, holding one prompt.
+fn headed(
+    sample: &Sample,
+    workspace: &crucible_workspace::Workspace,
+    id: &str,
+    branch: Option<&str>,
+) {
+    let mut header = serde_json::json!({
+        "format": wire::FORMAT,
+        "session": id,
+        "workspace": workspace.root().display().to_string(),
+    });
+    if let (Some(branch), Some(fields)) = (branch, header.as_object_mut()) {
+        fields.insert("branch".to_owned(), branch.into());
+    }
+    sample.plant(
+        id,
+        &[
+            header.to_string(),
+            serde_json::json!({ "user": PROMPT }).to_string(),
+        ],
+    );
+}
+
+/// The index, written by hand: each id with its count and saved title.
+fn indexed(sample: &Sample, entries: &[(&str, usize, Option<&str>)]) {
+    let mut text = "crucible-session-index-2\n".to_owned();
+    for (id, messages, title) in entries {
+        let title = title.map(|title| format!("\t{title}")).unwrap_or_default();
+        text.push_str(&[id, "\t", &messages.to_string(), &title, "\n"].concat());
+    }
+    std::fs::write(sample.logs().join("recent.sessions"), text).expect("an index");
+}
+
+/// What a listing for this sample's workspace finds.
+fn discovering(sample: &Sample, wanted: usize) -> Discovery {
+    discovered(
+        &sample.logs(),
+        Roots::These(&[sample.workspace().root()]),
+        wanted,
+    )
+    .expect("an index that reads")
+}
+
+/// Every entry under `root`, with its bytes where it is a file.
+fn tree(root: &Path) -> Vec<(std::path::PathBuf, Option<Vec<u8>>)> {
+    let mut seen = Vec::new();
+    let mut left = vec![root.to_path_buf()];
+    while let Some(directory) = left.pop() {
+        for entry in std::fs::read_dir(&directory).expect("a directory the test made") {
+            let at = entry.expect("an entry").path();
+            if at.is_dir() {
+                seen.push((at.clone(), None));
+                left.push(at);
+            } else {
+                seen.push((at.clone(), Some(std::fs::read(&at).expect("its bytes"))));
+            }
+        }
+    }
+    seen.sort();
+    seen
+}
+
+#[test]
+fn a_listing_says_what_the_index_and_each_header_say_and_nothing_a_session_recorded() {
+    let sample = Sample::new("discovered-listed");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    headed(
+        &sample,
+        &sample.workspace(),
+        &nth(2),
+        Some("feature/picker"),
+    );
+    indexed(
+        &sample,
+        &[(&nth(1), 4, None), (&nth(2), 9, Some("the debugging one"))],
+    );
+
+    let found = discovering(&sample, 8);
+
+    let listed: Vec<(&str, Option<&str>, usize, Option<&str>)> = found
+        .sessions()
+        .iter()
+        .map(|session| {
+            (
+                session.id().as_str(),
+                session.branch(),
+                session.messages(),
+                session.title(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (
+                nth(2).as_str(),
+                Some("feature/picker"),
+                9,
+                Some("the debugging one")
+            ),
+            (nth(1).as_str(), None, 4, None),
+        ]
+    );
+    assert!(!format!("{found:?}").contains(PROMPT), "{found:?}");
+    assert_eq!(
+        (
+            found.omitted(),
+            found.unreadable(),
+            found.full(),
+            found.unindexed()
+        ),
+        (0, 0, false, false)
+    );
+}
+
+#[test]
+fn a_listing_writes_nothing_where_it_reads() {
+    let sample = Sample::new("discovered-unwritten");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    indexed(&sample, &[(&nth(1), 1, None)]);
+    let before = tree(&sample.logs());
+
+    let found = discovering(&sample, 8);
+
+    assert_eq!(found.sessions().len(), 1);
+    assert_eq!(
+        tree(&sample.logs()),
+        before,
+        "a listing made, changed or removed a file"
+    );
+}
+
+#[test]
+fn another_directorys_sessions_are_neither_listed_nor_counted() {
+    let sample = Sample::new("discovered-elsewhere");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    headed(&sample, &sample.elsewhere(), &nth(2), None);
+    indexed(&sample, &[(&nth(1), 1, None), (&nth(2), 1, None)]);
+
+    let found = discovering(&sample, 8);
+
+    let ids: Vec<&str> = found
+        .sessions()
+        .iter()
+        .map(|one| one.id().as_str())
+        .collect();
+    assert_eq!(ids, [nth(1).as_str()]);
+    assert_eq!((found.omitted(), found.unreadable()), (0, 0));
+}
+
+#[test]
+fn more_sessions_than_were_wanted_are_counted_rather_than_listed() {
+    let sample = Sample::new("discovered-omitted");
+    for nth_one in 1..=5 {
+        headed(&sample, &sample.workspace(), &nth(nth_one), None);
+    }
+    let ids: Vec<String> = (1..=5).map(nth).collect();
+    indexed(
+        &sample,
+        &ids.iter()
+            .map(|id| (id.as_str(), 0, None))
+            .collect::<Vec<_>>(),
+    );
+
+    let found = discovering(&sample, 2);
+
+    let listed: Vec<&str> = found
+        .sessions()
+        .iter()
+        .map(|one| one.id().as_str())
+        .collect();
+    assert_eq!(listed, [nth(5).as_str(), nth(4).as_str()]);
+    assert_eq!(found.omitted(), 3);
+}
+
+#[test]
+fn a_log_whose_first_line_does_not_read_is_counted_and_said_nothing_of() {
+    let sample = Sample::new("discovered-unreadable");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    sample.plant(&nth(2), &[format!("{{\"format\": 1, {PROMPT}")]);
+    sample.plant(
+        &nth(3),
+        &[serde_json::json!({
+            "format": wire::FORMAT + 1,
+            "session": nth(3),
+            "workspace": sample.workspace().root().display().to_string(),
+        })
+        .to_string()],
+    );
+    std::fs::write(
+        sample.logs().join(format!("{}.jsonl", nth(4))),
+        "{\"format\":",
+    )
+    .expect("a torn log");
+    indexed(
+        &sample,
+        &[
+            (&nth(1), 1, None),
+            (&nth(2), 1, None),
+            (&nth(3), 1, None),
+            (&nth(4), 1, None),
+        ],
+    );
+
+    let found = discovering(&sample, 8);
+
+    let ids: Vec<&str> = found
+        .sessions()
+        .iter()
+        .map(|one| one.id().as_str())
+        .collect();
+    assert_eq!(ids, [nth(1).as_str()]);
+    assert_eq!(found.unreadable(), 3);
+    assert!(!format!("{found:?}").contains(PROMPT), "{found:?}");
+}
+
+#[test]
+fn a_session_indexed_with_no_log_yet_is_left_out_and_not_counted() {
+    // A session starting this instant is indexed before its header exists.
+    let sample = Sample::new("discovered-unlogged");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    indexed(&sample, &[(&nth(1), 1, None), (&nth(2), 0, None)]);
+
+    let found = discovering(&sample, 8);
+
+    assert_eq!(found.sessions().len(), 1);
+    assert_eq!((found.omitted(), found.unreadable()), (0, 0));
+}
+
+#[test]
+fn an_index_that_holds_all_it_keeps_says_older_sessions_may_be_left_out() {
+    let sample = Sample::new("discovered-full");
+    // `nth` spells two hex digits, so the window is numbered from zero.
+    let ids: Vec<String> = (0..u64::try_from(index::ENTRIES).expect("a small number"))
+        .map(nth)
+        .collect();
+    indexed(
+        &sample,
+        &ids.iter()
+            .map(|id| (id.as_str(), 0, None))
+            .collect::<Vec<_>>(),
+    );
+
+    assert!(discovering(&sample, 8).full());
+
+    indexed(
+        &sample,
+        &ids.iter()
+            .skip(1)
+            .map(|id| (id.as_str(), 0, None))
+            .collect::<Vec<_>>(),
+    );
+    assert!(!discovering(&sample, 8).full());
+}
+
+#[test]
+fn a_directory_with_no_index_yet_says_so_rather_than_that_nothing_was_recorded() {
+    let sample = Sample::new("discovered-unindexed");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+
+    let found = discovering(&sample, 8);
+    assert!(found.unindexed(), "{found:?}");
+    assert!(found.sessions().is_empty());
+    assert!(
+        !sample.logs().join("recent.sessions").exists(),
+        "a listing built the index"
+    );
+
+    let nowhere = discovered(
+        &sample.logs().join("never-made"),
+        Roots::These(&[sample.workspace().root()]),
+        8,
+    )
+    .expect("no directory is nothing recorded");
+    assert_eq!(nowhere, Discovery::default());
+}
+
+#[test]
+fn an_index_that_does_not_read_is_refused_without_quoting_it() {
+    let sample = Sample::new("discovered-malformed");
+    std::fs::write(
+        sample.logs().join("recent.sessions"),
+        format!("crucible-session-index-2\nnot an entry {PROMPT}\n"),
+    )
+    .expect("an index");
+
+    let refused = discovered(
+        &sample.logs(),
+        Roots::These(&[sample.workspace().root()]),
+        8,
+    )
+    .expect_err("an index with a line that is not an entry");
+
+    assert!(matches!(refused, SessionError::Index { .. }), "{refused:?}");
+    assert!(!refused.to_string().contains(PROMPT), "{refused}");
+}
+
+#[test]
+fn a_branch_longer_than_a_title_is_listed_as_its_header_wrote_it() {
+    let sample = Sample::new("discovered-long-branch");
+    let branch = format!("feature/{}", "b".repeat(TITLE * 2));
+    headed(&sample, &sample.workspace(), &nth(1), Some(&branch));
+    indexed(&sample, &[(&nth(1), 1, None)]);
+
+    let found = discovering(&sample, 8);
+
+    let listed: Vec<Option<&str>> = found.sessions().iter().map(Discovered::branch).collect();
+    assert_eq!(listed, [Some(branch.as_str())]);
+}
+
+#[test]
+fn a_sessions_directory_with_no_log_in_it_is_nothing_recorded_rather_than_unindexed() {
+    let sample = Sample::new("discovered-empty");
+    assert_eq!(discovering_unindexed(&sample), Discovery::default());
+
+    // What is beside the logs is not a log: a session's results, a lock.
+    std::fs::create_dir(sample.logs().join(format!("{}.results", nth(1))))
+        .expect("a results directory");
+    std::fs::write(sample.logs().join("notes.txt"), "not a session").expect("a file");
+    assert_eq!(discovering_unindexed(&sample), Discovery::default());
+}
+
+/// What a listing finds in a directory the index has not been written to.
+fn discovering_unindexed(sample: &Sample) -> Discovery {
+    assert!(!sample.logs().join("recent.sessions").exists());
+    discovering(sample, 8)
+}
+
+/// A pipe where a log should be waits for a writer that is not coming, so a
+/// listing that opened one would never come back.
+#[cfg(unix)]
+#[test]
+fn a_log_that_is_a_pipe_is_counted_unreadable_without_waiting_for_a_writer() {
+    let sample = Sample::new("discovered-pipe");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    let made = std::process::Command::new("mkfifo")
+        .arg(sample.logs().join(format!("{}.jsonl", nth(2))))
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+    indexed(&sample, &[(&nth(1), 1, None), (&nth(2), 1, None)]);
+
+    // On a thread of its own: a listing that opens the pipe never comes back,
+    // and a test that waited for it here would wait forever.
+    let (send, found) = std::sync::mpsc::channel();
+    let logs = sample.logs();
+    let root = sample.workspace().root().to_path_buf();
+    std::thread::spawn(move || {
+        let _ = send.send(discovered(&logs, Roots::These(&[root.as_path()]), 8));
+    });
+    let found = found
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("a listing that came back")
+        .expect("an index that reads");
+
+    let ids: Vec<&str> = found
+        .sessions()
+        .iter()
+        .map(|one| one.id().as_str())
+        .collect();
+    assert_eq!(ids, [nth(1).as_str()]);
+    assert_eq!(found.unreadable(), 1);
+}
+
+/// A link where a log should be leads out of the sessions directory, to a
+/// file nothing says is a session recorded here.
+#[cfg(unix)]
+#[test]
+fn a_log_that_is_a_link_is_counted_unreadable_rather_than_followed() {
+    let sample = Sample::new("discovered-link");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    let outside = sample.home().join(format!("{}.jsonl", nth(2)));
+    std::fs::create_dir_all(sample.home()).expect("a home");
+    std::fs::rename(sample.logs().join(format!("{}.jsonl", nth(1))), &outside)
+        .expect("a header outside the sessions directory");
+    std::os::unix::fs::symlink(&outside, sample.logs().join(format!("{}.jsonl", nth(1))))
+        .expect("a link");
+    indexed(&sample, &[(&nth(1), 1, None)]);
+
+    let found = discovering(&sample, 8);
+
+    assert!(found.sessions().is_empty(), "{found:?}");
+    assert_eq!(found.unreadable(), 1);
+}

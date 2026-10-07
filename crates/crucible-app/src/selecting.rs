@@ -206,8 +206,9 @@ fn confinement(
     .map_err(|problem| problem.to_string())
 }
 
-/// The names the document did hold, for a sentence that says what to type.
-fn written(records: &[McpServer]) -> Box<str> {
+/// The names the document did hold, for a sentence that says what to type:
+/// the one `--with-mcp` and `crucible mcp get` both refuse an unknown name with.
+pub(crate) fn written(records: &[McpServer]) -> Box<str> {
     if records.is_empty() {
         return "none under mcp.servers".into();
     }
