@@ -65,6 +65,7 @@ that build is what proves it.
 ## What a cross build does not answer
 
 It compiles and links; it does not run. The tests for a target are run on that
-platform (CI runs them on Linux, macOS and Windows for every pull request), so
+platform (CI runs them on Linux, Apple silicon macOS and x86_64 Windows for
+every pull request, and on macOS Intel and Windows ARM64 too once it merges), so
 a cross build catches a platform-specific compile error and nothing that
 happens afterwards. `scripts/sh/check.sh` is still the gate.
