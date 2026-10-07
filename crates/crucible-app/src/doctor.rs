@@ -166,25 +166,46 @@ pub(crate) fn examining(
 
 /// The report as a person reads it: the overall status, then each check on a
 /// line of its own with what to do beneath it.
+///
+/// Words cut at the contract's ceiling end in [`CUT`], and a report with any
+/// opens by saying so, since a reason cut short can read as a whole one; the
+/// document says the same in each check's `truncated`.
 #[must_use]
 pub fn human(report: &Report) -> String {
     use std::fmt::Write as _;
 
+    let marked = |words: &Text| {
+        let shown = clean(words.as_str());
+        if words.truncated() {
+            format!("{shown}{CUT}")
+        } else {
+            shown
+        }
+    };
     let mut out = format!("crucible doctor: {}\n", report.status());
+    let any_cut = report.checks.iter().any(|check| {
+        check.reason.truncated() || check.remedy.as_ref().is_some_and(Text::truncated)
+    });
+    if any_cut {
+        let _ = writeln!(out, "  some words were cut short, each where it says{CUT}");
+    }
     for check in &report.checks {
         let _ = writeln!(
             out,
             "  {:<11} {}: {}",
             check.status.as_str(),
             check.id.as_str(),
-            clean(check.reason.as_str()),
+            marked(&check.reason),
         );
         if let Some(remedy) = &check.remedy {
-            let _ = writeln!(out, "              {}", clean(remedy.as_str()));
+            let _ = writeln!(out, "              {}", marked(remedy));
         }
     }
     out
 }
+
+/// What the text form puts after words cut at their ceiling.
+const CUT: &str = " [cut]";
 
 /// How one check came out, before it is bounded into the contract's words.
 struct Finding {

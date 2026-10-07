@@ -288,8 +288,10 @@ crucible doctor --json
 The report opens with `crucible doctor: healthy`, `warnings` or `failed`,
 then one line per check: its status (`ok`, `warning`, `failed` or
 `unavailable`), its id and the reason, with what to do about it on the line
-under any check that is not `ok`. The checks are always these, in this order,
-and an id never changes:
+under any check that is not `ok`. A reason or remedy longer than 16 KiB is cut
+there and ends in `[cut]`, and a report with one says so on the line after
+the first. The checks are always these, in this order, and an id never
+changes:
 
 | Id | What it looks at |
 | --- | --- |

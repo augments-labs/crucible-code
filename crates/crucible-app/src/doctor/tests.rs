@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crucible_auth::{
     LoginAttempt, LoginMethod, OAuthError, Store, StoredCredentials, SubscriptionLogin,
 };
+use crucible_client_api::Text;
 use crucible_client_api::doctor::{Report, Status};
 use crucible_config::{ConfigError, Home};
 use crucible_credentials::Credential;
@@ -667,6 +668,69 @@ fn the_doctor_replaces_every_character_a_limit_name_drops_and_the_two_separators
             u32::from(character)
         );
     }
+}
+
+#[test]
+fn words_cut_at_their_ceiling_are_marked_as_cut_in_the_text_form() {
+    // A provider's name longer than a reason may be: the report is cut, and
+    // a person reading it is told so, where the document says it in a field.
+    let sample = Sample::new("doctor-cut-words");
+    let long = format!("{}TAIL", "p".repeat(20_000));
+    drop(sample.user(&format!(r#"{{"provider":"{long}"}}"#)));
+
+    let report = examined(&sample, &Counting::default(), &none(), &exported);
+    let said = human(&report);
+
+    let provider = said
+        .lines()
+        .find(|line| line.contains(" provider: "))
+        .expect("a line for the provider");
+    assert!(!provider.contains("TAIL"), "the reason was not cut");
+    assert!(
+        provider.ends_with(" [cut]"),
+        "{:?}",
+        provider.get(provider.len().saturating_sub(80)..)
+    );
+    let mut lines = said.lines();
+    assert_eq!(lines.next(), Some("crucible doctor: failed"));
+    assert_eq!(
+        lines.next(),
+        Some("  some words were cut short, each where it says [cut]")
+    );
+    // Nothing that was not cut is marked: the opening line and the
+    // provider's are the two.
+    assert_eq!(said.matches(" [cut]").count(), 2);
+
+    // A remedy cut is marked as a reason is, and a report with nothing cut
+    // says nothing of cutting.
+    let mut cut = report.clone();
+    cut.checks.retain(|check| check.id.as_str() == "home");
+    if let Some(home) = cut.checks.first_mut() {
+        home.status = Status::Warning;
+        home.remedy = Some(Text::cut(&"r".repeat(20_000)));
+    }
+    let said = human(&cut);
+    assert!(
+        said.lines()
+            .nth(1)
+            .is_some_and(|line| line.contains("[cut]")),
+        "{said:?}"
+    );
+    assert!(
+        said.lines()
+            .nth(3)
+            .is_some_and(|line| line.ends_with("r [cut]"))
+    );
+    let whole = human(
+        &examined(&sample, &Counting::default(), &none(), &bare)
+            .checks
+            .first()
+            .map(|home| Report {
+                checks: vec![home.clone()],
+            })
+            .expect("a home check"),
+    );
+    assert!(!whole.contains("[cut]"), "{whole:?}");
 }
 
 #[test]
