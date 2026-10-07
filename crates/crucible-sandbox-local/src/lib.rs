@@ -57,6 +57,8 @@ pub use local::{LocalSandbox, ObservedVersion, SandboxObservation};
 pub fn hold_broker_directory() {
     #[cfg(target_os = "linux")]
     linux::hold_broker_directory();
+    #[cfg(target_os = "macos")]
+    macos::hold_broker_directory();
 }
 
 #[cfg(test)]

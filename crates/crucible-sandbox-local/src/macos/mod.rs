@@ -40,6 +40,9 @@ mod tree;
 mod unreadable;
 
 #[cfg(target_os = "macos")]
+pub(crate) use broker::hold_broker_directory;
+
+#[cfg(target_os = "macos")]
 pub(super) fn probe() -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
     let broker = broker::Broker::find(&[])?;
     let backend = probe::Seatbelt::find(&broker)?;
