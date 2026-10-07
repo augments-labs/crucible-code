@@ -238,3 +238,36 @@ fn a_digest_is_written_as_lowercase_hex() {
     assert!(text.ends_with("000f"));
     assert_eq!(text.len(), 64);
 }
+
+#[test]
+fn every_accepted_receipt_is_written_back_byte_for_byte() {
+    let accepted = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/installer/receipts/accepted");
+    let mut written = 0;
+    for listed in std::fs::read_dir(&accepted).expect("the accepted fixtures") {
+        let at = listed.expect("a fixture").path();
+        let bytes = std::fs::read(&at).expect("its bytes");
+        let receipt = Receipt::parse(&bytes).expect("an accepted receipt");
+
+        assert_eq!(receipt.to_bytes(), bytes, "{}", at.display());
+        written += 1;
+    }
+    assert!(written > 0);
+}
+
+#[test]
+fn a_receipt_for_another_release_keeps_its_installation_and_reads_back_as_itself() {
+    let active = Receipt::parse(&fixture("accepted", "linux-with-broker")).expect("a receipt");
+    let version = Version::parse(b"0.47.0").expect("a release number");
+    let crucible = Digest::new([0xab; 32]);
+
+    let next = active.for_release(version.clone(), crucible, None);
+
+    assert_eq!(next.installation(), active.installation());
+    assert_eq!(next.target(), active.target());
+    assert_eq!(next.prefix(), active.prefix());
+    assert_eq!(next.version(), &version);
+    assert_eq!(next.crucible(), &crucible);
+    assert_eq!(next.broker(), None);
+    assert_eq!(Receipt::parse(&next.to_bytes()), Ok(next));
+}

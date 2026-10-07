@@ -16,10 +16,13 @@
 //! ```
 //!
 //! Only the broker line may be left out, when the release carries no broker.
-//! Each line ends in a newline. The installer that will write it is shell, so
-//! the format is one a POSIX shell can read and write without a parser of its
-//! own, and the shell reader in `tests/fixtures/installer/receipt.sh` is held
-//! to the same answer as this one on every receipt beside it.
+//! Each line ends in a newline. The installer writes it in shell, so the
+//! format is one a POSIX shell can read and write without a parser of its own,
+//! and the shell reader in `tests/fixtures/installer/receipt.sh` is held to the
+//! same answer as this one on every receipt beside it. A unit crucible stages
+//! itself gets its receipt from this module, written byte for byte as the
+//! installer writes one, so every accepted receipt beside it is written back
+//! unchanged.
 //!
 //! Anything the grammar does not name is refused rather than skipped: a reader
 //! that ignored an unknown key would let a later installer's receipt mean less
@@ -278,6 +281,50 @@ impl Receipt {
     pub fn broker(&self) -> Option<&Digest> {
         self.broker.as_ref()
     }
+
+    /// The receipt of another release of the same installation, kept under
+    /// the same prefix on the same platform, holding `crucible` and, when the
+    /// release carries one, `broker`.
+    pub(crate) fn for_release(
+        &self,
+        version: Version,
+        crucible: Digest,
+        broker: Option<Digest>,
+    ) -> Self {
+        Self {
+            installation: self.installation.clone(),
+            target: self.target,
+            prefix: self.prefix.clone(),
+            version,
+            crucible,
+            broker,
+        }
+    }
+
+    /// The receipt in the format, as the installer writes it byte for byte.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = HEADER.to_vec();
+        bytes.extend_from_slice(b"1\n");
+        let crucible = self.crucible.to_string();
+        let broker = self.broker.map(|broker| broker.to_string());
+        let lines = [
+            (MANAGER, b"crucible-installer".as_slice()),
+            (INSTALLATION, self.installation.as_str().as_bytes()),
+            (TARGET_KEY, self.target.as_str().as_bytes()),
+            (LAYOUT, b"versioned"),
+            (PREFIX, self.prefix.as_os_str().as_bytes()),
+            (VERSION, self.version.as_str().as_bytes()),
+            (CRUCIBLE, crucible.as_bytes()),
+        ];
+        let broker = broker.as_ref().map(|broker| (BROKER, broker.as_bytes()));
+        for (key, value) in lines.into_iter().chain(broker) {
+            bytes.extend_from_slice(key.as_bytes());
+            bytes.push(b'=');
+            bytes.extend_from_slice(value);
+            bytes.push(b'\n');
+        }
+        bytes
+    }
 }
 
 impl Installation {
@@ -374,7 +421,7 @@ impl Digest {
     }
 
     /// Reads 64 lowercase hex digits.
-    fn parse(value: &[u8]) -> Option<Self> {
+    pub(super) fn parse(value: &[u8]) -> Option<Self> {
         if !hex(value, 64) {
             return None;
         }
