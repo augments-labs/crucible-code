@@ -574,16 +574,149 @@ fn every_place_an_argument_can_carry_a_secret_is_shown_without_it() {
     // which of them a rule misses.
     let wrong: Vec<String> = cases
         .iter()
-        .filter_map(|(args, expected)| {
-            let got = shown(args);
-            let leaked = got
-                .iter()
-                .any(|one| one.contains(WORD) || one.contains(TOKEN));
-            (leaked || got != *expected)
-                .then(|| format!("{args:?} showed {got:?}, not {expected:?}"))
-        })
+        .filter_map(|(args, expected)| shown_wrong(args, expected))
+        .chain(shown_wrong_where_a_password_holds_what_ends_a_url())
         .collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How `args` are shown, where that is not `expected` or holds a secret.
+fn shown_wrong(args: &[&str], expected: &[&str]) -> Option<String> {
+    let got = shown(args);
+    let leaked = got
+        .iter()
+        .any(|one| one.contains(WORD) || one.contains(TOKEN));
+    (leaked || got != expected).then(|| format!("{args:?} showed {got:?}, not {expected:?}"))
+}
+
+/// The URL shapes of the test above whose password holds a character that
+/// ends a URL or starts the next pair, each shown wrong.
+fn shown_wrong_where_a_password_holds_what_ends_a_url() -> Vec<String> {
+    let word = WORD;
+    let cases: [(&[&str], &[&str]); 22] = [
+        // A URL's user is hidden whatever its password holds, a character that
+        // ends a URL or starts the next pair included.
+        (
+            &[&format!("https://someone:pa;{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://someone:pa,{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://someone:pa'{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://someone:12,{word}@mcp.example.test")],
+            &["https://<redacted>@mcp.example.test"],
+        ),
+        (
+            &[&format!(
+                "--url=https://someone:pa;{word}@mcp.example.test/sse"
+            )],
+            &["--url=https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!(
+                "--url=https://someone:pa,{word}@mcp.example.test/sse"
+            )],
+            &["--url=https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!(
+                "--url=https://someone:pa'{word}@mcp.example.test/sse"
+            )],
+            &["--url=https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("--url=https://someone:12,{word}@mcp.example.test")],
+            &["--url=https://<redacted>@mcp.example.test"],
+        ),
+        (
+            &[&format!(
+                r#"{{"url":"https://someone:pa;{word}@mcp.example.test/sse"}}"#
+            )],
+            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+        ),
+        (
+            &[&format!(
+                r#"{{"url":"https://someone:pa,{word}@mcp.example.test/sse"}}"#
+            )],
+            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+        ),
+        (
+            &[&format!(
+                r#"{{"url":"https://someone:pa'{word}@mcp.example.test/sse"}}"#
+            )],
+            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+        ),
+        (
+            &[&format!(
+                r#"{{"url":"https://someone:12,{word}@mcp.example.test"}}"#
+            )],
+            &[r#"{"url":"https://<redacted>@mcp.example.test"}"#],
+        ),
+        // A quote escaped inside a JSON string does not close it.
+        (
+            &[&format!(
+                r#"{{"url":"https://someone:pa\"{word}@mcp.example.test/sse"}}"#
+            )],
+            &[r#"{"url":"https://<redacted>@mcp.example.test/sse"}"#],
+        ),
+        (
+            &[&format!("https://someone:pa\"{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://someone:pa{{{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://someone:pa|{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://someone:pa<{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://someone:pa\\{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        (
+            &[&format!("https://someone:pa^{word}@mcp.example.test/sse")],
+            &["https://<redacted>@mcp.example.test/sse"],
+        ),
+        // A quote a shell closes only to write a quote goes on with the URL.
+        (
+            &[
+                "-c",
+                &format!(r#"curl 'https://someone:pa'"'"'{word}@mcp.example.test/sse'"#),
+            ],
+            &["-c", "curl 'https://<redacted>@mcp.example.test/sse'"],
+        ),
+        (
+            &[
+                "-c",
+                &format!(r"curl 'https://someone:pa'\''{word}@mcp.example.test/sse'"),
+            ],
+            &["-c", "curl 'https://<redacted>@mcp.example.test/sse'"],
+        ),
+        // A `,` after the user still starts the next host.
+        (
+            &[&format!(
+                "postgres://someone:{word}@db1.example.test,db2.example.test/app"
+            )],
+            &["postgres://<redacted>@db1.example.test,db2.example.test/app"],
+        ),
+    ];
+
+    cases
+        .iter()
+        .filter_map(|(args, expected)| shown_wrong(args, expected))
+        .collect()
 }
 
 #[test]

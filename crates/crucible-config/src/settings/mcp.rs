@@ -183,8 +183,12 @@ impl McpServer {
     /// argument too where what was hidden ends on a scheme word such as
     /// `Bearer`. A URL, wherever in a word its `scheme://` starts, is shown
     /// without its user, query and fragment, as `user:password@host` is shown
-    /// without its password; and a word, or a piece of one, shaped like a
-    /// token is hidden. A value after a flag whose name says nothing, as `-p`,
+    /// without its password. The user is hidden whatever its password holds:
+    /// a `;`, `,`, quote or other character that ends a URL ends one only
+    /// after its user, but for the quote that closes a string the URL opens,
+    /// as `"url":"https://...` opens one, and a shell's `'"'"'` or `'\''`
+    /// writes a quote rather than closing one. And a word, or a piece of one,
+    /// shaped like a token is hidden. A value after a flag whose name says nothing, as `-p`,
     /// is shown. More is hidden than is secret, on purpose: a value shown in
     /// error is the one that cannot be taken back.
     #[must_use]
@@ -457,6 +461,12 @@ fn token(piece: &str) -> String {
 /// the text that begins, to the first character a URL is not written with
 /// unescaped, or a `;` or `,` that starts the next pair.
 ///
+/// Those ends are looked for only after the user part, so a password holding
+/// one is hidden whole rather than cut where it falls. The user part runs to
+/// the last `@` before the authority ends: at a `/`, `?`, `#`, or the quote
+/// that closes the string the URL opens, as `"url":"https://...` opens one.
+/// Where that runs on into a later `@`, more is hidden than the user.
+///
 /// `None` where `text` holds no URL.
 fn url(text: &str) -> Option<(usize, usize)> {
     const ENDS: [char; 12] = ['"', '\'', '`', '<', '>', '{', '}', '|', '\\', '^', ';', ','];
@@ -475,14 +485,52 @@ fn url(text: &str) -> Option<(usize, usize)> {
             .and_then(|scheme| scheme.find(|c: char| c.is_ascii_alphabetic()));
         let after = found + "://".len();
         if let Some(letter) = letter {
-            let end = text
-                .get(after..)
-                .and_then(|rest| rest.find(ENDS))
-                .map_or(text.len(), |end| after + end);
-            return Some((run + letter, end));
+            let start = run + letter;
+            let opened = text
+                .get(..start)
+                .and_then(|head| head.chars().next_back())
+                .filter(|c| matches!(c, '"' | '\''));
+            let rest = text.get(after..).unwrap_or_default();
+            let user = rest
+                .get(..authority(rest, opened))
+                .and_then(|authority| authority.rfind('@'))
+                .map_or(0, |sign| sign + 1);
+            let end = rest
+                .get(user..)
+                .and_then(|host| host.find(ENDS))
+                .map_or(text.len(), |end| after + user + end);
+            return Some((start, end));
         }
         from = after;
     }
+}
+
+/// How far into what follows a URL's `://` its authority runs: to the first
+/// `/`, `?`, `#` or whitespace, or to `opened`, the quote the URL's string was
+/// opened with, where it is not escaped.
+///
+/// A quote next to another quote, or before a backslash, closes nothing: that
+/// is a shell writing a quote into the string, as `'"'"'` and `'\''` do, and
+/// JSON never writes a closing quote beside either.
+fn authority(rest: &str, opened: Option<char>) -> usize {
+    let quote = |c: &char| matches!(c, '"' | '\'');
+    let mut escaped = false;
+    let mut before = None;
+    let mut chars = rest.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        let closes = !escaped
+            && Some(c) == opened
+            && !before.as_ref().is_some_and(quote)
+            && !chars
+                .peek()
+                .is_some_and(|(_, next)| quote(next) || *next == '\\');
+        if matches!(c, '/' | '?' | '#') || c.is_whitespace() || closes {
+            return at;
+        }
+        escaped = c == '\\' && !escaped;
+        before = Some(c);
+    }
+    rest.len()
 }
 
 /// A URL as a reader is shown it: scheme, host and path, with the user, the
