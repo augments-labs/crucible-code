@@ -44,10 +44,10 @@ impl fmt::Display for Minted {
 ///
 /// `None` where no honest rule exists — a path that did not resolve or is not
 /// text, a command nobody could read, or a line that is more than one command.
-/// A path that is not text is spelled with a replacement character, so a rule
-/// in that spelling would name other files too. The last is the interesting
-/// one: a rule per constituent would let each of them run alone from now on,
-/// which is wider than the line that was actually agreed to.
+/// The last is the interesting one: a rule per constituent would let each of
+/// them run alone from now on, which is wider than the line that was actually
+/// agreed to. A path that is not text is spelled with a replacement character,
+/// so a rule in that spelling would name other files too.
 #[must_use]
 pub fn narrowest(call: &ToolCall, sensitivity: &Sensitivity) -> Option<Minted> {
     let subject = match sensitivity {

@@ -7,12 +7,13 @@
 //! So a path is resolved twice — once here, before anybody is asked, and once
 //! in `run`, where the result is what actually gets opened. That is not a
 //! redundancy waiting to be cached away. What crosses the permission boundary
-//! between the two is a [`Target`], which is text; a tool that carried a
-//! resolved handle across it would be a tool that had decided what to open
-//! before anyone said yes. The second resolution is held to the first, inside
-//! the workspace as well as outside it: the filesystem can answer differently
-//! by the time the call runs, and a verdict about one file is not a verdict
-//! about the file a name leads to now.
+//! between the two is a [`Target`], which is a name rather than a handle: its
+//! text, and for a name that is not text, the path itself beside it. A tool
+//! that carried a resolved handle across it would be a tool that had decided
+//! what to open before anyone said yes. The second resolution is held to the
+//! first, inside the workspace as well as outside it: the filesystem can answer
+//! differently by the time the call runs, and a verdict about one file is not a
+//! verdict about the file a name leads to now.
 //!
 //! Anything that does not resolve becomes [`Target::unresolved`], which no rule
 //! matches. The call is asked about and then refused by the tool a moment

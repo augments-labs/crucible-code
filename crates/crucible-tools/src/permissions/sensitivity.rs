@@ -171,8 +171,8 @@ pub(super) enum Held {
 
 /// A path that resolved, in the spellings something was going to read.
 ///
-/// `None` in either field means nobody asked for that spelling, never that the
-/// path has none — and from here the two are indistinguishable. That is why
+/// `None` in either spelling means nobody asked for that spelling, never that
+/// the path has none — and from here the two are indistinguishable. That is why
 /// the [`Wanted`] a target is built with comes from the very patterns that
 /// will read it, and why a target built with less than [`Wanted::BOTH`] goes
 /// straight to those patterns and is not kept.
