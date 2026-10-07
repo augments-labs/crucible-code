@@ -377,14 +377,44 @@ fn the_update_the_kill_point_tests_stop() {
     }
 }
 
-/// The boundaries an update crosses, in order: one for each of the
-/// `leftovers` it finds, and those of a rollback when it `rolls_back`.
-fn boundaries(leftovers: usize, rolls_back: bool) -> Vec<&'static str> {
+/// What an update finds and does, which decides the boundaries it crosses.
+#[derive(Clone, Copy)]
+struct Run {
+    /// It finds what an interrupted install left.
+    leftovers: bool,
+    /// It finds the same build of the next release already in place.
+    in_place: bool,
+    /// It rolls back the release it activated.
+    rolls_back: bool,
+}
+
+/// A plain update: nothing left behind, nothing in place, no rollback.
+const UPDATE_RUN: Run = Run {
+    leftovers: false,
+    in_place: false,
+    rolls_back: false,
+};
+
+impl Run {
+    /// Makes `install` what this update finds.
+    fn prepare(self, install: &Install) {
+        if self.leftovers {
+            leave_leftovers(install);
+        }
+        if self.in_place {
+            install.release(NEXT, &executable(NEXT));
+        }
+    }
+}
+
+/// The boundaries an update crosses, in order: one for each of the two
+/// leftovers it finds, the staged unit removed rather than moved when the
+/// same build is in place, and those of a rollback.
+fn boundaries(run: Run) -> Vec<&'static str> {
     let mut crossed = vec!["took the lock"];
-    crossed.extend(std::iter::repeat_n(
-        "removed what an interrupted install left",
-        leftovers,
-    ));
+    if run.leftovers {
+        crossed.extend(["removed what an interrupted install left"; 2]);
+    }
     crossed.extend([
         "made the staging directory",
         "copied the archive",
@@ -393,11 +423,14 @@ fn boundaries(leftovers: usize, rolls_back: bool) -> Vec<&'static str> {
         "removed the archive's copy",
         "wrote the receipt",
         "sealed the staged release",
-        "moved the release into place",
-        "made the activation link",
-        "switched the active release",
     ]);
-    if rolls_back {
+    crossed.push(if run.in_place {
+        "removed the staging directory"
+    } else {
+        "moved the release into place"
+    });
+    crossed.extend(["made the activation link", "switched the active release"]);
+    if run.rolls_back {
         crossed.extend(["made the activation link", "switched the active release"]);
     }
     crossed.push("released the lock");
@@ -436,16 +469,14 @@ fn leave_leftovers(install: &Install) {
 /// time, and holds what it leaves to the rule: one whole release active, the
 /// one before or the one after, and an install the next update recovers.
 /// Returns each kill point that broke it, the boundary named.
-fn kill_matrix(name: &str, rolls_back: bool, leftovers: bool, finish: &[&str]) -> Vec<String> {
-    let expected = boundaries(if leftovers { 2 } else { 0 }, rolls_back);
+fn kill_matrix(name: &str, run: Run, finish: &[&str]) -> Vec<String> {
+    let expected = boundaries(run);
     let mut broken = Vec::new();
     for at in 1..=expected.len() {
         let install = Install::new(&format!("{name}-{at}"));
-        if leftovers {
-            leave_leftovers(&install);
-        }
+        run.prepare(&install);
         let record = install.dir.join("crossed");
-        let killed = install.update(rolls_back, &record, Some(at));
+        let killed = install.update(run.rolls_back, &record, Some(at));
         let crossed = recorded(&record);
         let boundary = crossed.last().cloned().unwrap_or_default();
         let point = format!("killed at crossing {at}, after `{boundary}`");
@@ -470,7 +501,7 @@ fn kill_matrix(name: &str, rolls_back: bool, leftovers: bool, finish: &[&str]) -
             broken.push(format!("{point}: once recovered, {problem}"));
             continue;
         }
-        let again = install.update(rolls_back, &install.dir.join("again"), None);
+        let again = install.update(run.rolls_back, &install.dir.join("again"), None);
         if !again.status.success() {
             broken.push(format!(
                 "{point}: the next update failed: {}",
@@ -486,13 +517,11 @@ fn kill_matrix(name: &str, rolls_back: bool, leftovers: bool, finish: &[&str]) -
 }
 
 /// What an update that is not killed crosses, and leaves active.
-fn uninterrupted(name: &str, rolls_back: bool, leftovers: bool) -> (Vec<String>, String) {
+fn uninterrupted(name: &str, run: Run) -> (Vec<String>, String) {
     let install = Install::new(name);
-    if leftovers {
-        leave_leftovers(&install);
-    }
+    run.prepare(&install);
     let record = install.dir.join("crossed");
-    let ran = install.update(rolls_back, &record, None);
+    let ran = install.update(run.rolls_back, &record, None);
     assert!(
         ran.status.success(),
         "the update failed: {}",
@@ -508,29 +537,57 @@ fn uninterrupted(name: &str, rolls_back: bool, leftovers: bool) -> (Vec<String>,
 
 #[test]
 fn a_kill_at_every_boundary_of_an_update_leaves_one_whole_release_it_recovers_from() {
-    let broken = kill_matrix("kill-update", false, true, &[NEXT]);
+    let run = Run {
+        leftovers: true,
+        ..UPDATE_RUN
+    };
+    let broken = kill_matrix("kill-update", run, &[NEXT]);
     assert!(broken.is_empty(), "{}", broken.join("\n"));
-    let (crossed, active) = uninterrupted("kill-update-whole", false, true);
+    let (crossed, active) = uninterrupted("kill-update-whole", run);
     assert_eq!(active, NEXT, "the update did not activate the next release");
     assert_eq!(
         crossed,
-        boundaries(2, false),
+        boundaries(run),
         "the matrix does not kill at every boundary the update crosses"
     );
 }
 
 #[test]
-fn a_kill_at_every_boundary_of_a_rollback_leaves_one_whole_release_it_recovers_from() {
-    let broken = kill_matrix("kill-rollback", true, false, &[ACTIVE, NEXT]);
+fn a_kill_at_every_boundary_of_an_update_to_a_release_in_place_leaves_one_whole_release() {
+    let run = Run {
+        in_place: true,
+        ..UPDATE_RUN
+    };
+    let broken = kill_matrix("kill-in-place", run, &[NEXT]);
     assert!(broken.is_empty(), "{}", broken.join("\n"));
-    let (crossed, active) = uninterrupted("kill-rollback-whole", true, false);
+    let (crossed, active) = uninterrupted("kill-in-place-whole", run);
+    assert_eq!(
+        active, NEXT,
+        "the update did not activate the release in place"
+    );
+    assert_eq!(
+        crossed,
+        boundaries(run),
+        "the matrix does not kill at every boundary an update to a release in place crosses"
+    );
+}
+
+#[test]
+fn a_kill_at_every_boundary_of_a_rollback_leaves_one_whole_release_it_recovers_from() {
+    let run = Run {
+        rolls_back: true,
+        ..UPDATE_RUN
+    };
+    let broken = kill_matrix("kill-rollback", run, &[ACTIVE, NEXT]);
+    assert!(broken.is_empty(), "{}", broken.join("\n"));
+    let (crossed, active) = uninterrupted("kill-rollback-whole", run);
     assert_eq!(
         active, ACTIVE,
         "the rollback did not restore the release before"
     );
     assert_eq!(
         crossed,
-        boundaries(0, true),
+        boundaries(run),
         "the matrix does not kill at every boundary the rollback crosses"
     );
 }
@@ -896,7 +953,7 @@ fn a_release_staged_for_another_install_is_not_activated_here() {
 fn the_installer_refuses_the_lock_a_killed_update_left_and_finishes_once_it_is_removed() {
     let install = Install::new("installer");
     let record = install.dir.join("crossed");
-    let at = boundaries(0, false)
+    let at = boundaries(UPDATE_RUN)
         .iter()
         .position(|boundary| *boundary == "unpacked the executable")
         .expect("a boundary in staging")
