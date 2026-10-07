@@ -64,7 +64,7 @@ compiler comes from:
 
 crucible's own `bash` tool looks for a POSIX shell at runtime as well, and finds
 the one [Git for Windows](https://git-scm.com/download/win) installs. See
-[getting started](../getting-started/getting-started.md).
+[getting started](../getting-started/first-session.md).
 
 ## Build it
 

@@ -99,7 +99,7 @@ into text. `pandoc` without it writes the *reference* and not the file, leaving
 a link to something that was never saved; with it the pictures come out beside
 the Markdown as ordinary files, and an ordinary file is one `read` hands back
 to be looked at, or that you can
-[name in the prompt](../getting-started/getting-started.md#naming-a-file-in-the-prompt).
+[name in the prompt](../getting-started/first-session.md#naming-a-file-in-the-prompt).
 That is the second half of reading a document: the words come out of the
 converter, and the diagram goes back in as a picture.
 

@@ -342,7 +342,7 @@ A session put back on the screen is drawn by the code that drew it live, so it
 is the same session rather than a rendering of one. A result too long for its
 row still says how much it left over, still stands out from the rows with
 nothing behind them, and still opens on
-[<kbd>Ctrl+O</kbd> or a click](../getting-started/getting-started.md). The
+[<kbd>Ctrl+O</kbd> or a click](../getting-started/first-session.md). The
 lines are read back out of the log rather than out of the run that produced
 them, and a result too old to still be held is read back from the log when the
 view reaches it.

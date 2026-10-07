@@ -106,7 +106,7 @@ provider is chosen and no model is named, by `--model` or by
 Down a pipe there is nobody to type `/model`, so a run with no terminal ends
 instead, with the same sentence and `No turn was taken.` after it. Give the
 key and the model before running redirected. See [sign in or give it a
-key](getting-started.md#sign-in-or-give-it-a-key), [which
+key](first-session.md#sign-in-or-give-it-a-key), [which
 provider](../providers/providers.md#which-provider) and [which
 model](../providers/providers.md#which-model).
 
@@ -283,7 +283,7 @@ a reason this build does not know`. A narrower question fixes the first,
 asking for less does not help the second, the same prompt again carries on from
 the third, and the last is a stop crucible could not name, so asking again is
 what there is to try. `! stopped` is a turn you ended with <kbd>Esc</kbd>. See
-[when an answer stops early](getting-started.md#when-an-answer-stops-early).
+[when an answer stops early](first-session.md#when-an-answer-stops-early).
 
 ### `■ Usage limit reached · weekly window · resets 5 Oct 09:00`
 
@@ -495,7 +495,7 @@ redirected run rather than a fault: lines are read whole, one prompt each, and
 the mode is written in front of them because there is no row under a box to
 show it. With no colour to read them into, the emphasis markers the model wrote
 are left in the text, which is what makes `crucible < prompts.txt > answers.md`
-a file of markdown. See [run it](getting-started.md#run-it).
+a file of markdown. See [run it](first-session.md#run-it).
 
 ### `crucible: what you typed is longer than 1 MiB; no prompt was accepted`
 
@@ -504,4 +504,4 @@ prompt is held to, and the run stopped without taking it. Split it, or name
 the file in the prompt instead of pasting its contents: a path to a picture or
 a PDF goes with the prompt, and any other path is a word the `read` tool opens
 when the model asks for it. See [naming a file in the
-prompt](getting-started.md#naming-a-file-in-the-prompt).
+prompt](first-session.md#naming-a-file-in-the-prompt).
