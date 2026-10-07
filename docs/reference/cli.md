@@ -362,8 +362,9 @@ read, or an account login holds no lapse time, so it could not be settled).
 Whether a vendor accepts any credential is never checked, and the report says
 so.
 
-It exits 0 when every provider was settled, and 1 when one could not be or
-when the provider named has nothing to sign in with. `--json` prints one JSON
+It exits 0 when every provider was settled, and 1 when one could not be, when
+the provider named has nothing to sign in with, or when a name was too long to
+show whole and the report is incomplete. `--json` prints one JSON
 document on one line to standard output instead of the report, with
 `format_version` 1, `kind` `auth-status`, `status` (`complete`, `incomplete`
 or `failed`), `acceptance` `unchecked`, a `problem` sentence or null, a
@@ -411,16 +412,24 @@ standard output on the terminal as well, so a key row, or a name that is both,
 with its output redirected is refused the same way before anything is asked;
 an account sign-in needs standard input and standard error alone.
 
+A login that changes which credential the provider is stored with takes
+`providers.<name>.fast` out of the user configuration file, as `/login` does
+([When it goes back to standard](../providers/fast.md#when-it-goes-back-to-standard)).
 It exits 0 once the credential is stored and 1 when nothing was: a key that
-does not fit, a sign-in that failed or was declined, or a store that could not
-be written. A login never signs another provider in.
+does not fit, a sign-in that failed or was declined, a store that could not be
+written, or a user configuration file that could not be read, since what goes
+with a credential is settled from it. A login never signs another provider in.
 
 ### `auth logout PROVIDER`
 
 Takes every credential crucible stored for the provider out of its store, in
 one write under the lock a renewal holds, and leaves every other provider and
-every name this build has no row for as they were. The yes given to a
-vendor's terms for that sign-in goes with it, as it does for `/logout`.
+every name this build has no row for as they were. A row's name signs out the
+whole provider: `auth logout moonshot@kimi.ai` takes out every credential
+stored for `moonshot`, a key under the bare `moonshot` row among them, not that
+row's alone. The yes given to a vendor's terms for that sign-in goes with it,
+and where a credential went, so does `providers.<name>.fast` in the user
+configuration file, as for `/logout`.
 
 ```bash
 crucible auth logout anthropic
@@ -430,7 +439,7 @@ A variable that still holds a key is the shell's, not crucible's, and is never
 touched: the run names it and says to unset it there. It exits 0 once the
 provider's credentials are out of the store, or when it held none, and 1 when
 the store could not be changed, such as while another crucible is writing it,
-in which case nothing was.
+or the user configuration file could not be read; in either case nothing was.
 
 ## Windows sandbox maintenance
 
@@ -521,8 +530,8 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, a `doctor` with nothing to warn about, an `auth status` that settled every provider, and an `auth login` or `auth logout` that changed the store end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold, and a `sandbox inspect` that could not be made, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider or found nothing for the one named, with its report on standard output, and an `auth` command given a provider nobody serves. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold, and a `sandbox inspect` that could not be made, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
 | 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
 
