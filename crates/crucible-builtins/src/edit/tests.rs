@@ -310,7 +310,10 @@ fn a_link_retargeted_after_the_verdict_to_another_file_inside_changes_neither() 
     assert_eq!(read(&sample, "inside.txt"), "token = 1\n");
 }
 
-#[cfg(unix)]
+/// Linux alone, as the other tests about names that are not text: macOS
+/// refuses to make such a file, and not every Linux mount keeps one either,
+/// which is why a refusal to make it ends the test rather than failing it.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_link_retargeted_after_the_verdict_between_files_whose_names_are_not_text_changes_neither() {
     // The same, where the two files' names are not text. Spelled as text they
@@ -322,8 +325,9 @@ fn a_link_retargeted_after_the_verdict_between_files_whose_names_are_not_text_ch
     let sample = Sample::new("edit-retargeted-untextual");
     let named = sample.root().join(OsStr::from_bytes(b"\xff"));
     let now = sample.root().join(OsStr::from_bytes(b"\xfe"));
-    fs::write(&named, "token = 1\n").expect("a writable temporary directory");
-    fs::write(&now, "token = 1\n").expect("a writable temporary directory");
+    if fs::write(&named, "token = 1\n").is_err() || fs::write(&now, "token = 1\n").is_err() {
+        return;
+    }
     crate::sample::symlink(&named, sample.root().join("door.txt"));
 
     let tool = Edit::new(sample.workspace());
@@ -342,7 +346,10 @@ fn a_link_retargeted_after_the_verdict_between_files_whose_names_are_not_text_ch
     assert_eq!(fs::read_to_string(&named).unwrap(), "token = 1\n");
 }
 
-#[cfg(unix)]
+/// Linux alone, as the other tests about names that are not text: macOS
+/// refuses to make such a file, and not every Linux mount keeps one either,
+/// which is why a refusal to make it ends the test rather than failing it.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_file_whose_name_is_not_text_is_changed_when_its_link_still_leads_to_it() {
     use std::ffi::OsStr;
@@ -350,7 +357,9 @@ fn a_file_whose_name_is_not_text_is_changed_when_its_link_still_leads_to_it() {
 
     let sample = Sample::new("edit-untextual");
     let named = sample.root().join(OsStr::from_bytes(b"\xff"));
-    fs::write(&named, "token = 1\n").expect("a writable temporary directory");
+    if fs::write(&named, "token = 1\n").is_err() {
+        return;
+    }
     crate::sample::symlink(&named, sample.root().join("door.txt"));
 
     let output = edit(

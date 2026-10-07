@@ -611,8 +611,13 @@ fn an_unresolved_write_beside_the_workspace_is_asked_about_each_time() {
 /// second, and `secret` to a copy of the first under `secrets/`. Spelled as
 /// text the two names come out the same, which is what these fixtures exist
 /// to hold apart.
-#[cfg(unix)]
-fn two_untextual_files(name: &str) -> (Removed, Workspace) {
+///
+/// Linux alone, because it is where the checks run on a filesystem that keeps
+/// a name that is not text. macOS refuses to make such a file and other Unix
+/// filesystems keep one; not every Linux mount does either, so a refusal to
+/// make one answers `None`, and the test that asked ends rather than fails.
+#[cfg(target_os = "linux")]
+fn two_untextual_files(name: &str) -> Option<(Removed, Workspace)> {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt as _;
 
@@ -624,7 +629,9 @@ fn two_untextual_files(name: &str) -> (Removed, Workspace) {
     fs::create_dir_all(root.join("secrets")).unwrap();
     for (link, file) in [("a", b"\xff"), ("b", b"\xfe")] {
         let file = OsStr::from_bytes(file);
-        fs::write(root.join(file), "k").unwrap();
+        if fs::write(root.join(file), "k").is_err() {
+            return None;
+        }
         std::os::unix::fs::symlink(root.join(file), root.join(link)).unwrap();
     }
     let secret = root.join("secrets").join(OsStr::from_bytes(b"\xff"));
@@ -632,13 +639,15 @@ fn two_untextual_files(name: &str) -> (Removed, Workspace) {
     std::os::unix::fs::symlink(secret, root.join("secret")).unwrap();
 
     let workspace = Workspace::open(&root).unwrap();
-    (base, workspace)
+    Some((base, workspace))
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn a_session_yes_to_one_file_whose_name_is_not_text_does_not_cover_another() {
-    let (_base, workspace) = two_untextual_files("session");
+    let Some((_base, workspace)) = two_untextual_files("session") else {
+        return;
+    };
     let mut permission = Permission::new();
     let mut answer = Answer::for_the_session();
 
@@ -658,12 +667,14 @@ fn a_session_yes_to_one_file_whose_name_is_not_text_does_not_cover_another() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn no_rule_is_minted_for_a_file_whose_name_is_not_text() {
     // The rule would be written in the text spelling, which names the other
     // file as well.
-    let (_base, workspace) = two_untextual_files("minted");
+    let Some((_base, workspace)) = two_untextual_files("minted") else {
+        return;
+    };
     let path = workspace.existing("a").unwrap();
     let changing = Sensitivity::MutatesFile {
         target: Target::resolved(&workspace, &path),
@@ -672,13 +683,15 @@ fn no_rule_is_minted_for_a_file_whose_name_is_not_text() {
     assert_eq!(narrowest(&call("edit"), &changing), None);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn a_denial_still_names_a_file_whose_name_is_not_text() {
     // Two such names read alike once spelled as text, so a rule about one
     // speaks about both. For a denial that is the side to err on: a file with
     // an unreadable name below a denied directory is still below it.
-    let (_base, workspace) = two_untextual_files("denied");
+    let Some((_base, workspace)) = two_untextual_files("denied") else {
+        return;
+    };
     let mut permission = with(Mode::Ask, &[(Disposition::Deny, "read(secrets/**)")]);
     let mut answer = Answer::once(Verdict::Allow);
     let secret = workspace.existing("secret").unwrap();
