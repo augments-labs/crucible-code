@@ -19,10 +19,10 @@
 //! accident of the parser. [`frame`] holds what is written to the same counts,
 //! so this build never sends what it would refuse to read.
 //!
-//! A string is written with every control character escaped, the C1 range
-//! included, which the JSON grammar allows but does not require: a document
-//! is often read off a terminal, and a terminal acts on U+009B as it acts on
-//! ESC `[`. The escape reads back as the same character, so nothing a reader
+//! A string is written with every control character escaped, DEL and the C1
+//! range included, which the JSON grammar allows but does not require: a
+//! document is often read off a terminal, and a terminal acts on U+009B as it
+//! acts on ESC `[`. The escape reads back as the same character, so nothing a reader
 //! decodes changes.
 
 use std::cell::Cell;
@@ -226,8 +226,8 @@ pub(crate) fn frame(value: &Value) -> Result<Vec<u8>, Refusal> {
     Ok(bytes)
 }
 
-/// Compact JSON whose strings carry the C1 controls, U+0080 to U+009F, as
-/// `\u00XX` escapes as well as the C0 ones `serde_json` escapes already.
+/// Compact JSON whose strings carry DEL and the C1 controls, U+007F to U+009F,
+/// as `\u00XX` escapes as well as the C0 ones `serde_json` escapes already.
 struct Escaping;
 
 impl Formatter for Escaping {
@@ -239,7 +239,7 @@ impl Formatter for Escaping {
         let mut rest = fragment;
         while let Some((at, control)) = rest
             .char_indices()
-            .find(|(_, character)| ('\u{80}'..='\u{9f}').contains(character))
+            .find(|(_, character)| ('\u{7f}'..='\u{9f}').contains(character))
         {
             let (before, after) = rest.split_at(at);
             CompactFormatter.write_string_fragment(writer, before)?;
