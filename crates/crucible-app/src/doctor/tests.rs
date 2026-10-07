@@ -602,12 +602,7 @@ fn words_from_a_configuration_file_reach_either_form_without_their_control_or_fo
 }
 
 #[test]
-fn the_doctor_replaces_every_character_a_limit_name_drops_and_the_two_separators() {
-    // The format characters are listed by hand, as a limit's name lists them,
-    // since no Unicode table is in the standard library; this holds the two
-    // lists to each other. The line and paragraph separators end a line in
-    // some terminals and viewers, and a reason is one line.
-    const SEPARATORS: [char; 2] = ['\u{2028}', '\u{2029}'];
+fn the_doctor_replaces_every_character_crucible_does_not_show_and_no_other() {
     // A line feed is where a reason's lines are joined, which the test below
     // holds.
     for character in (0..=u32::from(char::MAX))
@@ -622,11 +617,9 @@ fn the_doctor_replaces_every_character_a_limit_name_drops_and_the_two_separators
             "U+{:04X}",
             u32::from(character)
         );
-        let dropped =
-            crucible_types::GroupName::new(&words).is_some_and(|name| name.as_str() == "ab");
         assert_eq!(
             replaced,
-            dropped || SEPARATORS.contains(&character),
+            crucible_types::shown::unshown(character),
             "U+{:04X}",
             u32::from(character)
         );
