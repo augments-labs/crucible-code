@@ -218,12 +218,17 @@ jobs:
   # FreeBSD's mv, ln, install, sync and checksum tools differ from both GNU and
   # macOS, and the installer depends on how each renames over a link. GitHub
   # hosts no FreeBSD runner, so the installer's tests run in the same guest the
-  # release builds in. Unlike that release job, this one is required: it
-  # builds nothing, so the guest is all it waits on.
+  # release builds in. The update's activation renames over the same link and
+  # shares the installer's lock, so its tests, which kill an update at each
+  # point it changes the install and recover from what it left, run there
+  # too. Unlike that release job, this one is required: it builds one crate's
+  # tests rather than the release, so the guest is most of what it waits on.
   freebsd-installer:
     name: FreeBSD installer
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      BOOTSTRAP_RUSTUP_VERSION: "1.29.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -233,7 +238,29 @@ jobs:
           release: "14.4"
           usesh: true
           prepare: pkg install -y bash curl
-          run: scripts/sh/install-tests.sh
+          # `--default-toolchain none` leaves the choice to
+          # rust-toolchain.toml, so this guest compiles with the version every
+          # other machine here does rather than whatever pkg happens to carry.
+          # `set -e` so the installer's tests failing fails the job even when
+          # the update's tests after them pass.
+          run: |
+            set -e
+            rustup_sha256=c3fdfa4553e088edad701ea74776eb707644bed9f4a44f42a077e733201e966a
+            url="https://static.rust-lang.org/rustup/archive/${{ env.BOOTSTRAP_RUSTUP_VERSION }}/x86_64-unknown-freebsd/rustup-init"
+            curl --proto '=https' --tlsv1.2 --fail --location --silent \
+              --show-error --output rustup-init "$url"
+            if [ "$(sha256 -q rustup-init)" != "$rustup_sha256" ]; then
+              echo 'rustup-init checksum did not match'
+              exit 1
+            fi
+            chmod 755 rustup-init
+            ./rustup-init -y --no-modify-path --profile minimal \
+              --default-toolchain none
+            rm rustup-init
+            . "$HOME/.cargo/env"
+
+            scripts/sh/install-tests.sh
+            cargo test -p crucible-update --locked
 
   # Windows ARM64 cannot be cross-built from Linux, so a pull request that
   # leaves its tests to dev still compiles every target there. It starts from
