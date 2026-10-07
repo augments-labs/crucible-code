@@ -96,8 +96,8 @@ const JOINERS: [char; 2] = ['\u{200c}', '\u{200d}'];
 /// Compact JSON whose strings carry every [`unshown`] character as a `\u`
 /// escape: DEL, the C1 controls, the format characters and the line and
 /// paragraph separators as well as the C0 controls `serde_json` escapes
-/// already. One beyond the Basic Multilingual
-/// Plane is written as its two UTF-16 halves, as the JSON grammar spells it.
+/// already. One beyond the Basic Multilingual Plane is written as its two
+/// UTF-16 halves, as the JSON grammar spells it.
 #[derive(Debug, Clone, Copy)]
 pub struct Escaping;
 

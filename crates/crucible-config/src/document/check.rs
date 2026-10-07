@@ -774,8 +774,9 @@ impl CheckReport {
     /// The same redaction as [`human`](Self::human): names and redacted
     /// sentences, with no secret or credential values; the non-secret values
     /// a failure sentence quotes arrive here too. Strings are written through
-    /// [`Escaping`], so DEL, the C1 controls and the format characters a file
-    /// chose leave as `\u` escapes, which read back as the same characters.
+    /// [`Escaping`], so DEL, the C1 controls, the format characters and the
+    /// line and paragraph separators a file chose leave as `\u` escapes, which
+    /// read back as the same characters.
     #[must_use]
     pub fn json(&self) -> String {
         let files: Vec<serde_json::Value> = self
