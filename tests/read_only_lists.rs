@@ -398,7 +398,9 @@ fn sessions_list_says_what_was_recorded_here_and_changes_nothing() {
 #[test]
 fn a_session_directory_with_no_index_is_listed_as_incomplete() {
     let scratch = Scratch::new("sessions-unindexed");
-    fs::create_dir_all(scratch.crucible().join("sessions")).expect("a session directory");
+    let logs = scratch.crucible().join("sessions");
+    fs::create_dir_all(&logs).expect("a session directory");
+    fs::write(logs.join("1700000000001-000001.jsonl"), "").expect("an older log");
     let before = tree(&scratch.home());
 
     let json = asked(&scratch, &["sessions", "list", "--json"], false);

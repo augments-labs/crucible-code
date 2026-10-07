@@ -150,6 +150,7 @@ fn nothing_recorded_says_so_and_names_where_it_looked() {
 fn a_directory_with_sessions_and_no_index_says_they_were_not_listed() {
     let sample = Sample::new("sessions-unindexed");
     fs::create_dir_all(sample.logs()).expect("a session directory");
+    fs::write(sample.logs().join(format!("{}.jsonl", id(1))), "").expect("an older log");
 
     let listed = listing(&sample.root(), &sample.logs()).expect("a listing");
 
