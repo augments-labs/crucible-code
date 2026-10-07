@@ -132,7 +132,7 @@ pub enum LayoutError {
     Current,
     /// The unit holds a file its receipt does not account for, or lacks one
     /// it does.
-    #[error("the active release holds other files than its receipt names")]
+    #[error("the install's release holds other files than its receipt names")]
     Contents,
     /// The receipt does not follow the format.
     #[error("the install's receipt is not valid")]
@@ -166,13 +166,14 @@ pub enum LayoutEntry {
     Releases,
     /// `current`, the link naming the active release.
     Current,
-    /// The active release unit, `releases/<version>`.
+    /// A release unit, `releases/<version>`: the active one, or one about to
+    /// be made active.
     Unit,
-    /// The active unit's receipt.
+    /// The unit's receipt.
     Receipt,
-    /// The active unit's `crucible`.
+    /// The unit's `crucible`.
     Executable,
-    /// The active unit's `crucible-sandbox-broker`.
+    /// The unit's `crucible-sandbox-broker`.
     Broker,
 }
 
@@ -204,7 +205,7 @@ impl fmt::Display for LayoutEntry {
             Self::Prefix => "prefix",
             Self::Releases => "releases directory",
             Self::Current => "active-release link",
-            Self::Unit => "active release",
+            Self::Unit => "release",
             Self::Receipt => "receipt",
             Self::Executable => "executable",
             Self::Broker => "broker",

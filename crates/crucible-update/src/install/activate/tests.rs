@@ -783,6 +783,51 @@ fn a_staged_release_changed_before_activation_is_not_activated() {
     assert_eq!(install.leftovers(), Vec::<String>::new());
 }
 
+/// What `error` says, with each error it was caused by.
+fn said(error: &dyn std::error::Error) -> String {
+    let mut said = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        said.push_str(": ");
+        said.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    said
+}
+
+#[test]
+fn a_staged_release_that_is_not_whole_is_not_called_the_active_one() {
+    for name in ["writable", "contents"] {
+        let install = Install::new(&format!("staged-said-{name}"));
+        let (activation, staged) = staged(&install);
+        if name == "writable" {
+            fs::set_permissions(staged.path(), fs::Permissions::from_mode(0o775))
+                .expect("its mode");
+        } else {
+            file(&staged.path().join("extra"), b"not in the receipt", 0o644);
+        }
+
+        let refused = activation.activate(staged);
+
+        assert!(
+            matches!(
+                refused,
+                Err(ActivationError::Unit {
+                    unit: UnitRole::Staged,
+                    ..
+                })
+            ),
+            "{name}: {refused:?}"
+        );
+        let said = refused.err().map(|error| said(&error)).unwrap_or_default();
+        assert!(
+            !said.contains("active"),
+            "{name}: a staged release is called the active one: {said}"
+        );
+        assert_eq!(install.active(), ACTIVE);
+    }
+}
+
 #[test]
 fn a_staged_release_whose_receipt_was_rewritten_to_match_is_not_activated() {
     let install = Install::new("staged-rewritten");
