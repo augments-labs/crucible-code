@@ -1657,7 +1657,7 @@ if [[ -d .github/workflows ]]; then
     while IFS= read -r workflow; do
         workflow_count=$((workflow_count + 1))
     done < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \))
-    floating=$(grep -rn 'uses:' .github/workflows |
+    floating=$(grep -rn 'uses:' .github/workflows .github/actions |
         grep -vE 'uses: *\./' |
         grep -vE 'uses: *[^@]+@[0-9a-f]{40} +# ' || true)
     if [[ -n "$floating" ]]; then

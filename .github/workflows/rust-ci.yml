@@ -96,8 +96,8 @@ jobs:
       - uses: ./.github/actions/check-clean-worktree
 
   platform-tests:
-    name: ${{ matrix.platform.name }} tests ${{ matrix.shard }}/2
-    runs-on: ${{ matrix.platform.os }}
+    name: ${{ matrix.name }} tests ${{ matrix.shard }}/${{ matrix.shards }}
+    runs-on: ${{ matrix.os }}
     # The macOS Intel tests have run 12 to 19 minutes in one job and gone past
     # 20 under load. The limit is there to catch a hang, not to time the suite.
     timeout-minutes: 30
@@ -105,24 +105,29 @@ jobs:
       fail-fast: false
       # macOS Intel and Windows ARM64 are the slowest platforms to test, so a
       # pull request leaves them to the run on dev that follows its merge,
-      # and compiles for Windows ARM64 in the job below instead.
+      # and compiles for Windows ARM64 in the job below instead. Apple silicon
+      # runs its tests in one part: macOS machines are the ones a run queues
+      # longest for, and a second one costs more waiting than it saves.
       matrix:
-        platform: >-
+        include: >-
           ${{ fromJSON(inputs.all-platforms && '[
-          {"name": "macOS Intel", "os": "macos-15-intel"},
-          {"name": "macOS Apple silicon", "os": "macos-26"},
-          {"name": "Windows x86_64", "os": "windows-latest"},
-          {"name": "Windows ARM64", "os": "windows-11-arm"}]' || '[
-          {"name": "macOS Apple silicon", "os": "macos-26"},
-          {"name": "Windows x86_64", "os": "windows-latest"}]') }}
-        shard: [1, 2]
+          {"name": "macOS Intel", "os": "macos-15-intel", "shard": 1, "shards": 2},
+          {"name": "macOS Intel", "os": "macos-15-intel", "shard": 2, "shards": 2},
+          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 1, "shards": 1},
+          {"name": "Windows x86_64", "os": "windows-latest", "shard": 1, "shards": 2},
+          {"name": "Windows x86_64", "os": "windows-latest", "shard": 2, "shards": 2},
+          {"name": "Windows ARM64", "os": "windows-11-arm", "shard": 1, "shards": 2},
+          {"name": "Windows ARM64", "os": "windows-11-arm", "shard": 2, "shards": 2}]' || '[
+          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 1, "shards": 1},
+          {"name": "Windows x86_64", "os": "windows-latest", "shard": 1, "shards": 2},
+          {"name": "Windows x86_64", "os": "windows-latest", "shard": 2, "shards": 2}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: tests-${{ matrix.platform.os }}
+          shared-key: tests-${{ matrix.os }}
           save-if: ${{ matrix.shard == 1 }}
       # A prebuilt cargo-nextest, checked against its published checksum, in
       # seconds rather than the minutes building it would take.
@@ -142,7 +147,7 @@ jobs:
       # (add_item EPERM). The documentation examples run beside the first part.
       - shell: bash
         run: |
-          cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/2
+          cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
           if [[ ${{ matrix.shard }} == 1 ]]; then cargo test --workspace --locked --doc; fi
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
@@ -162,24 +167,31 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      # The same platforms as the tests above.
+      # The same platforms as the tests above. A macOS cell runs the rollback
+      # drill too, rather than queueing for a macOS machine of its own, so its
+      # cache is kept apart: it also holds the build the drill makes.
       matrix:
         include: >-
           ${{ fromJSON(inputs.all-platforms && '[
-          {"name": "macOS Intel", "os": "macos-15-intel"},
-          {"name": "macOS Apple silicon", "os": "macos-26"},
-          {"name": "Windows x86_64", "os": "windows-latest"},
-          {"name": "Windows ARM64", "os": "windows-11-arm"}]' || '[
-          {"name": "macOS Apple silicon", "os": "macos-26"},
-          {"name": "Windows x86_64", "os": "windows-latest"}]') }}
+          {"name": "macOS Intel", "os": "macos-15-intel", "drill": true},
+          {"name": "macOS Apple silicon", "os": "macos-26", "drill": true},
+          {"name": "Windows x86_64", "os": "windows-latest", "drill": false},
+          {"name": "Windows ARM64", "os": "windows-11-arm", "drill": false}]' || '[
+          {"name": "macOS Apple silicon", "os": "macos-26", "drill": true},
+          {"name": "Windows x86_64", "os": "windows-latest", "drill": false}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: checks-${{ matrix.os }}
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          shared-key: ${{ matrix.drill && 'checks-drill' || 'checks' }}-${{ matrix.os }}
+      # First, so its steps meet the job as they would in the drill's own job,
+      # and every check after it runs whatever it found.
+      - if: ${{ matrix.drill }}
+        uses: ./.github/actions/rollback-drill
+      - if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - if: ${{ !cancelled() }}
         run: cargo doc --workspace --all-features --no-deps --locked
         env:
@@ -241,115 +253,22 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      # The same platforms as the tests above.
+      # The same platforms as the tests above, with Linux, less macOS, whose
+      # drill runs in its checks job.
       matrix:
         include: >-
           ${{ fromJSON(inputs.all-platforms && '[
           {"name": "Linux", "os": "ubuntu-latest"},
-          {"name": "macOS Intel", "os": "macos-15-intel"},
-          {"name": "macOS Apple silicon", "os": "macos-26"},
           {"name": "Windows x86_64", "os": "windows-latest"},
           {"name": "Windows ARM64", "os": "windows-11-arm"}]' || '[
           {"name": "Linux", "os": "ubuntu-latest"},
-          {"name": "macOS Apple silicon", "os": "macos-26"},
           {"name": "Windows x86_64", "os": "windows-latest"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # The tag the drill rolls back to, read from the drill so it is named in
-      # one place, and fetched without credentials. The drill itself never
-      # fetches; it builds whatever tag is already local.
-      - name: Fetch the previous release tag
-        shell: bash
-        run: |
-          tag=$(sed -n 's/^readonly PRIOR_TAG=//p' scripts/sh/rollback-drill.sh)
-          [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "::error::scripts/sh/rollback-drill.sh names no PRIOR_TAG"
-            exit 1
-          }
-          echo "PRIOR_TAG=$tag" >>"$GITHUB_ENV"
-          # The runner image, since a binary built on a newer image may not
-          # start on an older one while a label rolls between them.
-          echo "PRIOR_IMAGE=${ImageOS:-unknown}" >>"$GITHUB_ENV"
-          # A runner that loses github.com for a minute or so has not found a
-          # broken drill, so the fetch is tried three times, with pauses.
-          for pause in 30 60 ''; do
-            git fetch --depth=1 origin tag "$tag" && break
-            [[ -n $pause ]] || exit 1
-            echo "::warning::could not fetch $tag; trying again in ${pause}s"
-            sleep "$pause"
-          done
-      # The previous binary depends on nothing but the tag and the platform, so
-      # it is restored from the cache once a run on `dev` has saved it.
-      - name: Restore the previous release binary
-        id: prior
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/prior-bin
-          key: rollback-prior-${{ runner.os }}-${{ env.PRIOR_IMAGE }}-${{ runner.arch }}-${{ env.PRIOR_TAG }}
-      # Built in a worktree of this checkout so the candidate tree is untouched.
-      # No sandbox setup: the drill runs the binaries headless with redirected
-      # input and compares replay, pending-action recovery and read-only
-      # commands — it starts no sandboxed command.
-      - name: Build the previous release binary
-        id: build-prior
-        if: ${{ steps.prior.outputs.cache-hit != 'true' }}
-        shell: bash
-        run: |
-          git worktree add --detach "$RUNNER_TEMP/prior-src" "$PRIOR_TAG"
-          # The tag built when it was released, and the crates it locks that
-          # the cache lacks are downloaded here. A failure is nearly always the
-          # registry out of reach for a minute, so it is tried three times too.
-          for pause in 30 60 ''; do
-            (cd "$RUNNER_TEMP/prior-src" && cargo build --locked --bin crucible) && break
-            [[ -n $pause ]] || exit 1
-            echo "::warning::could not build $PRIOR_TAG; trying again in ${pause}s"
-            sleep "$pause"
-          done
-          mkdir -p "$RUNNER_TEMP/prior-bin"
-          for name in crucible crucible.exe; do
-            built="$RUNNER_TEMP/prior-src/target/debug/$name"
-            if [[ -f $built ]]; then cp "$built" "$RUNNER_TEMP/prior-bin/"; fi
-          done
-          # An empty directory would be cached under a key no run replaces.
-          [[ -n $(ls -A "$RUNNER_TEMP/prior-bin") ]] || {
-            echo "::error::the build of $PRIOR_TAG left no crucible binary"
-            exit 1
-          }
-      - name: Cache the previous release binary
-        if: ${{ steps.prior.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/prior-bin
-          key: ${{ steps.prior.outputs.cache-primary-key }}
-      # The drill builds the candidate from this checkout itself, so no step
-      # builds it beforehand, and the self-test's runs find it current.
-      - name: Run the rollback drill
-        shell: bash
-        run: |
-          prior="$RUNNER_TEMP/prior-bin/crucible"
-          [[ -x $prior ]] || prior="$prior.exe"
-          scripts/sh/rollback-drill.sh --prior-binary "$prior"
-      # A second, independent gate, so it runs whatever the drill did. It is
-      # handed the same previous binary, so the release is built once here
-      # rather than again inside the self-test, and it waits for that binary:
-      # when it was never built, the step that failed to build it says why.
-      - name: Run the rollback drill self-test
-        if: ${{ always() && (steps.prior.outputs.cache-hit == 'true' || steps.build-prior.outcome == 'success') }}
-        shell: bash
-        run: |
-          prior="$RUNNER_TEMP/prior-bin/crucible"
-          [[ -x $prior ]] || prior="$prior.exe"
-          scripts/sh/rollback-drill-selftest.sh --prior-binary "$prior"
-      - name: Remove the previous release worktree
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          if [[ -d $RUNNER_TEMP/prior-src ]]; then
-            git worktree remove --force "$RUNNER_TEMP/prior-src"
-          fi
-      # A check whose only value is as a check, like the self-test above.
+      - uses: ./.github/actions/rollback-drill
+      # A check whose only value is as a check, like the drill's self-test.
       - uses: ./.github/actions/check-clean-worktree
         if: ${{ always() }}
