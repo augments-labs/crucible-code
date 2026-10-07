@@ -218,10 +218,12 @@ the run ends 1:
 crucible: no mcp server called dosc; this configuration has docs, notes
 ```
 
-In both, every string from the file is cut to 512 bytes, ending `… (cut)`
+In both lists, every string from the file is cut to 512 bytes, ending `… (cut)`
 where there was more, and a control character, line break or Unicode format
-character in it is written as its escape. `mcp` on its own, without `list` or
-`get`, is a usage error.
+character in it is written as its escape. The refusal names every server
+whole, with a control character or Unicode format character written as its
+escape but a line break kept, as every refusal on standard error keeps one.
+`mcp` on its own, without `list` or `get`, is a usage error.
 
 ### `extensions list`, `--extensions`
 
