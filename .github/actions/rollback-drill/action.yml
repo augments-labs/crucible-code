@@ -1,0 +1,100 @@
+name: Rollback drill
+description: Build the previous release once and run the rollback drill and its self-test against it.
+
+# The steps a rollback-drill cell runs, kept here so a job that folds the drill
+# into itself runs exactly what the drill's own job does.
+runs:
+  using: composite
+  steps:
+    # The tag the drill rolls back to, read from the drill so it is named in
+    # one place, and fetched without credentials. The drill itself never
+    # fetches; it builds whatever tag is already local.
+    - name: Fetch the previous release tag
+      shell: bash
+      run: |
+        tag=$(sed -n 's/^readonly PRIOR_TAG=//p' scripts/sh/rollback-drill.sh)
+        [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+          echo "::error::scripts/sh/rollback-drill.sh names no PRIOR_TAG"
+          exit 1
+        }
+        echo "PRIOR_TAG=$tag" >>"$GITHUB_ENV"
+        # The runner image, since a binary built on a newer image may not
+        # start on an older one while a label rolls between them.
+        echo "PRIOR_IMAGE=${ImageOS:-unknown}" >>"$GITHUB_ENV"
+        # A runner that loses github.com for a minute or so has not found a
+        # broken drill, so the fetch is tried three times, with pauses.
+        for pause in 30 60 ''; do
+          git fetch --depth=1 origin tag "$tag" && break
+          [[ -n $pause ]] || exit 1
+          echo "::warning::could not fetch $tag; trying again in ${pause}s"
+          sleep "$pause"
+        done
+    # The previous binary depends on nothing but the tag and the platform, so
+    # it is restored from the cache once a run on `dev` has saved it.
+    - name: Restore the previous release binary
+      id: prior
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/prior-bin
+        key: rollback-prior-${{ runner.os }}-${{ env.PRIOR_IMAGE }}-${{ runner.arch }}-${{ env.PRIOR_TAG }}
+    # Built in a worktree of this checkout so the candidate tree is untouched.
+    # No sandbox setup: the drill runs the binaries headless with redirected
+    # input and compares replay, pending-action recovery and read-only
+    # commands — it starts no sandboxed command.
+    - name: Build the previous release binary
+      id: build-prior
+      if: ${{ steps.prior.outputs.cache-hit != 'true' }}
+      shell: bash
+      run: |
+        git worktree add --detach "$RUNNER_TEMP/prior-src" "$PRIOR_TAG"
+        # The tag built when it was released, and the crates it locks that
+        # the cache lacks are downloaded here. A failure is nearly always the
+        # registry out of reach for a minute, so it is tried three times too.
+        for pause in 30 60 ''; do
+          (cd "$RUNNER_TEMP/prior-src" && cargo build --locked --bin crucible) && break
+          [[ -n $pause ]] || exit 1
+          echo "::warning::could not build $PRIOR_TAG; trying again in ${pause}s"
+          sleep "$pause"
+        done
+        mkdir -p "$RUNNER_TEMP/prior-bin"
+        for name in crucible crucible.exe; do
+          built="$RUNNER_TEMP/prior-src/target/debug/$name"
+          if [[ -f $built ]]; then cp "$built" "$RUNNER_TEMP/prior-bin/"; fi
+        done
+        # An empty directory would be cached under a key no run replaces.
+        [[ -n $(ls -A "$RUNNER_TEMP/prior-bin") ]] || {
+          echo "::error::the build of $PRIOR_TAG left no crucible binary"
+          exit 1
+        }
+    - name: Cache the previous release binary
+      if: ${{ steps.prior.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/prior-bin
+        key: ${{ steps.prior.outputs.cache-primary-key }}
+    # The drill builds the candidate from this checkout itself, so no step
+    # builds it beforehand, and the self-test's runs find it current.
+    - name: Run the rollback drill
+      shell: bash
+      run: |
+        prior="$RUNNER_TEMP/prior-bin/crucible"
+        [[ -x $prior ]] || prior="$prior.exe"
+        scripts/sh/rollback-drill.sh --prior-binary "$prior"
+    # A second, independent gate, so it runs whatever the drill did. It is
+    # handed the same previous binary, so the release is built once here
+    # rather than again inside the self-test, and it waits for that binary:
+    # when it was never built, the step that failed to build it says why.
+    - name: Run the rollback drill self-test
+      if: ${{ always() && (steps.prior.outputs.cache-hit == 'true' || steps.build-prior.outcome == 'success') }}
+      shell: bash
+      run: |
+        prior="$RUNNER_TEMP/prior-bin/crucible"
+        [[ -x $prior ]] || prior="$prior.exe"
+        scripts/sh/rollback-drill-selftest.sh --prior-binary "$prior"
+    - name: Remove the previous release worktree
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        if [[ -d $RUNNER_TEMP/prior-src ]]; then
+          git worktree remove --force "$RUNNER_TEMP/prior-src"
+        fi
