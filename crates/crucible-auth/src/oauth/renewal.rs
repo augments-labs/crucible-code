@@ -44,6 +44,12 @@
 //! most 5 s for the lock; and [`Renewals::join_within`] gives rotations still
 //! running a bound of the caller's choosing before it aborts them.
 //!
+//! **Held, or not sent.** Every account request leaves through one client,
+//! made with the hold the application hands in ([`Renewals::holds`]) and
+//! asked before each request leaves. An owner never given a hold makes no
+//! client and sends nothing: a caller that forgot to hand one in gets
+//! [`OAuthError::NoHold`], not a request that went out unasked.
+//!
 //! **Login borrows it too.** An account login is a task of its own on the
 //! application's runtime, owned by its attempt, and it awaits its requests and
 //! its store work through this owner, which is what holds them to the one
@@ -103,7 +109,9 @@ pub(crate) struct Due {
 /// one rotation per account hold across every credential and login built with
 /// one owner. It is given its runtime separately, once the application has
 /// one ([`Renewals::runs_on`]); until then a renewal is refused with
-/// [`OAuthError::NoRuntime`] and a login with [`OAuthError::NotStarted`].
+/// [`OAuthError::NoRuntime`] and a login with [`OAuthError::NotStarted`]. It
+/// is given its hold separately too ([`Renewals::holds`]); until then every
+/// account request is refused with [`OAuthError::NoHold`].
 #[derive(Clone)]
 pub struct Renewals(Arc<Inner>);
 
@@ -111,7 +119,7 @@ struct Inner {
     runtime: OnceLock<Handle>,
     client: OnceLock<Http>,
     /// What every account request is asked about before it leaves, once the
-    /// application has handed it one.
+    /// application has handed it one; until then none leaves.
     hold: OnceLock<Arc<dyn Hold>>,
     /// The one place this owner's blocking work takes: held by a rotation
     /// for the whole of its work and by a login request for the whole of its
@@ -171,9 +179,8 @@ impl Renewals {
     }
 
     /// Gives this owner what every sign-in and renewal request it sends is
-    /// asked about before it leaves. The first hold given is the one kept, and
-    /// one given after the first request has been sent is ignored, since the
-    /// client it would have gone into is already made.
+    /// asked about before it leaves. The first hold given is the one kept;
+    /// until one is, no request is sent.
     pub fn holds(&self, hold: Arc<dyn Hold>) {
         let _ = self.0.hold.set(hold);
     }
@@ -318,7 +325,9 @@ impl Renewals {
     ///
     /// [`OAuthError::Unreachable`] where no whole answer arrived in time or
     /// the exchange failed, [`OAuthError::Invalid`] where the body was over
-    /// its limit, and [`OAuthError::Tls`] where the client could not be made.
+    /// its limit, [`OAuthError::Held`] where the hold kept it back,
+    /// [`OAuthError::NoHold`] where this owner was given no hold, and
+    /// [`OAuthError::Tls`] where the client could not be made.
     pub(crate) async fn post(
         &self,
         url: &str,
@@ -407,21 +416,21 @@ impl Renewals {
     /// The client account requests are sent through, made the first time
     /// one is: TLS over the compiled-in roots, one hostname lookup at a time
     /// for targets and proxies together, the proxy this process's
-    /// environment names, and the hold the application handed in.
+    /// environment names, and the hold the application handed in. Never made
+    /// without that hold: until there is one, every request is refused with
+    /// [`OAuthError::NoHold`] before anything is dialled.
     fn client(&self) -> Result<&Http, OAuthError> {
         if let Some(client) = self.0.client.get() {
             return Ok(client);
         }
+        let hold = self.0.hold.get().ok_or(OAuthError::NoHold)?;
         let tls = Tls::new().map_err(OAuthError::Tls)?;
         // One lookup place, shared: a proxy's host and a target's are looked
         // up one at a time between them, and each request is bounded by its
         // own deadline rather than by a lookup's.
         let lookups = Lookups::plain(NonZeroUsize::MIN);
-        let client = Http::new(&tls, lookups.clone().into(), lookups, ProxyEnv::capture());
-        let client = match self.0.hold.get() {
-            Some(hold) => client.holding(Arc::clone(hold)),
-            None => client,
-        };
+        let client = Http::new(&tls, lookups.clone().into(), lookups, ProxyEnv::capture())
+            .holding(Arc::clone(hold));
         Ok(self.0.client.get_or_init(|| client))
     }
 }
@@ -493,6 +502,19 @@ impl Drop for Running {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Holds no origin: the hold a test hands an owner whose account requests
+/// may all leave, since an owner given none sends nothing.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct Nowhere;
+
+#[cfg(test)]
+impl Hold for Nowhere {
+    fn held(&self, _: &crucible_http::Origin) -> Option<Box<str>> {
+        None
+    }
 }
 
 /// Renewals were still running when the owner stopped waiting for them.
