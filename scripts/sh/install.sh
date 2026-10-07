@@ -794,8 +794,10 @@ lock_owner=
 locked=0
 # The lock is a link whose text names the install that holds it, so taking it
 # is one call that fails while it exists, on every platform this runs on.
+# The wait is a minute by the clock, since each look at the lock costs more
+# than its pause on a loaded machine.
 take_lock() {
-    local tries=0 owner pid host
+    local owner pid host deadline=$((SECONDS + 60))
     lock_owner="$$@$(uname -n)"
     [[ ! -d $lock || -L $lock ]] || fail 1 "refusing to use $lock, which is a directory"
     until ln -sn -- "$lock_owner" "$lock" 2>/dev/null; do
@@ -813,8 +815,7 @@ take_lock() {
         elif [[ ! -w $prefix ]]; then
             fail 1 "$lock could not be created, since $prefix is not writable"
         fi
-        tries=$((tries + 1))
-        ((tries < 300)) ||
+        ((SECONDS < deadline)) ||
             fail 1 "another install, ${owner:-unknown}, still holds $lock after a minute; if no install is running, remove it and run the install again"
         sleep 0.2
     done
