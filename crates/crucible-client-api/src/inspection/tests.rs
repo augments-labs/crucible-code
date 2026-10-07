@@ -208,6 +208,25 @@ fn every_document_is_one_line_naming_its_format_kind_and_status() {
 }
 
 #[test]
+fn a_control_character_crosses_as_its_escape_and_reads_back_as_itself() {
+    // A key a checkout's configuration set, carrying a title change, a colour,
+    // a delete and a C1 control sequence introducer: a terminal acts on all four.
+    let hostile = "\u{1b}]0;PWNED\u{7}\u{1b}[31mred\u{7f}\u{9b}2J";
+    let inspection = Inspection::Failed(Text::cut(hostile));
+
+    let written = inspection.encode().unwrap();
+    let raw: Vec<char> = String::from_utf8_lossy(&written)
+        .chars()
+        .filter(|character| character.is_control() && *character != '\n')
+        .collect();
+    assert_eq!(raw, Vec::<char>::new(), "{written:?}");
+    let line = String::from_utf8_lossy(&written);
+    assert!(line.contains(r"\u001b]0;PWNED\u0007"), "{line}");
+    assert!(line.contains(r"\u007f\u009b2J"), "{line}");
+    assert_eq!(Inspection::decode(&written).unwrap(), inspection);
+}
+
+#[test]
 fn another_format_version_is_refused_by_name() {
     for version in [0, 2, u64::MAX] {
         let other = with(document(0), "/format_version", json!(version));
