@@ -1,8 +1,8 @@
 # Installs the newest published release on Windows with the install.ps1 that
 # release published, into a disposable directory, runs both names it installs,
 # removes the three executables it installed, and proves the directory is left
-# empty. Windows ships no uninstaller: removing what install.ps1 lists is the
-# uninstall the getting-started guide describes.
+# empty. Windows ships no uninstaller, so removing what install.ps1 installed
+# is the uninstall.
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 

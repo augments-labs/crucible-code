@@ -397,16 +397,25 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    line, and until `publish` runs there is no line.
 
    A tag that published nothing is therefore the other case, and it is not the
-   same one. When a job fails before `publish`, there is no release, no
-   artifact, and so no checksum for a move to invalidate. Spending a version
-   number on infrastructure that was never the code's fault only leaves the next
-   reader comparing two versions that carry identical code. Confirm it shipped
-   nothing — `gh release view v<version>` answering `release not found` is the
-   check — then land the repair on `main` the way a hotfix does, relax the
-   `release tags` ruleset,
-   move the annotated tag onto the commit carrying the repair, and put the
-   ruleset back before anything else. Restoring it is part of the procedure,
-   not a follow-up.
+   same one. When the tag's run fails before the release is made public, there
+   is no published release, and so no checksum for a move to invalidate; a
+   draft it left behind is private, and nobody has recorded it. Spending a
+   version number on infrastructure that was never the code's fault only leaves
+   the next reader comparing two versions that carry identical code. In order:
+
+   1. Confirm it shipped nothing, and clear what it left.
+      `gh release list --json tagName,isDraft --jq '.[] | select(.tagName == "v<version>")'`
+      prints nothing, or one row whose `isDraft` is `true`. Delete such a draft
+      with `gh release delete v<version> --yes`, as [Cutting it](#cutting-it)
+      says. A row that is not a draft was published, and this case does not
+      apply.
+   2. Land the repair on `main` the way a hotfix does.
+   3. Stage the repair commit and wait for its `staged` job, as step 3 of
+      [Cutting it](#cutting-it) does. The run the moved tag starts promotes
+      only what a staging run of that tree staged, and refuses without one.
+   4. Relax the `release tags` ruleset, move the annotated tag onto the commit
+      carrying the repair, and put the ruleset back before anything else.
+      Restoring it is part of the procedure, not a follow-up.
 
    The friction is deliberate. The published release is the usual case; this
    one is the exception, and it has to be shown to apply before it is used.
