@@ -88,10 +88,10 @@ impl Tool for BashOutput {
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         // Not a file and not a process. What this reads is a value inside this
-        // process, and a target that resolves to nothing is the honest answer
-        // to what a rule could be written about.
+        // process, and a target naming no path is the honest answer to what a
+        // rule could be written about.
         Sensitivity::ReadOnly {
-            target: Target::unresolved(),
+            target: Target::pathless(),
         }
     }
 

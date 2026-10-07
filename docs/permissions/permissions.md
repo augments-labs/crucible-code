@@ -202,7 +202,12 @@ Both durations remember exactly what the question named.
 
 - For a file change, it is the tool **and the resolved path**. `session` on a
   `write` to `src/a.rs` stops asking about that write; another path asks again,
-  and `edit` is separate too.
+  and `edit` is separate too. A path crucible could not resolve, such as one
+  outside the directories it reaches, is never remembered: `session` allows
+  that one call, and the next is asked about again.
+- For a tool that names no file at all, such as `todo_write`, which is asked
+  about only when an `ask` rule names it, it is the tool. `session` stops
+  asking about that tool.
 - For a command, it is the tool **and the whole line the question
   showed**, operators and the spacing between words included. `session` on `cargo test` stops
   asking about `cargo test`; `cargo build`, the same program but a different

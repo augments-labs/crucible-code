@@ -25,7 +25,7 @@
 //! human saying no is about this moment, and ends the turn — otherwise a model
 //! can reshape the same question until one of the shapes gets a yes.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::Path;
 
 use crucible_types::ToolCall;
@@ -45,6 +45,7 @@ pub use grant::{Approved, Grant};
 pub use mode::Mode;
 pub use rule::mint::{Minted, narrowest};
 pub use rule::{Disposition, RuleError, Rules};
+use sensitivity::Held;
 pub use sensitivity::{Command, Host, Sensitivity, Target};
 pub use verdict::{Ask, Remember, Verdict};
 
@@ -98,10 +99,10 @@ pub struct Permission {
     mode: Mode,
     rules: Rules,
 
-    /// What the user allowed for the rest of the session, by scope. Held in
-    /// memory and never written down, so it dies with the process that earned
-    /// it.
-    remembered: HashSet<Scope>,
+    /// What the user allowed for the rest of the session, by scope, each
+    /// beside the words its question named it in. Held in memory and never
+    /// written down, so it dies with the process that earned it.
+    remembered: HashMap<Scope, Box<str>>,
 }
 
 /// What one session-long allow covers, and the only thing a later call is
@@ -110,6 +111,10 @@ pub struct Permission {
 /// Kept apart by what the question was about, so a yes to changing a file is
 /// never read as a yes to running a command that happens to be spelled the
 /// same.
+///
+/// A file is held by the path it resolved to, never by the words a question
+/// shows it in. Those are for a person, and every path that did not resolve
+/// reads the same there, whatever was asked for.
 #[derive(Debug, PartialEq, Eq, Hash)]
 enum Scope {
     /// A command: the tool, a colon, and the line the question showed,
@@ -122,18 +127,18 @@ enum Scope {
     /// line nobody was asked about.
     Command(Box<str>),
 
-    /// Any other call: the tool, a colon, and the one thing the question named,
-    /// spelled the way the question spelled it.
-    Named(Box<str>),
-}
+    /// A call about a file: the tool, a colon, and the path the workspace
+    /// resolved, absolute. A call whose path did not resolve has none, so it
+    /// has no scope either.
+    File(Box<str>),
 
-impl Scope {
-    /// The scope as written, which is what a context section may report.
-    fn spelled(&self) -> &str {
-        match self {
-            Self::Command(spelled) | Self::Named(spelled) => spelled,
-        }
-    }
+    /// A call that names no path by design: the tool alone, since every call
+    /// of it acts on the same nothing.
+    Pathless(Box<str>),
+
+    /// A call bound for a host: the tool, a colon, and the host as a rule
+    /// spells it.
+    Host(Box<str>),
 }
 
 impl Permission {
@@ -149,7 +154,7 @@ impl Permission {
         Self {
             mode,
             rules,
-            remembered: HashSet::new(),
+            remembered: HashMap::new(),
         }
     }
 
@@ -165,7 +170,7 @@ impl Permission {
     /// grants: the only execution authority remains [`Approved`], minted by
     /// this engine after the ordinary policy path.
     pub fn context_state(&self) -> (Mode, Vec<&str>) {
-        let mut remembered: Vec<&str> = self.remembered.iter().map(Scope::spelled).collect();
+        let mut remembered: Vec<&str> = self.remembered.values().map(|named| &**named).collect();
         remembered.sort_unstable();
         (self.mode, remembered)
     }
@@ -180,7 +185,7 @@ impl Permission {
     /// has one, is outside this engine and must build the rules for the session
     /// being entered.
     pub fn forget(&mut self) {
-        self.remembered = HashSet::new();
+        self.remembered = HashMap::new();
     }
 
     /// Steps that mode on to the next of the ring, and says which it is now.
@@ -325,7 +330,10 @@ impl Permission {
         ask: &mut dyn Ask,
     ) -> Settled {
         let scope = Self::scope(call, sensitivity);
-        if self.remembered.contains(&scope) {
+        if scope
+            .as_ref()
+            .is_some_and(|(scope, _)| self.remembered.contains_key(scope))
+        {
             return self.approve(call, sensitivity, generation, Verdict::Allow);
         }
 
@@ -337,8 +345,14 @@ impl Permission {
             Remember::Never => false,
             Remember::Session | Remember::Always => true,
         };
-        if verdict == Verdict::Allow && lasts {
-            self.remembered.insert(scope);
+        // A call with no scope is settled by its answer alone, however long
+        // the answer was given for: a path that did not resolve names no file
+        // a later call could be the same as.
+        if verdict == Verdict::Allow
+            && lasts
+            && let Some((scope, named)) = scope
+        {
+            self.remembered.insert(scope, named);
         }
 
         // Nothing is remembered about a no. The turn ends on one, so there is
@@ -377,34 +391,53 @@ impl Permission {
     }
 
     /// What a session-long allow covers: the tool, and the one thing the
-    /// question named it would do.
+    /// question named it would do — beside the words the question named it in,
+    /// which are what a context section reports. `None` for a file the
+    /// workspace could not resolve, which names nothing an answer could cover
+    /// beyond the call it was given to. A call that names no path at all is
+    /// covered by its tool.
     ///
-    /// Never the tool alone. Agreeing to `cargo test` is not agreeing to
-    /// `curl`, and agreeing to change `src/a.rs` is not agreeing to change the
-    /// hook git runs on every commit — the question showed one of them, so that
-    /// is the whole of what an answer to it can cover.
+    /// Never the tool alone where the question named more. Agreeing to
+    /// `cargo test` is not agreeing to `curl`, and agreeing to change
+    /// `src/a.rs` is not agreeing to change the hook git runs on every commit —
+    /// the question showed one of them, so that is the whole of what an answer
+    /// to it can cover.
     ///
-    /// Spelled the way the question spelled it, which is also what stands for
-    /// a persisted answer during the current session — so it may be narrower
-    /// than the durable rule minted from the same question, and is wider only
-    /// in leaving out whitespace at the ends of a command line.
-    /// For a file or a host the two name the same thing. For a command the
-    /// question showed the line, so the line is what is remembered; the rule
-    /// names the command a one-command line runs, and a longer line mints none.
-    fn scope(call: &ToolCall, sensitivity: &Sensitivity) -> Scope {
+    /// It also stands for a persisted answer during the current session — so
+    /// it may be narrower than the durable rule minted from the same question,
+    /// and is wider only in leaving out whitespace at the ends of a command
+    /// line. For a file or a host the two name the same thing, and a file that
+    /// did not resolve, or a call naming no path, mints no rule. For a command
+    /// the question showed the line, so the line is what is remembered; the
+    /// rule names the command a one-command line runs, and a longer line mints
+    /// none.
+    fn scope(call: &ToolCall, sensitivity: &Sensitivity) -> Option<(Scope, Box<str>)> {
         match sensitivity {
             Sensitivity::ReadOnly { target }
             | Sensitivity::ReadsOutside { target }
             | Sensitivity::MutatesFile { target } => {
-                Scope::Named(format!("{}:{target}", call.name).into())
+                let named = format!("{}:{target}", call.name).into();
+                match target.held() {
+                    Held::Named(_) => {
+                        let absolute = target.absolute()?;
+                        Some((
+                            Scope::File(format!("{}:{absolute}", call.name).into()),
+                            named,
+                        ))
+                    }
+                    Held::Unresolved => None,
+                    Held::Pathless => Some((Scope::Pathless(call.name.clone()), named)),
+                }
             }
             // The line as sent, never `Display`: that one is the spelling a
             // rule is about, and it joins the commands without their operators.
             Sensitivity::SpawnsProcess { command } => {
-                Scope::Command(format!("{}:{}", call.name, command.sent()).into())
+                let line: Box<str> = format!("{}:{}", call.name, command.sent()).into();
+                Some((Scope::Command(line.clone()), line))
             }
             Sensitivity::ReachesNetwork { host } => {
-                Scope::Named(format!("{}:{host}", call.name).into())
+                let host: Box<str> = format!("{}:{host}", call.name).into();
+                Some((Scope::Host(host.clone()), host))
             }
         }
     }

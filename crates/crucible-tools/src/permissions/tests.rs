@@ -451,6 +451,183 @@ fn nothing_is_remembered_about_a_refusal() {
     assert_eq!(answer.asked, 2, "a no is about this moment only");
 }
 
+// A path the workspace could not resolve names no file, so a yes to one call
+// about it is a yes to nothing a second call could share.
+
+/// A call to `name` carrying `args`, for the cases where two calls of one tool
+/// have to be told apart by what they asked for.
+fn calling(name: &str, args: &str) -> ToolCall {
+    ToolCall {
+        args: ToolArgs::new(args),
+        ..call(name)
+    }
+}
+
+fn changing_what_did_not_resolve() -> Sensitivity {
+    Sensitivity::MutatesFile {
+        target: Target::unresolved(),
+    }
+}
+
+/// Answers two different calls of one tool, each about a target that did not
+/// resolve, with `answer`, and says how often the user was asked across them
+/// and what the session was left remembering.
+fn asked_about_two_unresolved(
+    permission: &mut Permission,
+    tool: &str,
+    sensitivity: &Sensitivity,
+    mut answer: Answer,
+) -> (usize, Vec<String>) {
+    let first = calling(tool, r#"{"path":"../first.txt","content":"one"}"#);
+    let second = calling(tool, r#"{"path":"../second.txt","content":"two"}"#);
+
+    assert!(
+        permission.decided(&first, sensitivity, &mut answer).ran(),
+        "the call that was answered yes runs"
+    );
+    assert!(permission.decided(&second, sensitivity, &mut answer).ran());
+
+    let (_, remembered) = permission.context_state();
+    (
+        answer.asked,
+        remembered.into_iter().map(str::to_owned).collect(),
+    )
+}
+
+#[test]
+fn a_session_approval_of_an_unresolved_change_settles_that_call_alone() {
+    let (asked, remembered) = asked_about_two_unresolved(
+        &mut Permission::new(),
+        "write",
+        &changing_what_did_not_resolve(),
+        Answer::for_the_session(),
+    );
+
+    assert_eq!(asked, 2, "a yes about no file covered another call");
+    assert!(remembered.is_empty(), "{remembered:?}");
+}
+
+#[test]
+fn an_unresolved_change_answered_for_ever_is_asked_about_again() {
+    // No durable rule can be minted for it either, so the session may not
+    // stand in for one.
+    assert_eq!(
+        narrowest(&call("write"), &changing_what_did_not_resolve()),
+        None
+    );
+
+    let (asked, remembered) = asked_about_two_unresolved(
+        &mut Permission::new(),
+        "write",
+        &changing_what_did_not_resolve(),
+        Answer::for_ever(),
+    );
+
+    assert_eq!(asked, 2);
+    assert!(remembered.is_empty(), "{remembered:?}");
+}
+
+#[test]
+fn an_unresolved_read_an_ask_rule_puts_to_the_user_is_asked_about_each_time() {
+    // A read is asked about only where somebody wrote that it should be, and
+    // a rule naming every read is the only one a path that did not resolve
+    // can match.
+    let (asked, remembered) = asked_about_two_unresolved(
+        &mut with(Mode::Ask, &[(Disposition::Ask, "read")]),
+        "read",
+        &Sensitivity::ReadOnly {
+            target: Target::unresolved(),
+        },
+        Answer::for_the_session(),
+    );
+
+    assert_eq!(asked, 2);
+    assert!(remembered.is_empty(), "{remembered:?}");
+}
+
+#[test]
+fn a_session_yes_to_a_call_that_names_no_file_stops_the_asking() {
+    // `todo_write` changes a value inside this process and names no path, so
+    // its target is one that names none by design rather than by failing.
+    let mut permission = with(Mode::Ask, &[(Disposition::Ask, "todo_write")]);
+    let mut answer = Answer::for_the_session();
+    let sensitivity = Sensitivity::ReadOnly {
+        target: Target::pathless(),
+    };
+
+    permission.decided(
+        &calling("todo_write", r#"{"todos":[]}"#),
+        &sensitivity,
+        &mut answer,
+    );
+    permission.decided(
+        &calling("todo_write", r#"{"todos":[{}]}"#),
+        &sensitivity,
+        &mut answer,
+    );
+
+    assert_eq!(
+        answer.asked, 1,
+        "a session yes to a call naming no file was asked again"
+    );
+    assert_eq!(
+        permission.context_state().1,
+        ["todo_write:a path it could not resolve"]
+    );
+}
+
+#[test]
+fn an_unresolved_write_beside_the_workspace_is_asked_about_each_time() {
+    // The paths `write` classifies through `Target::intended` and reaches the
+    // engine with unresolved: a destination outside every directory the
+    // workspace reaches, which the tool goes on to refuse.
+    let base = Removed(
+        std::env::temp_dir().join(format!("crucible-unresolved-write-{}", std::process::id())),
+    );
+    let _ = fs::remove_dir_all(&base.0);
+    let root = base.0.join("root");
+    fs::create_dir_all(&root).unwrap();
+    let workspace = Workspace::open(&root).unwrap();
+
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_the_session();
+    for (n, path) in ["../first.txt", "../elsewhere/second.txt"]
+        .into_iter()
+        .enumerate()
+    {
+        let target = Target::intended(&workspace, path);
+        assert_eq!(target, Target::unresolved(), "{path}");
+
+        let call = calling("write", &format!(r#"{{"path":"{path}","content":""}}"#));
+        let settled = permission.decided(&call, &Sensitivity::MutatesFile { target }, &mut answer);
+
+        assert!(settled.ran(), "{path}");
+        assert_eq!(answer.asked, n + 1, "{path} was not asked about");
+    }
+    assert!(permission.context_state().1.is_empty());
+}
+
+/// A directory a test made, removed however the test ends.
+struct Removed(std::path::PathBuf);
+
+impl Drop for Removed {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn a_remembered_file_is_reported_the_way_its_question_spelled_it() {
+    // What a context section repeats to the model is the path the user saw,
+    // whatever the session holds the answer by.
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_the_session();
+
+    permission.decided(&call("write"), &writing("src/a.rs"), &mut answer);
+
+    assert_eq!(permission.context_state().1, ["write:src/a.rs"]);
+}
+
 #[test]
 fn the_mode_is_readable_because_the_prompt_shows_it() {
     assert_eq!(Permission::new().mode(), Mode::Ask);

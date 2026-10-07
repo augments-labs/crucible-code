@@ -253,7 +253,7 @@ impl Tool for AskUser {
     /// usefully be written about.
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
-            target: Target::unresolved(),
+            target: Target::pathless(),
         }
     }
 
