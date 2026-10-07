@@ -79,7 +79,9 @@ A change that adds or changes what a user can see or set looks at each
 surface below, and updates every one it reaches in the same change.
 
 - The user docs under `docs/`, the README's first-run section, contributor
-  setup in `CONTRIBUTING.md`, and the changelog entry under `changelog.d/`.
+  setup in `CONTRIBUTING.md`, and the changelog entry, which is never
+  committed: the pull request gives it, and whoever merges writes it to the
+  main checkout's `changelog.d/`, which git ignores.
 - A boolean environment variable accepts exactly `true`, `false`, `1` and `0`,
   and refuses any other value with a message that names those four.
 - Content added to a request gets a category in `/context`.
@@ -128,10 +130,10 @@ Write about shipped behavior and why the reader cares:
 - A commit has a conventional subject and at most one short paragraph saying
   why. Long reasoning goes beside the code or in a focused design document.
 - A changelog entry is a bold lead and at most three sentences, for someone
-  deciding whether to upgrade, in a file of its own under `changelog.d/`;
-  only a release commit edits `CHANGELOG.md`. A version section opens with a
-  summary written the same way, and the release notes are that summary, the
-  comparison link and a link to the changelog.
+  deciding whether to upgrade, in a file of its own in the main checkout's
+  untracked `changelog.d/`; only a release commit edits `CHANGELOG.md`. A
+  version section opens with a summary written the same way, and the release
+  notes are that summary, the comparison link and a link to the changelog.
 - Shipped comments, docs, schemas and manifests carry no internal planning
   identifiers and no harness paths.
 

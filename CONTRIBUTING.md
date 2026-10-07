@@ -53,8 +53,8 @@ then, and the ruleset is what keeps the same rule from reaching `dev` or `main`.
 2. Read the module documentation beside the code being changed.
 3. Start new behavior with a failing test; reproduce a bug before fixing it.
 4. Run the narrow test while working, then the complete local gate.
-5. Update user documentation, and write a changelog entry under
-   `changelog.d/`, when shipped behavior changes.
+5. Update user documentation, and give the pull request its
+   [changelog entry](#changelog-entries), when shipped behavior changes.
 6. Open a pull request and state what changed and how it was verified.
 
 Coding agents begin in [`AGENTS.md`](AGENTS.md), which holds the repository
@@ -204,11 +204,9 @@ section, kept placeholder text or bundled unrelated changes get the pull
 request closed rather than reviewed. The surfaces it lists — security
 boundaries, durable formats, generated files, platform-specific behavior,
 terminal rendering, performance-sensitive paths and required-case obligations —
-are the ones a reviewer cannot recover from the diff alone. A changelog entry
-is for user-visible changes, written for someone deciding whether to upgrade,
-in a file of its own under `changelog.d/` as
-[its README](changelog.d/README.md) says; only a release commit edits
-`CHANGELOG.md`.
+are the ones a reviewer cannot recover from the diff alone. A user-visible
+change gives its [changelog entry](#changelog-entries) under the template's
+surfaces section.
 
 It opens by asking who made the change, because a reviewer reads a generated
 diff with different questions than a hand-written one, and which model, harness
@@ -218,6 +216,35 @@ checks that ran, not about whether the change answers the right problem, so
 that reading is a separate thing a pull request either has or is still waiting
 for — and one nobody has read yet leaves the box empty rather than claiming
 otherwise.
+
+## Changelog entries
+
+An entry is for a user-visible change, written for someone deciding whether to
+upgrade. It is never committed: a pull request gives it in its description,
+and whoever merges writes it to `changelog.d/<name>.md` in the checkout
+releases are cut from, a directory git ignores. Entries are drafts for whoever
+writes the release, so no change has to agree with another about them, and
+only a release commit edits `CHANGELOG.md`.
+
+`<name>` is lower-case letters, digits and hyphens and starts with a letter or
+a digit, such as the branch's last part. The first line is exactly one of the
+headings listed below, the second line is empty, and from the third line on
+come one or more list items, the first opening with a bold lead:
+
+```markdown
+### Fixed
+
+- **A bold lead saying what changed.** At most three sentences, for someone
+  deciding whether to upgrade.
+```
+
+The headings are `### Added`, `### Changed`, `### Fixed`, `### Removed`,
+`### Security`, `### Documentation` and `### Internal`. An entry holds no other
+heading and is at most 4096 bytes. The repository gate fails on any file under
+`changelog.d/` that is committed, and runs
+`python3 scripts/python/changelog-entries.py check`, which holds every entry it
+finds to that shape and `## [Unreleased]` to staying empty.
+[`RELEASING.md`](RELEASING.md) says how the entries become the version section.
 
 ## Dependencies
 

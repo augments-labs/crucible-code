@@ -1424,15 +1424,16 @@ while IFS= read -r file; do
 done <<<"$naming"
 
 section "changelog entries"
-# A pull request writes its entry to a file of its own under `changelog.d/`, so
-# two open at once never edit the same lines of `CHANGELOG.md`; only a release
-# commit writes the changelog, assembling the section from those files. An
-# entry the release could not assemble, or a line written under
-# `## [Unreleased]` by hand, is caught on the change that adds it.
-if [[ ! -f changelog.d/README.md ]]; then
-    printf '    FAIL changelog.d/README.md is missing; nothing tells a contributor where the entry goes\n'
+# Entries wait in `changelog.d/`, which git ignores, in the checkout releases
+# are cut from; only a release commit writes the changelog, assembling the
+# section from them. An entry committed anyway, with `git add -f`, is one every
+# checkout would then carry into its next release; an entry the release could
+# not assemble, where the directory exists, or a line written under
+# `## [Unreleased]` by hand, is caught before it is relied on.
+while IFS= read -r tracked; do
+    printf '    FAIL %s is committed; changelog entries stay untracked in changelog.d/, so remove it with git rm --cached\n' "$tracked"
     failed=1
-fi
+done < <(git ls-files -- changelog.d)
 if ! entry_problems=$(PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/changelog-entries.py check); then
     while IFS= read -r said; do
         printf '    FAIL %s\n' "$said"

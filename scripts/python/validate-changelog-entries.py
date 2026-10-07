@@ -31,8 +31,6 @@ Notable changes.
 [1.0.0]: https://github.com/example/project/compare/v0.9.0...v1.0.0
 """
 
-README = "# Changelog entries\n\nOne file per change.\n"
-
 FIXED = "### Fixed\n\n- **A fix.** It is listed in full.\n"
 
 # Every tree is made under one directory, removed when the run ends.
@@ -44,7 +42,6 @@ def tree(entries: dict[str, str | bytes], changelog: str = CHANGELOG) -> pathlib
     (root / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
     folder = root / "changelog.d"
     folder.mkdir()
-    (folder / "README.md").write_text(README, encoding="utf-8")
     for name, body in entries.items():
         path = folder / name
         if isinstance(body, bytes):
@@ -85,6 +82,10 @@ def check_rules() -> None:
     }
     assert MODULE.check(tree(good)) == [], MODULE.check(tree(good))
     assert MODULE.check(tree({})) == []
+    # A checkout with no entries waiting has no directory, which CI's never does.
+    bare = tree({})
+    (bare / "changelog.d").rmdir()
+    assert MODULE.check(bare) == [], MODULE.check(bare)
 
     # The name.
     broken({"Upper.md": FIXED}, "changelog.d/Upper.md", "name")
@@ -142,11 +143,11 @@ def check_rules() -> None:
     assert MODULE.check(tree({}, blank)) == []
 
 
-def readme_names_every_heading() -> None:
-    # The README lists the headings an entry may open with; it and the code are
-    # one list read twice, so they are held to agree here.
-    readme = (ROOT.parents[1] / "changelog.d" / "README.md").read_text(encoding="utf-8")
-    listed = re.findall(r"`### ([A-Za-z]+)`", readme)
+def contributing_names_every_heading() -> None:
+    # CONTRIBUTING.md lists the headings an entry may open with; it and the code
+    # are one list read twice, so they are held to agree here.
+    contributing = (ROOT.parents[1] / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    listed = re.findall(r"`### ([A-Za-z]+)`", contributing)
     assert tuple(listed) == MODULE.HEADINGS, listed
 
 
@@ -207,7 +208,7 @@ def assemble_rules() -> None:
     written = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     assert written == expected, written
     left = sorted(path.name for path in (root / "changelog.d").iterdir())
-    assert left == ["README.md"], left
+    assert left == [], left
     assert MODULE.check(root) == [], MODULE.check(root)
 
     # Names are ordered by their bytes, so a digit comes before a letter.
@@ -246,7 +247,7 @@ def main() -> int:
     with WORK:
         check_rules()
         check_command()
-        readme_names_every_heading()
+        contributing_names_every_heading()
         assemble_rules()
         assemble_refusals()
     print("changelog entries validator passed")
