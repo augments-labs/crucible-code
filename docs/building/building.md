@@ -125,3 +125,4 @@ fetch and that build are each tried three times, 30 and then 60 seconds apart,
 so a runner that loses the network for a minute does not fail the drill. When
 the build still fails, the self-test is skipped rather than reporting a binary
 that was never built.
+
