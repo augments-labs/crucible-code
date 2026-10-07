@@ -90,7 +90,7 @@ fn what_is_read_is_never_said_back() {
         let said = Secret::read(&mut input.as_bytes())
             .expect_err(refused)
             .to_string();
-        assert!(!said.contains(SENTINEL), "{refused}: {said}");
+        assert!(!said.contains(SENTINEL), "{refused}: the key was said back");
     }
     let binary = [0xff_u8, 0xfe, 0x00];
     assert!(matches!(
@@ -124,11 +124,8 @@ fn a_word_settles_on_its_row_or_is_refused_without_being_repeated() {
     let refused = desk.login(SENTINEL, true).expect_err("nobody serves it");
     assert!(matches!(refused, Refused::Unknown { .. }));
     let said = refused.to_string();
-    assert!(!said.contains(SENTINEL), "{said}");
-    assert!(
-        said.contains("anthropic"),
-        "the names served are said: {said}"
-    );
+    assert!(!said.contains(SENTINEL), "the word was said back");
+    assert!(said.contains("anthropic"), "the names served were not said");
     assert!(desk.provider(SENTINEL).is_err());
 }
 
@@ -143,7 +140,11 @@ fn status_says_each_source_and_state_in_one_bounded_document() {
     let text = String::from_utf8(bytes).expect("UTF-8");
     assert!(!text.contains(SENTINEL), "a variable's value was said");
     assert!(!text.contains("fabricated"), "a stored value was said");
-    assert_eq!(text.matches('\n').count(), 1, "one line: {text}");
+    assert_eq!(
+        text.matches('\n').count(),
+        1,
+        "the document is not one line"
+    );
     let document: Value = serde_json::from_str(&text).expect("one JSON document");
 
     assert_eq!(at(&document, "/format_version"), 1);
@@ -210,8 +211,14 @@ fn status_says_each_source_and_state_in_one_bounded_document() {
     }
 
     let human = status.human(NOW);
-    assert!(human.contains("lapsed"), "{human}");
-    assert!(human.contains("not checked here"), "{human}");
+    assert!(
+        human.contains("lapsed"),
+        "the report did not say the login lapsed"
+    );
+    assert!(
+        human.contains("not checked here"),
+        "the report did not say acceptance is unchecked"
+    );
     assert!(!human.contains(SENTINEL));
 }
 
@@ -267,12 +274,16 @@ fn a_name_the_store_holds_says_no_line_of_its_own_and_is_bounded_everywhere() {
         !human.lines().any(|line| line
             .trim_start()
             .starts_with("configured anthropic: forged")),
-        "a name in the store wrote a line of its own:\n{human}"
+        "a name in the store wrote a line of its own"
     );
     let document: Value = serde_json::from_slice(&status.json()).expect("a document");
     let providers = at(&document, "/providers").as_array().expect("a list");
     // The header, the store's sentence, one line a provider, and the last.
-    assert_eq!(human.lines().count(), providers.len() + 3, "{human}");
+    assert_eq!(
+        human.lines().count(),
+        providers.len() + 3,
+        "the report has a line it should not"
+    );
     assert_eq!(status.exit(), 1);
 
     let long = "x".repeat(60_000);
@@ -329,8 +340,11 @@ fn a_key_is_kept_under_its_row_and_said_by_name_alone() {
 
     let kept_now = desk.keep(&way, &secret).expect("a writable home");
     let said = kept(&kept_now);
-    assert!(said.contains("under anthropic"), "{said}");
-    assert!(!said.contains(SENTINEL), "{said}");
+    assert!(
+        said.contains("under anthropic"),
+        "the sentence did not say the row it stored under"
+    );
+    assert!(!said.contains(SENTINEL), "the sentence said the key");
     let text = fs::read_to_string(sample.home().join("auth.json")).expect("the store");
     assert!(text.contains(SENTINEL), "the key went to the store");
 
@@ -340,8 +354,14 @@ fn a_key_is_kept_under_its_row_and_said_by_name_alone() {
     let refused = desk
         .keep(&marked, &secret)
         .expect_err("its keys are marked otherwise");
-    assert!(matches!(refused, Refused::Misfit(_)), "{refused}");
-    assert!(!refused.to_string().contains(SENTINEL), "{refused}");
+    assert!(
+        matches!(refused, Refused::Misfit(_)),
+        "the key was refused for another reason"
+    );
+    assert!(
+        !refused.to_string().contains(SENTINEL),
+        "the refusal said the key"
+    );
     let after = fs::read_to_string(sample.home().join("auth.json")).expect("the store");
     assert_eq!(after, text, "a key that does not fit is not stored");
 }
@@ -359,9 +379,18 @@ fn a_logout_takes_one_provider_out_and_says_what_a_launch_still_finds() {
         vec![("Kimi Code · kimi.ai", "moonshot@kimi.ai".to_owned())]
     );
     let said = forgotten(&gone);
-    assert!(said.contains("MY_MOONSHOT_KEY"), "{said}");
-    assert!(said.contains("unset it there"), "{said}");
-    assert!(!said.contains(SENTINEL), "{said}");
+    assert!(
+        said.contains("MY_MOONSHOT_KEY"),
+        "the sentence did not name the variable"
+    );
+    assert!(
+        said.contains("unset it there"),
+        "the sentence did not say where to unset it"
+    );
+    assert!(
+        !said.contains(SENTINEL),
+        "the sentence said the variable's value"
+    );
 
     let text = fs::read_to_string(sample.home().join("auth.json")).expect("the store");
     let document: Value = serde_json::from_str(&text).expect("the store parses");
@@ -374,7 +403,7 @@ fn a_logout_takes_one_provider_out_and_says_what_a_launch_still_finds() {
         at(&document, "/subscriptions")
             .get("moonshot@kimi.ai")
             .is_none(),
-        "{text}"
+        "the account login is still stored"
     );
 
     let again = desk.forget("moonshot").expect("a writable home");
@@ -395,21 +424,39 @@ fn a_name_the_configuration_gave_reads_back_from_the_document_as_itself() {
         .expect("a provider this build serves");
     let status = desk.status(Some(provider), NOW);
     let text = String::from_utf8(status.json()).expect("a document is text");
-    assert!(!text.contains(['\u{1b}', '\u{202e}']), "{text}");
-    assert!(!text.contains(SENTINEL), "{text}");
-    assert!(text.contains("MY\\u001b[31mRED\\u202eKEY"), "{text}");
+    assert!(
+        !text.contains(['\u{1b}', '\u{202e}']),
+        "the document holds a raw control character"
+    );
+    assert!(
+        !text.contains(SENTINEL),
+        "the document said the variable's value"
+    );
+    assert!(
+        text.contains("MY\\u001b[31mRED\\u202eKEY"),
+        "the document did not escape the name"
+    );
     let document: Value = serde_json::from_str(&text).expect("one document");
     assert_eq!(at(&document, "/providers/0/variable"), name);
     let reason = at(&document, "/providers/0/reason")
         .as_str()
         .unwrap_or_default();
-    assert!(reason.contains(name), "{reason}");
+    assert!(
+        reason.contains(name),
+        "the reason did not name the variable"
+    );
 
     // The report a person reads says the same name, with what a terminal
     // would act on written as its escape.
     let human = status.human(NOW);
-    assert!(!human.contains(['\u{1b}', '\u{202e}']), "{human}");
-    assert!(human.contains(r"MY\u{1b}[31mRED\u{202e}KEY"), "{human}");
+    assert!(
+        !human.contains(['\u{1b}', '\u{202e}']),
+        "the report holds a raw control character"
+    );
+    assert!(
+        human.contains(r"MY\u{1b}[31mRED\u{202e}KEY"),
+        "the report did not escape the name"
+    );
 
     let said = "a sentence that quotes\u{1b}]0;a title\u{7} and\nbreaks";
     let text = String::from_utf8(failed(&Refused::Misfit(said.to_owned()))).expect("text");

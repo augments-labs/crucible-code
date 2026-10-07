@@ -162,18 +162,37 @@ fn asked(
     child.wait_with_output().expect("the built binary ends")
 }
 
+/// What one entry under a scratch directory is, as far as a test compares it.
+#[derive(Debug, PartialEq, Eq)]
+enum Entry {
+    Directory,
+    /// The store's lock file, recorded by presence alone.
+    Lock,
+    File(Vec<u8>),
+}
+
+/// The name of the lock file a store change takes.
+const LOCK: &str = "auth.lock";
+
 /// Every entry under `root`, with its bytes where it is a file.
-fn tree(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+///
+/// The lock file is recorded by presence only, on every platform: a test that
+/// holds the lock while it runs would otherwise read a file Windows refuses to
+/// read while another handle holds a lock on its bytes.
+fn tree(root: &Path) -> BTreeMap<PathBuf, Entry> {
     let mut seen = BTreeMap::new();
     let mut left = vec![root.to_path_buf()];
     while let Some(directory) = left.pop() {
         for entry in fs::read_dir(&directory).expect("a directory this test made") {
             let at = entry.expect("an entry").path();
             if at.is_dir() {
-                seen.insert(at.clone(), None);
+                seen.insert(at.clone(), Entry::Directory);
                 left.push(at);
+            } else if at.file_name().is_some_and(|name| name == LOCK) {
+                seen.insert(at, Entry::Lock);
             } else {
-                seen.insert(at.clone(), Some(fs::read(&at).expect("its bytes")));
+                let bytes = fs::read(&at).expect("its bytes");
+                seen.insert(at, Entry::File(bytes));
             }
         }
     }
@@ -272,6 +291,7 @@ fn shimmed(scratch: &Scratch) {
 }
 
 /// Whether anything a login started was handed the sentinel.
+#[cfg(unix)]
 fn started_with_it(scratch: &Scratch) -> bool {
     fs::read(scratch.bin().join("started.log")).is_ok_and(|log| carries(&log, SENTINEL))
 }
@@ -282,7 +302,7 @@ fn locked(scratch: &Scratch) -> fs::File {
         .create(true)
         .truncate(false)
         .write(true)
-        .open(scratch.crucible().join("auth.lock"))
+        .open(scratch.crucible().join(LOCK))
         .expect("the lock file");
     lock.try_lock().expect("the lock is free");
     lock
@@ -304,26 +324,34 @@ fn a_key_piped_in_is_stored_under_its_row_and_repeated_nowhere_else() {
         &[],
     );
 
-    assert_eq!(answered.status.code(), Some(0), "{answered:?}");
+    assert_eq!(answered.status.code(), Some(0), "the piped login failed");
     unrepeated(&answered);
     let said = String::from_utf8_lossy(&answered.stdout);
-    assert!(said.contains("under anthropic"), "{said}");
+    assert!(
+        said.contains("under anthropic"),
+        "the login did not say the row it stored under"
+    );
     let store = fs::read_to_string(scratch.store()).expect("the store was written");
     assert!(
         store.contains(&format!(r#""anthropic":"{SENTINEL}""#)),
         "stored under its row's name"
     );
-    for (path, bytes) in tree(scratch.root()) {
+    for (path, entry) in tree(scratch.root()) {
         if path == scratch.store() {
             continue;
         }
-        if let Some(bytes) = bytes {
-            assert!(
-                !carries(&bytes, SENTINEL),
-                "{} holds the key",
-                path.display()
-            );
-        }
+        // Nothing holds the lock once the run has ended, so its bytes are
+        // read here, where the comparison above records it by presence alone.
+        let bytes = match entry {
+            Entry::Directory => continue,
+            Entry::Lock => fs::read(&path).expect("its bytes"),
+            Entry::File(bytes) => bytes,
+        };
+        assert!(
+            !carries(&bytes, SENTINEL),
+            "{} holds the key",
+            path.display()
+        );
     }
     assert!(!started_with_it(&scratch), "a process was handed the key");
     assert!(!sentinel.heard(), "something reached out");
@@ -348,8 +376,14 @@ fn a_key_longer_than_the_bound_is_refused_and_nothing_is_stored() {
     assert_eq!(answered.status.code(), Some(1));
     unrepeated(&answered);
     let said = String::from_utf8_lossy(&answered.stderr);
-    assert!(said.contains("longer than 16384 bytes"), "{said}");
-    assert!(said.contains("nothing was stored"), "{said}");
+    assert!(
+        said.contains("longer than 16384 bytes"),
+        "the refusal did not say the bound"
+    );
+    assert!(
+        said.contains("nothing was stored"),
+        "the refusal did not say nothing was stored"
+    );
     assert_eq!(tree(scratch.root()), before, "something was written");
 }
 
@@ -393,9 +427,12 @@ fn a_provider_nobody_serves_is_refused_by_every_command() {
         let said = String::from_utf8_lossy(&answered.stderr);
         assert!(
             said.contains("this build serves anthropic"),
-            "{args:?}: {said}"
+            "{args:?}: the names served were not said"
         );
-        assert!(!said.contains("nonesuch"), "the word was repeated: {said}");
+        assert!(
+            !said.contains("nonesuch"),
+            "{args:?}: the word was repeated"
+        );
     }
     let answered = asked(
         &scratch,
@@ -409,10 +446,16 @@ fn a_provider_nobody_serves_is_refused_by_every_command() {
     assert!(
         document
             .starts_with(r#"{"acceptance":"unchecked","format_version":1,"kind":"auth-status","#),
-        "{document}"
+        "the document does not open with its header"
     );
-    assert!(document.contains(r#""status":"failed""#), "{document}");
-    assert!(document.contains(r#""providers":[]"#), "{document}");
+    assert!(
+        document.contains(r#""status":"failed""#),
+        "the document does not say it failed"
+    );
+    assert!(
+        document.contains(r#""providers":[]"#),
+        "the document lists a provider"
+    );
     assert_eq!(tree(scratch.root()), before, "something was written");
 }
 
@@ -439,13 +482,23 @@ fn status_writes_one_document_and_neither_writes_renews_nor_waits_on_the_lock() 
         started.elapsed() < std::time::Duration::from_secs(4),
         "the status waited on the lock"
     );
-    assert_eq!(answered.status.code(), Some(0), "{answered:?}");
-    assert!(answered.stderr.is_empty(), "{answered:?}");
+    assert_eq!(answered.status.code(), Some(0), "the status failed");
+    assert!(
+        answered.stderr.is_empty(),
+        "the status wrote to standard error"
+    );
     unrepeated(&answered);
     let document = String::from_utf8(answered.stdout).expect("UTF-8");
     assert!(!document.contains("fabricated"), "a stored value was said");
-    assert_eq!(document.matches('\n').count(), 1, "{document}");
-    assert!(document.ends_with("}\n"), "{document}");
+    assert_eq!(
+        document.matches('\n').count(),
+        1,
+        "the document is not one line"
+    );
+    assert!(
+        document.ends_with("}\n"),
+        "the document does not end its line"
+    );
     for fragment in [
         r#""format_version":1"#,
         r#""kind":"auth-status""#,
@@ -457,7 +510,10 @@ fn status_writes_one_document_and_neither_writes_renews_nor_waits_on_the_lock() 
         r#""source":"environment","state":"configured""#,
         r#""variable":"XAI_API_KEY","variable_configured":false,"variable_set":true"#,
     ] {
-        assert!(document.contains(fragment), "{fragment} in {document}");
+        assert!(
+            document.contains(fragment),
+            "{fragment} is not in the document"
+        );
     }
     // The lapsed login is said to be lapsed, not renewed: the store is as it
     // was, and nothing was asked of anyone.
@@ -482,9 +538,16 @@ fn a_logout_while_the_store_is_locked_changes_nothing_and_says_so() {
         &[],
     );
 
-    assert_eq!(answered.status.code(), Some(1), "{answered:?}");
+    assert_eq!(
+        answered.status.code(),
+        Some(1),
+        "the logout under the lock did not end 1"
+    );
     let said = String::from_utf8_lossy(&answered.stderr);
-    assert!(said.contains("another crucible is writing"), "{said}");
+    assert!(
+        said.contains("another crucible is writing"),
+        "the logout did not say the store was busy"
+    );
     assert_eq!(
         tree(scratch.root()),
         before,
@@ -507,17 +570,17 @@ fn a_logout_takes_out_one_provider_and_keeps_every_other_name() {
         &[],
     );
 
-    assert_eq!(answered.status.code(), Some(0), "{answered:?}");
+    assert_eq!(answered.status.code(), Some(0), "the logout failed");
     let said = String::from_utf8_lossy(&answered.stdout);
     assert!(
         said.contains(
             "removed the credential stored for Kimi Code · kimi.ai under moonshot@kimi.ai"
         ),
-        "{said}"
+        "the logout did not say what it removed"
     );
     assert!(
         !said.contains("a launch still"),
-        "nothing else signs it in: {said}"
+        "nothing else signs it in, and the logout said something does"
     );
     let store = fs::read_to_string(scratch.store()).expect("the store");
     for kept in [
@@ -525,10 +588,16 @@ fn a_logout_takes_out_one_provider_and_keeps_every_other_name() {
         r#""openai":"fabricated-openai-key""#,
         r#""custom@example.com":"fabricated-custom-key""#,
     ] {
-        assert!(store.contains(kept), "{kept} went: {store}");
+        assert!(store.contains(kept), "{kept} went");
     }
-    assert!(!store.contains("fabricated-access"), "{store}");
-    assert!(!store.contains("fabricated-refresh"), "{store}");
+    assert!(
+        !store.contains("fabricated-access"),
+        "the account's access token is still stored"
+    );
+    assert!(
+        !store.contains("fabricated-refresh"),
+        "the account's refresh token is still stored"
+    );
     assert!(!sentinel.heard(), "something reached out");
 }
 
@@ -546,21 +615,30 @@ fn a_logout_says_which_variable_still_signs_the_provider_in() {
         &[("ANTHROPIC_API_KEY", SENTINEL)],
     );
 
-    assert_eq!(answered.status.code(), Some(0), "{answered:?}");
+    assert_eq!(answered.status.code(), Some(0), "the logout failed");
     unrepeated(&answered);
     let said = String::from_utf8_lossy(&answered.stdout);
     assert!(
         said.contains("removed the credential stored for Anthropic"),
-        "{said}"
+        "the logout did not say what it removed"
     );
     assert!(
         said.contains("a launch still signs anthropic in with ANTHROPIC_API_KEY"),
-        "{said}"
+        "the logout did not name the variable that still signs it in"
     );
-    assert!(said.contains("unset it there"), "{said}");
+    assert!(
+        said.contains("unset it there"),
+        "the logout did not say where to unset it"
+    );
     let store = fs::read_to_string(scratch.store()).expect("the store");
-    assert!(!store.contains("fabricated-anthropic-key"), "{store}");
-    assert!(store.contains("fabricated-openai-key"), "{store}");
+    assert!(
+        !store.contains("fabricated-anthropic-key"),
+        "the Anthropic key is still stored"
+    );
+    assert!(
+        store.contains("fabricated-openai-key"),
+        "the OpenAI key went with it"
+    );
 
     // The variable is still the shell's, and status still says it is used.
     let after = asked(
@@ -574,7 +652,7 @@ fn a_logout_says_which_variable_still_signs_the_provider_in() {
     let said = String::from_utf8_lossy(&after.stdout);
     assert!(
         said.contains("configured anthropic: ANTHROPIC_API_KEY is set"),
-        "{said}"
+        "the status did not say the variable is used"
     );
     unrepeated(&after);
 }
