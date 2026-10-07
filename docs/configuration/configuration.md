@@ -1379,4 +1379,5 @@ In the report, a control character, a line break or a Unicode format character
 such as a right-to-left override in a key, a value or a path is shown as its
 escape, `\n` or `\u{202e}`, rather than sent to the terminal, so a checkout
 cannot add a line to the report or rewrite the screen. In `--json` each is a
-`\u` escape, which a JSON reader decodes back to the same character.
+JSON escape, `\n` or `\u202e`, which a JSON reader decodes back to the same
+character.

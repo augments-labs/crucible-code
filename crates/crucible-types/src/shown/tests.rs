@@ -36,3 +36,11 @@ fn escaped_text_shows_a_line_break_and_an_override_instead_of_acting_on_them() {
     );
     assert_eq!(escaped("plain — text ✓"), "plain — text ✓");
 }
+
+#[test]
+fn escaped_text_keeps_the_joiners_a_terminal_draws_with_the_characters_around_them() {
+    let persian = "\u{645}\u{6cc}\u{200c}\u{62e}\u{648}\u{627}\u{647}\u{645}";
+    let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}";
+    assert_eq!(escaped(persian), persian);
+    assert_eq!(escaped(family), family);
+}

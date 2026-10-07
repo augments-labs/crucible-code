@@ -7,8 +7,9 @@
 //! Unicode format character, a right-to-left override among them, reorders or
 //! hides what is drawn around it. So text that is quoted rather than written
 //! by crucible leaves with each of these as an escape a person can read, and a
-//! JSON document leaves with each as a `\u` escape, which reads back as the same
-//! character, so nothing a reader decodes changes.
+//! JSON document leaves with each as a JSON escape, `\n` for a line break and
+//! `\u202e` for an override, which reads back as the same character, so nothing
+//! a reader decodes changes.
 //!
 //! Owned here because the two writers of such text, a configuration report and
 //! a client-contract document, may not name each other.
@@ -62,13 +63,18 @@ pub const fn unshown(character: char) -> bool {
 /// as its escape: `\u{1b}` for ESC, `\n` for a line break, `\u{202e}` for a
 /// right-to-left override. Escaped, it is still the name, and the person who
 /// sees it can tell which directory or key it was.
+///
+/// The zero-width non-joiner and joiner, U+200C and U+200D, are kept, as the
+/// terminal keeps them: they shape Persian and Indic script and join an emoji
+/// sequence, and drawn they move and hide nothing, so escaping them would only
+/// break the word they stand in.
 #[must_use]
 pub fn escaped(text: &str) -> String {
     text.chars()
         .fold(String::with_capacity(text.len()), |mut shown, character| {
             if character.is_control() {
                 shown.extend(character.escape_debug());
-            } else if unshown(character) {
+            } else if unshown(character) && !JOINERS.contains(&character) {
                 shown.extend(character.escape_unicode());
             } else {
                 shown.push(character);
@@ -76,6 +82,9 @@ pub fn escaped(text: &str) -> String {
             shown
         })
 }
+
+/// The zero-width non-joiner and joiner, which [`escaped`] keeps.
+const JOINERS: [char; 2] = ['\u{200c}', '\u{200d}'];
 
 /// Compact JSON whose strings carry every [`unshown`] character as a `\u`
 /// escape: DEL, the C1 controls and the format characters as well as the C0

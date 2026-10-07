@@ -6,6 +6,8 @@
 //! identity, a message, a call, a recorded result, the persisted half of a
 //! context. A type that only one owner produces belongs with that owner, and a
 //! value that confers authority belongs with whatever issues it.
+//! It also holds [`shown`], how quoted text is escaped before it reaches a
+//! terminal, because the writers that need it may not name each other.
 //!
 //! What that rules out is as important as what it admits. There is no live tool
 //! result here, no permission verdict, no runtime handle and no provider wire

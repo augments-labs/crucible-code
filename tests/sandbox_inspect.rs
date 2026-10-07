@@ -426,3 +426,26 @@ fn a_configuration_check_that_fails_says_why_with_the_override_shown() {
     assert_eq!(unshown_in(&said, true), Vec::<char>::new(), "{said:?}");
     assert!(said.contains(r"forged\u{202e}b"), "{said}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_configuration_check_names_a_hostile_directory_with_its_escapes_shown() {
+    let scratch = Scratch::new("hostile-check-root");
+    let here = scratch.work().join("sub\u{1b}]0;T\u{7}\u{202e}");
+    fs::create_dir_all(&here).expect("a directory with a hostile name");
+
+    let text = asked_in(
+        Path::new(env!("CARGO_BIN_EXE_crucible")),
+        &scratch,
+        &here,
+        &["config", "check"],
+        false,
+    );
+    assert_eq!(text.status.code(), Some(0), "{text:?}");
+    let said = String::from_utf8(text.stdout).expect("UTF-8");
+    assert_eq!(unshown_in(&said, true), Vec::<char>::new(), "{said:?}");
+    assert!(
+        said.contains(r"sub\u{1b}]0;T\u{7}\u{202e}/.crucible/config.json: absent"),
+        "{said}"
+    );
+}
