@@ -706,7 +706,7 @@ fn a_writer_waits_its_turn_behind_a_publication_another_test_process_holds() {
     let early = hears.recv_timeout(Duration::from_secs(3));
     other.let_go();
     let outcome = early
-        .or_else(|_| hears.recv_timeout(HUNG))
+        .or_else(|_| hears.recv_timeout(super::transaction::tests::OTHER_TEST_PROCESSES))
         .expect("the writer answers once the other publication is let go");
     writer.join().expect("the writer thread");
     let status = outcome.expect("a writer waits out another test process's publication");

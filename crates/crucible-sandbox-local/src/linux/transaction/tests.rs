@@ -992,7 +992,7 @@ fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
 }
 
 /// Another checkout's state directory, removed however a test ends — unless it
-/// is this build's own, which every other test of the process shares.
+/// is this build's own, which every other test of this checkout shares.
 struct AnotherCheckout(PathBuf);
 
 impl Drop for AnotherCheckout {
@@ -1017,6 +1017,12 @@ const HELPER_HOLDING: &str = "CRUCIBLE_TEST_HELPER_HOLDING";
 /// Where a helper process is told it may let go, set in its copy.
 const HELPER_RELEASE: &str = "CRUCIBLE_TEST_HELPER_RELEASE";
 
+/// How long a test here may wait for what it asks of another test process, or
+/// of this one once another has let go: a hang detector, long enough to wait out
+/// the writer tests of every other test process of this checkout, which take
+/// the writers' lease in turn.
+pub(in crate::linux) const OTHER_TEST_PROCESSES: Duration = Duration::from_mins(5);
+
 /// Another process of this test binary, running one helper test alone and
 /// holding what it took until it is let go: what another `cargo test` of this
 /// checkout, running beside this one, holds in this user's state directory.
@@ -1032,20 +1038,17 @@ impl AnotherTestProcess {
         let files = crate::sample::Sample::new("sandbox-another-test-process");
         let holding = files.root().join("holding");
         let release = files.root().join("release");
-        let mut child = std::process::Command::new(
-            std::env::current_exe().expect("this test binary"),
-        )
-        .args(["--exact", test, "--nocapture", "--test-threads=1"])
-        .env(HELPER_HOLDING, &holding)
-        .env(HELPER_RELEASE, &release)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("another process of this test binary");
-        // A hang detector: the helper may first wait out tests of every other
-        // test process of this checkout.
-        let deadline = Instant::now() + Duration::from_mins(2);
+        let mut child =
+            std::process::Command::new(std::env::current_exe().expect("this test binary"))
+                .args(["--exact", test, "--nocapture", "--test-threads=1"])
+                .env(HELPER_HOLDING, &holding)
+                .env(HELPER_RELEASE, &release)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("another process of this test binary");
+        let deadline = Instant::now() + OTHER_TEST_PROCESSES;
         while !holding.exists() {
             if let Some(ended) = child.try_wait().expect("the helper's status") {
                 panic!("{test} ended before it held anything: {ended}");
@@ -1103,7 +1106,7 @@ pub(in crate::linux) fn held_by_another_test_process() -> bool {
     };
     fs::write(holding, b"held\n").expect("the helper says it holds");
     let release = PathBuf::from(release);
-    let deadline = Instant::now() + Duration::from_mins(1);
+    let deadline = Instant::now() + OTHER_TEST_PROCESSES;
     while !release.exists() {
         assert!(Instant::now() < deadline, "the helper was never let go");
         std::thread::sleep(Duration::from_millis(10));
@@ -1155,7 +1158,7 @@ fn a_lease_waits_out_a_change_another_test_process_holds() {
     let early = answered.recv_timeout(Duration::from_millis(200));
     other.let_go();
     let lease = early
-        .or_else(|_| answered.recv_timeout(Duration::from_secs(30)))
+        .or_else(|_| answered.recv_timeout(OTHER_TEST_PROCESSES))
         .expect("the lease answers once the change is let go");
     asking.join().expect("the asking thread");
     assert!(
