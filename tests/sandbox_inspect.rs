@@ -257,9 +257,11 @@ fn a_report_that_could_not_be_made_does_not_name_the_file_that_stopped_it() {
         Vec::<String>::new(),
         "{written}"
     );
-    // The run's own failure still says which file, where a failure is said.
+    // The run's own failure still says which file, where a failure is said,
+    // spelled the way this platform spells it.
+    let file = Path::new(".crucible").join("config.json");
     assert!(
-        String::from_utf8_lossy(&json.stderr).contains(".crucible/config.json"),
+        String::from_utf8_lossy(&json.stderr).contains(&*file.to_string_lossy()),
         "{json:?}"
     );
 
