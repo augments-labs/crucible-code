@@ -1,6 +1,7 @@
 //! Native Windows confinement through the packaged account/token broker.
 
 mod broker;
+pub(crate) use broker::hold_broker_directory;
 use std::ffi::OsStr;
 use std::fs;
 use std::os::windows::ffi::OsStrExt as _;

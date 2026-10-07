@@ -1143,7 +1143,11 @@ section "shipping source boundary"
 # rest are still named in the files listed here, each for something that reads a
 # key or draws a cell around a concrete value, and the list is a ratchet: a name
 # in a file that is not listed fails, and so does a line whose file no longer
-# names the crate, so the list can only get shorter.
+# names the crate, so the list can only get shorter. One line was added on
+# purpose since: `src/main.rs` settles where the sandbox broker is looked for
+# before anything else runs, because only then does the executable's path still
+# name the release the process was started from, and the application is built
+# after that.
 #
 # Files that compile only under test are left out, because a fixture has to
 # build the thing it stands in for -- which is why a test module that names one
@@ -1204,7 +1208,8 @@ src/cli/converse/resuming.rs crucible_session
 src/cli/converse/typing.rs crucible_builtins
 src/cli/draw.rs crucible_builtins
 src/cli/draw/opening.rs crucible_session
-src/cli/standing.rs crucible_builtins'
+src/cli/standing.rs crucible_builtins
+src/main.rs crucible_sandbox_local'
 concrete=$(grep -E ' crucible_(auth|builtins|privacy|provider|sandbox_broker|sandbox_local|session)$' <<<"$named")
 while IFS= read -r line; do
     [[ -z "$line" ]] && continue

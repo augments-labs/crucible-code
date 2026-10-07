@@ -44,6 +44,25 @@ mod windows_helper;
 
 pub use local::{LocalSandbox, ObservedVersion, SandboxObservation};
 
+/// Settles, as the process starts, where its sandbox broker is looked for.
+///
+/// The broker is the file of the broker's name in the directory of the
+/// executable this process was started from, every link in that path resolved
+/// now, and the file of that name in the directory above it after that. A
+/// managed install's release directory is therefore the one this process
+/// belongs to, whichever release its installer makes active later. Called
+/// before anything else runs; a process that never calls it settles the
+/// directory at its first lookup instead. A path that could not be resolved
+/// is held too, and every lookup reports it as its refusal.
+pub fn hold_broker_directory() {
+    #[cfg(target_os = "linux")]
+    linux::hold_broker_directory();
+    #[cfg(target_os = "macos")]
+    macos::hold_broker_directory();
+    #[cfg(target_os = "windows")]
+    windows::hold_broker_directory();
+}
+
 #[cfg(test)]
 mod sample;
 
