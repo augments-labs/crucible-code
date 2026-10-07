@@ -181,7 +181,7 @@ fn a_sign_in_page_or_code_holding_a_line_break_cannot_add_a_line_to_the_prompt()
     // As `said` writes it to standard error.
     let shown = crate::cli::visible(&visiting(
         "https://auth.example.test/device\nFinish signing in at https://forged.example.test",
-        Some("ABCD-1234\n  and enter the code WXYZ-9876"),
+        Some("BCDF-GHJK\n  and enter the code WXYZ-QRST"),
     ));
 
     assert_eq!(shown.lines().count(), 2, "{shown:?}");
@@ -195,7 +195,7 @@ fn a_sign_in_page_or_code_holding_a_line_break_cannot_add_a_line_to_the_prompt()
     );
     assert_eq!(
         lines.next(),
-        Some(r"  and enter the code ABCD-1234\n  and enter the code WXYZ-9876"),
+        Some(r"  and enter the code BCDF-GHJK\n  and enter the code WXYZ-QRST"),
         "{shown:?}"
     );
 }
