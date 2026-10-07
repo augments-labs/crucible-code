@@ -1,5 +1,6 @@
 use super::*;
 use crate::oauth::PATIENCE;
+use crate::oauth::renewal::Nowhere;
 
 use std::collections::BTreeMap;
 use std::io::{Read as _, Write as _};
@@ -34,10 +35,11 @@ fn runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
-/// An owner of renewals that runs them on `runtime`.
+/// An owner of renewals that runs them on `runtime` and holds no request.
 fn renewing(runtime: &tokio::runtime::Runtime) -> Renewals {
     let renewals = Renewals::new();
     renewals.runs_on(runtime.handle().clone());
+    renewals.holds(Arc::new(Nowhere));
     renewals
 }
 

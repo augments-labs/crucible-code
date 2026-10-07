@@ -15,6 +15,10 @@
 //! what to run instead and fails, rather than waiting on input that cannot
 //! come.
 //!
+//! A termination or a hang-up while the hidden prompt stands is held back
+//! until the prompt has handed the terminal back, then obeyed: see
+//! [`super::ending`] for why a signal is ever held back, and for how long.
+//!
 //! [`visible`]: super::visible
 
 use std::fmt::Write as _;
@@ -22,10 +26,14 @@ use std::io::{self, BufRead as _, IsTerminal as _, Read as _, Write as _};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crucible_app::auth::{self, Desk, Login, MAX_SECRET, Refused, Secret, Signed, Signer, Way};
+use crucible_app::auth::{
+    self, Desk, Login, MAX_SECRET, Refused, SURROUNDING, Secret, Signed, Signer, Way,
+};
 use crucible_app::content_use::Warned;
 use crucible_config::Home;
 use crucible_tui::{Key, Pressed, Raw};
+
+use super::ending::{Ending, Told};
 
 #[cfg(test)]
 mod tests;
@@ -85,15 +93,15 @@ pub(super) fn status(word: Option<&str>, json: bool) -> ExitCode {
 /// where `piped`, or signs in to its account.
 pub(super) fn login(word: &str, piped: bool) -> ExitCode {
     let outcome = desk()
-        .map_err(|problem| problem.to_string())
+        .map_err(|problem| Unstored::Refused(problem.to_string()))
         .and_then(|desk| {
             let login = desk
                 .login(word, piped)
-                .map_err(|problem| problem.to_string())?;
+                .map_err(|problem| Unstored::Refused(problem.to_string()))?;
             match login {
-                Login::Key(way) if piped => keyed(&desk, &way, &mut io::stdin().lock()),
+                Login::Key(way) if piped => Ok(keyed(&desk, &way, &mut io::stdin().lock())?),
                 Login::Key(way) => typed(&desk, &way),
-                Login::Account(way) => signed(&desk, &way),
+                Login::Account(way) => Ok(signed(&desk, &way)?),
                 Login::Either { key, account } => either(&desk, &key, &account),
             }
         });
@@ -102,7 +110,26 @@ pub(super) fn login(word: &str, piped: bool) -> ExitCode {
             let _ = io::stdout().write_all(super::visible(&said).as_bytes());
             ExitCode::SUCCESS
         }
-        Err(problem) => refused(&problem),
+        Err(Unstored::Refused(problem)) => refused(&problem),
+        // The prompt's guard has handed the terminal back by now, which is
+        // what the signal was held back for.
+        Err(Unstored::Ended(told)) => told.obeyed(),
+    }
+}
+
+/// Why a login stored nothing.
+#[derive(Debug)]
+enum Unstored {
+    /// It was refused, for the reason given.
+    Refused(String),
+    /// The process was told to stop from outside while the key's prompt
+    /// stood, and the prompt has been put away.
+    Ended(Told),
+}
+
+impl From<String> for Unstored {
+    fn from(problem: String) -> Self {
+        Self::Refused(problem)
     }
 }
 
@@ -197,56 +224,76 @@ impl Ends {
 }
 
 /// Asks for `way`'s key at a hidden prompt and stores it.
-fn typed(desk: &Desk, way: &Way) -> Result<String, String> {
+fn typed(desk: &Desk, way: &Way) -> Result<String, Unstored> {
     if let Some(why) = Ends::now().unhidden() {
-        return Err(why.to_owned());
+        return Err(why.to_owned().into());
     }
     let Some(typed) = hidden(way.shown())? else {
-        return Err("nothing was typed, so nothing was stored".to_owned());
+        return Err("nothing was typed, so nothing was stored".to_owned().into());
     };
     let secret = Secret::typed(&typed).map_err(|problem| problem.to_string())?;
-    desk.keep(way, &secret)
+    Ok(desk
+        .keep(way, &secret)
         .map(|kept| auth::kept(&kept))
-        .map_err(|problem| problem.to_string())
+        .map_err(|problem| problem.to_string())?)
 }
 
 /// What was typed at a prompt that shows none of it, or `None` where it was
 /// left with Esc, Ctrl-C or Ctrl-D.
-fn hidden(shown: &str) -> Result<Option<String>, String> {
-    let raw = match Raw::enter() {
-        Ok(Some(raw)) => raw,
-        Ok(None) => return Err(Ends::now().unhidden().unwrap_or(UNASKED).to_owned()),
-        Err(problem) => {
-            return Err(format!(
-                "the terminal would not hide what is typed: {problem}"
+///
+/// A termination or a hang-up while it stands is noted rather than obeyed,
+/// and ends the prompt on the next beat: the terminal is handed back hiding
+/// nothing, and only then is the signal obeyed, by the caller. Obeyed where
+/// it landed, it would end the process with the terminal still raw and the
+/// shell after it showing nothing that is typed.
+fn hidden(shown: &str) -> Result<Option<String>, Unstored> {
+    let ending = Ending::listening(true);
+    let hiding = ending.hiding();
+    let outcome = match Raw::enter() {
+        Ok(Some(raw)) => {
+            said(&format!(
+                "{shown} API key (it does not show; Enter to store it, Esc to cancel): "
             ));
+            let outcome = typing(ending.presses());
+            drop(raw);
+            said("\n");
+            outcome
         }
+        Ok(None) => Err(Ends::now().unhidden().unwrap_or(UNASKED).to_owned()),
+        Err(problem) => Err(format!(
+            "the terminal would not hide what is typed: {problem}"
+        )),
     };
-    said(&format!(
-        "{shown} API key (it does not show; Enter to store it, Esc to cancel): "
-    ));
-    let outcome = typing(std::iter::repeat_with(crucible_tui::pressed));
-    drop(raw);
-    said("\n");
-    outcome
+    drop(hiding);
+    // Read after the prompt is put away, and ahead of what it came to, the
+    // prompt that never stood included: a window that closed fails the read
+    // and hangs up, and it is the hang-up that says how the process should be
+    // seen to end.
+    match ending.told() {
+        Some(told) => Err(Unstored::Ended(told)),
+        None => Ok(outcome?),
+    }
 }
 
 /// What `presses` type before Enter, or `None` where they leave with Esc,
 /// Ctrl-C or Ctrl-D.
 ///
-/// Held to one byte past [`MAX_SECRET`]. What arrives past that is not kept,
-/// and the key it belonged to is refused as too long when Enter is pressed,
-/// even after Backspace: the whitespace a trim would set aside may have made
-/// room, and what is held then is a key cut to fit, not the one typed.
+/// Held to the room `--api-key-stdin` gives a key: [`MAX_SECRET`] bytes and
+/// [`SURROUNDING`] more for the whitespace around it, so a key at the bound
+/// pasted with a line break or spaces on either side is taken. What arrives
+/// past that is not kept, and the key it belonged to is refused as too long
+/// when Enter is pressed, even after Backspace: the whitespace a trim would
+/// set aside may have made room, and what is held then is a key cut to fit,
+/// not the one typed.
 fn typing<E: std::fmt::Display>(
     presses: impl IntoIterator<Item = Result<Pressed, E>>,
 ) -> Result<Option<String>, String> {
-    let room = MAX_SECRET.saturating_add(1);
+    let room = MAX_SECRET.saturating_add(SURROUNDING);
     let mut typed = String::new();
     let mut overflowed = false;
     for pressed in presses {
         match pressed {
-            Ok(Pressed::Key(Key::Enter)) if overflowed => {
+            Ok(Pressed::Key(Key::Enter)) if overflowed || typed.len() > room => {
                 return Err(Refused::Oversized.to_string());
             }
             Ok(Pressed::Key(Key::Enter)) => return Ok(Some(typed)),
@@ -280,9 +327,9 @@ fn cut(text: &str, bound: usize) -> &str {
 
 /// Asks whether `key` or `account` is meant, then logs in that way; refused
 /// before it asks where the key's prompt could not be shown.
-fn either(desk: &Desk, key: &Way, account: &Way) -> Result<String, String> {
+fn either(desk: &Desk, key: &Way, account: &Way) -> Result<String, Unstored> {
     if let Some(why) = Ends::now().unhidden() {
-        return Err(why.to_owned());
+        return Err(why.to_owned().into());
     }
     let ways = [
         (
@@ -293,8 +340,8 @@ fn either(desk: &Desk, key: &Way, account: &Way) -> Result<String, String> {
     ];
     match Asking.chooses("How do you want to sign in?", &ways) {
         Some(0) => typed(desk, key),
-        Some(_) => signed(desk, account),
-        None => Err("no way was chosen, so nothing was stored".to_owned()),
+        Some(_) => Ok(signed(desk, account)?),
+        None => Err("no way was chosen, so nothing was stored".to_owned().into()),
     }
 }
 

@@ -585,6 +585,9 @@ fn a_read_only_command_ends_while_another_publishes() {
         policy,
         SandboxManifest::empty(),
     );
+    // Held as a writer holds it: another test process's writer would otherwise
+    // be refused as concurrent while this one holds the lock.
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
     let publishing = held_publication(&sample);
 
     let finished = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -649,6 +652,69 @@ fn a_writer_prepared_while_a_publication_will_not_end_is_refused_rather_than_wai
         .expect("a writer is refused while another publication holds the lock");
     assert!(refused.contains("concurrency"), "{refused}");
     assert!(!sample.root().join("after.txt").exists());
+}
+
+#[test]
+fn another_test_process_publishes() {
+    // A helper: in an ordinary run it does nothing.
+    if !super::transaction::tests::started_by_another_test_process() {
+        return;
+    }
+    let sample = Sample::new("sandbox-another-test-process-publishes");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let publishing = held_publication(&sample);
+    super::transaction::tests::held_by_another_test_process();
+    drop(publishing);
+}
+
+#[test]
+fn a_writer_waits_its_turn_behind_a_publication_another_test_process_holds() {
+    // Two `cargo test` runs of one checkout share this user's publication
+    // lock, and a test of one holding it past a preparation's patience had a
+    // writer of the other refused as concurrent: the sandbox tests failed by
+    // the dozen, the setuid test among them, when four ran at once.
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let other = super::transaction::tests::AnotherTestProcess::holding(
+        "linux::publication_tests::another_test_process_publishes",
+    );
+    let sample = Sample::new("sandbox-writer-behind-another-test-process");
+    let writing = request(&sample, SandboxManifest::empty());
+    let (told, hears) = std::sync::mpsc::channel();
+    let writer = thread::spawn(move || {
+        let _serial =
+            super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+        let outcome = (|| {
+            let mut session = crucible_runtime::answered!(service.prepare(writing))
+                .map_err(|problem| problem.to_string())?;
+            crucible_runtime::answered!(session.materialize())
+                .map_err(|problem| problem.to_string())?;
+            let mut process = crucible_runtime::answered!(
+                session.start(command("printf 'after\\n' > after.txt"))
+            )
+            .map_err(|problem| problem.to_string())?;
+            let status = ended_within(process.as_mut(), HUNG);
+            crucible_runtime::answered!(process.stop()).map_err(|problem| problem.to_string())?;
+            Ok::<_, String>(status)
+        })();
+        told.send(outcome)
+            .expect("the test hears how the writer went");
+    });
+    // Longer than a preparation waits for the lock before refusing.
+    let early = hears.recv_timeout(Duration::from_secs(3));
+    other.let_go();
+    let outcome = early
+        .or_else(|_| hears.recv_timeout(super::transaction::tests::OTHER_TEST_PROCESSES))
+        .expect("the writer answers once the other publication is let go");
+    writer.join().expect("the writer thread");
+    let status = outcome.expect("a writer waits out another test process's publication");
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
+        "after\n"
+    );
 }
 
 #[test]

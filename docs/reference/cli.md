@@ -538,7 +538,10 @@ and asks first, and nothing reaches the vendor before a yes. With no terminal to
 instead and ends 1 rather than waiting. The prompt that hides a key needs
 standard output on the terminal as well, so a key row, or a name that is both,
 with its output redirected is refused the same way before anything is asked;
-an account sign-in needs standard input and standard error alone.
+an account sign-in needs standard input and standard error alone. On Linux,
+macOS and FreeBSD, a termination or a hang-up while that prompt waits puts the
+terminal back as it found it, showing what is typed again, before the run ends
+by that signal; nothing is stored.
 
 A login that changes which credential the provider is stored with takes
 `providers.<name>.fast` out of the user configuration file, as `/login` does
@@ -661,7 +664,7 @@ the warning is drawn there instead and the run goes on to the next line.
 | 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
 | 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
 | 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
-| 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
+| 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, and the prompt `auth login` hides a key at is put away with the terminal handed back as it was found, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
 
 Flags that exclude each other are refused with a line saying one `cannot be
 used with` the other: `--continue` with `--resume`, `--extensions` or

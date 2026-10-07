@@ -535,6 +535,11 @@ pub enum OAuthError {
     /// the route it would have gone to: nothing was sent.
     #[error("nothing was sent: {0} waits for an answer")]
     Held(Box<str>),
+    /// An account request was about to be sent before the application had
+    /// given its renewals the hold every such request is asked about: nothing
+    /// was sent.
+    #[error("nothing was sent: account requests were given no hold to check before they leave")]
+    NoHold,
     /// The authorization service refused one step.
     #[error("account login was refused (HTTP {status})")]
     Refused {

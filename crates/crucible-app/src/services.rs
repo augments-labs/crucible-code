@@ -125,7 +125,7 @@ impl Services {
     pub(crate) fn over(routes: Routes) -> Self {
         let consent = Consent::new(routes);
         // Before anything could be sent: the renewals owner makes its client
-        // with whatever hold it has by the first request.
+        // only with a hold, and sends nothing until it has one.
         let renewals = Renewals::new();
         renewals.holds(Arc::new(consent.clone()));
         Self {

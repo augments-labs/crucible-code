@@ -44,6 +44,18 @@ and narrow inherited authority. See [configuration](../configuration/configurati
    PowerShell in the same directory and with the same `--owner` setup was
    given, removes what setup created.
 
+## Which broker a Crucible uses
+
+Crucible looks for its broker in the directory of the executable it was
+started from, with every link in that path resolved as it starts, and then in
+the directory above that one, where a build puts its helpers. It settles that
+directory once and keeps it for as long as it runs. `install.sh` keeps each
+release in a directory of its own, so a Crucible that is already running keeps
+the broker of the release it started from after a newer release is installed,
+and the next one started uses the newer release's broker. An install that
+keeps its files directly in one directory, as `install.ps1` does, finds the
+broker beside `crucible.exe` there.
+
 ## How Linux and macOS confine a command
 
 On Linux, the production backend uses a

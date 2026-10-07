@@ -6,6 +6,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use crucible_sandbox::SandboxError;
@@ -31,7 +32,8 @@ fn trusted_owner(uid: u32, mode: u32) -> bool {
 /// Where a broker image is looked for.
 #[derive(Debug, Clone, Copy)]
 enum Place {
-    /// The directory the running executable is in.
+    /// The directory of the executable this process was started from, with
+    /// every link in its path resolved as it started.
     BesideExecutable,
     /// The directory above that one, where a build puts its helpers.
     AboveExecutable,
@@ -47,6 +49,60 @@ impl Place {
     }
 }
 
+/// The name of the broker image in a release, beside `crucible`.
+const BROKER: &str = "crucible-sandbox-broker";
+
+/// The directory this process's broker is looked for in.
+static HELD: Held = Held::new();
+
+/// Settles, once, the directory this process's broker is looked for in.
+///
+/// The kernel's answer for the running executable is already free of links
+/// here, but once the file it names is replaced it no longer resolves, so it
+/// is read before an installer can replace it.
+pub(crate) fn hold_broker_directory() {
+    let _ = HELD.directory(std::env::current_exe);
+}
+
+/// The directory a process's broker is looked for in, settled the first time
+/// it is asked for and never again.
+struct Held(OnceLock<Result<PathBuf, &'static str>>);
+
+impl Held {
+    const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+
+    fn directory(
+        &self,
+        executable: impl FnOnce() -> io::Result<PathBuf>,
+    ) -> Result<PathBuf, &'static str> {
+        self.0.get_or_init(|| resolved(executable())).clone()
+    }
+}
+
+/// The directory of the running executable, once every link in its path is
+/// resolved.
+fn resolved(executable: io::Result<PathBuf>) -> Result<PathBuf, &'static str> {
+    let executable = executable.map_err(|_| "could not locate the Crucible executable")?;
+    let executable = executable
+        .canonicalize()
+        .map_err(|_| "could not resolve where the Crucible executable is")?;
+    executable
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or("the Crucible executable is in no directory")
+}
+
+/// Where a broker is looked for, in the order it is looked for there.
+fn candidates(directory: &Path) -> Vec<(Place, PathBuf)> {
+    let mut candidates = vec![(Place::BesideExecutable, directory.join(BROKER))];
+    if let Some(above) = directory.parent() {
+        candidates.push((Place::AboveExecutable, above.join(BROKER)));
+    }
+    candidates
+}
+
 /// One opened broker image whose descriptor is mounted into the namespace.
 pub(super) struct Broker {
     path: PathBuf,
@@ -55,24 +111,8 @@ pub(super) struct Broker {
 
 impl Broker {
     pub(super) fn find(excluded: &[&Path]) -> Result<Self, SandboxError> {
-        let executable = std::env::current_exe()
-            .map_err(|_| unavailable("could not locate the Crucible executable"))?;
-        let mut candidates = Vec::new();
-        if let Some(parent) = executable.parent() {
-            candidates.push((
-                Place::BesideExecutable,
-                parent.join("crucible-sandbox-broker"),
-            ));
-            if let Some(build_root) = parent.parent() {
-                candidates.push((
-                    Place::AboveExecutable,
-                    build_root.join("crucible-sandbox-broker"),
-                ));
-            }
-        }
-        candidates.sort_by(|(_, one), (_, other)| one.cmp(other));
-        candidates.dedup_by(|(_, one), (_, other)| one == other);
-        Self::first_trusted(candidates, excluded)
+        let directory = HELD.directory(std::env::current_exe).map_err(unavailable)?;
+        Self::first_trusted(candidates(&directory), excluded)
     }
 
     fn first_trusted(
@@ -412,5 +452,358 @@ mod tests {
             !reason.contains(&sample.root().display().to_string()),
             "the refusal named the path it looked at: {reason}"
         );
+    }
+
+    #[test]
+    fn the_held_directory_is_not_resolved_again_after_the_link_moves() {
+        let layout = Layout::new("held");
+        layout.program(".crucible-install/releases/0.46.0/crucible");
+        layout.program(".crucible-install/releases/0.46.1/crucible");
+        layout.link(".crucible-install/current", "releases/0.46.0");
+        let started = layout.at(".crucible-install/current/crucible");
+        let unit = layout
+            .at(".crucible-install/releases/0.46.0")
+            .canonicalize()
+            .expect("the first unit");
+        let asked = std::cell::Cell::new(0);
+        let executable = || {
+            asked.set(asked.get() + 1);
+            Ok(started.clone())
+        };
+
+        let held = Held::new();
+        assert_eq!(held.directory(executable), Ok(unit.clone()));
+        layout.relink(".crucible-install/current", "releases/0.46.1");
+        assert_eq!(held.directory(executable), Ok(unit));
+        assert_eq!(asked.get(), 1, "the executable was asked for again");
+    }
+
+    #[test]
+    fn a_directory_that_could_not_be_resolved_is_each_lookup_s_refusal() {
+        let layout = Layout::new("unresolved");
+        let program = layout.program("bin/crucible");
+        let held = Held::new();
+        assert_eq!(
+            held.directory(|| Ok(layout.at("bin/gone"))),
+            Err("could not resolve where the Crucible executable is")
+        );
+        assert_eq!(
+            held.directory(|| Ok(program)),
+            Err("could not resolve where the Crucible executable is"),
+            "a later lookup looked somewhere else"
+        );
+        let unlocated = Held::new();
+        assert_eq!(
+            unlocated.directory(|| Err(io::Error::other("no executable"))),
+            Err("could not locate the Crucible executable")
+        );
+    }
+
+    #[test]
+    fn the_unit_s_own_broker_is_tried_first() {
+        // A directory whose name sorts after the broker's, so a lookup that
+        // ordered its candidates by path would try the one above first.
+        let layout = Layout::new("own-first");
+        let own = layout.broker("target/release/crucible-sandbox-broker");
+        layout.broker("target/crucible-sandbox-broker");
+        let directory = layout.at("target/release");
+        let places: Vec<_> = candidates(&directory)
+            .into_iter()
+            .map(|(place, path)| (place.said(), path))
+            .collect();
+        assert_eq!(
+            places,
+            [
+                (Place::BesideExecutable.said(), directory.join(BROKER)),
+                (
+                    Place::AboveExecutable.said(),
+                    layout.at("target").join(BROKER)
+                ),
+            ]
+        );
+        let found = Broker::first_trusted(candidates(&directory), &[]).expect("a trusted broker");
+        assert_eq!(found.path, own);
+    }
+
+    /// The file a copy of this test binary, started by [`found_by_process`],
+    /// writes the broker it found to.
+    const LOOKUP_REPORT: &str = "CRUCIBLE_TEST_BROKER_LOOKUP_REPORT";
+
+    /// Set when a started copy settles its broker's directory the way
+    /// `crucible` does as it starts, rather than by looking for it.
+    const LOOKUP_HOLDS: &str = "CRUCIBLE_TEST_BROKER_LOOKUP_HOLDS";
+
+    /// The test a started copy of this binary runs.
+    const LOOKUP_HELPER: &str = "linux::broker::tests::broker_lookup_helper_process";
+
+    /// What a started copy does first.
+    #[derive(Clone, Copy)]
+    enum Start {
+        /// Looks for its broker.
+        Looking,
+        /// Settles where its broker is, as `crucible` does before anything.
+        Holding,
+    }
+
+    /// An install or a build laid out on disk the way its installer or cargo
+    /// leaves one, with this test binary standing in for `crucible`.
+    ///
+    /// It is made below the directory this test binary is in, not under the
+    /// temporary directory: a broker is trusted only below directories nobody
+    /// else can write to, which `/tmp` is not, and a hard link to the running
+    /// binary needs the same file system.
+    struct Layout {
+        root: PathBuf,
+    }
+
+    impl Layout {
+        fn new(name: &str) -> Self {
+            static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let made = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let binary = std::env::current_exe()
+                .and_then(|binary| binary.canonicalize())
+                .expect("this test binary's path");
+            let root = binary.parent().expect("a directory").join(format!(
+                "crucible-broker-lookup-{name}-{}-{made}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            directory(&root);
+            Self { root }
+        }
+
+        fn at(&self, path: &str) -> PathBuf {
+            self.root.join(path)
+        }
+
+        /// This test binary, at `path`, as the program the layout runs.
+        fn program(&self, path: &str) -> PathBuf {
+            let program = self.at(path);
+            directory(program.parent().expect("a directory"));
+            let binary = std::env::current_exe().expect("this test binary");
+            if std::fs::hard_link(&binary, &program).is_err() {
+                std::fs::copy(&binary, &program).expect("a copy of this test binary");
+            }
+            program
+        }
+
+        /// A broker image at `path`, which a lookup that finds it names this way.
+        fn broker(&self, path: &str) -> PathBuf {
+            let broker = self.at(path);
+            directory(broker.parent().expect("a directory"));
+            std::fs::write(&broker, b"#!/bin/sh\nexit 0\n").expect("a broker fixture");
+            std::fs::set_permissions(&broker, std::fs::Permissions::from_mode(0o755))
+                .expect("the broker fixture's mode");
+            broker.canonicalize().expect("the broker fixture's path")
+        }
+
+        /// A symbolic link at `path` to `target`.
+        fn link(&self, path: &str, target: &str) {
+            let link = self.at(path);
+            directory(link.parent().expect("a directory"));
+            crate::sample::symlink(target, link);
+        }
+
+        /// What `path` is replaced, in one rename, by a link to `target`, the
+        /// way an installer activates a release.
+        fn relink(&self, path: &str, target: &str) {
+            let next = self.at(&format!("{path}.next"));
+            crate::sample::symlink(target, &next);
+            std::fs::rename(&next, self.at(path)).expect("the link replaced");
+        }
+    }
+
+    impl Drop for Layout {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// A directory, and those above it, that only their owner can write to,
+    /// whatever the umask of the run.
+    fn directory(path: &Path) {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o755)
+            .create(path)
+            .expect("a directory for the layout");
+    }
+
+    /// The broker a process started as `launch` finds, once it has done what
+    /// `start` says as it started and `meanwhile` has happened since.
+    ///
+    /// A real process, because what is being asked is what the operating
+    /// system says the running executable is, and the process started through
+    /// a link answers that differently on each platform.
+    fn found_by_process(
+        layout: &Layout,
+        launch: &Path,
+        start: Start,
+        meanwhile: impl FnOnce(),
+    ) -> PathBuf {
+        let report = layout.at("lookup-report");
+        let ready = report.with_extension("ready");
+        let go = report.with_extension("go");
+        let mut command = std::process::Command::new(launch);
+        if matches!(start, Start::Holding) {
+            command.env(LOOKUP_HOLDS, "1");
+        }
+        let mut child = command
+            .args(["--exact", LOOKUP_HELPER, "--test-threads=1"])
+            .env(LOOKUP_REPORT, &report)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("a copy of this test binary started");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !ready.exists() {
+            if child.try_wait().expect("the helper's status").is_some() || Instant::now() > deadline
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("the started copy never looked for its broker");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        meanwhile();
+        std::fs::write(&go, b"").expect("the go-ahead");
+        assert!(
+            child.wait().expect("the helper's status").success(),
+            "the started copy failed"
+        );
+        let said = std::fs::read_to_string(&report).expect("the helper's report");
+        let Some(found) = said.strip_prefix("found ") else {
+            panic!("the started copy found no broker: {said}");
+        };
+        PathBuf::from(found)
+    }
+
+    /// What a copy of this binary started by [`found_by_process`] runs: it
+    /// looks for its broker as it starts, or settles where it is, waits to be
+    /// told to go on, and writes down the broker it finds then.
+    #[test]
+    fn broker_lookup_helper_process() {
+        let Some(report) = std::env::var_os(LOOKUP_REPORT).map(PathBuf::from) else {
+            return;
+        };
+        let started = if std::env::var_os(LOOKUP_HOLDS).is_some() {
+            crate::hold_broker_directory();
+            None
+        } else {
+            Some(Broker::find(&[]))
+        };
+        std::fs::write(report.with_extension("ready"), b"").expect("the readiness mark");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !report.with_extension("go").exists() {
+            assert!(Instant::now() < deadline, "never told to go on");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let said = match Broker::find(&[]) {
+            Ok(broker) => format!("found {}", broker.path.display()),
+            Err(refused) => format!("refused {refused}"),
+        };
+        drop(started);
+        std::fs::write(&report, said).expect("the report");
+    }
+
+    #[test]
+    fn an_old_process_finds_its_own_broker_after_a_new_unit_activates() {
+        // Started through the link to the active release, and through the
+        // command's link in the directory the installer was given, which is
+        // how a user starts it.
+        for launch in [".crucible-install/current/crucible", "crucible"] {
+            let layout = Layout::new("unit");
+            layout.program(".crucible-install/releases/0.46.0/crucible");
+            let own = layout.broker(".crucible-install/releases/0.46.0/crucible-sandbox-broker");
+            layout.program(".crucible-install/releases/0.46.1/crucible");
+            layout.broker(".crucible-install/releases/0.46.1/crucible-sandbox-broker");
+            layout.link(".crucible-install/current", "releases/0.46.0");
+            layout.link("crucible", ".crucible-install/current/crucible");
+
+            let found = found_by_process(&layout, &layout.at(launch), Start::Looking, || {
+                layout.relink(".crucible-install/current", "releases/0.46.1");
+            });
+            assert_eq!(found, own, "started as {launch}");
+        }
+    }
+
+    #[test]
+    fn a_flat_install_finds_the_broker_beside_the_executable() {
+        // How `install.sh` before release units left an install, started by
+        // its name and by its alias, and how `cargo install` leaves one.
+        for (program, launch) in [
+            ("bin/crucible", "bin/crucible"),
+            ("bin/crucible", "bin/cru"),
+            (".cargo/bin/crucible", ".cargo/bin/crucible"),
+        ] {
+            let layout = Layout::new("flat");
+            layout.program(program);
+            layout.link("bin/cru", "crucible");
+            let beside = layout.broker(&format!("{program}-sandbox-broker"));
+            let found = found_by_process(&layout, &layout.at(launch), Start::Looking, || {});
+            assert_eq!(found, beside, "started as {launch}");
+        }
+    }
+
+    #[test]
+    fn a_build_finds_the_broker_it_built() {
+        // `crucible` beside its broker in each profile's directory, and a test
+        // binary one directory below it, which is what the second place is
+        // for.
+        for (program, broker) in [
+            (
+                "target/debug/crucible",
+                "target/debug/crucible-sandbox-broker",
+            ),
+            (
+                "target/release/crucible",
+                "target/release/crucible-sandbox-broker",
+            ),
+            (
+                "target/debug/deps/tests-0123",
+                "target/debug/crucible-sandbox-broker",
+            ),
+        ] {
+            let layout = Layout::new("build");
+            let program = layout.program(program);
+            let built = layout.broker(broker);
+            let found = found_by_process(&layout, &program, Start::Looking, || {});
+            assert_eq!(found, built, "started as {}", program.display());
+        }
+    }
+
+    #[test]
+    fn a_process_from_a_flat_install_keeps_its_broker_once_the_install_moves_to_release_units() {
+        let layout = Layout::new("migrated");
+        let program = layout.program("bin/crucible");
+        let flat = layout.broker("bin/crucible-sandbox-broker");
+        layout.program("bin/.crucible-install/releases/0.46.0/crucible");
+        layout.broker("bin/.crucible-install/releases/0.46.0/crucible-sandbox-broker");
+        layout.link("bin/.crucible-install/current", "releases/0.46.0");
+
+        let found = found_by_process(&layout, &program, Start::Looking, || {
+            layout.relink("bin/crucible", ".crucible-install/current/crucible");
+        });
+        assert_eq!(found, flat);
+    }
+
+    #[test]
+    fn a_process_that_settled_its_broker_as_it_started_keeps_it() {
+        // `crucible` settles where its broker is before it does anything, so
+        // a lookup made long after start goes where the start pointed: here
+        // the file it was started from has been replaced by a link to a
+        // release before it looks for the first time.
+        let layout = Layout::new("settled");
+        let program = layout.program("bin/crucible");
+        let flat = layout.broker("bin/crucible-sandbox-broker");
+        layout.program("bin/.crucible-install/releases/0.46.0/crucible");
+        layout.broker("bin/.crucible-install/releases/0.46.0/crucible-sandbox-broker");
+        layout.link("bin/.crucible-install/current", "releases/0.46.0");
+
+        let found = found_by_process(&layout, &program, Start::Holding, || {
+            layout.relink("bin/crucible", ".crucible-install/current/crucible");
+        });
+        assert_eq!(found, flat);
     }
 }
