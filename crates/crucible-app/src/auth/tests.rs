@@ -14,7 +14,7 @@ use super::{
 use crate::sample::Sample;
 
 /// A made-up key, spelled so that one repeated anywhere shows.
-const SENTINEL: &str = "sk-auth-unit-sentinel-5e4d3c2b1a";
+const SENTINEL: &str = "not-a-real-key-auth-unit-sentinel-5e4d3c2b1a";
 
 /// What `pointer` points at in `value`, or null where nothing is there.
 fn at<'a>(value: &'a Value, pointer: &str) -> &'a Value {
@@ -326,4 +326,26 @@ fn a_logout_takes_one_provider_out_and_says_what_a_launch_still_finds() {
     let again = desk.forget("moonshot").expect("a writable home");
     assert!(again.went.is_empty());
     assert!(forgotten(&again).contains("nothing was stored by Crucible for moonshot"));
+}
+
+#[test]
+fn a_name_the_configuration_gave_reaches_the_document_escaped() {
+    let sample = Sample::new("auth-escaped");
+    sample.holding(HELD);
+    sample.user("{\"providers\":{\"anthropic\":{\"apiKeyEnv\":\"MY\\u202eKEY\"}}}");
+    let desk = desk(&sample, &[("MY\u{202e}KEY", SENTINEL)]);
+
+    let provider = desk
+        .provider("anthropic")
+        .expect("a provider this build serves");
+    let bytes = desk.status(Some(provider), NOW).json();
+    let text = String::from_utf8(bytes).expect("a document is text");
+    assert!(!text.contains('\u{202e}'), "{text}");
+    assert!(!text.contains(SENTINEL), "{text}");
+    let document: Value = serde_json::from_str(&text).expect("one document");
+    assert_eq!(at(&document, "/providers/0/variable"), "MY\\u{202e}KEY");
+    let reason = at(&document, "/providers/0/reason")
+        .as_str()
+        .unwrap_or_default();
+    assert!(reason.contains("MY\\u{202e}KEY"), "{reason}");
 }

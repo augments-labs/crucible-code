@@ -33,6 +33,7 @@ use std::io::Read;
 
 use crucible_auth::{AuthError, Inventory, Kind, LoginUpdate, OAuthError, Store};
 use crucible_config::{ConfigError, Home, Settings};
+use crucible_types::shown::escaped;
 use serde_json::{Value, json};
 
 use crate::content_use::{self, Warned};
@@ -830,19 +831,11 @@ fn unfitting(misfit: &Misfit) -> String {
     }
 }
 
-/// A variable's name as a report says it: printable ASCII, with anything
-/// else replaced, bounded at [`MAX_NAME`] bytes; and whether it was cut.
+/// A variable's name as a report says it: with every character a terminal
+/// would act on or hide written as its escape, bounded at [`MAX_NAME`] bytes;
+/// and whether it was cut.
 fn named(name: &str) -> (String, bool) {
-    let shown: String = name
-        .chars()
-        .map(|one| {
-            if one.is_ascii_graphic() {
-                one
-            } else {
-                '\u{fffd}'
-            }
-        })
-        .collect();
+    let shown = escaped(name);
     let cut_short = shown.len() > MAX_NAME;
     (cut(&shown, MAX_NAME), cut_short)
 }
@@ -1009,7 +1002,7 @@ impl Status {
                         "kind": kind(one.kind),
                         "expires_at": one.lapses,
                     })).collect::<Vec<_>>(),
-                    "reason": entry.reason,
+                    "reason": escaped(&entry.reason),
                 })
             })
             .collect();
@@ -1018,7 +1011,7 @@ impl Status {
             "kind": KIND,
             "status": self.status(),
             "acceptance": "unchecked",
-            "problem": self.trouble,
+            "problem": self.trouble.as_deref().map(escaped),
             "providers": providers,
             "truncated": self.truncated(),
         });
@@ -1085,7 +1078,7 @@ pub fn failed(problem: &Refused) -> Vec<u8> {
         "kind": KIND,
         "status": "failed",
         "acceptance": "unchecked",
-        "problem": cut(&said, MAX_PROBLEM),
+        "problem": escaped(&cut(&said, MAX_PROBLEM)),
         "providers": [],
         "truncated": said.len() > MAX_PROBLEM,
     });
