@@ -1213,30 +1213,43 @@ fn resuming(cli: &Cli) -> Result<startup::Resuming, Fatal> {
 ///
 /// Straight to standard error rather than through the renderer: the renderer is
 /// one of the things that can fail here, and by this point there is no live
-/// region left to protect. The sentence often quotes what a checkout chose, a
-/// key in its configuration or a directory's name, so it is written
-/// [`visible`].
+/// region left to protect. It is written as [`failing`] says it.
 fn fail(problem: &Fatal) -> ExitCode {
-    let mut line = String::from("crucible: ");
-    line.push_str(&visible(&problem.to_string()));
-    line.push('\n');
-
-    let _ = io::stderr().write_all(line.as_bytes());
+    let _ = io::stderr().write_all(failing(&problem.to_string()).as_bytes());
     ExitCode::FAILURE
 }
 
+/// The one line a failure is said in: `crucible: `, `problem` with every
+/// character [`crucible_types::shown::escaped`] escapes written as its escape,
+/// a line break among them, and a line feed to end it.
+///
+/// The sentence often quotes what a checkout or a vendor chose, a key in its
+/// configuration, a directory's name, a vendor's refusal, and no failure's own
+/// sentence runs over lines: a break in one came from a value it quotes, and
+/// kept, it would start a line on standard error that no failure said, which
+/// a person or a script reading it would take for crucible's own. Escaped, it
+/// is still the value, and the person who sees it can tell which key or
+/// directory it was.
+fn failing(problem: &str) -> String {
+    format!("crucible: {}\n", crucible_types::shown::escaped(problem))
+}
+
 /// `text` as it may reach a terminal outside the renderer: every control
-/// character but a line break, and every Unicode format character but the
-/// zero-width joiner and non-joiner, written as its escape, `\u{1b}` for ESC
-/// and `\u{202e}` for a right-to-left override.
+/// character but a line break, the line and paragraph separators, and every
+/// Unicode format character but the zero-width joiner and non-joiner, written
+/// as its escape, `\u{1b}` for ESC, `\u{2028}` for a line separator and
+/// `\u{202e}` for a right-to-left override.
 ///
 /// A terminal acts on ESC, BEL and the C1 controls rather than drawing them,
 /// so a name that carries one could retitle the window or clear the screen
-/// instead of being read, and an override reorders what is drawn after it.
-/// Escaped, it is still the name, and the person who sees it can tell which
-/// directory or key it was; [`crucible_types::shown`] owns the escape. A line
-/// break is kept because the sentences written this way run over lines of
-/// their own.
+/// instead of being read; an override reorders what is drawn after it, and
+/// some terminals and viewers end a line at either separator. Escaped, it is
+/// still the name, and the person who sees it can tell which directory or key
+/// it was; [`crucible_types::shown`] owns the escape. A line break is kept
+/// because the reports and prompts written this way run over lines of their
+/// own, so a break in a value one quotes is the quoting owner's to escape, as
+/// the configuration check and `auth status` reports do. A failure is one
+/// line, and is written [`failing`] instead.
 fn visible(text: &str) -> String {
     text.split('\n')
         .map(crucible_types::shown::escaped)

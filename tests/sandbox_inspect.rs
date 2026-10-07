@@ -490,3 +490,37 @@ fn a_configuration_check_names_a_hostile_directory_with_its_escapes_shown() {
         "{said}"
     );
 }
+
+#[test]
+fn a_failure_quoting_a_key_that_holds_line_breaks_is_said_on_one_line() {
+    // A line feed, a carriage return and a line separator each start a line
+    // in some terminal or viewer, and kept raw they would add a `crucible: `
+    // line to standard error that no failure said.
+    const KEY: &str = "a\ncrucible: forged\rcrucible: also\u{2028}crucible: and this";
+    for (probe, args) in [
+        ("broken-check", &["config", "check"][..]),
+        ("broken-inspect", &["sandbox", "inspect"][..]),
+    ] {
+        let scratch = Scratch::new(probe);
+        fs::create_dir_all(scratch.work().join(".crucible")).expect("a project directory");
+        let document = serde_json::json!({ KEY: true }).to_string();
+        fs::write(scratch.work().join(".crucible/config.json"), document).expect("a project file");
+
+        let text = asked(&scratch, args, false);
+        assert_eq!(text.status.code(), Some(1), "{args:?}: {text:?}");
+        let told = String::from_utf8(text.stderr).expect("UTF-8");
+        let (line, rest) = told.split_once('\n').expect("a line on standard error");
+        assert_eq!(rest, "", "{args:?} said more than one line: {told:?}");
+        assert!(line.starts_with("crucible: "), "{args:?}: {told:?}");
+        assert_eq!(
+            unshown_in(line, false),
+            Vec::<char>::new(),
+            "{args:?}: {told:?}"
+        );
+        assert!(!line.contains('\u{2028}'), "{args:?}: {told:?}");
+        assert!(
+            line.contains(r"a\ncrucible: forged\rcrucible: also\u{2028}crucible: and this"),
+            "{args:?} did not name the key: {told:?}"
+        );
+    }
+}
