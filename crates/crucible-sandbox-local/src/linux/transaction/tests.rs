@@ -878,7 +878,7 @@ fn a_panic_under_the_state_coordination_leaves_it_usable() {
     // the run.
     let (done, finished) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        drop(TestStateChange::read());
+        drop(TestStateChange::read().expect("a reading"));
         drop(TestStateChange::change());
         done.send(())
             .expect("the test is told the coordination answered");
@@ -892,7 +892,7 @@ fn a_panic_under_the_state_coordination_leaves_it_usable() {
 fn a_change_waits_for_a_reading_under_way() {
     // A lease part-way through reading this user's state directory would be
     // refused by a change made now, for a change that is not its own.
-    let reading = TestStateChange::read();
+    let reading = TestStateChange::read().expect("a reading");
     let (asking, asked) = std::sync::mpsc::channel();
     let (holding, held) = std::sync::mpsc::channel();
     let changer = std::thread::spawn(move || {
@@ -1010,6 +1010,158 @@ impl Drop for ModeRestored {
     fn drop(&mut self) {
         let _ = fs::set_permissions(&self.0, self.1.clone());
     }
+}
+
+/// Where a helper process says it holds what its test took, set in its copy.
+const HELPER_HOLDING: &str = "CRUCIBLE_TEST_HELPER_HOLDING";
+/// Where a helper process is told it may let go, set in its copy.
+const HELPER_RELEASE: &str = "CRUCIBLE_TEST_HELPER_RELEASE";
+
+/// Another process of this test binary, running one helper test alone and
+/// holding what it took until it is let go: what another `cargo test` of this
+/// checkout, running beside this one, holds in this user's state directory.
+pub(in crate::linux) struct AnotherTestProcess {
+    child: Option<std::process::Child>,
+    release: PathBuf,
+    _files: crate::sample::Sample,
+}
+
+impl AnotherTestProcess {
+    /// Starts `test` in a copy of this binary, once it holds what it takes.
+    pub(in crate::linux) fn holding(test: &str) -> Self {
+        let files = crate::sample::Sample::new("sandbox-another-test-process");
+        let holding = files.root().join("holding");
+        let release = files.root().join("release");
+        let mut child = std::process::Command::new(
+            std::env::current_exe().expect("this test binary"),
+        )
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .env(HELPER_HOLDING, &holding)
+        .env(HELPER_RELEASE, &release)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("another process of this test binary");
+        // A hang detector: the helper may first wait out tests of every other
+        // test process of this checkout.
+        let deadline = Instant::now() + Duration::from_mins(2);
+        while !holding.exists() {
+            if let Some(ended) = child.try_wait().expect("the helper's status") {
+                panic!("{test} ended before it held anything: {ended}");
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{test} did not hold anything in time");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Self {
+            child: Some(child),
+            release,
+            _files: files,
+        }
+    }
+
+    /// Lets the helper go, and fails where it failed.
+    pub(in crate::linux) fn let_go(mut self) {
+        fs::write(&self.release, b"go\n").expect("the helper is let go");
+        let ended = self
+            .child
+            .take()
+            .expect("a helper not yet let go")
+            .wait()
+            .expect("the helper ends");
+        assert!(ended.success(), "the helper process failed: {ended}");
+    }
+}
+
+impl Drop for AnotherTestProcess {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = fs::write(&self.release, b"go\n");
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Whether this run is the copy of this binary [`AnotherTestProcess`] started.
+pub(in crate::linux) fn started_by_another_test_process() -> bool {
+    std::env::var_os(HELPER_HOLDING).is_some()
+}
+
+/// In the copy of this binary [`AnotherTestProcess`] started, says the helper
+/// holds what it took and waits to be let go; in any other run, `false` at
+/// once, so the helper test passes having done nothing.
+pub(in crate::linux) fn held_by_another_test_process() -> bool {
+    let (Some(holding), Some(release)) = (
+        std::env::var_os(HELPER_HOLDING),
+        std::env::var_os(HELPER_RELEASE),
+    ) else {
+        return false;
+    };
+    fs::write(holding, b"held\n").expect("the helper says it holds");
+    let release = PathBuf::from(release);
+    let deadline = Instant::now() + Duration::from_mins(1);
+    while !release.exists() {
+        assert!(Instant::now() < deadline, "the helper was never let go");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+#[test]
+fn another_test_process_changes_this_users_state_directory() {
+    // A helper: in an ordinary run it does nothing.
+    if !started_by_another_test_process() {
+        return;
+    }
+    let own = state_base().expect("this build's state directory");
+    create_state_directory(&own).expect("this build's state directory");
+    let changing = TestStateChange::change();
+    let restore = ModeRestored(
+        own.clone(),
+        fs::metadata(&own)
+            .expect("this build's state directory")
+            .permissions(),
+    );
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o750))
+        .expect("a state directory that is not private");
+    held_by_another_test_process();
+    drop(restore);
+    drop(changing);
+}
+
+#[test]
+fn a_lease_waits_out_a_change_another_test_process_holds() {
+    // Two `cargo test` runs of one checkout share its state directory, and a
+    // test of one that changes it to watch a refusal refused every lease the
+    // other asked for meanwhile: the sandbox tests failed by the dozen, the
+    // setuid test among them, when four ran at once.
+    let own = state_base().expect("this build's state directory");
+    let other = AnotherTestProcess::holding(
+        "linux::transaction::tests::another_test_process_changes_this_users_state_directory",
+    );
+    let (answering, answered) = std::sync::mpsc::channel();
+    let asking = std::thread::spawn(move || {
+        let lease = RegistryLease::acquire_at(&own)
+            .map(drop)
+            .map_err(|problem| problem.to_string());
+        answering
+            .send(lease)
+            .expect("the test is told what the lease answered");
+    });
+    let early = answered.recv_timeout(Duration::from_millis(200));
+    other.let_go();
+    let lease = early
+        .or_else(|_| answered.recv_timeout(Duration::from_secs(30)))
+        .expect("the lease answers once the change is let go");
+    asking.join().expect("the asking thread");
+    assert!(
+        lease.is_ok(),
+        "a lease was refused for a change another test process held: {lease:?}"
+    );
 }
 
 #[test]

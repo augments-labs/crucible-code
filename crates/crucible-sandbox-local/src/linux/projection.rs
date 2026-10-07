@@ -889,7 +889,8 @@ pub(super) struct ProcessPlan {
     pub(super) sandbox: SandboxId,
     pub(super) invocation: SandboxInvocationMode,
     pub(super) call_result_key: Option<CallResultKey>,
-    /// Writers in one test process run one at a time, for as long as each runs.
+    /// Writers under test run one at a time, in this process and across the
+    /// test processes of this checkout, for as long as each runs.
     #[cfg(test)]
     pub(super) serial: Option<transaction::TestSerialLease>,
 }
