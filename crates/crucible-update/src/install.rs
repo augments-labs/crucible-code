@@ -20,9 +20,13 @@
 //! cannot pair it with another release's broker. The receipt is written once
 //! the unit's executables are in place, and names the unit's installation,
 //! platform, prefix and release and the SHA-256 of each executable it holds.
-//! This module reads that layout and stages a release unit into it from the
-//! release's archive, under `releases/` beside the active unit; the installer
-//! writes the same layout and holds itself to the same shape.
+//! This module reads that layout, stages a release unit into it from the
+//! release's archive, under `releases/` beside the active unit, and makes the
+//! staged unit active, or the one before it again, under the install's lock;
+//! the installer writes the same layout, takes the same lock and holds itself
+//! to the same shape. Whichever of them is killed, at whatever point, the
+//! install is left with one whole release active, and what it left behind is
+//! removed by the next to take the lock.
 //!
 //! A receipt is evidence to check, not a list of paths to follow. Nothing
 //! here opens a path the receipt names: the layout is found from where the
@@ -35,10 +39,13 @@
 //! Only Unix installs are managed this way; Windows has neither a receipt nor
 //! this module.
 
+mod activate;
+mod boundary;
 mod layout;
 mod receipt;
 mod stage;
 
+pub use activate::{Activated, ActivationError, ActivationStep, RecoverableActivation, UnitRole};
 pub use layout::{EntryKind, LayoutEntry, LayoutError, ReceiptClaim, ReceiptLayout};
 pub use receipt::{Digest, Installation, Receipt, ReceiptError, Target, Version};
 pub use stage::{StageError, StagePart, StagedUnit};

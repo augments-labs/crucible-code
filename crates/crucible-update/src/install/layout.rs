@@ -37,7 +37,7 @@ use super::receipt::{self, Digest, Receipt, ReceiptError, Target, Version};
 pub(crate) const PREFIX: &str = ".crucible-install";
 
 /// The link naming the active release.
-const CURRENT: &str = "current";
+pub(super) const CURRENT: &str = "current";
 
 /// The directory each release unit is kept under.
 pub(super) const RELEASES: &str = "releases";
@@ -291,6 +291,12 @@ impl ReceiptLayout {
             .join(self.receipt.version().as_str())
     }
 
+    /// Reads the layout again, from its prefix, as it is now: what an
+    /// install holding the lock acts on rather than what was read before.
+    pub(super) fn again(&self) -> Result<Self, LayoutError> {
+        Self::read(&self.prefix, Owner::running())
+    }
+
     /// Reads the layout under `prefix`, whose entries `owner` or root must
     /// own.
     fn read(prefix: &Path, owner: Owner) -> Result<Self, LayoutError> {
@@ -301,48 +307,72 @@ impl ReceiptLayout {
         let version = current(&prefix.join(CURRENT))?;
         let releases = prefix.join(RELEASES);
         directory(&releases, LayoutEntry::Releases, owner)?;
-        let unit = releases.join(version.as_str());
-        directory(&unit, LayoutEntry::Unit, owner)?;
-
-        let mut bytes = Vec::new();
-        file(&unit.join(RECEIPT), LayoutEntry::Receipt, owner)?
-            .take(receipt::MAX_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(io(LayoutEntry::Receipt))?;
-        let receipt = Receipt::parse(&bytes).map_err(LayoutError::Receipt)?;
-        contents(&unit, receipt.broker().is_some())?;
-        if receipt.prefix().as_os_str() != prefix.as_os_str() {
-            return Err(LayoutError::Mismatch {
-                claim: ReceiptClaim::Prefix,
-            });
-        }
-        if *receipt.version() != version {
-            return Err(LayoutError::Mismatch {
-                claim: ReceiptClaim::Release,
-            });
-        }
-        if Target::running() != Some(receipt.target()) {
-            return Err(LayoutError::Mismatch {
-                claim: ReceiptClaim::Platform,
-            });
-        }
-
-        for (entry, name, recorded) in [
-            (LayoutEntry::Executable, CRUCIBLE, Some(receipt.crucible())),
-            (LayoutEntry::Broker, BROKER, receipt.broker()),
-        ] {
-            let Some(recorded) = recorded else { continue };
-            let opened = file(&unit.join(name), entry, owner)?;
-            if digest(opened, entry, EXECUTABLE_CEILING)? != *recorded {
-                return Err(LayoutError::Digest { entry });
-            }
-        }
-
+        let receipt = whole(prefix, &releases.join(version.as_str()), &version, owner)?;
         Ok(Self {
             prefix: prefix.to_path_buf(),
             receipt,
         })
     }
+}
+
+/// The receipt of the unit at `unit`, once it is whole: a unit of `version` of
+/// the install under `prefix`, for this platform, holding exactly what its
+/// receipt names with the hashes it records, and nothing in it that the user
+/// running crucible or root did not make. The active unit is held to this, and
+/// so is any other before it is made active.
+pub(super) fn unit_receipt(
+    prefix: &Path,
+    unit: &Path,
+    version: &Version,
+) -> Result<Receipt, LayoutError> {
+    whole(prefix, unit, version, Owner::running())
+}
+
+/// The receipt of the unit at `unit` once it is whole, its entries owned by
+/// `owner` or root.
+fn whole(
+    prefix: &Path,
+    unit: &Path,
+    version: &Version,
+    owner: Owner,
+) -> Result<Receipt, LayoutError> {
+    directory(unit, LayoutEntry::Unit, owner)?;
+
+    let mut bytes = Vec::new();
+    file(&unit.join(RECEIPT), LayoutEntry::Receipt, owner)?
+        .take(receipt::MAX_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io(LayoutEntry::Receipt))?;
+    let receipt = Receipt::parse(&bytes).map_err(LayoutError::Receipt)?;
+    contents(unit, receipt.broker().is_some())?;
+    if receipt.prefix().as_os_str() != prefix.as_os_str() {
+        return Err(LayoutError::Mismatch {
+            claim: ReceiptClaim::Prefix,
+        });
+    }
+    if receipt.version() != version {
+        return Err(LayoutError::Mismatch {
+            claim: ReceiptClaim::Release,
+        });
+    }
+    if Target::running() != Some(receipt.target()) {
+        return Err(LayoutError::Mismatch {
+            claim: ReceiptClaim::Platform,
+        });
+    }
+
+    for (entry, name, recorded) in [
+        (LayoutEntry::Executable, CRUCIBLE, Some(receipt.crucible())),
+        (LayoutEntry::Broker, BROKER, receipt.broker()),
+    ] {
+        let Some(recorded) = recorded else { continue };
+        let opened = file(&unit.join(name), entry, owner)?;
+        if digest(opened, entry, EXECUTABLE_CEILING)? != *recorded {
+            return Err(LayoutError::Digest { entry });
+        }
+    }
+
+    Ok(receipt)
 }
 
 /// The prefix a canonical executable path at `<prefix>/releases/<version>/crucible`

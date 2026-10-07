@@ -35,9 +35,12 @@ tokio = { workspace = true, features = ["rt", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 # An install may be made only of root's files and those of the user running
-# crucible, and `std` cannot say who that is. `process` is turned on for
-# `getuid` alone; nothing here stops a process.
-rustix = { workspace = true, features = ["process"] }
+# crucible, and `std` cannot say who that is, nor whether the process an
+# install's lock names still runs, nor this host's name the lock carries as
+# `uname -n` prints it. `process` is turned on for `getuid` and for signal 0,
+# which stops nothing; only the tests kill, and only their own process.
+# `system` is turned on for `uname`.
+rustix = { workspace = true, features = ["process", "system"] }
 # A release unit is staged from the gzip-compressed tar the release ships;
 # `flate2` decompresses it and `tar` reads its members, and only on the
 # platforms whose installs are managed.
