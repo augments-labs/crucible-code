@@ -129,7 +129,9 @@ enum Scope {
 
     /// A call about a file: the tool, a colon, and the path the workspace
     /// resolved, absolute. A call whose path did not resolve has none, so it
-    /// has no scope either.
+    /// has no scope either, and nor does one whose path is not text: its
+    /// spelling stands a replacement character in for what could not be
+    /// written, and so names other files as well.
     File(Box<str>),
 
     /// A call that names no path by design: the tool alone, since every call
@@ -347,7 +349,8 @@ impl Permission {
         };
         // A call with no scope is settled by its answer alone, however long
         // the answer was given for: a path that did not resolve names no file
-        // a later call could be the same as.
+        // a later call could be the same as, and one that is not text has no
+        // spelling another file could not share.
         if verdict == Verdict::Allow
             && lasts
             && let Some((scope, named)) = scope
@@ -394,8 +397,10 @@ impl Permission {
     /// question named it would do — beside the words the question named it in,
     /// which are what a context section reports. `None` for a file the
     /// workspace could not resolve, which names nothing an answer could cover
-    /// beyond the call it was given to. A call that names no path at all is
-    /// covered by its tool, and listed by its name alone.
+    /// beyond the call it was given to, and for one whose path is not text,
+    /// whose spelling names more than the file the question was about. A call
+    /// that names no path at all is covered by its tool, and listed by its
+    /// name alone.
     ///
     /// Never the tool alone where the question named more. Agreeing to
     /// `cargo test` is not agreeing to `curl`, and agreeing to change
@@ -407,10 +412,10 @@ impl Permission {
     /// it may be narrower than the durable rule minted from the same question,
     /// and is wider only in leaving out whitespace at the ends of a command
     /// line. For a file or a host the two name the same thing, and a file that
-    /// did not resolve, or a call naming no path, mints no rule. For a command
-    /// the question showed the line, so the line is what is remembered; the
-    /// rule names the command a one-command line runs, and a longer line mints
-    /// none.
+    /// did not resolve or is not text, or a call naming no path, mints no
+    /// rule. For a command the question showed the line, so the line is what
+    /// is remembered; the rule names the command a one-command line runs, and
+    /// a longer line mints none.
     fn scope(call: &ToolCall, sensitivity: &Sensitivity) -> Option<(Scope, Box<str>)> {
         match sensitivity {
             Sensitivity::ReadOnly { target }
@@ -418,6 +423,7 @@ impl Permission {
             | Sensitivity::MutatesFile { target } => {
                 let named = format!("{}:{target}", call.name).into();
                 match target.held() {
+                    Held::Named(_) if target.untextual() => None,
                     Held::Named(_) => {
                         let absolute = target.absolute()?;
                         Some((

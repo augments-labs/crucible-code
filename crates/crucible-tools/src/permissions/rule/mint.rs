@@ -42,16 +42,21 @@ impl fmt::Display for Minted {
 /// what it lets through; nothing here mints one on their behalf out of a single
 /// yes.
 ///
-/// `None` where no honest rule exists — a path that did not resolve, a command
-/// nobody could read, or a line that is more than one command. The last is the
-/// interesting one: a rule per constituent would let each of them run alone
-/// from now on, which is wider than the line that was actually agreed to.
+/// `None` where no honest rule exists — a path that did not resolve or is not
+/// text, a command nobody could read, or a line that is more than one command.
+/// A path that is not text is spelled with a replacement character, so a rule
+/// in that spelling would name other files too. The last is the interesting
+/// one: a rule per constituent would let each of them run alone from now on,
+/// which is wider than the line that was actually agreed to.
 #[must_use]
 pub fn narrowest(call: &ToolCall, sensitivity: &Sensitivity) -> Option<Minted> {
     let subject = match sensitivity {
         Sensitivity::ReadOnly { target }
         | Sensitivity::ReadsOutside { target }
         | Sensitivity::MutatesFile { target } => {
+            if target.untextual() {
+                return None;
+            }
             // The spelling somebody would recognise, falling back to the only
             // name a file outside the working directory has.
             target.below_root().or_else(|| target.absolute())?

@@ -204,7 +204,9 @@ Both durations remember exactly what the question named.
   `write` to `src/a.rs` stops asking about that write; another path asks again,
   and `edit` is separate too. A path crucible could not resolve, such as one
   outside the directories it reaches, is never remembered: `session` allows
-  that one call, and the next is asked about again.
+  that one call, and the next is asked about again. Nor is a path whose name
+  is not valid text, which a question can only show with `�` standing in for
+  what it could not print, so two such files would read alike.
 - For a tool that names no file at all, such as `todo_write`, which is asked
   about only when an `ask` rule names it, it is the tool. `session` stops
   asking about that tool.

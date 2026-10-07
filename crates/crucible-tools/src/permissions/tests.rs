@@ -606,6 +606,95 @@ fn an_unresolved_write_beside_the_workspace_is_asked_about_each_time() {
     assert!(permission.context_state().1.is_empty());
 }
 
+/// A workspace holding two files whose names are not text, `\xff` and `\xfe`,
+/// each behind a link a checkout could ship: `a` to the first, `b` to the
+/// second, and `secret` to a copy of the first under `secrets/`. Spelled as
+/// text the two names come out the same, which is what these fixtures exist
+/// to hold apart.
+#[cfg(unix)]
+fn two_untextual_files(name: &str) -> (Removed, Workspace) {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let base = Removed(
+        std::env::temp_dir().join(format!("crucible-untextual-{name}-{}", std::process::id())),
+    );
+    let _ = fs::remove_dir_all(&base.0);
+    let root = base.0.join("root");
+    fs::create_dir_all(root.join("secrets")).unwrap();
+    for (link, file) in [("a", b"\xff"), ("b", b"\xfe")] {
+        let file = OsStr::from_bytes(file);
+        fs::write(root.join(file), "k").unwrap();
+        std::os::unix::fs::symlink(root.join(file), root.join(link)).unwrap();
+    }
+    let secret = root.join("secrets").join(OsStr::from_bytes(b"\xff"));
+    fs::write(&secret, "k").unwrap();
+    std::os::unix::fs::symlink(secret, root.join("secret")).unwrap();
+
+    let workspace = Workspace::open(&root).unwrap();
+    (base, workspace)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_session_yes_to_one_file_whose_name_is_not_text_does_not_cover_another() {
+    let (_base, workspace) = two_untextual_files("session");
+    let mut permission = Permission::new();
+    let mut answer = Answer::for_the_session();
+
+    for (n, link) in ["a", "b"].into_iter().enumerate() {
+        let path = workspace.existing(link).unwrap();
+        let call = calling("edit", &format!(r#"{{"path":"{link}"}}"#));
+        let changing = Sensitivity::MutatesFile {
+            target: Target::resolved(&workspace, &path),
+        };
+
+        assert!(permission.decided(&call, &changing, &mut answer).ran());
+        assert_eq!(
+            answer.asked,
+            n + 1,
+            "the yes about `a` settled `{link}`, a different file"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn no_rule_is_minted_for_a_file_whose_name_is_not_text() {
+    // The rule would be written in the text spelling, which names the other
+    // file as well.
+    let (_base, workspace) = two_untextual_files("minted");
+    let path = workspace.existing("a").unwrap();
+    let changing = Sensitivity::MutatesFile {
+        target: Target::resolved(&workspace, &path),
+    };
+
+    assert_eq!(narrowest(&call("edit"), &changing), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_denial_still_names_a_file_whose_name_is_not_text() {
+    // Two such names read alike once spelled as text, so a rule about one
+    // speaks about both. For a denial that is the side to err on: a file with
+    // an unreadable name below a denied directory is still below it.
+    let (_base, workspace) = two_untextual_files("denied");
+    let mut permission = with(Mode::Ask, &[(Disposition::Deny, "read(secrets/**)")]);
+    let mut answer = Answer::once(Verdict::Allow);
+    let secret = workspace.existing("secret").unwrap();
+
+    let settled = permission.decided(
+        &call("read"),
+        &Sensitivity::ReadOnly {
+            target: Target::resolved(&workspace, &secret),
+        },
+        &mut answer,
+    );
+
+    assert!(matches!(settled, Settled::Forbidden), "{settled:?}");
+    assert_eq!(answer.asked, 0);
+}
+
 /// A directory a test made, removed however the test ends.
 struct Removed(std::path::PathBuf);
 
