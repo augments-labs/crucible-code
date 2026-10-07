@@ -341,3 +341,62 @@ fn an_extension_nobody_wrote_settings_for_says_so_rather_than_nothing() {
 
     assert!(said.contains("config    nothing"), "{said}");
 }
+
+/// Fails unless `said` holds no character a terminal would act on or hide,
+/// and holds `escaped` where it quoted one.
+fn unacted(said: &str, escaped: &[&str]) {
+    for character in ['\u{1b}', '\u{7}', '\u{202e}'] {
+        assert!(!said.contains(character), "{character:?} in {said:?}");
+    }
+    for one in escaped {
+        assert!(said.contains(one), "no {one} in {said}");
+    }
+}
+
+#[test]
+fn what_a_manifest_says_that_a_terminal_would_act_on_is_listed_as_its_escape() {
+    // A manifest is a file somebody else wrote, and a listing is read in a
+    // terminal before anybody has decided to trust it. A version that clears
+    // the screen or starts a line of its own could draw a listing that says
+    // something the file does not.
+    let sample = Sample::new("extensions-listing-escaped");
+    sample.installed(
+        "reviewer",
+        &manifest("acme.reviewer").replace(
+            r#""version": "1.4.0""#,
+            r#""version": "1.4.0\u001b]0;owned\u0007\nacme.trusted 9.9.9\u202e""#,
+        ),
+    );
+    sample.installed(
+        "broken",
+        r#"{"id": "acme.broken", "\u001b[2Jstray\nkey": true}"#,
+    );
+
+    let said = listing(&sample.discovered(), &sample.decided(), RUNNING);
+
+    unacted(
+        &said,
+        &[
+            r"acme.reviewer 1.4.0\u{1b}]0;owned\u{7}\nacme.trusted 9.9.9\u{202e}",
+            r"\u{1b}[2Jstray\nkey",
+        ],
+    );
+    assert!(
+        !said.lines().any(|line| line.starts_with("acme.trusted")),
+        "{said}"
+    );
+    assert!(!said.contains("stray\nkey"), "{said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_whose_name_a_terminal_would_act_on_is_listed_as_its_escape() {
+    let sample = Sample::new("extensions-listing-escaped-directory");
+    sample.installed("line\nbreak\u{1b}[2J", &manifest("acme.reviewer"));
+    sample.installed("other\u{1b}[2J", "not a manifest");
+
+    let said = listing(&sample.discovered(), &sample.decided(), RUNNING);
+
+    unacted(&said, &[r"line\nbreak\u{1b}[2J", r"other\u{1b}[2J"]);
+    assert!(!said.contains("line\nbreak"), "{said}");
+}

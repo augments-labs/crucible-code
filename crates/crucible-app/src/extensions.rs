@@ -1,4 +1,5 @@
-//! What `--extensions` prints.
+//! What `crucible extensions list` prints, and `--extensions`, which is the
+//! same list under the name it had first.
 //!
 //! A listing of what is installed and what could not be read, written from a
 //! sweep that has already happened. [`installed`] makes that sweep and reads
@@ -10,6 +11,13 @@
 //! The whole answer is built as one string and written once, because it goes to
 //! standard output for a person or a pipe rather than to the renderer — by the
 //! time this runs there is no session, no screen and nothing to protect.
+//!
+//! Nothing installed is trusted yet, so every string a manifest, a directory
+//! name or the home file chose is written with what a terminal would act on or
+//! hide as its escape, a line break among them: a version that cleared the
+//! screen or began a line of its own could otherwise draw a listing that says
+//! something the files do not. The sweep already bounds how many extensions
+//! are read and how long each field may be.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -19,6 +27,7 @@ use crucible_extension::{
     ExtensionDecision, ExtensionManifest, ExtensionProtocol, ExtensionUnhosted, Extensions,
     Installed,
 };
+use crucible_types::shown::escaped;
 
 use crate::AppError;
 
@@ -111,7 +120,7 @@ pub fn listing(found: &Extensions, settings: &Settings, running: &str) -> String
             }
         );
         for problem in refused {
-            let _ = writeln!(said, "  {problem}");
+            let _ = writeln!(said, "  {}", escaped(&problem.to_string()));
         }
     }
 
@@ -144,12 +153,18 @@ fn describe(said: &mut String, one: &Installed, decided: Decided<'_>, running: &
     let identity = manifest.identity();
     let requests = manifest.requests();
 
-    let _ = writeln!(said, "{} {}", identity.id, identity.version);
-    let _ = writeln!(said, "  from      {}", one.file());
+    let _ = writeln!(
+        said,
+        "{} {}",
+        escaped(&identity.id),
+        escaped(&identity.version)
+    );
+    let _ = writeln!(said, "  from      {}", escaped(one.file()));
     let _ = writeln!(
         said,
         "  protocol  {}, needs crucible {}",
-        requests.protocol, requests.minimum,
+        requests.protocol,
+        escaped(&requests.minimum),
     );
     // "nothing" rather than an empty line, both times. An extension that asks
     // for no capability is a real and unremarkable thing, and a blank space
@@ -188,18 +203,22 @@ fn describe(said: &mut String, one: &Installed, decided: Decided<'_>, running: &
         "  may run   {}",
         match manifest.trusted(trust) {
             Ok(_) => String::from("yes"),
-            Err(why) => format!("no; {why}"),
+            Err(why) => format!("no; {}", escaped(&why.to_string())),
         }
     );
     // The names only. Crucible has never read this extension's documentation,
     // so it cannot tell which of these holds a key somebody pasted — and a
     // listing is a thing people paste into an issue. Named at all because
     // whoever wrote them needs to see the block was read as the one they meant.
-    let _ = writeln!(said, "  config    {}", joined(written.iter().copied()));
+    let _ = writeln!(
+        said,
+        "  config    {}",
+        escaped(&joined(written.iter().copied()))
+    );
     // Taken over the manifest's own bytes by the parser, never read out of it:
     // a file stating its own digest would be a file asserting it had not
     // changed since somebody trusted it.
-    let _ = writeln!(said, "  digest    {}", identity.digest);
+    let _ = writeln!(said, "  digest    {}", escaped(&identity.digest));
 }
 
 /// Whether this build could run it, and what stands in the way where it could not.
@@ -235,9 +254,10 @@ fn joined<'a>(spellings: impl Iterator<Item = &'a str>) -> String {
     listed.join(", ")
 }
 
-/// A path, as the user would name it.
+/// A path, as the user would name it, with what a terminal would act on in
+/// it written as its escape.
 fn shown(path: &Path) -> String {
-    path.display().to_string()
+    escaped(&path.display().to_string())
 }
 
 #[cfg(test)]

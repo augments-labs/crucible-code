@@ -149,11 +149,11 @@ recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
 /resume inside a session lists the rest.
 
---extensions lists what is installed in ~/.crucible/extensions (or the \
+extensions list says what is installed in ~/.crucible/extensions (or the \
 extensions directory under CRUCIBLE_CODE_HOME), with what each \
 manifest asks to be allowed to do and the digest crucible took over its bytes, \
-and stops. Nothing installed is run to produce that list, which is the point of \
-being able to read it.
+and stops; --extensions is the same list. Nothing installed is run to produce \
+that list, which is the point of being able to read it.
 
 sandbox inspect prints the confinement a command in this directory would run \
 under — which backend would enforce it, what that backend can and cannot hold, \
@@ -254,6 +254,18 @@ enum Command {
         #[command(subcommand)]
         action: McpAction,
     },
+    /// Say what is installed in crucible's extensions directory, without
+    /// running any of it, and stop.
+    Extensions {
+        #[command(subcommand)]
+        action: ExtensionsAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ExtensionsAction {
+    /// List every installed extension and stop. The same as `--extensions`.
+    List,
 }
 
 #[derive(Debug, Subcommand)]
@@ -470,7 +482,14 @@ pub(crate) fn start() -> ExitCode {
             };
         }
         (Some(Command::Mcp { action }), _, _) => declared(action),
-        (None, true, _) => listed(),
+        (
+            Some(Command::Extensions {
+                action: ExtensionsAction::List,
+            }),
+            _,
+            _,
+        )
+        | (None, true, _) => listed(),
         (None, _, true) => inspected(false),
         (None, _, _) => run(&cli),
     };
@@ -614,10 +633,11 @@ fn diagnosed(json: bool) -> ExitCode {
 /// Writes what is installed to standard output, and stops.
 ///
 /// Answered here rather than inside [`run`] so that it is answered before
-/// anything is built: the flag exists so somebody can read what crucible found
-/// *before* deciding whether any of it should ever run, and a listing that had
-/// opened a workspace, read a credential or started a session on the way would
-/// be a poor thing to reach for when an extension is the suspect.
+/// anything is built: `extensions list`, and `--extensions` before it, exist so
+/// somebody can read what crucible found *before* deciding whether any of it
+/// should ever run, and a listing that had opened a workspace, read a
+/// credential or started a session on the way would be a poor thing to reach
+/// for when an extension is the suspect.
 ///
 /// A write that fails is dropped the way [`fail`] drops one. Standard output
 /// closing early is a `head` on the other end of a pipe, and there is nothing

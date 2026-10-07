@@ -252,3 +252,50 @@ fn no_secret_a_record_holds_reaches_either_stream() {
         "{described}"
     );
 }
+
+/// Installs an extension under the home whose manifest says something a
+/// terminal would act on, and one whose manifest does not read.
+fn installing(scratch: &Scratch) {
+    let at = scratch.crucible().join("extensions");
+    fs::create_dir_all(at.join("reviewer")).expect("an extension directory");
+    fs::write(
+        at.join("reviewer").join("manifest.json"),
+        r#"{
+  "id": "acme.reviewer",
+  "version": "1.4.0\u001b[2J\nacme.trusted 9.9.9",
+  "protocol": "1.0",
+  "entrypoint": "bin/reviewer",
+  "minimumCrucible": "0.34.0",
+  "capabilities": ["registerTools"],
+  "contributions": ["tools"]
+}"#,
+    )
+    .expect("a manifest");
+    fs::create_dir_all(at.join("broken")).expect("an extension directory");
+    fs::write(at.join("broken").join("manifest.json"), "{\u{1b}[31m").expect("a manifest");
+}
+
+#[test]
+fn extensions_list_and_the_flag_it_replaces_print_the_same_list_and_start_nothing() {
+    let scratch = Scratch::new("extensions");
+    assert_bound(&scratch);
+    installing(&scratch);
+    let before = tree(&scratch.home());
+
+    let listed = asked(&scratch, &["extensions", "list"], true);
+    let flagged = asked(&scratch, &["--extensions"], true);
+
+    assert!(listed.status.success(), "{}", said(&listed));
+    assert!(flagged.status.success(), "{}", said(&flagged));
+    assert_eq!(listed.stdout, flagged.stdout);
+    assert!(listed.stderr.is_empty() && flagged.stderr.is_empty());
+
+    let text = String::from_utf8_lossy(&listed.stdout);
+    assert!(text.contains("acme.reviewer 1.4.0"), "{text}");
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    assert!(
+        !text.lines().any(|line| line.starts_with("acme.trusted")),
+        "{text}"
+    );
+    assert_eq!(tree(&scratch.home()), before, "a list wrote to the home");
+}

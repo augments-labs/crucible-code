@@ -13,12 +13,13 @@ Usage: crucible [OPTIONS]
        crucible <COMMAND>
 
 Commands:
-  sandbox  Inspect confinement here, or provision or remove native sandbox support
-  config   Parse and validate the effective configuration, and stop
-  doctor   Check whether this machine is ready to run a conversation, offline, and stop
-  auth     Say, store or remove the credentials crucible signs providers in with, offline but for a sign-in
-  mcp      Say which MCP servers your configuration writes down, without starting any of them, and stop
-  help     Print this message or the help of the given subcommand(s)
+  sandbox     Inspect confinement here, or provision or remove native sandbox support
+  config      Parse and validate the effective configuration, and stop
+  doctor      Check whether this machine is ready to run a conversation, offline, and stop
+  auth        Say, store or remove the credentials crucible signs providers in with, offline but for a sign-in
+  mcp         Say which MCP servers your configuration writes down, without starting any of them, and stop
+  extensions  Say what is installed in crucible's extensions directory, without running any of it, and stop
+  help        Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --continue             Carry on the most recent session for this directory
@@ -53,7 +54,7 @@ crucible keeps its own files in ~/.crucible (or the directory CRUCIBLE_CODE_HOME
 
 Sessions are written one file per session, and --continue picks up the most recent one for this directory. --resume picks up the exact session an id names instead; a quitting session prints its own id on the way out, and /resume inside a session lists the rest.
 
---extensions lists what is installed in ~/.crucible/extensions (or the extensions directory under CRUCIBLE_CODE_HOME), with what each manifest asks to be allowed to do and the digest crucible took over its bytes, and stops. Nothing installed is run to produce that list, which is the point of being able to read it.
+extensions list says what is installed in ~/.crucible/extensions (or the extensions directory under CRUCIBLE_CODE_HOME), with what each manifest asks to be allowed to do and the digest crucible took over its bytes, and stops; --extensions is the same list. Nothing installed is run to produce that list, which is the point of being able to read it.
 
 sandbox inspect prints the confinement a command in this directory would run under — which backend would enforce it, what that backend can and cannot hold, the reach and ceilings a command would get, and why it would be refused — and stops; --json writes it as one JSON document instead. Nothing is started to produce it, so what only starting the backend could tell is said to be unverified, and every path in it but the workspace root is a digest. --sandbox is the same report as text.
 
@@ -65,12 +66,13 @@ Usage: crucible [OPTIONS]
        crucible <COMMAND>
 
 Commands:
-  sandbox  Inspect confinement here, or provision or remove native sandbox support
-  config   Parse and validate the effective configuration, and stop
-  doctor   Check whether this machine is ready to run a conversation, offline, and stop
-  auth     Say, store or remove the credentials crucible signs providers in with, offline but for a sign-in
-  mcp      Say which MCP servers your configuration writes down, without starting any of them, and stop
-  help     Print this message or the help of the given subcommand(s)
+  sandbox     Inspect confinement here, or provision or remove native sandbox support
+  config      Parse and validate the effective configuration, and stop
+  doctor      Check whether this machine is ready to run a conversation, offline, and stop
+  auth        Say, store or remove the credentials crucible signs providers in with, offline but for a sign-in
+  mcp         Say which MCP servers your configuration writes down, without starting any of them, and stop
+  extensions  Say what is installed in crucible's extensions directory, without running any of it, and stop
+  help        Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --continue
