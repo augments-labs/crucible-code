@@ -117,6 +117,32 @@ if ! grep -qE '^ +assets/install\.ps1$' .github/workflows/release.yml; then
     failed=1
 fi
 
+section "a pull request that changes only documentation"
+# blocking-ci.yml asks scripts/sh/docs-only.sh whether a pull request changes
+# nothing but documentation, and then leaves macOS and Windows to the run its
+# merge makes. A wrong yes skips a platform that a change could break, so each
+# case below is one the answer must get right.
+docs_only_case() {
+    local want=$1 got
+    shift
+    got=$(printf '%s\0' "$@" | scripts/sh/docs-only.sh) || got="exit $?"
+    if [[ "$got" != "$want" ]]; then
+        printf '    FAIL docs-only says %s, not %s, for:%s\n' "$got" "$want" "$(printf ' %q' "$@")"
+        failed=1
+    fi
+}
+docs_only_case true docs/reference/cli.md
+docs_only_case true README.md "docs/user guide/a b.md" docs/assets/flow.svg .github/PULL_REQUEST_TEMPLATE.md
+docs_only_case false docs/reference/cli.md crates/crucible-app/src/lib.rs
+# The release notes are compiled into the binary.
+docs_only_case false CHANGELOG.md
+docs_only_case false docs/reference/cli.md CHANGELOG.md
+docs_only_case false .github/workflows/rust-ci.yml
+docs_only_case false notes.md.rs
+docs_only_case false scripts/sh/install.sh
+# A pull request that changes no file has nothing to say it is documentation.
+docs_only_case false
+
 section "tracked source secrets"
 # Deliberately narrow signatures: each names a credential format whose prefix is
 # part of the provider's contract. Generic entropy and words such as `password`
