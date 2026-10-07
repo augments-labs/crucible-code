@@ -201,14 +201,13 @@ is the scheme word `Bearer`, `Basic` or `Token` (`Basic dXNlcjpwYXNz`). It is
 hidden when it holds an `@` anywhere after a `:`, as `user:password@host` and a
 URL with a user do; when a URL in it has a `?` or `#` after its `://`, or a `:`
 after its host followed by anything but a port number; and when a run of it is
-shaped like a token. The argument after one that ends on a flag naming a key
-(`--api-key`), on such a name followed by `=` or `:` (`Authorization:`), or on
-`Bearer`, `Basic` or `Token` is hidden too, also when a quote joins that flag
-or word to what comes before it (`https://host'--api-key`), with or without a
-quote or bracket closing it. A value after a flag whose name says nothing about
-it, such as `-p`, is shown. More is hidden than is secret, on purpose:
-`https://registry.example.test/@scope/pkg`, `--tokenizer` and `--mode=basic`
-are hidden although none holds one.
+shaped like a token. The argument after one hidden for such a word or scheme
+is hidden too, however that one ends (`--api-key`, `Authorization:`,
+`X-Api-Key`, `Bearer`, `https://host'--api-key`). A value after a flag whose
+name says nothing about it, such as `-p`, is shown. More is hidden than is
+secret, on purpose: `https://registry.example.test/@scope/pkg`, `--tokenizer`
+and `--mode=basic` are hidden although none holds one, and so is the path
+after `--tokenizer=fast`.
 
 ```
   command    docs-mcp

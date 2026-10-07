@@ -63,7 +63,7 @@ fn one_server_is_described_whole_with_every_secret_left_out() {
         "  arguments  <redacted>\n",
         "             <redacted>\n",
         "             <redacted>\n",
-        "             --catalogue\n",
+        "             <redacted>\n",
         "             public\n",
         "  env        DOCS_LOCALE=<redacted>\n",
         "             DOCS_TOKEN=<redacted>\n",
