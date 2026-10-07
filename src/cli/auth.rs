@@ -26,6 +26,9 @@ use crucible_app::content_use::Warned;
 use crucible_config::Home;
 use crucible_tui::{Key, Pressed, Raw};
 
+#[cfg(test)]
+mod tests;
+
 /// The longest answer read to a question on the terminal, in bytes.
 const MAX_ANSWER: u64 = 256;
 
@@ -162,9 +165,6 @@ fn typed(desk: &Desk, way: &Way) -> Result<String, String> {
 
 /// What was typed at a prompt that shows none of it, or `None` where it was
 /// left with Esc, Ctrl-C or Ctrl-D.
-///
-/// Held to one byte past [`MAX_SECRET`], so a key that long is refused as
-/// too long rather than cut to fit.
 fn hidden(shown: &str) -> Result<Option<String>, String> {
     let raw = match Raw::enter() {
         Ok(Some(raw)) => raw,
@@ -178,27 +178,48 @@ fn hidden(shown: &str) -> Result<Option<String>, String> {
     said(&format!(
         "{shown} API key (it does not show; Enter to store it, Esc to cancel): "
     ));
+    let outcome = typing(std::iter::repeat_with(crucible_tui::pressed));
+    drop(raw);
+    said("\n");
+    outcome
+}
+
+/// What `presses` type before Enter, or `None` where they leave with Esc,
+/// Ctrl-C or Ctrl-D.
+///
+/// Held to one byte past [`MAX_SECRET`]. What arrives past that is not kept,
+/// and the key it belonged to is refused as too long when Enter is pressed,
+/// even after Backspace: the whitespace a trim would set aside may have made
+/// room, and what is held then is a key cut to fit, not the one typed.
+fn typing<E: std::fmt::Display>(
+    presses: impl IntoIterator<Item = Result<Pressed, E>>,
+) -> Result<Option<String>, String> {
     let room = MAX_SECRET.saturating_add(1);
     let mut typed = String::new();
-    let outcome = loop {
-        match crucible_tui::pressed() {
-            Ok(Pressed::Key(Key::Enter)) => break Ok(Some(typed)),
+    let mut overflowed = false;
+    for pressed in presses {
+        match pressed {
+            Ok(Pressed::Key(Key::Enter)) if overflowed => {
+                return Err(Refused::Oversized.to_string());
+            }
+            Ok(Pressed::Key(Key::Enter)) => return Ok(Some(typed)),
             Ok(Pressed::Key(Key::Char(one))) if typed.len() < room => typed.push(one),
+            Ok(Pressed::Key(Key::Char(_))) => overflowed = true,
             Ok(Pressed::Pasted(text)) => {
                 let left = room.saturating_sub(typed.len());
-                typed.push_str(cut(&text, left));
+                let kept = cut(&text, left);
+                overflowed |= kept.len() < text.len();
+                typed.push_str(kept);
             }
             Ok(Pressed::Key(Key::Backspace)) => {
                 typed.pop();
             }
-            Ok(Pressed::Key(Key::Interrupt | Key::Eof) | Pressed::Escape) => break Ok(None),
+            Ok(Pressed::Key(Key::Interrupt | Key::Eof) | Pressed::Escape) => return Ok(None),
             Ok(_) => {}
-            Err(problem) => break Err(format!("the terminal could not be read: {problem}")),
+            Err(problem) => return Err(format!("the terminal could not be read: {problem}")),
         }
-    };
-    drop(raw);
-    said("\n");
-    outcome
+    }
+    Ok(None)
 }
 
 /// `text` at most `bound` bytes long, cut on a character boundary.
