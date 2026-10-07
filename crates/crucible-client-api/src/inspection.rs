@@ -362,8 +362,8 @@ pub enum Inspection {
     Inspected(Box<Inspected>),
     /// None could be: the directory, crucible's files or the policy could not
     /// be read. The words name the step that stopped and, like every other
-    /// field, no path; the file it was about is left to the error a person is
-    /// shown.
+    /// field, no path; any file it was about is left to the error a person
+    /// is shown.
     Failed(Text),
 }
 

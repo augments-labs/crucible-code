@@ -533,7 +533,7 @@ that passes the same trust checks on its owner, on who can write it and on
 whether you may run it, and `build` is the SHA-256 of that file. Preparation
 also starts each candidate to check it, and passes over one that fails for the
 next, so where a trusted file will not start, the backend a command gets can be
-a later one than the report names.
+a later one than the report names, or none, and then no command is run.
 
 ```
 sandbox enabled in <root>

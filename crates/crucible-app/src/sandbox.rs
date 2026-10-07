@@ -341,9 +341,9 @@ impl Unmade<'_> {
     ///
     /// The document is pasted where the report would have been, so it keeps
     /// the report's promise to carry no path. A workspace or configuration
-    /// error leads with the file it is about, so for those the document says
-    /// which step stopped and leaves the file to standard error, where the
-    /// run ends with the whole sentence. A policy refusal and an unwritable
+    /// error can lead with the file it is about, so for those the document
+    /// says which step stopped and leaves the rest to standard error, where
+    /// the run ends with the whole sentence. A policy refusal and an unwritable
     /// report name no file, so they are said as they stand.
     fn said(self) -> String {
         match self {
@@ -352,8 +352,7 @@ impl Unmade<'_> {
                 "this directory is not one crucible can work in; standard error says why".to_owned()
             }
             Self::Inspecting(AppError::Config(_)) => {
-                "crucible's configuration could not be read; standard error names the file and why"
-                    .to_owned()
+                "crucible's configuration could not be read; standard error says why".to_owned()
             }
             Self::Inspecting(refused @ AppError::Confinement(_)) => refused.to_string(),
             // Nothing else is returned by an inspection today, and a sentence

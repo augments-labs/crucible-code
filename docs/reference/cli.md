@@ -243,7 +243,8 @@ directory to read configuration from, the reason is one line beginning
 `crucible: ` on standard error and the run ends 1; with `--json` a document
 with `status` `failed` and the `problem` is written to standard output as
 well. The `problem` names the step that stopped, such as reading
-configuration, and no file; the line on standard error names the file.
+configuration, and no file; the line on standard error names the file, where
+there is one.
 
 ### `config check [--json]`
 
