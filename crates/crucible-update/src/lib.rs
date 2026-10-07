@@ -18,7 +18,9 @@
 //! its directories and files, its receipt and the recorded hashes agree, and
 //! nothing about it is read over the network. A release's archive, once it is
 //! the one its `SHA256SUMS` lists, is staged into that layout as a unit beside
-//! the active one, which staging never changes.
+//! the active one, which staging never changes. Under the install's lock the
+//! staged unit is checked again and made active by one rename, and the unit
+//! that was active is kept so the switch can be rolled back.
 
 #[cfg(unix)]
 mod install;
@@ -26,7 +28,8 @@ mod release;
 
 #[cfg(unix)]
 pub use install::{
-    Digest, EntryKind, Installation, LayoutEntry, LayoutError, Receipt, ReceiptClaim, ReceiptError,
-    ReceiptLayout, StageError, StagePart, StagedUnit, Target, Version,
+    Activated, ActivationError, ActivationStep, Digest, EntryKind, Installation, LayoutEntry,
+    LayoutError, Receipt, ReceiptClaim, ReceiptError, ReceiptLayout, RecoverableActivation,
+    StageError, StagePart, StagedUnit, Target, UnitRole, Version,
 };
 pub use release::{Newer, SHUTDOWN, Unjoined, UpdateCrateReleaseCheck, newer};

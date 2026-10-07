@@ -34,10 +34,12 @@
 //! checksums, the archive, its decompressed contents, its headers and each
 //! member, each by the most a release holds. A unit is staged under
 //! `releases/` in a directory named as the installer names its own, which is
-//! removed when the value is dropped, so whatever keeps the unit must move it
-//! out first, and a refusal or a crash before activation leaves only what the
-//! installer already cleans up. The active unit, the `current` link and every
-//! other release are never opened for writing.
+//! removed when the value is dropped unless activation moved it into place,
+//! and a refusal or a crash before activation leaves only what the installer
+//! and the next update already clean up. A unit is staged only under the
+//! install's lock, which activation holds, since an install holding the lock
+//! removes every staging directory it finds. The active unit, the `current`
+//! link and every other release are never opened for writing.
 
 use std::cell::Cell;
 use std::fmt;
@@ -51,13 +53,14 @@ use flate2::bufread::GzDecoder;
 use sha2::{Digest as _, Sha256};
 use tar::EntryType;
 
+use super::boundary::crossed;
 use super::layout::{BROKER, CRUCIBLE, EXECUTABLE_CEILING, HASH_BUFFER, RECEIPT, RELEASES};
 use super::receipt::MAX_BYTES;
 use super::{Digest, Receipt, ReceiptError, ReceiptLayout, Target, Version};
 
 /// What a staging directory's name opens with, which the installer's own
 /// staging directories share, so either cleans up what the other left.
-const INCOMING: &str = ".incoming.";
+pub(super) const INCOMING: &str = ".incoming.";
 
 /// How many names are tried for a staging directory before giving up.
 const ATTEMPTS: usize = 16;
@@ -202,13 +205,9 @@ impl Limits {
 }
 
 impl StagedUnit {
-    /// Stages `version` from its archive and `SHA256SUMS`.
-    ///
-    /// # Errors
-    ///
-    /// [`StageError`] naming the first thing that is not as a release ships
-    /// it.
-    pub fn stage(
+    /// Stages `version` from its archive and `SHA256SUMS`, under the lock
+    /// the caller holds.
+    pub(super) fn stage(
         layout: &ReceiptLayout,
         version: &Version,
         archive: &Path,
@@ -235,13 +234,23 @@ impl StagedUnit {
         let unpacked = extract(&copy, &unit.path, &stem, limits)?;
         drop(copy);
         fs::remove_file(unit.path.join(ARCHIVE)).map_err(io(StagePart::Unit))?;
+        crossed("removed the archive's copy");
         let receipt =
             layout
                 .receipt()
                 .for_release(version.clone(), unpacked.crucible, unpacked.broker);
         write_receipt(&unit.path, &receipt)?;
         seal(&unit.path)?;
+        crossed("sealed the staged release");
         Ok(Self { unit, receipt })
+    }
+
+    /// Moves the unit to `to`, an absent name in the same directory, where it
+    /// is no longer removed with the value, and returns its receipt.
+    pub(super) fn moved(mut self, to: &Path) -> io::Result<Receipt> {
+        fs::rename(&self.unit.path, to)?;
+        self.unit.moved = true;
+        Ok(self.receipt)
     }
 
     /// The staging directory.
@@ -255,11 +264,13 @@ impl StagedUnit {
     }
 }
 
-/// A staging directory, removed with the value.
+/// A staging directory, removed with the value unless it was moved.
 #[derive(Debug)]
 struct Incoming {
     /// Where it is.
     path: PathBuf,
+    /// Whether it was moved into place, so it is no longer here to remove.
+    moved: bool,
 }
 
 impl Incoming {
@@ -271,7 +282,10 @@ impl Incoming {
             hasher.write_u32(std::process::id());
             let path = releases.join(format!("{INCOMING}{:016x}", hasher.finish()));
             match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => return Ok(Self { path }),
+                Ok(()) => {
+                    crossed("made the staging directory");
+                    return Ok(Self { path, moved: false });
+                }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => last = error,
                 Err(source) => {
                     return Err(StageError::Io {
@@ -290,7 +304,12 @@ impl Incoming {
 
 impl Drop for Incoming {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        if self.moved {
+            return;
+        }
+        if fs::remove_dir_all(&self.path).is_ok() {
+            crossed("removed the staging directory");
+        }
     }
 }
 
@@ -487,6 +506,7 @@ fn copied(from: &Path, to: &Path, expected: Digest, limits: &Limits) -> Result<F
         return Err(StageError::Mismatch);
     }
     copy.sync_all().map_err(io(StagePart::Unit))?;
+    crossed("copied the archive");
     rewind(&copy, StagePart::Unit)?;
     Ok(copy)
 }
@@ -608,10 +628,12 @@ fn extract(
                 let to = unit.join(CRUCIBLE);
                 let part = StagePart::Executable;
                 crucible = Some(unpack(&mut entry, size, &to, part, &exceeded)?);
+                crossed("unpacked the executable");
             }
             Place::Broker => {
                 let to = unit.join(BROKER);
                 broker = Some(unpack(&mut entry, size, &to, StagePart::Broker, &exceeded)?);
+                crossed("unpacked the broker");
             }
         }
     }
@@ -663,6 +685,7 @@ fn write_receipt(unit: &Path, receipt: &Receipt) -> Result<(), StageError> {
     file.set_permissions(fs::Permissions::from_mode(0o644))
         .map_err(io(part))?;
     file.sync_all().map_err(io(part))?;
+    crossed("wrote the receipt");
     rewind(&file, part)?;
     let mut written = Vec::new();
     let ceiling = u64::try_from(MAX_BYTES).unwrap_or(u64::MAX);
