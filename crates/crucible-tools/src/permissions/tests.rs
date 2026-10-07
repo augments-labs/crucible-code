@@ -570,10 +570,9 @@ fn a_session_yes_to_a_call_that_names_no_file_stops_the_asking() {
         answer.asked, 1,
         "a session yes to a call naming no file was asked again"
     );
-    assert_eq!(
-        permission.context_state().1,
-        ["todo_write:a path it could not resolve"]
-    );
+    // The call names no path by design, so the tool's name is all the question
+    // named and all there is to list.
+    assert_eq!(permission.context_state().1, ["todo_write"]);
 }
 
 #[test]

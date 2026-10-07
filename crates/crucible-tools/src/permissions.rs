@@ -395,7 +395,7 @@ impl Permission {
     /// which are what a context section reports. `None` for a file the
     /// workspace could not resolve, which names nothing an answer could cover
     /// beyond the call it was given to. A call that names no path at all is
-    /// covered by its tool.
+    /// covered by its tool, and listed by its name alone.
     ///
     /// Never the tool alone where the question named more. Agreeing to
     /// `cargo test` is not agreeing to `curl`, and agreeing to change
@@ -426,7 +426,13 @@ impl Permission {
                         ))
                     }
                     Held::Unresolved => None,
-                    Held::Pathless => Some((Scope::Pathless(call.name.clone()), named)),
+                    // The question named no path, so the tool is all there is
+                    // to list; `Target`'s words for a missing path would say a
+                    // lookup failed.
+                    Held::Pathless => Some((
+                        Scope::Pathless(call.name.clone()),
+                        call.name.as_ref().into(),
+                    )),
                 }
             }
             // The line as sent, never `Display`: that one is the spelling a
