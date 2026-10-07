@@ -57,8 +57,9 @@ pub const KIND: &str = "auth-status";
 pub const MAX_SECRET: usize = 16 * 1024;
 
 /// The whitespace read around a key beside it, in bytes: a key at the bound
-/// is still taken with the line break `echo` puts after it.
-const SURROUNDING: usize = 64;
+/// is still taken with the line break `echo` puts after it, and the hidden
+/// prompt holds the same room.
+pub const SURROUNDING: usize = 64;
 
 /// The longest variable name a report holds, in bytes. A name is the
 /// configuration's to choose, so it is bounded and its cut said.
