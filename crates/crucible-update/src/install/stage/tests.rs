@@ -273,7 +273,23 @@ impl Archive {
     }
 
     /// An entry whose header names `path` byte for byte.
-    fn entry(mut self, path: &[u8], kind: EntryType, data: &[u8], link: Option<&[u8]>) -> Self {
+    fn entry(self, path: &[u8], kind: EntryType, data: &[u8], link: Option<&[u8]>) -> Self {
+        self.entry_rewritten(path, kind, data, |header| {
+            if let Some(link) = link {
+                header.set_link_name_literal(link).expect("a link name");
+            }
+        })
+    }
+
+    /// An entry whose header names `path` byte for byte and is changed by
+    /// `rewrite` before its checksum is set.
+    fn entry_rewritten(
+        mut self,
+        path: &[u8],
+        kind: EntryType,
+        data: &[u8],
+        rewrite: impl FnOnce(&mut Header),
+    ) -> Self {
         let mut header = Header::new_gnu();
         let gnu = header.as_gnu_mut().expect("a GNU header");
         assert!(path.len() <= gnu.name.len(), "a name that fits its header");
@@ -284,9 +300,7 @@ impl Archive {
         header.set_entry_type(kind);
         header.set_size(data.len() as u64);
         header.set_mode(if kind.is_dir() { 0o755 } else { 0o644 });
-        if let Some(link) = link {
-            header.set_link_name_literal(link).expect("a link name");
-        }
+        rewrite(&mut header);
         header.set_cksum();
         self.builder.append(&header, data).expect("an entry");
         self
@@ -297,6 +311,14 @@ impl Archive {
         let mut data = path.to_vec();
         data.push(0);
         self.entry(b"././@LongLink", EntryType::GNULongName, &data, None)
+    }
+
+    /// A GNU long-link record giving the entry that follows it the link
+    /// name `link`.
+    fn long_link(self, link: &[u8]) -> Self {
+        let mut data = link.to_vec();
+        data.push(0);
+        self.entry(b"././@LongLink", EntryType::GNULongLink, &data, None)
     }
 
     /// A PAX extended header for the entry that follows it.
@@ -985,6 +1007,138 @@ fn a_member_whose_extended_header_names_it_otherwise_is_refused() {
         StageError::Ambiguous
     ));
     assert_eq!(names(&install.releases()), [ACTIVE]);
+}
+
+// Headers no release writes, which other archivers read otherwise.
+
+/// Writes `bytes` over the header block at `at`.
+fn overwrite(block: &mut [u8; 512], at: std::ops::Range<usize>, bytes: &[u8]) {
+    block
+        .get_mut(at)
+        .expect("a header field")
+        .copy_from_slice(bytes);
+}
+
+/// A release whose `crucible` has a header that `rewrite` changes.
+fn release_with_crucible(rewrite: impl FnOnce(&mut [u8; 512])) -> Vec<u8> {
+    let path = format!("{}/{CRUCIBLE}", stem(NEXT));
+    Archive::new()
+        .directory("")
+        .entry_rewritten(path.as_bytes(), EntryType::Regular, EXECUTABLE, |header| {
+            rewrite(header.as_mut_bytes());
+        })
+        .gzip()
+}
+
+/// Asserts that `archive` is refused as one no release is, leaving nothing.
+fn refused_as_unexpected(install: &Install, archive: &[u8]) {
+    let error = refused(install.stage(archive));
+    assert!(matches!(error, StageError::Unexpected), "{error:?}");
+    assert_eq!(names(&install.releases()), [ACTIVE]);
+}
+
+#[test]
+fn a_ustar_header_of_another_version_is_refused() {
+    let install = Install::new("ustar-version");
+    let archive = release_with_crucible(|block| {
+        overwrite(block, 257..263, b"ustar\0");
+        overwrite(block, 263..265, b"01");
+        overwrite(block, 345..349, b"evil");
+    });
+
+    refused_as_unexpected(&install, &archive);
+}
+
+#[test]
+fn an_old_style_header_is_refused() {
+    let install = Install::new("old-header");
+    let archive = release_with_crucible(|block| overwrite(block, 257..265, &[0; 8]));
+
+    refused_as_unexpected(&install, &archive);
+}
+
+#[test]
+fn a_member_whose_extended_header_has_a_vendor_record_is_refused() {
+    let install = Install::new("pax-vendor");
+    for (key, value) in [
+        ("SCHILY.realsize", b"1048576".as_slice()),
+        ("LIBARCHIVE.symlinktype", b"file".as_slice()),
+    ] {
+        let archive = Archive::new()
+            .directory("")
+            .pax(&[(key, value)])
+            .file(CRUCIBLE, EXECUTABLE)
+            .gzip();
+
+        refused_as_unexpected(&install, &archive);
+    }
+}
+
+#[test]
+fn a_file_whose_extended_header_gives_it_a_link_path_is_refused() {
+    let install = Install::new("pax-linkpath");
+    let archive = Archive::new()
+        .directory("")
+        .pax(&[("linkpath", b"/bin/sh")])
+        .file(CRUCIBLE, EXECUTABLE)
+        .gzip();
+
+    refused_as_unexpected(&install, &archive);
+}
+
+#[test]
+fn a_file_whose_header_gives_it_a_link_name_is_refused() {
+    let install = Install::new("ustar-linkname");
+    let path = format!("{}/{CRUCIBLE}", stem(NEXT));
+    let archive = Archive::new()
+        .directory("")
+        .entry(
+            path.as_bytes(),
+            EntryType::Regular,
+            EXECUTABLE,
+            Some(b"/bin/sh"),
+        )
+        .gzip();
+
+    refused_as_unexpected(&install, &archive);
+}
+
+#[test]
+fn a_file_given_a_long_link_name_is_refused() {
+    let install = Install::new("long-link");
+    let archive = Archive::new()
+        .directory("")
+        .long_link(b"/bin/sh")
+        .file(CRUCIBLE, EXECUTABLE)
+        .gzip();
+
+    refused_as_unexpected(&install, &archive);
+}
+
+#[test]
+fn a_size_written_in_base_256_is_refused() {
+    let length = u8::try_from(EXECUTABLE.len()).expect("a one-byte length");
+    let positive = [0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, length];
+    let negative = [0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, length];
+    for size in [positive, negative] {
+        let install = Install::new("base-256-size");
+        let archive = release_with_crucible(|block| overwrite(block, 124..136, &size));
+
+        refused_as_unexpected(&install, &archive);
+    }
+}
+
+#[test]
+fn a_member_whose_extended_size_is_not_a_decimal_number_is_refused() {
+    let install = Install::new("pax-size-text");
+    let size = format!("{}x", EXECUTABLE.len());
+    let archive = Archive::new()
+        .directory("")
+        .pax(&[("size", size.as_bytes())])
+        .file(CRUCIBLE, EXECUTABLE)
+        .gzip();
+
+    refused_as_unexpected(&install, &archive);
 }
 
 // Archives read in part.
