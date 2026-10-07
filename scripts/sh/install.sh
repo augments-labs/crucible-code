@@ -22,6 +22,10 @@ own under DIRECTORY/.crucible-install, makes it the active release, and links
 also carry `crucible-sandbox-broker`, the native confinement helper; it is
 installed beside `crucible` in the release's directory. A local archive still
 requires its matching SHA256SUMS file.
+
+A flat install that an installer of 0.43.0 to 0.45.3 made in DIRECTORY is
+moved to this layout. Its `crucible-sandbox-broker` stays in DIRECTORY for the
+crucible processes started from it; uninstall.sh removes it.
 USAGE
 }
 
@@ -716,6 +720,15 @@ step_begin install
 # that was active still active, or the new one active and complete. No release
 # is ever removed. One install at a time holds the lock, and the next one waits
 # for it, or refuses when the install that took it is gone.
+#
+# The installers of 0.43.0 to 0.45.3 made a flat install instead: `crucible`
+# and `crucible-sandbox-broker` as files in the directory, and `cru -> crucible`
+# beside them. An install there puts its release in place and activates it as
+# above, and only then renames a new link over that `crucible`, so the name
+# runs one whole release at every moment. The flat broker is left where it is:
+# a crucible started from the flat install looks for its broker in the
+# directory it was started from, and finds its own there for as long as it
+# runs. Anything else at those names is refused, and left as it is.
 readonly link_target=.crucible-install/current/crucible
 me=$(id -u)
 
@@ -728,6 +741,7 @@ layout_paths() {
     link_path=$destination/crucible
     alias_path=$destination/cru
     broker_path=$unit/crucible-sandbox-broker
+    flat_broker=$destination/crucible-sandbox-broker
 }
 
 owner_of() { stat -c '%u' -- "$1" 2>/dev/null || stat -f '%u' -- "$1"; }
@@ -762,16 +776,23 @@ read_receipt() {
 }
 
 # What is there already, read and changed in nothing: the links in the
-# directory must be this installer's, and the active release and its receipt
-# whole. It runs before a dry run reports, and again once the lock is held.
+# directory must be this installer's, or a flat install's executable, broker
+# and alias, and the active release and its receipt whole. It runs before a dry
+# run reports, and again once the lock is held.
 inspect() {
     local target
     installation=
+    flat=0
     if [[ -e $alias_path || -L $alias_path ]]; then
         [[ -L $alias_path && $(readlink -- "$alias_path") == crucible ]] ||
             fail 1 "refusing to replace unrelated $alias_path"
     fi
-    if [[ -e $link_path || -L $link_path ]]; then
+    if [[ -f $link_path && ! -L $link_path && -L $alias_path ]]; then
+        flat=1
+        if [[ -e $flat_broker || -L $flat_broker ]] && [[ ! -f $flat_broker || -L $flat_broker ]]; then
+            fail 1 "refusing to use $flat_broker, which is not a file"
+        fi
+    elif [[ -e $link_path || -L $link_path ]]; then
         [[ -L $link_path && $(readlink -- "$link_path") == "$link_target" ]] ||
             fail 1 "refusing to replace $link_path, which is not this installer's link into $prefix"
     fi
@@ -831,20 +852,26 @@ flush() {
 
 staging=
 next_current=
+next_link=
 cleanup_install() {
     [[ -z $staging ]] || rm -rf -- "$staging"
     [[ -z $next_current ]] || rm -f -- "$next_current"
+    [[ -z $next_link ]] || rm -f -- "$next_link"
     if ((locked)); then
         rm -f -- "$lock"
         locked=0
     fi
 }
 
-# What an install that stopped left behind, removed only under the lock.
+# What an install that stopped left behind, removed only under the lock. In the
+# installation directory that is only a link this installer made.
 remove_leftovers() {
     local left
     for left in "$releases"/.incoming.* "$prefix"/.current.*; do
         [[ ! -e $left && ! -L $left ]] || rm -rf -- "$left"
+    done
+    for left in "$destination"/.crucible.link.*; do
+        [[ ! -L $left ]] || rm -f -- "$left"
     done
 }
 
@@ -928,19 +955,33 @@ reuse_unit() {
     [[ $entries == "$expected" ]] || fail 1 "$differs"
 }
 
-# `current` is replaced by renaming a new link over it. GNU and BusyBox mv say
-# so with -T, the BSDs and macOS with -h; without either, mv would move the new
-# link into the release `current` names. -f keeps mv from stopping to ask.
+# Renames `$1` over `$2`. GNU and BusyBox mv say not to follow a link at `$2`
+# with -T, the BSDs and macOS with -h; without either, mv would move `$1` into
+# the directory such a link names. -f keeps mv from stopping to ask.
+rename_over() {
+    if ((rename_flag_t)); then
+        mv -fT -- "$1" "$2"
+    else
+        mv -fh -- "$1" "$2"
+    fi
+}
+
+# `current` is replaced by renaming a new link over it.
 activate() {
     next_current=$prefix/.current.$$
     ln -sn -- "releases/$version" "$next_current"
-    if ((rename_flag_t)); then
-        mv -fT -- "$next_current" "$current"
-    else
-        mv -fh -- "$next_current" "$current"
-    fi
+    rename_over "$next_current" "$current"
     next_current=
     flush "$prefix"
+}
+
+# A flat install's `crucible` is replaced by renaming the link over it, so the
+# name is never missing, and a process started from the file keeps running it.
+replace_flat() {
+    next_link=$destination/.crucible.link.$$
+    ln -sn -- "$link_target" "$next_link"
+    rename_over "$next_link" "$link_path"
+    next_link=
 }
 
 if [[ -d $destination ]]; then
@@ -955,6 +996,12 @@ if ((dry_run)); then
     printf 'Would install crucible %s in %s and create %s -> %s and %s -> crucible\n' \
         "$version" "$unit" "$link_path" "$link_target" "$alias_path"
     [[ -z $broker ]] || printf 'Would install %s beside it\n' "$broker_path"
+    if ((flat)); then
+        printf "Would replace %s with that link, the flat install's executable\n" "$link_path"
+        [[ ! -f $flat_broker ]] ||
+            printf 'Would keep %s for the crucible processes started before this install\n' \
+                "$flat_broker"
+    fi
     exit 0
 fi
 
@@ -1006,7 +1053,11 @@ else
     stage_unit
 fi
 activate
-[[ -L $link_path ]] || ln -sn -- "$link_target" "$link_path"
+if ((flat)); then
+    replace_flat
+else
+    [[ -L $link_path ]] || ln -sn -- "$link_target" "$link_path"
+fi
 [[ -L $alias_path ]] || ln -sn -- crucible "$alias_path"
 flush "$destination"
 cleanup_install
@@ -1022,12 +1073,19 @@ if [[ -n $broker ]]; then
 else
     installed="Installed crucible and cru in $where"
 fi
+# What a migration did, and what it left in the directory on purpose.
+migrated=()
+if ((flat)); then
+    migrated+=("Replaced the flat install's crucible in $where with a link to this release.")
+    [[ ! -f $flat_broker ]] ||
+        migrated+=("Kept $(shown "$flat_broker") for the crucible processes started before this install; uninstall.sh removes it.")
+fi
 on_path=0
 case ":$PATH:" in
 *":$destination:"*) on_path=1 ;;
 esac
 if ((!fancy)); then
-    printf '%s\n' "$installed"
+    printf '%s\n' "$installed" ${migrated[@]+"${migrated[@]}"}
     [[ -z $broker ]] || warn_where_broker_is_untrusted
     ((on_path)) || printf 'Add %s to PATH to run crucible.\n' "$where"
     exit 0
@@ -1035,6 +1093,9 @@ fi
 
 printf '\n'
 wrapped '' "$installed"
+for line in ${migrated[@]+"${migrated[@]}"}; do
+    wrapped '' "$line"
+done
 [[ -z $broker ]] || warn_where_broker_is_untrusted
 printf '\n'
 if ((on_path)); then

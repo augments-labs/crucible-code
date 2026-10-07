@@ -63,8 +63,9 @@ neither group nor others; the installer points out a directory that breaks
 that rule, with the `chmod` that fixes it. It
 never asks for `sudo` or edits a shell profile. Use `--version`, `--dir` or
 `--dry-run` when the defaults are not the ones you want. The matching
-`uninstall.sh` removes only the executables an installer of 0.45 or earlier
-put in the directory, and preserves `~/.crucible`; deleting configuration,
+`uninstall.sh` removes the links, and in each release under
+`.crucible-install` the executables and receipt that release's receipt
+describes, and preserves `~/.crucible`; deleting configuration,
 credentials and sessions requires the explicit `--purge --yes` pair. In a
 terminal the installer shows each step as it runs,
 with a bar while the archive downloads; piped, or under `NO_COLOR` or
@@ -161,13 +162,25 @@ On macOS and FreeBSD `sync` only schedules the writes, so a power loss soon
 after an install can undo that install, and the release that was active
 before it is the one in use.
 
-A directory that still holds the `crucible` file an installer of 0.45 or
-earlier copied there is refused, as `refusing to replace <dir>/crucible, which
-is not this installer's link into <dir>/.crucible-install`; run `uninstall.sh`
-there first, then install again. `uninstall.sh` in turn refuses this layout,
-as `refusing to remove non-regular <dir>/crucible`; to remove it, delete
-`crucible`, `cru` and `.crucible-install` from the directory while no install
-is running.
+An installer of 0.43.0 to 0.45.3 copied `crucible` and
+`crucible-sandbox-broker` into the directory as files, with `cru` linked to
+`crucible`. Installing over that moves it to this layout: the release goes in
+place and becomes `current` first, and only then is `crucible` replaced by the
+link, in one rename, so it runs one complete release throughout. The old
+`crucible-sandbox-broker` stays in the directory, since a crucible already
+running from the old file finds its broker there, and the installer says so;
+`--dry-run` names the file it would replace. Anything else at those names, such
+as a `crucible` with no `cru` beside it, or a broker that is a directory or a
+link, is refused and left as it is.
+
+`uninstall.sh` removes `crucible`, `cru` and that old broker from the
+directory, and under `.crucible-install` only what the installer made:
+`current`, what a stopped install left, and in each release the executables
+and receipt that its receipt describes. A file you put there, an executable
+that no longer matches its receipt, or anything else is kept, and named as
+`uninstall: preserving <path>`. It refuses, removing nothing, while
+`.crucible-install/lock` is there, and when a directory of the layout is not
+one it trusts. `--dry-run` lists each path it would remove.
 
 ## Build it
 

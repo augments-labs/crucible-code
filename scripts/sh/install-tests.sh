@@ -154,8 +154,8 @@ mode_of() {
 }
 
 # A 0.45 install, made by hand: the executable and its broker as regular files
-# in the directory, and `cru` beside them. This is the layout the uninstaller
-# removes; it refuses a `crucible` that is a link.
+# in the directory, and `cru` beside them. The uninstaller removes this layout
+# as well as the one with links into `.crucible-install`.
 flat_install() {
     local dir=$1
     mkdir -p "$dir"
@@ -163,6 +163,70 @@ flat_install() {
     cp -- "$asset/$stem/crucible-sandbox-broker" "$dir/crucible-sandbox-broker"
     chmod 755 "$dir/crucible" "$dir/crucible-sandbox-broker"
     ln -sfn crucible "$dir/cru"
+}
+
+# The installers of 0.43.0 and 0.45.3 as they shipped, which made the flat
+# layout every release from 0.43.0 to 0.45.3 shares.
+readonly FLAT_INSTALLERS=$PWD/tests/fixtures/installer
+
+# A release of that layout whose executable can be kept running. Given `--hold
+# READY GO` it writes a line to READY, waits for one on GO, and then finds its
+# broker as crucible does, beside the path it was started as, and prints the
+# release that broker names and the status it exits with.
+legacy_release() {
+    local at=$1 old=$2 stem=crucible-$2-$platform-$architecture
+    release_version "$old" "$at" "crucible $old"
+    cat >"$at/$stem/crucible" <<HOLD
+#!/usr/bin/env sh
+if [ "\$1" = --hold ]; then
+    printf 'ready\n' >"\$2"
+    read -r _ <"\$3"
+    broker=\${0%/*}/crucible-sandbox-broker
+    sed -n 2p "\$broker"
+    "\$broker"
+    printf '%s\n' "\$?"
+    exit 0
+fi
+printf '%s\n' 'crucible $old'
+HOLD
+    chmod +x "$at/$stem/crucible"
+    tar -czf "$at/$stem.tar.gz" -C "$at" "$stem"
+    (cd "$at" && checksum "$stem.tar.gz") >"$at/SHA256SUMS"
+}
+
+# What a user keeps in their home: configuration, credentials, a session and
+# its write-ahead log, and a cache. Nothing in either script may change it.
+user_data() {
+    local data=$1/.crucible
+    mkdir -p "$data/sessions" "$data/cache"
+    printf 'model = "fixture"\n' >"$data/config.toml"
+    printf '{"fixture": "no credential"}\n' >"$data/auth.json"
+    printf '{"line": 1}\n' >"$data/sessions/fixture.jsonl"
+    printf 'journal\n' >"$data/sessions/transaction.wal"
+    printf 'cached\n' >"$data/cache/fixture"
+}
+
+mtime_of() {
+    stat -c '%Y' -- "$1" 2>/dev/null || stat -f '%m' -- "$1"
+}
+
+# Every path under a directory with its mode, modification time and, for a
+# file, the SHA-256 of what it holds, so that a change to any of them shows.
+snapshot() {
+    local path
+    (cd "$1" && find . | LC_ALL=C sort) | while IFS= read -r path; do
+        printf '%s %s %s' "$path" "$(mode_of "$1/$path")" "$(mtime_of "$1/$path")"
+        [[ ! -f $1/$path ]] || printf ' %s' "$(sum_of "$1/$path")"
+        printf '\n'
+    done
+}
+
+# Runs a command as a user whose home is `$1`, with no data directory of its own
+# named in the environment.
+as_user() {
+    local home=$1
+    shift
+    env -u CRUCIBLE_CODE_HOME HOME="$home" "$@"
 }
 
 # Runs the installer expecting a refusal that says `reason`.
@@ -251,17 +315,24 @@ for path in "$umasked/.crucible-install" "$umasked/.crucible-install/releases" "
 done
 [[ $(mode_of "$umasked_unit/receipt") == 644 ]]
 
-echo '==> the installer carries the receipt reader the tests hold crucible to'
-embedded=$scratch/embedded-reader.sh
-sed -n '/^# --- receipt reader: begin ---$/,/^# --- receipt reader: end ---$/p' "$INSTALL" >"$embedded"
-[[ -s $embedded ]] || { echo 'install.sh carries no receipt reader' >&2; exit 1; }
-readers=(crucible_receipt_read crucible_receipt_value crucible_receipt_hex
-    crucible_receipt_number crucible_receipt_refuse)
-[[ $(bash -c '. "$1"; shift; declare -f "$@"' _ "$embedded" "${readers[@]}") == \
-    "$(bash -c '. "$1"; shift; declare -f "$@"' _ "$RECEIPT" "${readers[@]}")" ]] || {
-    echo 'the receipt reader in install.sh differs from tests/fixtures/installer/receipt.sh' >&2
-    exit 1
+# Whether a script carries the receipt reader the tests hold crucible to.
+carries_reader() {
+    local carrier=$1 embedded=$scratch/embedded-reader.sh readers
+    readers=(crucible_receipt_read crucible_receipt_value crucible_receipt_hex
+        crucible_receipt_number crucible_receipt_refuse)
+    sed -n '/^# --- receipt reader: begin ---$/,/^# --- receipt reader: end ---$/p' \
+        "$carrier" >"$embedded"
+    [[ -s $embedded ]] || { printf '%s carries no receipt reader\n' "${carrier##*/}" >&2; exit 1; }
+    [[ $(bash -c '. "$1"; shift; declare -f "$@"' _ "$embedded" "${readers[@]}") == \
+        "$(bash -c '. "$1"; shift; declare -f "$@"' _ "$RECEIPT" "${readers[@]}")" ]] || {
+        printf 'the receipt reader in %s differs from tests/fixtures/installer/receipt.sh\n' \
+            "${carrier##*/}" >&2
+        exit 1
+    }
 }
+
+echo '==> the installer carries the receipt reader the tests hold crucible to'
+carries_reader "$INSTALL"
 
 echo '==> install refuses root spellings and root-pointing directories'
 if "$INSTALL" --dry-run --version "$version" --dir /tmp/.. \
@@ -418,11 +489,100 @@ if install_from "$asset" "$occupied" 2>/dev/null; then
 fi
 [[ $(cat "$occupied/crucible/sentinel") == kept ]]
 
-echo '==> a flat install is not replaced by a versioned one'
-flat=$scratch/flat
-flat_install "$flat"
-refused 'a flat install' "which is not this installer's link" install_from "$asset" "$flat"
-[[ -f $flat/crucible && ! -L $flat/crucible && ! -e $flat/.crucible-install ]]
+# A crucible started from a flat install runs on while the install over it
+# renames the link over `crucible`, and looks for its broker in the directory of
+# the path it was started as: on Linux the kernel still names the replaced
+# file's path, and on macOS crucible reads the path it was started as. The
+# broker it finds there must still be its own.
+for old in 0.43.0 0.45.3; do
+    echo "==> a flat $old install migrates while a process started from it keeps its broker"
+    legacy=$scratch/legacy-$old
+    legacy_release "$legacy" "$old"
+    old_stem=crucible-$old-$platform-$architecture
+    flat=$scratch/flat-$old
+    home=$scratch/home-$old
+    user_data "$home"
+    kept_data=$(snapshot "$home")
+    as_user "$home" "$FLAT_INSTALLERS/install-$old.sh" --version "$old" --dir "$flat" \
+        --archive "$legacy/$old_stem.tar.gz" --checksums "$legacy/SHA256SUMS" \
+        </dev/null >/dev/null 2>&1
+    [[ -f $flat/crucible && ! -L $flat/crucible && -L $flat/cru && ! -e $flat/.crucible-install ]]
+    [[ $(sed -n 2p "$flat/crucible-sandbox-broker") == "# crucible $old" ]]
+    mkfifo "$scratch/ready-$old" "$scratch/go-$old"
+    as_user "$home" "$flat/crucible" --hold "$scratch/ready-$old" "$scratch/go-$old" \
+        >"$scratch/held-$old" &
+    held=$!
+    read -r _ <"$scratch/ready-$old"
+    migration=0
+    as_user "$home" "$INSTALL" --version "$version" --dir "$flat" \
+        --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS" \
+        </dev/null >"$scratch/migrated-$old" 2>&1 || migration=$?
+    printf 'go\n' >"$scratch/go-$old"
+    wait "$held"
+    if ((migration != 0)); then
+        printf 'the install over a flat %s install failed: %s\n' \
+            "$old" "$(tr '\n' ' ' <"$scratch/migrated-$old")" >&2
+        exit 1
+    fi
+    [[ $(cat "$scratch/held-$old") == "# crucible $old"$'\n'125 ]] || {
+        printf 'a crucible %s started before the install found the broker %s\n' \
+            "$old" "$(tr '\n' ' ' <"$scratch/held-$old")" >&2
+        exit 1
+    }
+    assert_layout "$flat" "$version"
+    assert_no_leftovers "$flat"
+    [[ $("$flat/crucible" --version) == "crucible $version" ]]
+    [[ $("$flat/cru" --version) == "crucible $version" ]]
+    [[ $(sed -n 2p "$flat/crucible-sandbox-broker") == "# crucible $old" ]]
+    [[ -z $(cd "$flat" && find . -name '.crucible.link.*') ]]
+    grep -qF "Kept $flat/crucible-sandbox-broker for the crucible processes started before this install" \
+        "$scratch/migrated-$old" || {
+        printf 'the install did not say it kept the flat broker: %s\n' \
+            "$(tr '\n' ' ' <"$scratch/migrated-$old")" >&2
+        exit 1
+    }
+    [[ $(snapshot "$home") == "$kept_data" ]] || {
+        echo 'the migration changed what the user keeps in their home' >&2
+        exit 1
+    }
+    install_from "$asset" "$flat" >/dev/null
+    assert_layout "$flat" "$version"
+done
+
+echo '==> a dry run over a flat install says what it would replace and changes nothing'
+dry_flat=$scratch/dry-flat
+flat_install "$dry_flat"
+dry_before=$(snapshot "$dry_flat")
+said=$("$INSTALL" --dry-run --version "$version" --dir "$dry_flat" \
+    --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+[[ $said == *"Would replace $dry_flat/crucible with that link"* ]]
+[[ $(snapshot "$dry_flat") == "$dry_before" ]]
+
+echo '==> what is not a flat install is not migrated'
+# A flat install is `crucible` as a file with the `cru` link beside it, and its
+# broker as a file when it has one. Anything else is refused and left as it is.
+odd=$scratch/lone-crucible
+mkdir -p "$odd"
+cp -- "$asset/$stem/crucible" "$odd/crucible"
+refused 'a crucible with no cru beside it' "which is not this installer's link" \
+    install_from "$asset" "$odd"
+[[ -f $odd/crucible && ! -L $odd/crucible && ! -e $odd/.crucible-install ]]
+odd=$scratch/flat-broker-directory
+flat_install "$odd"
+rm -f -- "$odd/crucible-sandbox-broker"
+mkdir -- "$odd/crucible-sandbox-broker"
+refused 'a flat install whose broker is a directory' 'which is not a file' \
+    install_from "$asset" "$odd"
+[[ -f $odd/crucible && ! -L $odd/crucible && -d $odd/crucible-sandbox-broker ]]
+[[ ! -e $odd/.crucible-install ]]
+odd=$scratch/flat-broker-link
+flat_install "$odd"
+rm -f -- "$odd/crucible-sandbox-broker"
+ln -s -- "$asset/$stem/crucible-sandbox-broker" "$odd/crucible-sandbox-broker"
+refused 'a flat install whose broker is a link' 'which is not a file' \
+    install_from "$asset" "$odd"
+[[ -f $odd/crucible && ! -L $odd/crucible && -L $odd/crucible-sandbox-broker ]]
+[[ ! -e $odd/.crucible-install ]]
 
 echo '==> what stands where the layout goes is never replaced'
 # Each case puts one thing where the layout expects another, and the install
@@ -576,6 +736,9 @@ fi
 
 echo '==> an interrupted install never leaves a broken release active'
 tests/fixtures/installer/crash-probes.sh "$INSTALL"
+
+echo '==> an interrupted migration of a flat install never leaves a broken pair in use'
+tests/fixtures/installer/migration-crash-probes.sh "$INSTALL" "$FLAT_INSTALLERS/install-0.45.3.sh"
 
 echo '==> a group-writable installation directory is reported as untrusted'
 loose=$scratch/loose
@@ -961,6 +1124,93 @@ if "$UNINSTALL" --dir "$guarded" 2>/dev/null; then
     exit 1
 fi
 [[ -d $guarded/crucible && -L $guarded/cru ]]
+
+echo '==> uninstall removes a migrated install whole and leaves the user data'
+gone=$scratch/flat-0.43.0
+home=$scratch/home-0.43.0
+kept_data=$(snapshot "$home")
+removed=$(in_terminal 80 env -u CRUCIBLE_CODE_HOME TERM=xterm LC_ALL=C HOME="$home" \
+    "$UNINSTALL" --dir "$gone")
+expect 'a managed uninstall' "$removed" 'status=0'
+expect 'a managed uninstall' "$(visible "$removed")" \
+    "  ok remove              crucible, crucible-sandbox-broker and cru"
+[[ -d $gone && -z $(ls -A "$gone") ]] || {
+    printf 'uninstall left %s in the installation directory\n' "$(ls -A "$gone" | tr '\n' ' ')" >&2
+    exit 1
+}
+[[ $(snapshot "$home") == "$kept_data" ]] || {
+    echo 'the uninstall changed what the user keeps in their home' >&2
+    exit 1
+}
+
+echo '==> uninstall removes what the receipts own and keeps everything else'
+managed=$scratch/managed
+home=$scratch/home-managed
+user_data "$home"
+kept_data=$(snapshot "$home")
+install_from "$asset" "$managed" >/dev/null
+install_version 9.8.9 "$later" "$managed" >/dev/null
+prefix=$managed/.crucible-install
+printf 'mine\n' >"$prefix/releases/9.8.9/notes"
+printf 'mine\n' >"$prefix/mine"
+printf 'mine\n' >"$managed/other-tool"
+removed=$(as_user "$home" "$UNINSTALL" --dir "$managed" 2>&1)
+expect 'an uninstall beside unowned files' "$removed" "preserving $prefix/releases/9.8.9/notes"
+[[ ! -e $managed/crucible && ! -L $managed/crucible && ! -e $managed/cru && ! -L $managed/cru ]]
+[[ ! -e $managed/crucible-sandbox-broker && ! -e $prefix/current && ! -L $prefix/current ]]
+[[ ! -e $prefix/releases/$version && ! -e $prefix/lock && ! -L $prefix/lock ]]
+[[ $(cd "$prefix/releases/9.8.9" && LC_ALL=C ls -A) == notes ]]
+[[ $(cat "$prefix/releases/9.8.9/notes") == mine && $(cat "$prefix/mine") == mine ]]
+[[ $(cat "$managed/other-tool") == mine ]]
+[[ $(snapshot "$home") == "$kept_data" ]] || {
+    echo 'the uninstall changed what the user keeps in their home' >&2
+    exit 1
+}
+
+echo '==> uninstall keeps an executable its receipt does not describe'
+edited=$scratch/edited
+install_from "$asset" "$edited" >/dev/null
+edited_unit=$edited/.crucible-install/releases/$version
+printf '# changed\n' >>"$edited_unit/crucible"
+removed=$(as_user "$home" "$UNINSTALL" --dir "$edited" 2>&1)
+expect 'an uninstall beside a changed executable' "$removed" "preserving $edited_unit/crucible"
+[[ -f $edited_unit/crucible && ! -e $edited_unit/crucible-sandbox-broker ]]
+[[ ! -e $edited_unit/receipt && ! -L $edited/crucible ]]
+
+echo '==> a dry run of a managed uninstall names what it would remove and removes nothing'
+dry_managed=$scratch/dry-managed
+install_from "$asset" "$dry_managed" >/dev/null
+dry_before=$(snapshot "$dry_managed")
+said=$(as_user "$home" "$UNINSTALL" --dry-run --dir "$dry_managed")
+for path in crucible cru .crucible-install/current .crucible-install/releases/$version/crucible \
+    .crucible-install/releases/$version/receipt .crucible-install; do
+    expect 'a dry-run managed uninstall' $'\n'"$said"$'\n' $'\n'"Would remove $dry_managed/$path"$'\n'
+done
+[[ $(snapshot "$dry_managed") == "$dry_before" ]]
+
+echo '==> uninstall refuses a layout it cannot trust and removes nothing'
+odd=$scratch/foreign-link
+mkdir -p "$odd"
+ln -s "$asset/$stem/crucible" "$odd/crucible"
+ln -s crucible "$odd/cru"
+refused 'a crucible that links elsewhere' "which is not this installer's link" \
+    as_user "$home" "$UNINSTALL" --dir "$odd"
+[[ -L $odd/crucible && -L $odd/cru ]]
+odd=$scratch/locked
+install_from "$asset" "$odd" >/dev/null
+ln -s "1@elsewhere" "$odd/.crucible-install/lock"
+refused 'a layout whose lock is held' "$odd/.crucible-install/lock" \
+    as_user "$home" "$UNINSTALL" --dir "$odd"
+assert_layout "$odd" "$version"
+rm -f -- "$odd/.crucible-install/lock"
+chmod g+w "$odd/.crucible-install/releases"
+refused 'a release directory others can write' 'which group or others can write' \
+    as_user "$home" "$UNINSTALL" --dir "$odd"
+chmod g-w "$odd/.crucible-install/releases"
+assert_layout "$odd" "$version"
+
+echo '==> the uninstaller carries the receipt reader the tests hold crucible to'
+carries_reader "$UNINSTALL"
 
 echo '==> hermetic platform and download discovery matrix'
 discovery_tools=$scratch/discovery-tools
