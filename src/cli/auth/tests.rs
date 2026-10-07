@@ -74,3 +74,46 @@ fn leaving_the_prompt_keeps_nothing() {
         assert_eq!(outcome, Ok(None), "{leaving:?}");
     }
 }
+
+#[test]
+fn a_prompt_that_cannot_be_hidden_is_refused_before_anything_is_asked_and_says_why() {
+    let terminal = Ends {
+        input: true,
+        output: true,
+        errors: true,
+    };
+    assert_eq!(terminal.unhidden(), None);
+    assert_eq!(terminal.unsigned(), None);
+
+    // Standard output redirected: the terminal is there, and the hidden
+    // prompt still cannot be shown on it.
+    let redirected = Ends {
+        output: false,
+        ..terminal
+    };
+    let why = redirected
+        .unhidden()
+        .expect("refused before the prompt, and before the choice that leads to it");
+    assert!(why.contains("standard output"), "{why}");
+    assert!(!why.contains("no terminal"), "a terminal is there: {why}");
+    assert!(why.contains("--api-key-stdin"), "{why}");
+    assert_eq!(
+        redirected.unsigned(),
+        None,
+        "an account sign-in asks on standard input and error alone"
+    );
+
+    for unasked in [
+        Ends {
+            input: false,
+            ..terminal
+        },
+        Ends {
+            errors: false,
+            ..terminal
+        },
+    ] {
+        assert_eq!(unasked.unhidden(), Some(UNASKED), "{unasked:?}");
+        assert_eq!(unasked.unsigned(), Some(UNSIGNED), "{unasked:?}");
+    }
+}

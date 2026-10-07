@@ -8,9 +8,10 @@
 //!
 //! A key arrives one of two ways and never as an argument: piped to
 //! `--api-key-stdin`, which refuses a terminal on standard input because a
-//! terminal would echo it, or typed at a hidden prompt, which needs a terminal
-//! at both ends to hide it in. An account sign-in asks its questions on the
-//! terminal too. A run that has no terminal for what it was asked to do says
+//! terminal would echo it, or typed at a hidden prompt, which needs standard
+//! input, output and error all on the terminal to hide it in. An account
+//! sign-in asks its questions on the terminal too, on standard input and
+//! error. A run that has no terminal for what it was asked to do says
 //! what to run instead and fails, rather than waiting on input that cannot
 //! come.
 //!
@@ -40,6 +41,13 @@ const UNPIPED: &str = "--api-key-stdin reads a key piped to crucible, and standa
 /// Why a login with no pipe and no terminal was refused.
 const UNASKED: &str = "there is no terminal to ask for the key in; pipe it to `crucible auth \
                        login PROVIDER --api-key-stdin`, or run the login in a terminal";
+
+/// Why a login whose standard output is not the terminal was refused: the
+/// prompt that hides a key needs the terminal at both ends.
+const UNHIDDEN: &str = "the key is asked for at a prompt that hides it, which needs standard \
+                        output on the terminal too, and it is redirected; run the login without \
+                        redirecting its output, or pipe the key to `crucible auth login PROVIDER \
+                        --api-key-stdin`";
 
 /// Why an account sign-in with no terminal was refused.
 const UNSIGNED: &str = "signing in to an account asks questions on a terminal, and there is none \
@@ -149,10 +157,49 @@ fn keyed(desk: &Desk, way: &Way, input: &mut dyn io::Read) -> Result<String, Str
         .map_err(|problem| problem.to_string())
 }
 
+/// Which of the run's standard streams are a terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Ends {
+    input: bool,
+    output: bool,
+    errors: bool,
+}
+
+impl Ends {
+    fn now() -> Self {
+        Self {
+            input: io::stdin().is_terminal(),
+            output: io::stdout().is_terminal(),
+            errors: io::stderr().is_terminal(),
+        }
+    }
+
+    /// Why a key cannot be asked for at a hidden prompt on these ends, or
+    /// `None` where it can: it is read from standard input and asked on
+    /// standard error, and what hides it needs standard output on the
+    /// terminal as well.
+    fn unhidden(self) -> Option<&'static str> {
+        if !self.input || !self.errors {
+            Some(UNASKED)
+        } else if !self.output {
+            Some(UNHIDDEN)
+        } else {
+            None
+        }
+    }
+
+    /// Why an account sign-in cannot ask its questions on these ends, or
+    /// `None` where it can: it reads its answers from standard input and asks
+    /// on standard error, and hides nothing.
+    fn unsigned(self) -> Option<&'static str> {
+        (!self.input || !self.errors).then_some(UNSIGNED)
+    }
+}
+
 /// Asks for `way`'s key at a hidden prompt and stores it.
 fn typed(desk: &Desk, way: &Way) -> Result<String, String> {
-    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
-        return Err(UNASKED.to_owned());
+    if let Some(why) = Ends::now().unhidden() {
+        return Err(why.to_owned());
     }
     let Some(typed) = hidden(way.shown())? else {
         return Err("nothing was typed, so nothing was stored".to_owned());
@@ -168,7 +215,7 @@ fn typed(desk: &Desk, way: &Way) -> Result<String, String> {
 fn hidden(shown: &str) -> Result<Option<String>, String> {
     let raw = match Raw::enter() {
         Ok(Some(raw)) => raw,
-        Ok(None) => return Err(UNASKED.to_owned()),
+        Ok(None) => return Err(Ends::now().unhidden().unwrap_or(UNASKED).to_owned()),
         Err(problem) => {
             return Err(format!(
                 "the terminal would not hide what is typed: {problem}"
@@ -231,10 +278,11 @@ fn cut(text: &str, bound: usize) -> &str {
     text.get(..end).unwrap_or_default()
 }
 
-/// Asks whether `key` or `account` is meant, then logs in that way.
+/// Asks whether `key` or `account` is meant, then logs in that way; refused
+/// before it asks where the key's prompt could not be shown.
 fn either(desk: &Desk, key: &Way, account: &Way) -> Result<String, String> {
-    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
-        return Err(UNASKED.to_owned());
+    if let Some(why) = Ends::now().unhidden() {
+        return Err(why.to_owned());
     }
     let ways = [
         (
@@ -252,8 +300,8 @@ fn either(desk: &Desk, key: &Way, account: &Way) -> Result<String, String> {
 
 /// Signs in to `way`'s account, asking on the terminal.
 fn signed(desk: &Desk, way: &Way) -> Result<String, String> {
-    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
-        return Err(UNSIGNED.to_owned());
+    if let Some(why) = Ends::now().unsigned() {
+        return Err(why.to_owned());
     }
     match desk.sign_in(way, &mut Asking) {
         Ok(Signed::In(kept)) => Ok(auth::kept(&kept)),

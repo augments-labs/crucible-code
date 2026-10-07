@@ -406,7 +406,10 @@ Where the provider's `baseUrl` is set, the line after says a launch does not
 use the account while it is. A name that is both, such as `openai`, asks
 which. A sign-in whose vendor may use what it is sent shows the vendor's words
 and asks first, and nothing reaches the vendor before a yes. With no terminal to ask on, the run says what to run
-instead and ends 1 rather than waiting.
+instead and ends 1 rather than waiting. The prompt that hides a key needs
+standard output on the terminal as well, so a key row, or a name that is both,
+with its output redirected is refused the same way before anything is asked;
+an account sign-in needs standard input and standard error alone.
 
 It exits 0 once the credential is stored and 1 when nothing was: a key that
 does not fit, a sign-in that failed or was declined, or a store that could not
