@@ -1290,6 +1290,9 @@ fn forgetting_while_another_crucible_writes_waits_and_then_takes_nothing() {
 
     let refused = store.forgotten("moonshot");
 
-    assert!(matches!(refused, Err(AuthError::Busy { .. })), "{refused:?}");
+    assert!(
+        matches!(refused, Err(AuthError::Busy { .. })),
+        "{refused:?}"
+    );
     assert_eq!(on_disk(&scratch), before);
 }
