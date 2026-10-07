@@ -99,7 +99,7 @@ const KEYS: [&str; 73] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 49] = [
+const MORE_KEYS: [&str; 52] = [
     "added",
     "api_ms",
     "cache_read",
@@ -149,6 +149,9 @@ const MORE_KEYS: [&str; 49] = [
     "setting",
     "value",
     "by",
+    "asked",
+    "sent",
+    "left_running",
 ];
 
 /// What a field name may not say, whatever else it says.
@@ -192,13 +195,29 @@ fn retained() -> Retained {
     }
 }
 
-fn permission() -> Pending {
-    Pending::Permission {
+/// A permission question for every arm of what it can be about.
+fn permissions() -> [Pending; 3] {
+    let about = |effect, asked| Pending::Permission {
         id: PendingId::new(7),
         tool: marked(),
-        effect: Effect::SpawnsProcess,
+        effect,
         subject: marked(),
-    }
+        asked,
+    };
+    [
+        about(
+            Effect::SpawnsProcess,
+            pending::Operation::Command {
+                sent: marked(),
+                left_running: true,
+            },
+        ),
+        about(
+            Effect::ReachesNetwork,
+            pending::Operation::Network { sent: marked() },
+        ),
+        about(Effect::MutatesFile, pending::Operation::Other),
+    ]
 }
 
 fn questions() -> Pending {
@@ -763,8 +782,10 @@ fn progress() -> Vec<Progress> {
 }
 
 fn snapshots() -> Vec<Snapshot> {
-    [Some(permission()), Some(questions()), Some(warning()), None]
+    permissions()
+        .map(Some)
         .into_iter()
+        .chain([Some(questions()), Some(warning()), None])
         .map(|pending| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
             provider: pending.as_ref().map(|_| name("anthropic")),
@@ -884,6 +905,14 @@ const fn pending_arm(one: &Pending) -> (usize, usize) {
         Pending::Permission { .. } => (0, 3),
         Pending::Questions { .. } => (1, 3),
         Pending::Warning { .. } => (2, 3),
+    }
+}
+
+const fn operation_arm(one: &pending::Operation) -> (usize, usize) {
+    match one {
+        pending::Operation::Command { .. } => (0, 3),
+        pending::Operation::Network { .. } => (1, 3),
+        pending::Operation::Other => (2, 3),
     }
 }
 
@@ -1155,6 +1184,10 @@ fn every_arm_that_crosses_has_a_specimen() {
         if let Some(pending) = &snapshot.pending {
             let (arm, of) = pending_arm(pending);
             seen.insert(("pending".to_owned(), arm, of));
+            if let Pending::Permission { asked, .. } = pending {
+                let (arm, of) = operation_arm(asked);
+                seen.insert(("asked".to_owned(), arm, of));
+            }
         }
     }
     whole(&seen);
@@ -1940,7 +1973,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (3, 2_273_694_165_132_666_843),
+        (3, 13_612_340_515_065_506_504),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
