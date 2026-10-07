@@ -1767,7 +1767,6 @@ else
         staging_fail "a release restores a cache another ref may have written: $cached"
     fi
 
-
     # Publication is one job, and that job never runs on a branch. Another job
     # may download a published release, which is how a cell installs the one it
     # upgrades from; it may do nothing else with one.
@@ -1959,9 +1958,14 @@ GH
             staging_api repos/o/r/git/commits/same-tree '{"tree":{"sha":"t1"}}'
             staging_api repos/o/r/git/commits/other-tree '{"tree":{"sha":"t2"}}'
             staging_api 'repos/o/r/actions/workflows/release.yml/runs?event=workflow_dispatch&per_page=100' "{\"workflow_runs\":[$runs]}"
-            local artifacts
-            for artifacts in "$@"; do
-                staging_api "repos/o/r/actions/runs/${artifacts%%=*}/artifacts?name=staged" "${artifacts#*=}"
+            # `ID=JSON` is what run ID kept; `jobs:ID=JSON` is the jobs it ran.
+            local fixture
+            for fixture in "$@"; do
+                case $fixture in
+                    jobs:*) fixture=${fixture#jobs:}
+                            staging_api "repos/o/r/actions/runs/${fixture%%=*}/jobs?per_page=100" "${fixture#*=}" ;;
+                    *) staging_api "repos/o/r/actions/runs/${fixture%%=*}/artifacts?name=staged" "${fixture#*=}" ;;
+                esac
             done
             : >"$staging_scratch/output"
             status=0
@@ -1980,10 +1984,28 @@ GH
         staging_find refuse "a staged run from another repository" "$(staging_dispatch 13 tagged x/r)" "13=$kept"
         staging_find refuse "a staged run whose verdict expired" "$(staging_dispatch 14 tagged)" \
             '14={"total_count":1,"artifacts":[{"name":"staged","expired":true}]}'
-        staging_find pass "a staged run of this tree" "$(staging_dispatch 15 same-tree),$(staging_dispatch 16 tagged)" "15=$kept" "16=$none"
+        # Any action in a staging run can upload an artifact named `staged`, so
+        # the artifact counts only beside a `staged` job that passed.
+        staging_jobs() { printf '{"total_count":%s,"jobs":[%s]}' "$1" "$2"; }
+        verdict() { printf '{"name":"staged","conclusion":"%s"}' "$1"; }
+        cell='{"name":"staged linux-x86_64","conclusion":"success"}'
+        staging_find refuse "a staged artifact whose staged job failed" "$(staging_dispatch 17 tagged)" "17=$kept" \
+            "jobs:17=$(staging_jobs 2 "$cell,$(verdict failure)")"
+        staging_find refuse "a staged artifact whose staged job has not finished" "$(staging_dispatch 18 tagged)" "18=$kept" \
+            "jobs:18=$(staging_jobs 1 '{"name":"staged","conclusion":null}')"
+        staging_find refuse "a staged artifact from a run with no staged job" "$(staging_dispatch 19 tagged)" "19=$kept" \
+            "jobs:19=$(staging_jobs 1 "$cell")"
+        staging_find refuse "a staged artifact from a run with two staged jobs" "$(staging_dispatch 20 tagged)" "20=$kept" \
+            "jobs:20=$(staging_jobs 2 "$(verdict success),$(verdict success)")"
+        staging_find refuse "a staged artifact from a run with more jobs than one page" "$(staging_dispatch 21 tagged)" "21=$kept" \
+            "jobs:21=$(staging_jobs 101 "$(verdict success)")"
+        staging_find pass "a staged run of this tree" \
+            "$(staging_dispatch 17 tagged),$(staging_dispatch 15 same-tree),$(staging_dispatch 16 tagged)" \
+            "17=$kept" "jobs:17=$(staging_jobs 2 "$cell,$(verdict failure)")" \
+            "15=$kept" "jobs:15=$(staging_jobs 2 "$cell,$(verdict success)")" "16=$none"
         [[ $(<"$staging_scratch/output") == run=15 ]] ||
             staging_fail "staging run: named '$(<"$staging_scratch/output")', expected run=15"
-        unset -f staging_dispatch
+        unset -f staging_dispatch staging_jobs verdict
     fi
 
     if staging_has 'published as staged'; then

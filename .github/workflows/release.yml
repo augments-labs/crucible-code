@@ -1010,7 +1010,9 @@ jobs:
   # thing it keeps, the staged checksums under the name `staged`, is uploaded
   # only after every one of them passed. A stage that failed, was skipped or was
   # cancelled leaves no `staged` artifact, so there is nothing for a tag to
-  # promote and a dispatch again is the only way on.
+  # promote and a dispatch again is the only way on. Any action in the run can
+  # upload an artifact by that name too, so `publish` takes it only from a run
+  # whose one job named `staged`, this one, concluded success.
   #
   # `budgets` is deliberately not among these. It is the slowest job here — the
   # grep probe alone runs twenty paired rounds across three workloads — and by
@@ -1087,7 +1089,8 @@ jobs:
       STAGED_SUMS: ${{ github.workspace }}/run/staged/SHA256SUMS
     steps:
       # The newest dispatched run of release.yml, in this repository, whose
-      # commit has the tagged commit's tree and which kept a `staged` verdict.
+      # commit has the tagged commit's tree, which kept a `staged` artifact,
+      # and whose one `staged` job concluded success.
       # The tree rather than the commit, so a staging run of the release
       # branch promotes once its merge leaves the tree unchanged. No such run
       # is a refusal, never a rebuild.
@@ -1119,11 +1122,25 @@ jobs:
               if tree(run["head_sha"]) != wanted:
                   continue
               kept = api(f"repos/{repo}/actions/runs/{run['id']}/artifacts?name=staged")["artifacts"]
-              if any(artifact["name"] == "staged" and not artifact["expired"] for artifact in kept):
-                  with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-                      output.write(f"run={run['id']}\n")
-                  print(f"promoting what run {run['id']} staged: {run['html_url']}")
-                  sys.exit(0)
+              if not any(artifact["name"] == "staged" and not artifact["expired"] for artifact in kept):
+                  continue
+              # Any action in the run could have uploaded an artifact by that
+              # name, so it counts only beside the run's one `staged` job,
+              # concluded success. A run has about twenty jobs and one page
+              # holds a hundred; a run that does not fit is refused, not half read.
+              jobs = api(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
+              if jobs["total_count"] > len(jobs["jobs"]):
+                  print(f"::warning::run {run['id']} has more jobs than one page holds; not promoting it")
+                  continue
+              verdicts = [job.get("conclusion") for job in jobs["jobs"] if job["name"] == "staged"]
+              if verdicts != ["success"]:
+                  print(f"::warning::run {run['id']} kept a staged artifact, but its staged jobs "
+                        f"concluded {verdicts or 'nothing'}; not promoting it")
+                  continue
+              with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                  output.write(f"run={run['id']}\n")
+              print(f"promoting what run {run['id']} staged: {run['html_url']}")
+              sys.exit(0)
           print(f"::error::no staging run of tree {wanted} passed its cells; dispatch release.yml "
                 "on this commit, wait for its staged job, then re-run this one")
           sys.exit(1)
