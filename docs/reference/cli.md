@@ -372,7 +372,10 @@ or `failed`), `acceptance` `unchecked`, a `problem` sentence or null, a
 reads a key from with `variable_set` and `variable_configured` (whether
 `apiKeyEnv` named it), `base_url_configured`, what is `stored` for it by
 `name`, `kind` and `expires_at` (seconds since the Unix epoch, or null), and a
-`reason`. A run that settled nothing, such as one naming a provider nobody
+`reason`. In either report, a control character, line break or Unicode format
+character in a name the configuration or the store gave is written as its
+escape rather than sent to the terminal; in the document that is a JSON `\u`
+escape, which reads back as the same character. A run that settled nothing, such as one naming a provider nobody
 serves, still writes a `failed` document, and says why on standard error.
 
 ### `auth login PROVIDER [--api-key-stdin]`

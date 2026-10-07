@@ -33,7 +33,9 @@ use std::io::Read;
 
 use crucible_auth::{AuthError, Inventory, Kind, LoginUpdate, OAuthError, Store};
 use crucible_config::{ConfigError, Home, Settings};
-use crucible_types::shown::escaped;
+use crucible_types::shown::{Escaping, escaped};
+use serde_core::Serialize as _;
+use serde_json::ser::Serializer;
 use serde_json::{Value, json};
 
 use crate::content_use::{self, Warned};
@@ -58,7 +60,7 @@ pub const MAX_SECRET: usize = 16 * 1024;
 /// is still taken with the line break `echo` puts after it.
 const SURROUNDING: usize = 64;
 
-/// The longest variable name a report says, in bytes. A name is the
+/// The longest variable name a report holds, in bytes. A name is the
 /// configuration's to choose, so it is bounded and its cut said.
 const MAX_NAME: usize = 256;
 
@@ -486,7 +488,7 @@ impl Desk {
         if let Some(CredentialSource::Environment(variable)) = source {
             notes.push(format!(
                 "{} is set, and a launch uses it before the stored credential",
-                named(&variable).0
+                named(&variable)
             ));
         }
         if way.0.kind == Kind::Account && settings.base_url(one.name).is_some() {
@@ -547,7 +549,7 @@ impl Desk {
                 "a launch still signs {} in with {}, which is the shell's and not Crucible's to \
                  remove; unset it there",
                 one.name,
-                named(&variable).0
+                named(&variable)
             ),
             CredentialSource::StoredKey | CredentialSource::Subscription => format!(
                 "another crucible stored a credential for {} since; run this again to take it out",
@@ -711,12 +713,11 @@ impl Desk {
         let settings = self.settings.as_ref().ok();
         let configured = settings.and_then(|settings| settings.api_key_env(one.name));
         let looked = configured.unwrap_or(one.key);
-        let (name, cut_short) = named(looked);
         let variable = Variable {
             set: (self.from)(looked).is_some_and(|value| !value.trim().is_empty()),
             configured: configured.is_some(),
-            cut: cut_short,
-            name,
+            cut: looked.len() > MAX_NAME,
+            name: cut(looked, MAX_NAME),
         };
         let mut stored: Vec<Stored> = self
             .rows
@@ -831,13 +832,10 @@ fn unfitting(misfit: &Misfit) -> String {
     }
 }
 
-/// A variable's name as a report says it: with every character a terminal
-/// would act on or hide written as its escape, bounded at [`MAX_NAME`] bytes;
-/// and whether it was cut.
-fn named(name: &str) -> (String, bool) {
-    let shown = escaped(name);
-    let cut_short = shown.len() > MAX_NAME;
-    (cut(&shown, MAX_NAME), cut_short)
+/// A variable's name as a sentence says it: with every character a terminal
+/// would act on or hide written as its escape, bounded at [`MAX_NAME`] bytes.
+fn named(name: &str) -> String {
+    cut(&escaped(name), MAX_NAME)
 }
 
 /// `text` at most `bound` bytes long, cut on a character boundary.
@@ -873,7 +871,7 @@ struct Entry {
 /// The variable a launch would read a provider's key from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Variable {
-    /// Its name, as a report says it.
+    /// Its name, as the configuration gave it, cut at [`MAX_NAME`] bytes.
     name: String,
     /// Whether it is set to something other than whitespace.
     set: bool,
@@ -983,6 +981,11 @@ impl Status {
     }
 
     /// The document, on one line.
+    ///
+    /// Its strings hold the text they stand for, bounded, and are written
+    /// through [`Escaping`]: a control or format character a configuration
+    /// or the store chose leaves as a `\u` escape, which reads back as the
+    /// same character.
     #[must_use]
     pub fn json(&self) -> Vec<u8> {
         let providers: Vec<Value> = self
@@ -1002,7 +1005,7 @@ impl Status {
                         "kind": kind(one.kind),
                         "expires_at": one.lapses,
                     })).collect::<Vec<_>>(),
-                    "reason": escaped(&entry.reason),
+                    "reason": entry.reason,
                 })
             })
             .collect();
@@ -1011,23 +1014,25 @@ impl Status {
             "kind": KIND,
             "status": self.status(),
             "acceptance": "unchecked",
-            "problem": self.trouble.as_deref().map(escaped),
+            "problem": self.trouble,
             "providers": providers,
             "truncated": self.truncated(),
         });
-        let mut bytes = document.to_string().into_bytes();
-        bytes.push(b'\n');
-        bytes
+        written(&document)
     }
 
     /// The report as a person reads it, with lapse times measured from `now`.
+    ///
+    /// A sentence that quotes a name the configuration or the store chose is
+    /// written [`escaped`], a line break in it among the rest, so it stays on
+    /// its own line.
     #[must_use]
     pub fn human(&self, now: u64) -> String {
         use std::fmt::Write as _;
 
         let mut out = format!("crucible auth status: {}\n", self.status());
         if let Some(trouble) = &self.trouble {
-            let _ = writeln!(out, "  {trouble}");
+            let _ = writeln!(out, "  {}", escaped(trouble));
         }
         for entry in &self.entries {
             let _ = writeln!(
@@ -1035,7 +1040,7 @@ impl Status {
                 "  {:<10} {}: {}",
                 entry.state.as_str(),
                 entry.provider,
-                entry.reason
+                escaped(&entry.reason)
             );
             for one in &entry.stored {
                 let lapse = one.lapses.map_or_else(String::new, |at| {
@@ -1078,11 +1083,19 @@ pub fn failed(problem: &Refused) -> Vec<u8> {
         "kind": KIND,
         "status": "failed",
         "acceptance": "unchecked",
-        "problem": escaped(&cut(&said, MAX_PROBLEM)),
+        "problem": cut(&said, MAX_PROBLEM),
         "providers": [],
         "truncated": said.len() > MAX_PROBLEM,
     });
-    let mut bytes = document.to_string().into_bytes();
+    written(&document)
+}
+
+/// `document` on one line, through [`Escaping`], ending in a line break.
+fn written(document: &Value) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    // Into memory a `Value` is always written: its keys are strings, its
+    // numbers finite, and a `Vec` refuses no byte.
+    let _ = document.serialize(&mut Serializer::with_formatter(&mut bytes, Escaping));
     bytes.push(b'\n');
     bytes
 }

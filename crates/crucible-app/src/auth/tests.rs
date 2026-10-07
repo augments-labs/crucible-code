@@ -329,23 +329,40 @@ fn a_logout_takes_one_provider_out_and_says_what_a_launch_still_finds() {
 }
 
 #[test]
-fn a_name_the_configuration_gave_reaches_the_document_escaped() {
+fn a_name_the_configuration_gave_reads_back_from_the_document_as_itself() {
     let sample = Sample::new("auth-escaped");
     sample.holding(HELD);
-    sample.user("{\"providers\":{\"anthropic\":{\"apiKeyEnv\":\"MY\\u202eKEY\"}}}");
-    let desk = desk(&sample, &[("MY\u{202e}KEY", SENTINEL)]);
+    sample.user("{\"providers\":{\"anthropic\":{\"apiKeyEnv\":\"MY\\u001b[31mRED\\u202eKEY\"}}}");
+    let name = "MY\u{1b}[31mRED\u{202e}KEY";
+    let desk = desk(&sample, &[("MY\u{1b}[31mRED\u{202e}KEY", SENTINEL)]);
 
     let provider = desk
         .provider("anthropic")
         .expect("a provider this build serves");
-    let bytes = desk.status(Some(provider), NOW).json();
-    let text = String::from_utf8(bytes).expect("a document is text");
-    assert!(!text.contains('\u{202e}'), "{text}");
+    let status = desk.status(Some(provider), NOW);
+    let text = String::from_utf8(status.json()).expect("a document is text");
+    assert!(!text.contains(['\u{1b}', '\u{202e}']), "{text}");
     assert!(!text.contains(SENTINEL), "{text}");
+    assert!(text.contains("MY\\u001b[31mRED\\u202eKEY"), "{text}");
     let document: Value = serde_json::from_str(&text).expect("one document");
-    assert_eq!(at(&document, "/providers/0/variable"), "MY\\u{202e}KEY");
+    assert_eq!(at(&document, "/providers/0/variable"), name);
     let reason = at(&document, "/providers/0/reason")
         .as_str()
         .unwrap_or_default();
-    assert!(reason.contains("MY\\u{202e}KEY"), "{reason}");
+    assert!(reason.contains(name), "{reason}");
+
+    // The report a person reads says the same name, with what a terminal
+    // would act on written as its escape.
+    let human = status.human(NOW);
+    assert!(!human.contains(['\u{1b}', '\u{202e}']), "{human}");
+    assert!(human.contains(r"MY\u{1b}[31mRED\u{202e}KEY"), "{human}");
+
+    let said = "a sentence that quotes\u{1b}]0;a title\u{7} and\nbreaks";
+    let text = String::from_utf8(failed(&Refused::Misfit(said.to_owned()))).expect("text");
+    assert!(!text.contains(['\u{1b}', '\u{7}']), "{text}");
+    let document: Value = serde_json::from_str(&text).expect("one document");
+    assert_eq!(
+        at(&document, "/problem"),
+        &Value::String(format!("{said}; nothing was stored"))
+    );
 }
