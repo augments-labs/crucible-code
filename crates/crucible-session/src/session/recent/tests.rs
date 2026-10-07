@@ -873,3 +873,60 @@ fn discovering_unindexed(sample: &Sample) -> Discovery {
     assert!(!sample.logs().join("recent.sessions").exists());
     discovering(sample, 8)
 }
+
+/// A pipe where a log should be waits for a writer that is not coming, so a
+/// listing that opened one would never come back.
+#[cfg(unix)]
+#[test]
+fn a_log_that_is_a_pipe_is_counted_unreadable_without_waiting_for_a_writer() {
+    let sample = Sample::new("discovered-pipe");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    let made = std::process::Command::new("mkfifo")
+        .arg(sample.logs().join(format!("{}.jsonl", nth(2))))
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+    indexed(&sample, &[(&nth(1), 1, None), (&nth(2), 1, None)]);
+
+    // On a thread of its own: a listing that opens the pipe never comes back,
+    // and a test that waited for it here would wait forever.
+    let (send, found) = std::sync::mpsc::channel();
+    let logs = sample.logs();
+    let root = sample.workspace().root().to_path_buf();
+    std::thread::spawn(move || {
+        let _ = send.send(discovered(&logs, Roots::These(&[root.as_path()]), 8));
+    });
+    let found = found
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("a listing that came back")
+        .expect("an index that reads");
+
+    let ids: Vec<&str> = found
+        .sessions()
+        .iter()
+        .map(|one| one.id().as_str())
+        .collect();
+    assert_eq!(ids, [nth(1).as_str()]);
+    assert_eq!(found.unreadable(), 1);
+}
+
+/// A link where a log should be leads out of the sessions directory, to a
+/// file nothing says is a session recorded here.
+#[cfg(unix)]
+#[test]
+fn a_log_that_is_a_link_is_counted_unreadable_rather_than_followed() {
+    let sample = Sample::new("discovered-link");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    let outside = sample.home().join(format!("{}.jsonl", nth(2)));
+    std::fs::create_dir_all(sample.home()).expect("a home");
+    std::fs::rename(sample.logs().join(format!("{}.jsonl", nth(1))), &outside)
+        .expect("a header outside the sessions directory");
+    std::os::unix::fs::symlink(&outside, sample.logs().join(format!("{}.jsonl", nth(1))))
+        .expect("a link");
+    indexed(&sample, &[(&nth(1), 1, None)]);
+
+    let found = discovering(&sample, 8);
+
+    assert!(found.sessions().is_empty(), "{found:?}");
+    assert_eq!(found.unreadable(), 1);
+}

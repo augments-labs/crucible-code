@@ -329,8 +329,9 @@ impl Discovery {
 ///
 /// A name the index holds with no log beside it is a session starting this
 /// instant, or one removed, and is left out uncounted. A log whose first line
-/// does not read, or that this build cannot read, is counted rather than
-/// listed, since where it was recorded is not known.
+/// does not read, that this build cannot read, or that is not a file, as a
+/// pipe or a link is not, is counted rather than listed, since where it was
+/// recorded is not known.
 ///
 /// # Errors
 ///
@@ -414,12 +415,26 @@ fn logged(directory: &Path) -> bool {
 }
 
 /// The first line of the log at `path`, read no further than [`READ`] bytes.
+///
+/// Only a file is a log. A pipe would hold the listing until something wrote
+/// to it, and a link would read wherever it leads, so the name is asked what
+/// it is without following it, and what opened is asked again. A file swapped
+/// for a pipe between the two still waits, which only something that can
+/// write in crucible's own sessions directory can do.
 fn heading(path: &Path, roots: Roots<'_>) -> Heading {
+    match std::fs::symlink_metadata(path) {
+        Ok(found) if found.is_file() => {}
+        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Heading::Absent,
+        Ok(_) | Err(_) => return Heading::Unreadable,
+    }
     let opened = match File::open(path) {
         Ok(opened) => opened,
         Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Heading::Absent,
         Err(_) => return Heading::Unreadable,
     };
+    if !opened.metadata().is_ok_and(|opened| opened.is_file()) {
+        return Heading::Unreadable;
+    }
     let mut line = String::new();
     let read = BufReader::new(opened).take(READ).read_line(&mut line);
     if read.is_err() || !line.ends_with('\n') {
