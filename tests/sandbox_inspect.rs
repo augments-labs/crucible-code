@@ -57,6 +57,17 @@ fn asked(scratch: &Scratch, args: &[&str], homeless: bool) -> Output {
 
 /// [`asked`], of the binary at `program`.
 fn asked_of(program: &Path, scratch: &Scratch, args: &[&str], homeless: bool) -> Output {
+    asked_in(program, scratch, &scratch.work(), args, homeless)
+}
+
+/// [`asked_of`], started in `here` rather than in the scratch's work directory.
+fn asked_in(
+    program: &Path,
+    scratch: &Scratch,
+    here: &Path,
+    args: &[&str],
+    homeless: bool,
+) -> Output {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -64,7 +75,7 @@ fn asked_of(program: &Path, scratch: &Scratch, args: &[&str], homeless: bool) ->
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
-        .current_dir(scratch.work())
+        .current_dir(here)
         .stdin(Stdio::null());
     if !homeless {
         command
@@ -269,4 +280,54 @@ fn a_report_that_could_not_be_made_does_not_name_the_file_that_stopped_it() {
     let text = asked(&scratch, &["sandbox", "inspect"], false);
     assert_eq!(text.status.code(), Some(1), "{text:?}");
     assert!(text.stdout.is_empty(), "{text:?}");
+}
+
+/// Every character in `written` a terminal would act on rather than draw: ESC,
+/// BEL, the C1 controls and the rest, a line break aside.
+fn controls_in(written: &[u8]) -> Vec<char> {
+    String::from_utf8_lossy(written)
+        .chars()
+        .filter(|character| character.is_control() && *character != '\n')
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_named_to_retitle_the_terminal_is_named_with_its_escapes_shown() {
+    let scratch = Scratch::new("hostile-root");
+    let here = scratch.work().join("sub\u{1b}]0;T\u{7}");
+    fs::create_dir_all(&here).expect("a directory with a hostile name");
+
+    let text = asked_in(
+        Path::new(env!("CARGO_BIN_EXE_crucible")),
+        &scratch,
+        &here,
+        &["sandbox", "inspect"],
+        false,
+    );
+    assert_eq!(text.status.code(), Some(0), "{text:?}");
+    assert_eq!(controls_in(&text.stdout), Vec::<char>::new(), "{text:?}");
+    let said = String::from_utf8_lossy(&text.stdout);
+    let (first, _) = said.split_once('\n').expect("a first line");
+    assert!(first.ends_with(r"sub\u{1b}]0;T\u{7}"), "{said}");
+}
+
+#[test]
+fn a_configuration_key_that_carries_escapes_is_named_with_them_shown() {
+    let scratch = Scratch::new("hostile-key");
+    fs::create_dir_all(scratch.work().join(".crucible")).expect("a project directory");
+    fs::write(
+        scratch.work().join(".crucible/config.json"),
+        r#"{"\u001b]0;PWNED\u0007\u001b[31mred\u009b2J":true}"#,
+    )
+    .expect("a project file");
+
+    let text = asked(&scratch, &["sandbox", "inspect"], false);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    assert_eq!(controls_in(&text.stderr), Vec::<char>::new(), "{text:?}");
+    let said = String::from_utf8_lossy(&text.stderr);
+    assert!(
+        said.contains(r"\u{1b}]0;PWNED\u{7}\u{1b}[31mred\u{9b}2J"),
+        "{said}"
+    );
 }

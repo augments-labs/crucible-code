@@ -487,6 +487,8 @@ fn listed() -> Result<(), Fatal> {
 /// the step that stopped, so a script reading standard output never finds it
 /// empty; the run then ends with the whole error, file and all, on standard
 /// error. A write that fails is dropped for the reason [`listed`] drops one.
+/// The text names the directory asked about, which a checkout chose, so it is
+/// written [`visible`].
 fn inspected(json: bool) -> Result<(), Fatal> {
     use crucible_app::sandbox::{Unmade, failure};
 
@@ -497,7 +499,7 @@ fn inspected(json: bool) -> Result<(), Fatal> {
     });
     if !json {
         let observed = observed.map_err(Fatal::Here)??;
-        let _ = io::stdout().write_all(observed.human().as_bytes());
+        let _ = io::stdout().write_all(visible(&observed.human()).as_bytes());
         return Ok(());
     }
 
@@ -1077,14 +1079,36 @@ fn resuming(cli: &Cli) -> Result<startup::Resuming, Fatal> {
 ///
 /// Straight to standard error rather than through the renderer: the renderer is
 /// one of the things that can fail here, and by this point there is no live
-/// region left to protect.
+/// region left to protect. The sentence often quotes what a checkout chose, a
+/// key in its configuration or a directory's name, so it is written
+/// [`visible`].
 fn fail(problem: &Fatal) -> ExitCode {
     let mut line = String::from("crucible: ");
-    line.push_str(&problem.to_string());
+    line.push_str(&visible(&problem.to_string()));
     line.push('\n');
 
     let _ = io::stderr().write_all(line.as_bytes());
     ExitCode::FAILURE
+}
+
+/// `text` as it may reach a terminal outside the renderer: every control
+/// character but a line break written as its escape, `\u{1b}` for ESC.
+///
+/// A terminal acts on ESC, BEL and the C1 controls rather than drawing them,
+/// so a name that carries one could retitle the window or clear the screen
+/// instead of being read. Escaped, it is still the name, and the person who
+/// sees it can tell which directory or key it was. A line break is kept
+/// because the sentences written this way run over lines of their own.
+fn visible(text: &str) -> String {
+    text.chars()
+        .fold(String::with_capacity(text.len()), |mut shown, character| {
+            if character.is_control() && character != '\n' {
+                shown.extend(character.escape_debug());
+            } else {
+                shown.push(character);
+            }
+            shown
+        })
 }
 
 /// What a start reads its credentials from `home` as, and the one sentence
