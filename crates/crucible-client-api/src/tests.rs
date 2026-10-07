@@ -192,6 +192,17 @@ const INSPECTION_KEYS: [&str; 31] = [
 /// The field names of the doctor's report that no other value carries.
 const DOCTOR_KEYS: [&str; 3] = ["checks", "reason", "remedy"];
 
+/// The field names of the sessions list that no other value carries.
+const SESSIONS_KEYS: [&str; 7] = [
+    "branch",
+    "index_full",
+    "sessions",
+    "started",
+    "title",
+    "unindexed",
+    "unreadable",
+];
+
 /// What a field name may not say, whatever else it says.
 ///
 /// A field called any of these is a field holding authority: a secret, a place
@@ -921,6 +932,16 @@ fn specimens() -> Vec<Specimen> {
         });
     }
 
+    for one in sessions::tests::reports(&marked()) {
+        let frame = one.encode().unwrap();
+        assert_eq!(sessions::Report::decode(&frame).unwrap(), one);
+        all.push(Specimen {
+            what: format!("sessions {}", one.status()),
+            debug: format!("{one:?}"),
+            frame,
+        });
+    }
+
     all
 }
 
@@ -1256,6 +1277,28 @@ fn doctor_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
     }
 }
 
+/// Every arm of a sessions list, and a session's branch and title with and
+/// without, as `seen` counts them.
+fn sessions_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
+    for report in sessions::tests::reports(&marked()) {
+        let arm = match &report {
+            sessions::Report::Listed(listing) => {
+                for session in &listing.sessions {
+                    for (what, there) in [
+                        ("sessions.branch", session.branch.is_some()),
+                        ("sessions.title", session.title.is_some()),
+                    ] {
+                        seen.insert((what.to_owned(), usize::from(there), 2));
+                    }
+                }
+                usize::from(report.status() == "incomplete")
+            }
+            sessions::Report::Failed(_) => 2,
+        };
+        seen.insert(("sessions.status".to_owned(), arm, 3));
+    }
+}
+
 /// Fails unless `seen` holds every arm `0..of` for each name in it.
 fn whole(seen: &BTreeSet<(String, usize, usize)>) {
     for (what, _, of) in seen {
@@ -1346,6 +1389,7 @@ fn every_arm_that_crosses_has_a_specimen() {
     }
     inspection_arms(&mut seen);
     doctor_arms(&mut seen);
+    sessions_arms(&mut seen);
     for snapshot in snapshots() {
         if let Some(pending) = &snapshot.pending {
             let (arm, of) = pending_arm(pending);
@@ -1366,6 +1410,7 @@ fn no_value_that_crosses_names_a_field_for_a_secret_a_path_or_a_handle() {
         .chain(MORE_KEYS)
         .chain(INSPECTION_KEYS)
         .chain(DOCTOR_KEYS)
+        .chain(SESSIONS_KEYS)
         .collect();
     for word in &allowed {
         for stem in FORBIDDEN {
@@ -2144,7 +2189,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (3, 14_318_635_380_701_603_224),
+        (3, 9_249_023_251_157_594_290),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
