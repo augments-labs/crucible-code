@@ -1223,9 +1223,9 @@ fn fail(problem: &Fatal) -> ExitCode {
 /// character [`crucible_types::shown::escaped`] escapes written as its escape,
 /// a line break among them, and a line feed to end it.
 ///
-/// The sentence often quotes what a checkout or a vendor chose, a key in its
-/// configuration, a directory's name, a vendor's refusal, and no failure's own
-/// sentence runs over lines: a break in one came from a value it quotes, and
+/// The sentence often quotes what a checkout chose, a key in its
+/// configuration or a directory's name, and no failure's own sentence runs
+/// over lines: a break in one came from a value it quotes, and
 /// kept, it would start a line on standard error that no failure said, which
 /// a person or a script reading it would take for crucible's own. Escaped, it
 /// is still the value, and the person who sees it can tell which key or
@@ -1249,7 +1249,8 @@ fn failing(problem: &str) -> String {
 /// because the reports and prompts written this way run over lines of their
 /// own, so a break in a value one quotes is the quoting owner's to escape, as
 /// the configuration check and `auth status` reports and the sign-in prompt
-/// do. A failure is one line, and is written [`failing`] instead.
+/// do. A failure [`fail`] reports is one line, and is written [`failing`]
+/// instead.
 fn visible(text: &str) -> String {
     text.split('\n')
         .map(crucible_types::shown::escaped)
