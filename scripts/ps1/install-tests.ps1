@@ -219,6 +219,43 @@ try {
         Stop-Test 'a refused install changed the directory'
     }
 
+    # A copy that fails midway leaves every file as it was. The broker lands
+    # first; the executable is held open so that it cannot be moved aside,
+    # which fails the install after the broker has already been replaced. It
+    # is held for reading and without delete sharing, which still lets the
+    # installer hash it, so the failure comes from moving it and not before.
+    $midway = Join-Path $root 'midway'
+    $null = New-Item -ItemType Directory -Path $midway
+    $kept = [ordered]@{
+        'crucible.exe' = 'crucible.exe before'
+        'crucible-sandbox-broker.exe' = 'crucible-sandbox-broker.exe before'
+        'cru.exe' = 'crucible.exe before'
+    }
+    foreach ($file in $kept.Keys) { [IO.File]::WriteAllText((Join-Path $midway $file), $kept[$file]) }
+    $midwayBinary = Join-Path $midway 'crucible.exe'
+    $held = [IO.File]::Open($midwayBinary, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $null = Get-FileHash -LiteralPath $midwayBinary -Algorithm SHA256
+        $moved = $true
+        try { [IO.File]::Move($midwayBinary, "$midwayBinary.moved") } catch [IO.IOException] { $moved = $false }
+        if ($moved) { Stop-Test 'a file held open for reading could be moved aside' }
+        $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $midway))
+    } finally {
+        $held.Dispose()
+    }
+    if ($run.Status -ne 1) { Stop-Test "an install that failed midway exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Out 'install: install: failed' 'a failure midway'
+    foreach ($file in $kept.Keys) {
+        $path = Join-Path $midway $file
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Test "an install that failed midway lost $file" }
+        if ([IO.File]::ReadAllText($path) -cne $kept[$file]) { Stop-Test "an install that failed midway changed $file" }
+    }
+    $beside = @(Get-ChildItem -LiteralPath $midway -Force | ForEach-Object { $_.Name })
+    if (@($beside | Where-Object { $_ -like '*.previous.*' }).Count -ne 0) {
+        Stop-Test "an install that failed midway left a replaced copy: $($beside -join ', ')"
+    }
+    if ($beside.Count -ne $kept.Count) { Stop-Test "an install that failed midway left files behind: $($beside -join ', ')" }
+
     # A dry run says what it would do and changes nothing.
     $dry = Join-Path $root 'dry'
     $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $dry, '-DryRun'))
