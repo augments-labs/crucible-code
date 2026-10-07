@@ -233,6 +233,62 @@ fn with_no_home_the_report_still_comes_and_says_so() {
     assert!(!sentinel.heard());
 }
 
+/// An openai account login whose access token ran out long ago, so asking it
+/// for the credential a request would be signed with renews it on the way
+/// out, and renewing is a request. Every value is a made-up fixture.
+const EXPIRED_ACCOUNT_LOGIN: &str = r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fixture-access-not-a-token","refresh_token":"fixture-refresh-not-a-token","details":{"account_id":"fixture-account"},"expires_at":1,"refreshed_at":1}},"identities":{}}"#;
+
+#[test]
+fn an_expired_account_login_is_reported_by_name_and_never_renewed_so_nothing_is_dialled() {
+    let scratch = Scratch::new("expired-login");
+    let sentinel = Sentinel::new();
+    let crucible = scratch.home().join(".crucible");
+    fs::create_dir_all(&crucible).expect("crucible's home");
+    fs::write(crucible.join("auth.json"), EXPIRED_ACCOUNT_LOGIN).expect("a stored login");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&crucible, fs::Permissions::from_mode(0o700)).expect("a mode");
+        fs::set_permissions(
+            crucible.join("auth.json"),
+            fs::Permissions::from_mode(0o600),
+        )
+        .expect("a mode");
+    }
+    let before = tree(&scratch.0);
+
+    let json = asked(&scratch, &sentinel, &["doctor", "--json"], false);
+    assert!(json.stderr.is_empty(), "{json:?}");
+    let report = reported(&json);
+    let credentials = report
+        .checks
+        .iter()
+        .find(|check| check.id.as_str() == "credentials")
+        .expect("the credentials check");
+    assert_eq!(credentials.status.as_str(), "ok", "{credentials:?}");
+    assert!(
+        credentials
+            .reason
+            .as_str()
+            .contains("openai from a stored account login"),
+        "{credentials:?}"
+    );
+    let text = asked(&scratch, &sentinel, &["doctor"], false);
+    assert!(text.stderr.is_empty(), "{text:?}");
+    assert!(
+        String::from_utf8_lossy(&text.stdout).contains("openai from a stored account login"),
+        "{text:?}"
+    );
+
+    // A renewal would have gone through the proxy, which is the sentinel, and
+    // would have taken the store's lock and written what replaced the token.
+    assert!(
+        !sentinel.heard(),
+        "the doctor dialled out: it asked an expired account login for its credential"
+    );
+    assert_eq!(tree(&scratch.0), before);
+}
+
 #[test]
 fn a_command_line_that_does_not_parse_is_a_usage_error() {
     let scratch = Scratch::new("usage");
