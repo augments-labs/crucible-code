@@ -128,6 +128,11 @@ fn update(scratch: &Scratch, proxy: &Listener, source: Option<&str>, args: &[&st
         .env("CRUCIBLE_CODE_HOME", scratch.home().join(".crucible"))
         .current_dir(scratch.home())
         .stdin(Stdio::null());
+    // Windows finds its socket providers through `SystemRoot`, and a process
+    // started without it cannot open a connection to anything.
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", root);
+    }
     for variable in [
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -232,13 +237,20 @@ fn a_build_cargo_made_is_not_replaced() {
     let scratch = Scratch::new("cargo");
     let proxy = Listener::proxy();
     let source = Listener::source("v99.0.0");
+    // Every install on Windows is updated by its own installer, which is the
+    // refusal given there before anything asks what made this one.
+    let route = if cfg!(windows) {
+        "install.ps1"
+    } else {
+        "`cargo install`"
+    };
 
     for asked in [&["--dry-run"][..], &[]] {
         let output = update(&scratch, &proxy, Some(&source.url), asked);
 
         assert_eq!(output.status.code(), Some(1), "{}", said(&output));
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains("`cargo install`"),
+            String::from_utf8_lossy(&output.stderr).contains(route),
             "{}",
             said(&output)
         );
