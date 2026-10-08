@@ -215,6 +215,19 @@ pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
             break;
         };
 
+        // A character wider than the whole row cannot be drawn in it at all,
+        // so it is left out, as `clip` leaves it out, rather than put on a row
+        // it reaches past the edge of.
+        if over == 0 {
+            let first = step(rest);
+            if walk(&rest[..first], columns, row::drawn).1.is_some() {
+                let after = first + leading(&rest[first..]);
+                base += after;
+                rest = &rest[after..];
+                continue;
+            }
+        }
+
         // What stopped the row decides where it breaks. A space there means the
         // row filled to the column on a whole word and what came next was the
         // gap after it, so the row is already whole words — looking further
@@ -223,8 +236,8 @@ pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
         //
         // Otherwise the cut fell inside a word, so the last space before it is
         // the break. Failing that the row is one long word and the cut stands.
-        // Never zero: a character wider than the whole row would take no bytes
-        // off the front and this would not end.
+        // Never zero: a character that fits only without the selector after it
+        // would take no bytes off the front and this would not end.
         let mut space = None;
         let mut stopped_on_a_gap = false;
         for (at, _, drawn) in shown(rest) {
@@ -354,8 +367,9 @@ pub(crate) fn wraps(text: &str, columns: usize) -> Vec<Range<usize>> {
 /// instead, because it is fed a character at a time and cannot see the end of
 /// the word it is in.
 ///
-/// A word too long for a row is cut rather than left to overflow, which is what
-/// keeps every row back no wider than asked for however narrow the terminal is.
+/// A word too long for a row is cut rather than left to overflow, and a
+/// character wider than a whole row is left out, which is what keeps every row
+/// back no wider than asked for however narrow the terminal is.
 /// Borrowed rather than allocated: the rows are pieces of `text`.
 ///
 /// Measured as the [`crate::Row`] each piece is made into draws it, which is
@@ -524,6 +538,14 @@ mod tests {
                 assert!(drawn <= 5, "{row:?} of {text:?} draws {drawn} columns");
             }
         }
+    }
+
+    #[test]
+    fn a_character_wider_than_the_whole_row_is_left_out_of_the_fold() {
+        // One column cannot hold an ideograph two wide. Given a row of its own
+        // it is drawn across the edge, where the terminal wraps it and puts
+        // every band under it a row lower than it was laid out.
+        assert_eq!(fold("a\u{691c}b \u{7d22}", 1), ["a", "b"]);
     }
 
     #[test]
