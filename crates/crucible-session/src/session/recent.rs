@@ -26,7 +26,6 @@
 //! still a name anything that can write there could have put a link or a pipe
 //! under, and either read runs where nobody asked to wait.
 
-use std::fs::File;
 use std::io::{BufRead as _, BufReader, Read as _};
 use std::path::Path;
 use std::str::FromStr as _;
@@ -36,6 +35,7 @@ use crucible_types::{Message, SessionId};
 
 use super::SessionError;
 use super::index;
+use super::replay::opened;
 use super::wire;
 
 /// How many logs the first frame may open before the scan gives up.
@@ -514,28 +514,6 @@ fn read(path: &Path, roots: Roots<'_>) -> Option<Recorded> {
             });
         }
     }
-}
-
-/// The log at `path`, opened to read, where it is one ordinary file.
-///
-/// A pipe would hold the welcome screen, or a listing, until something wrote
-/// to it, and a link would read wherever it leads, out of the sessions
-/// directory or into another log. So the name is opened without following a
-/// final link and, on Unix, without waiting for a writer, and the proof that
-/// it is an ordinary file is taken on the handle that opened, before a byte is
-/// read. On Windows a final reparse point is opened as itself and refused by
-/// the same proof; a pipe cannot sit in a directory there.
-///
-/// A second hard name is accepted. Nothing is followed to reach a file with
-/// one, so what is read is what this name opened, and a backup made with hard
-/// links gives every log one: refusing it would empty the welcome screen of
-/// the sessions `--continue` still opens.
-///
-/// The privacy crate's opener rather than a workspace path: the sessions
-/// directory is not a root the agent was pointed at, and a workspace proof
-/// follows any link that stays inside its root, where this follows none.
-fn opened(path: &Path) -> Result<File, crucible_privacy::PrivacyError> {
-    crucible_privacy::open_read_ordinary(path)
 }
 
 /// One line of what was asked, with nothing in it that could become a row.
