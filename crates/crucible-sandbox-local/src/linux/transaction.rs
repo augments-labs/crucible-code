@@ -1,6 +1,8 @@
 //! The host's publication lock, durable transaction journals and the closed command
 //! lifecycle grammar.
 
+#[cfg(any(test, feature = "per-checkout-state"))]
+mod checkout_state;
 mod state_directory;
 
 use std::fs::{self, File, OpenOptions};
@@ -10,6 +12,8 @@ use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+#[cfg(any(test, feature = "per-checkout-state"))]
+use checkout_state::checkout_state_name;
 use crucible_sandbox::{SandboxError, SandboxRequest};
 use crucible_storage::CallResultKey;
 use crucible_types::SandboxId;
@@ -1269,7 +1273,7 @@ impl TestSerialLease {
         let across = if lent_by_parent() {
             Ok(None)
         } else {
-            test_checkout_lock(".test-writers.lock", FlockOperation::LockExclusive).map(Some)
+            test_checkout_lock(TEST_WRITERS_LOCK, FlockOperation::LockExclusive).map(Some)
         };
         match across {
             Ok(across) => Ok(Self { held: true, across }),
@@ -1314,7 +1318,8 @@ impl Drop for TestSerialLease {
 ///
 /// One file per checkout, as the state directory is one, and left in place
 /// with it: removing a lock file another process holds would let a third take
-/// a fresh one beside it.
+/// a fresh one beside it. Only a reclaim of a checkout that is gone removes
+/// them, once no process of that checkout is left to hold one.
 #[cfg(test)]
 fn test_checkout_lock(suffix: &str, operation: FlockOperation) -> io::Result<File> {
     let mut path = state_base().map_err(io::Error::other)?.into_os_string();
@@ -1406,7 +1411,9 @@ pub(super) fn read_for(thread: std::thread::ThreadId) {
 }
 
 #[cfg(test)]
-const TEST_STATE_LOCK: &str = ".test-state.lock";
+const TEST_STATE_LOCK: &str = checkout_state::STATE_LOCK_SUFFIX;
+#[cfg(test)]
+const TEST_WRITERS_LOCK: &str = checkout_state::WRITERS_LOCK_SUFFIX;
 
 #[cfg(test)]
 impl TestStateChange {
@@ -2038,30 +2045,33 @@ fn discard_recovered_staging(candidate: &Path, recovered: &mut Recovered) -> io:
 /// `target`, until a plain `cargo build` replaces it, is a test build as well:
 /// it uses that checkout's directory, so it does not share a publication lock
 /// with a crucible that is not a test build working on the same roots.
+///
+/// A test build also claims its checkout's directory, the first time a process
+/// asks, and before that reclaims every other checkout's whose checkout is gone
+/// and whose claim nobody holds; see `checkout_state`. So removing a worktree
+/// leaves its directory only until a test build next runs.
 fn state_base() -> Result<PathBuf, SandboxError> {
-    let name = format!(
+    state_base_for(&format!(
         "crucible-code-sandbox-{}-v1",
         rustix::process::getuid().as_raw()
-    );
-    #[cfg(any(test, feature = "per-checkout-state"))]
-    let name = checkout_state_name(&name, env!("CARGO_MANIFEST_DIR"));
-    state_base_named(&name)
+    ))
 }
 
-/// `shipped` followed by a fixed-width token of `checkout`: the first eight
-/// bytes of its SHA-256, in hexadecimal, so a path of any length or spelling
-/// makes a name of one length and one alphabet.
-#[cfg(any(test, feature = "per-checkout-state"))]
-fn checkout_state_name(shipped: &str, checkout: &str) -> String {
-    use std::fmt::Write as _;
+/// The shipped directory, in a build that ships.
+#[cfg(not(any(test, feature = "per-checkout-state")))]
+fn state_base_for(shipped: &str) -> Result<PathBuf, SandboxError> {
+    state_base_named(shipped)
+}
 
-    let mut name = format!("{shipped}-");
-    for byte in Sha256::digest(checkout.as_bytes()).iter().take(8) {
-        // Writing to a string cannot fail, and a name that lost a byte would
-        // be another checkout's.
-        let _ = write!(name, "{byte:02x}");
+/// This checkout's directory, in a test build, claimed for this process.
+#[cfg(any(test, feature = "per-checkout-state"))]
+fn state_base_for(shipped: &str) -> Result<PathBuf, SandboxError> {
+    let checkout = env!("CARGO_MANIFEST_DIR");
+    let state = state_base_named(&checkout_state_name(shipped, checkout))?;
+    if let Some(base) = state.parent() {
+        checkout_state::claim_once(base, shipped, checkout);
     }
-    name
+    Ok(state)
 }
 
 /// The directory `name` under `/var/tmp`, refused unless `/var/tmp` resolves to
