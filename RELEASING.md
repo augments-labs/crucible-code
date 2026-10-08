@@ -239,8 +239,10 @@ release. Nothing in a dispatched run can publish.
 
 Pushing the tag promotes. The workflow runs the gate again, then finds the
 newest dispatched run of this repository whose commit has the tagged commit's
-tree and which kept `staged`, and refuses when there is none. It takes that
-run's artifacts, rebuilds nothing, and publishes them only when every file it
+tree, which has finished, and which kept one `staged` artifact, made and last
+changed while its one `staged` job ran and passed, because a job outside that
+verdict can outlive it; it refuses when there is none. It takes that run's
+artifacts, rebuilds nothing, and publishes them only when every file it
 would publish is one `staged` lists and every byte matches; the release's
 `SHA256SUMS` is the staged file itself. It attests them, creates the GitHub
 Release as a draft with the changelog section's summary, its comparison link
@@ -248,8 +250,8 @@ and a link to the full changelog as its body, downloads the draft back and
 holds it to the staged checksums again, and only then makes it public.
 
 When the promote job refuses before the draft exists, dispatch the staging run
-on the tagged commit, wait for `staged`, and re-run the failed job. When it
-refuses after, the draft is still private: delete it with
+on the tagged commit, wait for that run to finish, and re-run the failed job.
+When it refuses after, the draft is still private: delete it with
 `gh release delete v0.0.1 --yes`, which leaves the tag, and re-run the job.
 
 ## Artifacts
@@ -410,7 +412,7 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
       says. A row that is not a draft was published, and this case does not
       apply.
    2. Land the repair on `main` the way a hotfix does.
-   3. Stage the repair commit and wait for its `staged` job, as step 3 of
+   3. Stage the repair commit and wait for that run to finish, as step 3 of
       [Cutting it](#cutting-it) does. The run the moved tag starts promotes
       only what a staging run of that tree staged, and refuses without one.
    4. Relax the `release tags` ruleset, move the annotated tag onto the commit

@@ -1089,8 +1089,9 @@ jobs:
       STAGED_SUMS: ${{ github.workspace }}/run/staged/SHA256SUMS
     steps:
       # The newest dispatched run of release.yml, in this repository, whose
-      # commit has the tagged commit's tree, which kept a `staged` artifact,
-      # and whose one `staged` job concluded success.
+      # commit has the tagged commit's tree, which has finished, which kept
+      # one `staged` artifact, and whose one `staged` job concluded success
+      # with that artifact made and last changed while it ran.
       # The tree rather than the commit, so a staging run of the release
       # branch promotes once its merge leaves the tree unchanged. No such run
       # is a refusal, never a rebuild.
@@ -1102,6 +1103,7 @@ jobs:
           # >>> staging run
           python3 - <<'PY'
           import json, os, subprocess, sys
+          from datetime import datetime
           repo = os.environ["GITHUB_REPOSITORY"]
           def api(path):
               answer = subprocess.run(["gh", "api", path], capture_output=True, text=True)
@@ -1109,6 +1111,16 @@ jobs:
                   print(f"::error::gh api {path} failed: {answer.stderr.strip()}")
                   sys.exit(1)
               return json.loads(answer.stdout)
+          # A time GitHub reported, or None when it is missing, unreadable or
+          # has no offset to compare it by, which every caller refuses. GitHub
+          # writes UTC as a trailing `Z`, which Python reads from 3.11; an
+          # older one refuses every run rather than guess.
+          def moment(value):
+              try:
+                  parsed = datetime.fromisoformat(value)
+              except (TypeError, ValueError):
+                  return None
+              return parsed if parsed.tzinfo is not None else None
           trees = {}
           def tree(commit):
               if commit not in trees:
@@ -1122,27 +1134,44 @@ jobs:
               if tree(run["head_sha"]) != wanted:
                   continue
               kept = api(f"repos/{repo}/actions/runs/{run['id']}/artifacts?name=staged")["artifacts"]
-              if not any(artifact["name"] == "staged" and not artifact["expired"] for artifact in kept):
+              staged = [artifact for artifact in kept if artifact["name"] == "staged" and not artifact["expired"]]
+              if not staged:
+                  continue
+              if len(staged) != 1:
+                  print(f"::warning::run {run['id']} kept {len(staged)} staged artifacts; not promoting it")
+                  continue
+              # A job that is not among the verdict's needs can still be running
+              # after it, so only a run that has finished can no longer change.
+              if run.get("status") != "completed":
+                  print(f"::warning::run {run['id']} has not finished; not promoting it")
                   continue
               # Any action in the run could have uploaded an artifact by that
               # name, so it counts only beside the run's one `staged` job,
-              # concluded success. A run has about twenty jobs and one page
+              # concluded success, and only when it was made and last changed
+              # while that job ran. A run has about twenty jobs and one page
               # holds a hundred; a run that does not fit is refused, not half read.
               jobs = api(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
               if jobs["total_count"] > len(jobs["jobs"]):
                   print(f"::warning::run {run['id']} has more jobs than one page holds; not promoting it")
                   continue
-              verdicts = [job.get("conclusion") for job in jobs["jobs"] if job["name"] == "staged"]
-              if verdicts != ["success"]:
+              verdicts = [job for job in jobs["jobs"] if job["name"] == "staged"]
+              concluded = [job.get("conclusion") for job in verdicts]
+              if concluded != ["success"]:
                   print(f"::warning::run {run['id']} kept a staged artifact, but its staged jobs "
-                        f"concluded {verdicts or 'nothing'}; not promoting it")
+                        f"concluded {concluded or 'nothing'}; not promoting it")
+                  continue
+              began, ended = (moment(verdicts[0].get(key)) for key in ("started_at", "completed_at"))
+              made = [moment(staged[0].get(key)) for key in ("created_at", "updated_at")]
+              if began is None or ended is None or not all(at is not None and began <= at <= ended for at in made):
+                  print(f"::warning::run {run['id']} kept a staged artifact its staged job cannot be shown "
+                        "to have made; not promoting it")
                   continue
               with open(os.environ["GITHUB_OUTPUT"], "a") as output:
                   output.write(f"run={run['id']}\n")
               print(f"promoting what run {run['id']} staged: {run['html_url']}")
               sys.exit(0)
           print(f"::error::no staging run of tree {wanted} passed its cells; dispatch release.yml "
-                "on this commit, wait for its staged job, then re-run this one")
+                "on this commit, wait for that run to finish, then re-run this one")
           sys.exit(1)
           PY
           # <<< staging run

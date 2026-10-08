@@ -1973,8 +1973,13 @@ GH
                 GITHUB_REPOSITORY=o/r GITHUB_SHA=tagged GITHUB_OUTPUT="$staging_scratch/output" || status=$?
             staging_expect "$expect" "staging run: $what" "$status"
         }
-        staging_dispatch() { printf '{"id":%s,"event":"workflow_dispatch","head_sha":"%s","head_repository":{"full_name":"%s"},"html_url":"u"}' "$1" "$2" "${3:-o/r}"; }
-        kept='{"total_count":1,"artifacts":[{"name":"staged","expired":false}]}'
+        staging_dispatch() { printf '{"id":%s,"event":"workflow_dispatch","status":"%s","head_sha":"%s","head_repository":{"full_name":"%s"},"html_url":"u"}' "$1" "${4:-completed}" "$2" "${3:-o/r}"; }
+        # Every `staged` job below ran from 01:00 to 01:10, and the artifact it
+        # kept was made at 01:09 unless a case says otherwise.
+        at() { printf '2026-10-04T%s:00Z' "$1"; }
+        artifact() { printf '{"name":"staged","expired":false,"created_at":"%s","updated_at":"%s"}' "$1" "${2:-$1}"; }
+        staging_kept() { printf '{"total_count":%s,"artifacts":[%s]}' "$1" "$2"; }
+        kept=$(staging_kept 1 "$(artifact "$(at 01:09)")")
         none='{"total_count":0,"artifacts":[]}'
         staging_find refuse "no staging run at all" ''
         # The restoration case: a stage that failed kept no verdict, and
@@ -1987,7 +1992,7 @@ GH
         # Any action in a staging run can upload an artifact named `staged`, so
         # the artifact counts only beside a `staged` job that passed.
         staging_jobs() { printf '{"total_count":%s,"jobs":[%s]}' "$1" "$2"; }
-        verdict() { printf '{"name":"staged","conclusion":"%s"}' "$1"; }
+        verdict() { printf '{"name":"staged","conclusion":"%s","started_at":"%s","completed_at":"%s"}' "$1" "${2:-$(at 01:00)}" "${3:-$(at 01:10)}"; }
         cell='{"name":"staged linux-x86_64","conclusion":"success"}'
         staging_find refuse "a staged artifact whose staged job failed" "$(staging_dispatch 17 tagged)" "17=$kept" \
             "jobs:17=$(staging_jobs 2 "$cell,$(verdict failure)")"
@@ -1999,13 +2004,37 @@ GH
             "jobs:20=$(staging_jobs 2 "$(verdict success),$(verdict success)")"
         staging_find refuse "a staged artifact from a run with more jobs than one page" "$(staging_dispatch 21 tagged)" "21=$kept" \
             "jobs:21=$(staging_jobs 101 "$(verdict success)")"
+        staging_find refuse "a staged run that has not finished" "$(staging_dispatch 22 tagged o/r in_progress)" "22=$kept" \
+            "jobs:22=$(staging_jobs 1 "$(verdict success)")"
+        # A job outside the verdict's needs can outlive it, so an artifact
+        # counts only when it was made, and last changed, while `staged` ran.
+        staging_find refuse "a staged artifact made after its staged job finished" "$(staging_dispatch 23 tagged)" \
+            "23=$(staging_kept 1 "$(artifact "$(at 02:00)")")" "jobs:23=$(staging_jobs 1 "$(verdict success)")"
+        staging_find refuse "a staged artifact changed after its staged job finished" "$(staging_dispatch 24 tagged)" \
+            "24=$(staging_kept 1 "$(artifact "$(at 01:09)" "$(at 02:00)")")" "jobs:24=$(staging_jobs 1 "$(verdict success)")"
+        staging_find refuse "a staged artifact made before its staged job started" "$(staging_dispatch 25 tagged)" \
+            "25=$(staging_kept 1 "$(artifact "$(at 00:59)")")" "jobs:25=$(staging_jobs 1 "$(verdict success)")"
+        staging_find refuse "two staged artifacts" "$(staging_dispatch 26 tagged)" \
+            "26=$(staging_kept 2 "$(artifact "$(at 01:08)"),$(artifact "$(at 01:09)")")" \
+            "jobs:26=$(staging_jobs 1 "$(verdict success)")"
+        # A time that cannot be read is a time that cannot be shown inside.
+        staging_find refuse "a staged artifact with no creation time" "$(staging_dispatch 27 tagged)" \
+            '27={"total_count":1,"artifacts":[{"name":"staged","expired":false,"updated_at":"2026-10-04T01:09:00Z"}]}' \
+            "jobs:27=$(staging_jobs 1 "$(verdict success)")"
+        staging_find refuse "a staged job whose finish cannot be read" "$(staging_dispatch 28 tagged)" "28=$kept" \
+            "jobs:28=$(staging_jobs 1 "$(verdict success "$(at 01:00)" soon)")"
+        staging_find refuse "times with no offset" "$(staging_dispatch 29 tagged)" \
+            "29=$(staging_kept 1 "$(artifact 2026-10-04T01:09:00)")" \
+            "jobs:29=$(staging_jobs 1 "$(verdict success 2026-10-04T01:00:00 2026-10-04T01:10:00)")"
+        staging_find pass "a staged artifact made as its staged job started and changed as it finished" "$(staging_dispatch 30 tagged)" \
+            "30=$(staging_kept 1 "$(artifact "$(at 01:00)" "$(at 01:10)")")" "jobs:30=$(staging_jobs 1 "$(verdict success)")"
         staging_find pass "a staged run of this tree" \
             "$(staging_dispatch 17 tagged),$(staging_dispatch 15 same-tree),$(staging_dispatch 16 tagged)" \
             "17=$kept" "jobs:17=$(staging_jobs 2 "$cell,$(verdict failure)")" \
             "15=$kept" "jobs:15=$(staging_jobs 2 "$cell,$(verdict success)")" "16=$none"
         [[ $(<"$staging_scratch/output") == run=15 ]] ||
             staging_fail "staging run: named '$(<"$staging_scratch/output")', expected run=15"
-        unset -f staging_dispatch staging_jobs verdict
+        unset -f staging_dispatch staging_jobs verdict at artifact staging_kept
     fi
 
     if staging_has 'published as staged'; then
