@@ -59,7 +59,8 @@ pub const MAX_EXTENSIONS: usize = 64;
 /// the rest.
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
-    /// The directory or its manifest would not open.
+    /// The directory or its manifest could not be read, or the manifest is not
+    /// an ordinary file.
     #[error("{file} could not be read: {source}")]
     Unreadable {
         /// The file, as the user would name it.
@@ -289,14 +290,54 @@ fn directories(at: &Path) -> io::Result<Vec<PathBuf>> {
 /// One byte past the boundary is read rather than exactly it, so that a file
 /// over the line arrives whole enough to be refused by length instead of
 /// arriving cut in half and being refused as broken JSON.
+///
+/// Only an ordinary file is read. A pipe or a device standing where a manifest
+/// should be is somebody else's stream rather than a file an installer wrote,
+/// and a pipe with no writer would hold the sweep, and everything waiting on
+/// it, for as long as nobody writes to it.
 fn read(file: &Path) -> io::Result<String> {
-    let opened = File::open(file)?;
+    let opened = open(file)?;
+    if !opened.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the manifest is not a regular file",
+        ));
+    }
+
     let mut text = String::new();
     opened
         .take(EXTENSION_MANIFEST_BYTES as u64 + 1)
         .read_to_string(&mut text)?;
 
     Ok(text)
+}
+
+/// Opens a manifest without waiting for anybody on the far side of it.
+///
+/// A plain open of a pipe waits for a writer before it returns, so the question
+/// [`read`] asks of the handle would come too late: the flag makes the open come
+/// straight back, and the question is then asked of what it opened. It changes
+/// nothing about reading an ordinary file. `std` carries the flag and names no
+/// value for it, which is in a different bit on different platforms, so `libc`
+/// names it.
+#[cfg(unix)]
+fn open(file: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    File::options()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(file)
+}
+
+/// Opens a manifest.
+///
+/// Windows has no flag that stops this open waiting on a peer, and a name under
+/// a directory is not opened as a pipe there, so the plain open is the whole of
+/// what the platform has to give.
+#[cfg(not(unix))]
+fn open(file: &Path) -> io::Result<File> {
+    File::open(file)
 }
 
 /// A path, as the user would name it.

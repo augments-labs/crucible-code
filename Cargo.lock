@@ -544,6 +544,7 @@ dependencies = [
  "crucible-sandbox",
  "crucible-transport",
  "crucible-types",
+ "libc",
  "serde_json",
  "sha2",
  "thiserror",
