@@ -18,7 +18,8 @@ use crucible_app::update::{self, Answer, Asked, Failed, SOURCE, SelfUpdateComman
 
 use super::failure::failing;
 
-#[cfg(test)]
+// Its one case is a refusal only an install that can be staged gives.
+#[cfg(all(test, unix))]
 mod tests;
 
 /// Runs `crucible update` as `check` and `dry_run` ask, and stops.

@@ -44,6 +44,7 @@ use crate::{UpdateCrateReleaseCheck, Version};
 pub const SOURCE: &str = "CRUCIBLE_CODE_UPDATE_SOURCE";
 
 /// Where GitHub serves a release's files, before `v<version>/<name>`.
+#[cfg(unix)]
 const DOWNLOADS: &str = "https://github.com/augments-labs/crucible-code/releases/download";
 
 /// What the person asked `crucible update` to do.
@@ -256,6 +257,7 @@ impl Source {
     }
 
     /// Where `version`'s file `name` is.
+    #[cfg(unix)]
     fn download(&self, version: &Version, name: &str) -> String {
         match self {
             Self::GitHub => format!("{DOWNLOADS}/v{version}/{name}"),
