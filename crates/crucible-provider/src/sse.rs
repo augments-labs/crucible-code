@@ -6,10 +6,11 @@
 //! payload still text. Parsing that text is the provider's job, because only it
 //! knows what its vendor puts in there.
 //!
-//! A read that gave up waiting leaves as [`Framed::Quiet`] rather than as
-//! either an event or an ending, which is what lets a caller holding a cancel
-//! act on it while a response is open. Both providers stream through here, so
-//! that is one behaviour rather than two that have to be kept the same.
+//! A read that gave up waiting, or that read a line which goes into no event,
+//! leaves as [`Framed::Quiet`] rather than as either an event or an ending,
+//! which is what lets a caller holding a cancel act on it while a response is
+//! open. Both providers stream through here, so that is one behaviour rather
+//! than two that have to be kept the same.
 //!
 //! Bytes throughout, converted to text once per event. One read from the socket
 //! can split a character in half, so accumulating into a `String` would have to
@@ -64,15 +65,18 @@ pub(crate) enum Framed {
     /// One event, whole.
     Event(SseEvent),
 
-    /// Nothing yet. The read waited as long as it waits and the peer said
-    /// nothing, which is neither a failure nor an ending: the response is still
-    /// open and the model is still thinking.
+    /// No event yet. The read waited as long as it waits and the peer said
+    /// nothing, or the peer said something that goes into no event: a comment,
+    /// a field nothing here reads, or a blank line with nothing to dispatch.
+    /// Neither is a failure or an ending: the response is still open and the
+    /// model is still thinking.
     ///
     /// It exists so that waiting is the caller's to do. A provider that goes
     /// silent would otherwise hold the caller inside this call for as long as
-    /// it stayed silent, and a user who asked to stop would be waiting on the
-    /// same socket. Handed back the turn, the caller looks at its cancel and
-    /// asks again.
+    /// it stayed silent, and one that sends a comment every few hundred
+    /// milliseconds for as long as it kept sending them, and a user who asked
+    /// to stop would be waiting on the same socket. Handed back the turn, the
+    /// caller looks at its cancel and asks again.
     Quiet,
 }
 
@@ -85,6 +89,14 @@ enum Line {
     Quiet,
     /// The stream is finished.
     Ended,
+}
+
+/// What became of one field line.
+enum Field {
+    /// It went into the event being built.
+    Kept,
+    /// It goes into no event: a comment, or a field nothing here reads.
+    Ignored,
 }
 
 /// Frames a byte stream into events.
@@ -107,8 +119,8 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
         }
     }
 
-    /// The next event, [`Framed::Quiet`] if none has arrived yet, or `None`
-    /// when the stream is finished.
+    /// The next event, [`Framed::Quiet`] if none has arrived yet or the line
+    /// read goes into none, or `None` when the stream is finished.
     ///
     /// A stream that ends part-way through an event delivers nothing for it.
     /// That is not silent: every protocol here ends with an event of its own,
@@ -129,17 +141,23 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
                 // the way in would drop that half every time the peer paused
                 // mid-line.
                 self.line.clear();
-                if let Err(problem) = taken {
-                    return Some(Err(problem));
+                match taken {
+                    Err(problem) => return Some(Err(problem)),
+                    Ok(Field::Kept) => continue,
+                    // Handed back rather than read past, since a peer can send
+                    // these for as long as it likes without ever sending an
+                    // event, and the caller cannot look at its cancel in here.
+                    Ok(Field::Ignored) => return Some(Ok(Framed::Quiet)),
                 }
-                continue;
             }
 
             // A blank line dispatches. Runs of them, and the one that closes a
-            // comment, have nothing to dispatch.
-            if !self.name.is_empty() || !self.data.is_empty() {
-                return Some(self.dispatch().map(Framed::Event));
+            // comment, have nothing to dispatch, and are handed back for the
+            // same reason as a field nothing reads.
+            if self.name.is_empty() && self.data.is_empty() {
+                return Some(Ok(Framed::Quiet));
             }
+            return Some(self.dispatch().map(Framed::Event));
         }
     }
 
@@ -189,8 +207,8 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
         }
     }
 
-    /// Folds one line into the event being built.
-    fn take_field(&mut self) -> Result<(), SseError> {
+    /// Folds one line into the event being built, and says whether it went in.
+    fn take_field(&mut self) -> Result<Field, SseError> {
         let (name, value) = split(&self.line);
 
         // An empty field name is a comment -- including the keep-alive some
@@ -199,6 +217,7 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
             b"event" => {
                 self.name.clear();
                 self.name.extend_from_slice(value);
+                Ok(Field::Kept)
             }
             b"data" => {
                 if self.data.len() + value.len() > MAX_EVENT {
@@ -208,14 +227,13 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
                     self.data.push(b'\n');
                 }
                 self.data.extend_from_slice(value);
+                Ok(Field::Kept)
             }
             // `id` and `retry` are reconnection machinery. Nothing here
             // reconnects: a dropped turn is the runner's to retry, and it holds
             // the transcript that would be needed to do it.
-            _ => {}
+            _ => Ok(Field::Ignored),
         }
-
-        Ok(())
     }
 
     /// Finishes the event and resets for the next one.
