@@ -61,6 +61,14 @@
 //! a case may read: [`Screen::shows`] answers only between frames, because a
 //! read that ends inside one would otherwise see what no terminal ever showed.
 //!
+//! Every character is kept with what it was drawn in: the whole state the
+//! colour sequences before it left in force, which is not the last sequence
+//! alone. [`Screen::picture`] leaves that out, so a text snapshot reads the
+//! same in any theme; [`Screen::picture_in_colour`] writes each span's state
+//! under its row, which is how a case sees a slot that changed colour. A
+//! colour parameter outside the set crucible promises is refused like any
+//! other sequence, since a span drawn in it would be captured without it.
+//!
 //! Columns are counted in characters here rather than from a width table.
 //! Everything these cases put on screen — ASCII, box drawing, the block glyphs
 //! of the wordmark, the arrows — is one column wide, so the two counts agree,
@@ -114,7 +122,7 @@ pub(crate) struct Screen {
     rows: usize,
     /// What is on it, one row per line of the window, each as wide as what was
     /// written on it rather than as wide as the window.
-    grid: Vec<Vec<char>>,
+    grid: Vec<Vec<Cell>>,
     /// Whether each row of the window is the fold of a wider line, running on
     /// into the row under it — which only a resize of a native screen makes,
     /// and which the next resize needs so as to join the pieces again.
@@ -132,9 +140,11 @@ pub(crate) struct Screen {
     scrolled: usize,
     /// The rows pushed off the top of a native window, oldest first: what a
     /// reader would find on scrolling back.
-    scrollback: Vec<Vec<char>>,
+    scrollback: Vec<Vec<Cell>>,
     /// Whether each row of the scrollback ran on into the one under it.
     ran_on_back: Vec<bool>,
+    /// What the next character written is drawn in.
+    pen: Pen,
     /// Whether the session entered the alternate screen.
     alternate: bool,
     /// What crucible did that it does not promise to do, in the order it was
@@ -178,6 +188,190 @@ struct Awaiting {
     spare: bool,
 }
 
+/// One column of a row: the character drawn there, and what it was drawn in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cell {
+    character: char,
+    pen: Pen,
+}
+
+impl Cell {
+    /// A column nothing was drawn in, which a row is padded with to reach the
+    /// cursor.
+    const BLANK: Self = Self {
+        character: ' ',
+        pen: Pen::DEFAULT,
+    };
+}
+
+/// What a character is drawn in: the whole state the colour sequences before
+/// it left in force, which is not the same as the last of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Pen {
+    /// Which [`Attribute`]s are on, one bit each.
+    attributes: u8,
+    foreground: Option<Colour>,
+    background: Option<Colour>,
+}
+
+/// An attribute a colour sequence turns on or off, in the order a capture
+/// spells them.
+#[derive(Debug, Clone, Copy)]
+enum Attribute {
+    Bold,
+    Dim,
+    Italic,
+    Underline,
+    Reverse,
+    Struck,
+}
+
+impl Attribute {
+    const ALL: [Self; 6] = [
+        Self::Bold,
+        Self::Dim,
+        Self::Italic,
+        Self::Underline,
+        Self::Reverse,
+        Self::Struck,
+    ];
+
+    /// This attribute's bit in [`Pen::attributes`].
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+
+    /// The word a capture writes for it.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Bold => "bold",
+            Self::Dim => "dim",
+            Self::Italic => "italic",
+            Self::Underline => "underline",
+            Self::Reverse => "reverse",
+            Self::Struck => "strikethrough",
+        }
+    }
+}
+
+impl Pen {
+    /// The terminal's own colours, with no attribute set.
+    const DEFAULT: Self = Self {
+        attributes: 0,
+        foreground: None,
+        background: None,
+    };
+
+    /// This pen with the colour sequence `params` applied, or `None` when the
+    /// sequence holds a parameter outside the set crucible promises.
+    ///
+    /// The set is what a span is said to be drawn in: the five attributes the
+    /// renderer sets and strikethrough, each one's way back off, the sixteen
+    /// colours, the 256 and the exact ones, and the way back to the terminal's
+    /// own. A parameter outside it is refused rather than passed over, since a
+    /// span drawn in it would be captured in a state that leaves it out.
+    fn applied(self, params: &str) -> Option<Self> {
+        let mut pen = self;
+        let mut codes = params.split(';');
+
+        while let Some(code) = codes.next() {
+            match code {
+                "" | "0" => pen = Self::DEFAULT,
+                "1" => pen.turn(&[Attribute::Bold], true),
+                "2" => pen.turn(&[Attribute::Dim], true),
+                "3" => pen.turn(&[Attribute::Italic], true),
+                "4" => pen.turn(&[Attribute::Underline], true),
+                "7" => pen.turn(&[Attribute::Reverse], true),
+                "9" => pen.turn(&[Attribute::Struck], true),
+                "22" => pen.turn(&[Attribute::Bold, Attribute::Dim], false),
+                "23" => pen.turn(&[Attribute::Italic], false),
+                "24" => pen.turn(&[Attribute::Underline], false),
+                "27" => pen.turn(&[Attribute::Reverse], false),
+                "29" => pen.turn(&[Attribute::Struck], false),
+                "39" => pen.foreground = None,
+                "49" => pen.background = None,
+                "38" => pen.foreground = Some(Colour::chosen(&mut codes)?),
+                "48" => pen.background = Some(Colour::chosen(&mut codes)?),
+                _ => match code.parse::<u16>().ok()? {
+                    named @ (30..=37 | 90..=97) => pen.foreground = Some(Colour::Named(named)),
+                    named @ (40..=47 | 100..=107) => pen.background = Some(Colour::Named(named)),
+                    _ => return None,
+                },
+            }
+        }
+
+        Some(pen)
+    }
+
+    /// Turns each of `attributes` on, or off.
+    fn turn(&mut self, attributes: &[Attribute], on: bool) {
+        for attribute in attributes {
+            if on {
+                self.attributes |= attribute.bit();
+            } else {
+                self.attributes &= !attribute.bit();
+            }
+        }
+    }
+
+    /// What this pen draws in, in the fixed order a capture spells it: the
+    /// attributes, then the foreground and the background as the parameters
+    /// that chose them. Empty for the terminal's own colours.
+    fn described(self) -> String {
+        let colours = [
+            self.foreground
+                .map(|colour| format!("fg={}", colour.params(38))),
+            self.background
+                .map(|colour| format!("bg={}", colour.params(48))),
+        ];
+
+        Attribute::ALL
+            .into_iter()
+            .filter(|attribute| self.attributes & attribute.bit() != 0)
+            .map(|attribute| attribute.name().to_owned())
+            .chain(colours.into_iter().flatten())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+impl Colour {
+    /// The colour `38` or `48` goes on to name: `5` and an index, or `2` and
+    /// red, green and blue.
+    fn chosen<'a>(codes: &mut impl Iterator<Item = &'a str>) -> Option<Self> {
+        let mut next = || codes.next().and_then(|code| code.parse::<u8>().ok());
+
+        match next()? {
+            5 => Some(Self::Indexed(next()?)),
+            2 => Some(Self::Exact(next()?, next()?, next()?)),
+            _ => None,
+        }
+    }
+
+    /// The parameters that choose this colour, where `lead` is `38` for the
+    /// foreground and `48` for the background.
+    fn params(self, lead: u16) -> String {
+        match self {
+            Self::Named(named) => named.to_string(),
+            Self::Indexed(index) => format!("{lead};5;{index}"),
+            Self::Exact(red, green, blue) => format!("{lead};2;{red};{green};{blue}"),
+        }
+    }
+}
+
+/// A colour, in the form the sequence that chose it named it in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Colour {
+    /// One of the sixteen a terminal has, by the parameter that chose it:
+    /// `30` to `37` and `90` to `97` for the foreground, ten more for the
+    /// background.
+    Named(u16),
+    /// One of the 256-colour palette.
+    Indexed(u8),
+    /// An exact colour, red, green and blue.
+    Exact(u8, u8, u8),
+}
+
 /// The version this build draws on its opening screen.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -215,6 +409,7 @@ impl Screen {
             scrolled: 0,
             scrollback: Vec::new(),
             ran_on_back: Vec::new(),
+            pen: Pen::default(),
             alternate: false,
             refused: Vec::new(),
             commanded: Vec::new(),
@@ -408,12 +603,12 @@ impl Screen {
         let was = self.columns;
         let cursor = self.scrollback.len() + self.row;
         let back = self.scrollback.drain(..).zip(self.ran_on_back.drain(..));
-        let held: Vec<(Vec<char>, bool)> = back
+        let held: Vec<(Vec<Cell>, bool)> = back
             .chain(self.grid.drain(..).zip(self.ran_on.drain(..)))
             .collect();
 
         // Rows back into lines, with where in its line the cursor was.
-        let mut lines: Vec<Vec<char>> = Vec::new();
+        let mut lines: Vec<Vec<Cell>> = Vec::new();
         let mut line = Vec::new();
         let mut caret = (0, 0);
         for (index, (mut row, ran_on)) in held.into_iter().enumerate() {
@@ -421,7 +616,7 @@ impl Screen {
                 caret = (lines.len(), line.len() + self.column);
             }
             if ran_on {
-                row.resize(was, ' ');
+                row.resize(was, Cell::BLANK);
                 line.extend(row);
             } else {
                 line.extend(row);
@@ -437,14 +632,14 @@ impl Screen {
 
         // And lines into rows at the new width.
         let width = columns.max(1);
-        let mut folded: Vec<(Vec<char>, bool)> = Vec::new();
+        let mut folded: Vec<(Vec<Cell>, bool)> = Vec::new();
         let mut at = (0, 0);
         for (index, line) in lines.into_iter().enumerate() {
             let first = folded.len();
-            let pieces: Vec<Vec<char>> = if line.is_empty() {
+            let pieces: Vec<Vec<Cell>> = if line.is_empty() {
                 vec![Vec::new()]
             } else {
-                line.chunks(width).map(<[char]>::to_vec).collect()
+                line.chunks(width).map(<[Cell]>::to_vec).collect()
             };
             let count = pieces.len();
             for (piece, row) in pieces.into_iter().enumerate() {
@@ -526,7 +721,19 @@ impl Screen {
     /// re-accept — which is how a picture stops being read and becomes a file
     /// that gets a yes. [`MASK`] is what stands there instead, one per character.
     pub(crate) fn picture(&self) -> String {
-        let header = match self.mode {
+        let header = self.header();
+        let rows = self.framed(&self.grid);
+        if rows.is_empty() {
+            header
+        } else {
+            format!("{header}\n{rows}")
+        }
+    }
+
+    /// The line a picture opens with: the size, the cursor, and how many rows
+    /// left the top of the window.
+    fn header(&self) -> String {
+        match self.mode {
             Mode::Fullscreen => format!(
                 "{}x{} cursor {},{} scrolled {}",
                 self.columns, self.rows, self.row, self.column, self.scrolled
@@ -539,32 +746,57 @@ impl Screen {
                 self.column,
                 self.scrollback.len()
             ),
-        };
-
-        let rows = self.framed(&self.grid);
-        if rows.is_empty() {
-            header
-        } else {
-            format!("{header}\n{rows}")
         }
+    }
+
+    /// The screen as [`picture`](Self::picture) draws it, with what each row
+    /// was drawn in under it.
+    ///
+    /// Under each row that holds a span not in the terminal's own colours is
+    /// one line per such span, in column order: `  <first>..<last> <state>`,
+    /// columns counted from one, and the state as [`Pen::described`] spells
+    /// it. A slot that moves to another colour changes this and leaves the
+    /// picture as it was.
+    pub(crate) fn picture_in_colour(&self) -> String {
+        let mut lines = vec![self.header()];
+
+        for row in &self.grid {
+            lines.push(self.framed_row(row));
+
+            let mut first = 0;
+            for span in row.chunk_by(|one, other| one.pen == other.pen) {
+                let last = first + span.len();
+                if let Some(cell) = span.first()
+                    && cell.pen != Pen::DEFAULT
+                {
+                    lines.push(format!("  {}..{last} {}", first + 1, cell.pen.described()));
+                }
+                first = last;
+            }
+        }
+
+        lines.join("\n")
     }
 
     /// `rows` as the lines of a picture: each padded to the full width, closed
     /// with a bar, and with this build's version masked out.
-    fn framed(&self, rows: &[Vec<char>]) -> String {
-        let mut lines = Vec::with_capacity(rows.len());
+    fn framed(&self, rows: &[Vec<Cell>]) -> String {
+        rows.iter()
+            .map(|row| self.framed_row(row))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 
-        for row in rows {
-            let mut line: String = row.iter().collect();
-            for _ in row.len()..self.columns {
-                line.push(' ');
-            }
-            lines.push(format!("|{line}|"));
+    /// One row as a line of a picture.
+    fn framed_row(&self, row: &[Cell]) -> String {
+        let mut line: String = row.iter().map(|cell| cell.character).collect();
+        for _ in row.len()..self.columns {
+            line.push(' ');
         }
 
         let masked = MASK.to_string().repeat(VERSION.len());
 
-        lines.join("\n").replace(VERSION, &masked)
+        format!("|{line}|").replace(VERSION, &masked)
     }
 
     /// Says once that crucible did something it does not promise to do.
@@ -630,12 +862,16 @@ impl Screen {
 
         if let Some(row) = self.grid.get_mut(self.row) {
             while row.len() < column {
-                row.push(' ');
+                row.push(Cell::BLANK);
             }
             for character in text.chars() {
+                let drawn = Cell {
+                    character,
+                    pen: self.pen,
+                };
                 match row.get_mut(column) {
-                    Some(cell) => *cell = character,
-                    None => row.push(character),
+                    Some(cell) => *cell = drawn,
+                    None => row.push(drawn),
                 }
                 column += 1;
             }
@@ -767,8 +1003,14 @@ impl Screen {
         }
 
         match (params, ends) {
-            // Colour, the modes crucible borrows from the terminal, and the
-            // device-attributes question it asks once at startup. None of them
+            // Colour moves nothing, but it is what the characters after it
+            // are drawn in, so the pen takes it.
+            (_, 'm') => match self.pen.applied(params) {
+                Some(pen) => self.pen = pen,
+                None => self.refuse(format!("wrote ESC[{params}{ends}")),
+            },
+            // The modes crucible borrows from the terminal, and the
+            // device-attributes question it asks once at startup. Neither
             // moves the cursor or fills a column: the modes are state handed
             // back by a guard, and the last is a question.
             //
@@ -785,8 +1027,7 @@ impl Screen {
             // a terminal replies in the order it was asked — without it, a
             // terminal implementing neither would be waited on for the whole
             // patience rather than answered at once.
-            (_, 'm')
-            | ("?1000" | "?1002" | "?1003" | "?1006" | "?2004" | "?25" | "?1049", 'h' | 'l')
+            ("?1000" | "?1002" | "?1003" | "?1006" | "?2004" | "?25" | "?1049", 'h' | 'l')
             | (">1" | "<", 'u')
             | ("", 'c') => {}
             (_, 'H') => self.park(params),
@@ -989,6 +1230,46 @@ mod tests {
             "the picture names the version it was drawn by:\n{picture}"
         );
         assert!(picture.contains("crucible v#"), "{picture}");
+    }
+
+    #[test]
+    fn a_picture_in_colour_says_what_each_span_was_drawn_in() {
+        // Each span is drawn in everything still in force when it was written,
+        // not in the last sequence alone: `22;23` turns two attributes off and
+        // leaves the background the sequence before it chose.
+        let mut screen = Screen::new(12, 2);
+        screen.feed(
+            concat!(
+                "\x1b[1;38;5;30mab\x1b[0mc \x1b[3m\x1b[48;2;1;2;3md\x1b[22;23mef\x1b[m",
+                "\r\n\x1b[1;43;30mok\x1b[m",
+            )
+            .as_bytes(),
+        );
+
+        assert_eq!(
+            screen.picture_in_colour(),
+            [
+                "12x2 cursor 1,2 scrolled 0",
+                "|abc def     |",
+                "  1..2 bold fg=38;5;30",
+                "  5..5 italic bg=48;2;1;2;3",
+                "  6..7 bg=48;2;1;2;3",
+                "|ok          |",
+                "  1..2 bold fg=30 bg=43",
+            ]
+            .join("\n")
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_colour_the_screen_cannot_name_is_refused() {
+        // Blinking is nothing crucible promises, and a span drawn in it would
+        // otherwise be captured in a state that leaves it out.
+        let mut screen = Screen::new(12, 2);
+        screen.feed(b"\x1b[5mx\x1b[38;5mx");
+
+        assert_eq!(screen.refusals(), ["wrote ESC[5m", "wrote ESC[38;5m"]);
     }
 
     #[test]

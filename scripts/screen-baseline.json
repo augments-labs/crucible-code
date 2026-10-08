@@ -1,10 +1,19 @@
 {
   "harness": {
-    "tests/whole_screen/screen.rs": "923ea6c0bfa9b63671bd937e71c3e14db9c8b24645a87302bd26e5ccd4d01cbb",
+    "tests/whole_screen/screen.rs": "94e66360f1c14a074d8c34e55763790a0883a1a1467662f10db50ce499be1edb",
     "tests/whole_screen/vendor.rs": "47b1c989828849cf2b712646681e350c048b59fe1fbc2b8838bfb3663db6dd3c",
-    "tests/whole_screen/watched.rs": "22552be6a6900f30d75b42603bd0956b5a64553173f74431fa7661de2241017c"
+    "tests/whole_screen/watched.rs": "e155c647bb2d3f5dcdcccfde086832b726d9183b4f78feb34701a4637722d1bc"
   },
   "captures": [
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_call_that_changed_a_file_in_colour.snap",
+      "case": "a_call_that_changed_a_file_in_colour",
+      "opened": [
+        "Vendor::calling( \"edit\", r##\"{\"path\":\"release.yml\",\"find\":\"# trend data\",\"replace\":\"# what stops a tag\"}\"##, \"Renamed. Nothing else in the file moved.\", )",
+        "Watched::in_default_colours( \"tool-called-in-colour\", (80, 24), Some(&vendor), Some(\"edit(*)\"), )"
+      ],
+      "sha256": "6e261cd3734e1bd936f8252b9fb943deb77e951b48c13ac980946c8ade51a8a1"
+    },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_call_that_changed_a_file_is_drawn_with_the_change.snap",
       "case": "a_call_that_changed_a_file_is_drawn_with_the_change",
@@ -598,6 +607,15 @@
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
       "sha256": "c5cbf45eb449beb0772d3732d418dddc53c89dc2dc32fb9c04a212cb8602de93"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__five_waiting_prompts_in_colour.snap",
+      "case": "five_waiting_prompts_in_colour",
+      "opened": [
+        "Vendor::calling_then_holding_long( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
+        "Watched::in_default_colours( \"queue-panel-in-colour\", (80, 24), Some(&vendor), Some(\"bash(*)\"), )"
+      ],
+      "sha256": "24fe6b58fdf64f32736d43b6f04e6ceee2ec68f170a0399942d51448fa72656c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__five_waiting_prompts_stand_in_one_panel_in_a_narrow_window.snap",
@@ -1400,6 +1418,23 @@
         "Watched::answering(case, columns, rows, &vendor)"
       ],
       "sha256": "71f9803684b924e52ab24980ced818a08a5a0af0efa7d8cd596033b366d06c50"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_welcome_in_colour.snap",
+      "case": "the_welcome_in_colour",
+      "opened": [
+        "Watched::in_default_colours(\"welcome-in-colour\", (80, 24), None, None)"
+      ],
+      "sha256": "469d5858507854e356c4f81c704dfd93e3926bb95fe390326ae85da8042bd6f8"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_in_colour.snap",
+      "case": "usage_in_colour",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::in_default_colours(\"usage-in-colour\", (80, 30), Some(&vendor), None)"
+      ],
+      "sha256": "2541272ae55df2687cf9836be8336b0547ce86d32f88c8973dc2d85ffd4b6a07"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_key_40.snap",
