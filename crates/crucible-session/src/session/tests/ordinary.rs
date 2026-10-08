@@ -22,6 +22,7 @@ const NEWER: &str = "01941f29-7c00-7000-8000-000000000000";
 
 /// An older session of the same workspace, which a refusal must not stand in
 /// for.
+#[cfg(unix)]
 const OLDER: &str = "01887441-0c00-7000-8000-000000000000";
 
 /// Moves the log `id` out of the sessions directory and leaves a link to it
@@ -61,6 +62,7 @@ fn within_a_bound<T: Send + 'static>(continuing: impl FnOnce() -> T + Send + 'st
 }
 
 /// Where `--continue` took the session from, or why it refused.
+#[cfg(unix)]
 fn continued(sample: &Sample) -> Result<PathBuf, SessionError> {
     Session::resume(&sample.logs(), &sample.workspace()).map(|(session, _)| session.path().into())
 }
