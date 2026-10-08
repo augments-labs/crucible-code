@@ -60,8 +60,8 @@ pub(crate) fn too_late(name: &str) -> bool {
 
 /// A document, as `Debug` may write it: every `env` value replaced, wherever
 /// the block holding it is written, each server's arguments shown as a reader
-/// is shown them, every value an extension was told replaced, and the user in
-/// each provider's `baseUrl` replaced.
+/// is shown them, every value an extension was told replaced, and each
+/// provider's `baseUrl` cut to its recipient.
 ///
 /// The block is the environment, so what a user puts in it is whatever the
 /// commands they run need — a token among them, in the two layers that are
@@ -86,7 +86,9 @@ pub(crate) fn too_late(name: &str) -> bool {
 /// record's `args` is printed as [`McpServer::shown_args`] shows it. An
 /// extension's `config` holds names crucible cannot read, so it is printed as
 /// an `env` block is, names and no values. A `baseUrl` is printed with the
-/// host it goes to and without the user and password it would go as.
+/// scheme, host and port it goes to, as the provider's own diagnostics print
+/// it, and without the user and password it would go as or the path and
+/// query a gateway puts a tenant or a token in.
 ///
 /// [`McpServer::shown_args`]: crate::settings::McpServer::shown_args
 pub(crate) struct Redacted<'a>(pub(crate) &'a Value);
@@ -101,7 +103,7 @@ impl fmt::Debug for Redacted<'_> {
         redact(&mut shown);
         crate::settings::mcp::hide_args(&mut shown);
         crate::settings::hide_extension_settings(&mut shown);
-        crate::settings::hide_base_url_users(&mut shown);
+        crate::settings::hide_base_url_targets(&mut shown);
         shown.fmt(f)
     }
 }

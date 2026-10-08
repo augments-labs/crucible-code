@@ -89,10 +89,10 @@ pub(crate) struct Document {
 
 impl fmt::Debug for Document {
     /// Written by hand so the `env` block is redacted, each server's
-    /// arguments shown as a reader is shown them, and what an extension was
-    /// told and the user in a `baseUrl` are hidden. In two of the three
-    /// layers a variable there may hold anything the user's commands need,
-    /// and a derived `Debug` is what would print it.
+    /// arguments shown as a reader is shown them, what an extension was told
+    /// is hidden, and a `baseUrl` shows its recipient alone. In two of the
+    /// three layers a variable there may hold anything the user's commands
+    /// need, and a derived `Debug` is what would print it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Document")
             .field("value", &env::Redacted(&self.value))

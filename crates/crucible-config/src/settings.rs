@@ -13,7 +13,7 @@ use std::fmt;
 
 use crucible_models::{Effort, Speed};
 use crucible_tools::Rules;
-use crucible_types::PromptCachePolicy;
+use crucible_types::{PromptCachePolicy, address};
 use serde_json::{Map, Value};
 
 use crate::document::Document;
@@ -72,11 +72,11 @@ pub struct Settings {
 
 impl fmt::Debug for Settings {
     /// Written by hand so the `env` block is redacted, each server's
-    /// arguments shown as a reader is shown them, and what an extension was
-    /// told and the user in a `baseUrl` are hidden. This type is what the
-    /// wiring above holds for the whole session, so it is the one most likely
-    /// to end up inside somebody's diagnostic — and it holds every variable
-    /// the two private layers set, values and all.
+    /// arguments shown as a reader is shown them, what an extension was told
+    /// is hidden, and a `baseUrl` shows its recipient alone. This type is
+    /// what the wiring above holds for the whole session, so it is the one
+    /// most likely to end up inside somebody's diagnostic — and it holds
+    /// every variable the two private layers set, values and all.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Settings")
             .field("value", &env::Redacted(&self.value))
@@ -410,14 +410,16 @@ pub(crate) fn hide_extension_settings(shown_document: &mut Value) {
     }
 }
 
-/// Replaces the user and password in each provider's `baseUrl` in a printed
-/// document, and leaves where the address goes.
+/// Replaces each provider's `baseUrl` in a printed document with the
+/// recipient alone, as [`address::redacted`] shows it.
 ///
-/// The wiring refuses an address with a user in it, but the document holds
-/// what was written until then, and a line that says which host a turn would
-/// have gone to is the one a reader of a diagnostic needs. A `baseUrl` that is
-/// not text, which no document that parsed holds, is replaced whole.
-pub(crate) fn hide_base_url_users(shown_document: &mut Value) {
+/// The wiring refuses some addresses and sends to others, but the document
+/// holds what was written either way, and a line that says which host a turn
+/// would have gone to is the one a reader of a diagnostic needs. The user and
+/// password, the path and the query are not that, and are where a credential,
+/// a tenant or a token is written. A `baseUrl` that is not text, which no
+/// document that parsed holds, is replaced whole.
+pub(crate) fn hide_base_url_targets(shown_document: &mut Value) {
     let Some(providers) = shown_document
         .get_mut("providers")
         .and_then(Value::as_object_mut)
@@ -430,58 +432,42 @@ pub(crate) fn hide_base_url_users(shown_document: &mut Value) {
             continue;
         };
         *address = Value::String(match address.as_str() {
-            Some(written) => without_user(written),
+            Some(written) => recipient(written),
             None => env::REDACTED.to_owned(),
         });
     }
 }
 
-/// `address` with whatever stands before the last `@` of its authority replaced.
+/// `written` as [`address::redacted`] shows it, or replaced whole where that
+/// would not be the recipient.
 ///
-/// The authority is read as running from the first `://` to the first `/`, `?`
-/// or `#`. A URL parser starts it there too, and ends it at one of those three
-/// or sooner, so any user it reads is inside the one read here, which is what
-/// is replaced. The parser skips a run of `/` and `\` after the scheme and
-/// drops a tab or a line break wherever one is written, and an authority read
-/// from the first `://` would then not be the one it reads. So an address this
-/// cannot read the parser's way is replaced whole if it holds an `@` anywhere:
-/// one with no plain `scheme://` in front, one whose authority starts with a
-/// `/`, a `\`, a space or a control character, and one whose authority holds a
-/// `\`, a space or a control character.
-fn without_user(address: &str) -> String {
-    let unread = || {
-        if address.contains('@') {
-            env::REDACTED.to_owned()
-        } else {
-            address.to_owned()
-        }
-    };
-    let Some((scheme, rest)) = address.split_once("://") else {
-        return unread();
-    };
-    let plain = !scheme.is_empty()
-        && scheme
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
-    if !plain {
-        return unread();
-    }
-
-    let skipped = |c: char| c == '\\' || c.is_ascii_whitespace() || c.is_ascii_control();
-    if rest.starts_with(|c: char| c == '/' || skipped(c)) {
-        return unread();
-    }
-
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let Some((authority, after)) = rest.split_at_checked(end) else {
-        return unread();
-    };
-    if authority.contains(skipped) {
-        return unread();
-    }
-    match authority.rsplit_once('@') {
-        Some((_, host)) => format!("{scheme}://{}@{host}{after}", env::REDACTED),
-        None => address.to_owned(),
+/// It reads the authority from the first `://` to the first `/`, `?` or `#`,
+/// and a URL parser starts it there too and ends it at one of those three or
+/// sooner, so anything it reads as a user or a path is hidden with them. Two
+/// spellings break that. A scheme that is not a plain one holds whatever was
+/// written before the first `://`, a user or a path among it. And a parser
+/// ends the authority at a `\`, drops a tab or a line break wherever one is
+/// written, and refuses a space or another control, so an authority holding
+/// any of them is not one it reads. An address spelled either way is replaced
+/// whole. A run of `/` after the scheme, which a parser skips, leaves an empty
+/// authority here, and everything after it is hidden.
+///
+/// The provider refuses every one of these before it sends anything. This
+/// check is where what the two print differs, because a printed setting is
+/// written before any refusal is made.
+fn recipient(written: &str) -> String {
+    let readable = written.split_once("://").is_some_and(|(scheme, rest)| {
+        let plain = !scheme.is_empty()
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        let unread = |c: char| c == '\\' || c.is_ascii_whitespace() || c.is_ascii_control();
+        plain && !address::authority(rest).contains(unread)
+    });
+    if readable {
+        address::redacted(written)
+    } else {
+        env::REDACTED.to_owned()
     }
 }
 
@@ -758,7 +744,10 @@ mod tests {
         let settings = Settings::resolve(vec![document.clone()]);
 
         for printed in [format!("{settings:?}"), format!("{document:?}")] {
-            assert!(printed.contains("host.example/v1"), "got {printed}");
+            assert!(
+                printed.contains("https://host.example/[redacted]"),
+                "got {printed}"
+            );
             assert!(!printed.contains("pa55word"), "got {printed}");
             assert!(!printed.contains("user:"), "got {printed}");
             assert!(!printed.contains("user@"), "got {printed}");
@@ -772,48 +761,74 @@ mod tests {
     }
 
     #[test]
+    fn printing_the_settings_shows_where_a_base_url_goes_and_not_its_path_or_query() {
+        // A gateway's path and query are where a tenant or a token is put, so
+        // a printed setting names the recipient alone, as the provider's own
+        // diagnostics do.
+        let text = r#"{"providers": {"openai": {"baseUrl":
+                         "https://host.example:8443/tenant-fake/v1?api-key=not-a-real-key"}}}"#;
+        let document = Document::sample(text, Origin::User);
+        let settings = Settings::resolve(vec![document.clone()]);
+
+        for printed in [format!("{settings:?}"), format!("{document:?}")] {
+            assert!(
+                printed.contains("https://host.example:8443/[redacted]"),
+                "got {printed}"
+            );
+            for hidden in ["tenant-fake", "api-key", "not-a-real-key"] {
+                assert!(!printed.contains(hidden), "{hidden} in {printed}");
+            }
+        }
+
+        // What is applied is what was written.
+        assert_eq!(
+            settings.base_url("openai"),
+            Some("https://host.example:8443/tenant-fake/v1?api-key=not-a-real-key")
+        );
+    }
+
+    #[test]
     fn a_base_url_spelled_so_its_authority_cannot_be_read_is_hidden_whole() {
-        // Nothing may be read as a host that a URL parser would read as a user,
-        // so an address with no plain `scheme://` in front and an `@` anywhere
-        // is not shown at all. One with no `@` has no user to hide.
+        // Nothing may be shown as a recipient that a URL parser would read as
+        // a user or a path, so an address with no plain `scheme://` in front,
+        // or whose authority holds a `\`, a space or a control, is not shown
+        // at all.
         for written in [
             "https:user:pa55word@host.example/v1",
             "user:pa55word@host.example",
             "https:user:pa55word@host.example/x://y",
+            "https:tenant-fake/x://y",
+            "localhost:8080/v1?api-key=not-a-real-key",
+            "https://host.example\\tenant-fake",
+            "https://\\/user:pa55word@host.example",
+            "https://\t/user:pa55word@host.example/v1",
+            "https://\n/user:pa55word@host.example/v1",
+            "https://host.example /tenant-fake",
         ] {
-            assert_eq!(without_user(written), env::REDACTED, "{written}");
+            assert_eq!(recipient(written), env::REDACTED, "{written:?}");
         }
         assert_eq!(
-            without_user("https://a:b@c:d@host.example:8443/v1?q=1"),
-            "https://<redacted>@host.example:8443/v1?q=1"
+            recipient("https://a:b@c:d@host.example:8443/v1?q=1"),
+            "https://host.example:8443/[redacted]"
         );
         assert_eq!(
-            without_user("https://host.example/v1/@path"),
-            "https://host.example/v1/@path"
+            recipient("https://host.example/v1/@path"),
+            "https://host.example/[redacted]"
         );
-        assert_eq!(without_user("localhost:8080"), "localhost:8080");
     }
 
     #[test]
-    fn a_base_url_whose_authority_follows_a_run_of_slashes_is_hidden_whole() {
-        // A URL parser skips every `/` and `\` after `https://`, and drops a
-        // tab or a line break wherever one is written, so in each of these it
-        // reads `user:pa55word` as the user. Read from the first `://`, the
-        // authority would be empty and the password printed beside it.
-        // Every spelling is tried before the assertion, so a failure names all
-        // of the ones that print rather than the first.
-        let printed: Vec<(&str, String)> = [
+    fn a_base_url_whose_authority_follows_a_run_of_slashes_shows_no_user() {
+        // A URL parser skips every `/` after `https://`, so in each of these
+        // it reads `user:pa55word` as the user. Read from the first `://`, the
+        // authority is empty, and the user is in what follows it, which is
+        // hidden.
+        for written in [
             "https:///user:pa55word@host.example/v1",
-            "https://\\/user:pa55word@host.example",
             "https:////user:pa55word@host.example",
-            "https://\t/user:pa55word@host.example/v1",
-            "https://\n/user:pa55word@host.example/v1",
-        ]
-        .into_iter()
-        .map(|written| (written, without_user(written)))
-        .filter(|(_, shown)| shown != env::REDACTED)
-        .collect();
-        assert!(printed.is_empty(), "shown: {printed:?}");
+        ] {
+            assert_eq!(recipient(written), "https:///[redacted]", "{written}");
+        }
     }
 
     #[test]

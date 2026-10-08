@@ -22,10 +22,15 @@
 //! `crucible-config`: `.crucible/config.json` travels with a checkout and may
 //! not say this, because a repository that could would be a repository that
 //! reads the key of everyone who clones it.
+//!
+//! What a refusal, `Display` and `Debug` show of an address is the recipient
+//! alone, as [`crucible_types::address::redacted`] writes it, which is also
+//! how a printed setting shows the `baseUrl` this is parsed from.
 
 use std::borrow::Cow;
 use std::fmt;
 
+use crucible_types::address::{authority, redacted};
 use thiserror::Error;
 
 /// Why an address was refused.
@@ -123,11 +128,6 @@ impl fmt::Debug for Endpoint {
     }
 }
 
-/// The authority at the front of what follows a scheme.
-fn authority(rest: &str) -> &str {
-    rest.split(['/', '?', '#']).next().unwrap_or("")
-}
-
 /// The host inside an authority, if it is unambiguous and well formed.
 fn host(authority: &str) -> Option<&str> {
     if authority.is_empty()
@@ -166,23 +166,6 @@ fn bracket_port(after: &str) -> bool {
 fn user_information(text: &str) -> bool {
     text.split_once("://")
         .is_some_and(|(_, rest)| authority(rest).contains('@'))
-}
-
-/// An address safe to put in diagnostics.
-fn redacted(text: &str) -> String {
-    let Some((scheme, rest)) = text.split_once("://") else {
-        return "[redacted address]".to_owned();
-    };
-    let named = authority(rest);
-    let authority = named.rsplit_once('@').map_or(named, |(_, host)| host);
-    let mut shown = format!("{scheme}://{authority}");
-
-    // Gateway paths are commonly tenant- or token-bearing, just as queries
-    // are. Diagnostics therefore show the recipient but no request target.
-    if rest.len() > named.len() {
-        shown.push_str("/[redacted]");
-    }
-    shown
 }
 
 /// Whether a parsed host is this machine talking to itself.
