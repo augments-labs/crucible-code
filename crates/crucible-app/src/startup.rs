@@ -485,10 +485,13 @@ pub fn reopening(
 /// most recent one is the whole plan — the tool replaces the list every time —
 /// so the search stops at the first it finds from the end.
 ///
-/// Only a call whose result succeeded wrote anything. One that was refused,
-/// declined, cancelled or never run, or that has no result because the log
-/// stops before one, asked for a plan that never took effect, and the plan in
-/// force is still the one before it; so such a call is passed over.
+/// Only a call whose result succeeded is read. One that was refused, declined,
+/// cancelled or never run, or that has no result because the log stops before
+/// one, asked for a plan that never took effect, and the plan in force is still
+/// the one before it; so such a call is passed over. The record is what decides
+/// this, so a call that wrote its plan and was then answered as failed — its
+/// answer would not fit the turn, or could not be kept — is passed over too,
+/// and the plan stood up is the last one the model was told it had written.
 ///
 /// Nothing is said where there is none, and nothing is said where the call
 /// cannot be read: this is a picture of the work, drawn again from the record,
