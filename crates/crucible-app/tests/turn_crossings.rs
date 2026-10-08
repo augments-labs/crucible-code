@@ -208,7 +208,9 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 /// waits made from outside every turn — startup writing what a session picked
 /// up owes before any turn exists, the drawing thread answering a command,
 /// taking back what a plan answered, asking the backend the sandbox panel
-/// shows, and joining a turn that has ended — the runner's test helper that drives a turn to its end on a runtime
+/// shows, and joining a turn that has ended — the two waits of `crucible
+/// update`, a command that runs before any conversation exists and starts
+/// none, the runner's test helper that drives a turn to its end on a runtime
 /// of the test's own, the two performance probes waiting, on their own main
 /// thread, for each call they time on a runtime of the probe's own, and the
 /// lines inside the `#[cfg(test)] mod tests` of the sandbox's redaction and of
@@ -268,6 +270,19 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "src/cli/converse.rs",
         "let (conversation, did) = terms.runtime.block_on(working).map_err(|_| Fatal::Lost)?;",
+        1,
+    ),
+    // `crucible update`, which a command line reaches before any conversation
+    // exists and which starts none: asking which release is newest, and
+    // downloading its checksums and its archive.
+    (
+        "crates/crucible-update/src/command.rs",
+        ".block_on(asked_at(http, &source.latest(), &Cancel::new()))",
+        1,
+    ),
+    (
+        "crates/crucible-update/src/command/apply.rs",
+        "runtime.block_on(download(http, source, url, into, ceiling))?;",
         1,
     ),
     ("crates/crucible-runner/src/fake.rs", ".block_on(self)", 1),

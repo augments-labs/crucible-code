@@ -36,6 +36,7 @@ mod sample;
 mod seen;
 mod standing;
 mod style;
+mod update;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
@@ -185,6 +186,15 @@ completion SHELL writes a completion script for bash, zsh, fish, powershell \
 or elvish, made from this command line as it is, and stops. It reads no \
 configuration and opens no terminal.
 
+update says whether a release later than this one is out and, where \
+install.sh installed crucible, downloads it, checks it against the release's \
+SHA256SUMS, makes it the active release and stops; a release that does not \
+then run as itself is rolled back. update --check only says, and exits 3 when \
+a later release is out; update --dry-run says what would be installed. Asking \
+is what updates: updates.check does not stop it, and a build cargo made, a \
+copy put in place by hand and a Windows install are refused with the way \
+each is updated instead.
+
 Flags, session files and config are unstable for the whole 0.x line.",
     args_conflicts_with_subcommands = true
 )]
@@ -278,6 +288,16 @@ enum Command {
     Sessions {
         #[command(subcommand)]
         action: SessionsAction,
+    },
+    /// Say whether a later release is out, or install it in place of this
+    /// one where install.sh installed it, and stop.
+    Update {
+        /// Only say whether a later release is out; exit 3 if one is.
+        #[arg(long, conflicts_with = "dry_run")]
+        check: bool,
+        /// Say what an update would install, and change nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Write a completion script for a shell to standard output, and stop.
     Completion {
@@ -522,6 +542,9 @@ pub(crate) fn start() -> ExitCode {
             };
         }
         (Some(Command::Completion { shell }), _, _) => return completion::completed(*shell),
+        (Some(Command::Update { check, dry_run }), _, _) => {
+            return update::updated(*check, *dry_run);
+        }
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {

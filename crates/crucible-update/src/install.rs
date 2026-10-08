@@ -41,11 +41,15 @@
 
 mod activate;
 mod boundary;
+#[cfg(test)]
+pub(crate) mod fixture;
 mod layout;
 mod receipt;
 mod stage;
 
+use crate::version::Version;
 pub use activate::{Activated, ActivationError, ActivationStep, RecoverableActivation, UnitRole};
 pub use layout::{EntryKind, LayoutEntry, LayoutError, ReceiptClaim, ReceiptLayout};
-pub use receipt::{Digest, Installation, Receipt, ReceiptError, Target, Version};
+pub use receipt::{Digest, Installation, Receipt, ReceiptError, Target};
+pub(crate) use stage::{Limits, archive_name};
 pub use stage::{StageError, StagePart, StagedUnit};

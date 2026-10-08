@@ -688,8 +688,10 @@ your directory or your configuration is sent. The request is a plain GET for
 the repository's latest release, carrying a user agent that names crucible and
 its version.
 
-`never` stops the asking. crucible then never contacts GitHub, and never says
-anything about releases.
+`never` stops the asking. crucible then never contacts GitHub on its own, and
+never says anything about releases. Running
+[`crucible update`](../reference/cli.md#update---check----dry-run) is still
+asking, so it reaches GitHub whatever this is set to.
 
 ### `contentUse`
 

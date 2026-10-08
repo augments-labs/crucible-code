@@ -420,10 +420,14 @@ section "every HTTP client is built where its hold was decided"
 # decided about: renewal.rs builds the client sign-ins and renewals go
 # through, handed the application's hold; release.rs lends the client
 # provider turns and web posts share only under a hold its caller hands in,
-# and builds the release check's own, which reaches GitHub alone; transport/http.rs builds one
-# only inside its test module. One more file is one more decision to take.
+# and builds the release check's own, which reaches GitHub alone; command.rs
+# builds the one `crucible update` asks a loopback release source through,
+# which reaches this machine alone and carries nothing from a session;
+# transport/http.rs builds one only inside its test module. One more file is
+# one more decision to take.
 decided="crates/crucible-auth/src/oauth/renewal.rs
 crates/crucible-provider/src/transport/http.rs
+crates/crucible-update/src/command.rs
 crates/crucible-update/src/release.rs"
 built=$(git ls-files 'crates/*.rs' 'src/*.rs' |
     grep -v -E '(^|/)tests(\.rs|/)' |
@@ -1902,7 +1906,7 @@ else
     # Every required cell feeds the verdict, and none of them may fail quietly.
     staged_job=$(staging_job staged)
     staged_needs=$(sed -n 's/^    needs: *\[\(.*\)\]$/\1/p' <<<"$staged_job" | tr -d ' ' | tr ',' '\n')
-    cells=(staged-checksums stage-unix stage-freebsd stage-windows)
+    cells=(staged-checksums stage-unix stage-freebsd stage-windows stage-update-unix stage-update-freebsd stage-update-windows)
     while IFS= read -r job; do cells+=("$job"); done < <(sed -n 's/^  \(stage-[A-Za-z0-9_-]*\):$/\1/p' "$staging_workflow")
     for job in "${cells[@]}"; do
         body=$(staging_job "$job")
@@ -1942,6 +1946,30 @@ else
             staging_fail "the rollback cell names a release: $named"
         fi
     fi
+    # `crucible update` is staged on every platform a release is built for:
+    # each build job builds the releases the cells move between, and each
+    # cell runs on what those builds made.
+    for job in build-linux build freebsd-x86_64; do
+        body=$(staging_job "$job")
+        grep -qF 'tests/fixtures/installer/update-build.sh' <<<"$body" ||
+            staging_fail "$job builds none of the releases the update cells move between"
+        grep -qF 'name: update-' <<<"$body" || staging_fail "$job uploads no update- artifact"
+    done
+    for cell in 'stem: linux-x86_64, runner: ubuntu-latest, backend: linux-bubblewrap' \
+                'stem: linux-aarch64, runner: ubuntu-24.04-arm, backend: linux-bubblewrap' \
+                'stem: macos-aarch64, runner: macos-latest, backend: macos-seatbelt' \
+                'stem: macos-x86_64, runner: macos-15-intel, backend: macos-seatbelt'; do
+        grep -qF -- "- { $cell }" <<<"$(staging_job stage-update-unix)" ||
+            staging_fail "stage-update-unix lost the cell { $cell }"
+    done
+    for cell in 'stem: windows-x86_64, runner: windows-latest' 'stem: windows-aarch64, runner: windows-11-arm'; do
+        grep -qF -- "- { $cell }" <<<"$(staging_job stage-update-windows)" ||
+            staging_fail "stage-update-windows lost the cell { $cell }"
+    done
+    for job in stage-update-unix stage-update-freebsd; do
+        grep -qF 'bash tests/fixtures/installer/update-cells.sh' <<<"$(staging_job "$job")" ||
+            staging_fail "$job does not run tests/fixtures/installer/update-cells.sh"
+    done
     canary_jobs=$(sed -n 's/^  \([A-Za-z0-9_-]*\):$/\1/p' <(sed -n '/^jobs:$/,$p' .github/workflows/release-canary.yml) | tr '\n' ' ')
     [[ $canary_jobs == "latest container windows " ]] ||
         staging_fail "release-canary.yml runs '$canary_jobs', not latest, container and windows"
@@ -1981,7 +2009,7 @@ GH
     chmod 755 "$staging_scratch"/bin/*
     staging_path=$staging_scratch/bin:$PATH
     staging_blocks=()
-    for name in 'promote by digest' 'staged verdict' 'staging run' 'published as staged'; do
+    for name in 'promote by digest' 'staged verdict' 'staging run' 'published as staged' 'update pair'; do
         if ! body=$(staging_block "$name"); then
             staging_fail "release.yml has no '$name' block for this check to run"
         elif grep -qF '${{' <<<"$body"; then
@@ -2162,6 +2190,36 @@ GH
         published refuse "a SHA256SUMS that is not the staged one" \
             sh -c "printf '\n' >>'$staging_scratch/gh/release/SHA256SUMS'"
         unset -f published
+    fi
+
+    if staging_has 'update pair'; then
+        block=$(<"$staging_scratch/update pair.sh")
+        # The releases the gate names, for a manifest VERSION and the drill's
+        # PRIOR_TAG line, as the outputs it writes, joined on one line.
+        pair() {
+            local expect=$1 version=$2 tag_line=$3 named=${4:-}
+            rm -rf "$staging_scratch/pair" && mkdir -p "$staging_scratch/pair/scripts/sh"
+            printf '%s\n' '#!/usr/bin/env bash' "$tag_line" >"$staging_scratch/pair/scripts/sh/rollback-drill.sh"
+            : >"$staging_scratch/pair/output"
+            status=0
+            staging_run "$block" "$staging_scratch/pair" PATH="$staging_path" VERSION="$version" \
+                GITHUB_OUTPUT="$staging_scratch/pair/output" || status=$?
+            staging_expect "$expect" "update pair: VERSION $version with '$tag_line'" "$status"
+            if [[ $expect == pass && $(paste -sd' ' "$staging_scratch/pair/output") != "$named" ]]; then
+                staging_fail "update pair: VERSION $version named '$(paste -sd' ' "$staging_scratch/pair/output")', expected '$named'"
+            fi
+        }
+        pair pass 1.4.0 'readonly PRIOR_TAG=v1.4.0' 'prior=1.4.0 older=1.5.0 newer=1.5.1 build-older=true'
+        pair pass 1.5.0 'readonly PRIOR_TAG=v1.4.0' 'prior=1.4.0 older=1.5.0 newer=1.5.1 build-older=false'
+        pair pass 1.10.2 'readonly PRIOR_TAG=v1.9.0' 'prior=1.9.0 older=1.10.2 newer=1.10.3 build-older=false'
+        pair refuse 1.3.9 'readonly PRIOR_TAG=v1.4.0'
+        pair refuse 1.5.0 'PRIOR_TAG=v1.4.0'
+        pair refuse 1.5.0 'readonly PRIOR_TAG=1.4.0'
+        pair refuse 1.5 'readonly PRIOR_TAG=v1.4.0'
+        if named=$(grep -E '[0-9]+\.[0-9]+\.[0-9]+' "$staging_scratch/update pair.sh"); then
+            staging_fail "the update pair names a release: $named"
+        fi
+        unset -f pair
     fi
     rm -rf "$staging_scratch"
 fi

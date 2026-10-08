@@ -464,6 +464,29 @@ fn doctor_is_an_early_action_with_an_optional_json_report() {
     }
 }
 
+#[test]
+fn update_checks_or_dry_runs_but_not_both() {
+    for (words, check, dry_run) in [
+        (vec!["crucible", "update"], false, false),
+        (vec!["crucible", "update", "--check"], true, false),
+        (vec!["crucible", "update", "--dry-run"], false, true),
+    ] {
+        let cli = Cli::try_parse_from(&words).expect("an update");
+        assert!(
+            matches!(cli.command, Some(Command::Update { check: c, dry_run: d }) if c == check && d == dry_run),
+            "{words:?}"
+        );
+    }
+
+    for invalid in [
+        vec!["crucible", "update", "--check", "--dry-run"],
+        vec!["crucible", "update", "0.47.1"],
+        vec!["crucible", "update", "--force"],
+    ] {
+        assert!(Cli::try_parse_from(&invalid).is_err(), "{invalid:?}");
+    }
+}
+
 /// A store 0.43.3 left after a roll back: its kimi.com key beside the kimi.ai
 /// sign-in the release after it wrote. Fabricated.
 const TWO_HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;

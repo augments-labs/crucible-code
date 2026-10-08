@@ -42,6 +42,16 @@ escaped: Rust's own `RUST_LIB_BACKTRACE`, or where that is unset
   See
   [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed).
 
+- `CRUCIBLE_CODE_UPDATE_SOURCE`: a release server on this machine for
+  [`crucible update`](cli.md#update---check----dry-run) to ask instead of
+  GitHub, so that an update can be tested without publishing a release. Only
+  an `http://` URL on `127.0.0.1` or `[::1]` is accepted. Any other value is
+  refused before a request is made, with `CRUCIBLE_CODE_UPDATE_SOURCE may only
+  name an http:// URL on 127.0.0.1 or [::1]; unset it to update from GitHub`,
+  and exit status 1. crucible reads it only from the shell it is started in.
+  Naming it in an `env` block sets it for the commands a session runs, but
+  `crucible update` does not look for it there. Unset: GitHub.
+
 The `env` block is the environment the commands crucible runs are started
 with, and crucible's own settings are read from it under this prefix. A
 configuration file under the working directory may set only names that begin

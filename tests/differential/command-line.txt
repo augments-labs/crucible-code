@@ -20,6 +20,7 @@ Commands:
   mcp         Say which MCP servers your configuration writes down, without starting any of them, and stop
   extensions  Say what is installed in crucible's extensions directory, without running any of it, and stop
   sessions    Say which sessions were recorded for this directory, without opening any of them, and stop
+  update      Say whether a later release is out, or install it in place of this one where install.sh installed it, and stop
   completion  Write a completion script for a shell to standard output, and stop
   help        Print this message or the help of the given subcommand(s)
 
@@ -64,6 +65,8 @@ sandbox inspect prints the confinement a command in this directory would run und
 
 completion SHELL writes a completion script for bash, zsh, fish, powershell or elvish, made from this command line as it is, and stops. It reads no configuration and opens no terminal.
 
+update says whether a release later than this one is out and, where install.sh installed crucible, downloads it, checks it against the release's SHA256SUMS, makes it the active release and stops; a release that does not then run as itself is rolled back. update --check only says, and exits 3 when a later release is out; update --dry-run says what would be installed. Asking is what updates: updates.check does not stop it, and a build cargo made, a copy put in place by hand and a Windows install are refused with the way each is updated instead.
+
 Flags, session files and config are unstable for the whole 0.x line.
 
 Usage: crucible [OPTIONS]
@@ -77,6 +80,7 @@ Commands:
   mcp         Say which MCP servers your configuration writes down, without starting any of them, and stop
   extensions  Say what is installed in crucible's extensions directory, without running any of it, and stop
   sessions    Say which sessions were recorded for this directory, without opening any of them, and stop
+  update      Say whether a later release is out, or install it in place of this one where install.sh installed it, and stop
   completion  Write a completion script for a shell to standard output, and stop
   help        Print this message or the help of the given subcommand(s)
 
