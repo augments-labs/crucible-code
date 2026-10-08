@@ -461,12 +461,13 @@ pub(crate) enum Fatal {
     Lost,
 
     /// The process was told to stop from outside while a turn ran, and the
-    /// turn has been ended and written down.
+    /// turn has been ended and written down, or while the keyboard was waited
+    /// on between turns.
     ///
     /// Carried as an error because it leaves by the way a failed terminal
     /// does, and never printed as one: [`start`] obeys the signal instead,
     /// once everything this run held has been given back.
-    #[error("the turn was ended from outside")]
+    #[error("the session was ended from outside")]
     Ended(ending::Told),
 }
 

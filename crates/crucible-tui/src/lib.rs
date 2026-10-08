@@ -93,7 +93,7 @@ pub use plan::{Plan, State, Task};
 pub use prompt::{CommandCount, Draft, Prompt, Recalled, Remaining, label};
 /// The most units of the transcript kept at once; a row put down whole costs one.
 pub const RECORDED: usize = record::MOST;
-pub use render::{Aimed, Caret, PromptRows, Renderer, ScreenMode};
+pub use render::{Aimed, Caret, PromptRows, Recall, Renderer, ScreenMode};
 pub use row::Row;
 pub use running::{Command, Running};
 pub use sandbox_panel::{SandboxPanel, SandboxTab};

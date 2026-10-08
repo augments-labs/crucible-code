@@ -234,6 +234,9 @@ struct TerminalFixture<'a> {
     /// Whether the launch asked for native mode, and so draws in this
     /// terminal's own buffer rather than on a screen of its own.
     native: bool,
+    /// Whether the far side starts in the mode a new terminal opens in,
+    /// echoing and reading whole lines, rather than raw.
+    cooked: bool,
 }
 
 impl TerminalFixture<'_> {
@@ -279,6 +282,7 @@ impl Watched {
                 rows,
                 reply: Some(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?1;2c"),
                 native: false,
+                cooked: false,
             },
             None,
         )
@@ -333,6 +337,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: true,
+                cooked: false,
             },
             None,
         )
@@ -424,6 +429,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: screen == "native",
+                cooked: false,
             },
             None,
         )
@@ -510,6 +516,25 @@ impl Watched {
 
     /// Starts crucible in a window that size and waits for it to finish
     /// drawing.
+    /// The same as [`Self::open`], in a terminal that starts as a new one
+    /// does, echoing and reading whole lines, so that whether crucible put it
+    /// back that way can be asked once it is gone.
+    pub(crate) fn cooked(case: &str, columns: u16, rows: u16) -> Self {
+        Self::configured_with_terminal(
+            case,
+            &document(None, None),
+            false,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: false,
+                cooked: true,
+            },
+            None,
+        )
+    }
+
     fn started(case: &str, columns: u16, rows: u16, vendor: Option<&Vendor>, keyed: bool) -> Self {
         Self::configured(case, columns, rows, &document(vendor, None), keyed)
     }
@@ -530,6 +555,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: false,
+                cooked: false,
             },
             None,
         )
@@ -546,6 +572,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: false,
+                cooked: false,
             },
             Some(launch),
         )
@@ -588,7 +615,7 @@ impl Watched {
         )
         .expect("a git configuration file");
 
-        let (mut near, inside) = pair(terminal.columns, terminal.rows);
+        let (mut near, inside) = pair(terminal.columns, terminal.rows, terminal.cooked);
         let child = start(&scratch, keyed, terminal, launch, inside);
         if let Some(reply) = terminal.reply {
             near.write_all(reply)
@@ -1062,6 +1089,17 @@ impl Watched {
         (ended, String::from_utf8_lossy(&wrote).into_owned())
     }
 
+    /// Whether the terminal echoes what is typed, and whether it hands over
+    /// whole lines rather than each key: the two modes a shell is left
+    /// unusable without.
+    pub(crate) fn modes(&self) -> (bool, bool) {
+        let mode = termios::tcgetattr(&self.terminal).expect("the terminal has a mode");
+        (
+            mode.local_modes.contains(termios::LocalModes::ECHO),
+            mode.local_modes.contains(termios::LocalModes::ICANON),
+        )
+    }
+
     /// Every session log this run left behind, one after another.
     ///
     /// Read after the process is gone, which is the only moment the question
@@ -1416,8 +1454,9 @@ impl Drop for Watched {
     }
 }
 
-/// Opens the pair, sets its size, and puts the far side in raw mode.
-fn pair(columns: u16, rows: u16) -> (File, File) {
+/// Opens the pair, sets its size, and puts the far side in raw mode unless
+/// it is to start `cooked`.
+fn pair(columns: u16, rows: u16, cooked: bool) -> (File, File) {
     let terminal = pty::openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
         .expect("a pseudo terminal");
     pty::grantpt(&terminal).expect("the far side is ours");
@@ -1430,9 +1469,11 @@ fn pair(columns: u16, rows: u16) -> (File, File) {
         .open(OsStr::from_bytes(named.as_bytes()))
         .expect("the far side opens");
 
-    let mut mode = termios::tcgetattr(&inside).expect("the far side has a mode");
-    mode.make_raw();
-    termios::tcsetattr(&inside, OptionalActions::Now, &mode).expect("the far side goes raw");
+    if !cooked {
+        let mut mode = termios::tcgetattr(&inside).expect("the far side has a mode");
+        mode.make_raw();
+        termios::tcsetattr(&inside, OptionalActions::Now, &mode).expect("the far side goes raw");
+    }
     termios::tcsetwinsize(&terminal, size(columns, rows)).expect("a window size");
 
     (File::from(terminal), inside)

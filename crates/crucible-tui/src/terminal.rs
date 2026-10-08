@@ -37,6 +37,10 @@ pub enum TerminalError {
     /// The terminal could not be written to, or would not report its size.
     #[error("terminal: {0}")]
     Io(#[from] io::Error),
+    /// A wait on the keyboard was called off from outside, by the
+    /// [`crate::Recall`] the renderer was given.
+    #[error("terminal: the wait for a key was called off")]
+    Recalled,
 }
 
 /// The size of the visible area, in cells.

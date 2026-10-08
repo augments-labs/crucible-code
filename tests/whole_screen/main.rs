@@ -3939,6 +3939,69 @@ fn a_termination_sent_while_the_list_stands_over_an_answer_is_not_kept_waiting()
     );
 }
 
+#[test]
+fn a_signal_sent_while_the_prompt_waits_hands_the_terminal_back() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    // Between turns crucible holds the keys raw and sits waiting for the next
+    // one. A window closed or a `kill` sent then ends it as either always
+    // did, but only once the keys are cooked again and the screen it borrowed
+    // is given back: a shell that no longer echoes what is typed is what
+    // ending where it stood left behind.
+    for (case, signal, number) in [
+        ("prompt-terminated", "TERM", 15),
+        ("prompt-hung-up", "HUP", 1),
+    ] {
+        let mut window = Watched::cooked(case, 80, 24);
+        assert_eq!(
+            window.modes(),
+            (false, false),
+            "{signal}: the keys were never raw"
+        );
+
+        let (ended, wrote) = window.ends_on(signal);
+
+        assert_eq!(
+            window.modes(),
+            (true, true),
+            "{signal}: the terminal was left without echo or whole lines"
+        );
+        assert!(
+            wrote.contains("\u{1b}[?25h\u{1b}[?1049l"),
+            "{signal}: the screen and the cursor were never handed back: {wrote:?}"
+        );
+        assert_eq!(
+            ended.signal(),
+            Some(number),
+            "{signal}: crucible did not end the way the signal ends a process: {ended:?}"
+        );
+    }
+}
+
+#[test]
+fn a_termination_sent_while_the_key_box_waits_hands_the_terminal_back() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    // The key box is a panel between turns that reads every key itself, so a
+    // termination there has to be noticed by the box rather than by the
+    // prompt it stands over.
+    let mut window = Watched::cooked("key-box-terminated", 80, 24);
+    window.types_until("/login anthropic\r", "paste or type your API key");
+
+    let (ended, wrote) = window.ends_on("TERM");
+
+    assert_eq!(
+        window.modes(),
+        (true, true),
+        "the terminal was left without echo or whole lines"
+    );
+    assert!(
+        wrote.contains("\u{1b}[?25h\u{1b}[?1049l"),
+        "the screen and the cursor were never handed back: {wrote:?}"
+    );
+    assert_eq!(ended.signal(), Some(15), "{ended:?}");
+}
+
 /// A configuration that draws crucible's own marks with the characters every
 /// font has.
 fn in_ascii() -> String {

@@ -120,8 +120,13 @@ arriving does not lose it. On Linux, macOS and FreeBSD the hang-up or
 termination stops the turn first, the way Escape would: what the model had said
 so far is written to the log, the terminal is handed back, and then the process
 ends by that signal. `--continue` picks the session up with that much of the
-answer in it. Between turns there is nothing in flight and the signal ends
-crucible at once, as it does while a permission question is waiting for a key.
+answer in it. Between turns there is nothing in flight. While crucible waits
+for a key there, at the prompt or in a panel such as the `/login` key box, the
+signal is noticed within a quarter of a second, the terminal is handed back
+with what is typed showing again, and then the process ends by that signal.
+While a command is being carried out, or an account sign-in waits on the
+browser, the signal ends crucible at once, as it does while a permission
+question is waiting for a key.
 A `kill -9` cannot be caught by anything, and on Windows a closing console
 window is not caught either; both end the process where it stands, which is the
 case the next paragraph is about.

@@ -18,13 +18,25 @@
 //! its `Drop`, and only then is the signal obeyed, by [`Told::obeyed`], so
 //! whoever sent it sees the death it asked for.
 //!
-//! Everywhere else in a session the signal does at once what it always did.
-//! Between turns there is no answer in flight, and the prompt waits on the
-//! keyboard with no clock, so nothing would read a note left there. The same
-//! is true inside a turn wherever this thread waits on a key with no clock — a
-//! permission question, a panel — and [`Ending::unclocked`] marks those
-//! stretches: a signal that was only noted there would be a `kill` that did
-//! nothing until somebody pressed a key. The wait for the log that ends a turn is one more:
+//! Between turns there is no answer in flight, but the keys are still raw:
+//! raw mode is held for the whole session, so a signal obeyed where it lands
+//! while the prompt waits ends the process with no guard's `Drop` run, and
+//! leaves the shell after it showing nothing that is typed. So a wait on the
+//! keyboard between turns — the prompt, and every panel that stands over it,
+//! the `/login` key box among them — is a stretch of its own, through the
+//! [`Recall`] the renderer is given: the signal is noted while the wait lasts,
+//! the wait looks for a note a beat at a time and is called off where it finds
+//! one, and the session unwinds the way it does for a terminal that failed,
+//! every guard handing back what it held, before the note is read and the
+//! signal obeyed. Anywhere else between turns — a command being carried out, a
+//! sign-in waiting on the browser — the signal does at once what it always did.
+//!
+//! Inside a turn, wherever this thread waits on a key with no clock — a
+//! permission question, a panel — [`Ending::unclocked`] marks the stretch and
+//! the signal is obeyed where it lands: one that was only noted there would be
+//! a `kill` that did nothing until somebody pressed a key, and those waits are
+//! not watched, since the stretch they stand in already decides. The wait for
+//! the log that ends a turn is one more:
 //! its worker has handed over everything it held by then, and a log that had
 //! stopped answering would otherwise hold the process against every `kill`.
 //! Once one signal has been read, the next is obeyed at once too, so a turn
@@ -69,7 +81,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crucible_tui::{Pressed, TerminalError};
+use crucible_tui::{Pressed, Recall, TerminalError};
 
 /// How long [`Ending::presses`] waits on the keyboard before it looks for a
 /// note again, and so the longest a signal at the prompt is held back.
@@ -77,7 +89,7 @@ const BEAT: Duration = Duration::from_millis(250);
 
 /// What this process has been told from outside, and when it may act on it.
 ///
-/// Cloned freely: every clone is the same two atomics.
+/// Cloned freely: every clone is the same three atomics.
 #[derive(Debug, Clone)]
 pub(crate) struct Ending {
     /// The signal that arrived, or zero. Written by the handler alone, apart
@@ -85,6 +97,9 @@ pub(crate) struct Ending {
     told: Arc<AtomicUsize>,
     /// Whether a signal is obeyed where it lands rather than noted.
     at_once: Arc<AtomicBool>,
+    /// How many stretches are open. None is between turns, where a wait on
+    /// the keyboard is the one place a signal is noted.
+    stretched: Arc<AtomicUsize>,
     /// Whether a handler was installed at all. Where none was, a signal is
     /// the system's to act on and nothing here may suggest otherwise.
     listening: bool,
@@ -113,6 +128,7 @@ impl Ending {
         Self {
             told: Arc::new(AtomicUsize::new(0)),
             at_once: Arc::new(AtomicBool::new(true)),
+            stretched: Arc::new(AtomicUsize::new(0)),
             listening: false,
         }
     }
@@ -219,6 +235,7 @@ impl Ending {
     }
 
     fn stretch(&self, at_once: bool) -> Stretch<'_> {
+        self.stretched.fetch_add(1, Ordering::SeqCst);
         let before = if self.listening {
             self.at_once.swap(at_once, Ordering::SeqCst)
         } else {
@@ -243,6 +260,13 @@ impl Ending {
 
         self.at_once.store(true, Ordering::SeqCst);
         i32::try_from(signal).ok().map(Told)
+    }
+
+    /// What lets a wait on the keyboard between turns notice a signal, where
+    /// one is heard at all: see [`Recall`] for `Ending`.
+    pub(crate) fn recall(&self) -> Option<Arc<dyn Recall>> {
+        self.listening
+            .then(|| Arc::new(self.clone()) as Arc<dyn Recall>)
     }
 
     /// Notes `signal` the way the handler does.
@@ -309,6 +333,7 @@ impl Stretch<'_> {
 
 impl Drop for Stretch<'_> {
     fn drop(&mut self) {
+        self.ending.stretched.fetch_sub(1, Ordering::SeqCst);
         if !self.ending.listening {
             return;
         }
@@ -319,6 +344,37 @@ impl Drop for Stretch<'_> {
         self.ending
             .at_once
             .store(self.before || noted, Ordering::SeqCst);
+    }
+}
+
+/// A wait on the keyboard between turns is a stretch of its own: the signal is
+/// noted while it waits, the wait is called off where a note is found, and the
+/// renderer's caller unwinds with every guard handing back what it holds. The
+/// note is left for whoever ends the session to read, as [`Ending::presses`]
+/// leaves it. Inside a stretch the stretch decides, so a wait there is not
+/// watched.
+impl Recall for Ending {
+    fn waiting(&self) -> bool {
+        if self.stretched.load(Ordering::SeqCst) != 0 {
+            return false;
+        }
+
+        // Noted already and the patience spent: the wait is called off at
+        // once, and a second signal meanwhile is obeyed where it lands.
+        if self.told.load(Ordering::SeqCst) == 0 {
+            self.at_once.store(false, Ordering::SeqCst);
+        }
+        true
+    }
+
+    fn recalled(&self) -> bool {
+        self.told.load(Ordering::SeqCst) != 0
+    }
+
+    // Between turns a signal is obeyed at once, and a wait that noted one has
+    // spent the patience: either way the stretch ends obeying.
+    fn waited(&self) {
+        self.at_once.store(true, Ordering::SeqCst);
     }
 }
 
