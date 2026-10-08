@@ -1,6 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
-expression: window.picture()
+expression: unclocked(&window.picture())
 ---
 60x24 cursor 23,0 scrolled 0
 |│                                                         ││|
@@ -24,6 +24,6 @@ expression: window.picture()
 |                                                            |
 |Still running                                               |
 |                                                            |
-|› 1. Bash(sleep 30)   0s · 0 lines · 0 B                    |
+|› 1. Bash(sleep 30)   #s · 0 lines · 0 B                    |
 |                                                            |
 |esc to close · enter shows it · x stops it                  |
