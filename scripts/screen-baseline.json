@@ -844,6 +844,15 @@
       "sha256": "01230767dc4846392ca9c7f25614755d6c746ae633526fc6891f79161adaca0c"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__context_stands_over_a_fresh_session_and_closes_on_escape_in_native_mode.snap",
+      "case": "context_stands_over_a_fresh_session_and_closes_on_escape_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::native(\"native-context-fresh\", 80, 24, &vendor)"
+      ],
+      "sha256": "4860be28fbc8631baa6caeaafc607c186e56567eeb39dfd4ec8bfad6eaab7805"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_b_opens_the_running_list_during_a_turn_in_native_mode.snap",
       "case": "ctrl_b_opens_the_running_list_during_a_turn_in_native_mode",
       "opened": [
@@ -911,6 +920,15 @@
       "sha256": "0aa24f18341395ec9422c028579f28b57a1f4e37364f235a8d2c7b6eca945566"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest_in_native_mode.snap",
+      "case": "release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::native(\"native-release-notes-list\", 80, 24, &vendor)"
+      ],
+      "sha256": "f7cb271a0ae7df26e8552c77af4cd5eaa5520d8dc4f1e547b6dd4530e3b2c8d1"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_divider_is_clipped_at_16_columns_in_native_mode.snap",
       "case": "resume_divider_is_clipped_at_16_columns_in_native_mode",
       "opened": [
@@ -939,6 +957,15 @@
         "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "31ae9dc29075b3866be7f69ed62366d18f2ce8be148cafcd7707cc19382e19b0"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_opens_on_config_and_shows_each_tab_and_a_search_in_native_mode.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::native(\"native-settings-tabs\", 80, 30, &vendor)"
+      ],
+      "sha256": "12179c24bcbaa28716e550f76d4e2eac6b9015ce9ad5199d7d3b09e285bff49f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_scrolls_inside_its_room_in_native_mode.snap",
@@ -975,6 +1002,15 @@
         "Watched::native(case, 80, 24, vendor)"
       ],
       "sha256": "9f31399eaa76bb79289f5eb13012fd8be945a6b1ef1a67693793ab6e64534bb8"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape_in_native_mode.snap",
+      "case": "usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::native(\"native-usage-key\", 80, 30, &vendor)"
+      ],
+      "sha256": "1edda29190f469781024d548005e42ce3a53d64dea057189439db145d2842e68"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",

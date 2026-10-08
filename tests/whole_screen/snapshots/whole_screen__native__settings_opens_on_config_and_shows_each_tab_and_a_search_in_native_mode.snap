@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/native.rs
+expression: config
+---
+80x30 cursor 29,0 scrollback 1
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› /settings                                                                     |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Settings     Status   ‹ Config ›   Usage                                        |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ / to search                                                                  │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› Theme                                                                     auto|
+|  Syntax theme                                                  Monokai Extended|
+|  Glyphs                                                                 unicode|
+|  Colour                                            auto · applies at next start|
+|  ↓ 14 more                                                                     |
+|                                                                                |
+|↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

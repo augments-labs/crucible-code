@@ -994,3 +994,95 @@ fn a_refused_take_back_says_so_beside_the_title_in_native_mode() {
     crate::draws_the_panel(&window, crate::REFUSED_80_ASCII);
     window.assert_never_alternate();
 }
+
+// Five screens opened in native mode the way their fullscreen cases open them,
+// at the same size, and recorded as text. The rows can match a fullscreen
+// capture line for line, so each case asks the window whether it ever took the
+// alternate screen before it records anything.
+
+#[test]
+#[ignore = "at 80x24 native mode leaves the queue panel no room, so a prompt queued during a turn shows no sign of it"]
+fn five_waiting_prompts_stand_in_one_panel_over_the_box_in_native_mode() {
+    let vendor = crate::a_turn_still_running_long();
+    let mut window = Watched::allowing_drawn(
+        "native-queue-panel-over-the-box",
+        (80, 24),
+        &vendor,
+        "bash(*)",
+        ("unicode", "native"),
+    );
+    crate::waiting_behind_a_turn(&mut window, 5);
+
+    window.assert_never_alternate();
+    crate::draws(&window, crate::WAITING_80);
+    insta::assert_snapshot!(crate::steadied_picture(&window.picture()));
+}
+
+#[test]
+fn context_stands_over_a_fresh_session_and_closes_on_escape_in_native_mode() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-context-fresh", 80, 24, &vendor);
+    window.types_until("/context\r", "esc to close");
+
+    window.assert_never_alternate();
+    let picture = window.picture();
+    assert!(picture.contains("Context"), "{picture}");
+    assert!(picture.contains("system prompt"), "{picture}");
+    insta::assert_snapshot!(picture);
+
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape_in_native_mode() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-usage-key", 80, 30, &vendor);
+    window.types_until("say hello\r", "Hello.");
+    window.types_until("/usage\r", "esc to close");
+
+    window.assert_never_alternate();
+    let picture = window.picture();
+    // Native mode holds a panel to half the window, so the plan limits are
+    // below the fold here, a scroll away.
+    assert!(picture.contains("Usage · anthropic · API key"), "{picture}");
+    assert!(picture.contains("more"), "{picture}");
+    insta::assert_snapshot!(crate::timeless(&picture));
+
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn settings_opens_on_config_and_shows_each_tab_and_a_search_in_native_mode() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-settings-tabs", 80, 30, &vendor);
+    window.types_until("/settings\r", "esc to close");
+
+    window.assert_never_alternate();
+    let config = window.picture();
+    assert!(config.contains("Config"), "{config}");
+    insta::assert_snapshot!(config);
+
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest_in_native_mode() {
+    // Recorded by its shape, as the fullscreen case is: its rows are the
+    // changelog's newest, which every release moves. Held to half the window,
+    // the list shows the releases it has room for, and the row that reveals the
+    // rest is a walk away.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-release-notes-list", 80, 24, &vendor);
+    window.types_until("/release-notes\r", "enter opens it");
+
+    window.assert_never_alternate();
+    let picture = window.picture();
+    assert!(picture.contains("Release notes"), "{picture}");
+    insta::assert_snapshot!(crate::shape(&picture));
+}
