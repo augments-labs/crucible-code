@@ -10,6 +10,7 @@ mod cli;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    cli::panicked::written();
     crucible_sandbox_local::hold_broker_directory();
     cli::start()
 }
