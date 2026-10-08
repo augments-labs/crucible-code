@@ -102,6 +102,7 @@ serve() {
     started+=("$!")
     for _ in $(seq 30); do
         [[ -s $port_file ]] && return 0
+        kill -0 "$!" 2>/dev/null || fail "the loopback server $1 exited before it listened"
         sleep 1
     done
     fail "the loopback server $1 never started"

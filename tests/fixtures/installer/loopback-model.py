@@ -12,6 +12,7 @@ The port it listens on is written to PORT_FILE once it is listening.
 
 import http.server
 import json
+import socketserver
 import sys
 
 port_file, result_file = sys.argv[1:3]
@@ -55,7 +56,9 @@ class Model(http.server.BaseHTTPRequestHandler):
         pass
 
 
-server = http.server.HTTPServer(("127.0.0.1", 0), Model)
+# A plain TCP server, because HTTPServer looks up the name of the address it
+# binds, and on a macOS runner that lookup outlasts the wait for the port.
+server = socketserver.TCPServer(("127.0.0.1", 0), Model)
 with open(port_file, "w") as port:
     port.write(str(server.server_address[1]))
 server.serve_forever()
