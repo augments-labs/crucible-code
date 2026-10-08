@@ -230,7 +230,7 @@ on both Linux architectures; a rollback to the release
 `scripts/sh/rollback-drill.sh` names in `PRIOR_TAG`, followed by that drill on
 the staged binary; and on Windows, `install.ps1` installing the archive, both
 names reporting the version, a sandboxed command running through the installed
-broker, and nothing left after the uninstall. Its last job, `staged`, keeps
+broker, and nothing left after the uninstall. Its verdict job, `staged`, keeps
 the checksums as an artifact named `staged` only when every one of those cells
 passed. A run without that artifact staged nothing: read its red, fix it,
 dispatch again. A required cell that cannot run, because its runner never came

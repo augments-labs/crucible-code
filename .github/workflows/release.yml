@@ -1141,7 +1141,8 @@ jobs:
                   print(f"::warning::run {run['id']} kept {len(staged)} staged artifacts; not promoting it")
                   continue
               # A job that is not among the verdict's needs can still be running
-              # after it, so only a run that has finished can no longer change.
+              # after it, so only a run that has finished is read; what a re-run
+              # uploads falls outside the window below.
               if run.get("status") != "completed":
                   print(f"::warning::run {run['id']} has not finished; not promoting it")
                   continue
