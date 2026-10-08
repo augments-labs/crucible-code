@@ -313,6 +313,44 @@ fn a_directory_named_to_retitle_the_terminal_is_named_with_its_escapes_shown() {
     assert!(first.ends_with(r"sub\u{1b}]0;T\u{7}"), "{said}");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_directory_named_with_line_breaks_adds_no_line_to_the_report() {
+    // A line feed, a line separator and a bell in the checkout's own name: the
+    // directory is quoted on the first line, and a break kept raw there would
+    // start a line the report never said.
+    let scratch = Scratch::new("broken-root");
+    let plain = scratch.work().join("plain");
+    let here = scratch
+        .work()
+        .join("sub\nsandbox disabled in forged\u{2028}x\u{7}");
+    fs::create_dir_all(&plain).expect("an ordinary directory");
+    fs::create_dir_all(&here).expect("a directory with a line break in its name");
+    let program = Path::new(env!("CARGO_BIN_EXE_crucible"));
+
+    let own = asked_in(program, &scratch, &plain, &["sandbox", "inspect"], false);
+    let text = asked_in(program, &scratch, &here, &["sandbox", "inspect"], false);
+    assert_eq!(text.status.code(), Some(0), "{text:?}");
+    assert!(text.stderr.is_empty(), "{text:?}");
+    let said = String::from_utf8(text.stdout).expect("UTF-8");
+    let plainly = String::from_utf8(own.stdout).expect("UTF-8");
+
+    assert_eq!(unshown_in(&said, true), Vec::<char>::new(), "{said:?}");
+    // The report has the lines it has anywhere else, the first of them naming
+    // the directory with each break written as its escape.
+    assert_eq!(said.lines().count(), plainly.lines().count(), "{said}");
+    let (first, _) = said.split_once('\n').expect("a first line");
+    assert!(
+        first.ends_with(r"sub\nsandbox disabled in forged\u{2028}x\u{7}"),
+        "{said}"
+    );
+    assert_eq!(
+        said.lines().filter(|line| line.contains("forged")).count(),
+        1,
+        "{said}"
+    );
+}
+
 #[test]
 fn a_configuration_key_that_carries_escapes_is_named_with_them_shown() {
     let scratch = Scratch::new("hostile-key");
