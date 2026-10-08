@@ -106,6 +106,20 @@ const CONFIG: &str = r#"{
   "output": {"color": "auto", "toolDetail": "compact"}
 }"#;
 
+/// Where [`CONFIG`] opens its `output` block.
+const OUTPUT: &str = r#""output": {"#;
+
+/// [`CONFIG`], with `output.screen` set to `screen` when a probe names one.
+///
+/// A probe that names none writes the document byte for byte, so every budget
+/// measured before a probe could name its screen still reads the same file.
+fn configuration(screen: Option<&str>) -> String {
+    match screen {
+        None => CONFIG.to_owned(),
+        Some(mode) => CONFIG.replacen(OUTPUT, &format!(r#"{OUTPUT}"screen": "{mode}", "#), 1),
+    }
+}
+
 /// What proves that the timed startup operation happened.
 ///
 /// This source is compiled separately into one probe per variant, so each
@@ -205,8 +219,16 @@ pub(crate) enum StartupError {
 
 /// Takes [`RUNS`] readings of the same thing.
 pub(crate) fn readings(measure: Measure) -> Result<Readings, StartupError> {
+    readings_in(measure, None)
+}
+
+/// The same, with `output.screen` set to `screen` when a probe names one.
+pub(crate) fn readings_in(
+    measure: Measure,
+    screen: Option<&str>,
+) -> Result<Readings, StartupError> {
     let binary = beside("crucible")?;
-    let home = Scratch::new(measure.label())?;
+    let home = Scratch::in_screen(measure.label(), screen)?;
 
     let mut taken = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
@@ -780,13 +802,18 @@ pub(crate) struct Scratch {
 
 impl Scratch {
     pub(crate) fn new(name: &str) -> Result<Self, StartupError> {
+        Self::in_screen(name, None)
+    }
+
+    /// The same, with `output.screen` set to `screen` when a probe names one.
+    pub(crate) fn in_screen(name: &str, screen: Option<&str>) -> Result<Self, StartupError> {
         let base = std::env::temp_dir().join(format!(
             "crucible-bench-{}-{}",
             name.trim().len(),
             std::process::id()
         ));
         fs::create_dir_all(&base)?;
-        fs::write(base.join("config.json"), CONFIG)?;
+        fs::write(base.join("config.json"), configuration(screen))?;
         let fixture = worked_in(&base.join("sessions"))?;
 
         Ok(Self {
@@ -826,7 +853,10 @@ mod tests {
 
     use super::chosen;
 
-    use super::{AT_LIBERTY, PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS, best};
+    use super::{
+        AT_LIBERTY, CONFIG, PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS, best,
+        configuration,
+    };
 
     /// A full set of readings, stalled from end to end of the first `windows`
     /// windows and clean through the rest.
@@ -1006,5 +1036,21 @@ mod tests {
             refused.to_string().contains("CRUCIBLE_BENCH_RUNNER"),
             "{refused}"
         );
+    }
+
+    #[test]
+    fn a_probe_that_names_no_screen_writes_the_configuration_it_always_has() {
+        assert_eq!(configuration(None).as_bytes(), CONFIG.as_bytes());
+    }
+
+    #[test]
+    fn a_probe_that_names_a_screen_writes_it_and_nothing_else() {
+        let named: serde_json::Value =
+            serde_json::from_str(&configuration(Some("native"))).expect("a document");
+        let mut plain: serde_json::Value = serde_json::from_str(CONFIG).expect("a document");
+
+        assert_eq!(named["output"]["screen"], "native");
+        plain["output"]["screen"] = "native".into();
+        assert_eq!(named, plain);
     }
 }
