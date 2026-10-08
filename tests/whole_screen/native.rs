@@ -182,6 +182,25 @@ fn ended_then_relaunched(case: &str, vendor: &Vendor) -> (Watched, Watched, Stri
 }
 
 #[test]
+fn a_native_session_leaves_autowrap_on_as_it_found_it() {
+    // Off while the region is drawn, so a row the terminal draws wider than
+    // crucible counted it costs its last cells rather than a row; on again once
+    // the session ends, since the shell's lines wrap.
+    let vendor = Vendor::answering("The first thing.");
+    let mut window = Watched::native("native-autowrap", 80, 24, &vendor);
+
+    window.types_until("say something\r", "The first thing.");
+    assert!(
+        !window.wraps(),
+        "autowrap stayed on while the region was drawn"
+    );
+
+    window.ends_on("TERM");
+    window.assert_never_alternate();
+    assert!(window.wraps(), "autowrap was left off");
+}
+
+#[test]
 fn resume_writes_one_divider_and_no_second_card_in_native_mode() {
     let vendor = Vendor::answering("The first thing this session said.");
     let (_first, mut window, id) = ended_then_relaunched("native-resume", &vendor);
@@ -1209,6 +1228,48 @@ fn every_answer_row_is_kept_once_through_two_narrowings_and_a_widening_on_every_
         let lost = lost_or_doubled(&window, &labels);
         assert!(lost.is_empty(), "{name}: {lost:?}\n{}", everything(&window));
     }
+}
+
+/// A paragraph seventy-six columns wide as crucible counts it, opening with
+/// `label` and made otherwise of a symbol crucible counts as one column. A
+/// terminal that draws the symbol as its picture gives it two, so the
+/// paragraph is wider than the window there.
+pub(crate) fn pictured_row(label: &str) -> String {
+    let mut row = format!("{label} weather");
+    while crucible_tui::columns(&row) < 76 {
+        row.push_str(" \u{2600}");
+    }
+    row
+}
+
+/// An answer the terminal draws wider than crucible counted it, streamed into
+/// the region and redrawn as it arrives: each row is still found once, and
+/// the box under it once.
+#[test]
+fn a_row_the_terminal_draws_wider_than_crucible_counts_is_kept_once_in_native_mode() {
+    const LABELS: [&str; 3] = ["oak", "pine", "rowan"];
+    let answer = LABELS
+        .iter()
+        .map(|label| pictured_row(label))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let vendor = Vendor::answering_each(&[&answer, "Nothing more."]);
+    let mut window = Watched::native_on(
+        "native-pictured",
+        80,
+        24,
+        &vendor,
+        Profile {
+            reflow: Reflow::Rewraps,
+            widths: Widths::Pictured,
+        },
+    );
+    window.types_until("say it\r", "rowan");
+    window.types_until("say it again\r", "Nothing more.");
+
+    window.assert_never_alternate();
+    let lost = lost_or_doubled(&window, &LABELS);
+    assert!(lost.is_empty(), "{lost:?}\n{}", everything(&window));
 }
 
 /// Two finished paragraphs, then one three rows long still in the region,

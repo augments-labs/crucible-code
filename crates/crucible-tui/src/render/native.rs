@@ -62,6 +62,17 @@
 //! them again; the session file still has them. Counting low instead would
 //! leave a stale copy of the region in the scrollback on every terminal that
 //! does rewrap, which is most of them.
+//!
+//! The rewind also trusts that a row crucible counted as fitting the window
+//! takes one row of it. A terminal that draws a symbol wider than crucible
+//! counts it, as some draw one that has a picture form, would carry the end
+//! of such a row onto the next, and every rewind after it would fall a row
+//! short and leave a copy of the region behind. So autowrap is off from the
+//! first frame until the region is closed for good: a row the terminal draws
+//! too wide loses its last cells instead. Closing the region is what turns
+//! it on again, and that happens from `Drop` too, as the rest of closing it
+//! does, and not at all where output is redirected, since nothing is drawn
+//! there to begin with.
 
 use std::fmt::Write as _;
 
@@ -75,6 +86,12 @@ use crate::width;
 
 /// Erases from the cursor to the end of the screen.
 const ERASE_BELOW: &str = "\x1b[J";
+
+/// Turns autowrap off, from the first frame on.
+const WRAP_OFF: &str = "\x1b[?7l";
+
+/// Turns it back on, once the region is closed for good.
+const WRAP_ON: &str = "\x1b[?7h";
 
 /// What a native frame keeps between one frame and the next.
 #[derive(Debug, Default)]
@@ -210,8 +227,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// Closes the region for good: everything held is written out, nothing
-    /// that stood is left, and the cursor is shown at the start of a row of
-    /// its own, where the shell will write next.
+    /// that stood is left, the cursor is shown at the start of a row of its
+    /// own, where the shell will write next, and autowrap is on again.
     ///
     /// Nothing where output is redirected, in the full screen, where nothing
     /// was drawn, and the second time.
@@ -232,7 +249,13 @@ impl<T: Terminal> Renderer<T> {
         if let Some(native) = &mut self.native {
             native.left = true;
         }
-        written
+        // Put back even when the frame before it failed: the shell's lines
+        // would otherwise stop at the edge of the window.
+        let restored = self
+            .terminal
+            .write(WRAP_ON)
+            .and_then(|()| self.terminal.flush());
+        written.and(restored)
     }
 
     /// Closes the region for good, before the renderer itself goes.
@@ -317,6 +340,9 @@ impl<T: Terminal> Renderer<T> {
         out.clear();
         out.push_str(BEGIN_SYNC);
         out.push_str(HIDE);
+        if !native.drawn {
+            out.push_str(WRAP_OFF);
+        }
         let rewound = native.rewind.take();
         let up = rewound.unwrap_or(native.parked);
         out.push('\r');

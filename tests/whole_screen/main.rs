@@ -47,6 +47,7 @@ mod watched;
 
 use std::fmt::Write as _;
 
+use screen::{Profile, Widths};
 use vendor::Vendor;
 use watched::Watched;
 
@@ -552,6 +553,46 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     window.types_until("say something long\r", ANSWER_END);
 
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_row_the_terminal_draws_wider_than_crucible_counts_leaves_no_cell_on_another_row() {
+    // Each paragraph is a row crucible counted narrower than this terminal
+    // draws it. Whatever of a row the terminal could not fit in the window
+    // belongs to that row: carried on to the start of the next, it sits on a
+    // row whose text has not changed, which nothing then draws again.
+    const LABELS: [&str; 3] = ["oak", "pine", "rowan"];
+    let answer = LABELS
+        .iter()
+        .map(|label| native::pictured_row(label))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let vendor = Vendor::answering_each(&[&answer, "Nothing more."]);
+    let mut window = Watched::answering_on(
+        "pictured",
+        80,
+        24,
+        &vendor,
+        Profile {
+            widths: Widths::Pictured,
+            ..Profile::default()
+        },
+    );
+    window.types_until("say it\r", "rowan");
+    window.types_until("say it again\r", "Nothing more.");
+
+    let picture = window.picture();
+    let strays: Vec<&str> = picture
+        .lines()
+        .skip(1)
+        .filter(|row| row.contains('\u{2600}'))
+        .filter(|row| {
+            !LABELS
+                .iter()
+                .any(|label| row.starts_with(&format!("|{label} weather")))
+        })
+        .collect();
+    assert!(strays.is_empty(), "{strays:#?}\n{picture}");
 }
 
 /// Where the count of what is still running lands, as the row of the window
@@ -4102,6 +4143,7 @@ fn a_signal_sent_while_the_prompt_waits_hands_the_terminal_back() {
             (false, false),
             "{signal}: the keys were never raw"
         );
+        assert!(!window.wraps(), "{signal}: autowrap was never turned off");
 
         let (ended, wrote) = window.ends_on(signal);
 
@@ -4110,6 +4152,7 @@ fn a_signal_sent_while_the_prompt_waits_hands_the_terminal_back() {
             (true, true),
             "{signal}: the terminal was left without echo or whole lines"
         );
+        assert!(window.wraps(), "{signal}: autowrap was left off");
         assert!(
             wrote.contains("\u{1b}[?25h\u{1b}[?1049l"),
             "{signal}: the screen and the cursor were never handed back: {wrote:?}"

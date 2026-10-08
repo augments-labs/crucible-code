@@ -1102,6 +1102,28 @@ fn a_native_region_closed_before_the_renderer_goes_is_left_alone_after() {
 }
 
 #[test]
+fn a_native_region_turns_autowrap_off_once_and_back_on_when_it_closes() {
+    // Off in the first frame and in no later one, and on again as the last
+    // thing the region writes, so the shell gets its wrapping lines back.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    let first = window.take();
+    render.commit("> hello").unwrap();
+    render.seal().unwrap();
+    stands(&mut render);
+    let later = window.take();
+    drop(render);
+    let closing = window.take();
+
+    assert_eq!(first.matches("\x1b[?7l").count(), 1, "{first:?}");
+    assert!(!later.contains("\x1b[?7l"), "a later frame: {later:?}");
+    assert!(!first.contains("\x1b[?7h") && !later.contains("\x1b[?7h"));
+    assert!(closing.ends_with("\x1b[?7h"), "closing: {closing:?}");
+}
+
+#[test]
 fn a_redirected_native_renderer_writes_plain_text_and_nothing_on_drop() {
     let window = Window::redirected(40, 10);
     let mut render = native(&window);

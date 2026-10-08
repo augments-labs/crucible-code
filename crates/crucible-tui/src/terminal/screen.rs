@@ -18,15 +18,24 @@
 use std::fmt;
 use std::io::{self, IsTerminal, Write as _};
 
-/// Take the alternate screen, and put the cursor at the top of it.
-const ENTER: &str = "\x1b[?1049h\x1b[H";
+/// Take the alternate screen, turn autowrap off, and put the cursor at the top
+/// of it.
+///
+/// Autowrap off because a row is addressed by its number here and written only
+/// when its text changes. A row the terminal draws wider than crucible counted
+/// it, as some draw a symbol that has a picture form, would otherwise carry its
+/// last cells onto the start of the row below, where nothing draws them again.
+/// Off, it loses those cells and nothing more.
+const ENTER: &str = "\x1b[?1049h\x1b[?7l\x1b[H";
 
 /// Give it back.
 ///
 /// The cursor is shown first, in case a frame was interrupted between hiding it
 /// and putting it back — the sequence that hid it was written to a screen that
 /// is about to stop existing, and the terminal would keep the state anyway.
-const LEAVE: &str = "\x1b[?25h\x1b[?1049l";
+/// Autowrap is put back last: it belongs to the terminal rather than to either
+/// screen, and the shell's is the one it is put back for.
+const LEAVE: &str = "\x1b[?25h\x1b[?1049l\x1b[?7h";
 
 /// What can go wrong taking the screen.
 #[derive(Debug, thiserror::Error)]
@@ -195,6 +204,26 @@ mod tests {
         let screen = held();
 
         assert_eq!(format!("{screen:?}"), "Screen { held: true }");
+    }
+
+    #[test]
+    fn autowrap_is_turned_off_with_the_screen_and_back_on_after_it() {
+        // Autowrap is not the alternate screen's to keep: a terminal that
+        // leaves it does not restore it, so what goes off on the way in has to
+        // be put back on the way out, after the shell's screen is back.
+        let off = ENTER.find("\x1b[?7l").expect("autowrap is turned off");
+        let taken = ENTER.find("\x1b[?1049h").expect("the screen is taken");
+        let gone = LEAVE.find("\x1b[?1049l").expect("the screen is given back");
+        let on = LEAVE.find("\x1b[?7h").expect("autowrap is turned on again");
+
+        assert!(
+            taken < off,
+            "autowrap goes off before the screen: {ENTER:?}"
+        );
+        assert!(
+            gone < on,
+            "autowrap comes back on another screen: {LEAVE:?}"
+        );
     }
 
     #[test]
