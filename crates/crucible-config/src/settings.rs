@@ -439,10 +439,15 @@ pub(crate) fn hide_base_url_users(shown_document: &mut Value) {
 /// `address` with whatever stands before the last `@` of its authority replaced.
 ///
 /// The authority is read as running from the first `://` to the first `/`, `?`
-/// or `#`, which every URL grammar ends it at, so it is never shorter than the
-/// one the address will be sent to and a user in it is always inside. An
-/// address this cannot read that way, a scheme with no `//` among them, is
-/// replaced whole if it holds an `@` anywhere.
+/// or `#`. A URL parser starts it there too, and ends it at one of those three
+/// or sooner, so any user it reads is inside the one read here, which is what
+/// is replaced. The parser skips a run of `/` and `\` after the scheme and
+/// drops a tab or a line break wherever one is written, and an authority read
+/// from the first `://` would then not be the one it reads. So an address this
+/// cannot read the parser's way is replaced whole if it holds an `@` anywhere:
+/// one with no plain `scheme://` in front, one whose authority starts with a
+/// `/`, a `\`, a space or a control character, and one whose authority holds a
+/// `\`, a space or a control character.
 fn without_user(address: &str) -> String {
     let unread = || {
         if address.contains('@') {
@@ -462,10 +467,18 @@ fn without_user(address: &str) -> String {
         return unread();
     }
 
+    let skipped = |c: char| c == '\\' || c.is_ascii_whitespace() || c.is_ascii_control();
+    if rest.starts_with(|c: char| c == '/' || skipped(c)) {
+        return unread();
+    }
+
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let Some((authority, after)) = rest.split_at_checked(end) else {
         return unread();
     };
+    if authority.contains(skipped) {
+        return unread();
+    }
     match authority.rsplit_once('@') {
         Some((_, host)) => format!("{scheme}://{}@{host}{after}", env::REDACTED),
         None => address.to_owned(),
@@ -779,6 +792,28 @@ mod tests {
             "https://host.example/v1/@path"
         );
         assert_eq!(without_user("localhost:8080"), "localhost:8080");
+    }
+
+    #[test]
+    fn a_base_url_whose_authority_follows_a_run_of_slashes_is_hidden_whole() {
+        // A URL parser skips every `/` and `\` after `https://`, and drops a
+        // tab or a line break wherever one is written, so in each of these it
+        // reads `user:pa55word` as the user. Read from the first `://`, the
+        // authority would be empty and the password printed beside it.
+        // Every spelling is tried before the assertion, so a failure names all
+        // of the ones that print rather than the first.
+        let printed: Vec<(&str, String)> = [
+            "https:///user:pa55word@host.example/v1",
+            "https://\\/user:pa55word@host.example",
+            "https:////user:pa55word@host.example",
+            "https://\t/user:pa55word@host.example/v1",
+            "https://\n/user:pa55word@host.example/v1",
+        ]
+        .into_iter()
+        .map(|written| (written, without_user(written)))
+        .filter(|(_, shown)| shown != env::REDACTED)
+        .collect();
+        assert!(printed.is_empty(), "shown: {printed:?}");
     }
 
     #[test]
