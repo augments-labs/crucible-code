@@ -177,11 +177,11 @@ impl fmt::Display for StagePart {
 
 /// The ceilings staging holds an archive to.
 #[derive(Debug, Clone, Copy)]
-struct Limits {
+pub(crate) struct Limits {
     /// The most `SHA256SUMS` may hold.
-    checksums: u64,
+    pub(crate) checksums: u64,
     /// The most the archive may hold, compressed.
-    archive: u64,
+    pub(crate) archive: u64,
     /// The most an executable member may hold.
     executable: u64,
     /// The most any other file member may hold.
@@ -194,7 +194,7 @@ struct Limits {
 
 impl Limits {
     /// The ceilings of a release.
-    const RELEASE: Self = Self {
+    pub(crate) const RELEASE: Self = Self {
         checksums: 64 * 1024,
         archive: 512 * 1024 * 1024,
         executable: EXECUTABLE_CEILING,
@@ -432,7 +432,7 @@ fn ended(tar: tar::Archive<Contents<'_>>, exceeded: &Cell<bool>) -> Result<(), S
 }
 
 /// The name a release's archive is published under.
-fn archive_name(version: &Version, target: Target) -> String {
+pub(crate) fn archive_name(version: &Version, target: Target) -> String {
     format!("crucible-{version}-{}.tar.gz", target.as_str())
 }
 

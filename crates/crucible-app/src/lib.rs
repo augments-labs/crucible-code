@@ -23,7 +23,8 @@
 //! The login store is also reached outside any conversation, by [`auth`]:
 //! `crucible auth status`, `login` and `logout` read and change it through
 //! the routes `/login` and `/logout` take, and are local commands rather than
-//! requests of the client contract.
+//! requests of the client contract. `crucible update` is another, run on the
+//! application's services by [`update`].
 //!
 //! Nothing in here reads the environment or the disk on its own account
 //! except through a parameter it was handed: the lookup, the home, the
@@ -54,6 +55,7 @@ pub mod speed;
 pub mod startup;
 pub mod subscription;
 pub mod switching;
+pub mod update;
 
 pub use conversation::Conversation;
 pub use error::AppError;

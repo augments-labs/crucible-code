@@ -791,6 +791,7 @@ dependencies = [
  "crucible-runtime",
  "crucible-types",
  "flate2",
+ "http",
  "rustix",
  "serde_json",
  "sha2",

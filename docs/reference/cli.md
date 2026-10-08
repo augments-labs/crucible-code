@@ -1,7 +1,8 @@
 # Command line
 
 `crucible --help` prints the flags and the subcommands `sandbox`, `config`,
-`doctor`, `auth`, `mcp`, `extensions`, `sessions`, `completion` and `help`,
+`doctor`, `auth`, `mcp`, `extensions`, `sessions`, `update`, `completion` and
+`help`,
 under a longer introduction; `crucible -h` prints the same under the one-line
 introduction. Each subcommand has its own help, such as `crucible
 config --help` and `crucible sandbox setup --help`, and `crucible help` and
@@ -503,6 +504,64 @@ nothing until you tell the shell so: in bash, `complete -F _crucible cru` in
 `~/.bashrc` after `source <(crucible completion bash)`, since `_crucible` does
 not exist before the script is loaded.
 
+## Updating crucible
+
+### `update [--check | --dry-run]`
+
+Run on its own, `crucible update` asks GitHub which release is the newest. If
+that release is later than the one you have installed, crucible downloads it,
+installs it in place of the one you have, and stops. Running the command is
+how you ask for this, so it works even when
+[`updates.check`](../configuration/configuration.md#updates) is set to
+`never`. The request is the same one the daily release check makes: a plain
+GET for the repository's latest release. Nothing about your session, your
+directory or your configuration is sent, and the configuration is not read.
+
+With `--check`, crucible only tells you whether a later release is out than
+the one running, and changes nothing. When one is out it says so and ends
+with exit status 3:
+
+```text
+crucible 0.47.1 is out; this is 0.47.0. `crucible update` installs it
+```
+
+When none is, it says `crucible 0.47.0 is the newest release` and ends with
+exit status 0. With `--dry-run`, crucible tells you which release an update
+would install and which one it would replace, and changes nothing. The two
+flags cannot be used together.
+
+An update only changes an install that
+[`install.sh`](../getting-started/first-session.md#where-the-shell-installer-puts-a-release)
+made. It first takes the install's lock, the same one the installer takes, and
+if another install or update already holds it, the update stops at once. It
+then compares the newest release with the one active in the install. An update
+never goes back to an earlier release, and two updates run one after the other
+install the new release only once.
+
+The release's `SHA256SUMS` and the archive for your platform are downloaded
+into a directory only you can read, which is removed when the update ends. A
+file is given up on if it is larger than a release ships, if it takes longer
+than 15 minutes, or if nothing arrives for a whole minute. A redirect is
+followed only over `https`, and only to `github.com` or a host under
+`githubusercontent.com`.
+
+Once the archive matches the checksum `SHA256SUMS` lists for it, the release
+is put together and made active exactly as `install.sh` does it. A new release
+that has no `crucible-sandbox-broker`, when the active one has one, is not
+installed. Finally crucible runs the new `crucible --version`. If that does
+not answer with the version just installed within 10 seconds, the update is
+rolled back and the release you had before is active again. Either way, the
+release that was replaced stays under `releases/`.
+
+Any other kind of install is refused, and the message says how to update it
+instead. A build made by cargo is updated with `cargo install` or by building
+it again. A copy put in place by hand is replaced by installing a release with
+`install.sh`, which `crucible update` can then keep current. On Windows, run
+`install.ps1` again. An install whose receipt cannot be read is refused as
+well, rather than being treated as a copy put in place by hand. If the newest
+release GitHub names is not three plain numbers, as with a prerelease, nothing
+is installed, and the name GitHub gave is not printed.
+
 ## Credentials from the command line
 
 `crucible auth` says, stores and removes the credentials a launch signs
@@ -710,12 +769,13 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
 | 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
+| 3 | An `update --check` that found a later release, with what it found on standard output. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, and the prompt `auth login` hides a key at, or a wait for a key between turns at the prompt or in a panel, is put away with the terminal handed back as it was found, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
 
 Flags that exclude each other are refused with a line saying one `cannot be
 used with` the other: `--continue` with `--resume`, `--extensions` or
-`--sandbox` with any session flag or with each other, and any flag with a
-subcommand.
+`--sandbox` with any session flag or with each other, `update --check` with
+`--dry-run`, and any flag with a subcommand.

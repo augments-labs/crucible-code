@@ -22,14 +22,18 @@
 //! staged unit is checked again and made active by one rename, and the unit
 //! that was active is kept so the switch can be rolled back.
 
+mod command;
 #[cfg(unix)]
 mod install;
 mod release;
+mod version;
 
+pub use command::{Answer, Asked, Refused, SOURCE, SelfUpdateCommand};
 #[cfg(unix)]
 pub use install::{
     Activated, ActivationError, ActivationStep, Digest, EntryKind, Installation, LayoutEntry,
     LayoutError, Receipt, ReceiptClaim, ReceiptError, ReceiptLayout, RecoverableActivation,
-    StageError, StagePart, StagedUnit, Target, UnitRole, Version,
+    StageError, StagePart, StagedUnit, Target, UnitRole,
 };
 pub use release::{Newer, SHUTDOWN, Unjoined, UpdateCrateReleaseCheck, newer};
+pub use version::Version;

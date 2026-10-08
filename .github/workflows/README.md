@@ -36,7 +36,7 @@ and each macOS checks job runs that platform's rollback drill, through
 | `task-campaign.yml` | Manual baseline/candidate coding-task campaign with independent fixture verification |
 | `audit.yml` | Advisories whose answer changes as databases are published |
 | `codeql.yml` | GitHub code scanning |
-| `release.yml` | Dispatched: the gate, artifacts and staged cells, which install, upgrade and roll back those exact bytes. On a tag: the gate again with tag validation, promotion of a staged run's bytes by digest, attestations and publication |
+| `release.yml` | Dispatched: the gate, artifacts and staged cells, which install, upgrade and roll back those exact bytes, and take an install from one release to the next with `crucible update`. On a tag: the gate again with tag validation, promotion of a staged run's bytes by digest, attestations and publication |
 
 A new language gets a peer reusable workflow such as `python-ci.yml` or
 `js-ci.yml`, then one call and one dependency in `blocking-ci.yml`. Do not add

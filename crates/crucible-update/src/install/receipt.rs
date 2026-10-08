@@ -37,6 +37,8 @@ use std::fmt;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 
+pub(crate) use crate::version::Version;
+
 /// The most a receipt may occupy, its last newline included.
 pub(crate) const MAX_BYTES: usize = 8192;
 
@@ -164,11 +166,6 @@ pub enum Target {
     /// FreeBSD on `x86_64`.
     FreebsdX86_64,
 }
-
-/// A release number, `major.minor.patch`, as the receipt and the layout's
-/// directory names spell it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Version(Box<str>);
 
 /// A SHA-256 digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -386,34 +383,6 @@ impl fmt::Display for Target {
     }
 }
 
-impl Version {
-    /// Reads `major.minor.patch`, each a decimal number without a leading
-    /// zero; the receipt and the active-release link are held to this one
-    /// grammar.
-    pub(crate) fn parse(text: &[u8]) -> Option<Self> {
-        let mut parts = text.split(|byte| *byte == b'.');
-        let parts = [parts.next(), parts.next(), parts.next(), parts.next()];
-        let [Some(major), Some(minor), Some(patch), None] = parts else {
-            return None;
-        };
-        if ![major, minor, patch].into_iter().all(number) {
-            return None;
-        }
-        self::text(text).map(Self)
-    }
-
-    /// The number as the receipt spells it.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for Version {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 impl Digest {
     /// Wraps the 32 bytes a hasher produced.
     pub(crate) fn new(bytes: [u8; 32]) -> Self {
@@ -504,15 +473,6 @@ fn nibble(digit: u8) -> u8 {
     match digit {
         b'0'..=b'9' => digit - b'0',
         _ => digit - b'a' + 10,
-    }
-}
-
-/// Whether `part` is a decimal number written without a leading zero.
-fn number(part: &[u8]) -> bool {
-    match part {
-        b"0" => true,
-        [b'1'..=b'9', rest @ ..] => rest.iter().all(u8::is_ascii_digit),
-        _ => false,
     }
 }
 

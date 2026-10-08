@@ -38,6 +38,7 @@ const COMMANDS: &[&[&str]] = &[
     &["extensions", "list"],
     &["sessions"],
     &["sessions", "list"],
+    &["update"],
     &["completion"],
 ];
 
@@ -261,6 +262,9 @@ fn the_flags_held_are_the_ones_the_command_line_is_used_through() {
     assert!(held.contains(&(inspect, "--json".to_owned())));
     let login = vec!["auth".to_owned(), "login".to_owned()];
     assert!(held.contains(&(login, "--api-key-stdin".to_owned())));
+    let update = vec!["update".to_owned()];
+    assert!(held.contains(&(update.clone(), "--check".to_owned())));
+    assert!(held.contains(&(update, "--dry-run".to_owned())));
 }
 
 #[test]

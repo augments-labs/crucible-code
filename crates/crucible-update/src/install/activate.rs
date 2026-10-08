@@ -45,7 +45,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use super::boundary::crossed;
-use super::layout::{CURRENT, RELEASES, unit_receipt};
+use super::layout::{CRUCIBLE, CURRENT, RELEASES, unit_receipt};
 use super::stage::INCOMING;
 use super::{LayoutError, Receipt, ReceiptLayout, StageError, StagedUnit, Version};
 
@@ -301,6 +301,15 @@ impl Activated {
     /// The receipt of the release now active.
     pub fn active(&self) -> &Receipt {
         &self.active
+    }
+
+    /// The `crucible` of the release now active, which an update starts to
+    /// see that it is the release it should be.
+    pub(crate) fn executable(&self) -> PathBuf {
+        self.prefix
+            .join(RELEASES)
+            .join(self.active.version().as_str())
+            .join(CRUCIBLE)
     }
 
     /// Makes the release that was active before active again, once it is

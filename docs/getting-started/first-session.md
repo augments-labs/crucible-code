@@ -145,6 +145,13 @@ names it, at once or, when another program now has the number of the install
 that held it, after that minute. Once no install is running, remove the lock and
 run the install again.
 
+To move to a later release, run `crucible update`. It downloads the release,
+checks it against `SHA256SUMS` and makes it active the same way the installer
+does, under the same lock. To find out whether a later release is out without
+installing it, run `crucible update --check`. Running `install.sh` again works
+too. The [`update`](../reference/cli.md#update---check----dry-run) reference
+has the details.
+
 Installing a version that is already there uses its directory again when it
 holds the same build, and refuses, changing nothing, when it holds a different
 one. So `--version` with an earlier release still under `releases/` switches

@@ -27,10 +27,11 @@ use tokio::time::timeout;
 pub const SHUTDOWN: Duration = Duration::from_secs(2);
 
 /// Where the newest release is named.
-const LATEST: &str = "https://api.github.com/repos/augments-labs/crucible-code/releases/latest";
+pub(crate) const LATEST: &str =
+    "https://api.github.com/repos/augments-labs/crucible-code/releases/latest";
 
-/// Where somebody goes to get it. Drawn beside the version, because crucible
-/// installs by download and there is no command that would update it.
+/// Where somebody goes to get it. Drawn beside the version, because an install
+/// that `crucible update` cannot replace is updated from there.
 const FROM: &str = "https://github.com/augments-labs/crucible-code/releases";
 
 /// What the answer is kept in, under crucible's own directory.
@@ -271,7 +272,13 @@ impl UpdateCrateReleaseCheck {
         Some(Http::new(tls, targets, self.0.plain.clone(), self.0.proxy.clone()).holding(hold))
     }
 
-    fn release_client(&self) -> Option<&Http> {
+    /// The TLS configuration every client of this owner is built over, where
+    /// one could be built.
+    pub(crate) fn tls(&self) -> Option<&Tls> {
+        self.0.tls.as_ref()
+    }
+
+    pub(crate) fn release_client(&self) -> Option<&Http> {
         let tls = self.0.tls.as_ref()?;
         Some(self.0.client.get_or_init(|| {
             let targets = self.0.plain.clone().into();
@@ -331,7 +338,7 @@ fn stale(home: &Path) -> bool {
 }
 
 /// What the release source says the newest release is called.
-async fn asked_at(http: &Http, url: &str, cancel: &Cancel) -> Option<Box<str>> {
+pub(crate) async fn asked_at(http: &Http, url: &str, cancel: &Cancel) -> Option<Box<str>> {
     let request = async {
         // The fixed release route owns the two non-secret headers GitHub asks
         // for and accepts no caller header. The program variant names the

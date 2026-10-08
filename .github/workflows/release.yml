@@ -35,6 +35,10 @@ jobs:
     timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
+      update-prior: ${{ steps.update.outputs.prior }}
+      update-older: ${{ steps.update.outputs.older }}
+      update-newer: ${{ steps.update.outputs.newer }}
+      update-build-older: ${{ steps.update.outputs.build-older }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,6 +58,52 @@ jobs:
             exit 1
           fi
           echo "version=$manifest" >>"$GITHUB_OUTPUT"
+
+      # The three releases the update cells need. The older is the one they
+      # install and the newer is the one `crucible update` takes it to; the
+      # prior is the published release the rollback drill names, which they
+      # install the older over. A run that stages a release newer than the
+      # prior has the older already: it is the staged release, so only the
+      # newer, one patch above it, is built. A run on a tree that still says
+      # the prior's version, before the bump, stages nothing new, so both are
+      # built: the next minor release and the patch after it. The build jobs
+      # build them, and no release is named here.
+      - name: The releases the update cells move between
+        id: update
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # >>> update pair
+          tag=$(sed -n 's/^readonly PRIOR_TAG=//p' scripts/sh/rollback-drill.sh)
+          if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::scripts/sh/rollback-drill.sh names no PRIOR_TAG"
+            exit 1
+          fi
+          prior=${tag#v}
+          if [[ ! $VERSION =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::the manifest version '$VERSION' is not a release version"
+            exit 1
+          fi
+          major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]}
+          if [[ $VERSION == "$prior" ]]; then
+            older=$major.$((minor + 1)).0
+            build_older=true
+          elif [[ $(printf '%s\n' "$prior" "$VERSION" | sort -V | tail -n 1) == "$VERSION" ]]; then
+            older=$VERSION
+            build_older=false
+          else
+            echo "::error::the manifest version $VERSION is older than PRIOR_TAG $tag"
+            exit 1
+          fi
+          newer=${older%.*}.$((${older##*.} + 1))
+          {
+            echo "prior=$prior"
+            echo "older=$older"
+            echo "newer=$newer"
+            echo "build-older=$build_older"
+          } >>"$GITHUB_OUTPUT"
+          echo "the update cells take $older to $newer, and install $older over the published $prior"
+          # <<< update pair
 
       # Re-run the deterministic local aggregate on the same enforcing sandbox
       # host CI proved it on, so the sandbox tests run here rather than skip.
@@ -108,12 +158,15 @@ jobs:
   # rebuild is not one. The smoke step before `publish` measures the floor the
   # artifact actually carries and fails the release when it has moved, so a
   # digest that raises glibc blocks the release rather than shipping quietly.
+  #
+  # Each build job also builds the releases the update cells need, one or two
+  # more release builds after its own, and its time limit allows for them.
   build-linux:
     name: ${{ matrix.stem }}
     needs: gate
     if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 75
     env:
       VERSION: ${{ needs.gate.outputs.version }}
     container:
@@ -202,6 +255,30 @@ jobs:
             digest-*
           if-no-files-found: error
 
+      # The releases the update cells move between, built here once the staged
+      # one is uploaded, by the command above and in this container. The
+      # fixture says how, and why nothing it builds can reach a release.
+      - name: The releases the update cells move between
+        env:
+          OLDER: ${{ needs.gate.outputs.update-older }}
+          NEWER: ${{ needs.gate.outputs.update-newer }}
+          BUILD_OLDER: ${{ needs.gate.outputs.update-build-older }}
+        run: |
+          versions=$NEWER
+          if [[ $BUILD_OLDER == true ]]; then versions="$OLDER $NEWER"; fi
+          for version in $versions; do
+            bash tests/fixtures/installer/update-build.sh --version "$version" --stem ${{ matrix.stem }} \
+              --target ${{ matrix.target }} --binaries 'crucible crucible-sandbox-broker' --out update -- \
+              cargo build --release --locked --target ${{ matrix.target }} \
+                -p crucible-code -p crucible-sandbox-broker
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: update-${{ matrix.stem }}
+          path: update/
+          if-no-files-found: error
+
   # One job per non-Linux target, and every runner here is the architecture it
   # builds for. A binary nobody could execute here is one whose first run would
   # otherwise happen on a user's machine.
@@ -210,7 +287,7 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 75
     env:
       VERSION: ${{ needs.gate.outputs.version }}
     strategy:
@@ -294,6 +371,40 @@ jobs:
             crucible-*.exe
           if-no-files-found: error
 
+      # The releases the update cells move between, built here once the staged
+      # one is uploaded, by the command above. Windows cells only check and
+      # refuse, so they need the older alone, and nothing when it is the
+      # staged release. The fixture says how, and why nothing it builds can
+      # reach a release.
+      - name: The releases the update cells move between
+        id: update
+        shell: bash
+        env:
+          OLDER: ${{ needs.gate.outputs.update-older }}
+          NEWER: ${{ needs.gate.outputs.update-newer }}
+          BUILD_OLDER: ${{ needs.gate.outputs.update-build-older }}
+        run: |
+          versions=$NEWER
+          if [[ $BUILD_OLDER == true ]]; then versions="$OLDER $NEWER"; fi
+          if [[ -n "${{ matrix.exe }}" ]]; then
+            versions=
+            if [[ $BUILD_OLDER == true ]]; then versions=$OLDER; fi
+          fi
+          for version in $versions; do
+            bash tests/fixtures/installer/update-build.sh --version "$version" --stem ${{ matrix.stem }} \
+              --target ${{ matrix.target }} --binaries 'crucible crucible-sandbox-broker' \
+              --exe "${{ matrix.exe }}" --out update -- \
+              cargo build --release --locked --target ${{ matrix.target }} -p crucible-code -p crucible-sandbox-broker
+          done
+          if [[ -n $versions ]]; then echo built=true >>"$GITHUB_OUTPUT"; fi
+
+      - if: steps.update.outputs.built == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: update-${{ matrix.stem }}
+          path: update/
+          if-no-files-found: error
+
   # GitHub hosts no FreeBSD runner, so this one target builds inside a guest
   # rather than cross-compiled from Linux. It costs about a quarter of an hour,
   # and what it buys is the same thing the six above get for free: a binary
@@ -313,7 +424,7 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -368,10 +479,29 @@ jobs:
             cp scripts/sh/install.sh scripts/sh/uninstall.sh "$name/"
             tar czf "$name.tar.gz" "$name"
 
+            # The releases the update cells move between, built by the command
+            # above in this guest. The fixture says how, and why nothing it
+            # builds can reach a release.
+            versions='${{ needs.gate.outputs.update-newer }}'
+            if [ '${{ needs.gate.outputs.update-build-older }}' = true ]; then
+              versions="${{ needs.gate.outputs.update-older }} $versions"
+            fi
+            for update in $versions; do
+              bash tests/fixtures/installer/update-build.sh --version "$update" --stem freebsd-x86_64 \
+                --target x86_64-unknown-freebsd --binaries crucible --out update -- \
+                cargo build --release --locked --target x86_64-unknown-freebsd || exit 1
+            done
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: freebsd-x86_64
           path: crucible-*.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: update-freebsd-x86_64
+          path: update/
           if-no-files-found: error
 
   # The release archive, not a local rebuild, runs in the stripped sandbox
@@ -1005,6 +1135,341 @@ jobs:
           }
           if ($status -ne 0) { exit $status }
 
+  # `crucible update` on every platform install.sh installs. The gate names
+  # three releases: an older one these cells install, a newer one `crucible
+  # update` takes it to, and the published prior they install the older over.
+  # The older is the staged release whenever this run stages one newer than
+  # the prior, and the build jobs built everything else. A release source on
+  # loopback serves the newer one, so nothing here is fetched from a release
+  # but the prior. tests/fixtures/installer/update-cells.sh runs the cells
+  # and says what each one proves.
+  stage-update-unix:
+    name: staged update ${{ matrix.stem }}
+    needs: [gate, staged-checksums]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+      STEM: ${{ matrix.stem }}
+      PRIOR: ${{ needs.gate.outputs.update-prior }}
+      OLDER: ${{ needs.gate.outputs.update-older }}
+      NEWER: ${{ needs.gate.outputs.update-newer }}
+      BUILD_OLDER: ${{ needs.gate.outputs.update-build-older }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { stem: linux-x86_64, runner: ubuntu-latest, backend: linux-bubblewrap }
+          - { stem: linux-aarch64, runner: ubuntu-24.04-arm, backend: linux-bubblewrap }
+          - { stem: macos-aarch64, runner: macos-latest, backend: macos-seatbelt }
+          - { stem: macos-x86_64, runner: macos-15-intel, backend: macos-seatbelt }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/enforcing-sandbox
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ matrix.stem }}
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notes
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-sums
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: update-${{ matrix.stem }}
+          path: update
+
+      # The installer is always the staged one, and so is the older release
+      # whenever the gate says it was not built.
+      - name: What these cells take from the staged bytes is what was staged
+        working-directory: staged
+        run: |
+          names=(install.sh)
+          if [[ $BUILD_OLDER != true ]]; then names+=("crucible-$VERSION-$STEM.tar.gz"); fi
+          for name in "${names[@]}"; do
+            awk -v name="$name" '$2 == name' SHA256SUMS
+          done >mine
+          if [[ $(wc -l <mine) -ne ${#names[@]} ]]; then
+            echo "::error::the staged checksums do not list everything these cells install"
+            exit 1
+          fi
+          if command -v sha256sum >/dev/null; then
+            sha256sum --check --strict mine
+          else
+            shasum -a 256 --check mine
+          fi
+          rm mine
+
+      - name: The release the cells start from, and the published one before it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir older prior
+          if [[ $BUILD_OLDER == true ]]; then
+            cp "update/$OLDER/crucible-$OLDER-$STEM.tar.gz" "update/$OLDER/SHA256SUMS" older/
+          else
+            cp "staged/crucible-$OLDER-$STEM.tar.gz" staged/SHA256SUMS older/
+          fi
+          gh release download "v$PRIOR" --repo "$GITHUB_REPOSITORY" --dir prior \
+            --pattern "crucible-$PRIOR-$STEM.tar.gz" --pattern SHA256SUMS --pattern install.sh
+          cd prior
+          for name in "crucible-$PRIOR-$STEM.tar.gz" install.sh; do
+            awk -v name="$name" '$2 == name' SHA256SUMS
+          done >mine
+          if [[ $(wc -l <mine) -ne 2 ]]; then
+            echo "::error::v$PRIOR's checksums do not list what these cells install from it"
+            exit 1
+          fi
+          if command -v sha256sum >/dev/null; then
+            sha256sum --check --strict mine
+          else
+            shasum -a 256 --check mine
+          fi
+          rm mine
+
+      - name: crucible update is refused, applied, and installed over
+        run: |
+          bash tests/fixtures/installer/update-cells.sh --stem "$STEM" --backend ${{ matrix.backend }} \
+            --installer staged/install.sh --older "$OLDER" \
+            --older-archive "$PWD/older/crucible-$OLDER-$STEM.tar.gz" --older-sums "$PWD/older/SHA256SUMS" \
+            --newer "$NEWER" --newer-dir "$PWD/update/$NEWER" --prior "$PRIOR" --prior-dir "$PWD/prior" \
+            --scratch "$(mktemp -d "$RUNNER_TEMP/update.XXXXXX")"
+
+  # The same cells in the FreeBSD guest. FreeBSD has no sandbox backend, so
+  # each cell there runs without its sandboxed command, which is the one
+  # thing it leaves out.
+  stage-update-freebsd:
+    name: staged update freebsd-x86_64
+    needs: [gate, staged-checksums]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+      STEM: freebsd-x86_64
+      PRIOR: ${{ needs.gate.outputs.update-prior }}
+      OLDER: ${{ needs.gate.outputs.update-older }}
+      BUILD_OLDER: ${{ needs.gate.outputs.update-build-older }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: freebsd-x86_64
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notes
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-sums
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: update-freebsd-x86_64
+          path: update
+
+      # Checked here, on the host, since the guest reads this same directory.
+      - name: What these cells take from the staged bytes is what was staged
+        working-directory: staged
+        run: |
+          names=(install.sh)
+          if [[ $BUILD_OLDER != true ]]; then names+=("crucible-$VERSION-$STEM.tar.gz"); fi
+          for name in "${names[@]}"; do
+            awk -v name="$name" '$2 == name' SHA256SUMS
+          done >mine
+          if [[ $(wc -l <mine) -ne ${#names[@]} ]]; then
+            echo "::error::the staged checksums do not list everything these cells install"
+            exit 1
+          fi
+          sha256sum --check --strict mine
+          rm mine
+
+      - name: The release the cells start from, and the published one before it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir older prior
+          if [[ $BUILD_OLDER == true ]]; then
+            cp "update/$OLDER/crucible-$OLDER-$STEM.tar.gz" "update/$OLDER/SHA256SUMS" older/
+          else
+            cp "staged/crucible-$OLDER-$STEM.tar.gz" staged/SHA256SUMS older/
+          fi
+          gh release download "v$PRIOR" --repo "$GITHUB_REPOSITORY" --dir prior \
+            --pattern "crucible-$PRIOR-$STEM.tar.gz" --pattern SHA256SUMS --pattern install.sh
+          cd prior
+          for name in "crucible-$PRIOR-$STEM.tar.gz" install.sh; do
+            awk -v name="$name" '$2 == name' SHA256SUMS
+          done >mine
+          if [[ $(wc -l <mine) -ne 2 ]]; then
+            echo "::error::v$PRIOR's checksums do not list what these cells install from it"
+            exit 1
+          fi
+          sha256sum --check --strict mine
+          rm mine
+
+      - uses: vmactions/freebsd-vm@a2f9a41fa97f6848b8c3b791087dfcdaa5b473ff # v1.5.8
+        with:
+          release: "14.4"
+          usesh: true
+          prepare: pkg install -y bash python3
+          run: |
+            set -e
+            older='${{ needs.gate.outputs.update-older }}'
+            newer='${{ needs.gate.outputs.update-newer }}'
+            prior='${{ needs.gate.outputs.update-prior }}'
+            [ -n "$older" ] && [ -n "$newer" ] && [ -n "$prior" ] || { echo 'the gate named no update releases'; exit 1; }
+            bash tests/fixtures/installer/update-cells.sh --stem freebsd-x86_64 --backend none \
+              --installer staged/install.sh --older "$older" \
+              --older-archive "$PWD/older/crucible-$older-freebsd-x86_64.tar.gz" --older-sums "$PWD/older/SHA256SUMS" \
+              --newer "$newer" --newer-dir "$PWD/update/$newer" --prior "$prior" --prior-dir "$PWD/prior" \
+              --scratch "$(mktemp -d /tmp/update.XXXXXX)"
+
+  # `crucible update` on both Windows architectures, from a flat install.ps1
+  # made of the older release. It answers `--check` from the release source
+  # on loopback, exiting 3 to say the newer one is out, and refuses to apply
+  # it with exit 1, naming install.ps1, with no file in the install changed.
+  stage-update-windows:
+    name: staged update ${{ matrix.stem }}
+    needs: [gate, staged-checksums]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+      STEM: ${{ matrix.stem }}
+      OLDER: ${{ needs.gate.outputs.update-older }}
+      NEWER: ${{ needs.gate.outputs.update-newer }}
+      BUILD_OLDER: ${{ needs.gate.outputs.update-build-older }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { stem: windows-x86_64, runner: windows-latest }
+          - { stem: windows-aarch64, runner: windows-11-arm }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ matrix.stem }}
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notes
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-sums
+          path: staged
+      - if: needs.gate.outputs.update-build-older == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: update-${{ matrix.stem }}
+          path: update
+
+      - name: What this cell takes from the staged bytes is what was staged
+        working-directory: staged
+        shell: bash
+        run: |
+          names=(install.ps1)
+          if [[ $BUILD_OLDER != true ]]; then names+=("crucible-$VERSION-$STEM.tar.gz"); fi
+          for name in "${names[@]}"; do
+            awk -v name="$name" '$2 == name' SHA256SUMS
+          done >mine
+          if [[ $(wc -l <mine) -ne ${#names[@]} ]]; then
+            echo "::error::the staged checksums do not list everything this cell installs"
+            exit 1
+          fi
+          sha256sum --check --strict mine
+          rm mine
+
+      - name: The release the cell starts from
+        shell: bash
+        run: |
+          mkdir older
+          if [[ $BUILD_OLDER == true ]]; then
+            cp "update/$OLDER/crucible-$OLDER-$STEM.tar.gz" "update/$OLDER/SHA256SUMS" older/
+          else
+            cp "staged/crucible-$OLDER-$STEM.tar.gz" staged/SHA256SUMS older/
+          fi
+
+      - name: install.ps1 installs the older release flat
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP 'update-bin'
+          $archive = Join-Path $PWD "older/crucible-$env:OLDER-$env:STEM.tar.gz"
+          $sums = Join-Path $PWD 'older/SHA256SUMS'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File staged/install.ps1 -Version $env:OLDER -Archive $archive -Checksums $sums -Dir $bin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "UPDATE_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: crucible update checks, and refuses to apply
+        shell: bash
+        run: |
+          python --version || { echo "::error::this runner has no python for the release source"; exit 1; }
+          root=$(mktemp -d "$(cygpath -u "$RUNNER_TEMP")/update.XXXXXX")
+          mkdir -p "$root/home" "$root/served"
+          printf '%s\n' '{"updates":{"check":"never"}}' >"$root/home/config.json"
+          # The newer release is named and nothing of it is served: a check
+          # asks for no more, and an apply that asked for more is the failure.
+          python -I tests/fixtures/installer/release-source.py "$(cygpath -w "$root/port")" \
+            "$(cygpath -w "$root/heard")" "$NEWER" "$(cygpath -w "$root/served")" &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for _ in $(seq 30); do [[ -s $root/port ]] && break; sleep 1; done
+          if [[ ! -s $root/port ]]; then
+            echo "::error::the release source never started"
+            exit 1
+          fi
+          bin=$(cygpath -u "$UPDATE_BIN")
+          listing() { (cd "$bin" && find . -type f -exec sha256sum {} + | LC_ALL=C sort); }
+          update() {
+            status=0
+            CRUCIBLE_CODE_HOME=$(cygpath -w "$root/home") CRUCIBLE_CODE_UPDATE_SOURCE=http://127.0.0.1:$(<"$root/port") \
+              "$bin/crucible.exe" update "$@" </dev/null >"$root/out" 2>"$root/err" || status=$?
+            printf 'crucible update %s exited %s\n  stdout: %s\n  stderr: %s\n' "$*" "$status" "$(<"$root/out")" "$(<"$root/err")"
+          }
+          before=$(listing)
+          update --check
+          if [[ $status != 3 || $(<"$root/out") != "crucible $NEWER is out; this is $OLDER. \`crucible update\` installs it" ]]; then
+            echo "::error::crucible update --check did not say that $NEWER is out"
+            exit 1
+          fi
+          update
+          if [[ $status != 1 ]] || ! grep -q 'install\.ps1' "$root/err"; then
+            echo "::error::crucible update was not refused with a message naming install.ps1"
+            exit 1
+          fi
+          if [[ $(listing) != "$before" ]]; then
+            echo "::error::the refused update changed a file in $UPDATE_BIN"
+            exit 1
+          fi
+          heard=$(<"$root/heard")
+          printf 'the release source heard:\n%s\n' "$heard"
+          if grep -qv '^GET /releases/latest ' "$root/heard"; then
+            echo "::error::the release source was asked for more than which release is newest"
+            exit 1
+          fi
+
   # The verdict a tag is promoted on, and the only record that one may be.
   # Every cell above is in its `needs`, it runs whatever they did, and the one
   # thing it keeps, the staged checksums under the name `staged`, is uploaded
@@ -1032,7 +1497,7 @@ jobs:
   # is putting the name back in `needs`.
   staged:
     name: staged
-    needs: [gate, staged-checksums, stage-unix, stage-freebsd, stage-windows]
+    needs: [gate, staged-checksums, stage-unix, stage-freebsd, stage-windows, stage-update-unix, stage-update-freebsd, stage-update-windows]
     if: always() && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1149,7 +1614,7 @@ jobs:
               # Any action in the run could have uploaded an artifact by that
               # name, so it counts only beside the run's one `staged` job,
               # concluded success, and only when it was made and last changed
-              # while that job ran. A run has about twenty jobs and one page
+              # while that job ran. A run has about thirty jobs and one page
               # holds a hundred; a run that does not fit is refused, not half read.
               jobs = api(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
               if jobs["total_count"] > len(jobs["jobs"]):
