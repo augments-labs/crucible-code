@@ -58,7 +58,7 @@ Settings {
         "providers": Object {
             "anthropic": Object {
                 "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
-                "baseUrl": String("https://user.example/v1"),
+                "baseUrl": String("https://user.example/[redacted]"),
                 "effort": String("high"),
                 "model": String("user-model"),
             },
@@ -192,7 +192,7 @@ Settings {
         "providers": Object {
             "anthropic": Object {
                 "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
-                "baseUrl": String("https://user.example/v1"),
+                "baseUrl": String("https://user.example/[redacted]"),
                 "effort": String("high"),
                 "model": String("project-model"),
             },
@@ -339,7 +339,7 @@ Settings {
         "providers": Object {
             "anthropic": Object {
                 "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
-                "baseUrl": String("https://user.example/v1"),
+                "baseUrl": String("https://user.example/[redacted]"),
                 "effort": String("low"),
                 "model": String("project-model"),
             },

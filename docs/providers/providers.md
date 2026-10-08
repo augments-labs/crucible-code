@@ -496,10 +496,11 @@ and `fast` are read only from the configuration file in your home directory; a
 project file that sets one is refused with `cannot be set here`.
 
 A custom `baseUrl` must use HTTPS unless it is the exact loopback host
-`localhost`, `127.0.0.1` or `[::1]`. User information and fragments are refused,
-and diagnostics show the recipient but redact the path and query because those
-parts often contain tenant identifiers or tokens. Authenticated model requests
-never follow redirects; the provider receives the 3xx refusal instead.
+`localhost`, `127.0.0.1` or `[::1]`. User information and fragments are refused.
+Diagnostics, a printed copy of the settings among them, show the recipient (the
+scheme, host and port) but redact the path and query, because those parts often
+contain tenant identifiers or tokens. Authenticated model requests never follow
+redirects; the provider receives the 3xx refusal instead.
 
 A refused response body is read for at most ten seconds and 8 KiB. That deadline
 is elapsed time for the whole body, including bytes a slow peer continues to
