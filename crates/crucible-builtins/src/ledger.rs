@@ -30,6 +30,7 @@
 //! module exists to prevent, and no bound can cause it.
 
 use std::collections::VecDeque;
+use std::fmt;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -161,8 +162,14 @@ impl From<ToolOutput> for Shown {
 ///
 /// Compared, never shown: it says whether a file is still what it was, and
 /// nothing about what that was.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Fingerprint([u8; 32]);
+
+impl fmt::Debug for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Fingerprint").field(&"[redacted]").finish()
+    }
+}
 
 impl Fingerprint {
     /// The digest of content already in memory.
@@ -240,6 +247,16 @@ mod tests {
 
     fn any() -> Fingerprint {
         Fingerprint::of(b"")
+    }
+
+    #[test]
+    fn a_fingerprint_is_compared_and_never_shown() {
+        // The digest says nothing about the content, but it is the same value
+        // an attachment keeps out of its `Debug`, so it is kept out here too.
+        assert_eq!(
+            format!("{:?}", Fingerprint::of(b"content")),
+            "Fingerprint(\"[redacted]\")"
+        );
     }
 
     #[test]
