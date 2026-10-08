@@ -1733,6 +1733,71 @@ staging_nextest_step() {
         }
     ' "$1"
 }
+# Every file a release runs under ROOT: the workflow, each local action it
+# uses, and each local action those use, under whichever of its two names the
+# action is kept. A local action with neither is put in staging_unreached, for
+# a cache it holds cannot be read.
+staging_reach() {
+    local root=$2 queue=("$2/$1") seen=" " file dir
+    staging_reached=()
+    staging_unreached=()
+    while ((${#queue[@]})); do
+        file=${queue[0]}
+        queue=("${queue[@]:1}")
+        staging_reached+=("$file")
+        while IFS= read -r dir; do
+            dir=${dir%/}
+            [[ $seen == *" $dir "* ]] && continue
+            seen+="$dir "
+            if [[ -f $root/$dir/action.yml ]]; then
+                queue+=("$root/$dir/action.yml")
+            elif [[ -f $root/$dir/action.yaml ]]; then
+                queue+=("$root/$dir/action.yaml")
+            else
+                staging_unreached+=("$dir")
+            fi
+        done < <(sed -n -E "s/^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*['\"]?\.\/([^'\"[:space:]]*)['\"]?([[:space:]].*)?$/\2/p" "$file" | sort -u)
+    done
+}
+# Reads the files given as PATH CONTENT pairs as a release made of them, with
+# w.yml its workflow, and fails unless the guard reads it as EXPECTED: clean,
+# cached, or unreached for a local action it cannot find.
+staging_cache_case() {
+    local name=$1 expected=$2 repo got
+    shift 2
+    repo=$(mktemp -d)
+    while (($# > 1)); do
+        mkdir -p "$repo/$(dirname "$1")"
+        printf '%s\n' "$2" >"$repo/$1"
+        shift 2
+    done
+    staging_reach w.yml "$repo"
+    if ((${#staging_unreached[@]})); then
+        got=unreached
+    else
+        staging_cached "${staging_reached[@]}" >/dev/null
+        case $? in
+            0) got=cached ;;
+            1) got=clean ;;
+            *) got=unreadable ;;
+        esac
+    fi
+    rm -rf "$repo"
+    [[ $got == "$expected" ]] || staging_fail "the release cache guard reads $name as $got, not $expected"
+}
+# The lines of FILES that restore or keep a cache, comments left out: a cache
+# action under any owner's spelling, quoted or not, sccache in any form, and a
+# `cache:` input such as a setup action takes. The status is 1 when there is
+# none and 2 when a file could not be read.
+staging_cache_pattern="uses:[[:space:]]*['\"]?[^'\"[:space:]#]*(actions/cache|rust-cache)|sccache|(^|[{,])[[:space:]]*(-[[:space:]]+)?cache:"
+staging_cached() {
+    local found status
+    found=$(grep -HniE -- "$staging_cache_pattern" "$@")
+    status=$?
+    ((status > 1)) && return 2
+    [[ -n $found ]] || return 1
+    grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' <<<"$found"
+}
 if [[ ! -f $staging_workflow ]]; then
     staging_fail "$staging_workflow is missing; this check measured nothing"
 else
@@ -1773,13 +1838,36 @@ else
             staging_fail "the release gate runs check.sh before it installs cargo-nextest"
         fi
     fi
-    staging_actions=("$staging_workflow")
-    while IFS= read -r local_action; do
-        staging_actions+=("$local_action/action.yml")
-    done < <(sed -n 's|^ *-\{0,1\} *uses: *\./\([^ ]*\).*$|\1|p' "$staging_workflow" | sort -u)
-    if cached=$(grep -nE 'uses: *(actions/cache|Swatinem/rust-cache)' "${staging_actions[@]}"); then
-        staging_fail "a release restores a cache another ref may have written: $cached"
-    fi
+    staging_reach "$staging_workflow" .
+    for dir in ${staging_unreached[@]+"${staging_unreached[@]}"}; do
+        staging_fail "a release uses $dir, which holds no action.yml or action.yaml"
+    done
+    cached=$(staging_cached "${staging_reached[@]}")
+    case $? in
+        0) staging_fail "a release restores a cache another ref may have written: $cached" ;;
+        2) staging_fail "a file a release runs could not be read for a cache: ${staging_reached[*]}" ;;
+    esac
+    staging_cache_case "a release with no cache" clean \
+        w.yml $'steps:\n  # restores no cache\n  - uses: actions/checkout@v4\n  - uses: ./a' \
+        a/action.yml $'runs:\n  steps:\n    - run: true'
+    staging_cache_case "actions/cache" cached w.yml '  - uses: actions/cache@v4'
+    staging_cache_case "a lowercase owner" cached w.yml '  - uses: swatinem/rust-cache@v2'
+    staging_cache_case "a quoted name" cached w.yml '  - uses: "actions/cache@v4"'
+    staging_cache_case "a single-quoted name" cached w.yml "  - uses: 'Swatinem/rust-cache@v2'"
+    staging_cache_case "the sccache action" cached w.yml '  - uses: mozilla-actions/sccache-action@v0.0.9'
+    staging_cache_case "sccache as the compiler wrapper" cached w.yml $'env:\n  RUSTC_WRAPPER: sccache'
+    staging_cache_case "a setup action's cache input" cached \
+        w.yml $'  - uses: actions/setup-python@v5\n    with:\n      cache: pip'
+    staging_cache_case "a cache input written inline" cached \
+        w.yml '  - uses: actions/setup-node@v4
+    with: {node-version: 22, cache: npm}'
+    staging_cache_case "a cache named only in a comment" clean \
+        w.yml $'  - uses: actions/checkout@v4\n    # uses: actions/cache@v4\n    # cache: pip'
+    staging_cache_case "a cache in a local action another uses" cached \
+        w.yml '  - uses: ./a' a/action.yml '    - uses: ./b' b/action.yml '    - uses: actions/cache/restore@v4'
+    staging_cache_case "a cache in an action.yaml" cached \
+        w.yml '  - uses: ./c' c/action.yaml '    - uses: actions/cache@v4'
+    staging_cache_case "a local action that is not there" unreached w.yml '  - uses: ./gone'
 
     # Publication is one job, and that job never runs on a branch. Another job
     # may download a published release, which is how a cell installs the one it
