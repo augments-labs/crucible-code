@@ -384,7 +384,8 @@ Reads the three configuration files the way a startup would, resolves them the
 way it would, and stops. The report opens with `configuration valid` or
 `configuration invalid`, names each file as `user config`, `project config` or
 `project-local config` with `absent`, `valid` or `invalid` after it, lists
-each failure (at most four) and ends with `schema:` and the schema's id
+each failure (at most four), cut at 4096 bytes and ending `… (cut)` where there
+was more, and ends with `schema:` and the schema's id
 ([Checking without starting](../configuration/configuration.md#checking-without-starting)).
 
 ```bash
