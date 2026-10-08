@@ -1,8 +1,9 @@
 # Command line
 
 `crucible --help` prints the flags and the subcommands `sandbox`, `config`,
-`doctor`, `auth`, `mcp`, `extensions`, `sessions` and `help`, under a longer
-introduction; `crucible -h` prints the same under the one-line introduction. Each subcommand has its own help, such as `crucible
+`doctor`, `auth`, `mcp`, `extensions`, `sessions`, `completion` and `help`,
+under a longer introduction; `crucible -h` prints the same under the one-line
+introduction. Each subcommand has its own help, such as `crucible
 config --help` and `crucible sandbox setup --help`, and `crucible help` and
 `crucible help <command>` print the same pages. `crucible --version` (or `-V`)
 prints `crucible` and the version number on one line, and stops. All of these
@@ -459,6 +460,38 @@ with `format_version` 1, `kind` `doctor`, `status` (`healthy`, `warnings` or
 `failed`), a `truncated` flag and `checks`, each with its `id`, `status`,
 `reason` and, for anything but `ok`, a `remedy`.
 
+### `completion SHELL`
+
+Writes a completion script for `SHELL`, one of `bash`, `zsh`, `fish`,
+`powershell` or `elvish`, to standard output, and stops. The script is made
+from the command line of the crucible that runs it, so it completes every
+subcommand and flag of this release. A script written to a file stays as it
+was written: write it again after an upgrade. The command reads no
+configuration, opens no terminal, starts nothing and makes no connection, so it
+is safe to run from a shell's start-up file. A shell it has no script for is
+refused with the list of those it has, exit 2, as any other unknown value is.
+Standard output closing early, as when piped to `head`, ends it quietly with
+exit 0.
+
+Each shell reads the script from a different place. Either write it to a file
+once, which is quick to load, or run the command from the start-up file, which
+is always current and costs one process at every start. A directory below
+that does not exist yet is made first, as with `mkdir -p ~/.zfunc`:
+
+| Shell | Install |
+| --- | --- |
+| bash | `crucible completion bash > ~/.local/share/bash-completion/completions/crucible`, which the `bash-completion` package loads on demand, or `source <(crucible completion bash)` in `~/.bashrc` |
+| zsh | `crucible completion zsh > ~/.zfunc/_crucible` in a directory you own, with `fpath=(~/.zfunc $fpath)` in `~/.zshrc` before `compinit` runs, then start a new shell |
+| fish | `crucible completion fish > ~/.config/fish/completions/crucible.fish` |
+| powershell | `crucible completion powershell \| Out-String \| Invoke-Expression` in your `$PROFILE` |
+| elvish | `crucible completion elvish > ~/.config/elvish/lib/crucible-completion.elv`, then `use crucible-completion` in `~/.config/elvish/rc.elv` |
+
+The script completes the command it was written for, `crucible`. The `cru`
+link the installer makes is a different name to the shell, and completes
+nothing until you tell the shell so: in bash, `complete -F _crucible cru` in
+`~/.bashrc` after `source <(crucible completion bash)`, since `_crucible` does
+not exist before the script is loaded.
+
 ## Credentials from the command line
 
 `crucible auth` says, stores and removes the credentials a launch signs
@@ -666,7 +699,7 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
 | 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
 | 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, and the prompt `auth login` hides a key at is put away with the terminal handed back as it was found, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |

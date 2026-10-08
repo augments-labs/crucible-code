@@ -83,6 +83,13 @@ tokio = { version = "=1.53.1", default-features = false }
 # produces rather than in a builder chain that drifts from it.
 clap = { version = "=4.6.7", features = ["derive"] }
 
+# Shell completion scripts written from the command tree `clap` already holds.
+# `std` has no notion of a command tree, and a script written by hand for five
+# shells would drift from the flags the first time one is renamed. Default
+# features only: the dynamic-completion machinery, which would add `clap_lex`,
+# `shlex` and `is_executable`, is not used.
+clap_complete = "=4.6.11"
+
 # Error enums. Every module owns its error type; `thiserror` writes the
 # `Display` and `source` impls for it without erasing the type the way a
 # boxed error does. Derive only — nothing of it survives into the binary.
@@ -494,6 +501,7 @@ crucible-app.workspace = true
 # front end makes: the command line is one client of that contract.
 crucible-client-api.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 crucible-attachments.workspace = true
 crucible-auth.workspace = true
 crucible-builtins.workspace = true
