@@ -353,9 +353,9 @@ impl Watched {
     /// the terminal they are actually in — was the one thing no case here
     /// could see. This asks for colour outright, which outranks `NO_COLOR`.
     ///
-    /// `ansi` because the screen keeps text and drops every colour it is told,
-    /// so what a snapshot is worth is the rows, and the sixteen a terminal
-    /// already has are the fewest escapes to get to them.
+    /// `ansi` because these cases are read through [`Self::picture`], which
+    /// shows the rows and not what they were drawn in, and the sixteen a
+    /// terminal already has are the fewest escapes to get to them.
     pub(crate) fn in_colour(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
         let document = format!(
             "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
@@ -366,6 +366,30 @@ impl Watched {
         );
 
         Self::configured(case, columns, rows, &document, true)
+    }
+
+    /// The same again, in the colours crucible draws with when nothing chooses
+    /// a theme, for a case read with [`Self::picture_in_colour`].
+    ///
+    /// Colour is asked for outright, which outranks the `NO_COLOR` the harness
+    /// sets, and the theme is left to its default. Nothing else differs from
+    /// the launch the case copies: `vendor` and `rule` are what it was given,
+    /// and a case with a vendor has the variable a key is read from, as every
+    /// case that reaches one does.
+    pub(crate) fn in_default_colours(
+        case: &str,
+        size: (u16, u16),
+        vendor: Option<&Vendor>,
+        rule: Option<&str>,
+    ) -> Self {
+        let plain = document(vendor, rule);
+        let rest = plain
+            .strip_prefix("{\n")
+            .expect("a whole-screen configuration object");
+        let document = format!("{{\n  \"output\": {{\"color\": \"always\"}},\n{rest}");
+        let (columns, rows) = size;
+
+        Self::configured(case, columns, rows, &document, vendor.is_some())
     }
 
     /// A provider to reach and nothing to sign a request with.
@@ -1129,6 +1153,11 @@ impl Watched {
     /// The screen, ready to be compared against the one checked in beside it.
     pub(crate) fn picture(&self) -> String {
         self.screen.picture()
+    }
+
+    /// The same, with what each span was drawn in under its row.
+    pub(crate) fn picture_in_colour(&self) -> String {
+        self.screen.picture_in_colour()
     }
 
     /// The rows that scrolled off the top of a native window, oldest first,
