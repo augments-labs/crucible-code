@@ -33,7 +33,10 @@
 //!
 //! Both files are read as one ordinary file each, through
 //! [`super::privacy::opened`]: an index under a link or a pipe is one that
-//! cannot be read, and a mark under either vouches for nothing.
+//! cannot be read, and a mark under either vouches for nothing. The mark is
+//! written through [`super::privacy::mark`], which refuses either too, so a
+//! link there carries no digest, and no mode, to the file it leads to; the
+//! digest is simply not left, and the next start scans once more.
 
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -404,6 +407,9 @@ fn vouched(directory: &Path, text: &str) -> bool {
 }
 
 /// Leaves the digest of the index just written in the mark.
+///
+/// A link or a pipe under the mark's name is refused when it is opened,
+/// before anything is written or narrowed, as a mark that cannot be made is.
 fn leave_mark(directory: &Path, text: &str) -> io::Result<()> {
     let mut mark = super::privacy::mark(&directory.join(ORDERED))?;
     mark.set_len(0)?;
