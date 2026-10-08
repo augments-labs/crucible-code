@@ -1049,8 +1049,15 @@ mod tests {
             serde_json::from_str(&configuration(Some("native"))).expect("a document");
         let mut plain: serde_json::Value = serde_json::from_str(CONFIG).expect("a document");
 
-        assert_eq!(named["output"]["screen"], "native");
-        plain["output"]["screen"] = "native".into();
+        assert_eq!(
+            named.pointer("/output/screen"),
+            Some(&serde_json::Value::from("native"))
+        );
+        plain
+            .pointer_mut("/output")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("an output block")
+            .insert("screen".to_owned(), "native".into());
         assert_eq!(named, plain);
     }
 }
