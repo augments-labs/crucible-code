@@ -1746,13 +1746,27 @@ else
     # before check.sh runs. Nothing a release runs restores a cache: a release
     # is built from nothing another ref wrote.
     gate_job=$(staging_job gate)
-    nextest_step=$(grep -m1 -A2 -F 'uses: taiki-e/install-action@' .github/workflows/rust-ci.yml)
+    # The step is the install whose `tool:` names cargo-nextest, wherever it
+    # stands among the others a workflow installs.
+    staging_nextest_step() {
+        awk '
+            { before = last; last = this; this = $0 }
+            before ~ /uses: taiki-e\/install-action@/ && last ~ /^ *with:$/ && this ~ /^ *tool: cargo-nextest@/ {
+                print before; print last; print this; exit
+            }
+        ' "$1"
+    }
+    nextest_fixture=$'      - uses: taiki-e/install-action@1 # v1\n        with:\n          tool: cargo-deny@1\n      - uses: taiki-e/install-action@2 # v2\n        with:\n          tool: cargo-nextest@2'
+    if [[ $(staging_nextest_step <(printf '%s\n' "$nextest_fixture")) != "$(tail -n3 <<<"$nextest_fixture")" ]]; then
+        staging_fail "the nextest step is not found behind another install-action step"
+    fi
+    nextest_step=$(staging_nextest_step .github/workflows/rust-ci.yml)
     if [[ $nextest_step != *'tool: cargo-nextest@'* ]]; then
         staging_fail "rust-ci.yml installs no cargo-nextest for this check to hold the release gate to"
     else
-        nextest_at=$(grep -nxF -- "$(head -n1 <<<"$nextest_step")" <<<"$gate_job" | head -n1 | cut -d: -f1)
+        nextest_at=$(grep -nxF -- "$(tail -n1 <<<"$nextest_step")" <<<"$gate_job" | head -n1 | cut -d: -f1)
         check_at=$(grep -nE '^ +- run: scripts/sh/check\.sh$' <<<"$gate_job" | head -n1 | cut -d: -f1)
-        if [[ -z $nextest_at || $(sed -n "${nextest_at},$((nextest_at + 2))p" <<<"$gate_job") != "$nextest_step" ]]; then
+        if [[ -z $nextest_at || $(staging_nextest_step <(printf '%s\n' "$gate_job")) != "$nextest_step" ]]; then
             staging_fail "the release gate does not install cargo-nextest as rust-ci.yml does:"
             printf '%s\n' "$nextest_step"
         elif [[ -z $check_at ]] || ((check_at < nextest_at)); then
