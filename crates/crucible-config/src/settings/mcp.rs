@@ -100,10 +100,11 @@ pub struct McpServer {
 }
 
 impl fmt::Debug for McpServer {
-    /// Written by hand so `env` is named and not shown.
+    /// Written by hand so `env` is named and not shown, and `args` is shown as
+    /// [`shown_args`](Self::shown_args) shows it.
     ///
-    /// The block is what this server is started with, so a key for it is
-    /// written there and nowhere else. A derive is how one reaches a log line,
+    /// A key for this server is written in the block it is started with, or
+    /// on its command line. A derive is how one reaches a log line,
     /// an error or a panic payload without anybody having decided that it
     /// should, which is why the redaction lives in the type rather than in
     /// whatever prints it.
@@ -114,7 +115,8 @@ impl fmt::Debug for McpServer {
     /// The record is taken apart rather than read field by field, so that a
     /// field added later is a compilation error here instead of a field this
     /// quietly stops printing. That is the one thing the derive gave for free
-    /// and the reason to give it up was `env`, not the rest of the record.
+    /// and the reason to give it up was `env` and `args`, not the rest of the
+    /// record.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             name,
@@ -133,7 +135,7 @@ impl fmt::Debug for McpServer {
         f.debug_struct("McpServer")
             .field("name", name)
             .field("command", command)
-            .field("args", args)
+            .field("args", &shown(args.iter().map(AsRef::as_ref)))
             .field("directory", directory)
             .field("env", &env::Named(env))
             .field("env_from", env_from)
@@ -200,19 +202,7 @@ impl McpServer {
     /// a secret wherever it was wrong.
     #[must_use]
     pub fn shown_args(&self) -> Vec<String> {
-        let mut follows = false;
-        self.args
-            .iter()
-            .map(|arg| {
-                let hidden = follows || credential(arg);
-                follows = named(arg);
-                if hidden {
-                    HIDDEN.to_owned()
-                } else {
-                    arg.to_string()
-                }
-            })
-            .collect()
+        shown(self.args.iter().map(AsRef::as_ref))
     }
 
     /// The absolute directory to start it in, where one was written.
@@ -332,6 +322,52 @@ fn block(record: &Value, key: &str) -> Vec<(Box<str>, Box<str>)> {
 /// A whole number of seconds, or the default the schema publishes for the key.
 fn seconds(record: &Value, key: &str, usual: u64) -> Duration {
     Duration::from_secs(record.get(key).and_then(whole).unwrap_or(usual))
+}
+
+/// What [`McpServer::shown_args`] shows of a list of arguments.
+fn shown<'a>(args: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut follows = false;
+    args.into_iter()
+        .map(|arg| {
+            let hidden = follows || credential(arg);
+            follows = named(arg);
+            if hidden {
+                HIDDEN.to_owned()
+            } else {
+                arg.to_owned()
+            }
+        })
+        .collect()
+}
+
+/// Replaces each server's arguments in a printed document with what
+/// [`McpServer::shown_args`] shows of them.
+///
+/// The document-holding types print through [`env::Redacted`], and a document
+/// holds every server's arguments unread, a key among them as often as not.
+/// An argument list that is not all text, which no document that parsed
+/// holds, is hidden whole.
+pub(crate) fn hide_args(shown_document: &mut Value) {
+    let Some(servers) = shown_document
+        .get_mut("mcp")
+        .and_then(|block| block.get_mut("servers"))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+
+    for record in servers.values_mut() {
+        let Some(args) = record.get_mut("args") else {
+            continue;
+        };
+        let read: Option<Vec<&str>> = args
+            .as_array()
+            .and_then(|held| held.iter().map(Value::as_str).collect());
+        *args = match read {
+            Some(read) => Value::from(shown(read)),
+            None => Value::String(HIDDEN.to_owned()),
+        };
+    }
 }
 
 /// Whether an argument could carry a secret, for any of the reasons
