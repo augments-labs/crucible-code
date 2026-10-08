@@ -1620,6 +1620,9 @@ mod latest;
 /// What a resume answers a call with that was started and never finished.
 mod started;
 
+/// Which names `--continue` and `--resume` will read as a log.
+mod ordinary;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {

@@ -107,6 +107,14 @@ a permission question into one. See
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.
 
+A log name in the sessions directory that is a symbolic link or a pipe rather
+than a file is refused as a log that cannot be read is: `--continue` stops with
+`could not read the session log …` and the reason, having read nothing through
+the link and waited on no pipe, rather than continuing an older session in its
+place. `--resume` and the `/resume` preview refuse a link the same way, and
+answer a pipe as an id nothing was recorded under. A log with a second hard
+name, as a backup made with hard links leaves, is read as any other.
+
 Closing the terminal window, or sending crucible a `kill`, while an answer is
 arriving does not lose it. On Linux, macOS and FreeBSD the hang-up or
 termination stops the turn first, the way Escape would: what the model had said

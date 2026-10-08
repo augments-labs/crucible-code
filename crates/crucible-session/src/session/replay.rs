@@ -6,6 +6,12 @@
 //! or have been written by a build that spelled a message differently — so
 //! finding the right log, refusing the wrong one and stopping at the first
 //! line that cannot be read all live here together.
+//!
+//! So does how a log is opened to be read. Every read of one by its name in
+//! the sessions directory — the header [`belongs`] reads, the [`replay`], the
+//! picker's glimpse and the welcome screen's lines — opens it as [`opened`]
+//! does, so a link or a pipe under a log's name is refused by every one of
+//! them in the same way.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -141,10 +147,40 @@ pub(super) fn newest(directory: &Path, workspace: &Workspace) -> Result<PathBuf,
     })
 }
 
+/// The log at `path`, opened to read, where it is one ordinary file.
+///
+/// A pipe would hold `--continue`, the welcome screen or a listing until
+/// something wrote to it, and a link would read wherever it leads, out of the
+/// sessions directory or into another log — and a session continued through
+/// one is then cut and appended to there. So the name is opened without
+/// following a final link and, on Unix, without waiting for a writer, and the
+/// proof that it is an ordinary file is taken on the handle that opened, before
+/// a byte is read. On Windows a final reparse point is opened as itself and
+/// refused by the same proof; a pipe cannot sit in a directory there.
+///
+/// A second hard name is accepted. Nothing is followed to reach a file with
+/// one, so what is read is what this name opened, and a backup made with hard
+/// links gives every log one: refusing it would leave every session that backup
+/// touched impossible to continue.
+///
+/// The privacy crate's opener rather than a workspace path: the sessions
+/// directory is not a root the agent was pointed at, and a workspace proof
+/// follows any link that stays inside its root, where this follows none.
+///
+/// # Errors
+///
+/// What the open said, or that what opened is not one ordinary file; a caller
+/// reports either against the log as it reports a log that will not open.
+pub(super) fn opened(path: &Path) -> Result<File, io::Error> {
+    crucible_privacy::open_read_ordinary(path).map_err(crucible_privacy::PrivacyError::into_io)
+}
+
 /// Whether `path` is a log of a session in `workspace`.
 ///
 /// A log this build does not understand is refused rather than skipped: the
-/// answer to "continue my last session" must never be a different one.
+/// answer to "continue my last session" must never be a different one. A name
+/// that is not one ordinary file — a link or a pipe — is refused the same way,
+/// as a log that does not open, since what it records is not known.
 pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, SessionError> {
     let trouble = |source| SessionError::Log {
         at: path.display().to_string().into(),
@@ -152,7 +188,7 @@ pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, Sessio
     };
 
     let mut first = String::new();
-    BufReader::new(File::open(path).map_err(trouble)?)
+    BufReader::new(opened(path).map_err(trouble)?)
         .read_line(&mut first)
         .map_err(trouble)?;
 
@@ -222,7 +258,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         source,
     };
 
-    let mut log = BufReader::new(File::open(path).map_err(trouble)?);
+    let mut log = BufReader::new(opened(path).map_err(trouble)?);
     let mut pending_results = results::load(path).map_err(trouble)?;
     let mut settled_results = Vec::new();
     let mut raw = Vec::new();
