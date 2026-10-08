@@ -54,6 +54,12 @@ pub(super) fn open_read(path: &Path) -> io::Result<File> {
     existing(path, false)
 }
 
+pub(super) fn open_read_ordinary(path: &Path) -> io::Result<File> {
+    let file = reached(path, false)?;
+    regular(&file)?;
+    Ok(file)
+}
+
 pub(super) fn open_read_append(path: &Path) -> io::Result<File> {
     existing(path, true)
 }
@@ -242,14 +248,23 @@ fn wide(path: &Path) -> Vec<u16> {
 }
 
 fn existing(path: &Path, writable: bool) -> io::Result<File> {
+    let file = reached(path, writable)?;
+    ordinary(&file)?;
+    Ok(file)
+}
+
+/// The existing file at `path`, opened as itself rather than through a final
+/// reparse point, and not yet proved to be anything.
+fn reached(path: &Path, writable: bool) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options
         .read(true)
         // Keep the file's name stable while this handle is live. Other readers
         // and writers can still open it and meet the lock on this file.
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-        // Open a final reparse point itself instead of following it. Validation
-        // below is therefore about this handle, not a name checked beforehand.
+        // Open a final reparse point itself instead of following it. What the
+        // caller then proves is therefore about this handle, not a name checked
+        // beforehand.
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     if writable {
         // `File::set_len` requires the ordinary write right on Windows.
@@ -258,12 +273,17 @@ fn existing(path: &Path, writable: bool) -> io::Result<File> {
         options.write(true);
     }
 
-    let file = options.open(path)?;
-    ordinary(&file)?;
-    Ok(file)
+    options.open(path)
 }
 
+/// One ordinary file under one name: what private state has to be.
 fn ordinary(file: &File) -> io::Result<()> {
+    regular(file)?;
+    single_name(file)
+}
+
+/// One ordinary file, not a reparse point, however many names reach it.
+fn regular(file: &File) -> io::Result<()> {
     let metadata = file.metadata()?;
     if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 || !metadata.is_file() {
         return Err(io::Error::new(
@@ -271,7 +291,7 @@ fn ordinary(file: &File) -> io::Result<()> {
             "private state is not one ordinary file",
         ));
     }
-    single_name(file)
+    Ok(())
 }
 
 fn reject_reparse(path: &Path) -> io::Result<()> {

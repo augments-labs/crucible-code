@@ -6,7 +6,10 @@ use std::time::Duration;
 
 #[cfg(unix)]
 use crate::{append, sync_parent, tighten};
-use crate::{create_append, create_write, directory, lock, open_read, open_read_append, replace};
+use crate::{
+    create_append, create_write, directory, lock, open_read, open_read_append, open_read_ordinary,
+    replace,
+};
 
 struct Scratch(PathBuf);
 
@@ -171,6 +174,10 @@ fn live_file_symlinks_are_refused_without_tightening_their_target() {
         open_read_append(&link).unwrap_err().kind(),
         std::io::ErrorKind::InvalidInput
     );
+    assert_eq!(
+        open_read_ordinary(&link).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
     assert!(tighten(&link).is_err());
     assert_eq!(fs::read_to_string(&target).unwrap(), "outside");
     assert_eq!(
@@ -199,6 +206,53 @@ fn an_existing_file_with_another_hard_name_is_not_opened_as_private_state() {
         std::io::ErrorKind::InvalidInput
     );
     assert_eq!(fs::read(source).unwrap(), b"unchanged");
+}
+
+/// The one open that takes a file however it is named still reads it, and
+/// through the name it was handed.
+#[test]
+fn an_ordinary_file_with_another_hard_name_is_read_where_its_names_are_not_asked() {
+    use std::io::Read as _;
+
+    let scratch = Scratch::new("hard-name-ordinary");
+    directory(&scratch.0).unwrap();
+    let source = scratch.0.join("source");
+    let alias = scratch.0.join("alias");
+    fs::write(&source, "under two names").unwrap();
+    fs::hard_link(&source, &alias).unwrap();
+
+    let mut read = String::new();
+    open_read_ordinary(&alias)
+        .unwrap()
+        .read_to_string(&mut read)
+        .unwrap();
+
+    assert_eq!(read, "under two names");
+}
+
+/// A pipe where an ordinary file is read waits for a writer that is not
+/// coming, so an open that waited would never come back.
+#[cfg(unix)]
+#[test]
+fn a_pipe_where_an_ordinary_file_is_read_is_refused_without_waiting_for_a_writer() {
+    let scratch = Scratch::new("ordinary-pipe");
+    fs::create_dir_all(&scratch.0).unwrap();
+    let at = scratch.0.join("pipe");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&at)
+        .status()
+        .expect("mkfifo is available on Unix");
+    assert!(made.success());
+
+    let opened = answered("reading a pipe standing where a file is read", move || {
+        open_read_ordinary(&at).map(drop)
+    });
+
+    assert_eq!(
+        opened.unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput,
+        "a pipe standing where a file is read was opened"
+    );
 }
 
 #[cfg(unix)]
