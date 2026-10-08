@@ -14,8 +14,10 @@ in that entry. What it sets, it sets for the processes it starts, which the
 last two sections cover, plus one internal setting it hands its own Windows
 sandbox helper.
 
-Two more are read only if crucible crashes: Rust's own `RUST_BACKTRACE` and
-`RUST_LIB_BACKTRACE` decide whether the crash message carries a backtrace.
+Two more are read only if crucible crashes, when it writes one line naming
+the thread and where it gave up, with any control character in the message
+escaped: Rust's own `RUST_LIB_BACKTRACE`, or where that is unset
+`RUST_BACKTRACE`, decides whether a backtrace follows the line.
 
 ## crucible's own settings
 

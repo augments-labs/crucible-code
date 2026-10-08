@@ -29,7 +29,7 @@ mod freed;
 mod gathering;
 mod kept;
 mod opening;
-mod panicked;
+pub(super) mod panicked;
 #[cfg(test)]
 mod sample;
 mod seen;
