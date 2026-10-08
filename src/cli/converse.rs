@@ -26,7 +26,9 @@
 //! Esc would, and hands back [`Fatal::Ended`] the way a terminal that failed
 //! is handed back. Every turn that ends in an error has its session finished
 //! here, before the error leaves, so what was said is on the disk whoever else
-//! still holds the session.
+//! still holds the session. Between turns the same note calls off a wait on
+//! the keyboard instead, so that the guards below hand the terminal back
+//! before the signal is obeyed, and [`converse`] reads it once they have.
 //!
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
@@ -467,7 +469,26 @@ impl<T: Terminal> Drop for Closing<'_, T> {
 /// `input` is standard input in a real run. It is a parameter so that a test
 /// can drive the loop: the deadlock this file has to avoid is one that only
 /// shows up when a whole turn runs, and a hardwired stdin makes that unrunnable.
+///
+/// A signal noted while the keyboard was waited on between turns is read here,
+/// once every guard the session held has handed back what it held, and
+/// outranks whatever the session ended with, as it does inside a turn.
 pub(crate) fn converse<T: Terminal>(
+    conversation: Conversation,
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    first: First<'_>,
+    input: &mut dyn BufRead,
+) -> Result<Parting, Fatal> {
+    let conversed = conversing(conversation, renderer, terms, first, input);
+    match terms.ending.told() {
+        Some(told) => Err(Fatal::Ended(told)),
+        None => conversed,
+    }
+}
+
+/// The session itself, behind [`converse`].
+fn conversing<T: Terminal>(
     mut conversation: Conversation,
     renderer: &mut Renderer<T>,
     terms: &Terms,
@@ -512,6 +533,13 @@ pub(crate) fn converse<T: Terminal>(
     let keys = raw.is_some();
     if keys {
         panics = Some(Panics::kept());
+        // A signal between turns is obeyed where it lands, and that would be
+        // with the keys still raw. While the keyboard is waited on, it is
+        // noted instead, and the wait called off, so the guards above hand
+        // the terminal back before the signal is obeyed.
+        if let Some(recall) = terms.ending.recall() {
+            renderer.recalled_by(recall);
+        }
     }
 
     // Held the same way and for the same length, and asked for unconditionally

@@ -419,7 +419,9 @@ fn stood<T: Terminal>(
 /// The clock is only consulted while there is something that could end without a
 /// keystroke — a wake-up four times a second, and only then, because a row that
 /// silently went on saying `1 command` after the server behind it fell over is the
-/// stale fact the row exists to prevent.
+/// stale fact the row exists to prevent. Either wait may also wake on a beat of
+/// the renderer's own, to look for a signal noted while it waited, which draws
+/// nothing and ends the wait only where one was.
 fn arriving<T: Terminal>(
     renderer: &mut Renderer<T>,
     left: &Background,

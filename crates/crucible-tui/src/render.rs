@@ -49,14 +49,18 @@ use crate::terminal::{Size, Terminal, TerminalError};
 use crate::width;
 
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod frame;
 mod native;
 mod painted;
+mod recall;
 
 use native::Native;
 use painted::Painted;
+pub use recall::Recall;
+use recall::Watch;
 
 /// How far one notch of the wheel moves the transcript, until told otherwise.
 ///
@@ -369,6 +373,8 @@ pub struct Renderer<T: Terminal> {
     /// still while an answer scrolls under it is over whatever is under it now,
     /// which is what a reader watching the screen sees.
     pointing: Option<(usize, usize)>,
+    /// What may call off a wait on the keyboard, where anything may.
+    recall: Option<Arc<dyn Recall>>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -421,7 +427,14 @@ impl<T: Terminal> Renderer<T> {
             held: None,
             creeps: None,
             pointing: None,
+            recall: None,
         }
+    }
+
+    /// Lets `recall` call off every wait on the keyboard from here on, as it
+    /// says in [`Recall`].
+    pub fn recalled_by(&mut self, recall: Arc<dyn Recall>) {
+        self.recall = Some(recall);
     }
 
     /// Waits for one press, carrying a drag resting at an edge of the
@@ -429,20 +442,25 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// `None` where the scroll rail or the selection consumed the press. A
     /// drag's next step wakes this wait, moves the transcript, and waits again;
-    /// it never becomes a key the caller could mistake for input.
+    /// it never becomes a key the caller could mistake for input. A wait a
+    /// [`Recall`] watches wakes on a beat as well, to ask it.
     ///
     /// # Errors
     ///
-    /// [`TerminalError::Io`] if the terminal could not be read or written.
+    /// [`TerminalError::Io`] if the terminal could not be read or written, and
+    /// [`TerminalError::Recalled`] if the wait was called off.
     pub fn pressed(&mut self) -> Result<Option<Pressed>, TerminalError> {
         self.seal()?;
+        let watch = Watch::began(self.recall.as_ref());
         loop {
-            if let Some(patience) = self.rests_in()
+            watch.held()?;
+            if let Some(patience) = watch.patience(self.rests_in())
                 && !waiting(patience)?
             {
                 self.repose()?;
                 continue;
             }
+            watch.held()?;
             return self.took(pressed()?);
         }
     }
@@ -452,20 +470,31 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// The caller already has something else to watch — a running turn or a
     /// login attempt — so a step taken answers `false` and lets that caller
-    /// make its ordinary pass before polling again.
+    /// make its ordinary pass before polling again. A wait a [`Recall`]
+    /// watches is taken a beat at a time, asking it between beats.
     ///
     /// # Errors
     ///
-    /// [`TerminalError::Io`] if the terminal could not be read or written.
+    /// [`TerminalError::Io`] if the terminal could not be read or written, and
+    /// [`TerminalError::Recalled`] if the wait was called off.
     pub fn waiting(&mut self, patience: Duration) -> Result<bool, TerminalError> {
         self.seal()?;
         self.repose()?;
-        let patience = self.rests_in().map_or(patience, |due| due.min(patience));
-        let ready = waiting(patience)?;
-        if !ready {
-            self.repose()?;
+        let watch = Watch::began(self.recall.as_ref());
+        let mut left = self.rests_in().map_or(patience, |due| due.min(patience));
+        loop {
+            watch.held()?;
+            let beat = watch.patience(Some(left)).unwrap_or(left);
+            if waiting(beat)? {
+                watch.held()?;
+                return Ok(true);
+            }
+            left = left.saturating_sub(beat);
+            if left.is_zero() {
+                self.repose()?;
+                return Ok(false);
+            }
         }
-        Ok(ready)
     }
 
     /// What a press means once the scroll rail and the selection have had it.
