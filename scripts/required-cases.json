@@ -944,15 +944,15 @@
     {
       "id": "CASE-CREDENTIAL-NESTED-ENVIRONMENT-UNPRINTED",
       "family": "credentials",
-      "obligation": "A printed document shows nothing of a variable written under a server, as it shows nothing of one written at the top.",
+      "obligation": "A printed document shows nothing of a variable or a key argument written under a server, as it shows nothing of a variable written at the top.",
       "package": "crucible-config",
       "target": {
         "kind": "lib",
         "name": "crucible_config"
       },
-      "case": "settings::mcp::tests::printing_the_settings_shows_nothing_of_a_variable_written_under_a_server",
+      "case": "settings::mcp::tests::printing_the_settings_shows_nothing_of_a_secret_written_under_a_server",
       "source": "crates/crucible-config/src/settings/mcp/tests.rs",
-      "body_sha256": "6812bbcc77ff2702318c69fd77681875485fd55d5af3d99b797521f11e80093c",
+      "body_sha256": "e888d6b2a2c79cb7a99169580823f2912124fae3a2c2f3620f862e663031a231",
       "platforms": [
         "linux",
         "macos",

@@ -395,13 +395,37 @@ fn printing_a_server_record_names_a_variable_and_shows_nothing_of_its_value() {
 }
 
 #[test]
-fn printing_the_settings_shows_nothing_of_a_variable_written_under_a_server() {
+fn printing_a_server_record_shows_its_arguments_as_a_reader_is_shown_them() {
+    // A key is often given to a server on its command line, so the arguments
+    // carry the same secret `env` does, and a `{record:?}` reaches a log line
+    // or a panic payload without anybody having read it first.
+    let found = read(
+        r#"{"mcp": {"servers": {"docs": {"command": "docs-mcp",
+           "args": ["--root", "/srv/docs", "--api-key", "hunter2"]}}}}"#,
+    );
+    let [server] = found.as_slice() else {
+        panic!("one server was written down");
+    };
+
+    let printed = format!("{server:?}");
+    let shown = format!("args: {:?}", server.shown_args());
+    assert!(printed.contains(&shown), "got {printed}");
+    assert!(printed.contains("/srv/docs"), "got {printed}");
+    assert!(!printed.contains("hunter2"), "got {printed}");
+
+    // And the argument is still whole for the process that needs it.
+    assert!(server.args().any(|arg| arg == "hunter2"));
+}
+
+#[test]
+fn printing_the_settings_shows_nothing_of_a_secret_written_under_a_server() {
     // The document-level redaction reaches the block a user writes at the top
     // of a file. A server's own block is nested inside `mcp.servers`, and a
     // secret written there is the same secret.
     let settings = Settings::resolve(vec![Document::sample(
         r#"{"env": {"TOKEN": "hunter2"},
             "mcp": {"servers": {"docs": {"command": "docs-mcp",
+              "args": ["--root", "/srv/docs", "--api-key", "hunter4"],
               "env": {"DOCS_TOKEN": "hunter3"}}}}}"#,
         Origin::User,
     )]);
@@ -411,6 +435,10 @@ fn printing_the_settings_shows_nothing_of_a_variable_written_under_a_server() {
     assert!(printed.contains("DOCS_TOKEN"), "got {printed}");
     assert!(!printed.contains("hunter2"), "got {printed}");
     assert!(!printed.contains("hunter3"), "got {printed}");
+
+    // A server's command line is the other place its key is written.
+    assert!(printed.contains("/srv/docs"), "got {printed}");
+    assert!(!printed.contains("hunter4"), "got {printed}");
 }
 
 /// A secret no rule could take for anything else: no digits, so only the
