@@ -1723,6 +1723,16 @@ staging_run() {
     shift 2
     (cd "$dir" && env "$@" bash --noprofile --norc -eo pipefail -c "$block") >"$staging_scratch/last.log" 2>&1
 }
+# The install step in FILE whose `tool:` names cargo-nextest, wherever it
+# stands among the others the file installs.
+staging_nextest_step() {
+    awk '
+        { before = last; last = this; this = $0 }
+        before ~ /uses: taiki-e\/install-action@/ && last ~ /^ *with:$/ && this ~ /^ *tool: cargo-nextest@/ {
+            print before; print last; print this; exit
+        }
+    ' "$1"
+}
 if [[ ! -f $staging_workflow ]]; then
     staging_fail "$staging_workflow is missing; this check measured nothing"
 else
@@ -1746,19 +1756,9 @@ else
     # before check.sh runs. Nothing a release runs restores a cache: a release
     # is built from nothing another ref wrote.
     gate_job=$(staging_job gate)
-    # The step is the install whose `tool:` names cargo-nextest, wherever it
-    # stands among the others a workflow installs.
-    staging_nextest_step() {
-        awk '
-            { before = last; last = this; this = $0 }
-            before ~ /uses: taiki-e\/install-action@/ && last ~ /^ *with:$/ && this ~ /^ *tool: cargo-nextest@/ {
-                print before; print last; print this; exit
-            }
-        ' "$1"
-    }
     nextest_fixture=$'      - uses: taiki-e/install-action@1 # v1\n        with:\n          tool: cargo-deny@1\n      - uses: taiki-e/install-action@2 # v2\n        with:\n          tool: cargo-nextest@2'
     if [[ $(staging_nextest_step <(printf '%s\n' "$nextest_fixture")) != "$(tail -n3 <<<"$nextest_fixture")" ]]; then
-        staging_fail "the nextest step is not found behind another install-action step"
+        staging_fail "the cargo-nextest step is not picked out when another install-action step comes first"
     fi
     nextest_step=$(staging_nextest_step .github/workflows/rust-ci.yml)
     if [[ $nextest_step != *'tool: cargo-nextest@'* ]]; then
