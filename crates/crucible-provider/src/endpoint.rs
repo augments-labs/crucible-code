@@ -25,7 +25,9 @@
 //!
 //! What a refusal, `Display` and `Debug` show of an address is the recipient
 //! alone, as [`crucible_types::address::redacted`] writes it, which is also
-//! how a printed setting shows the `baseUrl` this is parsed from.
+//! how a printed setting shows the `baseUrl` this is parsed from. A refusal of
+//! an address spelled so that what would be shown as its scheme or host is a
+//! user or a path to a URL parser shows nothing of it.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -265,6 +267,37 @@ mod tests {
             assert!(!problem.to_string().contains("hunter2"), "{problem}");
             assert!(!format!("{problem:?}").contains("hunter2"));
         }
+    }
+
+    #[test]
+    fn a_refusal_of_an_address_whose_authority_cannot_be_read_repeats_none_of_it() {
+        // A URL parser reads a user or a path in each of these where a split at
+        // the first `://` and the next `/` would read a scheme or a host, so
+        // the refusal must not take either at its word.
+        for (address, canary) in [
+            ("https:user:pa55word@host.example/x://y", "pa55word"),
+            ("https:tenant-fake/x://y", "tenant-fake"),
+            ("https://host.example\\tenant-fake", "tenant-fake"),
+            ("https://host.example /tenant-fake", "tenant-fake"),
+            ("https://host.example\t/tenant-fake", "tenant-fake"),
+        ] {
+            let problem = Endpoint::parse(address).expect_err("this to be refused");
+            assert!(!problem.to_string().contains(canary), "{problem}");
+            assert!(!format!("{problem:?}").contains(canary), "{problem:?}");
+        }
+
+        let insecure = Endpoint::parse("https:user:pa55word@host.example/x://y")
+            .expect_err("a scheme that is not https to be refused");
+        assert!(
+            matches!(insecure, EndpointError::Insecure(_)),
+            "{insecure:?}"
+        );
+        let hostless = Endpoint::parse("https://host.example\\tenant-fake")
+            .expect_err("an authority holding a backslash to be refused");
+        assert!(
+            matches!(hostless, EndpointError::Hostless(_)),
+            "{hostless:?}"
+        );
     }
 
     #[test]
