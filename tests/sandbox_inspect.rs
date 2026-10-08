@@ -686,7 +686,8 @@ fn a_configuration_check_in_a_directory_crucible_cannot_work_in_still_writes_a_d
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt as _;
 
-    // A root has to be text, and this one is not UTF-8.
+    // A root has to be text, and this one is not UTF-8. Linux only: macOS
+    // refuses to create a name that is not UTF-8, and Windows names are UTF-16.
     let scratch = Scratch::new("untext-check");
     let here = scratch.work().join(OsStr::from_bytes(b"not-\xff-text"));
     fs::create_dir_all(&here).expect("a directory whose name is not text");

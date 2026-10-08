@@ -849,8 +849,8 @@ const KIND: &str = "config-check";
 ///
 /// Each refusal behind one leads with a path, the directory crucible was
 /// started in or the home it looked for, so the document says only which step
-/// stopped and the whole sentence goes to standard error. The words are the
-/// ones `crucible sessions list --json` uses for the same steps.
+/// stopped and the whole sentence goes to standard error. `crucible sessions
+/// list --json` says the same steps in these words, so the two documents agree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unchecked {
     /// The directory crucible was started in could not be read.
