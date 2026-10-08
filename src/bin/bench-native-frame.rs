@@ -20,9 +20,19 @@ use std::time::Duration;
 use startup::{Measure, StartupError};
 
 /// The budget, in milliseconds.
+///
+/// The same as the fullscreen first frame's, and for the same reason: the gap
+/// a person notices does not depend on which screen the frame lands in. Across
+/// twenty runs on a quiet machine the two read 2.2 to 2.3 ms each.
 const LIMIT: f64 = 20.0;
 
 /// The limit on a shared CI runner, in milliseconds.
+///
+/// The same as the fullscreen first frame's. Across twenty CI runs the two
+/// probes stalled together, in the same runs and by about the same amount: a
+/// typical reading near 5 ms for each, and 28.6 against 29.1 ms in the worst
+/// run. A tighter limit here would fail on a runner's stall that the fullscreen
+/// probe is allowed.
 const SHARED_RUNNER_LIMIT: f64 = 150.0;
 
 /// The first output of a run that got as far as drawing.
