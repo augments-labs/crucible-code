@@ -42,7 +42,7 @@ use rustix::fs::{Mode, OFlags};
 use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
 
-use crate::screen::Screen;
+use crate::screen::{Profile, Screen};
 use crate::vendor::Vendor;
 
 /// How long the terminal must go without a byte before the screen is settled.
@@ -231,9 +231,9 @@ struct TerminalFixture<'a> {
     columns: u16,
     rows: u16,
     reply: Option<&'a [u8]>,
-    /// Whether the launch asked for native mode, and so draws in this
-    /// terminal's own buffer rather than on a screen of its own.
-    native: bool,
+    /// The terminal a native launch draws in, in its own buffer rather than
+    /// on a screen of its own; none for a fullscreen launch.
+    native: Option<Profile>,
     /// Whether the far side starts in the mode a new terminal opens in,
     /// echoing and reading whole lines, rather than raw.
     cooked: bool,
@@ -281,7 +281,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: Some(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?1;2c"),
-                native: false,
+                native: None,
                 cooked: false,
             },
             None,
@@ -320,6 +320,18 @@ impl Watched {
     /// [`Self::assert_never_alternate`] and not with its rows, which look the
     /// same on either screen until something scrolls.
     pub(crate) fn native(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
+        Self::native_on(case, columns, rows, vendor, Profile::default())
+    }
+
+    /// The same, on a terminal that reflows and counts columns as `profile`
+    /// says rather than as most terminals now do.
+    pub(crate) fn native_on(
+        case: &str,
+        columns: u16,
+        rows: u16,
+        vendor: &Vendor,
+        profile: Profile,
+    ) -> Self {
         let document = format!(
             "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
              \"output\": {{\"screen\": \"native\"}},\n  \
@@ -336,7 +348,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: true,
+                native: Some(profile),
                 cooked: false,
             },
             None,
@@ -452,7 +464,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: screen == "native",
+                native: (screen == "native").then(Profile::default),
                 cooked: false,
             },
             None,
@@ -551,7 +563,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: false,
+                native: None,
                 cooked: true,
             },
             None,
@@ -579,7 +591,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: false,
+                native: None,
                 cooked: false,
             },
             None,
@@ -596,7 +608,7 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: false,
+                native: None,
                 cooked: false,
             },
             Some(launch),
@@ -652,10 +664,9 @@ impl Watched {
         std::thread::spawn(move || read(reading, &sender));
 
         let (columns, rows) = (terminal.columns as usize, terminal.rows as usize);
-        let screen = if terminal.native {
-            Screen::native(columns, rows)
-        } else {
-            Screen::new(columns, rows)
+        let screen = match terminal.native {
+            Some(profile) => Screen::native_on(columns, rows, profile),
+            None => Screen::new(columns, rows),
         };
         let mut window = Self {
             terminal: near,
