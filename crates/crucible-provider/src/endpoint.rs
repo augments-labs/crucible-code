@@ -27,7 +27,9 @@
 //! alone, as [`crucible_types::address::redacted`] writes it, which is also
 //! how a printed setting shows the `baseUrl` this is parsed from. A refusal of
 //! an address spelled so that what would be shown as its scheme or host is a
-//! user or a path to a URL parser shows nothing of it.
+//! user or a path to a URL parser shows nothing of it, and neither does one
+//! whose authority is not a host and a numeric port, such as a user and a
+//! password written with the host left out.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -298,6 +300,28 @@ mod tests {
             matches!(hostless, EndpointError::Hostless(_)),
             "{hostless:?}"
         );
+    }
+
+    #[test]
+    fn a_refusal_of_an_address_missing_its_host_repeats_no_password() {
+        // With the host left out, the user information is all the authority
+        // there is, and its password sits where a port would.
+        for address in [
+            "https://user:pa55word-fake",
+            "https://user:pa55word-fake/v1",
+            "https://us%40x:pa55word-fake",
+        ] {
+            let problem = Endpoint::parse(address).expect_err("an address with no host");
+            assert!(
+                matches!(problem, EndpointError::Hostless(_)),
+                "{address}: {problem:?}"
+            );
+            assert!(!problem.to_string().contains("pa55word-fake"), "{problem}");
+            assert!(
+                !format!("{problem:?}").contains("pa55word-fake"),
+                "{problem:?}"
+            );
+        }
     }
 
     #[test]

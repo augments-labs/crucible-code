@@ -9,7 +9,9 @@
 //! What is shown as the recipient is only what a URL parser would read as one.
 //! An address spelled so that the two readings differ, where what is split off
 //! here as a scheme or a host is a user or a path to the parser, is shown as
-//! [`HIDDEN`] and nothing else.
+//! [`HIDDEN`] and nothing else. So is one whose authority, user information
+//! removed, is not a host and a port number: with the host left out, a
+//! password is what would stand where the port is.
 //!
 //! Owned here because the two writers of an address, the provider refusing or
 //! printing the one it sends to and the configuration printing the one that
@@ -44,6 +46,12 @@ pub fn authority(rest: &str) -> &str {
 /// authority holding any of them is not one it reads. A run of `/` after the
 /// scheme, which a parser skips, leaves an empty authority here, and
 /// everything after it is hidden.
+///
+/// What is left of the authority once user information is removed is shown
+/// only when it reads as a host and a port, and is [`HIDDEN`] whole
+/// otherwise: `https://user:pa55word` has no `@` to remove, and what it holds
+/// after the `:` is a password, not a port. A host holding a `%` is hidden
+/// too, because a URL parser decodes it before reading the host.
 #[must_use]
 pub fn redacted(text: &str) -> String {
     let Some((scheme, rest)) = text.split_once("://") else {
@@ -54,6 +62,9 @@ pub fn redacted(text: &str) -> String {
         return HIDDEN.to_owned();
     }
     let authority = named.rsplit_once('@').map_or(named, |(_, host)| host);
+    if !host_and_port(authority) {
+        return HIDDEN.to_owned();
+    }
     let mut shown = format!("{scheme}://{authority}");
 
     if rest.len() > named.len() {
@@ -72,6 +83,42 @@ fn plain(scheme: &str) -> bool {
         && scheme
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// Whether `authority`, with no user information in it, reads as a host and
+/// an optional port: either a bracketed literal of hex digits, `:` and `.`, or
+/// a host holding none of `:`, `%`, `[` and `]`, followed by nothing, or by a
+/// `:` and a port number: ASCII digits alone, no more than 65535.
+///
+/// A `%` is refused in a host that is not bracketed because a URL parser
+/// decodes it before reading the host, so what is written is not the host it
+/// reads, and user information encoded for a URL is spelled with one.
+fn host_and_port(authority: &str) -> bool {
+    let (host, port) = match authority.strip_prefix('[') {
+        Some(literal) => match literal.split_once(']') {
+            Some((inside, after))
+                if inside
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.')) =>
+            {
+                (
+                    "",
+                    after.strip_prefix(':').or(after.is_empty().then_some("")),
+                )
+            }
+            _ => return false,
+        },
+        None => match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, Some("")),
+        },
+    };
+    !host.contains(['%', '[', ']'])
+        && port.is_some_and(|digits| {
+            digits.is_empty()
+                || (digits.bytes().all(|byte| byte.is_ascii_digit())
+                    && digits.parse::<u16>().is_ok())
+        })
 }
 
 /// Whether `c` in an authority means a URL parser does not read it as
