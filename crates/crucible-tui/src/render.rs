@@ -443,25 +443,37 @@ impl<T: Terminal> Renderer<T> {
     /// `None` where the scroll rail or the selection consumed the press. A
     /// drag's next step wakes this wait, moves the transcript, and waits again;
     /// it never becomes a key the caller could mistake for input. A wait a
-    /// [`Recall`] watches wakes on a beat as well, to ask it.
+    /// [`Recall`] watches wakes on a beat as well, to ask it, and asks once
+    /// more after the key is read.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be read or written, and
     /// [`TerminalError::Recalled`] if the wait was called off.
     pub fn pressed(&mut self) -> Result<Option<Pressed>, TerminalError> {
+        self.pressed_from(waiting, pressed)
+    }
+
+    /// [`Renderer::pressed`], polling with `poll` and reading with `read`.
+    fn pressed_from(
+        &mut self,
+        mut poll: impl FnMut(Duration) -> Result<bool, TerminalError>,
+        read: impl FnOnce() -> Result<Pressed, TerminalError>,
+    ) -> Result<Option<Pressed>, TerminalError> {
         self.seal()?;
         let watch = Watch::began(self.recall.as_ref());
         loop {
             watch.held()?;
             if let Some(patience) = watch.patience(self.rests_in())
-                && !waiting(patience)?
+                && !poll(patience)?
             {
                 self.repose()?;
                 continue;
             }
             watch.held()?;
-            return self.took(pressed()?);
+            let arrived = read()?;
+            watch.over()?;
+            return self.took(arrived);
         }
     }
 
@@ -471,13 +483,23 @@ impl<T: Terminal> Renderer<T> {
     /// The caller already has something else to watch — a running turn or a
     /// login attempt — so a step taken answers `false` and lets that caller
     /// make its ordinary pass before polling again. A wait a [`Recall`]
-    /// watches is taken a beat at a time, asking it between beats.
+    /// watches is taken a beat at a time, asking it between beats and once
+    /// more after the last.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be read or written, and
     /// [`TerminalError::Recalled`] if the wait was called off.
     pub fn waiting(&mut self, patience: Duration) -> Result<bool, TerminalError> {
+        self.waiting_from(patience, waiting)
+    }
+
+    /// [`Renderer::waiting`], polling with `poll`.
+    fn waiting_from(
+        &mut self,
+        patience: Duration,
+        mut poll: impl FnMut(Duration) -> Result<bool, TerminalError>,
+    ) -> Result<bool, TerminalError> {
         self.seal()?;
         self.repose()?;
         let watch = Watch::began(self.recall.as_ref());
@@ -485,12 +507,13 @@ impl<T: Terminal> Renderer<T> {
         loop {
             watch.held()?;
             let beat = watch.patience(Some(left)).unwrap_or(left);
-            if waiting(beat)? {
-                watch.held()?;
+            if poll(beat)? {
+                watch.over()?;
                 return Ok(true);
             }
             left = left.saturating_sub(beat);
             if left.is_zero() {
+                watch.over()?;
                 self.repose()?;
                 return Ok(false);
             }
