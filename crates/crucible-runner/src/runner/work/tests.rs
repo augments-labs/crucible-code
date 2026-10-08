@@ -441,7 +441,7 @@ fn a_turn_output_refusal_reclaims_the_unaccepted_background_scope() {
     let tools = deferred_tools(&accepted, Arc::new(LongOutput));
     let snapshot = tools.snapshot().unwrap();
     let journal = ResultJournal::default();
-    let (events, _seen) = channel();
+    let (events, seen) = channel();
     let keeping = Keeping(events);
     let ancestry = Ancestry::new();
     let cancel = Cancel::new();
@@ -463,8 +463,15 @@ fn a_turn_output_refusal_reclaims_the_unaccepted_background_scope() {
     .pass(&[call("deferred-call", "deferred")], 0, LEFT_OUT.len())
     .awaited();
 
+    // What it left running is stopped with its acceptance, so it is not said
+    // to have succeeded.
     assert!(matches!(went, Went::OutputLimit));
-    assert_eq!(texts(&results), [LEFT_OUT]);
+    assert_eq!(
+        texts(&results),
+        ["ran and was stopped: the turn output limit was reached"]
+    );
+    assert!(results.iter().all(|result| result.output.is_failed()));
+    assert_eq!(finished(&seen), [ToolOutcome::Failed]);
     assert!(journal.results.lock().unwrap().is_empty());
     assert_eq!(
         *accepted.lock().unwrap(),
@@ -1351,9 +1358,11 @@ fn texts(results: &[ToolResult]) -> Vec<&str> {
 }
 
 fn outcomes(proof: &Proof) -> Vec<ToolOutcome> {
-    proof
-        .seen
-        .try_iter()
+    finished(&proof.seen)
+}
+
+fn finished(seen: &Receiver<Event>) -> Vec<ToolOutcome> {
+    seen.try_iter()
         .filter_map(|event| match event {
             Event::ToolFinished {
                 receipt: Some(receipt),

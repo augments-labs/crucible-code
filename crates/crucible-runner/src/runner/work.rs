@@ -100,6 +100,15 @@ const OUTPUT_LIMIT: &str = "not run: the turn output limit was reached";
 /// for before it is admitted.
 const RAN_LEFT_OUT: &str = "ran; its output was left out: the turn output limit was reached";
 
+/// What a call that ran is answered with when what it said would cross the
+/// turn boundary and it left something running that is waiting to be
+/// accepted.
+///
+/// Its acceptance is not written, and dropping it stops what the call left
+/// running, so the call no longer did what it reported: it is answered as
+/// failed. No longer than [`RAN_LEFT_OUT`], which is what it was reserved.
+const RAN_STOPPED: &str = "ran and was stopped: the turn output limit was reached";
+
 /// What replaces a background acceptance whose protected result write failed.
 const RESULT_STORAGE_FAILED: &str = "background command could not be durably accepted";
 
@@ -581,7 +590,16 @@ impl Work<'_> {
             .saturating_sub(reserved);
         let turn_limited = invocation.output.text().len() > room;
         if turn_limited {
-            if invocation.ran {
+            if invocation.ran && invocation.pending_result.is_some() {
+                // Its acceptance goes unwritten below, which stops what it
+                // left running, so what it reported no longer holds.
+                invocation.output = ToolOutput::failed(if RAN_STOPPED.len() <= room {
+                    RAN_STOPPED
+                } else {
+                    ""
+                });
+                invocation.outcome = ToolOutcome::Failed;
+            } else if invocation.ran {
                 // Whatever the run did is done, so the call keeps the outcome
                 // it reported and what it changed; only its words go. The
                 // turn's limit is the turn's, and ends it below.
