@@ -84,7 +84,8 @@ use std::time::Duration;
 use crucible_tui::{Pressed, Recall, TerminalError};
 
 /// How long [`Ending::presses`] waits on the keyboard before it looks for a
-/// note again, and so the longest a signal at the prompt is held back.
+/// note again, and so the longest a signal is held back while a prompt hides
+/// what is typed.
 const BEAT: Duration = Duration::from_millis(250);
 
 /// What this process has been told from outside, and when it may act on it.
@@ -105,7 +106,8 @@ pub(crate) struct Ending {
     listening: bool,
 }
 
-/// The signal a turn, or the prompt that hides a key, was ended by.
+/// The signal that ended a turn, a prompt that hides a key, or the session
+/// while it waited between turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Told(i32);
 

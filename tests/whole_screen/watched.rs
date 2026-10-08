@@ -514,9 +514,8 @@ impl Watched {
         Self::configured(case, columns, rows, document, false)
     }
 
-    /// Starts crucible in a window that size and waits for it to finish
-    /// drawing.
-    /// The same as [`Self::open`], in a terminal that starts as a new one
+    /// Crucible with nothing to answer, as [`Self::open`] starts it but with
+    /// no reply from the terminal, in a terminal that starts as a new one
     /// does, echoing and reading whole lines, so that whether crucible put it
     /// back that way can be asked once it is gone.
     pub(crate) fn cooked(case: &str, columns: u16, rows: u16) -> Self {
@@ -535,6 +534,8 @@ impl Watched {
         )
     }
 
+    /// Starts crucible in a window that size and waits for it to finish
+    /// drawing.
     fn started(case: &str, columns: u16, rows: u16, vendor: Option<&Vendor>, keyed: bool) -> Self {
         Self::configured(case, columns, rows, &document(vendor, None), keyed)
     }
