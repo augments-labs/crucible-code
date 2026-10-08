@@ -222,15 +222,18 @@ impl Emulator {
             });
     }
 
-    /// The window made `columns` wide, as a reader dragging its corner would,
-    /// with everything it holds rewrapped to the new width.
+    /// The window made `columns` wide and `rows` tall in one step, as a
+    /// reader dragging its corner would, with everything it holds rewrapped
+    /// to the new width.
     ///
     /// Rows that ran on into each other by wrapping are one line again, and
     /// each line is folded at the new width. The cursor keeps its place in the
     /// line it was on; nothing below it that is empty is kept; and the screen
-    /// is the foot of what is left, the rest above it being scrollback.
-    fn resize(&mut self, columns: usize) {
+    /// is the foot of what is left at the new height, the rest above it being
+    /// scrollback.
+    fn resize(&mut self, columns: usize, rows: usize) {
         let was = self.columns;
+        self.rows = rows;
         let cursor = self.scrollback.len() + self.at.0;
         let back = self.scrollback.drain(..).zip(self.ran_on_back.drain(..));
         let rows: Vec<(Vec<Cell>, bool)> = back
@@ -418,8 +421,8 @@ impl Window {
         self.0.borrow().emulator.at
     }
 
-    fn resize(&self, columns: usize) {
-        self.0.borrow_mut().emulator.resize(columns);
+    fn resize(&self, columns: usize, rows: usize) {
+        self.0.borrow_mut().emulator.resize(columns, rows);
     }
 
     fn scrollback(&self) -> Vec<String> {
@@ -516,7 +519,7 @@ fn a_native_frame_never_names_a_screen_row() {
         .unwrap();
     render.seal().unwrap();
     render.settle().unwrap();
-    window.resize(50);
+    window.resize(50, 10);
     render.resized().unwrap();
     stands(&mut render);
     drop(render);
@@ -689,7 +692,7 @@ fn a_native_resize_redraws_only_the_live_region() {
         .unwrap();
     window.take();
 
-    window.resize(60);
+    window.resize(60, 10);
     render.resized().unwrap();
     stands(&mut render);
     render
@@ -731,7 +734,7 @@ fn a_native_narrowing_keeps_the_finished_rows_that_still_fit_on_screen() {
     );
     window.take();
 
-    window.resize(20);
+    window.resize(20, 10);
     render.resized().unwrap();
     stands(&mut render);
     render.under(&thinking, None, Palette::plain()).unwrap();
@@ -779,7 +782,7 @@ fn a_native_frame_drawn_before_the_resize_is_reported_takes_the_new_width() {
         .unwrap();
     window.take();
 
-    window.resize(20);
+    window.resize(20, 10);
     render.stream("hotel ").unwrap();
     render.stream("india ").unwrap();
     render.resized().unwrap();
@@ -799,6 +802,67 @@ fn a_native_frame_drawn_before_the_resize_is_reported_takes_the_new_width() {
         "a row was written wider than the window: {:#?}",
         window.all()
     );
+}
+
+#[test]
+fn a_native_window_narrowed_twice_and_widened_keeps_every_finished_row_once() {
+    // Three resizes in one answer, each taken while it is still arriving: the
+    // window narrowed, narrowed again, and widened back to where it began.
+    // Each is a step a reader can take, and a rewind counted wrong at any of
+    // them leaves a row twice or takes one away, which only the whole
+    // sequence shows.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    for (words, columns) in [
+        ("alfa bravo charlie delta ", 30),
+        ("echo foxtrot golf hotel ", 20),
+        ("india juliett kilo lima ", 40),
+    ] {
+        render.stream(words).unwrap();
+        window.resize(columns, 10);
+        render.resized().unwrap();
+        stands(&mut render);
+    }
+
+    for word in ["> asked", "alfa", "echo", "india", "lima"] {
+        assert_eq!(window.rows_saying(word), 1, "{word}: {:#?}", window.all());
+    }
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+}
+
+#[test]
+fn a_native_window_shortened_and_narrowed_in_one_step_keeps_every_finished_row_once() {
+    // A corner dragged on the diagonal: the window loses rows and columns in
+    // the same resize, with the region still short enough to fit what is
+    // left of it.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    for at in 0..6 {
+        render.commit(&format!("said {at:02}")).unwrap();
+    }
+    render.seal().unwrap();
+    window.take();
+
+    window.resize(30, 7);
+    render.resized().unwrap();
+    stands(&mut render);
+
+    for at in 0..6 {
+        assert_eq!(
+            window.rows_saying(&format!("said {at:02}")),
+            1,
+            "said {at:02}: {:#?}",
+            window.all()
+        );
+    }
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+    assert_eq!(window.screen().len(), 7);
 }
 
 #[test]

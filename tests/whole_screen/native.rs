@@ -10,6 +10,7 @@
 //! and what they can scroll back to. A case that asserts a line went out once
 //! reads both.
 
+use crate::screen::{Profile, Reflow, Widths};
 use crate::vendor::Vendor;
 use crate::watched::Watched;
 
@@ -1085,4 +1086,210 @@ fn release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest_in_n
     let picture = window.picture();
     assert!(picture.contains("Release notes"), "{picture}");
     insta::assert_snapshot!(crate::shape(&picture));
+}
+
+/// The four terminals the sweep runs on: each way of putting what it holds at
+/// a new width, with each way of counting an emoji sequence.
+const PROFILES: [(&str, Profile); 4] = [
+    (
+        "rewraps",
+        Profile {
+            reflow: Reflow::Rewraps,
+            widths: Widths::Unicode,
+        },
+    ),
+    (
+        "rewraps-clustered",
+        Profile {
+            reflow: Reflow::Rewraps,
+            widths: Widths::Clustered,
+        },
+    ),
+    (
+        "keeps",
+        Profile {
+            reflow: Reflow::Keeps,
+            widths: Widths::Unicode,
+        },
+    ),
+    (
+        "keeps-clustered",
+        Profile {
+            reflow: Reflow::Keeps,
+            widths: Widths::Clustered,
+        },
+    ),
+];
+
+/// A family of three, joined.
+const FAMILY: &str = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}";
+
+/// A thumb with a skin tone.
+const THUMB: &str = "\u{1f44d}\u{1f3fd}";
+
+/// The row of the box a prompt is typed on, once in any picture with a box.
+///
+/// Not the footer under it, which a short window leaves out.
+const BOX: &str = "\u{2502} \u{203a}";
+
+/// A paragraph seventy columns wide as crucible counts it, opening with
+/// `label` and holding each glyph a terminal may count differently: a
+/// selector that widens the sun before it, two wide ideographs, a combining
+/// mark, two joined families and two skin tones. A terminal that draws each
+/// emoji sequence as one glyph counts it twelve columns narrower, so it fits
+/// in sixty columns where crucible folds it.
+fn glyph_row(label: &str) -> String {
+    let mut row = format!(
+        "{label} sun \u{2600}\u{fe0f} kanji \u{6f22}\u{5b57} cafe\u{301} family \
+         {FAMILY} {FAMILY} thumbs {THUMB} {THUMB}"
+    );
+    while crucible_tui::columns(&row) < 70 {
+        row.push('.');
+    }
+    row
+}
+
+/// One paragraph for each of `labels`.
+fn paragraphs(labels: &[&str]) -> String {
+    labels
+        .iter()
+        .map(|label| glyph_row(label))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Each of `labels`, and the box, that a reader of `window` cannot find
+/// exactly once in the scrollback and the window together, with how often
+/// they can.
+fn lost_or_doubled(window: &Watched, labels: &[&str]) -> Vec<String> {
+    let all = everything(window);
+    labels
+        .iter()
+        .chain([&BOX])
+        .filter_map(|label| {
+            let count = all.matches(label).count();
+            (count != 1).then(|| format!("{label} {count} times"))
+        })
+        .collect()
+}
+
+/// Three answers, the window narrowed to sixty while the first arrives, to
+/// forty while the second does, and widened to eighty again under the third.
+#[test]
+fn every_answer_row_is_kept_once_through_two_narrowings_and_a_widening_on_every_terminal_in_native_mode()
+ {
+    const ANSWERS: [[&str; 3]; 3] = [
+        ["amber", "basil", "cedar"],
+        ["dune", "ember", "fjord"],
+        ["grove", "heath", "inlet"],
+    ];
+    let texts: Vec<String> = ANSWERS.iter().map(|labels| paragraphs(labels)).collect();
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let labels: Vec<&str> = ANSWERS.iter().flatten().copied().collect();
+
+    for (name, profile) in PROFILES {
+        let vendor = Vendor::answering_each(&texts);
+        let mut window = Watched::native_on(
+            &format!("native-narrowed-twice-{name}"),
+            80,
+            24,
+            &vendor,
+            profile,
+        );
+        for (keys, caught, (columns, rows)) in [
+            ("say one\r", "amber", (60, 24)),
+            ("say two\r", "dune", (40, 24)),
+            ("say three\r", "grove", (80, 24)),
+        ] {
+            window.types_and_catches(keys, caught);
+            window.resize(columns, rows);
+        }
+
+        window.assert_never_alternate();
+        let lost = lost_or_doubled(&window, &labels);
+        assert!(lost.is_empty(), "{name}: {lost:?}\n{}", everything(&window));
+    }
+}
+
+/// Two finished paragraphs, then one three rows long still in the region,
+/// held there by a turn that has not ended.
+const HELD_LABELS: [&str; 5] = ["jade", "kelp", "loam", "marsh", "nettle"];
+
+/// The answer [`HELD_LABELS`] name, with its last three paragraphs run
+/// together into the one the turn holds open.
+fn held_answer() -> String {
+    let [finished @ .., _, _, _] = HELD_LABELS;
+    let held: Vec<String> = HELD_LABELS[2..]
+        .iter()
+        .map(|label| glyph_row(label))
+        .collect();
+    format!("{}\n\n{}", paragraphs(&finished), held.join(" "))
+}
+
+/// The window narrowed from eighty to sixty under [`held_answer`].
+fn narrowed_under_a_held_row(name: &str, vendor: &Vendor, profile: Profile) -> Watched {
+    let mut window = Watched::native_on(
+        &format!("native-held-narrowed-{name}"),
+        80,
+        24,
+        vendor,
+        profile,
+    );
+    window.types_and_catches("say it\r", "nettle");
+    window.resize(60, 24);
+    window.assert_never_alternate();
+    window
+}
+
+#[test]
+fn a_held_row_narrowed_on_a_terminal_that_rewraps_keeps_every_row_once_in_native_mode() {
+    for (name, profile) in PROFILES {
+        if !matches!(profile.reflow, Reflow::Rewraps) {
+            continue;
+        }
+        let vendor = Vendor::holding(&held_answer());
+        let window = narrowed_under_a_held_row(name, &vendor, profile);
+
+        let lost = lost_or_doubled(&window, &HELD_LABELS);
+        assert!(lost.is_empty(), "{name}: {lost:?}\n{}", everything(&window));
+    }
+}
+
+/// On a terminal that does not rewrap its lines when the window narrows,
+/// narrowing it can take a few finished lines off the visible screen; the
+/// session file still has them. This is that loss, held to its size: the two
+/// finished paragraphs go, what the turn still holds stays once, and the log
+/// has all of it once the turn ends.
+#[test]
+fn a_held_row_narrowed_on_a_terminal_that_keeps_its_lines_loses_finished_rows_only_from_the_screen_in_native_mode()
+ {
+    for (name, profile) in PROFILES {
+        if !matches!(profile.reflow, Reflow::Keeps) {
+            continue;
+        }
+        let vendor = Vendor::holding(&held_answer());
+        let window = narrowed_under_a_held_row(name, &vendor, profile);
+
+        let lost = lost_or_doubled(&window, &HELD_LABELS);
+        assert_eq!(
+            lost,
+            ["jade 0 times", "kelp 0 times"],
+            "{name}\n{}",
+            everything(&window)
+        );
+
+        vendor.ends_the_turn();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        while !HELD_LABELS
+            .iter()
+            .all(|label| window.recorded().contains(&format!("{label} sun")))
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{name}: the answer never reached the log\n{}",
+                window.recorded()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
 }
