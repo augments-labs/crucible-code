@@ -81,6 +81,16 @@
 //! glyph, which is where the two disagree. A wide glyph takes two cells, and a
 //! mark that takes no column is not kept, so a picture shows the letter it
 //! sits on.
+//!
+//! A third terminal draws a symbol that has a picture form as the picture, two
+//! columns wide, where crucible counts it one. On it a row crucible fitted to
+//! the window can be wider than the window, and that is the terminal's doing
+//! rather than a broken promise, so it is not refused: what crosses the edge
+//! goes on at the start of the next row, as a terminal with autowrap on does,
+//! or with autowrap off is drawn in the last columns over what was there.
+//! Autowrap is on when a screen opens, and turning it off and on are among the
+//! sequences crucible promises, so a case can ask whether a session left it as
+//! it found it.
 
 /// The byte that opens a sequence.
 const ESCAPE: u8 = 0x1b;
@@ -154,6 +164,13 @@ pub(crate) enum Widths {
     /// skin tone after a wide glyph. Crucible counts each part, so on this
     /// terminal a row with one of those is narrower than crucible thinks.
     Clustered,
+    /// The same, except that a symbol with an emoji form is drawn as the
+    /// picture, two columns wide, even where no selector asks for it, as a
+    /// terminal whose font has the picture may draw it. Crucible counts such a
+    /// symbol as one column, so on this terminal a row with one is wider than
+    /// crucible thinks, and can run past the edge of a window crucible fitted
+    /// it to.
+    Pictured,
 }
 
 /// A screen, and everything crucible did to it.
@@ -194,6 +211,10 @@ pub(crate) struct Screen {
     pen: Pen,
     /// Whether the session entered the alternate screen.
     alternate: bool,
+    /// Whether a character written past the last column goes on at the start
+    /// of the next row, which is what a terminal does until it is told not to.
+    /// Told not to, it draws the character in the last columns instead.
+    wraps: bool,
     /// What crucible did that it does not promise to do, in the order it was
     /// first done, each said once.
     refused: Vec<String>,
@@ -293,7 +314,18 @@ impl Widths {
                 (Some(base), '\u{1f3fb}'..='\u{1f3ff}') if measured(base, None) == 2 => 0,
                 _ => measured(character, before),
             },
+            Self::Pictured => match measured(character, before) {
+                1 if ('\u{2600}'..='\u{27bf}').contains(&character) => 2,
+                counted => counted,
+            },
         }
+    }
+
+    /// Whether a row crucible fitted to the window can be wider than it on
+    /// this terminal, so that what runs past the edge is the terminal's doing
+    /// rather than crucible writing past the window.
+    fn widens_rows(self) -> bool {
+        matches!(self, Self::Pictured)
     }
 }
 
@@ -492,7 +524,15 @@ const MASK: char = '#';
 impl Screen {
     /// An empty screen of that size, for a fullscreen launch.
     pub(crate) fn new(columns: usize, rows: usize) -> Self {
-        Self::opened(Mode::Fullscreen, columns, rows)
+        Self::fullscreen_on(columns, rows, Profile::default())
+    }
+
+    /// The same, standing for the terminal `profile` describes.
+    pub(crate) fn fullscreen_on(columns: usize, rows: usize, profile: Profile) -> Self {
+        Self {
+            profile,
+            ..Self::opened(Mode::Fullscreen, columns, rows)
+        }
     }
 
     /// An empty screen of that size, for a native launch.
@@ -523,6 +563,7 @@ impl Screen {
             ran_on_back: Vec::new(),
             pen: Pen::default(),
             alternate: false,
+            wraps: true,
             refused: Vec::new(),
             commanded: Vec::new(),
             holding: false,
@@ -710,7 +751,8 @@ impl Screen {
     /// it works out how far back the top of its region is, joins rows that ran
     /// on into each other into one line again and folds each line at the new
     /// width, never through a wide glyph. One that keeps its rows cuts each at
-    /// the new width instead, and has nothing to join when it widens again.
+    /// the new width instead and joins none, not even two that one line ran
+    /// on across, so it has nothing to join when it widens again.
     /// Either way the cursor keeps its place in the line it was on, nothing
     /// empty below it is kept, and the window is the foot of what is left, the
     /// rest above it being scrollback.
@@ -727,11 +769,11 @@ impl Screen {
         let mut line = Vec::new();
         let mut caret = (0, 0);
         for (index, (mut row, ran_on)) in held.into_iter().enumerate() {
-            let column = match self.profile.reflow {
-                Reflow::Rewraps => self.column,
+            let (column, ran_on) = match self.profile.reflow {
+                Reflow::Rewraps => (self.column, ran_on),
                 Reflow::Keeps => {
                     cut(&mut row, columns);
-                    self.column.min(columns)
+                    (self.column.min(columns), false)
                 }
             };
             if index == cursor {
@@ -789,6 +831,11 @@ impl Screen {
         self.column = at.1;
         self.columns = columns;
         self.rows = rows;
+    }
+
+    /// Whether autowrap is on, as the last sequence that set it left it.
+    pub(crate) fn wraps(&self) -> bool {
+        self.wraps
     }
 
     /// What crucible did that it does not promise to do.
@@ -981,33 +1028,54 @@ impl Screen {
     /// Each takes the columns the profile gives it: a wide glyph is followed
     /// by a [`TAIL`], and a character given none is not kept, since what it
     /// changes is how the one before it is drawn and a picture holds letters.
+    ///
+    /// On a terminal that can draw a row wider than crucible counted it, a
+    /// character that would cross the edge is where the terminal acts: it
+    /// goes on at the start of the next row, which then runs on from this
+    /// one, or, with that turned off, is drawn in the last columns over what
+    /// was there. Anywhere else, crossing the edge is crucible writing past
+    /// the window, and is refused below.
     fn put(&mut self, text: &str) {
         let mut column = self.column;
         let widths = self.profile.widths;
 
-        if let Some(row) = self.grid.get_mut(self.row) {
+        let mut before = self.grid.get_mut(self.row).and_then(|row| {
             while row.len() < column {
                 row.push(Cell::BLANK);
             }
-            let mut before = row
-                .get(..column)
+            row.get(..column)
                 .and_then(|left| left.iter().rev().find(|cell| cell.character != TAIL))
-                .map(|cell| cell.character);
-            for character in text.chars() {
-                let drawn = Cell {
-                    character,
-                    pen: self.pen,
-                };
-                let tail = Cell {
-                    character: TAIL,
-                    ..drawn
-                };
-                for cell in [drawn, tail].into_iter().take(widths.of(character, before)) {
-                    place(row, column, cell);
-                    column += 1;
+                .map(|cell| cell.character)
+        });
+        for character in text.chars() {
+            let wide = widths.of(character, before);
+            if widths.widens_rows() && wide > 0 && column + wide > self.columns {
+                if self.wraps {
+                    if let Some(ran_on) = self.ran_on.get_mut(self.row) {
+                        *ran_on = true;
+                    }
+                    self.down();
+                    column = 0;
+                } else {
+                    column = self.columns.saturating_sub(wide);
                 }
-                before = Some(character);
             }
+            let Some(row) = self.grid.get_mut(self.row) else {
+                break;
+            };
+            let drawn = Cell {
+                character,
+                pen: self.pen,
+            };
+            let tail = Cell {
+                character: TAIL,
+                ..drawn
+            };
+            for cell in [drawn, tail].into_iter().take(wide) {
+                place(row, column, cell);
+                column += 1;
+            }
+            before = Some(character);
         }
 
         if column > self.columns {
@@ -1163,6 +1231,11 @@ impl Screen {
             ("?1000" | "?1002" | "?1003" | "?1006" | "?2004" | "?25" | "?1049", 'h' | 'l')
             | (">1" | "<", 'u')
             | ("", 'c') => {}
+            // Autowrap, which a native session turns off so that a row the
+            // terminal draws wider than crucible counted it loses its last
+            // cells rather than running on into a row crucible never counted.
+            ("?7", 'h') => self.wraps = true,
+            ("?7", 'l') => self.wraps = false,
             (_, 'H') => self.park(params),
             ("" | "0", 'K') => self.erase_row(),
             ("?2026", 'h') => self.hold(),
@@ -1953,6 +2026,56 @@ mod tests {
         assert_eq!(
             rows(&screen.picture()),
             ["abcd    ", "ij      ", "        ", "        "]
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_row_drawn_wider_than_crucible_counted_runs_on_until_autowrap_is_off() {
+        // Crucible counts each of the three symbols one column, so the row is
+        // five columns to it. Drawn as pictures they are two each, and the
+        // last would cross the edge: it goes on at the start of the next row,
+        // or, with autowrap off, is drawn over the one before it.
+        let said = "ab\u{2600}\u{2601}\u{2602}";
+        assert_eq!(crucible_tui::columns(said), 5);
+
+        let mut screen = counting(Widths::Pictured, 6);
+        screen.feed(said.as_bytes());
+        assert_eq!(
+            rows(&screen.picture()),
+            ["ab\u{2600}\u{2601}", "\u{2602}    "]
+        );
+        assert!(screen.wraps());
+
+        let mut screen = counting(Widths::Pictured, 6);
+        screen.feed(b"\x1b[?7l");
+        screen.feed(said.as_bytes());
+        assert_eq!(rows(&screen.picture()), ["ab\u{2600}\u{2602}", "      "]);
+        assert!(!screen.wraps());
+
+        screen.feed(b"\x1b[?7h");
+        assert!(screen.wraps());
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_terminal_that_keeps_its_rows_leaves_a_row_it_ran_on_as_the_rows_it_drew() {
+        // The same row run on across two, on a terminal that does not rewrap:
+        // widened, it joins neither, as it joins no other row.
+        let mut screen = Screen::native_on(
+            6,
+            2,
+            Profile {
+                reflow: Reflow::Keeps,
+                widths: Widths::Pictured,
+            },
+        );
+        screen.feed("ab\u{2600}\u{2601}\u{2602}".as_bytes());
+
+        screen.fit(8, 2);
+        assert_eq!(
+            rows(&screen.picture()),
+            ["ab\u{2600}\u{2601}  ", "\u{2602}      "]
         );
         assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
     }

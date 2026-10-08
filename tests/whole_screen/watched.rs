@@ -231,9 +231,11 @@ struct TerminalFixture<'a> {
     columns: u16,
     rows: u16,
     reply: Option<&'a [u8]>,
-    /// The terminal a native launch draws in, in its own buffer rather than
-    /// on a screen of its own; none for a fullscreen launch.
-    native: Option<Profile>,
+    /// Whether the launch draws in the terminal's own buffer rather than on
+    /// a screen of its own.
+    native: bool,
+    /// How the terminal reflows and counts columns.
+    profile: Profile,
     /// Whether the far side starts in the mode a new terminal opens in,
     /// echoing and reading whole lines, rather than raw.
     cooked: bool,
@@ -281,7 +283,8 @@ impl Watched {
                 columns,
                 rows,
                 reply: Some(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?1;2c"),
-                native: None,
+                native: false,
+                profile: Profile::default(),
                 cooked: false,
             },
             None,
@@ -308,6 +311,31 @@ impl Watched {
     /// address a request goes to was a constant.
     pub(crate) fn answering(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
         Self::started(case, columns, rows, Some(vendor), true)
+    }
+
+    /// The same, on a terminal that counts columns as `profile` says rather
+    /// than as most terminals now do.
+    pub(crate) fn answering_on(
+        case: &str,
+        columns: u16,
+        rows: u16,
+        vendor: &Vendor,
+        profile: Profile,
+    ) -> Self {
+        Self::configured_with_terminal(
+            case,
+            &document(Some(vendor), None),
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: false,
+                profile,
+                cooked: false,
+            },
+            None,
+        )
     }
 
     /// The same again, in native mode: crucible drawing at the foot of the
@@ -348,7 +376,8 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: Some(profile),
+                native: true,
+                profile,
                 cooked: false,
             },
             None,
@@ -464,7 +493,8 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: (screen == "native").then(Profile::default),
+                native: screen == "native",
+                profile: Profile::default(),
                 cooked: false,
             },
             None,
@@ -563,7 +593,8 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: None,
+                native: false,
+                profile: Profile::default(),
                 cooked: true,
             },
             None,
@@ -591,7 +622,8 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: None,
+                native: false,
+                profile: Profile::default(),
                 cooked: false,
             },
             None,
@@ -608,7 +640,8 @@ impl Watched {
                 columns,
                 rows,
                 reply: None,
-                native: None,
+                native: false,
+                profile: Profile::default(),
                 cooked: false,
             },
             Some(launch),
@@ -664,9 +697,10 @@ impl Watched {
         std::thread::spawn(move || read(reading, &sender));
 
         let (columns, rows) = (terminal.columns as usize, terminal.rows as usize);
-        let screen = match terminal.native {
-            Some(profile) => Screen::native_on(columns, rows, profile),
-            None => Screen::new(columns, rows),
+        let screen = if terminal.native {
+            Screen::native_on(columns, rows, terminal.profile)
+        } else {
+            Screen::fullscreen_on(columns, rows, terminal.profile)
         };
         let mut window = Self {
             terminal: near,
@@ -1123,6 +1157,12 @@ impl Watched {
 
         let ended = self.child.wait().expect("crucible ended");
         (ended, String::from_utf8_lossy(&wrote).into_owned())
+    }
+
+    /// Whether the terminal carries a character written past the last column
+    /// on to the next row, as the last sequence that set it left it.
+    pub(crate) fn wraps(&self) -> bool {
+        self.screen.wraps()
     }
 
     /// Whether the terminal echoes what is typed, and whether it hands over
