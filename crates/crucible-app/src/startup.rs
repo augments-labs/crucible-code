@@ -490,8 +490,9 @@ pub fn reopening(
 /// one, asked for a plan that never took effect, and the plan in force is still
 /// the one before it; so such a call is passed over. The record is what decides
 /// this, so a call that wrote its plan and was then answered as failed — its
-/// answer would not fit the turn, or could not be kept — is passed over too,
-/// and the plan stood up is the last one the model was told it had written.
+/// answer could not be kept — is passed over too, and the plan stood up is the
+/// last one the model was told it had written. A call whose answer did not fit
+/// the turn keeps the outcome it reported, so its plan is the one in force.
 ///
 /// Nothing is said where there is none, and nothing is said where the call
 /// cannot be read: this is a picture of the work, drawn again from the record,

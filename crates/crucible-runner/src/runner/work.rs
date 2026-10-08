@@ -87,8 +87,18 @@ const NOT_RUN: &str = "not run: the turn ended first";
 /// What a call is answered with when the user said no.
 const DENIED: &str = "the user did not allow this";
 
-/// What a call is answered with when its output would cross the turn boundary.
+/// What a call is answered with when the turn's output allowance ran out
+/// before it was started.
 const OUTPUT_LIMIT: &str = "not run: the turn output limit was reached";
+
+/// What a call that ran is answered with when what it said would cross the
+/// turn boundary.
+///
+/// Its effect is already done, so only its words are dropped: it keeps the
+/// outcome it reported and what it changed. This is the longest answer a call
+/// can be given in place of its own, so it is what each call is reserved room
+/// for before it is admitted.
+const RAN_LEFT_OUT: &str = "ran; its output was left out: the turn output limit was reached";
 
 /// What replaces a background acceptance whose protected result write failed.
 const RESULT_STORAGE_FAILED: &str = "background command could not be durably accepted";
@@ -180,12 +190,17 @@ impl Work<'_> {
 
             let end = self.wave_end(calls, at);
 
-            // Reserve the model-readable stand-ins for every recorded call
-            // before this wave is admitted. This is the budget that cannot be
-            // recovered later: even a refusal or cancellation must answer all
-            // of those calls. Resource keys and worker slots were reserved by
-            // `wave_end` before any permission or executor code runs.
-            let required = calls.len().saturating_sub(at).saturating_mul(NOT_RUN.len());
+            // Reserve the longest model-readable stand-in for every recorded
+            // call before this wave is admitted. This is the budget that
+            // cannot be recovered later: even a refusal or cancellation must
+            // answer all of those calls, and a call that runs must be able to
+            // say it ran however long its own answer turns out to be.
+            // Resource keys and worker slots were reserved by `wave_end`
+            // before any permission or executor code runs.
+            let required = calls
+                .len()
+                .saturating_sub(at)
+                .saturating_mul(RAN_LEFT_OUT.len());
             if held.saturating_add(produced).saturating_add(required) > maximum {
                 went = Went::OutputLimit;
                 continue;
@@ -534,7 +549,7 @@ impl Work<'_> {
             Went::Stopped(_) | Went::Refused(_) => {
                 Some(self.stand_in(call, NOT_RUN, ToolOutcome::NotRun))
             }
-            Went::OutputLimit => Some(self.stand_in(call, "", ToolOutcome::OutputLimit)),
+            Went::OutputLimit => Some(self.stand_in(call, OUTPUT_LIMIT, ToolOutcome::OutputLimit)),
             Went::On => None,
         }
     }
@@ -556,26 +571,40 @@ impl Work<'_> {
     ) {
         // Leave enough room to answer every later call even when this one
         // fills the budget. The provider requires a result for every call
-        // already recorded, so dropping the tail is not a valid bound.
+        // already recorded, so dropping the tail is not a valid bound, and a
+        // later call of this wave may already have run.
         let later = total.saturating_sub(index + 1);
-        let reserved = later.saturating_mul(NOT_RUN.len());
+        let reserved = later.saturating_mul(RAN_LEFT_OUT.len());
         let room = maximum
             .saturating_sub(held)
             .saturating_sub(*produced)
             .saturating_sub(reserved);
         let turn_limited = invocation.output.text().len() > room;
         if turn_limited {
-            invocation.output = ToolOutput::failed(if OUTPUT_LIMIT.len() <= room {
-                OUTPUT_LIMIT
+            if invocation.ran {
+                // Whatever the run did is done, so the call keeps the outcome
+                // it reported and what it changed; only its words go. The
+                // turn's limit is the turn's, and ends it below.
+                invocation.output.leave_out(if RAN_LEFT_OUT.len() <= room {
+                    RAN_LEFT_OUT
+                } else {
+                    ""
+                });
             } else {
-                ""
-            });
+                invocation.output = ToolOutput::failed(if OUTPUT_LIMIT.len() <= room {
+                    OUTPUT_LIMIT
+                } else {
+                    ""
+                });
+                if matches!(went, Went::On | Went::OutputLimit) {
+                    invocation.outcome = ToolOutcome::OutputLimit;
+                }
+            }
             invocation.retention = invocation
                 .output
                 .limit_encoded(invocation.evidence.result_limit);
             if matches!(went, Went::On | Went::OutputLimit) {
                 *went = Went::OutputLimit;
-                invocation.outcome = ToolOutcome::OutputLimit;
             }
         }
         if let Some(pending) = invocation.pending_result.take()
@@ -721,6 +750,9 @@ struct Invocation {
     /// something else: its run answered after the turn was stopped, and is
     /// answered with what it answered rather than as cut short.
     stops: bool,
+    /// Whether the call's run answered or came apart, so that whatever it did
+    /// may already be done. Such a call is never said not to have run.
+    ran: bool,
 }
 
 impl Invocation {
@@ -740,6 +772,7 @@ impl Invocation {
             recovery: None,
             pending_result: None,
             stops: false,
+            ran: false,
         }
     }
 
@@ -1243,8 +1276,10 @@ impl Started {
         host: ExecutionHost<'_>,
     ) -> Invocation {
         let stopped = matches!(returned, Returned::Ran { stopped: true, .. });
+        let ran = matches!(returned, Returned::Ran { .. });
         let mut invocation = self.answered(returned, audit, host).await;
         invocation.stops = stopped;
+        invocation.ran = ran;
         invocation
     }
 
@@ -1380,6 +1415,7 @@ impl PanicFallback {
         )
         .recovering(self.record);
         invocation.stops = self.stop.requested();
+        invocation.ran = true;
         invocation
     }
 
