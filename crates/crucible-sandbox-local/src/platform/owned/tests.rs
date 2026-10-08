@@ -203,20 +203,47 @@ fn an_owned_writer_delivers_what_it_was_given_in_order() {
     );
 }
 
+/// A flag a fixture's thread waits on until it is set.
+type Gate = Arc<(Mutex<bool>, Condvar)>;
+
+/// A gate, open or closed.
+fn gate(open: bool) -> Gate {
+    Arc::new((Mutex::new(open), Condvar::new()))
+}
+
+/// Waits until `gate` is open.
+fn pass(gate: &(Mutex<bool>, Condvar)) {
+    let (open, woken) = gate;
+    let mut open = open.lock().expect("the fixture's lock");
+    while !*open {
+        open = woken.wait(open).expect("the fixture's lock");
+    }
+}
+
+/// Whether `gate` is open.
+fn opened(gate: &(Mutex<bool>, Condvar)) -> bool {
+    *gate.0.lock().expect("the fixture's lock")
+}
+
+/// Closes `gate`, so that whoever reaches it next waits there.
+fn hold(gate: &(Mutex<bool>, Condvar)) {
+    *gate.0.lock().expect("the fixture's lock") = false;
+}
+
 /// A pipe whose write parks until the interruption releases it, as a write to
 /// a peer that stopped reading does, and which says when its thread returned.
+/// A released write answers only once `resumed` is open, so a test can keep
+/// the thread from returning after the interruption has reached it.
 struct Parked {
-    released: Arc<(Mutex<bool>, Condvar)>,
+    released: Gate,
+    resumed: Gate,
     returned: Arc<AtomicBool>,
 }
 
 impl Write for Parked {
     fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-        let (released, woken) = &*self.released;
-        let mut released = released.lock().expect("the fixture's lock");
-        while !*released {
-            released = woken.wait(released).expect("the fixture's lock");
-        }
+        pass(&self.released);
+        pass(&self.resumed);
         // What an abandoned write answers; not `Interrupted`, which a caller
         // writing all of a chunk would take as a reason to write again.
         Err(io::Error::from(io::ErrorKind::BrokenPipe))
@@ -234,18 +261,21 @@ impl Drop for Parked {
 }
 
 /// A writer whose write is parked, with the flags a test reads: whether the
-/// pipe was released and whether the thread has let go of it.
+/// pipe was released, whether a released write may return, and whether the
+/// thread has let go of the pipe.
 struct Fixture {
     input: Writer,
     thread: WriterThread,
-    released: Arc<(Mutex<bool>, Condvar)>,
+    released: Gate,
+    resumed: Gate,
     returned: Arc<AtomicBool>,
 }
 
 /// Starts a writer on a [`Parked`] pipe, interrupted by releasing it where
 /// `reaches` says the interruption reaches it, and parks one write in it.
 fn parked(reaches: bool) -> Fixture {
-    let released = Arc::new((Mutex::new(false), Condvar::new()));
+    let released = gate(false);
+    let resumed = gate(true);
     let returned = Arc::new(AtomicBool::new(false));
     let interrupt: Interrupt = if reaches {
         let released = Arc::clone(&released);
@@ -256,6 +286,7 @@ fn parked(reaches: bool) -> Fixture {
     let (mut input, thread) = Writer::start(
         Parked {
             released: Arc::clone(&released),
+            resumed: Arc::clone(&resumed),
             returned: Arc::clone(&returned),
         },
         interrupt,
@@ -271,14 +302,16 @@ fn parked(reaches: bool) -> Fixture {
         input,
         thread,
         released,
+        resumed,
         returned,
     }
 }
 
-/// What stopping the command does to a pipe: every write in it fails.
-fn release(released: &(Mutex<bool>, Condvar)) {
-    let (flag, woken) = released;
-    *flag.lock().expect("the fixture's lock") = true;
+/// Opens `gate`: for `released`, what stopping the command does to a pipe,
+/// failing every write in it.
+fn release(gate: &(Mutex<bool>, Condvar)) {
+    let (open, woken) = gate;
+    *open.lock().expect("the fixture's lock") = true;
     woken.notify_all();
 }
 
@@ -291,33 +324,57 @@ fn let_go(returned: &AtomicBool) {
     }
 }
 
-/// How long a drop may take: it waits for nothing, so this is room for a busy
-/// test host, far below the interruption's bound.
-const DROP: Duration = Duration::from_millis(50);
+/// Drops `input` on a thread of its own while the writer's thread cannot
+/// return, and fails unless the drop does. The wait is bounded only so that a
+/// drop waiting on the held thread fails rather than hangs; one that waits for
+/// nothing returns whatever the host's load.
+///
+/// The drop is not timed. A drop that waits for the thread passes any timing
+/// whenever the host runs that thread quickly, and fails one only on a busy
+/// host that does not.
+fn dropped_without_waiting(input: Writer) {
+    let (dropped, answered) = std::sync::mpsc::channel();
+    let dropping = thread::spawn(move || {
+        drop(input);
+        let _ = dropped.send(());
+    });
+    assert!(
+        answered.recv_timeout(WAIT).is_ok(),
+        "dropping the writer waited on its thread"
+    );
+    dropping.join().expect("the dropping thread");
+}
 
 /// Dropping the writer interrupts the parked write once and returns without
-/// waiting; the interruption reaches the write, and the thread lets go of the
-/// pipe on its own.
+/// waiting: it returns while the released write is kept from answering, so
+/// it cannot be waiting on the write or the thread. Let answer, the thread
+/// lets go of the pipe on its own.
 #[test]
 fn dropping_an_owned_writer_parked_in_a_write_interrupts_it_without_waiting() {
     let Fixture {
         input,
         mut thread,
+        released,
+        resumed,
         returned,
-        ..
     } = parked(true);
+    hold(&resumed);
 
-    let dropping = Instant::now();
-    drop(input);
-    let took = dropping.elapsed();
+    dropped_without_waiting(input);
 
-    assert!(took < DROP, "dropping the writer took {took:?}");
+    assert!(opened(&released), "the drop never interrupted the write");
+    assert!(
+        !returned.load(Ordering::SeqCst),
+        "the held thread let go of its pipe"
+    );
+    release(&resumed);
     let_go(&returned);
     thread.end().expect("the thread ended");
 }
 
-/// A drop the interruption cannot reach still returns at once; the write
-/// stays parked until the pipe goes, and then the owner joins the thread.
+/// A drop the interruption cannot reach still returns at once, while the
+/// write it leaves parked keeps the thread from returning; the write stays
+/// parked until the pipe goes, and then the owner joins the thread.
 #[test]
 fn dropping_an_owned_writer_the_interruption_cannot_reach_returns_at_once() {
     let Fixture {
@@ -325,13 +382,11 @@ fn dropping_an_owned_writer_the_interruption_cannot_reach_returns_at_once() {
         mut thread,
         released,
         returned,
+        ..
     } = parked(false);
 
-    let dropping = Instant::now();
-    drop(input);
-    let took = dropping.elapsed();
+    dropped_without_waiting(input);
 
-    assert!(took < DROP, "dropping the writer took {took:?}");
     assert!(
         !returned.load(Ordering::SeqCst),
         "a write nothing interrupted let go of its pipe"
@@ -351,7 +406,8 @@ fn ending_an_idle_writer_thread_joins_it_while_the_writer_is_held() {
     let returned = Arc::new(AtomicBool::new(false));
     let (input, mut thread) = Writer::start(
         Parked {
-            released: Arc::new((Mutex::new(true), Condvar::new())),
+            released: gate(true),
+            resumed: gate(true),
             returned: Arc::clone(&returned),
         },
         Box::new(|_: &JoinHandle<()>| {}),
@@ -400,6 +456,7 @@ fn ending_a_writer_thread_the_interruption_cannot_reach_fails_and_can_be_retried
         mut thread,
         released,
         returned,
+        ..
     } = parked(false);
 
     let ending = Instant::now();
@@ -461,7 +518,7 @@ fn an_owner_ended_before_its_first_write_starts_no_thread_and_refuses_the_write(
 /// or not: the command's stop.
 #[test]
 fn ending_an_owner_joins_the_thread_of_the_writer_it_started() {
-    let released = Arc::new((Mutex::new(false), Condvar::new()));
+    let released = gate(false);
     let returned = Arc::new(AtomicBool::new(false));
     let owner = WriterOwner::default();
     let interrupt: Interrupt = {
@@ -472,6 +529,7 @@ fn ending_an_owner_joins_the_thread_of_the_writer_it_started() {
         .start(
             Parked {
                 released,
+                resumed: gate(true),
                 returned: Arc::clone(&returned),
             },
             interrupt,
