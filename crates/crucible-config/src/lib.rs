@@ -62,10 +62,11 @@ mod shape;
 // to do with it, and a second way in is a second answer to which files exist.
 //
 // What is public beside them is the read-only check: `config check` reports
-// what the files say without opening anything else, so its report and the one
-// function that builds it travel while the documents do not.
+// what the files say without opening anything else, so its report, the one
+// function that builds it, and the failed document for a check that never
+// reached the files travel while the documents do not.
 pub use document::check::{
-    CheckFailure, CheckReport, FileCheck, FileState, MAX_FAILURE_BYTES, check,
+    CheckFailure, CheckReport, FileCheck, FileState, MAX_FAILURE_BYTES, Unchecked, check,
 };
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};

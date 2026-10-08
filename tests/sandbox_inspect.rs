@@ -1,6 +1,7 @@
 //! What `crucible sandbox inspect` and `--sandbox` answer on this machine, and
 //! the exit each answer ends with; and, beside them, what `crucible config
-//! check` makes of the same hostile configuration key.
+//! check` makes of the same hostile configuration key, and what it writes
+//! where it could read no file at all.
 //!
 //! The built binary is run in a directory and a home of the test's own, with
 //! an environment cleared down to what it needs, so nothing the machine running
@@ -561,4 +562,159 @@ fn a_failure_quoting_a_key_that_holds_line_breaks_is_said_on_one_line() {
             "{args:?} did not name the key: {told:?}"
         );
     }
+}
+
+/// One `config check` document on one line, read back, from what `answered`
+/// wrote to standard output.
+fn checked_document(answered: &Output) -> serde_json::Value {
+    let said = String::from_utf8_lossy(&answered.stdout);
+    let (line, rest) = said
+        .split_once('\n')
+        .unwrap_or_else(|| panic!("one document ending in a newline: {answered:?}"));
+    assert_eq!(rest, "", "{answered:?}");
+    serde_json::from_str(line).unwrap_or_else(|_| panic!("one JSON document: {answered:?}"))
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_configuration_check_started_in_a_removed_directory_still_writes_a_document() {
+    // The shell enters the directory and removes it before it becomes
+    // crucible, so crucible starts in a directory that can no longer be
+    // named: Linux answers its first question about where it is with an
+    // error.
+    let scratch = Scratch::new("removed-check");
+    let here = scratch.work().join("gone");
+    fs::create_dir_all(&here).expect("a directory to remove");
+    let started = |args: &[&str]| {
+        Command::new("sh")
+            .arg("-c")
+            .arg(r#"cd "$1" && rmdir "$1" && shift && exec "$0" "$@""#)
+            .arg(env!("CARGO_BIN_EXE_crucible"))
+            .arg(&here)
+            .arg("config")
+            .args(args)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .env("HOME", scratch.home())
+            .env("CRUCIBLE_CODE_HOME", scratch.home().join(".crucible"))
+            .stdin(Stdio::null())
+            .output()
+            .expect("the shell runs")
+    };
+
+    let json = started(&["check", "--json"]);
+    assert!(!here.exists(), "the directory was not removed: {json:?}");
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    let document = checked_document(&json);
+    assert_eq!(
+        document.pointer("/format_version"),
+        Some(&serde_json::json!(1))
+    );
+    assert_eq!(
+        document.pointer("/kind"),
+        Some(&serde_json::json!("config-check"))
+    );
+    assert_eq!(
+        document.pointer("/status"),
+        Some(&serde_json::json!("failed"))
+    );
+    assert_eq!(
+        document.pointer("/problem/text"),
+        Some(&serde_json::json!(
+            "the directory crucible was started in could not be read"
+        ))
+    );
+    assert_eq!(
+        document.pointer("/problem/truncated"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(document.pointer("/files"), Some(&serde_json::json!([])));
+    assert_eq!(document.pointer("/failures"), Some(&serde_json::json!([])));
+    assert_eq!(
+        document.pointer("/truncated"),
+        Some(&serde_json::json!(false))
+    );
+    assert!(
+        !String::from_utf8_lossy(&json.stdout).contains(&*scratch.0.to_string_lossy()),
+        "{json:?}"
+    );
+    let told = String::from_utf8_lossy(&json.stderr);
+    assert!(
+        told.starts_with("crucible: the directory crucible was started in could not be read"),
+        "{json:?}"
+    );
+
+    // The text report is unchanged: nothing on standard output, the failure
+    // on standard error, and the same exit.
+    fs::create_dir_all(&here).expect("the directory again");
+    let text = started(&["check"]);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    assert!(text.stdout.is_empty(), "{text:?}");
+    assert_eq!(text.stderr, json.stderr, "{text:?}");
+}
+
+#[test]
+fn a_configuration_check_with_no_home_still_writes_a_document() {
+    let scratch = Scratch::new("homeless-check");
+
+    let json = asked(&scratch, &["config", "check", "--json"], true);
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    assert!(json.stderr.starts_with(b"crucible: "), "{json:?}");
+    let document = checked_document(&json);
+    assert_eq!(
+        document.pointer("/status"),
+        Some(&serde_json::json!("failed"))
+    );
+    assert_eq!(
+        document.pointer("/problem/text"),
+        Some(&serde_json::json!(
+            "crucible's home directory could not be found; standard error says why"
+        ))
+    );
+
+    let text = asked(&scratch, &["config", "check"], true);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    assert!(text.stdout.is_empty(), "{text:?}");
+    assert_eq!(text.stderr, json.stderr, "{text:?}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_configuration_check_in_a_directory_crucible_cannot_work_in_still_writes_a_document() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    // A root has to be text, and this one is not UTF-8.
+    let scratch = Scratch::new("untext-check");
+    let here = scratch.work().join(OsStr::from_bytes(b"not-\xff-text"));
+    fs::create_dir_all(&here).expect("a directory whose name is not text");
+    let program = Path::new(env!("CARGO_BIN_EXE_crucible"));
+
+    let json = asked_in(
+        program,
+        &scratch,
+        &here,
+        &["config", "check", "--json"],
+        false,
+    );
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    assert!(json.stderr.starts_with(b"crucible: "), "{json:?}");
+    let document = checked_document(&json);
+    assert_eq!(
+        document.pointer("/status"),
+        Some(&serde_json::json!("failed"))
+    );
+    assert_eq!(
+        document.pointer("/problem/text"),
+        Some(&serde_json::json!(
+            "this directory is not one crucible can work in; standard error says why"
+        ))
+    );
+
+    let text = asked_in(program, &scratch, &here, &["config", "check"], false);
+    assert_eq!(text.status.code(), Some(1), "{text:?}");
+    assert!(text.stdout.is_empty(), "{text:?}");
+    assert_eq!(text.stderr, json.stderr, "{text:?}");
 }

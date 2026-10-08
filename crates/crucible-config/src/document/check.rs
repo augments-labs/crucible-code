@@ -772,7 +772,8 @@ impl CheckReport {
     }
 
     /// The report as one JSON document: `format_version`, the `config-check`
-    /// kind, the `valid`/`invalid` status, the schema identity, one entry per
+    /// kind, the `valid`/`invalid` status (a check that read no file is
+    /// [`Unchecked::json`]'s `failed` one), the schema identity, one entry per
     /// file with its provenance, the bounded failures, and whether any
     /// sentence was cut. Keys are alphabetical, which is what makes the order
     /// stable. Ends in a newline, so it can share a stdout nothing else
@@ -815,20 +816,13 @@ impl CheckReport {
         let document = serde_json::json!({
             "failures": failures,
             "files": files,
-            "format_version": 1,
-            "kind": "config-check",
+            "format_version": FORMAT_VERSION,
+            "kind": KIND,
             "schema": {"id": self.schema_id()},
             "status": if self.valid() { "valid" } else { "invalid" },
             "truncated": self.failures.iter().any(|failure| failure.truncated),
         });
-        let mut written = Vec::new();
-        // Into memory a `Value` is always written: its keys are strings, its
-        // numbers finite, and a `Vec` refuses no byte. What is written is
-        // UTF-8, since every escape is ASCII and every fragment a `str`.
-        let _ = document.serialize(&mut Serializer::with_formatter(&mut written, Escaping));
-        let mut text = String::from_utf8_lossy(&written).into_owned();
-        text.push('\n');
-        text
+        written(&document)
     }
 
     /// The first refusal met, for the exit the command leaves by.
@@ -842,6 +836,77 @@ impl CheckReport {
             None => Ok(()),
         }
     }
+}
+
+/// The number the `config check` document says it is written in.
+const FORMAT_VERSION: u64 = 1;
+
+/// What the `config check` document says it is.
+const KIND: &str = "config-check";
+
+/// Why `config check` never reached the files, as far as its `failed`
+/// document says it.
+///
+/// Each refusal behind one leads with a path, the directory crucible was
+/// started in or the home it looked for, so the document says only which step
+/// stopped and the whole sentence goes to standard error. The words are the
+/// ones `crucible sessions list --json` uses for the same steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unchecked {
+    /// The directory crucible was started in could not be read.
+    Here,
+    /// That directory is not one crucible can work in.
+    Workspace,
+    /// Crucible's home directory could not be found.
+    Home,
+}
+
+impl Unchecked {
+    /// The step that stopped, in words that name no file.
+    #[must_use]
+    pub const fn said(self) -> &'static str {
+        match self {
+            Self::Here => "the directory crucible was started in could not be read",
+            Self::Workspace => {
+                "this directory is not one crucible can work in; standard error says why"
+            }
+            Self::Home => "crucible's home directory could not be found; standard error says why",
+        }
+    }
+
+    /// The `config check --json` document for a check that read no file:
+    /// `format_version`, the `config-check` kind, the `failed` status, the
+    /// schema identity, no files and no failures, and a `problem` naming the
+    /// step that stopped as `text` with its own `truncated` flag, the shape
+    /// the sessions list's failed document has. Each sentence is one of three
+    /// fixed ones, well inside [`MAX_FAILURE_BYTES`], so none is ever cut.
+    /// Ends in a newline, like [`CheckReport::json`].
+    #[must_use]
+    pub fn json(self) -> String {
+        let document = serde_json::json!({
+            "failures": [],
+            "files": [],
+            "format_version": FORMAT_VERSION,
+            "kind": KIND,
+            "problem": {"text": self.said(), "truncated": false},
+            "schema": {"id": crate::shape::schema::ID},
+            "status": "failed",
+            "truncated": false,
+        });
+        written(&document)
+    }
+}
+
+/// `document` on one line, through [`Escaping`], ending in a line break.
+fn written(document: &Value) -> String {
+    let mut written = Vec::new();
+    // Into memory a `Value` is always written: its keys are strings, its
+    // numbers finite, and a `Vec` refuses no byte. What is written is UTF-8,
+    // since every escape is ASCII and every fragment a `str`.
+    let _ = document.serialize(&mut Serializer::with_formatter(&mut written, Escaping));
+    let mut text = String::from_utf8_lossy(&written).into_owned();
+    text.push('\n');
+    text
 }
 
 /// Reads the three files and validates the effective configuration.

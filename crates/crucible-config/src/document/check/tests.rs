@@ -984,3 +984,32 @@ fn neither_workspace_file_can_say_yes_to_a_route_for_the_user() {
     }
     mine(r#"{"contentUse": {"accepted": ["key:google", "api.moonshot.ai"]}}"#).unwrap();
 }
+
+#[test]
+fn a_check_that_read_no_file_is_one_failed_envelope_naming_no_path() {
+    for step in [
+        crate::Unchecked::Here,
+        crate::Unchecked::Workspace,
+        crate::Unchecked::Home,
+    ] {
+        let text = step.json();
+        let (line, rest) = text.split_once('\n').expect("one line ending in a newline");
+        assert_eq!(rest, "", "got {text:?}");
+        let envelope: serde_json::Value = serde_json::from_str(line).expect("one JSON document");
+        assert_eq!(
+            envelope,
+            serde_json::json!({
+                "failures": [],
+                "files": [],
+                "format_version": 1,
+                "kind": "config-check",
+                "problem": {"text": step.said(), "truncated": false},
+                "schema": {"id": crate::shape::schema::ID},
+                "status": "failed",
+                "truncated": false,
+            })
+        );
+        assert!(step.said().len() <= crate::MAX_FAILURE_BYTES);
+        assert!(!step.said().contains('/'), "{step:?} names a path");
+    }
+}
