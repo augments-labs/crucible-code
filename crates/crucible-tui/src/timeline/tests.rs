@@ -209,6 +209,19 @@ fn the_whole_list_is_one_rail_from_the_first_release_to_the_running_one() {
 }
 
 #[test]
+fn words_too_wide_for_any_row_are_left_out_and_never_drawn_past_the_edge() {
+    // Two ideographs leave nothing a one column row can hold, and a bullet
+    // whose words are only those leaves its mark and nothing after it.
+    let bare = Spans::of(&Row::plain("\u{691c}\u{7d22}"));
+    let marked = Spans::of(&Row::plain("\u{2022} \u{691c}\u{7d22}"));
+    for (line, columns, hang) in [(&bare, 1, 0), (&marked, 3, 2)] {
+        for row in hung(line, columns, hang) {
+            assert!(row.columns() <= columns, "{:?}", row.text());
+        }
+    }
+}
+
+#[test]
 fn notes_hang_off_the_rail_and_a_wrapped_bullet_hangs_under_its_words() {
     let told = told();
     let rows = whole(&told, &forge(), 40, Glyphs::Unicode, 20_000);

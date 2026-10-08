@@ -385,6 +385,9 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
 
 /// `line` folded to `columns`, every row after the first standing `hang`
 /// columns in, under the words rather than the mark they follow.
+///
+/// A line that folds to nothing, because it is blank or every character in it
+/// is wider than a row, is one row of what fits: nothing, or the mark alone.
 fn hung(line: &Spans, columns: usize, hang: usize) -> Vec<Row> {
     let text = line.text();
     if hang == 0 || hang >= columns {
@@ -393,7 +396,7 @@ fn hung(line: &Spans, columns: usize, hang: usize) -> Vec<Row> {
             .map(|part| line.between(part.start, part.end))
             .collect();
         return if rows.is_empty() {
-            vec![line.between(0, text.len())]
+            vec![Row::new()]
         } else {
             rows
         };
@@ -405,7 +408,7 @@ fn hung(line: &Spans, columns: usize, hang: usize) -> Vec<Row> {
     let words = text.get(mark..).unwrap_or_default();
     let parts = folds(words, columns - hang);
     if parts.is_empty() {
-        return vec![line.between(0, text.len())];
+        return vec![line.between(0, mark)];
     }
     parts
         .into_iter()
