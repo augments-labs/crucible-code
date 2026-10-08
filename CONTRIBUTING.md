@@ -102,6 +102,16 @@ no web tool, no fast form) and the docs say which fact was not settled.
 6. Record where each recorded fixture came from, its link and the day it was
    read, in `crates/crucible-provider/src/<vendor>/fixtures/SOURCES.md`.
 
+### Adding a command
+
+`crucible completion SHELL` writes each shell's completion script from the
+command tree in `src/cli.rs` as it stands, so a new subcommand or flag is in the
+next script with nothing to regenerate. A new subcommand is named in `COMMANDS`
+in `src/cli/completion/tests.rs`, which fails until it is, and the test beside
+it holds that every shell's script completes it. Run
+`cargo test completion` and update the help text in
+`tests/differential/command-line.txt`.
+
 ## Local gates
 
 ```bash

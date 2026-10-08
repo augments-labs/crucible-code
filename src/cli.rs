@@ -18,6 +18,7 @@ mod choice;
 mod client;
 #[cfg(test)]
 mod colour_rule;
+mod completion;
 mod converse;
 mod counting;
 mod draw;
@@ -41,6 +42,7 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 use crucible_app::AppError;
 use crucible_app::content_use;
 use crucible_app::providers::{
@@ -177,6 +179,10 @@ NAME how one would be started, with every variable's value and whatever in \
 its arguments could be a secret left out, and stops. Neither starts a server, \
 so neither says whether one would start.
 
+completion SHELL writes a completion script for bash, zsh, fish, powershell \
+or elvish, made from this command line as it is, and stops. It reads no \
+configuration and opens no terminal.
+
 Flags, session files and config are unstable for the whole 0.x line.",
     args_conflicts_with_subcommands = true
 )]
@@ -270,6 +276,11 @@ enum Command {
     Sessions {
         #[command(subcommand)]
         action: SessionsAction,
+    },
+    /// Write a completion script for a shell to standard output, and stop.
+    Completion {
+        /// The shell to write the script for.
+        shell: Shell,
     },
 }
 
@@ -507,6 +518,7 @@ pub(crate) fn start() -> ExitCode {
                 AuthAction::Logout { provider } => auth::logout(provider),
             };
         }
+        (Some(Command::Completion { shell }), _, _) => return completion::completed(*shell),
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {
