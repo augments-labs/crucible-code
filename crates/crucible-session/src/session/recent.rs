@@ -19,6 +19,12 @@
 //! Where [`recent`] is decoration and drops whatever it cannot read,
 //! [`discovered`] is an answer somebody asked for, so it counts what it left
 //! out and refuses an index that does not read.
+//!
+//! Both open a log the one way [`opened`] does: without following a link,
+//! without waiting on a pipe, and only where what opened is one ordinary file
+//! under one name. The sessions directory is crucible's, but a name in it is
+//! still a name anything that can write there could have put a link or a pipe
+//! under, and either read runs where nobody asked to wait.
 
 use std::fs::File;
 use std::io::{BufRead as _, BufReader, Read as _};
@@ -329,9 +335,9 @@ impl Discovery {
 ///
 /// A name the index holds with no log beside it is a session starting this
 /// instant, or one removed, and is left out uncounted. A log whose first line
-/// does not read, that this build cannot read, or that is not a file, as a
-/// pipe or a link is not, is counted rather than listed, since where it was
-/// recorded is not known.
+/// does not read, that this build cannot read, or that is not one ordinary
+/// file under one name — a pipe, a link, a file with a second name — is
+/// counted rather than listed, since where it was recorded is not known.
 ///
 /// # Errors
 ///
@@ -416,25 +422,15 @@ fn logged(directory: &Path) -> bool {
 
 /// The first line of the log at `path`, read no further than [`READ`] bytes.
 ///
-/// Only a file is a log. A pipe would hold the listing until something wrote
-/// to it, and a link would read wherever it leads, so the name is asked what
-/// it is without following it, and what opened is asked again. A file swapped
-/// for a pipe between the two still waits, which only something that can
-/// write in crucible's own sessions directory can do.
+/// Opened as [`opened`] opens a log, so the name is looked up once, by the
+/// open, and what is read is what that open settled: nothing asks the name what
+/// it is first, so there is no gap for a pipe or a link to be swapped in.
 fn heading(path: &Path, roots: Roots<'_>) -> Heading {
-    match std::fs::symlink_metadata(path) {
-        Ok(found) if found.is_file() => {}
-        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Heading::Absent,
-        Ok(_) | Err(_) => return Heading::Unreadable,
-    }
-    let opened = match File::open(path) {
+    let opened = match opened(path) {
         Ok(opened) => opened,
         Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Heading::Absent,
         Err(_) => return Heading::Unreadable,
     };
-    if !opened.metadata().is_ok_and(|opened| opened.is_file()) {
-        return Heading::Unreadable;
-    }
     let mut line = String::new();
     let read = BufReader::new(opened).take(READ).read_line(&mut line);
     if read.is_err() || !line.ends_with('\n') {
@@ -468,10 +464,13 @@ fn heading(path: &Path, roots: Roots<'_>) -> Heading {
 /// rather than half-read. What is left is the first message, which is the first
 /// thing that was asked — and a log with none, crucible opened and left without
 /// a word typed, is no session to offer under any roots.
+///
+/// Opened as [`opened`] opens a log, and a log it refuses is one fewer row,
+/// as a log that will not open is.
 fn read(path: &Path, roots: Roots<'_>) -> Option<Recorded> {
     let id = SessionId::from_str(path.file_stem()?.to_str()?).ok()?;
 
-    let mut log = BufReader::new(File::open(path).ok()?).take(READ);
+    let mut log = BufReader::new(opened(path).ok()?).take(READ);
     let mut line = String::new();
 
     // A first line the process never finished is a log with nothing whole in
@@ -514,6 +513,25 @@ fn read(path: &Path, roots: Roots<'_>) -> Option<Recorded> {
             });
         }
     }
+}
+
+/// The log at `path`, opened to read, where it is one ordinary file under its
+/// own name.
+///
+/// A pipe would hold the welcome screen, or a listing, until something wrote
+/// to it, and a link would read wherever it leads, out of the sessions
+/// directory or into another log. So the name is opened without following a
+/// final link and, on Unix, without waiting for a writer, and the proof that
+/// it is an ordinary file with no second name is taken on the handle that
+/// opened, before a byte is read. On Windows a final reparse point is opened
+/// as itself and refused by the same proof; a pipe cannot sit in a directory
+/// there.
+///
+/// The private-state opener rather than a workspace path: the sessions
+/// directory is not a root the agent was pointed at, and a workspace proof
+/// follows any link that stays inside its root, where this follows none.
+fn opened(path: &Path) -> Result<File, crucible_privacy::PrivacyError> {
+    crucible_privacy::open_read(path)
 }
 
 /// One line of what was asked, with nothing in it that could become a row.

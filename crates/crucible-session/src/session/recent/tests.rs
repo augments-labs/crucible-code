@@ -930,3 +930,66 @@ fn a_log_that_is_a_link_is_counted_unreadable_rather_than_followed() {
     assert!(found.sessions().is_empty(), "{found:?}");
     assert_eq!(found.unreadable(), 1);
 }
+
+/// What the first frame's scan offers this sample's workspace, asked on a
+/// thread of its own so a scan that waits on a pipe fails the test rather than
+/// holding it forever.
+#[cfg(unix)]
+fn offered_within_a_bound(sample: &Sample, wanted: usize) -> Vec<Recorded> {
+    let (send, found) = std::sync::mpsc::channel();
+    let logs = sample.logs();
+    let root = sample.workspace().root().to_path_buf();
+    std::thread::spawn(move || {
+        let _ = send.send(recent(
+            &logs,
+            Roots::These(&[root.as_path()]),
+            Reach::FirstFrame,
+            wanted,
+        ));
+    });
+    found
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("a scan that came back")
+}
+
+/// A pipe named as a log is in the welcome screen's way before the first
+/// frame, so a scan that opened one would never draw it.
+#[cfg(unix)]
+#[test]
+fn a_log_that_is_a_pipe_is_left_out_of_the_first_frame_without_waiting_for_a_writer() {
+    let sample = Sample::new("recent-pipe");
+    planted(&sample, &nth(1), &["the real one"]);
+    let made = std::process::Command::new("mkfifo")
+        .arg(sample.logs().join(format!("{}.jsonl", nth(2))))
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+    indexed(&sample, &[(&nth(2), 1, None), (&nth(1), 1, None)]);
+
+    let offered = offered_within_a_bound(&sample, 4);
+
+    let asked: Vec<&str> = offered.iter().map(Recorded::asked).collect();
+    assert_eq!(asked, ["the real one"]);
+}
+
+/// A link named as a log leads out of the sessions directory, to a file
+/// nothing says is a session recorded here, however its header reads.
+#[cfg(unix)]
+#[test]
+fn a_log_that_is_a_link_is_left_out_of_the_first_frame_rather_than_followed() {
+    let sample = Sample::new("recent-link");
+    planted(&sample, &nth(1), &["the real one"]);
+    planted(&sample, &nth(2), &["read through a link"]);
+    let outside = sample.home().join(format!("{}.jsonl", nth(2)));
+    std::fs::create_dir_all(sample.home()).expect("a home");
+    std::fs::rename(sample.logs().join(format!("{}.jsonl", nth(2))), &outside)
+        .expect("a log outside the sessions directory");
+    std::os::unix::fs::symlink(&outside, sample.logs().join(format!("{}.jsonl", nth(2))))
+        .expect("a link");
+    indexed(&sample, &[(&nth(2), 1, None), (&nth(1), 1, None)]);
+
+    let offered = offered_within_a_bound(&sample, 4);
+
+    let asked: Vec<&str> = offered.iter().map(Recorded::asked).collect();
+    assert_eq!(asked, ["the real one"]);
+}
