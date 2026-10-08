@@ -39,8 +39,8 @@ Settings {
         "extensions": Object {
             "acme.reviewer": Object {
                 "config": Object {
-                    "audience": String("team"),
-                    "verbosity": String("brief"),
+                    "audience": String("<redacted>"),
+                    "verbosity": String("<redacted>"),
                 },
                 "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
                 "enabled": Bool(true),
@@ -172,8 +172,8 @@ Settings {
         "extensions": Object {
             "acme.reviewer": Object {
                 "config": Object {
-                    "audience": String("team"),
-                    "verbosity": String("brief"),
+                    "audience": String("<redacted>"),
+                    "verbosity": String("<redacted>"),
                 },
                 "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
                 "enabled": Bool(true),
@@ -316,8 +316,8 @@ Settings {
         "extensions": Object {
             "acme.reviewer": Object {
                 "config": Object {
-                    "audience": String("team"),
-                    "verbosity": String("brief"),
+                    "audience": String("<redacted>"),
+                    "verbosity": String("<redacted>"),
                 },
                 "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
                 "enabled": Bool(true),
