@@ -715,7 +715,7 @@ fn ctrl_b_opens_the_running_list_during_a_turn_in_native_mode() {
     window.types_and_catches("\x02", "Still running");
 
     window.assert_never_alternate();
-    insta::assert_snapshot!(window.picture());
+    insta::assert_snapshot!(crate::unclocked(&window.picture()));
 }
 
 // A command's reply in native mode. Fullscreen hangs it under the line that

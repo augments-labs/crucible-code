@@ -103,6 +103,101 @@ fn steadying_a_live_status_changes_only_its_clock_and_spinner() {
     assert_eq!(on_the_first_beat(transcript), transcript);
 }
 
+/// `picture` with how long each command in the `Still running` list has run
+/// written as one `#` per digit.
+///
+/// A row counts that from the moment its command started, and a case reaches
+/// the list however long starting the call and opening the list took on this
+/// machine today. What the case is about is the row's shape — a command, how
+/// long, how many lines, how many bytes — so the digits are masked and the
+/// units kept: the row keeps its width, and a run long enough to be read in
+/// minutes would still move the picture by the shape it takes. Only the time
+/// in front of a row's count of lines is touched, so a figure anywhere else
+/// still moves it too.
+fn unclocked(picture: &str) -> String {
+    picture
+        .split('\n')
+        .map(unclocked_row)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `row` with its elapsed time masked, if it is a row of the running list.
+fn unclocked_row(row: &str) -> String {
+    for dot in [" · ", " - "] {
+        for (at, _) in row.match_indices(dot) {
+            let (before, after) = row.split_at(at);
+            let after = after.get(dot.len()..).unwrap_or_default();
+            let counts_lines = after
+                .split_once(' ')
+                .is_some_and(|(count, word)| numeral(count) && word.starts_with("line"));
+            if let Some(masked) = counts_lines.then(|| masked_clock(before)).flatten() {
+                return format!("{masked}{dot}{after}");
+            }
+        }
+    }
+    row.to_owned()
+}
+
+/// `before` with the elapsed time it ends in masked, or `None` when it ends in
+/// none: `Ns`, or `Nm NNs` once a command has run a minute.
+fn masked_clock(before: &str) -> Option<String> {
+    let counted = |token: &str, unit: char| token.strip_suffix(unit).is_some_and(numeral);
+    let hashed = |token: &str| -> String {
+        token
+            .chars()
+            .map(|c| if c.is_ascii_digit() { '#' } else { c })
+            .collect()
+    };
+    let (head, seconds) = before.rsplit_once(' ')?;
+    if !counted(seconds, 's') {
+        return None;
+    }
+    Some(match head.rsplit_once(' ') {
+        Some((rest, minutes)) if counted(minutes, 'm') => {
+            format!("{rest} {} {}", hashed(minutes), hashed(seconds))
+        }
+        _ => format!("{head} {}", hashed(seconds)),
+    })
+}
+
+/// Whether `text` is a count written in digits.
+fn numeral(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+#[test]
+fn unclocking_the_running_list_masks_only_how_long_each_command_has_run() {
+    let list = |elapsed: &str| {
+        format!(
+            "|Still running|\n|› 1. Bash(sleep 30)   {elapsed} · 0 lines · 0 B|\n\
+             |  2. Bash(make)   {elapsed} · 12 lines · 3.4 kB|"
+        )
+    };
+    let masked = list("#s");
+    for elapsed in ["0s", "2s", "9s"] {
+        assert_eq!(unclocked(&list(elapsed)), masked);
+    }
+    for (elapsed, shape) in [("12s", "##s"), ("1m 05s", "#m ##s")] {
+        let later = list(elapsed);
+        let steadied = unclocked(&later);
+        assert_eq!(steadied, list(shape));
+        assert_eq!(steadied.chars().count(), later.chars().count());
+    }
+    let ascii = "|> 1. Bash(sleep 30)   2s - 1 line - 5 B|";
+    assert_eq!(
+        unclocked(ascii),
+        "|> 1. Bash(sleep 30)   #s - 1 line - 5 B|"
+    );
+    for untouched in [
+        "|✳ writing (2s · ↓ 4 · esc to interrupt)|",
+        "|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)|",
+        "|it took 2s · and printed nothing|",
+    ] {
+        assert_eq!(unclocked(untouched), untouched);
+    }
+}
+
 /// A line long enough to need more rows than the box is allowed to grow to.
 ///
 /// Built rather than written out so the arithmetic is visible: the box shows
@@ -500,7 +595,7 @@ fn a_click_on_the_count_opens_the_list_while_a_turn_is_still_running() {
     // spinner of a turn that is still running keeps the screen beating.
     window.clicks_catching(at, column, "Still running");
 
-    insta::assert_snapshot!(window.picture());
+    insta::assert_snapshot!(unclocked(&window.picture()));
 }
 
 #[test]
@@ -518,7 +613,7 @@ fn ctrl_b_opens_the_running_list_during_a_turn() {
     // gives: the spinner of a turn still running keeps the screen beating.
     window.types_and_catches("\x02", "Still running");
 
-    insta::assert_snapshot!(window.picture());
+    insta::assert_snapshot!(unclocked(&window.picture()));
 }
 
 /// The row of the window `said` is written on, and where its drawn cells end.
