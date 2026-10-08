@@ -27,6 +27,7 @@ use crucible_workspace::Workspace;
 use crucible_types::ResultProvenance;
 
 use super::privacy::opened;
+use super::recent::READ;
 use super::{SUFFIX, SessionError, results, wire};
 
 /// A persisted record cannot legitimately exceed the maximum retained item
@@ -158,20 +159,16 @@ pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, Sessio
         source,
     };
 
-    let mut first = String::new();
-    BufReader::new(opened(path).map_err(trouble)?)
-        .read_line(&mut first)
-        .map_err(trouble)?;
-
     // A first line the process never finished is a log with nothing whole in
     // it: the header is written before a session can record anything, so one
     // that stopped there holds no turns. Read as a header it would be worse
     // than useless — the next turn would be appended onto the header itself,
     // and the welded line names no workspace, so from then on nothing could
-    // find the session at all.
-    if !first.ends_with('\n') {
+    // find the session at all. A first line that runs past the ceiling is
+    // answered the same way, without reading on to find where it ends.
+    let Some(first) = first_line(opened(path).map_err(trouble)?).map_err(trouble)? else {
         return Ok(false);
-    }
+    };
 
     let Some(opening) = wire::opening(first.trim_end()) else {
         return Ok(false);
@@ -188,6 +185,25 @@ pub(super) fn belongs(path: &Path, workspace: &Workspace) -> Result<bool, Sessio
             at: path.display().to_string().into(),
         })
     }
+}
+
+/// The first line of `log`, newline included, or `None` where it holds no
+/// whole one within [`READ`] bytes.
+///
+/// The ceiling is the welcome screen's, so a header one of them reads is a
+/// header the other reads too, and a first line that never ends costs that
+/// much rather than the whole file. Held as bytes until the line is whole: a
+/// ceiling that cuts a character is a line with no end, not a log that
+/// failed to read.
+fn first_line(log: impl io::Read) -> io::Result<Option<String>> {
+    let mut first = Vec::new();
+    BufReader::new(log.take(READ)).read_until(b'\n', &mut first)?;
+    if first.last() != Some(&b'\n') {
+        return Ok(None);
+    }
+    String::from_utf8(first)
+        .map(Some)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "session header is not UTF-8"))
 }
 
 /// Everything a log holds, as the transcript it recorded, the offset the next
@@ -902,5 +918,82 @@ mod tests {
             "cleared text reached a log: {shown}"
         );
         assert!(shown.contains("redacted"), "{shown}");
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use std::cell::Cell;
+    use std::io::{self, Read};
+    use std::rc::Rc;
+
+    use super::{belongs, first_line};
+    use crate::sample::Sample;
+    use crate::session::recent::READ;
+    use crate::session::wire::FORMAT;
+
+    /// The ceiling as a length, for building lines that reach it.
+    fn ceiling() -> usize {
+        usize::try_from(READ).expect("a ceiling this target can hold")
+    }
+
+    /// A reader that counts what it hands out, so what a read took is measured
+    /// rather than guessed from memory.
+    struct Counted<R> {
+        inner: R,
+        served: Rc<Cell<usize>>,
+    }
+
+    impl<R: Read> Read for Counted<R> {
+        fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+            let count = self.inner.read(into)?;
+            self.served.set(self.served.get() + count);
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn a_first_line_that_never_ends_is_read_no_further_than_the_header_ceiling() {
+        let served = Rc::new(Cell::new(0));
+        let log = Counted {
+            inner: io::repeat(b'a').take(4 * READ),
+            served: Rc::clone(&served),
+        };
+
+        let first = first_line(log).expect("a log that reads");
+
+        assert!(first.is_none(), "a line with no end is no header");
+        assert!(
+            served.get() <= ceiling(),
+            "read {} bytes of a header held to {READ}",
+            served.get()
+        );
+    }
+
+    #[test]
+    fn a_header_longer_than_the_ceiling_does_not_belong_to_the_workspace() {
+        // A whole header naming this workspace, padded past the ceiling: read
+        // to its end it would be taken, and reading to its end is the bug.
+        let sample = Sample::new("replay-long-header");
+        let id = "0000000000001-000001";
+        let mut header: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&sample.header(FORMAT, id)).expect("a header");
+        header.insert("pad".to_owned(), "a".repeat(2 * ceiling()).into());
+        let line = serde_json::Value::Object(header).to_string();
+        let path = sample.plant(id, &[line]);
+
+        assert!(!belongs(&path, &sample.workspace()).expect("a log that opens"));
+    }
+
+    #[test]
+    fn a_header_cut_by_the_ceiling_inside_a_character_is_not_a_failure_to_read() {
+        // The ceiling falls wherever it falls; a line it cuts is a line with no
+        // end, whatever byte the cut landed on. One byte, then two-byte
+        // characters, puts an even ceiling inside one of them.
+        let sample = Sample::new("replay-cut-header");
+        let id = "0000000000001-000001";
+        let path = sample.plant(id, &[format!("a{}", "é".repeat(ceiling()))]);
+
+        assert!(!belongs(&path, &sample.workspace()).expect("a log that opens"));
     }
 }
