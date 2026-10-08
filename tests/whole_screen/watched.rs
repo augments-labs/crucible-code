@@ -353,9 +353,9 @@ impl Watched {
     /// the terminal they are actually in — was the one thing no case here
     /// could see. This asks for colour outright, which outranks `NO_COLOR`.
     ///
-    /// `ansi` because the screen keeps text and drops every colour it is told,
-    /// so what a snapshot is worth is the rows, and the sixteen a terminal
-    /// already has are the fewest escapes to get to them.
+    /// `ansi` because these cases are read through [`Self::picture`], which
+    /// shows the rows and not what they were drawn in, and the sixteen a
+    /// terminal already has are the fewest escapes to get to them.
     pub(crate) fn in_colour(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
         let document = format!(
             "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \

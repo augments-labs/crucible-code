@@ -265,8 +265,8 @@ impl Pen {
     /// This pen with the colour sequence `params` applied, or `None` when the
     /// sequence holds a parameter outside the set crucible promises.
     ///
-    /// The set is what a span is said to be drawn in: the five attributes the
-    /// renderer sets and strikethrough, each one's way back off, the sixteen
+    /// The set is what a span is said to be drawn in: the six attributes the
+    /// renderer sets, strikethrough last, each one's way back off, the sixteen
     /// colours, the 256 and the exact ones, and the way back to the terminal's
     /// own. A parameter outside it is refused rather than passed over, since a
     /// span drawn in it would be captured in a state that leaves it out.
