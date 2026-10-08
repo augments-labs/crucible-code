@@ -20,8 +20,9 @@
 //! a log, the index and its mark, the prompt history or a deferred call's
 //! result. Anything that can write to the tree can put a link or a pipe under
 //! one of those names, and each reader refuses either the way it refuses a
-//! file of its own that will not open. The one exception is a running session
-//! reading back the log it created and is still writing, by the name it made.
+//! file of its own that will not open. That holds for a running session too,
+//! reading back the log it created and is still writing: the name it made is
+//! one a link or a pipe can be swapped in under while it runs.
 //!
 //! The marks beside them — the lock beside a log, the index's lock and the
 //! index's digest — are opened to write through [`mark`], which follows no

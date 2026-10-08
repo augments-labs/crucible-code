@@ -22,7 +22,6 @@
 //! held when it arrived, whatever a pruning or a restriction has since cleared
 //! from what the model is sent.
 
-use std::fs::File;
 use std::io::{self, BufReader, Seek as _, SeekFrom};
 use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
@@ -30,7 +29,7 @@ use std::sync::mpsc::sync_channel;
 
 use crucible_types::{Message, RecordedToolOutput, ToolId};
 
-use super::{LogRequest, Session, SessionError, replay, wire};
+use super::{LogRequest, Session, SessionError, privacy, replay, wire};
 
 /// Where one tool result stands in a session log.
 ///
@@ -79,8 +78,9 @@ impl Session {
     /// # Errors
     ///
     /// [`SessionError::Log`] where the session records nothing, where its
-    /// writer has stopped, where the log cannot be opened or read there, or
-    /// where it holds no result of that call at that place.
+    /// writer has stopped, where the log cannot be opened, is no longer one
+    /// ordinary file or cannot be read there, or where it holds no result of
+    /// that call at that place.
     pub fn read_back(&self, place: &Place) -> Result<RecordedToolOutput, SessionError> {
         let trouble = |source| SessionError::Log {
             at: self.path.display().to_string().into(),
@@ -98,7 +98,10 @@ impl Session {
             )));
         }
 
-        let mut file = File::open(&self.path).map_err(trouble)?;
+        // Through the ordinary-file opener, though this session made the name:
+        // anything that can write the directory can swap a link or a pipe in
+        // under it while the session runs.
+        let mut file = privacy::opened(&self.path).map_err(trouble)?;
         file.seek(SeekFrom::Start(place.position))
             .map_err(trouble)?;
         let mut raw = Vec::new();
@@ -165,7 +168,7 @@ impl Session {
 
     /// Waits for the writer to take everything queued before this, and says
     /// whether it did: `false` where there is no writer left to ask.
-    fn caught_up(&self) -> bool {
+    pub(super) fn caught_up(&self) -> bool {
         let Some(to) = &self.to else { return false };
         let (done, waiting) = sync_channel(1);
         to.send(LogRequest::Barrier(done)).is_ok() && waiting.recv().is_ok()
