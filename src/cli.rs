@@ -23,6 +23,7 @@ mod converse;
 mod counting;
 mod draw;
 mod ending;
+mod failure;
 #[cfg(test)]
 mod fake;
 mod freed;
@@ -66,6 +67,7 @@ use crucible_workspace::Workspace;
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
 use crate::cli::draw::Opening;
+use crate::cli::failure::failing;
 use crate::cli::style::Style;
 
 /// How long the terminal is given to say what colour its background is.
@@ -1396,21 +1398,6 @@ fn resuming(cli: &Cli) -> Result<startup::Resuming, Fatal> {
 fn fail(problem: &Fatal) -> ExitCode {
     let _ = io::stderr().write_all(failing(&problem.to_string()).as_bytes());
     ExitCode::FAILURE
-}
-
-/// The one line a failure is said in: `crucible: `, `problem` with every
-/// character [`crucible_types::shown::escaped`] escapes written as its escape,
-/// a line break among them, and a line feed to end it.
-///
-/// The sentence often quotes what a checkout chose, a key in its
-/// configuration or a directory's name, and no failure's own sentence runs
-/// over lines: a break in one came from a value it quotes, and
-/// kept, it would start a line on standard error that no failure said, which
-/// a person or a script reading it would take for crucible's own. Escaped, it
-/// is still the value, and the person who sees it can tell which key or
-/// directory it was.
-fn failing(problem: &str) -> String {
-    format!("crucible: {}\n", crucible_types::shown::escaped(problem))
 }
 
 /// `text` as it may reach a terminal outside the renderer: every control

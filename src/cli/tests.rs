@@ -668,3 +668,53 @@ fn a_native_screen_setting_draws_natively_and_the_default_draws_full_screen() {
         crucible_tui::ScreenMode::Fullscreen
     );
 }
+
+/// What [`failing`] writes for `problem`, between `crucible: ` and the line
+/// feed that ends it.
+fn failed(problem: &str) -> String {
+    let line = failing(problem);
+    line.strip_prefix("crucible: ")
+        .and_then(|said| said.strip_suffix('\n'))
+        .unwrap_or_else(|| panic!("one `crucible: ` line: {line:?}"))
+        .to_owned()
+}
+
+#[test]
+fn a_failure_at_the_ceiling_is_said_whole() {
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    let whole = "x".repeat(TEXT_BYTES);
+    assert_eq!(failed(&whole), whole);
+}
+
+#[test]
+fn a_failure_one_byte_past_the_ceiling_is_cut_and_marked() {
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    let over = "x".repeat(TEXT_BYTES + 1);
+    assert_eq!(failed(&over), format!("{}… (cut)", "x".repeat(TEXT_BYTES)));
+}
+
+#[test]
+fn a_failure_is_cut_before_a_character_the_ceiling_falls_inside() {
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    // Two bytes, the first the last one the ceiling holds.
+    let straddling = format!("{}é", "x".repeat(TEXT_BYTES - 1));
+    assert!(!straddling.is_char_boundary(TEXT_BYTES));
+    assert_eq!(
+        failed(&straddling),
+        format!("{}… (cut)", "x".repeat(TEXT_BYTES - 1))
+    );
+}
+
+#[test]
+fn a_cut_failure_still_shows_what_a_terminal_would_act_on_as_its_escape() {
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    let hostile = format!("\u{1b}]0;T\u{7}\n{}", "x".repeat(TEXT_BYTES));
+    let said = failed(&hostile);
+    assert!(said.starts_with(r"\u{1b}]0;T\u{7}\nx"), "{said:?}");
+    assert!(said.ends_with("x… (cut)"), "{said:?}");
+    assert!(!said.chars().any(char::is_control), "{said:?}");
+}

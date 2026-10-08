@@ -6,7 +6,8 @@ parts that vary in angle brackets, and the rest name what you see instead. Each
 says what it means and points at the page that explains it in depth.
 
 A line that starts with `crucible: ` was written to standard error by a run
-that then stopped, with a non-zero exit code. A line that starts with `!` sits
+that then stopped, with a non-zero exit code; one that ends `… (cut)` said
+more than 16 KiB, and the rest was left off. A line that starts with `!` sits
 under a turn in the transcript, and the session carries on. A failed turn is
 written on its own, in the trouble colour, and begins with the provider's name,
 as in `anthropic: HTTP 401: ...`.
