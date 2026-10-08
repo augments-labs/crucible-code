@@ -183,9 +183,16 @@ dev-dependency; a release command that asks for the feature itself is not
 something it reads. A `crucible` binary that `cargo test` left in the
 checkout's `target/` is a test build too, until a plain `cargo build` replaces
 it: it keeps its state in that checkout's directory, so it does not share the
-publication lock with an installed crucible working on the same repository. The
-per-checkout directory stays behind when you remove a worktree; delete it by
-hand if you want it gone.
+publication lock with an installed crucible working on the same repository.
+
+Beside each per-checkout directory, a test build writes
+`/var/tmp/crucible-code-sandbox-{uid}-v1-{token}.checkout`, holding the
+checkout's path, and every process of that checkout holds a lock on it until
+it ends. When you remove a worktree, the next test build of any checkout
+removes that worktree's directory, its claim and its lock files, once no
+process from it is left holding the claim. A directory with no claim beside
+it, such as one left by a build from before claims were written, is never
+removed this way; delete it by hand if you want it gone.
 
 `scripts/required-cases.json` names the obligations that must keep running
 whatever the tests are called: `scripts/sh/rust-checks.sh` checks that each one

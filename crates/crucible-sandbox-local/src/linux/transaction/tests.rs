@@ -992,32 +992,40 @@ fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
 }
 
 /// Another checkout's state directory, removed however a test ends — unless it
-/// is this build's own, which every other test of this checkout shares.
-struct AnotherCheckout(PathBuf);
+/// is this build's own, which every other test of this checkout shares — and
+/// claimed while it stands, so a test killed before it could remove it leaves
+/// one the next run reclaims.
+struct AnotherCheckout(PathBuf, Option<checkout_state::Claim>);
 
 impl AnotherCheckout {
     /// The state directory a checkout beside this one would use, named for
     /// this test process and this test as well: every test process of this
     /// checkout makes one and removes it when its test ends, so a name for the
     /// checkout alone had one process remove the directory another was still
-    /// reading.
+    /// reading. No directory stands at that checkout's path, so once nobody
+    /// holds its claim it reads as a checkout that is gone.
     fn beside_this_one() -> Self {
         static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let made = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Self(
-            state_base_named(&checkout_state_name(
-                &format!(
-                    "crucible-code-sandbox-{}-v1",
-                    rustix::process::getuid().as_raw()
-                ),
-                &format!(
-                    "{}/another-checkout-{}-{made}",
-                    env!("CARGO_MANIFEST_DIR"),
-                    std::process::id()
-                ),
-            ))
-            .expect("another checkout's state directory"),
+        let shipped = format!(
+            "crucible-code-sandbox-{}-v1",
+            rustix::process::getuid().as_raw()
+        );
+        let checkout = format!(
+            "{}/another-checkout-{}-{made}",
+            env!("CARGO_MANIFEST_DIR"),
+            std::process::id()
+        );
+        let state = state_base_named(&checkout_state_name(&shipped, &checkout))
+            .expect("another checkout's state directory");
+        let claim = checkout_state::claim(
+            state.parent().expect("the state directory's parent"),
+            &shipped,
+            &checkout,
         )
+        .expect("another checkout's claim");
+        assert_eq!(claim.state(), state);
+        Self(state, Some(claim))
     }
 }
 
@@ -1025,8 +1033,179 @@ impl Drop for AnotherCheckout {
     fn drop(&mut self) {
         if state_base().ok().as_deref() != Some(self.0.as_path()) {
             let _ = fs::remove_dir_all(&self.0);
+            if let Some(claim) = self.1.take() {
+                let _ = claim.remove();
+            }
         }
     }
+}
+
+/// The shipped name the reclaiming tests below give their own checkouts, under
+/// a directory of their own.
+const RECLAIM_TEST_SHIPPED: &str = "crucible-code-sandbox-test-v1";
+
+/// A state directory claimed for a checkout under `base`, with something in
+/// it and the lock files a test build keeps beside it.
+fn claimed_state(base: &Path, checkout: &Path) -> checkout_state::Claim {
+    let claim = checkout_state::claim(
+        base,
+        RECLAIM_TEST_SHIPPED,
+        checkout.to_str().expect("a checkout path in UTF-8"),
+    )
+    .expect("a checkout's claim");
+    create_state_directory(claim.state()).expect("a checkout's state directory");
+    fs::write(claim.state().join(REGISTRY_LOCK), b"").expect("a lock in the state");
+    for suffix in checkout_state::TEST_LOCK_SUFFIXES {
+        let mut lock = claim.state().as_os_str().to_owned();
+        lock.push(suffix);
+        fs::write(lock, b"").expect("a lock beside the state");
+    }
+    claim
+}
+
+/// Everything under `base` whose name starts with the state directory's.
+fn left_of(base: &Path, state: &Path) -> Vec<String> {
+    let name = state
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a state directory name");
+    let mut left: Vec<String> = fs::read_dir(base)
+        .expect("the base")
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|entry| entry.starts_with(name))
+        .collect();
+    left.sort();
+    left
+}
+
+#[test]
+fn a_checkouts_state_is_reclaimed_once_its_checkout_is_gone_and_nobody_holds_its_claim() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-reclaimed");
+    let base = sample.root();
+    let checkout = base.join("checkout");
+    create_private_test_directory(&checkout);
+    let claim = claimed_state(base, &checkout);
+    let state = claim.state().to_path_buf();
+    let made = left_of(base, &state);
+    assert_eq!(
+        made.len(),
+        4,
+        "the state, its claim and two locks: {made:?}"
+    );
+
+    // A checkout that still stands is never reclaimed, held or not.
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    drop(claim);
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert_eq!(left_of(base, &state), made);
+
+    // Gone, but a process of it still running holds its claim.
+    let claim = claimed_state(base, &checkout);
+    fs::remove_dir(&checkout).expect("the checkout is removed");
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert_eq!(left_of(base, &state), made);
+
+    // Gone, and nobody left holding it.
+    drop(claim);
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        1
+    );
+    assert_eq!(left_of(base, &state), Vec::<String>::new());
+}
+
+#[test]
+fn reclaiming_leaves_what_it_cannot_prove_is_an_abandoned_checkouts() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-kept");
+    let base = sample.root();
+
+    // A checkout's state with no claim beside it, as every one made before
+    // claims were written is: its name alone proves nothing.
+    let unclaimed = base.join(checkout_state_name(
+        RECLAIM_TEST_SHIPPED,
+        &base.join("unclaimed").display().to_string(),
+    ));
+    create_private_test_directory(&unclaimed);
+
+    // A claim naming a gone checkout whose name is not this directory's.
+    let gone = base.join("gone").display().to_string();
+    let renamed = base.join(checkout_state_name(RECLAIM_TEST_SHIPPED, "elsewhere"));
+    create_private_test_directory(&renamed);
+    let mut marker = renamed.as_os_str().to_owned();
+    marker.push(checkout_state::CLAIM_SUFFIX);
+    fs::write(&marker, gone.as_bytes()).expect("a claim for another name");
+
+    // The shipped directory, with a claim beside it naming a gone checkout.
+    let shipped = base.join(RECLAIM_TEST_SHIPPED);
+    create_private_test_directory(&shipped);
+    let mut marker = shipped.as_os_str().to_owned();
+    marker.push(checkout_state::CLAIM_SUFFIX);
+    fs::write(&marker, gone.as_bytes()).expect("a claim beside the shipped state");
+
+    let before: Vec<_> = fs::read_dir(base)
+        .expect("the base")
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .collect();
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    let after: Vec<_> = fs::read_dir(base)
+        .expect("the base")
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .collect();
+    assert_eq!(before.len(), after.len(), "{before:?} became {after:?}");
+    assert!(unclaimed.is_dir() && renamed.is_dir() && shipped.is_dir());
+}
+
+#[test]
+fn another_test_process_claims_a_checkout_and_is_killed() {
+    // A helper: in an ordinary run it does nothing.
+    if !started_by_another_test_process() {
+        return;
+    }
+    let holding = PathBuf::from(std::env::var_os(HELPER_HOLDING).expect("the helper's files"));
+    let base = holding.parent().expect("the helper's files");
+    let claim = claimed_state(base, &base.join("removed-checkout"));
+    held_by_another_test_process();
+    drop(claim);
+}
+
+#[test]
+fn a_test_process_killed_holding_a_claim_leaves_a_state_the_next_run_reclaims() {
+    let mut helper = AnotherTestProcess::holding(
+        "linux::transaction::tests::another_test_process_claims_a_checkout_and_is_killed",
+    );
+    let base = helper.files().to_path_buf();
+    let state = base.join(checkout_state_name(
+        RECLAIM_TEST_SHIPPED,
+        &base.join("removed-checkout").display().to_string(),
+    ));
+    assert!(
+        state.is_dir(),
+        "the helper made no state: {}",
+        state.display()
+    );
+    assert_eq!(
+        checkout_state::reclaim_abandoned(&base, RECLAIM_TEST_SHIPPED),
+        0,
+        "a live process's state was reclaimed"
+    );
+    helper.kill();
+    assert_eq!(
+        checkout_state::reclaim_abandoned(&base, RECLAIM_TEST_SHIPPED),
+        1
+    );
+    assert_eq!(left_of(&base, &state), Vec::<String>::new());
 }
 
 /// A state directory's mode, put back however a test ends.
@@ -1055,7 +1234,7 @@ pub(in crate::linux) const OTHER_TEST_PROCESSES: Duration = Duration::from_mins(
 pub(in crate::linux) struct AnotherTestProcess {
     child: Option<std::process::Child>,
     release: PathBuf,
-    _files: crate::sample::Sample,
+    files: crate::sample::Sample,
 }
 
 impl AnotherTestProcess {
@@ -1089,7 +1268,7 @@ impl AnotherTestProcess {
         Self {
             child: Some(child),
             release,
-            _files: files,
+            files,
         }
     }
 
@@ -1103,6 +1282,19 @@ impl AnotherTestProcess {
             .wait()
             .expect("the helper ends");
         assert!(ended.success(), "the helper process failed: {ended}");
+    }
+
+    /// The directory the helper says it holds in, which outlives it.
+    pub(in crate::linux) fn files(&self) -> &Path {
+        self.files.root()
+    }
+
+    /// Ends the helper as a kill would, with no chance to unwind.
+    pub(in crate::linux) fn kill(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
