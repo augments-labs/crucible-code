@@ -1367,6 +1367,8 @@ configuration invalid
 
 Each file is `valid`, `invalid` or `absent`, and each error is the one a
 startup would stop on, including two layers whose rules contradict each other.
+An error longer than 4096 bytes is cut there and ends `… (cut)`; in `--json`
+its `truncated` is `true`.
 It does not look up a provider's name or check a `baseUrl` address; a start
 refuses an unknown provider, and an address that is neither `https` nor `http`
 on `localhost`, `127.0.0.1` or `[::1]`, so a file that passes here can still

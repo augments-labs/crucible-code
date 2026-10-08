@@ -786,6 +786,28 @@ fn failures_are_bounded_and_say_where_they_were_cut() {
 }
 
 #[test]
+fn the_text_report_marks_a_sentence_it_cut() {
+    // The document says `truncated`; the text report has only the line, and a
+    // sentence cut mid-word with nothing after it reads as a whole one. A key
+    // longer than the ceiling is quoted by its refusal, so the sentence about
+    // it runs past the cut.
+    let scratch = crate::sample::Scratch::new("check-text-cut");
+    let key = "k".repeat(crate::MAX_FAILURE_BYTES);
+    scratch.write(".crucible/config.json", &format!(r#"{{"{key}": 1}}"#));
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    let cut = report.failures().first().expect("the one refusal");
+    assert!(cut.truncated(), "got {:?}", report.failures());
+    let human = report.human();
+    let line = human
+        .lines()
+        .find(|line| line.contains(&key[..64]))
+        .expect("the cut sentence is on a line of its own");
+    assert!(line.ends_with("… (cut)"), "got {line:?}");
+}
+
+#[test]
 fn the_json_report_is_one_complete_envelope() {
     // The common contract: one document with an explicit version, a kind, a
     // status, bounded data and explicit incompleteness — parseable by the

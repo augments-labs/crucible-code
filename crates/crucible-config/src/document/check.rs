@@ -599,6 +599,10 @@ fn join(path: &str, key: &str) -> String {
 /// the whole report small enough to print and to carry as one JSON document.
 pub const MAX_FAILURE_BYTES: usize = 4096;
 
+/// What the text report puts after a sentence it cut, the mark the other
+/// command-line listings put after a string they cut.
+const CUT: &str = "… (cut)";
+
 /// What the check found in one of the three files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileCheck {
@@ -736,7 +740,9 @@ impl CheckReport {
     /// is written [`escaped`]: a key that carries a line break shows it as
     /// `\n` rather than opening a line of the report, and one that carries
     /// ESC or a right-to-left override shows its escape rather than acting on
-    /// the terminal. Every line break here is the report's own.
+    /// the terminal. Every line break here is the report's own. A sentence
+    /// cut at [`MAX_FAILURE_BYTES`] ends `… (cut)`, after its escapes, so a
+    /// reader without the document's `truncated` does not take it as whole.
     #[must_use]
     pub fn human(&self) -> String {
         let mut said = String::from(if self.valid() {
@@ -758,7 +764,8 @@ impl CheckReport {
             );
         }
         for failure in &self.failures {
-            let _ = writeln!(said, "  {}", escaped(&failure.message));
+            let cut = if failure.truncated { CUT } else { "" };
+            let _ = writeln!(said, "  {}{cut}", escaped(&failure.message));
         }
         let _ = writeln!(said, "  schema: {}", self.schema_id());
         said
