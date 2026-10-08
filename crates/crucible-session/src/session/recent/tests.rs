@@ -993,3 +993,44 @@ fn a_log_that_is_a_link_is_left_out_of_the_first_frame_rather_than_followed() {
     let asked: Vec<&str> = offered.iter().map(Recorded::asked).collect();
     assert_eq!(asked, ["the real one"]);
 }
+
+/// Gives the log `id` a second name in the sessions directory, as a backup
+/// made with hard links would.
+fn hard_linked(sample: &Sample, id: &str) {
+    std::fs::hard_link(
+        sample.logs().join(format!("{id}.jsonl")),
+        sample.logs().join(format!("{id}.jsonl.kept")),
+    )
+    .expect("a second name for the log");
+}
+
+/// A log is the one session it records however many names it has: a backup
+/// taken with hard links gives every log a second one, and that is no reason
+/// for the welcome screen to stop offering it.
+#[test]
+fn a_log_with_a_second_name_is_still_offered_to_the_first_frame() {
+    let sample = Sample::new("recent-hard-link");
+    planted(&sample, &nth(1), &["kept under two names"]);
+    hard_linked(&sample, &nth(1));
+
+    assert_eq!(first(&offered(&sample, 4)), "kept under two names");
+}
+
+/// The listing reads a log with a second name as it reads any other.
+#[test]
+fn a_log_with_a_second_name_is_listed_rather_than_counted_unreadable() {
+    let sample = Sample::new("discovered-hard-link");
+    headed(&sample, &sample.workspace(), &nth(1), None);
+    hard_linked(&sample, &nth(1));
+    indexed(&sample, &[(&nth(1), 1, None)]);
+
+    let found = discovering(&sample, 8);
+
+    let ids: Vec<&str> = found
+        .sessions()
+        .iter()
+        .map(|one| one.id().as_str())
+        .collect();
+    assert_eq!(ids, [nth(1).as_str()]);
+    assert_eq!(found.unreadable(), 0);
+}

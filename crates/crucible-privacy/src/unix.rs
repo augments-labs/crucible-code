@@ -46,6 +46,18 @@ pub(super) fn open_read(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+pub(super) fn open_read_ordinary(path: &Path) -> io::Result<File> {
+    // Opened as `open_read` opens, for the same reason; only the single-name
+    // proof is left out.
+    let file = opened(
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    )?;
+    regular(&file)?;
+    Ok(file)
+}
+
 pub(super) fn open_read_append(path: &Path) -> io::Result<File> {
     let file = opened(
         path,
@@ -121,20 +133,15 @@ pub(super) fn lock(path: &Path) -> io::Result<File> {
 pub(super) fn tighten(path: &Path) -> io::Result<bool> {
     // Opening a pipe for reading blocks until somebody writes, so the descriptor
     // is asked for without waiting. The regular-file check below is what then
-    // refuses what opened, written out here rather than reached through
-    // `ordinary`, which also asks that nothing else names the file. Nothing
-    // here reads, so the flag bears only on the open.
+    // refuses what opened, `regular` rather than `ordinary`, which also asks
+    // that nothing else names the file. Nothing here reads, so the flag bears
+    // only on the open.
     let file = opened(
         path,
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
         Mode::empty(),
     )?;
-    if !file.metadata()?.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "private state is not a regular file",
-        ));
-    }
+    regular(&file)?;
     narrow(&file, FILE)
 }
 
@@ -169,14 +176,21 @@ fn private_file() -> Mode {
     Mode::RUSR | Mode::WUSR
 }
 
+/// One ordinary file under one name: what private state has to be.
 fn ordinary(file: &File) -> io::Result<()> {
+    regular(file)?;
+    single_name(file)
+}
+
+/// One ordinary file, however many names reach it.
+fn regular(file: &File) -> io::Result<()> {
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "private state is not a regular file",
         ));
     }
-    single_name(file)
+    Ok(())
 }
 
 fn narrow(file: &File, wanted: u32) -> io::Result<bool> {

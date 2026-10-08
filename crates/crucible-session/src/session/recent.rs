@@ -21,8 +21,8 @@
 //! out and refuses an index that does not read.
 //!
 //! Both open a log the one way [`opened`] does: without following a link,
-//! without waiting on a pipe, and only where what opened is one ordinary file
-//! under one name. The sessions directory is crucible's, but a name in it is
+//! without waiting on a pipe, and only where what opened is one ordinary file,
+//! however many hard names reach it. The sessions directory is crucible's, but a name in it is
 //! still a name anything that can write there could have put a link or a pipe
 //! under, and either read runs where nobody asked to wait.
 
@@ -336,8 +336,9 @@ impl Discovery {
 /// A name the index holds with no log beside it is a session starting this
 /// instant, or one removed, and is left out uncounted. A log whose first line
 /// does not read, that this build cannot read, or that is not one ordinary
-/// file under one name — a pipe, a link, a file with a second name — is
-/// counted rather than listed, since where it was recorded is not known.
+/// file — a pipe or a link — is counted rather than listed, since where it was
+/// recorded is not known. A second hard name is no reason to count a log: it
+/// is the same file under another name, and it is listed as one.
 ///
 /// # Errors
 ///
@@ -515,23 +516,26 @@ fn read(path: &Path, roots: Roots<'_>) -> Option<Recorded> {
     }
 }
 
-/// The log at `path`, opened to read, where it is one ordinary file under its
-/// own name.
+/// The log at `path`, opened to read, where it is one ordinary file.
 ///
 /// A pipe would hold the welcome screen, or a listing, until something wrote
 /// to it, and a link would read wherever it leads, out of the sessions
 /// directory or into another log. So the name is opened without following a
 /// final link and, on Unix, without waiting for a writer, and the proof that
-/// it is an ordinary file with no second name is taken on the handle that
-/// opened, before a byte is read. On Windows a final reparse point is opened
-/// as itself and refused by the same proof; a pipe cannot sit in a directory
-/// there.
+/// it is an ordinary file is taken on the handle that opened, before a byte is
+/// read. On Windows a final reparse point is opened as itself and refused by
+/// the same proof; a pipe cannot sit in a directory there.
 ///
-/// The private-state opener rather than a workspace path: the sessions
+/// A second hard name is accepted. Nothing is followed to reach a file with
+/// one, so what is read is what this name opened, and a backup made with hard
+/// links gives every log one: refusing it would empty the welcome screen of
+/// the sessions `--continue` still opens.
+///
+/// The privacy crate's opener rather than a workspace path: the sessions
 /// directory is not a root the agent was pointed at, and a workspace proof
 /// follows any link that stays inside its root, where this follows none.
 fn opened(path: &Path) -> Result<File, crucible_privacy::PrivacyError> {
-    crucible_privacy::open_read(path)
+    crucible_privacy::open_read_ordinary(path)
 }
 
 /// One line of what was asked, with nothing in it that could become a row.
