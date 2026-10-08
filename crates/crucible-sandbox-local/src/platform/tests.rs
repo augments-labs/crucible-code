@@ -108,7 +108,7 @@ fn stderr(child: &mut Child) -> Box<dyn Stream> {
     stream(child.stderr.take().expect("stderr")).expect("a prepared stderr")
 }
 
-fn reaped(mut child: Child) {
+fn reaped(child: &mut Child) {
     let deadline = Instant::now() + WAIT;
     while child.try_wait().expect("a status").is_none() {
         assert!(Instant::now() < deadline, "the command did not exit");
@@ -116,16 +116,73 @@ fn reaped(mut child: Child) {
     }
 }
 
+/// A command killed and reaped when it is dropped, however the test holding it
+/// ends: one that never ends on its own outlives a failed assertion otherwise,
+/// and the test is reported as leaking it as well as failing.
+struct Killing(Child);
+
+impl std::ops::Deref for Killing {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Killing {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+/// Killing one that has ended does nothing, and waiting on one already reaped
+/// answers with the status it was reaped with.
+impl Drop for Killing {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A test that fails holding a command through [`Killing`] leaves nothing
+/// running once it has unwound, though the command would have run on long
+/// after it. The command is `exec`ed, so the process killed is the one that
+/// would have run on rather than a shell above it; and `kill -0` still answers
+/// for a process killed but not yet reaped, so the guard is held to both.
+#[cfg(unix)]
+#[test]
+fn a_command_held_through_a_failing_test_is_killed_and_reaped() {
+    let held = Killing(shell("exec sleep 30"));
+    let process = held.id().to_string();
+    let answers = || {
+        Command::new("kill")
+            .args(["-0", &process])
+            .stderr(Stdio::null())
+            .status()
+            .expect("kill")
+            .success()
+    };
+    assert!(answers(), "the command never started");
+
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _held = held;
+        panic!("an assertion failed while the command ran");
+    }));
+
+    assert!(failed.is_err(), "the test holding the command did not fail");
+    assert!(!answers(), "the command outlived the test that failed");
+}
+
 #[test]
 fn a_waited_read_carries_what_a_read_without_waiting_carries() {
     let mut first = shell(LINES);
     let expected = polled(stdout(&mut first).as_mut());
-    reaped(first);
+    reaped(&mut first);
 
     let mut second = shell(LINES);
     let output = stdout(&mut second);
     let kept = runtime().block_on(async { tokio::time::timeout(WAIT, waited(output, 7)).await });
-    reaped(second);
+    reaped(&mut second);
 
     assert!(expected.len() > 2000 * 6, "only {} bytes", expected.len());
     assert_eq!(kept.expect("the stream ended in time"), expected);
@@ -157,7 +214,7 @@ fn said_back_waiting(told: Vec<u8>) -> Vec<u8> {
             .expect("the command finished speaking in time")
             .expect("the reading task")
     });
-    reaped(child);
+    reaped(&mut child);
     thread
         .end()
         .expect("the input's thread, where there is one, ended");
@@ -176,7 +233,7 @@ fn said_back_polled(told: Vec<u8>) -> Vec<u8> {
         .join()
         .expect("the writer")
         .expect("every byte written");
-    reaped(child);
+    reaped(&mut child);
     kept
 }
 
@@ -217,7 +274,7 @@ fn a_flood_on_standard_error_is_read_beside_standard_output_to_both_ends() {
     let flooding = std::thread::spawn(move || polled(first_stderr.as_mut()));
     let said = polled(first_stdout.as_mut());
     let flooded = flooding.join().expect("the stderr reader");
-    reaped(first);
+    reaped(&mut first);
 
     let mut second = shell(FLOOD);
     let errors = stderr(&mut second);
@@ -233,7 +290,7 @@ fn a_flood_on_standard_error_is_read_beside_standard_output_to_both_ends() {
             .expect("the stderr task");
         (said, flooded)
     });
-    reaped(second);
+    reaped(&mut second);
 
     assert!(flooded.len() > 64 * 1024, "only {} bytes", flooded.len());
     assert_eq!((waited_said, waited_flooded), (said, flooded));
@@ -438,7 +495,7 @@ const DEAF: &str = "for /l %i in (0,0,1) do @rem";
 #[cfg(windows)]
 #[test]
 fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
-    let mut child = shell(DEAF);
+    let mut child = Killing(shell(DEAF));
     let thread = InputThread::default();
     let mut input = input(child.stdin.take().expect("stdin"), &thread);
     let parked = runtime().block_on(async {
@@ -490,5 +547,5 @@ fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
     thread.end().expect("the thread ended");
     assert!(thread.joined(), "the ended thread was not joined");
     child.kill().expect("the command stopped");
-    reaped(child);
+    reaped(&mut child);
 }
