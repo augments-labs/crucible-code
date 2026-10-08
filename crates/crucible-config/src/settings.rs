@@ -428,46 +428,13 @@ pub(crate) fn hide_base_url_targets(shown_document: &mut Value) {
     };
 
     for record in providers.values_mut() {
-        let Some(address) = record.get_mut("baseUrl") else {
+        let Some(base_url) = record.get_mut("baseUrl") else {
             continue;
         };
-        *address = Value::String(match address.as_str() {
-            Some(written) => recipient(written),
+        *base_url = Value::String(match base_url.as_str() {
+            Some(written) => address::redacted(written),
             None => env::REDACTED.to_owned(),
         });
-    }
-}
-
-/// `written` as [`address::redacted`] shows it, or replaced whole where that
-/// would not be the recipient.
-///
-/// It reads the authority from the first `://` to the first `/`, `?` or `#`,
-/// and a URL parser starts it there too and ends it at one of those three or
-/// sooner, so anything it reads as a user or a path is hidden with them. Two
-/// spellings break that. A scheme that is not a plain one holds whatever was
-/// written before the first `://`, a user or a path among it. And a parser
-/// ends the authority at a `\`, drops a tab or a line break wherever one is
-/// written, and refuses a space or another control, so an authority holding
-/// any of them is not one it reads. An address spelled either way is replaced
-/// whole. A run of `/` after the scheme, which a parser skips, leaves an empty
-/// authority here, and everything after it is hidden.
-///
-/// The provider refuses every one of these before it sends anything. This
-/// check is where what the two print differs, because a printed setting is
-/// written before any refusal is made.
-fn recipient(written: &str) -> String {
-    let readable = written.split_once("://").is_some_and(|(scheme, rest)| {
-        let plain = !scheme.is_empty()
-            && scheme
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
-        let unread = |c: char| c == '\\' || c.is_ascii_whitespace() || c.is_ascii_control();
-        plain && !address::authority(rest).contains(unread)
-    });
-    if readable {
-        address::redacted(written)
-    } else {
-        env::REDACTED.to_owned()
     }
 }
 
@@ -789,45 +756,20 @@ mod tests {
 
     #[test]
     fn a_base_url_spelled_so_its_authority_cannot_be_read_is_hidden_whole() {
-        // Nothing may be shown as a recipient that a URL parser would read as
-        // a user or a path, so an address with no plain `scheme://` in front,
-        // or whose authority holds a `\`, a space or a control, is not shown
-        // at all.
-        for written in [
-            "https:user:pa55word@host.example/v1",
-            "user:pa55word@host.example",
-            "https:user:pa55word@host.example/x://y",
-            "https:tenant-fake/x://y",
-            "localhost:8080/v1?api-key=not-a-real-key",
-            "https://host.example\\tenant-fake",
-            "https://\\/user:pa55word@host.example",
-            "https://\t/user:pa55word@host.example/v1",
-            "https://\n/user:pa55word@host.example/v1",
-            "https://host.example /tenant-fake",
-        ] {
-            assert_eq!(recipient(written), env::REDACTED, "{written:?}");
-        }
-        assert_eq!(
-            recipient("https://a:b@c:d@host.example:8443/v1?q=1"),
-            "https://host.example:8443/[redacted]"
-        );
-        assert_eq!(
-            recipient("https://host.example/v1/@path"),
-            "https://host.example/[redacted]"
-        );
-    }
+        // Which spellings those are is the address module's to say; this is
+        // that a printed setting takes its word, in the placeholder every
+        // other hidden value here is printed as.
+        assert_eq!(address::HIDDEN, env::REDACTED);
+        let text = r#"{"providers": {"openai": {"baseUrl":
+                         "https:user:pa55word@host.example/x://y"}}}"#;
+        let document = Document::sample(text, Origin::User);
+        let settings = Settings::resolve(vec![document.clone()]);
 
-    #[test]
-    fn a_base_url_whose_authority_follows_a_run_of_slashes_shows_no_user() {
-        // A URL parser skips every `/` after `https://`, so in each of these
-        // it reads `user:pa55word` as the user. Read from the first `://`, the
-        // authority is empty, and the user is in what follows it, which is
-        // hidden.
-        for written in [
-            "https:///user:pa55word@host.example/v1",
-            "https:////user:pa55word@host.example",
-        ] {
-            assert_eq!(recipient(written), "https:///[redacted]", "{written}");
+        for printed in [format!("{settings:?}"), format!("{document:?}")] {
+            assert!(printed.contains(env::REDACTED), "got {printed}");
+            for hidden in ["user", "pa55word", "host.example"] {
+                assert!(!printed.contains(hidden), "{hidden} in {printed}");
+            }
         }
     }
 
