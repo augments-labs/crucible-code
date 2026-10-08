@@ -7,15 +7,13 @@
 //! finding the right log, refusing the wrong one and stopping at the first
 //! line that cannot be read all live here together.
 //!
-//! So does how a log is opened to be read. Every read of one by its name in
-//! the sessions directory — the header [`belongs`] reads, the [`replay`], the
-//! picker's glimpse and the welcome screen's lines — opens it as [`opened`]
-//! does, so a link or a pipe under a log's name is refused by every one of
-//! them in the same way.
+//! Every read of a log by its name in the sessions directory — the header
+//! [`belongs`] reads, the [`replay`], the picker's glimpse and the welcome
+//! screen's lines — opens it as [`opened`] does, so a link or a pipe under a
+//! log's name is refused by every one of them in the same way.
 
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::File;
 use std::io::{self, BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
@@ -28,6 +26,7 @@ use crucible_workspace::Workspace;
 
 use crucible_types::ResultProvenance;
 
+use super::privacy::opened;
 use super::{SUFFIX, SessionError, results, wire};
 
 /// A persisted record cannot legitimately exceed the maximum retained item
@@ -145,34 +144,6 @@ pub(super) fn newest(directory: &Path, workspace: &Workspace) -> Result<PathBuf,
     Err(SessionError::Nothing {
         at: workspace.root().display().to_string().into(),
     })
-}
-
-/// The log at `path`, opened to read, where it is one ordinary file.
-///
-/// A pipe would hold `--continue`, the welcome screen or a listing until
-/// something wrote to it, and a link would read wherever it leads, out of the
-/// sessions directory or into another log — and a session continued through
-/// one is then cut and appended to there. So the name is opened without
-/// following a final link and, on Unix, without waiting for a writer, and the
-/// proof that it is an ordinary file is taken on the handle that opened, before
-/// a byte is read. On Windows a final reparse point is opened as itself and
-/// refused by the same proof; a pipe cannot sit in a directory there.
-///
-/// A second hard name is accepted. Nothing is followed to reach a file with
-/// one, so what is read is what this name opened, and a backup made with hard
-/// links gives every log one: refusing it would leave every session that backup
-/// touched impossible to continue.
-///
-/// The privacy crate's opener rather than a workspace path: the sessions
-/// directory is not a root the agent was pointed at, and a workspace proof
-/// follows any link that stays inside its root, where this follows none.
-///
-/// # Errors
-///
-/// What the open said, or that what opened is not one ordinary file; a caller
-/// reports either against the log as it reports a log that will not open.
-pub(super) fn opened(path: &Path) -> Result<File, io::Error> {
-    crucible_privacy::open_read_ordinary(path).map_err(crucible_privacy::PrivacyError::into_io)
 }
 
 /// Whether `path` is a log of a session in `workspace`.

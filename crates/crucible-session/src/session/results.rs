@@ -11,7 +11,7 @@
 
 use std::ffi::OsStr;
 use std::fmt::Write as _;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
@@ -199,17 +199,17 @@ fn decode(line: &str, path: PathBuf) -> Option<StoredResult> {
     })
 }
 
+/// One record, opened as one ordinary file and proved so on the handle it is
+/// read through, so a link or a pipe under its name is refused as an
+/// unreadable record and nothing can take its place between the proof and the
+/// read.
 fn read_one(path: &Path) -> Result<StoredResult, io::Error> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.len() > MAX_RUN_ITEM_BYTES as u64 + 1
-    {
+    let file = privacy::opened(path)?;
+    if file.metadata()?.len() > MAX_RUN_ITEM_BYTES as u64 + 1 {
         return Err(invalid_record());
     }
     let mut line = String::new();
-    File::open(path)?
-        .take(MAX_RUN_ITEM_BYTES as u64 + 2)
+    file.take(MAX_RUN_ITEM_BYTES as u64 + 2)
         .read_to_string(&mut line)?;
     let line = line.strip_suffix('\n').ok_or_else(invalid_record)?;
     if line.contains('\n') {
@@ -258,7 +258,7 @@ fn entries(path: &Path) -> Result<usize, io::Error> {
 
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), io::Error> {
-    File::open(path)?.sync_all()
+    fs::File::open(path)?.sync_all()
 }
 
 /// Windows offers no directory durability call, so the entry rename itself is

@@ -89,7 +89,9 @@ pub fn open_read(path: &Path) -> Result<File, PrivacyError> {
 /// reparse point or a non-file is refused, on the returned handle, and on Unix
 /// the open does not wait on a writer who is not coming. Another hard name is
 /// accepted, so a caller holds nothing it opened through here as private
-/// state it alone can change.
+/// state it alone can change. Nor does the handle hold the name: on Windows it
+/// allows deletion, so a [`replace`] over the file while it is read goes ahead
+/// and this reader keeps the file it opened, as it would on Unix.
 ///
 /// # Errors
 ///
@@ -217,8 +219,8 @@ pub fn sync_parent(path: &Path) -> Result<(), PrivacyError> {
 /// A handle already open on the destination keeps the file it opened while the
 /// name moves on to the new one. On Windows that needs a file system that
 /// supports POSIX rename semantics and a handle that allowed deletion, as a
-/// `std` open does; this crate's own opens do not, and replacing a file one of
-/// them holds fails.
+/// `std` open and [`open_read_ordinary`] do; this crate's other opens do not,
+/// and replacing a file one of them holds fails.
 ///
 /// # Errors
 ///

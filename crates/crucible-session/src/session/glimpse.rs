@@ -107,7 +107,7 @@ pub fn glimpse(
         source,
     };
 
-    let mut file = super::replay::opened(&path).map_err(failed)?;
+    let mut file = super::privacy::opened(&path).map_err(failed)?;
     let length = file.seek(SeekFrom::End(0)).map_err(failed)?;
     let start = length.saturating_sub(TAIL);
     file.seek(SeekFrom::Start(start)).map_err(failed)?;

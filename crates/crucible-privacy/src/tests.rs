@@ -333,6 +333,32 @@ fn a_destination_open_for_reading_is_replaced_all_the_same() {
     assert_eq!(kept, "old", "the reader lost the file it opened");
 }
 
+/// A file read and not trusted, such as a session index, is one another
+/// crucible replaces whole while this one reads it, and the read must not cost
+/// that replace.
+#[test]
+fn a_destination_open_as_an_ordinary_file_is_replaced_all_the_same() {
+    use std::io::Read as _;
+
+    let scratch = Scratch::new("replace-read-ordinary");
+    directory(&scratch.0).unwrap();
+    let partial = scratch.0.join("partial");
+    let destination = scratch.0.join("destination");
+    fs::write(&destination, "old").unwrap();
+    let mut reading = open_read_ordinary(&destination).unwrap();
+    let mut prepared = create_write(&partial).unwrap();
+    prepared.write_all(b"new").unwrap();
+    prepared.sync_all().unwrap();
+    drop(prepared);
+
+    replace(&partial, &destination).unwrap();
+
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "new");
+    let mut kept = String::new();
+    reading.read_to_string(&mut kept).unwrap();
+    assert_eq!(kept, "old", "the reader lost the file it opened");
+}
+
 #[cfg(windows)]
 #[test]
 fn every_created_kind_remains_reachable_by_its_owner() {
