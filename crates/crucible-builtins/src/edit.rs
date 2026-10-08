@@ -11,6 +11,14 @@
 //! cannot be made leaves the file exactly as it was — a file holding half of
 //! what was asked for is a state nobody chose, and the model cannot see which
 //! half it got without reading the file back.
+//!
+//! A file the session has read is held to what the session saw: an edit of
+//! one whose content changed since is refused, because the text it quotes
+//! may now mean something else. A file the session never read can still be
+//! edited, since the text it quotes has to be found in it. Either way the
+//! file is held to the content the edit read until the replacement is
+//! committed, so another writer's change in between is kept and the edit
+//! refused rather than the change overwritten.
 
 use std::io::{self, Read as _};
 
@@ -20,13 +28,14 @@ use crucible_tools::{
     ToolOutput,
 };
 use crucible_types::ToolArgs;
-use crucible_workspace::Workspace;
+use crucible_workspace::{PathError, Workspace};
 
 use std::sync::LazyLock;
 
 use crate::args::Args;
 use crate::atomic;
 use crate::changed;
+use crate::ledger::{Fingerprint, Ledger, Shown};
 use crate::schema::{Field, Schema, Shape};
 use crate::summary;
 use crate::target;
@@ -135,13 +144,15 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 #[derive(Debug)]
 pub struct Edit {
     workspace: Workspace,
+    seen: Ledger,
 }
 
 impl Edit {
-    /// Edits inside `workspace`, and nowhere else.
+    /// Edits inside `workspace`, and nowhere else, holding a file to what
+    /// `seen` says the session last saw in it.
     #[must_use]
-    pub fn new(workspace: Workspace) -> Self {
-        Self { workspace }
+    pub fn new(workspace: Workspace, seen: Ledger) -> Self {
+        Self { workspace, seen }
     }
 }
 
@@ -183,15 +194,17 @@ impl Tool for Edit {
         context: &'a ToolContext<'_>,
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
         let workspace = self.workspace.clone();
+        let seen = self.seen.clone();
         let editing = crate::blocking::run(NAME, context, move |cancel| {
-            edited(&workspace, &approved, cancel)
+            edited(&workspace, &seen, &approved, cancel)
         });
         Box::pin(async move {
             // A call cancelled while it waited for room on the worker did
             // nothing, and answers as one cancelled at its first look does.
-            editing
+            let edited = editing
                 .await?
-                .unwrap_or_else(|| Err(ToolError::Cancelled(NAME.into())))
+                .unwrap_or_else(|| Err(ToolError::Cancelled(NAME.into())))?;
+            Ok(self.seen.shown(edited))
         })
     }
 }
@@ -205,9 +218,10 @@ impl Tool for Edit {
 /// step here whose effect outlives the process.
 fn edited(
     workspace: &Workspace,
+    seen: &Ledger,
     approved: &Approved,
     cancel: &Cancel,
-) -> Result<ToolOutput, ToolError> {
+) -> Result<Shown, ToolError> {
     let args = Args::parse(NAME, approved.args())?;
     let requested = args.text(PATH)?;
     let listed = args.list(EDITS)?;
@@ -221,18 +235,19 @@ fn edited(
             at,
             wanted.len(),
             "find and replace are the same text, so there is nothing to change",
-        ));
+        )
+        .into());
     }
 
     let path = match workspace.existing(requested) {
         Ok(path) => path,
-        Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+        Err(problem) => return Ok(ToolOutput::failed(problem.to_string()).into()),
     };
 
     // The file the verdict was reached about, or nothing is read: a name
     // that leads elsewhere now is not the file anybody agreed to change.
     if let Err(problem) = target::held(workspace, approved, requested, &path) {
-        return Ok(ToolOutput::failed(problem));
+        return Ok(ToolOutput::failed(problem).into());
     }
 
     // Read through a descriptor-relative open. If the last component or a
@@ -242,7 +257,7 @@ fn edited(
     // over a newly planted link rather than following it.
     let mut file = match path.open_regular_to_change() {
         Ok(file) => file,
-        Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+        Err(problem) => return Ok(ToolOutput::failed(problem.to_string()).into()),
     };
 
     // Fixed-size reads put a cancellation point inside the scan and keep
@@ -251,12 +266,10 @@ fn edited(
     // how long a stopped turn keeps reading it.
     let before = match source(&mut file, cancel) {
         Ok(Source::Text(before)) => before,
-        Ok(Source::TooLarge) => return Ok(too_large(requested)),
+        Ok(Source::TooLarge) => return Ok(too_large(requested).into()),
         Ok(Source::Cancelled) => return Err(ToolError::Cancelled(NAME.into())),
         Ok(Source::Binary) => {
-            return Ok(ToolOutput::failed(format!(
-                "{requested} is not a text file"
-            )));
+            return Ok(ToolOutput::failed(format!("{requested} is not a text file")).into());
         }
         Err(source) => {
             return Err(ToolError::Io {
@@ -266,6 +279,17 @@ fn edited(
             });
         }
     };
+
+    // What the edit is derived from, held against what the session last saw
+    // of the file where it saw it, and carried to the commit either way.
+    let read = Fingerprint::of(before.as_bytes());
+    let held = seen.fingerprint(path.as_path());
+    if held.is_some_and(|held| held != read) {
+        return Ok(ToolOutput::failed(format!(
+            "{requested} changed since it was read, so the edit was not made: read it again"
+        ))
+        .into());
+    }
 
     // Every change is made to the text in memory, and the file is written
     // only once they all have been. A list that fails part-way through has
@@ -284,12 +308,12 @@ fn edited(
 
         let found = after.matches(change.find).count();
         if let Some(problem) = trouble(found, change.all, requested) {
-            return Ok(refused(at, wanted.len(), &problem));
+            return Ok(refused(at, wanted.len(), &problem).into());
         }
 
         let made = if change.all { found } else { 1 };
         if grown(after.len(), made, change).is_none_or(|length| length > FILE_LIMIT) {
-            return Ok(too_large(requested));
+            return Ok(too_large(requested).into());
         }
 
         after = if change.all {
@@ -314,16 +338,35 @@ fn edited(
     // The replacement is prepared beside the old file, flushed, and
     // renamed only after it is whole. At no point can a reader observe the
     // empty or partially-written interval that truncating in place creates;
-    // an identity change detected at the final pre-commit check is refused
-    // as well.
-    if let Err(problem) = atomic::replace(&path, after.as_bytes(), Some(permissions), Some(&file)) {
-        return Ok(ToolOutput::failed(problem.to_string()));
+    // a change of identity or of content detected at the final pre-commit
+    // check is refused as well.
+    let expected = Some((&file, read));
+    match atomic::replace(&path, after.as_bytes(), Some(permissions), expected) {
+        Ok(()) => {}
+        // Named as the model asked for it, as every other answer here is.
+        Err(PathError::Changed { .. }) => {
+            return Ok(ToolOutput::failed(format!(
+                "{requested} changed while its replacement was prepared, so it was not replaced"
+            ))
+            .into());
+        }
+        Err(problem) => return Ok(ToolOutput::failed(problem.to_string()).into()),
     }
 
-    Ok(
-        ToolOutput::ok(format!("changed {requested}, {replaced} replacements"))
-            .showing(changed::between(&before, &after)),
-    )
+    let output = ToolOutput::ok(format!("changed {requested}, {replaced} replacements"))
+        .showing(changed::between(&before, &after));
+
+    // A file the session was holding to what it saw is now held to what this
+    // edit made, so the next change needs no read first. One it never read
+    // stays unread: an edit quotes part of a file, and a `write` that relied
+    // on it would discard the rest unseen.
+    let file = held.map(|_| {
+        (
+            path.as_path().to_path_buf(),
+            Fingerprint::of(after.as_bytes()),
+        )
+    });
+    Ok(Shown { output, file })
 }
 
 /// One replacement a call asks for.

@@ -161,6 +161,7 @@ pub(super) fn replaced(
     permissions: Option<Permissions>,
     expected: Option<&File>,
     write: impl FnOnce(&mut File) -> io::Result<()>,
+    unchanged: impl FnOnce(&mut File) -> bool,
 ) -> Result<(), PathError> {
     let (at, leaf) = parent(path)?;
     let existed = permissions.is_some();
@@ -183,7 +184,9 @@ pub(super) fn replaced(
         // identity compare-and-rename primitive, so a different file can still
         // arrive in the interval after this check. The rename remains relative
         // to `at` and replaces the leaf itself rather than following it, so a
-        // leaf link cannot redirect the replacement to another file.
+        // leaf link cannot redirect the replacement to another file. The
+        // content is asked about only once the identity matched, so what the
+        // caller reads is the file it derived the replacement from.
         let current = rustix::fs::openat(
             &at,
             &leaf,
@@ -191,14 +194,16 @@ pub(super) fn replaced(
             Mode::empty(),
         )
         .map(File::from);
-        let unchanged = current
-            .ok()
-            .and_then(|current| current.metadata().ok())
-            .zip(expected.metadata().ok())
-            .is_some_and(|(current, expected)| {
-                current.dev() == expected.dev() && current.ino() == expected.ino()
-            });
-        if !unchanged {
+        let same = current.ok().filter(|current| {
+            current
+                .metadata()
+                .ok()
+                .zip(expected.metadata().ok())
+                .is_some_and(|(current, expected)| {
+                    current.dev() == expected.dev() && current.ino() == expected.ino()
+                })
+        });
+        if !same.is_some_and(|mut current| unchanged(&mut current)) {
             let _ = rustix::fs::unlinkat(&at, &temporary, AtFlags::empty());
             return Err(path.changed());
         }

@@ -11,6 +11,7 @@ use crucible_tools::{
 use crucible_types::{Change, ToolCall, ToolId};
 
 use super::{Ledger, Sensitivity, Tool, ToolArgs, ToolOutput, Write};
+use crate::ledger::Fingerprint;
 use crate::sample::{
     Sample, allowed, asked_once, cancelled_by, idle, lent, occupied, symlink, waited,
 };
@@ -30,14 +31,18 @@ fn writing(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
 /// Says a file was read, the way `read` does when it shows one.
 fn looked_at(sample: &Sample, at: &str) -> Ledger {
     let seen = Ledger::new();
-    seen.record(
-        sample
-            .workspace()
-            .existing(at)
-            .expect("a file inside the sample workspace")
-            .as_path(),
-    );
+    told(sample, &seen, at);
     seen
+}
+
+/// Tells `seen` that `at` was read holding what it holds now.
+fn told(sample: &Sample, seen: &Ledger, at: &str) {
+    let path = sample
+        .workspace()
+        .existing(at)
+        .expect("a file inside the sample workspace");
+    let content = fs::read(path.as_path()).expect("a file that can be read");
+    seen.record(path.as_path(), Fingerprint::of(&content));
 }
 
 fn read(sample: &Sample, at: &str) -> String {
@@ -347,7 +352,7 @@ fn a_link_retargeted_after_the_verdict_to_another_file_inside_replaces_neither()
         sample.root().join("door.txt"),
     );
     let seen = looked_at(&sample, "inside.txt");
-    seen.record(sample.workspace().existing(".env").unwrap().as_path());
+    told(&sample, &seen, ".env");
 
     let tool = Write::new(sample.workspace(), seen);
     let approved = allowed(&tool, r#"{"path":"door.txt","content":"stolen\n"}"#);
@@ -831,7 +836,7 @@ fn a_write_whose_call_is_dropped_while_its_job_runs_replaces_nothing_and_gives_i
     // file was read — after it has started, and before it can replace
     // anything — until the call is gone.
     let mut record = seen.held();
-    record.push_back(one.as_path().to_path_buf());
+    record.push_back((one.as_path().to_path_buf(), Fingerprint::of(b"kept\n")));
     {
         let mut running = Box::pin(tool.run(approved, &context));
         assert!(
@@ -886,4 +891,86 @@ fn a_write_on_a_worker_that_has_stopped_is_an_error_and_changes_nothing() {
         Some(&crucible_tools::Unrun::Stopped)
     );
     assert_eq!(read(&sample, "one.txt"), "kept\n");
+}
+
+/// Reads `at` through the real `read` tool, so the record holds what that
+/// tool keeps about a file it showed rather than what a test fills in.
+fn shown(sample: &Sample, at: &str) -> Ledger {
+    let seen = Ledger::new();
+    let reader = crate::Read::new(sample.workspace(), seen.clone());
+    let args = format!(r#"{{"path":"{at}"}}"#);
+    let output =
+        crucible_runtime::answered!(reader.run(allowed(&reader, &args), &crate::sample::context()))
+            .unwrap();
+    assert!(!output.is_failed(), "{}", output.text());
+    seen
+}
+
+#[test]
+fn a_write_over_a_file_changed_in_place_since_it_was_read_is_refused_as_stale() {
+    // Another writer — the user's editor, a formatter, a second session —
+    // changed the file after the model read it. Its name and its identity are
+    // as they were, so only what is in it can tell the two apart, and
+    // replacing it would throw away a change nobody has seen.
+    let sample = Sample::new("write-stale-in-place");
+    sample.write("one.txt", "what was read\n");
+    let seen = shown(&sample, "one.txt");
+    #[cfg(unix)]
+    let before =
+        std::os::unix::fs::MetadataExt::ino(&fs::metadata(sample.root().join("one.txt")).unwrap());
+
+    sample.write("one.txt", "what the other writer put\n");
+    #[cfg(unix)]
+    assert_eq!(
+        std::os::unix::fs::MetadataExt::ino(&fs::metadata(sample.root().join("one.txt")).unwrap()),
+        before,
+        "the other writer was meant to change the file in place"
+    );
+    let output = writing(&sample, r#"{"path":"one.txt","content":"new\n"}"#, &seen);
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.txt"), "what the other writer put\n");
+    assert_eq!(
+        output.text(),
+        "one.txt changed since it was read, so replacing it would discard what changed: read it again"
+    );
+}
+
+#[test]
+fn a_write_over_a_file_replaced_since_it_was_read_is_refused_as_stale() {
+    // An editor that saves by renaming a new file over the old one leaves the
+    // same name with another file behind it.
+    let sample = Sample::new("write-stale-replaced");
+    sample.write("one.txt", "what was read\n");
+    let seen = shown(&sample, "one.txt");
+
+    sample.write("saved.txt", "what the other writer put\n");
+    fs::rename(
+        sample.root().join("saved.txt"),
+        sample.root().join("one.txt"),
+    )
+    .unwrap();
+    let output = writing(&sample, r#"{"path":"one.txt","content":"new\n"}"#, &seen);
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.txt"), "what the other writer put\n");
+    assert_eq!(
+        output.text(),
+        "one.txt changed since it was read, so replacing it would discard what changed: read it again"
+    );
+}
+
+#[test]
+fn a_file_rewritten_with_what_was_read_is_not_stale() {
+    // What is compared is what is in the file, so a save that changed nothing
+    // in it refuses nothing.
+    let sample = Sample::new("write-not-stale");
+    sample.write("one.txt", "what was read\n");
+    let seen = shown(&sample, "one.txt");
+
+    sample.write("one.txt", "what was read\n");
+    let output = writing(&sample, r#"{"path":"one.txt","content":"new\n"}"#, &seen);
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.txt"), "new\n");
 }

@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
-use crate::Workspace;
+use crate::{PathError, Workspace};
 
 /// A directory of its own that is removed when the test ends.
 struct Directory(PathBuf);
@@ -72,10 +72,15 @@ fn a_replaced_files_preparation_file_is_owner_only_from_the_moment_it_is_made() 
     let permissions = original.metadata().unwrap().permissions();
 
     let mut seen = None;
-    path.replace_with(Some(permissions), Some(&original), |file| {
-        seen = Some(file.metadata()?.permissions().mode() & 0o777);
-        Ok(())
-    })
+    path.replace_with(
+        Some(permissions),
+        Some(&original),
+        |file| {
+            seen = Some(file.metadata()?.permissions().mode() & 0o777);
+            Ok(())
+        },
+        |_| true,
+    )
     .unwrap();
 
     let seen = seen.expect("the write callback ran");
@@ -95,9 +100,12 @@ fn a_replaced_file_keeps_the_mode_it_had() {
         let original = path.open_regular().unwrap();
         let permissions = original.metadata().unwrap().permissions();
 
-        path.replace_with(Some(permissions), Some(&original), |file| {
-            std::io::Write::write_all(file, b"after\n")
-        })
+        path.replace_with(
+            Some(permissions),
+            Some(&original),
+            |file| std::io::Write::write_all(file, b"after\n"),
+            |_| true,
+        )
         .unwrap();
 
         assert_eq!(directory.mode("kept.txt"), mode);
@@ -113,11 +121,56 @@ fn a_new_file_is_made_with_the_ordinary_creation_mode() {
     let directory = Directory::new("new-file");
     let path = directory.workspace().creatable("fresh.txt").unwrap();
 
-    path.replace_with(None, None, |file| std::io::Write::write_all(file, b"new\n"))
-        .unwrap();
+    path.replace_with(
+        None,
+        None,
+        |file| std::io::Write::write_all(file, b"new\n"),
+        |_| true,
+    )
+    .unwrap();
 
     assert_eq!(
         directory.mode("fresh.txt"),
         ordinary_creation_mode("new-file")
     );
+}
+
+#[test]
+fn the_same_file_whose_content_the_caller_no_longer_accepts_is_not_replaced() {
+    // Identity alone does not see a file rewritten in place: the caller is
+    // asked about the content of the file at the name, and its no keeps the
+    // file and leaves nothing beside it.
+    let directory = Directory::new("content-refused");
+    directory.file("kept.txt", "rewritten in place\n", 0o644);
+    let path = directory.workspace().existing("kept.txt").unwrap();
+    let original = path.open_regular().unwrap();
+    let permissions = original.metadata().unwrap().permissions();
+
+    let mut asked = None;
+    let problem = path
+        .replace_with(
+            Some(permissions),
+            Some(&original),
+            |file| std::io::Write::write_all(file, b"replacement\n"),
+            |current| {
+                let mut text = String::new();
+                asked = std::io::Read::read_to_string(current, &mut text)
+                    .ok()
+                    .map(|_| text);
+                false
+            },
+        )
+        .expect_err("the caller refused the content");
+
+    assert!(matches!(problem, PathError::Changed { .. }), "{problem:?}");
+    assert_eq!(asked.as_deref(), Some("rewritten in place\n"));
+    assert_eq!(
+        fs::read_to_string(directory.0.join("kept.txt")).unwrap(),
+        "rewritten in place\n"
+    );
+    let names: Vec<_> = fs::read_dir(&directory.0)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, [std::ffi::OsString::from("kept.txt")]);
 }

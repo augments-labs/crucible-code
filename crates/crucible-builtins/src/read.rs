@@ -14,7 +14,7 @@ use crucible_workspace::{Workspace, WorkspacePath, written};
 
 use crate::args::Args;
 use crate::bound::OUTPUT;
-use crate::ledger::{Ledger, Shown};
+use crate::ledger::{Fingerprint, Fingerprinting, Ledger, Shown};
 use crate::schema::{Field, Schema, Shape, Whole};
 use crate::summary;
 use crate::target;
@@ -659,7 +659,7 @@ impl Read {
         requested: &str,
         path: &WorkspacePath,
         cancel: &Cancel,
-    ) -> Result<Option<ToolOutput>, ToolError> {
+    ) -> Result<Option<Shown>, ToolError> {
         // A match rather than an equality, so a modality added to the enum
         // arrives here as a compiler error asking whether `read` hands it back.
         match kind.modality {
@@ -684,11 +684,14 @@ impl Read {
             Ok(taken) => taken,
             Err(AttachmentError::Stopped) => return Err(ToolError::Cancelled(NAME.into())),
             Err(AttachmentError::TooLarge) => {
-                return Ok(Some(ToolOutput::failed(format!(
-                    "{requested} is larger than the {} MB a request may carry, so it is not \
-                     attached. A smaller copy of it would be.",
-                    crucible_attachments::CEILING / (1024 * 1024),
-                ))));
+                return Ok(Some(
+                    ToolOutput::failed(format!(
+                        "{requested} is larger than the {} MB a request may carry, so it is not \
+                         attached. A smaller copy of it would be.",
+                        crucible_attachments::CEILING / (1024 * 1024),
+                    ))
+                    .into(),
+                ));
             }
             Err(
                 AttachmentError::NotFile
@@ -702,24 +705,31 @@ impl Read {
             return Ok(None);
         }
 
-        Ok(Some(
-            ToolOutput::ok(format!(
-                "{requested} is attached as {} rather than read as text.",
-                kind.spoken()
-            ))
-            .with_attachments(
-                approved,
-                [Attachment {
-                    // The resolved path, for the reason `seen` records one: the
-                    // request reads the file again when it goes out, and it
-                    // must find the file this call looked at.
-                    path: written(path.as_path()).into_boxed_str(),
-                    modality: kind.modality,
-                    media_type: kind.media_type.into(),
-                    hash: taken.hash(),
-                }],
-            ),
+        let output = ToolOutput::ok(format!(
+            "{requested} is attached as {} rather than read as text.",
+            kind.spoken()
         ))
+        .with_attachments(
+            approved,
+            [Attachment {
+                // The resolved path, for the reason `seen` records one: the
+                // request reads the file again when it goes out, and it
+                // must find the file this call looked at.
+                path: written(path.as_path()).into_boxed_str(),
+                modality: kind.modality,
+                media_type: kind.media_type.into(),
+                hash: taken.hash(),
+            }],
+        );
+        // The picture was taken whole, so its hash is the digest of the whole
+        // file, which is what the record holds.
+        Ok(Some(Shown {
+            output,
+            file: Some((
+                path.as_path().to_path_buf(),
+                Fingerprint::from(taken.hash()),
+            )),
+        }))
     }
 }
 
@@ -813,10 +823,9 @@ fn read_one(
     // made of them and nothing a decoder found in it would change the
     // answer. A file that turns out not to be one falls through.
     if let Some(kind) = kind(requested)
-        && let Some(output) = Read::looked_at(approved, kind, requested, &path, cancel)?
+        && let Some(shown) = Read::looked_at(approved, kind, requested, &path, cancel)?
     {
-        let file = (!output.is_failed()).then(|| path.as_path().to_path_buf());
-        return Ok(Shown { output, file });
+        return Ok(shown);
     }
 
     // Through the workspace rather than by name, so a last component
@@ -828,12 +837,29 @@ fn read_one(
         Err(problem) => return Ok(ToolOutput::failed(problem.to_string()).into()),
     };
 
-    let (output, shown) = Read::numbered(BufReader::new(file), requested, from, limit, cancel)?;
+    // Every byte the page is read from goes through the digest, and the rest
+    // of the file after it, so what the record holds is the whole file as it
+    // was read rather than a second open's view of it a moment later.
+    let mut hashed = Fingerprinting::new(file);
+    let (output, shown) =
+        Read::numbered(BufReader::new(&mut hashed), requested, from, limit, cancel)?;
+    if shown == 0 {
+        return Ok(output.into());
+    }
+
+    // A file whose rest could not be read is shown without being remembered:
+    // that costs the agent a read before it replaces it, and remembering a
+    // digest of part of it would cost the file.
+    let fingerprint = match hashed.finish(|| cancel.requested()) {
+        Ok(Some(fingerprint)) => Some(fingerprint),
+        Ok(None) => return Err(ToolError::Cancelled(NAME.into())),
+        Err(_) => None,
+    };
 
     // The resolved path rather than the requested one, because `write` asks
     // with a resolved path too — otherwise `./one.txt` and `one.txt` would
     // be two different files to a record that exists to say they are one.
-    let file = (shown > 0).then(|| path.as_path().to_path_buf());
+    let file = fingerprint.map(|fingerprint| (path.as_path().to_path_buf(), fingerprint));
     Ok(Shown { output, file })
 }
 
