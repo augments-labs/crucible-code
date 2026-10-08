@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: "crate::shape(&picture)"
+---
+80x24 cursor 23,0 scrollback 4
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› /release-notes                                                                |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Release notes                                                                   |
+|                                                                                |
+|› ######      ####-##-##    ## entries   this version                           |
+|  #.##.#      ####-##-##    ## entries                                          |
+|  #.##.#      ####-##-##    ## entries                                          |
+|  #.##.#      ####-##-##    ## entries                                          |
+|  #.##.#      ####-##-##    ## entries                                          |
+|  #.##.#      ####-##-##    ## entries                                          |
+|                                                                                |
+|↑↓ to walk · enter opens it · esc to close                                      |

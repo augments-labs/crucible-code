@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: picture
+---
+80x24 cursor 23,0 scrollback 4
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› /context                                                                      |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Context · claude-test-1 · 200k window                                           |
+|                                                                                |
+|█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|
+|                                                                                |
+|  ██ system prompt           1.0k     0.5%                                      |
+|  ██ project instructions       0       0%                                      |
+|  ██ tool schemas            3.8k     1.9%                                      |
+|  ↓ 4 more                                                                      |
+|                                                                                |
+|esc to close · ↑↓ to see more                                                   |
