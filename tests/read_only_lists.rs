@@ -218,6 +218,22 @@ fn a_server_nobody_wrote_down_is_a_failure_naming_the_ones_that_were() {
     assert!(!scratch.marker().exists());
 }
 
+#[test]
+fn a_line_break_in_the_name_asked_for_is_written_as_its_escape() {
+    // The refusal quotes what the command line named, and it is one line: a
+    // break kept there would start a line on standard error no failure said.
+    let scratch = Scratch::new("unknown-server-break");
+    starting(&scratch);
+
+    let answered = asked(&scratch, &["mcp", "get", "no\ncrucible: forged"], false);
+
+    assert_eq!(answered.status.code(), Some(1), "{}", said(&answered));
+    assert_eq!(
+        String::from_utf8_lossy(&answered.stderr),
+        "crucible: no mcp server called no\\ncrucible: forged; this configuration has probe\n"
+    );
+}
+
 /// A secret written in every place a server's record can hold one.
 const SECRET: &str = "swordfish-sentinel";
 
