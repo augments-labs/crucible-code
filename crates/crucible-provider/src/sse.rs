@@ -6,18 +6,20 @@
 //! payload still text. Parsing that text is the provider's job, because only it
 //! knows what its vendor puts in there.
 //!
-//! A read that gave up waiting leaves as [`Framed::Quiet`] rather than as
-//! either an event or an ending, which is what lets a caller holding a cancel
-//! act on it while a response is open. Both providers stream through here, so
-//! that is one behaviour rather than two that have to be kept the same.
+//! A read that gave up waiting, or that read a line which finishes no event,
+//! leaves as [`Framed::Quiet`] rather than as either an event or an ending,
+//! which is what lets a caller holding a cancel act on it while a response is
+//! open. Both providers stream through here, so that is one behaviour rather
+//! than two that have to be kept the same.
 //!
-//! Bytes throughout, converted to text once per event. One read from the socket
-//! can split a character in half, so accumulating into a `String` would have to
-//! either lose it or refuse it -- and the payload is JSON, where a lost byte is
-//! a silently wrong answer.
+//! Lines are read as bytes and converted to text whole. One read from the
+//! socket can split a character in half, so converting what each read brings
+//! would have to either lose it or refuse it -- and the payload is JSON, where a
+//! lost byte is a silently wrong answer. A line ending is never part of a
+//! character, so a whole line is text or it is not.
 
 use std::io;
-use std::string::FromUtf8Error;
+use std::str::Utf8Error;
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
@@ -43,7 +45,7 @@ pub(crate) enum SseError {
 
     /// The payload was not text.
     #[error("the stream was not UTF-8: {0}")]
-    NotUtf8(#[from] FromUtf8Error),
+    NotUtf8(#[from] Utf8Error),
 }
 
 /// One dispatched event.
@@ -64,15 +66,18 @@ pub(crate) enum Framed {
     /// One event, whole.
     Event(SseEvent),
 
-    /// Nothing yet. The read waited as long as it waits and the peer said
-    /// nothing, which is neither a failure nor an ending: the response is still
-    /// open and the model is still thinking.
+    /// No event yet. The read waited as long as it waits and the peer said
+    /// nothing, or the peer sent a line that finishes no event: a comment, a
+    /// field, or a blank line with nothing to dispatch.
+    /// Neither is a failure or an ending: the response is still open and the
+    /// model is still thinking.
     ///
     /// It exists so that waiting is the caller's to do. A provider that goes
     /// silent would otherwise hold the caller inside this call for as long as
-    /// it stayed silent, and a user who asked to stop would be waiting on the
-    /// same socket. Handed back the turn, the caller looks at its cancel and
-    /// asks again.
+    /// it stayed silent, and one that sends a line every few hundred
+    /// milliseconds for as long as it kept sending them, and a user who asked
+    /// to stop would be waiting on the same socket. Handed back the turn, the
+    /// caller looks at its cancel and asks again.
     Quiet,
 }
 
@@ -92,8 +97,8 @@ enum Line {
 pub(crate) struct Events<R> {
     reader: R,
     line: Vec<u8>,
-    name: Vec<u8>,
-    data: Vec<u8>,
+    name: String,
+    data: String,
 }
 
 impl<R: AsyncBufRead + Unpin> Events<R> {
@@ -102,45 +107,45 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
         Self {
             reader,
             line: Vec::new(),
-            name: Vec::new(),
-            data: Vec::new(),
+            name: String::new(),
+            data: String::new(),
         }
     }
 
-    /// The next event, [`Framed::Quiet`] if none has arrived yet, or `None`
-    /// when the stream is finished.
+    /// The next event, [`Framed::Quiet`] if none has arrived yet or the line
+    /// read finishes none, or `None` when the stream is finished.
     ///
     /// A stream that ends part-way through an event delivers nothing for it.
     /// That is not silent: every protocol here ends with an event of its own,
-    /// so the caller notices the one that never came.
+    /// so the caller notices the one that never came. A line of it that was
+    /// not text has already been refused, as it was read.
     pub(crate) async fn next(&mut self) -> Option<Result<Framed, SseError>> {
-        loop {
-            match self.read_line().await {
-                Err(problem) => return Some(Err(problem)),
-                Ok(Line::Quiet) => return Some(Ok(Framed::Quiet)),
-                Ok(Line::Ended) => return None,
-                Ok(Line::Read) => {}
-            }
-
-            if !self.line.is_empty() {
-                let taken = self.take_field();
-                // Here rather than where the next line starts: a line half of
-                // which has arrived is held in the same place, and clearing on
-                // the way in would drop that half every time the peer paused
-                // mid-line.
-                self.line.clear();
-                if let Err(problem) = taken {
-                    return Some(Err(problem));
-                }
-                continue;
-            }
-
-            // A blank line dispatches. Runs of them, and the one that closes a
-            // comment, have nothing to dispatch.
-            if !self.name.is_empty() || !self.data.is_empty() {
-                return Some(self.dispatch().map(Framed::Event));
-            }
+        match self.read_line().await {
+            Err(problem) => return Some(Err(problem)),
+            Ok(Line::Quiet) => return Some(Ok(Framed::Quiet)),
+            Ok(Line::Ended) => return None,
+            Ok(Line::Read) => {}
         }
+
+        if !self.line.is_empty() {
+            let taken = self.take_field();
+            // Here rather than where the next line starts: a line half of
+            // which has arrived is held in the same place, and clearing on
+            // the way in would drop that half every time the peer paused
+            // mid-line.
+            self.line.clear();
+            // Handed back rather than read past, whatever the line was: a peer
+            // can send lines for as long as it likes without ever finishing an
+            // event, and the caller cannot look at its cancel in here.
+            return Some(taken.map(|()| Framed::Quiet));
+        }
+
+        // A blank line dispatches. Runs of them, and the one that closes a
+        // comment, have nothing to dispatch.
+        if self.name.is_empty() && self.data.is_empty() {
+            return Some(Ok(Framed::Quiet));
+        }
+        Some(Ok(Framed::Event(self.dispatch())))
     }
 
     /// Reads one line into `self.line`, without its ending.
@@ -197,33 +202,34 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
         // proxies send, which is a bare colon.
         match name {
             b"event" => {
+                let value = std::str::from_utf8(value)?;
                 self.name.clear();
-                self.name.extend_from_slice(value);
+                self.name.push_str(value);
             }
             b"data" => {
                 if self.data.len() + value.len() > MAX_EVENT {
                     return Err(SseError::TooLarge);
                 }
+                let value = std::str::from_utf8(value)?;
                 if !self.data.is_empty() {
-                    self.data.push(b'\n');
+                    self.data.push('\n');
                 }
-                self.data.extend_from_slice(value);
+                self.data.push_str(value);
             }
             // `id` and `retry` are reconnection machinery. Nothing here
             // reconnects: a dropped turn is the runner's to retry, and it holds
             // the transcript that would be needed to do it.
             _ => {}
         }
-
         Ok(())
     }
 
     /// Finishes the event and resets for the next one.
-    fn dispatch(&mut self) -> Result<SseEvent, SseError> {
-        Ok(SseEvent {
-            name: String::from_utf8(std::mem::take(&mut self.name))?,
-            data: String::from_utf8(std::mem::take(&mut self.data))?,
-        })
+    fn dispatch(&mut self) -> SseEvent {
+        SseEvent {
+            name: std::mem::take(&mut self.name),
+            data: std::mem::take(&mut self.data),
+        }
     }
 }
 

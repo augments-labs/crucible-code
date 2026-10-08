@@ -23,11 +23,13 @@
 //! would lose part of an answer that had arrived.
 //!
 //! The cancel is looked at between events, and what makes that prompt is that
-//! the framing below gives up waiting and hands the turn back rather than
-//! blocking on the socket. So a provider that has stopped talking costs one
-//! bounded wait and not an indefinite one, and a wait that expired ends
-//! nothing: the response is still open, and only the user or the socket closes
-//! it.
+//! the framing below hands the turn back rather than blocking on the socket:
+//! when it gives up waiting, and after every line that finishes no event. So
+//! a provider that has stopped talking costs one bounded wait and not an
+//! indefinite one, one that keeps sending comments, or lines of an event it
+//! never finishes, costs one line and not as many as it cares to send, and a
+//! wait that expired ends nothing: the
+//! response is still open, and only the user or the socket closes it.
 //!
 //! That wait happens on whichever thread polls the stream: the future
 //! [`DeltaStream::next`] hands back does the whole read the first time it is
@@ -168,7 +170,7 @@ impl<W: Wire> Response<W> {
             }
 
             // Between events rather than during one, which is prompt because
-            // the read below comes back whether or not anything arrived.
+            // the read below comes back whether or not one arrived.
             if self.cancel.requested() {
                 self.finished = true;
                 return Some(Ok(Delta::Stopped(StopReason::Cancelled)));
@@ -182,8 +184,8 @@ impl<W: Wire> Response<W> {
                         problem: problem.to_string().into(),
                     }));
                 }
-                // Nothing yet. Round the loop to the cancel above, which is the
-                // whole of what a bounded wait is for.
+                // No event yet. Round the loop to the cancel above, which is the
+                // whole of what coming back without one is for.
                 Some(Ok(Framed::Quiet)) => continue,
                 Some(Ok(Framed::Event(event))) => event,
             };
@@ -253,3 +255,6 @@ impl<W: Wire> DeltaStream for Response<W> {
         self.wire.served()
     }
 }
+
+#[cfg(test)]
+mod tests;
