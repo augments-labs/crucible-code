@@ -59,7 +59,8 @@ pub const MAX_EXTENSIONS: usize = 64;
 /// the rest.
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
-    /// The directory or its manifest would not open.
+    /// The directory or its manifest could not be read, or the manifest is not
+    /// an ordinary file.
     #[error("{file} could not be read: {source}")]
     Unreadable {
         /// The file, as the user would name it.
