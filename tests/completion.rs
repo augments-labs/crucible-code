@@ -123,14 +123,16 @@ fn completion_is_answered_before_the_home_is_read() {
 #[test]
 fn completion_is_the_same_script_every_time_it_is_asked() {
     let scratch = Scratch::new("same");
-    let first = asked(&scratch, "zsh").stdout;
+    for shell in SHELLS {
+        let first = asked(&scratch, shell).stdout;
 
-    assert!(!first.is_empty(), "no script was written");
-    assert_eq!(
-        first,
-        asked(&scratch, "zsh").stdout,
-        "a script that differs between runs would be rewritten by every new terminal"
-    );
+        assert!(!first.is_empty(), "{shell}: no script was written");
+        assert_eq!(
+            first,
+            asked(&scratch, shell).stdout,
+            "{shell}: a script that differs between runs would be rewritten by every new terminal"
+        );
+    }
 }
 
 #[test]

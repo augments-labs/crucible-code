@@ -462,30 +462,32 @@ with `format_version` 1, `kind` `doctor`, `status` (`healthy`, `warnings` or
 
 Writes a completion script for `SHELL`, one of `bash`, `zsh`, `fish`,
 `powershell` or `elvish`, to standard output, and stops. The script is made
-from the command line as this crucible parses it, so it completes every
-subcommand and flag in this page and follows the next release's without being
-regenerated. It reads no configuration, opens no terminal, starts nothing and
-makes no connection, so it is safe to run from a shell's start-up file. A shell
-it has no script for is refused with the list of those it has, exit 2, as any
-other unknown value is. Standard output closing early, as when piped to `head`,
-ends it quietly with exit 0.
+from the command line of the crucible that runs it, so it completes every
+subcommand and flag of this release. A script written to a file stays as it
+was written: write it again after an upgrade. The command reads no
+configuration, opens no terminal, starts nothing and makes no connection, so it
+is safe to run from a shell's start-up file. A shell it has no script for is
+refused with the list of those it has, exit 2, as any other unknown value is.
+Standard output closing early, as when piped to `head`, ends it quietly with
+exit 0.
 
-Each shell reads the script from a different place. Write it once, after
-installing or upgrading crucible, rather than running the command at every
-start:
+Each shell reads the script from a different place. Either write it to a file
+once, which is quick to load, or run the command from the start-up file, which
+is always current and costs one process at every start:
 
 | Shell | Install |
 | --- | --- |
 | bash | `crucible completion bash > ~/.local/share/bash-completion/completions/crucible`, which the `bash-completion` package loads on demand, or `source <(crucible completion bash)` in `~/.bashrc` |
-| zsh | `crucible completion zsh > "${fpath[1]}/_crucible"` for a directory on `$fpath` that you own, before `compinit` runs, then start a new shell |
+| zsh | `crucible completion zsh > ~/.zfunc/_crucible` in a directory you own, with `fpath=(~/.zfunc $fpath)` in `~/.zshrc` before `compinit` runs, then start a new shell |
 | fish | `crucible completion fish > ~/.config/fish/completions/crucible.fish` |
 | powershell | `crucible completion powershell \| Out-String \| Invoke-Expression` in your `$PROFILE` |
 | elvish | `crucible completion elvish > ~/.config/elvish/lib/crucible-completion.elv`, then `use crucible-completion` in `~/.config/elvish/rc.elv` |
 
 The script completes the command it was written for, `crucible`. The `cru`
 link the installer makes is a different name to the shell, and completes
-nothing until you tell the shell so, for example `complete -F _crucible cru` in
-bash.
+nothing until you tell the shell so, once the script is loaded: in bash,
+`complete -F _crucible cru` after `crucible`'s completion has been loaded
+(`_crucible` does not exist before it).
 
 ## Credentials from the command line
 
