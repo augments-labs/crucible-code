@@ -532,6 +532,17 @@ mod tests {
         }
     }
 
+    /// How long a check a test started is given to write its answer, and then
+    /// to stop, before the test says which of the two it was still waiting for.
+    ///
+    /// Measured by the clock rather than counted in sleeps: a sleep lasts as
+    /// long as the platform's timer makes it, a millisecond here and about
+    /// fifteen on Windows, and a loaded runner can spend seconds on the loopback
+    /// answer, the blocking write and the rename. A passing run waits only as
+    /// long as the check takes; the window is where one that never writes, or
+    /// never stops, is reported instead of a suite that never finishes.
+    const SETTLING: Duration = Duration::from_secs(30);
+
     /// A loopback source that answers `status` with `body`, and the request it
     /// was asked with, so a test can read what went out.
     async fn serve(status: &str, body: Vec<u8>) -> (String, Arc<Mutex<Vec<u8>>>) {
@@ -725,30 +736,40 @@ mod tests {
         assert!(asked_at(&client(), &url, &Cancel::new()).await.is_none());
     }
 
+    /// Waited for by the clock and only then joined: a join raises the owner's
+    /// cancellation first, so one that came before the answer was written would
+    /// drop the very request this is about, and either outwait its bound on the
+    /// write or leave the running version written down instead. The first
+    /// answer seen is the only one, because it lands by an atomic replacement
+    /// in a directory that had none, so a wrong one fails at once rather than
+    /// at the end of the window.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_refresh_writes_the_answer_from_owned_work() {
         let scratch = Scratch::new("refresh");
+        let cache = scratch.0.join(REMEMBERED);
         let (url, _) = serve("200 OK", br#"{"tag_name":"v1.2.3"}"#.to_vec()).await;
         let check = UpdateCrateReleaseCheck::new();
         check.runs_on(Handle::current());
 
+        let began = Instant::now();
         check.refresh_at(&scratch.0, &url);
 
-        for _ in 0..100 {
-            if std::fs::read_to_string(scratch.0.join(REMEMBERED))
-                .ok()
-                .as_deref()
-                == Some("1.2.3\n")
-            {
-                break;
-            }
+        let mut written = std::fs::read_to_string(&cache).ok();
+        while written.is_none() && began.elapsed() < SETTLING {
             tokio::time::sleep(Duration::from_millis(1)).await;
+            written = std::fs::read_to_string(&cache).ok();
         }
-        assert!(check.join_within(Duration::from_secs(1)).is_ok());
         assert_eq!(
-            std::fs::read_to_string(scratch.0.join(REMEMBERED)).unwrap(),
-            "1.2.3\n"
+            written.as_deref(),
+            Some("1.2.3\n"),
+            "the refresh did not write the release it was answered with within {SETTLING:?}"
         );
+        let joined = check.join_within(SETTLING);
+        assert!(
+            joined.is_ok(),
+            "a check that had written its answer did not stop: {joined:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), "1.2.3\n");
     }
 
     /// Runtime workers poll application-owned spawned tasks; synchronous disk

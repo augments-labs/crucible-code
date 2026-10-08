@@ -40,10 +40,25 @@ mod tree;
 mod unreadable;
 
 #[cfg(target_os = "macos")]
+pub(crate) use broker::hold_broker_directory;
+
+#[cfg(target_os = "macos")]
 pub(super) fn probe() -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
     let broker = broker::Broker::find(&[])?;
     let backend = probe::Seatbelt::find(&broker)?;
     Ok((backend.identity().clone(), backend.capabilities().clone()))
+}
+
+/// The backend [`prepare`] would use, found by the trust checks it applies and
+/// started neither for itself nor for its broker.
+#[cfg(target_os = "macos")]
+pub(super) fn observe(
+    excluded: &[&std::path::Path],
+) -> Result<crate::SandboxObservation, SandboxError> {
+    let _broker = broker::Broker::find(excluded)?;
+    Ok(probe::locate()?.leaving(
+        "whether the broker starts and Seatbelt applies a profile on this host, and whether each root passes the checks a command's preparation makes",
+    ))
 }
 
 #[cfg(all(target_os = "macos", test))]

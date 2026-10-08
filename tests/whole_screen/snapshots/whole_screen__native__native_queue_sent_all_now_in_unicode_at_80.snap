@@ -1,0 +1,54 @@
+---
+source: tests/whole_screen/native.rs
+assertion_line: 972
+expression: "crate::steadied_picture(&window.picture())"
+---
+80x48 cursor 39,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› start it                                                                      |
+|                                                                                |
+|● Bash(sleep 30)                                                                |
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                               |
+|                                                                                |
+|It is started. That is all.                                                     |
+|                                                                                |
+|! stopped                                                                       |
+|                                                                                |
+|› and add a test for the windows path                                           |
+|                                                                                |
+|› then run the whole gate                                                       |
+|                                                                                |
+|› check the ascii glyphs too                                                    |
+|                                                                                |
+|› and the box last                                                              |
+|                                                                                |
+|                                                                                |
+|It is started. That is all.                                                     |
+|                                                                                |
+|✳ writing (0s · esc to interrupt)                                               |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1|
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |

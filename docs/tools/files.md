@@ -99,7 +99,7 @@ into text. `pandoc` without it writes the *reference* and not the file, leaving
 a link to something that was never saved; with it the pictures come out beside
 the Markdown as ordinary files, and an ordinary file is one `read` hands back
 to be looked at, or that you can
-[name in the prompt](../getting-started/getting-started.md#naming-a-file-in-the-prompt).
+[name in the prompt](../getting-started/first-session.md#naming-a-file-in-the-prompt).
 That is the second half of reading a document: the words come out of the
 converter, and the diagram goes back in as a picture.
 
@@ -235,6 +235,13 @@ place creates, and a failure part-way through leaves the original whole.
 A path whose parent directories are missing gets them, one checked level at a
 time, on Linux, macOS and FreeBSD. On Windows the parent directory has to be
 there already.
+
+A `..` in the path is followed the way the system follows it, and the question
+and your rules see the file it leads to. On Linux, macOS and FreeBSD that is
+through any symbolic link before it; on Windows a `..` takes away the name
+before it, wherever that name points. A `..` after a name that is not an
+existing directory is refused before anything is made, since where it leads
+depends on what the write itself would create: name the file without it.
 
 The answer is `created src/main.rs, 41 lines` or `replaced src/main.rs, 41
 lines`. The file is put down the same way `edit` puts one down: written beside

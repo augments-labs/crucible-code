@@ -1,27 +1,28 @@
 ---
 source: tests/whole_screen/main.rs
-expression: on_the_first_beat(&window.picture())
+assertion_line: 1079
+expression: steadied_picture(&window.picture())
 ---
 40x24 cursor 21,4 scrolled 0
-|CRUCIBLE                                |
-|/…/workspace                            |
-|                                        |
-|› start it                              |
-|                                        |
-|● Bash(sleep 30)                        |
-|  ⎿ (no … (+2 lines · ctrl+o to expand) |
-|                                        |
-|It is started. That is all.             |
-|                                        |
+|● Bash(sleep 30)                       │|
+|  ⎿ (no … (+2 lines · ctrl+o to expand)●|
+|                                       ┃|
+|It is started. That is all.            ┃|
+|                                       ┃|
 |✳ writing (0s · ↓ 4 · esc to interrupt) |
 |────────────────────────────────────────|
 |                                        |
-|1 queued                                |
+|5 queued · ctrl+enter to send all now   |
 |                                        |
 |› and add a test for the windows path   |
 |                                        |
-|↑↓ to walk · e edit · d delete · esc to |
-|close                                   |
+|  then run the whole gate               |
+|                                        |
+|  check the ascii glyphs too            |
+|                                        |
+|↑↓ to walk · ctrl+e to edit · ctrl+x to |
+|delete · ctrl+s to send now             |
+|                                        |
 |                         99% window left|
 |╭──────────────────────────────────────╮|
 |│ ›                                    │|

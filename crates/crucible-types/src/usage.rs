@@ -9,6 +9,7 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cache::{PromptCacheOutcome, PromptCacheUsageReporting};
+use crate::shown::unshown;
 
 /// Maximum provider-labelled numeric details retained for one usage report.
 pub const MAX_PROVIDER_USAGE_DETAILS: usize = 16;
@@ -651,9 +652,10 @@ pub const MAX_GROUP_WINDOWS: usize = 6;
 /// group from another; which requests a group holds back is its
 /// [`ModelKey`]'s to say.
 ///
-/// It is text a response chose, so it is never read for meaning: control
-/// characters and Unicode format characters, which would reorder or hide what
-/// is drawn, are taken out, it is cut to [`MAX_LIMIT_NAME_BYTES`] on a
+/// It is text a response chose, so it is never read for meaning: every
+/// character [`unshown`] lists, the controls, the Unicode format characters
+/// and the line and paragraph separators, which would move, reorder or hide
+/// what is drawn, is taken out, it is cut to [`MAX_LIMIT_NAME_BYTES`] on a
 /// character's boundary and ends in `…` where it was, and a name with nothing
 /// left is not one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -690,43 +692,6 @@ impl GroupName {
     }
 }
 
-/// Whether `character` is a control character, or a Unicode format character
-/// (general category `Cf`): the bidi marks, embeddings, overrides and
-/// isolates, the zero-width characters and the byte order mark among them.
-/// Drawn, either reorders or hides the text around it. U+2065, unassigned
-/// between the invisible operators and the isolates, is taken with them.
-///
-/// The terminal drops the same format characters from everything it draws,
-/// except the zero-width non-joiner and joiner, which join characters on
-/// screen. Neither crate may name the other, so a test in the command line
-/// holds the two lists to each other.
-const fn unshown(character: char) -> bool {
-    character.is_control()
-        || matches!(
-            character,
-            '\u{ad}'
-                | '\u{600}'..='\u{605}'
-                | '\u{61c}'
-                | '\u{6dd}'
-                | '\u{70f}'
-                | '\u{890}'..='\u{891}'
-                | '\u{8e2}'
-                | '\u{180e}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2060}'..='\u{206f}'
-                | '\u{feff}'
-                | '\u{fff9}'..='\u{fffb}'
-                | '\u{110bd}'
-                | '\u{110cd}'
-                | '\u{13430}'..='\u{1343f}'
-                | '\u{1bca0}'..='\u{1bca3}'
-                | '\u{1d173}'..='\u{1d17a}'
-                | '\u{e0001}'
-                | '\u{e0020}'..='\u{e007f}'
-        )
-}
-
 /// Which requests a model's group of limits holds back, as the provider
 /// module that read the group said.
 ///
@@ -761,7 +726,7 @@ enum Matching {
 
 impl ModelKey {
     /// The model whose id is exactly `id`; `None` for an id that is empty,
-    /// holds a control or a Unicode format character, or is longer than
+    /// holds a character [`unshown`] lists, or is longer than
     /// [`MAX_LIMIT_NAME_BYTES`]: no model's id is, and one cut to fit would be
     /// another model's.
     #[must_use]
@@ -772,11 +737,10 @@ impl ModelKey {
 
     /// Every model whose id starts with what comes before the `*` that ends
     /// `pattern`; `None` for a pattern that does not end in `*`, has another
-    /// `*` or nothing before it, holds a control or a Unicode format
-    /// character, or is longer than [`MAX_LIMIT_NAME_BYTES`]. The one star at
-    /// the end is the only pattern read: a vendor's name with any other is
-    /// no model's, and a guess at what it meant could hold back one it does
-    /// not.
+    /// `*` or nothing before it, holds a character [`unshown`] lists, or is
+    /// longer than [`MAX_LIMIT_NAME_BYTES`]. The one star at the end is the
+    /// only pattern read: a vendor's name with any other is no model's, and a
+    /// guess at what it meant could hold back one it does not.
     #[must_use]
     pub fn prefixed(pattern: &str) -> Option<Self> {
         let prefix = pattern.strip_suffix('*')?;

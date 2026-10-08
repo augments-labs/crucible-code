@@ -84,23 +84,25 @@ pub(super) fn finish(mut process: Box<dyn SandboxProcess>) -> (ExitStatus, Vec<u
     (status.expect("status"), output, errors)
 }
 
+/// Takes everything `stream` has ready, the way a reader draining it does: an
+/// ended command's ending waits only a bounded while for its readers to reach
+/// the end before it seals what is left.
 fn read_ready(stream: &mut Option<Box<dyn SandboxOutput>>, bytes: &mut Vec<u8>) {
-    let Some(output) = stream else {
-        return;
-    };
-    let mut buffer = [0_u8; 512];
-    match output.read_ready(&mut buffer).expect("read output") {
-        SandboxRead::Bytes(read) => {
-            bytes.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+    while let Some(output) = stream {
+        let mut buffer = [0_u8; 512];
+        match output.read_ready(&mut buffer).expect("read output") {
+            SandboxRead::Bytes(read) => {
+                bytes.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+            }
+            SandboxRead::Limited {
+                retained,
+                discarded: _,
+            } => {
+                bytes.extend_from_slice(buffer.get(..retained).expect("reported bytes"));
+            }
+            SandboxRead::Pending => return,
+            SandboxRead::End => *stream = None,
         }
-        SandboxRead::Limited {
-            retained,
-            discarded: _,
-        } => {
-            bytes.extend_from_slice(buffer.get(..retained).expect("reported bytes"));
-        }
-        SandboxRead::Pending => {}
-        SandboxRead::End => *stream = None,
     }
 }
 
@@ -1745,6 +1747,12 @@ fn abrupt_host_loss_kills_the_scope_and_the_next_prepare_reconciles_its_wal() {
         .env(CRASH_HELPER_SANDBOX, sandbox.to_string())
         .env(CRASH_HELPER_MARKER, &marker)
         .env(CRASH_HELPER_READY, &ready)
+        // The helper prepares a writer while this test holds the writers'
+        // lease and waits on it, so the lease is lent rather than waited for.
+        .env(
+            super::transaction::TEST_SERIAL_LENT_BY,
+            std::process::id().to_string(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .spawn()

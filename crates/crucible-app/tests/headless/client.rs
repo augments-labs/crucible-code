@@ -15,11 +15,12 @@ use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_app::switching::{LoggedIn, LoggedOut};
+use crucible_builtins::{Ledger, Read};
 use crucible_client_api::{
     Capabilities, ClearOutcome, Command, Correlation, Cost, Decision, ErrorCode, Forced, Lasting,
     Limit, LimitGroup, Limits, Missing, Mode, ModelOutcome, Name, NotesOutcome, Outcome, Palette,
     Pending, PendingId, Percent, Progress, Prompt, Reading, Refusal, Request, Response,
-    ResumeOutcome, Ruling, SettingOutcome, Snapshot, Stop, Theme, TurnOutcome,
+    ResumeOutcome, Ruling, SettingOutcome, Snapshot, Stop, SummaryKind, Theme, TurnOutcome,
     Window as LimitWindow,
 };
 use crucible_models::{Asked, Delta, ProviderError};
@@ -118,6 +119,18 @@ fn asking_under(
     let ran = Arc::new(AtomicUsize::new(0));
     let mut tools = Tools::new();
     tools.add_builtin(Counting(Arc::clone(&ran)))?;
+    Ok((offering(tree, script, serving, window, tools)?, ran))
+}
+
+/// A conversation over `script` that asks before anything is changed, with
+/// `tools` on offer.
+fn offering(
+    tree: &Tree,
+    script: Script,
+    serving: Option<&'static str>,
+    window: Option<u32>,
+    tools: Tools,
+) -> Result<Conversation, Failed> {
     let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
     let agent = AgentBuilder::new(
         AgentId::new("test"),
@@ -141,7 +154,7 @@ fn asking_under(
         .permitting(Permission::with(crucible_tools::Mode::Ask, Rules::new()))
     });
 
-    Ok((conversation, ran))
+    Ok(conversation)
 }
 
 /// The one syntax theme the host in these tests reads code in.
@@ -382,6 +395,52 @@ fn a_yes_on_the_wire_runs_the_tool_once_and_a_no_never() -> Result<(), Failed> {
         );
         assert!(remote.refused.is_empty(), "{:?}", remote.refused);
     }
+    Ok(())
+}
+
+#[test]
+fn a_requested_read_says_its_argument_is_a_path() -> Result<(), Failed> {
+    let tree = Tree::new("client-argument-kind")?;
+    std::fs::write(tree.0.join("work").join("notes.txt"), "a note\n")?;
+    let mut tools = Tools::new();
+    tools.add_builtin(Read::new(tree.workspace()?, Ledger::new()))?;
+    let reading = vec![
+        Delta::ToolStarted {
+            id: ToolId::new("r"),
+            name: "read".into(),
+        },
+        Delta::ToolArgs(r#"{"path":"notes.txt"}"#.into()),
+        Delta::Stopped(StopReason::WantsTools),
+    ];
+    let script = Script::new(vec![reading, saying("read it")]);
+    let mut conversation = offering(&tree, script, None, None, tools)?;
+    let request = Wire::default().sent(prompt("read the notes")?)?;
+
+    let (_, streamed) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+    let requested: Vec<&Progress> = streamed
+        .iter()
+        .filter(|progress| matches!(progress, Progress::ToolRequested { .. }))
+        .collect();
+    let [one] = requested.as_slice() else {
+        return Err(format!("{streamed:?}").into());
+    };
+    let Progress::ToolRequested {
+        tool, summary_kind, ..
+    } = one
+    else {
+        return Err(format!("{one:?}").into());
+    };
+    assert_eq!(tool.as_str(), "read");
+    assert_eq!(*summary_kind, SummaryKind::Path);
+    let frame: serde_json::Value = serde_json::from_slice(&one.encode()?)?;
+    assert_eq!(
+        frame
+            .get("summary_kind")
+            .and_then(serde_json::Value::as_str),
+        Some("path"),
+        "{frame}"
+    );
     Ok(())
 }
 

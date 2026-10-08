@@ -88,6 +88,65 @@ impl Effect {
     }
 }
 
+/// What exactly a permission question is about, beyond its subject.
+///
+/// The subject is the host's sentence about a call, and for a command or a
+/// request it is written in the spelling a rule is matched against: the
+/// commands without the operators between them, the host without what is sent
+/// to it. Those are what tells two calls apart that a rule treats as one —
+/// `a && b` from `a; b`, one query from another to the same service — so they
+/// travel here, as the call carried them, beside the subject rather than in
+/// place of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Operation {
+    /// A process would be started.
+    Command {
+        /// The line as the call carried it, operators and all.
+        sent: Text,
+        /// Whether the call asked for it to be left running after the turn
+        /// that starts it has ended.
+        left_running: bool,
+    },
+    /// Something would leave the machine.
+    Network {
+        /// What is sent, as it is sent: the address for a fetch, the query for
+        /// a search.
+        sent: Text,
+    },
+    /// Nothing the subject does not already say.
+    Other,
+}
+
+impl Operation {
+    fn written(&self) -> Value {
+        match self {
+            Self::Command { sent, left_running } => Writing::kind("command")
+                .text("sent", sent)
+                .with("left_running", *left_running),
+            Self::Network { sent } => Writing::kind("network").text("sent", sent),
+            Self::Other => Writing::kind("other"),
+        }
+        .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let operation = match fields.kind()?.as_str() {
+            "command" => Self::Command {
+                sent: fields.text("sent")?,
+                left_running: fields.flag("left_running")?,
+            },
+            "network" => Self::Network {
+                sent: fields.text("sent")?,
+            },
+            "other" => Self::Other,
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(operation)
+    }
+}
+
 /// One answer a question offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
@@ -134,6 +193,9 @@ pub enum Pending {
         /// does not put such an action to a client that has only these words
         /// to go on: the call is denied instead.
         subject: Text,
+        /// The line that would run, or what would be sent, as the call
+        /// carried it. Cut and denied in the same way as the subject.
+        asked: Operation,
     },
     /// Questions a model asked of the person.
     Questions {
@@ -178,11 +240,13 @@ impl Pending {
                 tool,
                 effect,
                 subject,
+                asked,
             } => Writing::kind("permission")
                 .with("id", id.number())
                 .text("tool", tool)
                 .with("effect", effect.as_str())
-                .text("subject", subject),
+                .text("subject", subject)
+                .with("asked", asked.written()),
             Self::Questions { id, questions } => {
                 Writing::kind("questions").with("id", id.number()).with(
                     "questions",
@@ -220,6 +284,7 @@ impl Pending {
                 tool: fields.text("tool")?,
                 effect: Effect::named(&fields.string("effect")?)?,
                 subject: fields.text("subject")?,
+                asked: Operation::read(fields.take("asked")?)?,
             },
             "questions" => Self::Questions {
                 id,

@@ -40,6 +40,7 @@ mod dump;
 mod editor;
 mod escape;
 mod expanded;
+mod files;
 #[cfg(test)]
 mod fits;
 pub mod forge;
@@ -77,6 +78,7 @@ pub use bar::{Bar, Fill, Part};
 pub use color::{Design, Palette, Sequence, Slot, Theme, Worn};
 pub use editor::{Editor, Key, Projection, Sending, Typed};
 pub use expanded::{Expanded, Shown};
+pub use files::{Files, Line};
 pub use forge::Forge;
 pub use glyphs::Glyphs;
 pub use ground::{Ground, is_light};
@@ -91,7 +93,7 @@ pub use plan::{Plan, State, Task};
 pub use prompt::{CommandCount, Draft, Prompt, Recalled, Remaining, label};
 /// The most units of the transcript kept at once; a row put down whole costs one.
 pub const RECORDED: usize = record::MOST;
-pub use render::{Aimed, Caret, PromptRows, Renderer, ScreenMode};
+pub use render::{Aimed, Caret, PromptRows, Recall, Renderer, ScreenMode};
 pub use row::Row;
 pub use running::{Command, Running};
 pub use sandbox_panel::{SandboxPanel, SandboxTab};

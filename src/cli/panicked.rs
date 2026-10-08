@@ -1,20 +1,36 @@
-//! Where a panic's message goes while a session holds the terminal.
+//! How a panic's message is written, and where it goes while a session holds
+//! the terminal.
 //!
-//! The default hook writes a panic's message to standard error as the thread
-//! unwinds, before anything joining that thread or task has seen it. While a
-//! session holds the terminal in raw mode, that write lands in the middle of a
-//! frame: the drawing thread is the screen's only writer, and a line written
-//! past it breaks the frame it lands in and is drawn over by the next.
+//! std's default hook writes a panic's message to standard error as it stands,
+//! over lines of its own. A message is whatever the code that gave up was
+//! holding, which can be text a checkout or a vendor chose, so written that way
+//! an escape sequence in it acts on the terminal and a line break in it forges
+//! a line. So [`written`] replaces that hook for the whole process, before
+//! anything else runs: every panic is written as a failure is, one line naming
+//! the thread and where it gave up, every control and format character in it
+//! escaped. A backtrace follows it where `RUST_LIB_BACKTRACE`, or failing that
+//! `RUST_BACKTRACE`, asks for one, each of its lines escaped the same way:
+//! its symbols and paths are the build's rather than anyone's input, but
+//! escaping them costs nothing and leaves no panic able to write a raw byte.
+//! std's note saying how to ask for one is not written.
+//!
+//! That write happens as the thread unwinds, before anything joining that
+//! thread or task has seen it. While a session holds the terminal in raw
+//! mode, it lands in the middle of a frame: the drawing thread is the screen's
+//! only writer, and a line written past it breaks the frame it lands in and is
+//! drawn over by the next.
 //!
 //! So for as long as a session holds the terminal, a panic on any other
 //! thread — a task on the application's runtime, most of all — is kept for the
 //! drawing thread instead, which says it in the transcript the next time it
 //! comes round to the prompt. What it has not said by the time the session
 //! lets go is written to standard error then, once the screen is the reader's
-//! own again, so a panic on another thread is never lost. A panic on the
-//! drawing thread itself still goes to the hook in force before: it ends the
+//! own again, so a panic on another thread is never lost. Each is one line,
+//! written as a failure is, so a message holding a line break or a control
+//! character cannot add a line of its own or act on the terminal. A panic on the
+//! drawing thread itself is still written at once, the same way: it ends the
 //! session, and there is nobody left to keep it for — nor for what it had
-//! taken to say, if it gave up while saying it. That hook writes it where the
+//! taken to say, if it gave up while saying it. That write lands where the
 //! cursor stands, so it can be lost: onto a screen of crucible's own, which
 //! goes when the screen is handed back, or into the live region of the
 //! terminal's own buffer, which closing that region on the way out may
@@ -25,11 +41,15 @@
 //!
 //! Only a session holding the terminal takes the hook, and it puts back the
 //! hook it found when it lets go, so every other path panics the way that hook
-//! has it. A session let go of by its drawing thread's own panic cannot put
-//! it back — std refuses to change the hook from a thread that is unwinding,
-//! and a panic there aborts the process — so its hook stays in force, handing
-//! every later panic straight to the one it found.
+//! has it. What it does not keep it writes itself, as [`written`] does, rather
+//! than handing it to the hook it found, so a panic in a session is never
+//! written raw whichever hook was in force before. A session let go of by its
+//! drawing thread's own panic cannot put the hook back — std refuses to change
+//! the hook from a thread that is unwinding, and a panic there aborts the
+//! process — so its hook stays in force, writing every later panic the same
+//! way.
 
+use std::backtrace::{Backtrace, BacktraceStatus};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -83,8 +103,7 @@ impl Panics {
         let drawing = thread::current().id();
         panic::set_hook(Box::new({
             let kept = Arc::clone(&kept);
-            let found = Arc::clone(&found);
-            move |info| keep(&kept, &found, drawing, info)
+            move |info| keep(&kept, drawing, info)
         }));
         Self { kept, found }
     }
@@ -119,7 +138,7 @@ impl Drop for Panics {
         }
 
         // Let go and drained under one lock, so a panic on another thread is
-        // either among what is written below or handed to the hook found.
+        // either among what is written below or written by itself.
         let (said, unkept) = {
             let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
             kept.let_go = true;
@@ -128,9 +147,7 @@ impl Drop for Panics {
         };
         let mut written = String::new();
         for one in said {
-            written.push_str("crucible: ");
-            written.push_str(&one);
-            written.push('\n');
+            written.push_str(&super::failing(&one));
         }
         if unkept > 0 {
             let _ = writeln!(written, "crucible: and {unkept} more panics");
@@ -141,19 +158,50 @@ impl Drop for Panics {
     }
 }
 
-/// The hook while a session holds the terminal: `info` kept for the drawing
-/// thread, unless it is the drawing thread's own or the session has let go.
-fn keep(kept: &Mutex<Kept>, found: &Found, drawing: ThreadId, info: &PanicHookInfo<'_>) {
-    let current = thread::current();
-    if current.id() == drawing {
-        return found(info);
+/// Writes every panic in this process as one line from now on, until a
+/// session holding the terminal takes the hook.
+pub(crate) fn written() {
+    panic::set_hook(Box::new(write));
+}
+
+/// Writes `info` to standard error as one line, and a backtrace after it where
+/// one is asked for, in one write.
+fn write(info: &PanicHookInfo<'_>) {
+    let mut written = super::failing(&said(info));
+    let backtrace = Backtrace::capture();
+    if backtrace.status() == BacktraceStatus::Captured {
+        written.push_str("stack backtrace:\n");
+        written.push_str(&super::visible(&backtrace.to_string()));
+        if !written.ends_with('\n') {
+            written.push('\n');
+        }
     }
-    let mut said = format!("{} panicked", current.name().unwrap_or("a thread"));
+    let _ = io::stderr().lock().write_all(written.as_bytes());
+}
+
+/// What `info` says, naming the thread that gave up and where, before it is
+/// escaped.
+fn said(info: &PanicHookInfo<'_>) -> String {
+    let mut said = format!(
+        "{} panicked",
+        thread::current().name().unwrap_or("a thread")
+    );
     if let Some(at) = info.location() {
         let _ = write!(said, " at {at}");
     }
     said.push_str(": ");
     said.push_str(info.payload_as_str().unwrap_or("with no message"));
+    said
+}
+
+/// The hook while a session holds the terminal: `info` kept for the drawing
+/// thread, unless it is the drawing thread's own or the session has let go,
+/// when it is written at once.
+fn keep(kept: &Mutex<Kept>, drawing: ThreadId, info: &PanicHookInfo<'_>) {
+    if thread::current().id() == drawing {
+        return write(info);
+    }
+    let mut said = said(info);
     if said.len() > MESSAGE {
         let mut end = MESSAGE;
         while !said.is_char_boundary(end) {
@@ -166,7 +214,7 @@ fn keep(kept: &Mutex<Kept>, found: &Found, drawing: ThreadId, info: &PanicHookIn
     let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
     if kept.let_go {
         drop(kept);
-        return found(info);
+        return write(info);
     }
     if kept.said.len() < KEPT {
         kept.said.push_back(said);

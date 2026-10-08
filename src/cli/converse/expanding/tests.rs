@@ -76,7 +76,7 @@ fn the_view_under_a_turn_leaves_the_tail_a_row_to_go_on_writing_into() {
     standing.open(&held);
 
     let mut stood = Renderer::new(Recording::new(80, 24));
-    assert!(under(&mut stood, Style::plain(), &held, &mut standing).expect("drawn"));
+    assert!(under(&mut stood, Style::plain(), &held, &mut standing, None).expect("drawn"));
 
     let mut same = Standing::default();
     same.open(&held);
@@ -89,10 +89,116 @@ fn the_view_under_a_turn_leaves_the_tail_a_row_to_go_on_writing_into() {
         column: 0,
     };
     by_hand
-        .under(&rows, Some(caret), Style::plain().palette())
+        .instead(&[], &rows, Some(caret), Style::plain().palette())
         .expect("drawn");
 
     assert_eq!(stood.terminal().written(), by_hand.terminal().written());
+}
+
+#[test]
+fn the_working_row_stands_over_the_view_parted_from_the_transcript_by_a_blank() {
+    // The box had the row saying a turn is running over it, so the view in its
+    // place keeps it: directly over the view's own rows, under a blank that is
+    // the transcript's, both out of the view's room. Drawn by hand the same
+    // way, the blank handed over as the transcript's and the working row first
+    // among the view's rows, so the caret still parks on the view's last row.
+    let held = overflowing();
+    let working = Row::plain("writing");
+
+    let mut standing = Standing::default();
+    standing.open(&held);
+
+    let mut stood = Renderer::new(Recording::new(80, 24));
+    assert!(
+        under(
+            &mut stood,
+            Style::plain(),
+            &held,
+            &mut standing,
+            Some(working.clone())
+        )
+        .expect("drawn")
+    );
+
+    let mut same = Standing::default();
+    same.open(&held);
+    let mut rows = laying(&held, opened(&mut same), Glyphs::Unicode, 80, 21);
+    assert_eq!(rows.len(), 21);
+    rows.insert(0, working);
+
+    let mut by_hand = Renderer::new(Recording::new(80, 24));
+    let caret = Caret {
+        row: rows.len(),
+        column: 0,
+    };
+    by_hand
+        .instead(&[Row::new()], &rows, Some(caret), Style::plain().palette())
+        .expect("drawn");
+
+    assert_eq!(stood.terminal().written(), by_hand.terminal().written());
+}
+
+#[test]
+fn the_working_row_gives_way_before_the_view_shows_no_line() {
+    // Six rows of room less the two would leave the view its chrome and no
+    // line of what it is about, so the two go and the view keeps the six: the
+    // same picture as when no turn runs.
+    let held = overflowing();
+
+    let mut with = Standing::default();
+    with.open(&held);
+    let mut stood = Renderer::new(Recording::new(80, 7));
+    assert!(
+        under(
+            &mut stood,
+            Style::plain(),
+            &held,
+            &mut with,
+            Some(Row::plain("writing"))
+        )
+        .expect("drawn")
+    );
+
+    let mut without = Standing::default();
+    without.open(&held);
+    let mut bare = Renderer::new(Recording::new(80, 7));
+    assert!(under(&mut bare, Style::plain(), &held, &mut without, None).expect("drawn"));
+
+    assert!(!stood.terminal().written().contains("writing"));
+    assert_eq!(stood.terminal().written(), bare.terminal().written());
+}
+
+#[test]
+fn the_view_under_a_turn_fits_every_window_it_is_given() {
+    // This view's own fit sweep, since the rows a turn keeps over it are laid
+    // here and not among the components the crate's sweep walks: at every
+    // width and every room it decides anything at, in either glyph set, the
+    // blank, the working row and the view together take no more than the room
+    // and no row is wider than the window. Where the working row is kept the
+    // view still shows a row of results, and it is dropped only where it would
+    // not; the view itself stands exactly where its full room shows one.
+    let held = overflowing();
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for columns in 1..=200 {
+            for room in 0..=24 {
+                let mut standing = Standing::default();
+                standing.open(&held);
+                let view = opened(&mut standing);
+                let (blank, rows) = laying_under_a_turn(room, Some(Row::plain("w")), |rows| {
+                    laying(&held, view, glyphs, columns, rows)
+                });
+                let at = format!("{glyphs:?} {columns}x{room}");
+                assert!(blank.iter().len() + rows.len() <= room, "{at}");
+                for row in blank.iter().chain(&rows) {
+                    assert!(row.columns() <= columns, "{at}: {:?}", row.text());
+                }
+                let kept = rows.first().is_some_and(|row| row.text() == "w");
+                assert_eq!(kept, blank.is_some(), "{at}");
+                assert_eq!(kept, Expanded::seen(room.saturating_sub(2)) > 0, "{at}");
+                assert_eq!(rows.is_empty(), Expanded::seen(room) == 0, "{at}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -107,7 +213,7 @@ fn a_window_with_no_room_for_the_view_closes_it_and_gives_the_box_back() {
     standing.open(&held);
 
     let mut render = Renderer::new(Recording::new(80, 4));
-    assert!(!under(&mut render, Style::plain(), &held, &mut standing).expect("drawn"));
+    assert!(!under(&mut render, Style::plain(), &held, &mut standing, None).expect("drawn"));
 
     assert_eq!(standing, Standing::Closed);
     assert_eq!(render.terminal().written(), "");
@@ -376,6 +482,64 @@ fn frame(kept: &Kept, standing: &mut Standing, rows: usize) -> Vec<String> {
         .iter()
         .map(Row::text)
         .collect()
+}
+
+#[test]
+fn what_a_call_still_out_goes_on_printing_is_reached_by_a_view_standing_over_it() {
+    // A view counts the rows a result comes to once for each width and keeps
+    // the count, and a command still running goes on printing under it. The
+    // rows it comes to grow with what it printed: the keys that walk the
+    // window are named once there is more than it shows, and its foot
+    // reaches the last line printed.
+    let mut kept = Kept::default();
+    let call = crucible_types::ToolId::new("build");
+    kept.calling(call.clone(), "Bash(cargo build)".to_owned());
+    kept.wrote(&call, "compiling 001\n");
+
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let rows = frame(&kept, &mut standing, 24);
+    assert_eq!(rows.last().map(String::as_str), Some("esc to close"));
+
+    for at in 2..=60 {
+        kept.wrote(&call, &format!("compiling {at:03}\n"));
+    }
+    let rows = frame(&kept, &mut standing, 24);
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · ↑↓ pgup pgdn to see more"),
+        "{rows:?}"
+    );
+
+    let view = opened(&mut standing);
+    view.from = view.end;
+    let rows = frame(&kept, &mut standing, 24);
+    assert!(rows.iter().any(|row| row == "compiling 060"), "{rows:?}");
+}
+
+#[test]
+fn a_call_still_out_named_again_is_measured_by_its_new_line() {
+    // The line a call is named by is laid out above what it printed, so the
+    // call named again in more lines than before comes to more rows, even
+    // with nothing more printed under it.
+    let mut kept = Kept::default();
+    let call = crucible_types::ToolId::new("build");
+    kept.calling(call.clone(), "Bash(cargo build)".to_owned());
+    kept.wrote(&call, "compiling 001\n");
+
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let rows = frame(&kept, &mut standing, 24);
+    assert_eq!(rows.last().map(String::as_str), Some("esc to close"));
+
+    let named: Vec<String> = (1..=30).map(|at| format!("step {at:02}")).collect();
+    kept.calling(call, named.join("\n"));
+    let rows = frame(&kept, &mut standing, 24);
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("esc to close · ↑↓ pgup pgdn to see more"),
+        "{rows:?}"
+    );
 }
 
 #[test]

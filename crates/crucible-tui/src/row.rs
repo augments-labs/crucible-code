@@ -66,6 +66,37 @@ pub(crate) fn drawn(character: char) -> Option<char> {
     }
 }
 
+/// `link` as the sequence that carries it may hold it: printable ASCII, with
+/// every other byte written as a percent escape.
+///
+/// The address is written between the bytes that open and close a sequence,
+/// so it is the one part of a row a terminal reads as instruction rather than
+/// text, and [`words`] never sees it. A model writes the address of every link
+/// in its answer; one holding an escape or a bell would end the sequence where
+/// it chose and send what came after it as a command. Escaping, rather than
+/// dropping, keeps a space or a letter past ASCII pointing where it did: it is
+/// the form a browser sends, and a `%` already there is left as it was written.
+fn address(link: Box<str>) -> Box<str> {
+    if link.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return link;
+    }
+
+    let mut escaped = String::with_capacity(link.len() * 3);
+    for byte in link.bytes() {
+        if byte.is_ascii_graphic() {
+            escaped.push(char::from(byte));
+        } else {
+            escaped.push('%');
+            for nibble in [byte >> 4, byte & 0x0f] {
+                escaped.extend(
+                    char::from_digit(u32::from(nibble), 16).map(|d| d.to_ascii_uppercase()),
+                );
+            }
+        }
+    }
+    escaped.into_boxed_str()
+}
+
 /// A run of text that is all one slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Span {
@@ -80,7 +111,8 @@ struct Span {
     /// Beside the text rather than inside it, for the reason the slot is: an
     /// address written into the string would be measured as columns the reader
     /// cannot see, and every fold and clip in this file would break in the
-    /// middle of one.
+    /// middle of one. Escaped by [`address`] on the way in, because it is
+    /// written inside a sequence where [`words`] cannot reach.
     link: Option<Box<str>>,
 }
 
@@ -139,7 +171,7 @@ impl Row {
 
     /// Appends `text` in `slot`, opening `link` when clicked.
     pub fn push_linked(&mut self, slot: Slot, text: impl Into<String>, link: impl Into<Box<str>>) {
-        self.push_span(slot, text, Vec::new(), Some(link.into()));
+        self.push_span(slot, text, Vec::new(), Some(address(link.into())));
     }
 
     /// The row with structural art appended in `slot`.
@@ -597,6 +629,49 @@ mod tests {
 
         let clipped = row.clipped(20).paint(&addressed());
         assert!(clipped.contains("https://example.test/1"), "{clipped:?}");
+    }
+
+    #[test]
+    fn an_address_cannot_end_its_own_sequence() {
+        // A model writes the address of a link it puts in an answer. One that
+        // carried the terminator would close the opening sequence early, and
+        // whatever followed it would reach the terminal as an instruction.
+        let hostile = Row::new()
+            .then_linked(Slot::Link, "a", "https://x.test/\x1b\\\x1b[2J\x07\u{9c}y")
+            .paint(&addressed());
+        let clean = Row::new()
+            .then_linked(Slot::Link, "a", "https://x.test/")
+            .paint(&addressed());
+
+        assert!(!hostile.contains("\x1b[2J"), "{hostile:?}");
+        assert!(
+            !hostile.contains('\x07') && !hostile.contains('\u{9c}'),
+            "{hostile:?}"
+        );
+        assert_eq!(
+            hostile.matches('\x1b').count(),
+            clean.matches('\x1b').count(),
+            "{hostile:?}"
+        );
+        assert!(
+            hostile.contains("https://x.test/%1B\\%1B[2J%07%C2%9Cy"),
+            "{hostile:?}"
+        );
+    }
+
+    #[test]
+    fn an_address_is_sent_in_the_characters_the_sequence_allows() {
+        // The sequence carries printable ASCII alone. A space or a character
+        // past it is sent as the escape a browser would send, so the address
+        // still opens where it pointed and a terminal never has to guess.
+        let painted = Row::new()
+            .then_linked(Slot::Link, "a", "https://x.test/a b/é?q=%41")
+            .paint(&addressed());
+
+        assert!(
+            painted.contains("https://x.test/a%20b/%C3%A9?q=%41"),
+            "{painted:?}"
+        );
     }
 
     #[test]

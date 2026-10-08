@@ -558,11 +558,13 @@ fn moving(arrived: Pressed, standing: &mut Standing, questions: &[Question]) -> 
         | Pressed::Plan
         | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
-        | Pressed::Queue
+        | Pressed::Remove
         | Pressed::Copy
         | Pressed::PasteImage
         | Pressed::Rename
         | Pressed::All
+        | Pressed::SendAll
+        | Pressed::SendNow
         | Pressed::Scrolled { .. }
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }

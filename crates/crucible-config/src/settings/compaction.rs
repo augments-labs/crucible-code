@@ -6,6 +6,7 @@
 //! above it is what reaches the bound.
 
 use super::Settings;
+use crate::shape::whole;
 
 impl Settings {
     /// What every layer together says about compaction.
@@ -17,11 +18,7 @@ impl Settings {
     #[must_use]
     pub fn compaction(&self) -> Compaction {
         let block = self.value.get("compaction");
-        let count = |key: &str| {
-            block
-                .and_then(|block| block.get(key))
-                .and_then(serde_json::Value::as_u64)
-        };
+        let count = |key: &str| block.and_then(|block| block.get(key)).and_then(whole);
 
         Compaction {
             when: block
@@ -56,7 +53,7 @@ impl Settings {
             .and_then(|windows| windows.get(model))
             .or_else(|| provider.get("defaultContextWindow"))?;
 
-        u32::try_from(said.as_u64()?).ok()
+        u32::try_from(whole(said)?).ok()
     }
 }
 

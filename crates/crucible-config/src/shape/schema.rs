@@ -305,7 +305,7 @@ fn described(field: &Field) -> Value {
 /// resolves it insert the one value the key refuses.
 ///
 /// A [`Shape::Whole`] is the exception that proves it: it may be written as a
-/// JSON integer or as a string, and its default is published as the string, the
+/// JSON whole number or as a string, and its default is published as the string, the
 /// form the environment holds and the one `usual` is already spelled in. Either
 /// form is accepted, so the string is a valid default beside the integer
 /// bounds, and the editor writes into the file a value that reads back as the

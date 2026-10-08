@@ -6,6 +6,8 @@
 //! the thing that stays readable when the sequences underneath it change. The
 //! sequences themselves are asserted once, next to the type that writes them.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use unicode_width::UnicodeWidthStr;
 
 use super::*;
@@ -142,6 +144,25 @@ fn what_a_turn_stands_under_sits_between_the_transcript_and_the_box() {
     assert_eq!(screen.row(0), "answer");
     assert_eq!(screen.row(6), "· thinking");
     assert_eq!(screen.row(7), "╭────╮");
+}
+
+#[test]
+fn rows_standing_instead_of_the_box_take_it_off_in_one_frame() {
+    let mut drawn = Drawn::new(40, 10);
+    let (rows, caret) = boxed();
+    drawn.commit("answer").unwrap();
+    drawn.live(&rows, caret, Palette::plain()).unwrap();
+    let before = drawn.terminal().flushes();
+
+    drawn
+        .instead(&[], &[Row::plain("view")], None, Palette::plain())
+        .unwrap();
+
+    let screen = drawn.screen();
+    assert_eq!(screen.row(0), "answer");
+    assert_eq!(screen.row(9), "view");
+    assert!((0..10).all(|at| !screen.row(at).starts_with('\u{256d}')));
+    assert_eq!(drawn.terminal().flushes(), before + 1);
 }
 
 #[test]
@@ -2707,6 +2728,30 @@ fn a_list_under_a_running_turn_stands_beside_no_rail_and_is_not_counted() {
 }
 
 #[test]
+fn a_turn_s_rows_standing_in_the_box_s_place_stand_beside_the_rail() {
+    // What the turn was showing over the box goes on standing over what takes
+    // the box's place, and is still the transcript's: the rail stands beside
+    // it and counts it, as it did over the box, and stops before the rows
+    // under it. Twenty-seven band rows and the blank are twenty-eight rail rows
+    // over eighty-one, so the thumb is ten rows; leaving the blank out would
+    // have made it nine.
+    let mut drawn = railed_turn();
+    let rows = [Row::plain("writing"), Row::plain("view")];
+    drawn
+        .instead(&[Row::new()], &rows, None, Palette::plain())
+        .unwrap();
+
+    let bands = drawn.bands();
+    let screen = drawn.screen();
+    assert_eq!(bands.transcript.len(), 27);
+    assert_eq!(screen.row(bands.turn.end - 2), "writing");
+    assert_eq!(screen.row(bands.turn.end - 1), "view");
+    let rail = rail_down(&drawn);
+    assert!(rail.ends_with("\u{2503}  "), "{rail:?}");
+    assert_eq!(thumb_of(&rail), 10, "{rail:?}");
+}
+
+#[test]
 fn rows_stood_under_the_transcript_by_anything_but_a_turn_stand_beside_no_rail() {
     // A question or a picker stands in the same band, and is not the
     // transcript's either: the rail is the band's alone, as between turns.
@@ -2740,4 +2785,101 @@ fn a_press_on_the_rail_beside_a_running_turn_steers_the_transcript() {
         drawn.screen().rows()
     );
     assert!(rail_down(&drawn).ends_with('┃'));
+}
+
+// A wait on the keyboard something outside can call off.
+
+/// A recall that is called off once `noted` is set, as a signal would set it.
+#[derive(Debug, Default)]
+struct Noting {
+    /// Whether the word to call the wait off has come.
+    noted: AtomicBool,
+    /// Whether the word comes as the wait says it is over, as a signal landing
+    /// after the wait last looked would.
+    as_it_ends: bool,
+}
+
+impl Noting {
+    fn note(&self) {
+        self.noted.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Recall for Noting {
+    fn waiting(&self) -> bool {
+        true
+    }
+
+    fn recalled(&self) -> bool {
+        self.noted.load(Ordering::SeqCst)
+    }
+
+    fn waited(&self) {
+        if self.as_it_ends {
+            self.note();
+        }
+    }
+}
+
+/// A renderer whose waits `recall` watches.
+fn watched_by(recall: &Arc<Noting>) -> Renderer<Recording> {
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.recalled_by(Arc::clone(recall) as Arc<dyn Recall>);
+    render
+}
+
+#[test]
+fn a_recall_during_the_last_beat_of_a_wait_calls_it_off() {
+    // The beat that runs the patience out is a beat like any other: a word
+    // that came while it slept is not left for nobody to read.
+    let recall = Arc::new(Noting::default());
+    let mut render = watched_by(&recall);
+
+    let waited = render.waiting_from(Duration::from_millis(10), |_| {
+        recall.note();
+        Ok(false)
+    });
+
+    assert!(matches!(waited, Err(TerminalError::Recalled)), "{waited:?}");
+}
+
+#[test]
+fn a_recall_while_the_key_is_read_calls_the_wait_off() {
+    let recall = Arc::new(Noting::default());
+    let mut render = watched_by(&recall);
+
+    let pressed = render.pressed_from(
+        |_| Ok(true),
+        || {
+            recall.note();
+            Ok(Pressed::Ignored)
+        },
+    );
+
+    assert!(
+        matches!(pressed, Err(TerminalError::Recalled)),
+        "{pressed:?}"
+    );
+}
+
+#[test]
+fn a_recall_as_a_wait_ends_calls_it_off() {
+    // After the wait has last looked and before it has said it is over, the
+    // recall's word is noted rather than acted on where it lands, so the wait
+    // looks once more after saying so.
+    let recall = Arc::new(Noting {
+        as_it_ends: true,
+        ..Noting::default()
+    });
+    let mut render = watched_by(&recall);
+
+    let waited = render.waiting_from(Duration::from_millis(10), |_| Ok(true));
+    assert!(matches!(waited, Err(TerminalError::Recalled)), "{waited:?}");
+
+    recall.noted.store(false, Ordering::SeqCst);
+    let pressed = render.pressed_from(|_| Ok(true), || Ok(Pressed::Ignored));
+    assert!(
+        matches!(pressed, Err(TerminalError::Recalled)),
+        "{pressed:?}"
+    );
 }

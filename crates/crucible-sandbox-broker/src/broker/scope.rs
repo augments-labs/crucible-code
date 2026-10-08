@@ -144,6 +144,12 @@ mod tests {
             .stdout(Stdio::null())
             .spawn()
             .expect("bystander child");
+        // The test needs a zombie that is already there when the workload exits.
+        rustix::process::waitid(
+            WaitId::Pid(Pid::from_child(&bystander)),
+            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
+        )
+        .expect("bystander exits, left uncollected");
         let workload = Command::new("sh")
             .args(["-c", "exit 7"])
             .stdin(Stdio::null())

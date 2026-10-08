@@ -49,6 +49,8 @@ pub enum Progress {
         tool: Text,
         /// What the tool says it would do, in its own words.
         summary: Text,
+        /// What kind of thing those words name.
+        summary_kind: SummaryKind,
     },
     /// A tool call ended.
     ToolFinished {
@@ -98,6 +100,46 @@ pub enum Progress {
     },
     /// A turn reported that it failed.
     Failed(Problem),
+}
+
+/// What kind of thing a requested call's summary names, as the tool that read
+/// the call's arguments says.
+///
+/// Closed, so a client can tell a path from an address from a command without
+/// guessing it back out of the words, and a new kind is a new revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SummaryKind {
+    /// A file or directory the call opens, writes or changes.
+    Path,
+    /// An address the call reaches.
+    Address,
+    /// A command the call runs or a pattern it looks for.
+    Command,
+    /// Words that are none of those: a question, a query, a count.
+    Other,
+}
+
+impl SummaryKind {
+    /// Every kind.
+    pub const EVERY: [Self; 4] = [Self::Path, Self::Address, Self::Command, Self::Other];
+
+    /// The word it crosses as.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Path => "path",
+            Self::Address => "address",
+            Self::Command => "command",
+            Self::Other => "other",
+        }
+    }
+
+    fn named(word: &str) -> Result<Self, Refusal> {
+        Self::EVERY
+            .into_iter()
+            .find(|kind| kind.as_str() == word)
+            .ok_or_else(|| ErrorCode::Malformed.into())
+    }
 }
 
 impl Progress {
@@ -151,10 +193,12 @@ impl Progress {
                 call,
                 tool,
                 summary,
+                summary_kind,
             } => object
                 .text("call", call)
                 .text("tool", tool)
-                .text("summary", summary),
+                .text("summary", summary)
+                .with("summary_kind", summary_kind.as_str()),
             Self::ToolFinished { call, failed } => {
                 object.text("call", call).with("failed", *failed)
             }
@@ -205,6 +249,7 @@ impl Progress {
                 call: fields.text("call")?,
                 tool: fields.text("tool")?,
                 summary: fields.text("summary")?,
+                summary_kind: SummaryKind::named(&fields.string("summary_kind")?)?,
             },
             "tool_finished" => Self::ToolFinished {
                 call: fields.text("call")?,

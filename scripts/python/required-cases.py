@@ -31,9 +31,14 @@ and the attribute rustdoc does honour, from changing unreviewed.
 Platform-specific cases are pending on the platforms that cannot run them, not
 skipped: each supported platform's own run enforces its own rows.
 
-    scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list>
+A case is rerun by exact name in the test binary the selection built, from its
+package's directory as cargo would run it, so the rerun is the code the suite
+ran and costs no build. Asking cargo for one package instead would resolve that
+package's features alone and build it again, different from what was tested.
+
+    scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list> <selection>...
     scripts/python/required-cases.py --self-test  prove the source reader reads,
-                                                  and what a rerun asks cargo for
+                                                  and what a rerun runs
 """
 
 import hashlib
@@ -42,17 +47,9 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 MANIFEST = "scripts/required-cases.json"
-
-# What a rerun of one package adds so that it builds as the shared selection
-# did. The Linux sandbox keeps a test build's state in a directory of its own
-# checkout only with `per-checkout-state` on. The selection turns it on through
-# other packages' dev-dependencies, which a rerun of one package does not build,
-# and the crate cannot take itself as one. Without it, a rerun of the crate's
-# integration tests would lock and recover in the directory every crucible that
-# is not a test build uses, and so in every other checkout's rerun too.
-RERUN_FEATURES = {"crucible-sandbox-local": ["--features", "per-checkout-state"]}
 
 PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
     sys.platform, sys.platform
@@ -108,13 +105,18 @@ def fenced_region(lines, index):
 
 
 def find_function(root, name):
-    """Every place `name` is defined below `root`, so an ambiguity can be told."""
+    """Every place `name` is defined below `root`, so an ambiguity can be told.
+
+    A hidden directory holds no source of the workspace, but it can hold whole
+    other checkouts of it — a worktree, an archived copy — whose cases would
+    read as more definitions of the same name.
+    """
     opening = re.compile(
         r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+" + re.escape(name) + r"\s*[(<]"
     )
     found = []
     for base, directories, files in os.walk(root):
-        directories[:] = [one for one in directories if one not in ("target", ".git")]
+        directories[:] = [one for one in directories if one != "target" and not one.startswith(".")]
         for file in files:
             if not file.endswith(".rs"):
                 continue
@@ -193,27 +195,59 @@ def self_test():
         print("    FAIL the required-case reader let a neighbour's example answer for it")
         return 1
 
-    sandboxed = invocation("crucible-sandbox-local", ["--test", "linux_network"], ["--exact", "one"])
-    if sandboxed != [
-        "cargo",
-        "test",
-        "--locked",
-        "-p",
+    built = Built(
+        "target/debug/deps/linux_network-0a1b",
+        "crates/crucible-sandbox-local",
         "crucible-sandbox-local",
-        "--features",
-        "per-checkout-state",
-        "--test",
-        "linux_network",
-        "--",
-        "--exact",
-        "one",
-    ]:
-        print("    FAIL a rerun of crucible-sandbox-local would keep its sandbox state where every checkout does")
+        "0.1.0",
+    )
+    command, directory, environment = invocation(built, ["one", "two"])
+    if command != ["target/debug/deps/linux_network-0a1b", "--exact", "one", "two"]:
+        print("    FAIL a rerun would run something other than the binary the selection built")
         return 1
-    if "--features" in invocation("crucible-builtins", ["--lib"], ["--exact", "one"]):
-        print("    FAIL a rerun asks for a feature its package's selection did not need")
+    if directory != "crates/crucible-sandbox-local":
+        print("    FAIL a rerun would start outside the package directory cargo runs its tests from")
         return 1
+    if environment.get("CARGO_PKG_NAME") != "crucible-sandbox-local":
+        print("    FAIL a rerun would not be told the package cargo tells its tests about")
+        return 1
+    examples = documented_invocation(["--workspace", "--locked"], ["Trouble::one"])
+    if examples != ["cargo", "test", "--workspace", "--locked", "--doc", "--", "Trouble::one"]:
+        print("    FAIL a rerun of the examples would not ask for the selection the suite ran")
+        return 1
+
+    with tempfile.TemporaryDirectory() as root:
+        for where in ("tests", os.path.join(".worktrees", "other", "tests")):
+            os.makedirs(os.path.join(root, where))
+            with open(os.path.join(root, where, "main.rs"), "w", encoding="utf-8") as file:
+                file.write("fn a_named_case() {\n}\n")
+        found = [slashed(os.path.relpath(one[0], root)) for one in find_function(root, "a_named_case")]
+        if found != ["tests/main.rs"]:
+            print("    FAIL the required-case finder read a checkout nested under a hidden directory")
+            return 1
     return 0
+
+
+class Built:
+    """One test binary the shared selection built, and the package it tests."""
+
+    def __init__(self, executable, directory, package, version):
+        self.executable = executable
+        self.directory = directory
+        self.package = package
+        self.version = version
+
+    def environment(self):
+        """What cargo tells a test binary about its package when it starts one.
+
+        A case may read these: one proves that none of cargo's own variables
+        reach a command, and so needs one to be set.
+        """
+        return {
+            "CARGO_MANIFEST_DIR": self.directory,
+            "CARGO_PKG_NAME": self.package,
+            "CARGO_PKG_VERSION": self.version,
+        }
 
 
 def executables(stream):
@@ -234,7 +268,12 @@ def executables(stream):
             continue
         directory = os.path.dirname(os.path.relpath(message["manifest_path"], os.getcwd()))
         package = "crucible-code" if not directory else os.path.basename(directory)
-        built[(package, target["kind"][0], target["name"])] = message["executable"]
+        # `path+file:///…/crates/name#0.1.0`, or `…#name@0.1.0` when the
+        # directory is not called after the package.
+        version = message["package_id"].rsplit("#", 1)[-1].rsplit("@", 1)[-1]
+        built[(package, target["kind"][0], target["name"])] = Built(
+            message["executable"], os.path.dirname(message["manifest_path"]), package, version
+        )
     return built
 
 
@@ -272,34 +311,30 @@ def listed(executable):
     return names(), names("--ignored")
 
 
-def selector(target):
-    return {
-        "lib": ["--lib"],
-        "bin": ["--bin", target["name"]],
-        "test": ["--test", target["name"]],
-        "doc": ["--doc"],
-    }[target["kind"]]
+def invocation(built, names):
+    """The command that runs exactly these cases, where, and what it is told.
+
+    cargo starts a test binary in its package's directory, and a case that
+    reads a fixture by a relative path depends on that.
+    """
+    return [built.executable, "--exact", *names], built.directory, built.environment()
 
 
-def invocation(package, arguments, filters):
-    """The command that asks cargo for exactly these cases of one package."""
-    return [
-        "cargo",
-        "test",
-        "--locked",
-        "-p",
-        package,
-        *RERUN_FEATURES.get(package, []),
-        *arguments,
-        "--",
-        *filters,
-    ]
+def documented_invocation(selection, names):
+    """The command that runs the examples with these names under the selection.
+
+    rustdoc builds each example against its crate's library, so asking for the
+    selection the suite ran is what keeps that library the one already built.
+    """
+    return ["cargo", "test", *selection, "--doc", "--", *names]
 
 
-def attempted(package, arguments, filters):
-    """What cargo said when asked for exactly these."""
+def attempted(command, directory=None, environment=None):
+    """What the command said, and how it exited."""
     result = subprocess.run(
-        invocation(package, arguments, filters),
+        command,
+        cwd=directory,
+        env={**os.environ, **(environment or {})},
         capture_output=True,
         text=True,
         check=False,
@@ -307,9 +342,9 @@ def attempted(package, arguments, filters):
     return result.returncode, result.stdout
 
 
-def ran(package, arguments, filters):
-    """How many cases passed when cargo was asked for exactly these."""
-    code, printed = attempted(package, arguments, filters)
+def ran(built, names):
+    """How many cases passed when the built binary was asked for exactly these."""
+    code, printed = attempted(*invocation(built, names))
     if code != 0:
         return -1
     return sum(
@@ -333,7 +368,7 @@ def reported(printed, source, name, line):
     return False
 
 
-def check(stream, listing, silenced):
+def check(stream, listing, silenced, selection):
     manifest = json.load(open(MANIFEST, encoding="utf-8"))["cases"]
     if not manifest:
         print(f"    FAIL {MANIFEST} names no required case; this check measured nothing")
@@ -405,7 +440,7 @@ def check(stream, listing, silenced):
                 failed = 1
                 continue
             if key not in inventory:
-                inventory[key] = listed(built[key])
+                inventory[key] = listed(built[key].executable)
             discovered, ignored = inventory[key]
             if name not in discovered:
                 print(f"    FAIL {case['id']} is gone: {name} was not discovered in {case['package']}")
@@ -443,24 +478,32 @@ def check(stream, listing, silenced):
             continue
         run.setdefault(key, []).append((case, name, line))
 
+    # rustdoc names an example after the item it documents, and the listed name
+    # is the only handle a filter has. A filter matches anywhere, so what says
+    # an obligation ran is the line rustdoc printed for its exact example, not
+    # how many passed beside it, and that line also says which one stopped
+    # holding. Every example is asked for in one run.
+    examples = [one for key, cases in sorted(run.items()) if key[1] == "doc" for one in cases]
+    if examples:
+        names = sorted({name for _, name, _ in examples})
+        code, printed = attempted(documented_invocation(selection, names))
+        held = True
+        for case, name, line in examples:
+            if not reported(printed, case["source"], name, line):
+                print(f"    FAIL {case['id']} no longer holds: {name} did not run and pass")
+                print(f"         {case['obligation']}")
+                held = False
+                failed = 1
+        if code != 0 and held:
+            print("    FAIL the run of the required examples failed; rerun it and read the first failure")
+            failed = 1
+
     for key, cases in sorted(run.items()):
         package, kind, target = key
-        arguments = selector({"kind": kind, "name": target})
         if kind == "doc":
-            # rustdoc names an example after the item it documents, and the
-            # listed name is the only handle a filter has. A filter matches
-            # anywhere, so what says the obligation ran is the line rustdoc
-            # printed for this exact example, not how many passed beside it. One
-            # at a time, so a failure can say which obligation stopped holding.
-            for case, name, line in cases:
-                code, printed = attempted(package, arguments, [name])
-                if code != 0 or not reported(printed, case["source"], name, line):
-                    print(f"    FAIL {case['id']} no longer holds: {name} did not run and pass on its own")
-                    print(f"         {case['obligation']}")
-                    failed = 1
             continue
         names = [name for _, name, _ in cases]
-        if ran(package, arguments, ["--exact", *names]) != len(names):
+        if ran(built[key], names) != len(names):
             print(
                 f"    FAIL {len(names)} required cases in {package} {kind} {target} did not all pass;"
                 " rerun that target and read the assertion"
@@ -473,10 +516,10 @@ def check(stream, listing, silenced):
 def main(argv):
     if len(argv) == 2 and argv[1] == "--self-test":
         return self_test()
-    if len(argv) != 4:
+    if len(argv) < 5:
         print(__doc__)
         return 2
-    return self_test() or check(argv[1], argv[2], argv[3])
+    return self_test() or check(argv[1], argv[2], argv[3], argv[4:])
 
 
 if __name__ == "__main__":

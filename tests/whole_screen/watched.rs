@@ -234,6 +234,9 @@ struct TerminalFixture<'a> {
     /// Whether the launch asked for native mode, and so draws in this
     /// terminal's own buffer rather than on a screen of its own.
     native: bool,
+    /// Whether the far side starts in the mode a new terminal opens in,
+    /// echoing and reading whole lines, rather than raw.
+    cooked: bool,
 }
 
 impl TerminalFixture<'_> {
@@ -279,6 +282,7 @@ impl Watched {
                 rows,
                 reply: Some(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?1;2c"),
                 native: false,
+                cooked: false,
             },
             None,
         )
@@ -333,6 +337,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: true,
+                cooked: false,
             },
             None,
         )
@@ -388,6 +393,46 @@ impl Watched {
     ) -> Self {
         let document = document(Some(vendor), Some(rule));
         Self::configured(case, columns, rows, &document, true)
+    }
+
+    /// The same, drawn with the glyphs and on the screen `drawn` names: the two
+    /// settings a panel has to look right under in every combination, paired
+    /// because a case always names both.
+    ///
+    /// Both are written as the configuration spells them, so a case reads as
+    /// the setting it is about. A native terminal is the one that keeps a
+    /// scrollback, as [`Self::native`] says.
+    pub(crate) fn allowing_drawn(
+        case: &str,
+        size: (u16, u16),
+        vendor: &Vendor,
+        rule: &str,
+        drawn: (&str, &str),
+    ) -> Self {
+        let (glyphs, screen) = drawn;
+        let document = format!(
+            "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+             \"output\": {{\"glyphs\": \"{glyphs}\", \"screen\": \"{screen}\"}},\n  \
+             \"permissions\": {{\"allow\": [\"{rule}\"]}},\n  \
+             \"providers\": {{\n    \"anthropic\": {{\n      \
+             \"model\": \"{MODEL}\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+            vendor.address()
+        );
+        let (columns, rows) = size;
+
+        Self::configured_with_terminal(
+            case,
+            &document,
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: screen == "native",
+                cooked: false,
+            },
+            None,
+        )
     }
 
     /// Colour, rules for the calls a case makes, and no middle to recap.
@@ -469,6 +514,26 @@ impl Watched {
         Self::configured(case, columns, rows, document, false)
     }
 
+    /// Crucible with nothing to answer, as [`Self::open`] starts it but with
+    /// no reply from the terminal, in a terminal that starts as a new one
+    /// does, echoing and reading whole lines, so that whether crucible put it
+    /// back that way can be asked once it is gone.
+    pub(crate) fn cooked(case: &str, columns: u16, rows: u16) -> Self {
+        Self::configured_with_terminal(
+            case,
+            &document(None, None),
+            false,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: false,
+                cooked: true,
+            },
+            None,
+        )
+    }
+
     /// Starts crucible in a window that size and waits for it to finish
     /// drawing.
     fn started(case: &str, columns: u16, rows: u16, vendor: Option<&Vendor>, keyed: bool) -> Self {
@@ -491,6 +556,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: false,
+                cooked: false,
             },
             None,
         )
@@ -507,6 +573,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: false,
+                cooked: false,
             },
             Some(launch),
         )
@@ -549,7 +616,7 @@ impl Watched {
         )
         .expect("a git configuration file");
 
-        let (mut near, inside) = pair(terminal.columns, terminal.rows);
+        let (mut near, inside) = pair(terminal.columns, terminal.rows, terminal.cooked);
         let child = start(&scratch, keyed, terminal, launch, inside);
         if let Some(reply) = terminal.reply {
             near.write_all(reply)
@@ -867,9 +934,18 @@ impl Watched {
     /// being written, as [`Screen::shows`] has it: a read that ends inside a
     /// frame would otherwise hand a case half a box.
     pub(crate) fn catches(&mut self, step: &str, wanted: &str) {
+        self.catches_where(step, &format!("{wanted:?}"), |picture| {
+            picture.contains(wanted)
+        });
+    }
+
+    /// The same, for a screen a piece of text cannot name: reads frames until
+    /// a finished one is a picture `drawn` holds of. `named` says what that
+    /// is when none ever was.
+    pub(crate) fn catches_where(&mut self, step: &str, named: &str, drawn: impl Fn(&str) -> bool) {
         let deadline = Instant::now() + CEILING;
 
-        while !self.screen.shows(wanted) {
+        while !self.screen.shows_where(&drawn) {
             match self.bytes.recv_timeout(QUIET) {
                 Ok(bytes) => self.feed(&bytes),
                 Err(RecvTimeoutError::Timeout) => {}
@@ -883,7 +959,7 @@ impl Watched {
 
             assert!(
                 Instant::now() < deadline,
-                "no {wanted:?} was ever drawn after {step}, in {CEILING:?}{}\n{}",
+                "no {named} was ever drawn after {step}, in {CEILING:?}{}\n{}",
                 if self.screen.is_holding() {
                     " — the frame it is in was never finished"
                 } else {
@@ -891,6 +967,48 @@ impl Watched {
                 },
                 self.picture()
             );
+        }
+    }
+
+    /// Types `keys` and holds what follows to [`Self::never_draws`].
+    pub(crate) fn types_and_never_draws(&mut self, keys: &str, unwanted: &str, held: Duration) {
+        self.terminal
+            .write_all(keys.as_bytes())
+            .expect("keys go to the terminal");
+        self.never_draws(&format!("{keys:?} was typed"), unwanted, held);
+    }
+
+    /// Reads what crucible writes for `held`, failing as soon as `unwanted` is
+    /// on screen, in a finished frame or not: what a key that should leave part
+    /// of the screen alone is held to after `step`.
+    ///
+    /// No frame can say that something will never be drawn, so this watches
+    /// for longer than crucible takes to draw what the key would wrongly have
+    /// done. It waits for neither a byte nor quiet, since a running turn
+    /// redraws on its beat and a key that rightly does nothing draws nothing.
+    pub(crate) fn never_draws(&mut self, step: &str, unwanted: &str, held: Duration) {
+        let ended = Instant::now() + held;
+
+        loop {
+            assert!(
+                !self.picture().contains(unwanted),
+                "{unwanted:?} was drawn after {step}\n{}",
+                self.picture()
+            );
+            let left = ended.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            match self.bytes.recv_timeout(left) {
+                Ok(bytes) => self.feed(&bytes),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!(
+                        "crucible left the terminal while {step}\n{}",
+                        self.picture()
+                    )
+                }
+            }
         }
     }
 
@@ -970,6 +1088,17 @@ impl Watched {
 
         let ended = self.child.wait().expect("crucible ended");
         (ended, String::from_utf8_lossy(&wrote).into_owned())
+    }
+
+    /// Whether the terminal echoes what is typed, and whether it hands over
+    /// whole lines rather than each key: the two modes a shell is left
+    /// unusable without.
+    pub(crate) fn modes(&self) -> (bool, bool) {
+        let mode = termios::tcgetattr(&self.terminal).expect("the terminal has a mode");
+        (
+            mode.local_modes.contains(termios::LocalModes::ECHO),
+            mode.local_modes.contains(termios::LocalModes::ICANON),
+        )
     }
 
     /// Every session log this run left behind, one after another.
@@ -1326,8 +1455,9 @@ impl Drop for Watched {
     }
 }
 
-/// Opens the pair, sets its size, and puts the far side in raw mode.
-fn pair(columns: u16, rows: u16) -> (File, File) {
+/// Opens the pair, sets its size, and puts the far side in raw mode unless
+/// it is to start `cooked`.
+fn pair(columns: u16, rows: u16, cooked: bool) -> (File, File) {
     let terminal = pty::openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)
         .expect("a pseudo terminal");
     pty::grantpt(&terminal).expect("the far side is ours");
@@ -1340,9 +1470,11 @@ fn pair(columns: u16, rows: u16) -> (File, File) {
         .open(OsStr::from_bytes(named.as_bytes()))
         .expect("the far side opens");
 
-    let mut mode = termios::tcgetattr(&inside).expect("the far side has a mode");
-    mode.make_raw();
-    termios::tcsetattr(&inside, OptionalActions::Now, &mode).expect("the far side goes raw");
+    if !cooked {
+        let mut mode = termios::tcgetattr(&inside).expect("the far side has a mode");
+        mode.make_raw();
+        termios::tcsetattr(&inside, OptionalActions::Now, &mode).expect("the far side goes raw");
+    }
     termios::tcsetwinsize(&terminal, size(columns, rows)).expect("a window size");
 
     (File::from(terminal), inside)

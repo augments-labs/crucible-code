@@ -715,7 +715,7 @@ fn ctrl_b_opens_the_running_list_during_a_turn_in_native_mode() {
     window.types_and_catches("\x02", "Still running");
 
     window.assert_never_alternate();
-    insta::assert_snapshot!(window.picture());
+    insta::assert_snapshot!(crate::unclocked(&window.picture()));
 }
 
 // A command's reply in native mode. Fullscreen hangs it under the line that
@@ -922,4 +922,75 @@ fn a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode() {
     // nothing on screen reports a stream cut short.
     assert!(!all.contains("the response ended before"), "{all}");
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn five_waiting_prompts_stand_in_one_panel_in_native_mode() {
+    // As in fullscreen, with no rail. Forty-eight rows, because native mode
+    // holds what stands under the transcript to half the window, and the
+    // panel with three prompts named, the row over it and the box under it
+    // need more than half of forty once the footer folds at forty columns.
+    for (columns, glyphs, drawn) in [
+        (80, "unicode", crate::WAITING_80),
+        (40, "ascii", crate::WAITING_40_ASCII),
+    ] {
+        let vendor = crate::a_turn_still_running_long();
+        let mut window = Watched::allowing_drawn(
+            &format!("native-queue-panel-{columns}"),
+            (columns, 48),
+            &vendor,
+            "bash(*)",
+            (glyphs, "native"),
+        );
+        crate::waiting_behind_a_turn(&mut window, 5);
+
+        crate::draws(&window, drawn);
+        window.assert_never_alternate();
+    }
+}
+
+#[test]
+fn the_queue_sent_now_is_drawn_in_native_mode_as_in_fullscreen() {
+    // As in fullscreen, with no rail, in the rows native mode keeps under the
+    // transcript; the stop and the prompts sent go out with the transcript.
+    for (columns, glyphs) in [(80, "unicode"), (40, "ascii")] {
+        for (key, named, last) in [
+            (crate::CTRL_ENTER, "all", crate::IN_THE_BOX),
+            ("\x13", "highlighted", crate::WAITING[1]),
+        ] {
+            let vendor = crate::a_turn_still_running_long();
+            let mut window = Watched::allowing_drawn(
+                &format!("native-queue-sent-{named}-{columns}"),
+                (columns, 48),
+                &vendor,
+                "bash(*)",
+                (glyphs, "native"),
+            );
+            crate::sent_now(&mut window, glyphs, key, last);
+
+            window.assert_never_alternate();
+            insta::assert_snapshot!(
+                format!("native_queue_sent_{named}_now_in_{glyphs}_at_{columns}"),
+                crate::steadied_picture(&window.picture())
+            );
+        }
+    }
+}
+
+#[test]
+fn a_refused_take_back_says_so_beside_the_title_in_native_mode() {
+    let vendor = crate::a_turn_still_running_long();
+    let mut window = Watched::allowing_drawn(
+        "native-queue-refused",
+        (80, 40),
+        &vendor,
+        "bash(*)",
+        ("ascii", "native"),
+    );
+    crate::waiting_behind_a_turn(&mut window, 5);
+    window.types_and_catches(&crate::a_box_with_no_room(), "[Pasted text");
+
+    window.types_and_catches("\x05", "no room in the box - line stays queued");
+    crate::draws_the_panel(&window, crate::REFUSED_80_ASCII);
+    window.assert_never_alternate();
 }

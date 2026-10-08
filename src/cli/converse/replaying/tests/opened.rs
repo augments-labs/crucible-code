@@ -219,7 +219,8 @@ fn opened(back: &mut PutBack, line: usize) -> String {
             &mut back.renderer,
             Style::plain(),
             &back.kept,
-            &mut standing
+            &mut standing,
+            None,
         )
         .expect("a recording cannot fail"),
         "row {line} opened a view with no room to stand"
@@ -673,7 +674,8 @@ fn ctrl_o_reaches_every_result_the_rows_offer() {
                 &mut back.renderer,
                 Style::plain(),
                 &back.kept,
-                &mut standing
+                &mut standing,
+                None,
             )
             .expect("a recording cannot fail"),
             "the view closed"

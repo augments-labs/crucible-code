@@ -504,7 +504,13 @@ impl Screen {
     /// the held one is closed. Text from a frame still being held is what this
     /// picture has and that terminal does not show yet.
     pub(crate) fn shows(&self, wanted: &str) -> bool {
-        !self.holding && self.picture().contains(wanted)
+        self.shows_where(|picture| picture.contains(wanted))
+    }
+
+    /// The same, for a frame a piece of text cannot name: whether one that has
+    /// finished being written is a picture `drawn` holds of.
+    pub(crate) fn shows_where(&self, drawn: impl Fn(&str) -> bool) -> bool {
+        !self.holding && drawn(&self.picture())
     }
 
     /// The screen, as a picture with the size and the cursor above it.

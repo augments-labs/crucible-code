@@ -270,7 +270,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
             clipboard: &mut None,
             left: &crucible_builtins::Background::new(),
             aside: &Aside::new(),
-            queued: &Prompts::default(),
+            queued: &mut Prompts::default(),
             keys: false,
         },
     )
@@ -1237,6 +1237,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
             counting: "",
             opened_list: &Opened::default(),
             history: Recalled::default(),
+            queued: &Prompts::default(),
         },
         &says,
         Style::plain(),
@@ -1277,6 +1278,7 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
             counting: "",
             opened_list: &Opened::default(),
             history: Recalled::default(),
+            queued: &Prompts::default(),
         },
         &says,
         Style::plain(),
@@ -1924,10 +1926,12 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
     let lines: std::collections::VecDeque<String> = (0..super::super::QUEUED_LINES)
         .map(|at| format!("prompt-{at}"))
         .collect();
-    let mut queued = Prompts {
-        bytes: lines.iter().map(String::len).sum(),
-        lines,
-    };
+    let mut queued = Prompts::default();
+    for line in lines {
+        let mut held = Editor::new();
+        held.put(&line);
+        assert_eq!(queued.accept(&mut held), Retained::Accepted);
+    }
     let steer = crucible_runtime::Steer::new();
     let mut turning = Turning::started(Breakdown::default());
 
@@ -1942,7 +1946,7 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
             editor: &mut editor,
             steer: &steer,
         };
-        let notice = queue(reading, &mut turning, 80, Style::plain());
+        let notice = queue(reading, &mut turning);
         assert_eq!(notice, Some(QUEUED_LIMITED));
     }
 
@@ -1956,10 +1960,42 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
         editor: &mut editor,
         steer: &steer,
     };
-    let notice = queue(reading, &mut turning, 80, Style::plain());
+    let notice = queue(reading, &mut turning);
     assert_eq!(notice, None);
     assert!(editor.is_empty());
     assert_eq!(steer.take(), ["once more"]);
+}
+
+#[test]
+fn a_line_typed_while_the_queue_is_held_back_waits_with_the_rest() {
+    // Ctrl+S sends one line alone and holds the rest back until that turn
+    // ends. A line typed meanwhile waits behind them: said to the turn, it
+    // would join the turn meant to carry one line, ahead of the lines typed
+    // before it.
+    let mut queued = Prompts::default();
+    let steer = crucible_runtime::Steer::new();
+    let mut turning = Turning::started(Breakdown::default());
+    let mut typing = |line: &str, queued: &mut Prompts| {
+        let mut editor = Editor::new();
+        editor.put(line);
+        let reading = queueing::Reading {
+            queue: queued,
+            editor: &mut editor,
+            steer: &steer,
+        };
+        assert_eq!(queue(reading, &mut turning), None);
+    };
+    typing("first", &mut queued);
+    typing("second", &mut queued);
+    assert!(queued.send_now(&steer));
+
+    typing("third", &mut queued);
+
+    assert_eq!(steer.take(), Vec::<String>::new());
+    assert_eq!(
+        queued.waiting_all().collect::<Vec<_>>(),
+        ["first", "second", "third"]
+    );
 }
 
 /// A box holding `said`, told the commands there are, as the prompt draws it.
@@ -2054,6 +2090,168 @@ impl Colourless {
             set,
         }
     }
+}
+
+/// A queue holding `lines`, highlighted on the oldest.
+fn waiting(lines: &[&str]) -> Prompts {
+    let mut queued = Prompts::default();
+    for said in lines {
+        assert_eq!(queued.accept(&mut typed(said)), Retained::Accepted);
+    }
+
+    queued
+}
+
+#[test]
+fn an_arrow_moves_along_a_line_of_several_before_anything_else_takes_it() {
+    // The cursor is on the second of two lines, so the arrow up has a line to
+    // reach, and neither the queue nor the history hears it.
+    let mut editor = Editor::new().multiline();
+    assert_eq!(editor.paste("one\ntwo"), Typed::Changed);
+    let mut queued = waiting(&["first", "second"]);
+    assert!(queued.walk(false));
+    let mut recalling = walking(&["asked before"]);
+
+    assert!(arrowed(
+        true,
+        &mut editor,
+        &mut Opened::default(),
+        &mut recalling,
+        &mut queued
+    ));
+
+    assert_eq!(editor.text(), "one\ntwo");
+    assert_eq!(queued.highlighted(), 1, "the queue's highlight moved");
+    assert_eq!(
+        recalling.place(),
+        Recalled::default(),
+        "the history was walked"
+    );
+}
+
+#[test]
+fn an_open_list_takes_the_arrow_before_the_queue_does() {
+    let mut editor = typed("/");
+    let mut open = listing("/");
+    let first = open.chosen();
+    let mut queued = waiting(&["first", "second"]);
+    let mut recalling = walking(&["asked before"]);
+
+    assert!(arrowed(
+        false,
+        &mut editor,
+        &mut open,
+        &mut recalling,
+        &mut queued
+    ));
+
+    assert_ne!(open.chosen(), first, "the list's mark did not move");
+    assert_eq!(queued.highlighted(), 0, "the queue's highlight moved");
+    assert_eq!(editor.text(), "/");
+    assert_eq!(
+        recalling.place(),
+        Recalled::default(),
+        "the history was walked"
+    );
+}
+
+#[test]
+fn an_arrow_past_either_end_of_the_queue_does_not_reach_the_history() {
+    // The panel's footer names the arrows as its own. A walk that ran off its
+    // end into the history would replace the line in the box.
+    let mut editor = typed("half typed");
+    let mut open = Opened::default();
+    let mut queued = waiting(&["first", "second"]);
+    let mut recalling = walking(&["asked before"]);
+
+    assert!(!arrowed(
+        true,
+        &mut editor,
+        &mut open,
+        &mut recalling,
+        &mut queued
+    ));
+    assert!(arrowed(
+        false,
+        &mut editor,
+        &mut open,
+        &mut recalling,
+        &mut queued
+    ));
+    assert_eq!(queued.highlighted(), 1);
+    assert!(!arrowed(
+        false,
+        &mut editor,
+        &mut open,
+        &mut recalling,
+        &mut queued
+    ));
+
+    assert_eq!(editor.text(), "half typed", "the box was replaced");
+    assert_eq!(
+        recalling.place(),
+        Recalled::default(),
+        "the history was walked"
+    );
+}
+
+#[test]
+fn once_the_queue_is_empty_the_arrow_walks_the_history_again() {
+    let mut editor = Editor::new();
+    let mut queued = Prompts::default();
+    let mut recalling = walking(&["asked before"]);
+
+    assert!(arrowed(
+        true,
+        &mut editor,
+        &mut Opened::default(),
+        &mut recalling,
+        &mut queued
+    ));
+
+    assert_eq!(editor.text(), "asked before");
+}
+
+#[test]
+fn between_turns_the_queue_stands_over_the_plan_as_it_does_under_a_turn() {
+    // The same panel in both places, in the same place: over the plan card,
+    // with the box under them both. A blank parts the plan from the box, since
+    // the panel's own closing blank is above the plan rather than under it.
+    let queued = waiting(&["one", "two"]);
+    let plan = planned(2);
+    let says = settled(Mode::Ask);
+
+    let rows: Vec<String> = over(
+        around(
+            &plan,
+            &Opened::default(),
+            &says,
+            Recalled::default(),
+            &queued,
+        ),
+        80,
+        40,
+        Style::plain(),
+    )
+    .iter()
+    .map(Row::text)
+    .collect();
+
+    let at = |said: &str| {
+        rows.iter()
+            .position(|row| row.contains(said))
+            .unwrap_or_else(|| panic!("no {said:?} in {rows:#?}"))
+    };
+    assert!(at("2 queued") < at("Task 0"), "{rows:#?}");
+    assert_eq!(rows.first().map(String::as_str), Some(""), "{rows:#?}");
+    assert_eq!(rows.last().map(String::as_str), Some(""), "{rows:#?}");
+    assert!(
+        rows.iter()
+            .rev()
+            .nth(1)
+            .is_some_and(|row| row.contains("Task 1")),
+        "the plan does not stand last, over the box: {rows:#?}"
+    );
 }
 
 #[test]

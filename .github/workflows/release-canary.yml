@@ -37,3 +37,18 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/sh/release-container.sh
+
+  # What a Windows user gets from the published release: its own install.ps1
+  # installs it, both names run, and removing what it installed leaves the
+  # directory empty.
+  windows:
+    name: Latest release install and uninstall on Windows
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - shell: pwsh
+        run: scripts/ps1/release-canary.ps1
+      - uses: ./.github/actions/check-clean-worktree

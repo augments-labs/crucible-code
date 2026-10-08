@@ -13,8 +13,19 @@
 //! opened is the caller's [`Reach`], and bytes read from one log are bounded
 //! below. Which directories a session may have been recorded in to be listed
 //! is the caller's [`Roots`].
+//!
+//! [`discovered`] is a third read, for `crucible sessions list`: the same index
+//! and the same headers, and nothing after a header, so it carries no prompt.
+//! Where [`recent`] is decoration and drops whatever it cannot read,
+//! [`discovered`] is an answer somebody asked for, so it counts what it left
+//! out and refuses an index that does not read.
+//!
+//! Both open a log the one way [`opened`] does: without following a link,
+//! without waiting on a pipe, and only where what opened is one ordinary file,
+//! however many hard names reach it. The sessions directory is crucible's, but a name in it is
+//! still a name anything that can write there could have put a link or a pipe
+//! under, and either read runs where nobody asked to wait.
 
-use std::fs::File;
 use std::io::{BufRead as _, BufReader, Read as _};
 use std::path::Path;
 use std::str::FromStr as _;
@@ -22,7 +33,9 @@ use std::time::SystemTime;
 
 use crucible_types::{Message, SessionId};
 
+use super::SessionError;
 use super::index;
+use super::privacy::opened;
 use super::wire;
 
 /// How many logs the first frame may open before the scan gives up.
@@ -89,8 +102,9 @@ impl Roots<'_> {
 /// The first message is the first line after the header, so this is reached
 /// only by a prompt with a pasted file in it. Reading stops there and the
 /// session is left out, rather than the startup path being handed a length
-/// somebody else chose.
-const READ: u64 = 64 * 1024;
+/// somebody else chose. The header `--continue` reads is held to the same
+/// ceiling, so a log this list can read the start of is one it can take too.
+pub(super) const READ: u64 = 64 * 1024;
 
 /// How much of that message is kept.
 ///
@@ -217,6 +231,233 @@ pub fn recent(directory: &Path, roots: Roots<'_>, reach: Reach, wanted: usize) -
     found
 }
 
+/// One session the index names, as far as its header says, and nothing it
+/// recorded after that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Discovered {
+    /// Which session, and so also when it started.
+    id: SessionId,
+    /// The branch its header said the workspace had checked out.
+    branch: Option<Box<str>>,
+    /// How many conversation messages its log holds, as the index counted.
+    messages: usize,
+    /// The title somebody saved for it, where they did.
+    titled: Option<Box<str>>,
+}
+
+impl Discovered {
+    /// Which session it was.
+    #[must_use]
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    /// When it started.
+    #[must_use]
+    pub fn started(&self) -> SystemTime {
+        self.id.started()
+    }
+
+    /// The branch the session began on, where its header says, as the header
+    /// wrote it: not flattened or cut, and so not yet fit for a terminal.
+    #[must_use]
+    pub fn branch(&self) -> Option<&str> {
+        self.branch.as_deref()
+    }
+
+    /// How many conversation messages the index counted for it.
+    #[must_use]
+    pub fn messages(&self) -> usize {
+        self.messages
+    }
+
+    /// The title somebody saved for it, where they did.
+    #[must_use]
+    pub fn title(&self) -> Option<&str> {
+        self.titled.as_deref()
+    }
+}
+
+/// What a listing found, and what it could not say.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Discovery {
+    sessions: Vec<Discovered>,
+    omitted: usize,
+    unreadable: usize,
+    full: bool,
+    unindexed: bool,
+}
+
+impl Discovery {
+    /// The sessions found, newest first.
+    #[must_use]
+    pub fn sessions(&self) -> &[Discovered] {
+        &self.sessions
+    }
+
+    /// How many more were found than were wanted.
+    #[must_use]
+    pub const fn omitted(&self) -> usize {
+        self.omitted
+    }
+
+    /// How many indexed logs had a first line this build could not read.
+    #[must_use]
+    pub const fn unreadable(&self) -> usize {
+        self.unreadable
+    }
+
+    /// Whether the index held as many sessions as it keeps.
+    #[must_use]
+    pub const fn full(&self) -> bool {
+        self.full
+    }
+
+    /// Whether there is a sessions directory with a log in it and no index
+    /// in it yet.
+    #[must_use]
+    pub const fn unindexed(&self) -> bool {
+        self.unindexed
+    }
+}
+
+/// The sessions the index names that were recorded in one of `roots`, newest
+/// first, at most `wanted` of them, with what kept the list from being whole.
+///
+/// What `crucible sessions list` reads, and only that: the index, and each
+/// indexed log's first line, at most 64 KiB of it. Nothing a session
+/// recorded after its header is opened, so no prompt, answer or tool output
+/// can reach a listing, and the title is the one somebody saved or none. No
+/// lock is taken and nothing is written: an older directory with no index is
+/// said to be one, rather than indexed here, and the index is a fixed window of
+/// the newest sessions, so a full one says older sessions may be left out.
+/// Where there is no index, the directory's names are looked at, a bounded
+/// number of them, only to tell one holding a log from one holding none.
+///
+/// A name the index holds with no log beside it is a session starting this
+/// instant, or one removed, and is left out uncounted. A log whose first line
+/// does not read, that this build cannot read, or that is not one ordinary
+/// file — a pipe or a link — is counted rather than listed, since where it was
+/// recorded is not known. A second hard name is no reason to count a log: it
+/// is the same file under another name, and it is listed as one.
+///
+/// # Errors
+///
+/// [`SessionError::Index`] where the index is there and cannot be read: a
+/// listing that went on would say a directory with sessions in it has none.
+pub fn discovered(
+    directory: &Path,
+    roots: Roots<'_>,
+    wanted: usize,
+) -> Result<Discovery, SessionError> {
+    let Some(entries) = index::written(directory, index::ENTRIES)? else {
+        return Ok(Discovery {
+            unindexed: logged(directory),
+            ..Discovery::default()
+        });
+    };
+
+    let mut found = Discovery {
+        sessions: Vec::with_capacity(wanted.min(entries.len())),
+        full: entries.len() >= index::ENTRIES,
+        ..Discovery::default()
+    };
+    for entry in entries {
+        let path = directory.join(format!("{}.{}", entry.id.as_str(), super::SUFFIX));
+        match heading(&path, roots) {
+            Heading::Absent | Heading::Elsewhere => {}
+            Heading::Unreadable => found.unreadable += 1,
+            Heading::Here { branch } if found.sessions.len() < wanted => {
+                found.sessions.push(Discovered {
+                    id: entry.id,
+                    branch,
+                    messages: entry.messages,
+                    titled: entry.title,
+                });
+            }
+            Heading::Here { .. } => found.omitted += 1,
+        }
+    }
+    Ok(found)
+}
+
+/// What one log's first line says about where it belongs.
+enum Heading {
+    /// There is no log by that name.
+    Absent,
+    /// It opened, and its first line is not one this build reads.
+    Unreadable,
+    /// It was recorded somewhere none of the roots names.
+    Elsewhere,
+    /// It was recorded in one of the roots, on this branch where it says.
+    Here { branch: Option<Box<str>> },
+}
+
+/// How many entries of a directory with no index [`logged`] looks at.
+const LOOKED: usize = 1024;
+
+/// Whether a directory with no index holds a session log, so that a list of
+/// none would leave some out.
+///
+/// It stops at the first log, and at [`LOOKED`] entries: a directory that holds
+/// more than that with no log among them, or that cannot be read through, is
+/// taken to hold one, so the list says it may be leaving some out rather than
+/// that there are none.
+fn logged(directory: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return directory.is_dir();
+    };
+    for (looked, entry) in entries.enumerate() {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        if looked >= LOOKED
+            || Path::new(&entry.file_name())
+                .extension()
+                .is_some_and(|suffix| suffix == super::SUFFIX)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The first line of the log at `path`, read no further than [`READ`] bytes.
+///
+/// Opened as [`opened`] opens a log, so the name is looked up once, by the
+/// open, and what is read is what that open settled: nothing asks the name what
+/// it is first, so there is no gap for a pipe or a link to be swapped in.
+fn heading(path: &Path, roots: Roots<'_>) -> Heading {
+    let opened = match opened(path) {
+        Ok(opened) => opened,
+        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Heading::Absent,
+        Err(_) => return Heading::Unreadable,
+    };
+    let mut line = String::new();
+    let read = BufReader::new(opened).take(READ).read_line(&mut line);
+    if read.is_err() || !line.ends_with('\n') {
+        return Heading::Unreadable;
+    }
+    let Some(opening) = wire::opening(line.trim_end()) else {
+        return Heading::Unreadable;
+    };
+    if !roots.admit(Path::new(&opening.workspace)) {
+        Heading::Elsewhere
+    } else if !wire::readable(opening.format) {
+        Heading::Unreadable
+    } else {
+        Heading::Here {
+            // As the header wrote it, bounded by the line it was read from:
+            // whoever shows it escapes it and says where they cut it, which
+            // `single` would do without saying so.
+            branch: opening
+                .branch
+                .filter(|branch| !branch.is_empty())
+                .map(String::into_boxed_str),
+        }
+    }
+}
+
 /// One log, as the session it records, or `None` if it is not one this run can
 /// offer.
 ///
@@ -225,10 +466,13 @@ pub fn recent(directory: &Path, roots: Roots<'_>, reach: Reach, wanted: usize) -
 /// rather than half-read. What is left is the first message, which is the first
 /// thing that was asked — and a log with none, crucible opened and left without
 /// a word typed, is no session to offer under any roots.
+///
+/// Opened as [`opened`] opens a log, and a log it refuses is one fewer row,
+/// as a log that will not open is.
 fn read(path: &Path, roots: Roots<'_>) -> Option<Recorded> {
     let id = SessionId::from_str(path.file_stem()?.to_str()?).ok()?;
 
-    let mut log = BufReader::new(File::open(path).ok()?).take(READ);
+    let mut log = BufReader::new(opened(path).ok()?).take(READ);
     let mut line = String::new();
 
     // A first line the process never finished is a log with nothing whole in

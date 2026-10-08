@@ -32,7 +32,7 @@ use std::fmt;
 use serde_json::Value;
 
 /// What stands in a printed document where a value must not.
-const REDACTED: &str = "<redacted>";
+pub(crate) const REDACTED: &str = "<redacted>";
 
 /// The prefix on every environment variable crucible reads for itself.
 ///
@@ -59,7 +59,9 @@ pub(crate) fn too_late(name: &str) -> bool {
 }
 
 /// A document, as `Debug` may write it: every `env` value replaced, wherever
-/// the block holding it is written.
+/// the block holding it is written, each server's arguments shown as a reader
+/// is shown them, every value an extension was told replaced, and each
+/// provider's `baseUrl` cut to its recipient.
 ///
 /// The block is the environment, so what a user puts in it is whatever the
 /// commands they run need — a token among them, in the two layers that are
@@ -79,6 +81,16 @@ pub(crate) fn too_late(name: &str) -> bool {
 ///
 /// The names stay. A name is what makes a diagnostic worth reading, and it is
 /// already what the refusals in [`crate::error`] are allowed to say.
+///
+/// A server's arguments are the other place its key is written, so each
+/// record's `args` is printed as [`McpServer::shown_args`] shows it. An
+/// extension's `config` holds names crucible cannot read, so it is printed as
+/// an `env` block is, names and no values. A `baseUrl` is printed with the
+/// scheme, host and port it goes to, as the provider's own diagnostics print
+/// it, and without the user and password it would go as or the path and
+/// query a gateway puts a tenant or a token in.
+///
+/// [`McpServer::shown_args`]: crate::settings::McpServer::shown_args
 pub(crate) struct Redacted<'a>(pub(crate) &'a Value);
 
 impl fmt::Debug for Redacted<'_> {
@@ -89,6 +101,9 @@ impl fmt::Debug for Redacted<'_> {
         // document is kilobytes and nothing here is on the turn path.
         let mut shown = self.0.clone();
         redact(&mut shown);
+        crate::settings::mcp::hide_args(&mut shown);
+        crate::settings::hide_extension_settings(&mut shown);
+        crate::settings::hide_base_url_targets(&mut shown);
         shown.fmt(f)
     }
 }

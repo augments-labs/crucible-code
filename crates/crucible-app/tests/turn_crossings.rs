@@ -204,10 +204,9 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 
 /// Every line mentioning `block_on` a shipped file may hold, trimmed, with how
 /// many times that file may hold it, and none of them is reached by a turn: the
-/// runtime owner's documentation of why it is built multi-thread, the six
+/// runtime owner's documentation of why it is built multi-thread, the five
 /// waits made from outside every turn — startup writing what a session picked
-/// up owes before any turn exists, `--sandbox` asking the backend it reports on
-/// before any conversation exists, the drawing thread answering a command,
+/// up owes before any turn exists, the drawing thread answering a command,
 /// taking back what a plan answered, asking the backend the sandbox panel
 /// shows, and joining a turn that has ended — the runner's test helper that drives a turn to its end on a runtime
 /// of the test's own, the two performance probes waiting, on their own main
@@ -245,13 +244,6 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "crates/crucible-app/src/startup.rs",
         "runtime.block_on(conversation.clearings_recorded());",
-        1,
-    ),
-    // `--sandbox`, on the main thread, which writes its report and stops
-    // without assembling a conversation.
-    (
-        "src/cli.rs",
-        "runtime.block_on(crucible_app::sandbox::confinement(&here, &home))",
         1,
     ),
     // The drawing thread, answering a command, taking back what a plan asked

@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use crate::document::{Document, Origin};
 use crate::error::{At, ConfigError};
+use crate::shape::whole;
 
 mod filesystem;
 mod network;
@@ -267,7 +268,7 @@ pub(crate) fn read(
         block
             .get("limits")
             .and_then(|limits| limits.get(key.trim_start_matches("limits.")))
-            .and_then(Value::as_u64)
+            .and_then(whole)
             .map(|value| Limit {
                 value,
                 source: source(key),

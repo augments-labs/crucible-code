@@ -1,22 +1,23 @@
 # Command line
 
-`crucible --help` prints the flags and the subcommands `sandbox`, `config` and
-`help`, under a longer introduction; `crucible -h` prints the same under the
-one-line introduction. Each subcommand has its own help, such as `crucible
+`crucible --help` prints the flags and the subcommands `sandbox`, `config`,
+`doctor`, `auth`, `mcp`, `extensions`, `sessions`, `completion` and `help`,
+under a longer introduction; `crucible -h` prints the same under the one-line
+introduction. Each subcommand has its own help, such as `crucible
 config --help` and `crucible sandbox setup --help`, and `crucible help` and
 `crucible help <command>` print the same pages. `crucible --version` (or `-V`)
 prints `crucible` and the version number on one line, and stops. All of these
 are answered by the parser, before a file is read or anything is started.
 
 Run with nothing after it, `crucible` opens a session in the directory you are
-standing in, as [Run it](../getting-started/getting-started.md#run-it)
+standing in, as [Run it](../getting-started/first-session.md#run-it)
 describes. The flags change what that session is. `--extensions`, `--sandbox`
-and the two subcommands do one thing and stop, and none of them can be
+and the subcommands do one thing and stop, and none of them can be
 combined with a session flag. crucible takes no prompt on the command line: a
 bare word, as in `crucible "fix the bug"`, is refused as `unrecognized
 subcommand 'fix the bug'` and the run ends 2. The installer also links `cru`
 to the same executable, so everything here holds for `cru`
-([Install it](../getting-started/getting-started.md#install-it)).
+([Install it](../getting-started/first-session.md#install-it)).
 
 Flags, session files and configuration are unstable for the whole 0.x line.
 
@@ -51,8 +52,9 @@ Resume this session with:
   crucible --resume 019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1
 ```
 
-and the one `/resume` lists inside a session
-([Picking one by name](../sessions/sessions.md#picking-one-by-name)). An id
+the one `/resume` lists inside a session
+([Picking one by name](../sessions/sessions.md#picking-one-by-name)), and the
+one `crucible sessions list` prints beside each session. An id
 nothing here was recorded under, or a word that is not an id at all, is refused
 by name rather than matched to the nearest thing:
 
@@ -161,7 +163,78 @@ Each of these answers and stops. No session is started, no credential is
 opened, and no extension, server or command is run. `--extensions` and
 `--sandbox` take no other flag, and neither takes the other.
 
-### `--extensions`
+### `mcp list`
+
+Lists every MCP server written down under `mcp.servers` in your home
+configuration file, a line each, and stops. No server is started, no program
+is looked up and no variable is read, so the list says what each server would
+be started with and never whether it would start; that is known only once a
+run names it with `--with-mcp`, which is also the only way one is started. The
+first line counts the servers, as `no MCP servers written down in`, `1 MCP
+server written down in` or `<n> MCP servers written down in` followed by the
+file. Each line after it gives the server's name, its command, how many
+arguments it is given, how many variables it sets and takes from your
+environment, and `required` where it is. Only the home file is read, since a
+checkout cannot write a server down.
+
+```
+1 MCP server written down in /home/you/.crucible/config.json
+none is started unless a run names it with --with-mcp, and none was started to write this, so whether each would start is not known
+
+  docs  docs-mcp, 3 arguments, 1 variable set, 1 variable taken from your environment
+```
+
+### `mcp get <NAME>`
+
+Says how the server written down as `<NAME>` would be started, and stops: its
+command, arguments, directory, variables, how long crucible waits for it,
+how often it is restarted and whether a run that names it fails without it.
+Nothing is started for this either. A secret is left out wherever crucible can
+tell a record holds one: a variable set under `env` is shown by its name with
+`<redacted>` for its value, a variable under `envFrom` by its name and the one
+it is taken from, and each argument is shown as written, cut and escaped as
+every string in both lists is, or as `<redacted>` in its place, never in part.
+An argument is hidden when a word in it, a run of letters, digits, `-` and `_`
+in any case, holds `token`, `key`, `secret`, `pass`, `pwd`, `auth`, `bearer`,
+`credential`, `cookie`, `session`, `private`, `signature` or `jwt`, has `pat`
+as a part of its own (`--api-key=…`, `Password=…`, `"apiKey"`, `?token=…`), or
+is the scheme word `Bearer`, `Basic` or `Token` (`Basic dXNlcjpwYXNz`). It is
+hidden when it holds an `@` anywhere after a `:`, as `user:password@host` and a
+URL with a user do; when a URL in it has a `?` or `#` after its `://`, or a `:`
+after its host followed by anything but a port number; and when a run of it is
+shaped like a token. The argument after one hidden for such a word or scheme
+is hidden too, however that one ends (`--api-key`, `Authorization:`,
+`X-Api-Key`, `Bearer`, `https://host'--api-key`). A value after a flag whose
+name says nothing about it, such as `-p`, is shown. More is hidden than is
+secret, on purpose: `https://registry.example.test/@scope/pkg`, `--tokenizer`
+and `--mode=basic` are hidden although none holds one, and so is the path
+after `--tokenizer=fast`.
+
+```
+  command    docs-mcp
+  arguments  <redacted>
+             <redacted>
+             https://mcp.example.test/sse
+  env        DOCS_TOKEN=<redacted>
+  envFrom    DOCS_KEY from EXAMPLE_DOCS_KEY
+```
+
+A name nothing is written down under is refused with the names there are, and
+the run ends 1:
+
+```
+crucible: no mcp server called dosc; this configuration has docs, notes
+```
+
+In both lists, every string from the file is cut to 512 bytes, ending `… (cut)`
+where there was more, and a control character, line break or Unicode format
+character in it is written as its escape. The refusal names every server
+whole, with a control character, line break, line or paragraph separator or
+Unicode format character other than the zero-width joiner and non-joiner
+written as its escape, so the line stays one.
+`mcp` on its own, without `list` or `get`, is a usage error.
+
+### `extensions list`, `--extensions`
 
 Lists what is installed in `~/.crucible/extensions` (or `extensions` under the
 directory `CRUCIBLE_CODE_HOME` names, when it is set), with what each manifest
@@ -186,24 +259,124 @@ identifier another directory already declares, or the extensions directory
 itself was over the limit. An extensions directory that itself could not be
 opened counts as `no extensions in` and is listed here too. What each
 description holds, how to allow one, and the limit are under
-[Extensions](../configuration/configuration.md#extensions).
+[Extensions](../configuration/configuration.md#extensions). Every name, path
+and reason in the listing that came from a directory or a manifest is written
+with what a terminal would act on as its escape. `--extensions` prints the
+same listing and ends the same way, and `extensions` on its own is a usage
+error.
+
+### `sessions list [--json]`
+
+Lists the sessions recorded for the directory crucible was started in, newest
+first, and stops. It reads the session index and the first line of each
+session's log, which says when the session started, how many messages it held
+when it was last indexed, the branch it was started on and the title it was
+given; nothing anybody wrote in a session is read, and no session is opened,
+resumed, locked or written to, so a list can be taken while another crucible
+has one open.
+
+```bash
+crucible sessions list
+crucible sessions list --json
+```
+
+The first line counts the sessions, as `no sessions recorded for`, `1 session
+recorded for` or `<n> sessions recorded for` followed by the directory. Each
+session is one line: its id, when it started, how many messages it holds, the
+branch where there was one, and its title or `untitled`. Pass the id to
+[`--resume`](#-r---resume-session_id) to pick that one up.
+
+```
+2 sessions recorded for /home/you/api
+  019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1  3h ago  12 messages  on main  fix the parser
+  01985321-04bb-7c2a-9e15-a1d03b7c6e42  yesterday  4 messages  untitled
+
+`crucible --resume ID` carries one on
+```
+
+At most 128 sessions are listed. The list says, after the sessions, when it is
+not the whole of what was recorded: how many older sessions were left out, how
+many logs could not be read, that the index already holds as many sessions as
+it keeps so older ones may be missing, or that no index has been written yet,
+which the next session started or continued here writes. A title or branch
+is written with what a terminal would act on as its escape, and one longer
+than 16 KiB is cut there, ends `… (cut)` and leaves the list incomplete.
+
+`--json` prints one JSON document on one line to standard output instead,
+with `format_version` 1, `kind` `sessions`, `status` and a `truncated` flag.
+`status` is `complete` when the list is the whole of what was recorded,
+`incomplete` when it is not, and `failed` when no list could be made. Beside
+it are `sessions`, each with its `id`, `started` (milliseconds since the
+epoch), `messages`, and `branch` and `title` where there are ones, each as
+`text` with its own `truncated` flag; `omitted`, the older sessions left out;
+`unreadable`, the logs that could not be read; `index_full`; and
+`unindexed`. When the list cannot be made, for example because the index is
+not one crucible wrote, the reason is one line beginning `crucible: ` on
+standard error and the run ends 1; with `--json` a document with `status`
+`failed` and a `problem` that names the step that stopped, and no file and
+nothing the index held, is written to standard output as well. `sessions` on
+its own, without `list`, is a usage error.
 
 ### `--sandbox`
 
-Prints the confinement a command in the current directory would run under,
-and stops: which backend enforces it, what that backend can and cannot hold,
-the reach and ceilings a command would get, and anything given up along the
-way. No command is run to produce it, and every path in it but the workspace
-root is a digest, so it can be pasted into an issue whole. The first line is
-`sandbox enabled in <root>` or `sandbox disabled in <root>`; the rest is
-explained under [Reading the report](../security/sandboxing.md#reading-the-report).
+The same report as `crucible sandbox inspect`, as text, and the same exit.
 
-A backend that answers but will not take this workspace's policy prints its
-matrix and then `no command could be run here` with the reason under it, and
-no backend answering prints `no sandbox backend answered` with its reason.
-Both are the answer, and the run ends 0. The report is written even when
-shutting the backend down afterwards fails; the run then ends 1 with that
-failure on standard error.
+### `sandbox inspect [--json]`
+
+Prints the confinement a command in the current directory would run under,
+and stops: which backend would enforce it, what that backend can and cannot
+hold, the reach and ceilings a command would get, and why it would be refused.
+Nothing is started to produce it, not the backend, not its helper, not a
+command, and no file is written. Every path in it but the workspace root is a
+digest, so it can be pasted into an issue whole.
+
+```bash
+crucible sandbox inspect
+crucible sandbox inspect --json
+```
+
+The first line is `sandbox enabled in <root>` or `sandbox disabled in <root>`,
+with a control character, line break, line or paragraph separator or Unicode
+format character other than the zero-width joiner and non-joiner in the
+directory's path written as its escape, so the path stays on that line.
+`mode` says whether project configuration requires confinement. The
+backend is the first one a confined command's search would reach that passes
+the same trust checks, without starting it; where crucible read the backend's
+file it prints the file's `sha256` as `build`. A backend's version that only starting it could
+tell is printed `unverified`, with the reason, and whatever else only starting
+something could check is listed under `not checked, since checking would start
+something:`. The rest is explained under
+[Reading the report](../security/sandboxing.md#reading-the-report).
+
+Each feature is `enforced`, `observed` or `unsupported`, and each ceiling is
+printed beside the claim it rests on. A backend that was found but will not
+take this workspace's policy prints its matrix, what was asked for, and then
+`no command could be run here` with the reason under it. No backend found
+prints `no sandbox backend was found` with its reason. Both are the answer,
+and the run ends 0.
+
+`--json` prints one JSON document on one line to standard output instead,
+with `format_version` 1, `kind` `sandbox-inspection`, `status`, and a
+`truncated` flag. `status` is `ready` when a backend was found and would take
+the policy, `refused` when it would not and `refusal` says why, `unavailable`
+when none was found, and `failed` when no report could be made. Beside it are
+`enabled`, `mode` (`optional` or `required`), the `requested` and `effective`
+plans, `backend` with its `name`, `provenance`, `version` (`stated` with a
+`name`, or `unverified` with `why`), optional `build` and `capabilities`, and
+`unchecked`, `refusal` and `confined`. `confined` is never true for the
+`compatibility` backend, which runs a command as an ordinary subprocess. Each
+plan carries its `policy` and `commands` digests, the `cwd` digest, its
+`roots` (with `omitted` for any past the list's limit), `hidden`, `network`,
+`ceilings` (each with `amount`, `nanos`, `unit` and `claim`), `staged`,
+`persistent` and `snapshots`.
+
+When the report cannot be made, for example because there is no home
+directory to read configuration from, the reason is one line beginning
+`crucible: ` on standard error and the run ends 1; with `--json` a document
+with `status` `failed` and the `problem` is written to standard output as
+well. The `problem` names the step that stopped, such as reading
+configuration, and no file; the line on standard error names the file, where
+there is one.
 
 ### `config check [--json]`
 
@@ -211,7 +384,8 @@ Reads the three configuration files the way a startup would, resolves them the
 way it would, and stops. The report opens with `configuration valid` or
 `configuration invalid`, names each file as `user config`, `project config` or
 `project-local config` with `absent`, `valid` or `invalid` after it, lists
-each failure (at most four) and ends with `schema:` and the schema's id
+each failure (at most four), cut at 4096 bytes and ending `… (cut)` where there
+was more, and ends with `schema:` and the schema's id
 ([Checking without starting](../configuration/configuration.md#checking-without-starting)).
 
 ```bash
@@ -220,15 +394,232 @@ crucible config check --json
 ```
 
 It exits 0 when everything holds and 1 otherwise, saying the first failure
-again on standard error. `--json` prints one JSON document to standard output
+again on standard error, cut at 16 KiB and ending `… (cut)` where it is
+longer. `--json` prints one JSON document to standard output
 instead, with `format_version` 1, `kind` `config-check`, `status`, `files`,
-`failures`, `schema` and a `truncated` flag. `config` on its own, without
-`check`, is a usage error.
+`failures`, `schema` and a `truncated` flag. `status` is `valid` or
+`invalid`, and `failed` when no file could be read at all, because the
+directory it was started in could not be read, is not one crucible can work
+in, or crucible's home could not be found: then there is no text report, the
+reason is one line beginning `crucible: ` on standard error and the run ends
+1, and with `--json` a document with `status` `failed`, empty `files` and
+`failures`, and a `problem` that names the step that stopped as `text` with
+its own `truncated` flag, and no path, is written to standard output as well.
+In either report, a control
+character, line break, line or paragraph separator or Unicode format character
+a file chose is written as its escape rather than sent to the terminal; the
+text report keeps the zero-width joiner and non-joiner, which shape a word.
+`config` on its own, without `check`, is a usage error.
 
 The check reads each value's shape and the file it may come from. It does not
 ask whether a provider name is one this build serves or whether a `baseUrl` is
 an address crucible will send a key to: an `http` address that is not loopback
 passes here, and the next start refuses it.
+
+### `doctor [--json]`
+
+Checks whether this machine is ready to run a conversation, and stops. It is
+offline: nothing is sent to a provider, no account login is renewed, no
+backend, extension or server is started, and no file is written, not even to
+tighten one it reports as open. A stored credential is never used, renewed
+or shown: the store is read only for the names its credentials are held
+under, and no reason names a path or a value from the environment, so the
+report can be pasted into an issue whole.
+
+```bash
+crucible doctor
+crucible doctor --json
+```
+
+The report opens with `crucible doctor: healthy`, `warnings` or `failed`,
+then one line per check: its status (`ok`, `warning`, `failed` or
+`unavailable`), its id and the reason, with what to do about it on the line
+under any check that is not `ok`. A reason or remedy longer than 16 KiB is cut
+there and ends in `[cut]`, and a report with one says so on the line after
+the first. The checks are always these, in this order, and an id never
+changes:
+
+| Id | What it looks at |
+| --- | --- |
+| `home` | Whether crucible's home directory was found, from `HOME` or `CRUCIBLE_CODE_HOME`. |
+| `workspace` | Whether the directory crucible was started in exists and can be worked in. |
+| `config` | Whether the user, project and project-local configuration files parse and resolve, file by file, as `config check` reads them. |
+| `private-state` | Whether others can read or write the home directory, the sessions directory, the user configuration file or the credential store. Not checked on Windows. |
+| `credential-store` | Whether the stored credentials can be used, and how many there are. |
+| `credentials` | Which provider would take its credential from where: an environment variable, the store or an account login, settled as a start settles it. |
+| `provider` | Which provider and model a start would open, and whether one could be asked anything. Whether the vendor accepts the credential is not known, since nothing is sent. |
+| `sandbox-backend` | Whether a backend that confines commands was found here, observed the way `sandbox inspect` observes it, without starting it. |
+| `sandbox-policy` | Whether the policy this directory's configuration asks for would confine a command, as `sandbox inspect` settles it. |
+| `extension-discovery` | Whether the extensions directory could be read, and how many extensions are installed. |
+| `extension-trust` | How many extensions may run, are not turned on, are turned on without a digest that matches, or need another crucible. |
+| `mcp` | How many MCP servers are declared, and how many required. None is started, so whether each starts is not checked. |
+
+A check that rests on one which failed is `unavailable` and says what it
+rests on: with no configuration that reads, `credentials`, `provider`,
+`sandbox-policy` and `mcp` are, while the home, the store, the backend and
+the extensions are still looked at. `extension-trust` is also `unavailable`
+when the user configuration file does not read, since what was decided about
+each extension is kept there; the extensions are still discovered.
+`crucible --extensions`, `config check` and `sandbox inspect` say more about
+the checks that point to them.
+
+It exits 0 when every check is `ok` or `unavailable`, 1 when any is a
+`warning` and none `failed`, and 2 when any `failed`. A problem it finds is
+part of the report, not a failure of the run, so standard error stays empty.
+`--json` prints one JSON document on one line to standard output instead,
+with `format_version` 1, `kind` `doctor`, `status` (`healthy`, `warnings` or
+`failed`), a `truncated` flag and `checks`, each with its `id`, `status`,
+`reason` and, for anything but `ok`, a `remedy`.
+
+### `completion SHELL`
+
+Writes a completion script for `SHELL`, one of `bash`, `zsh`, `fish`,
+`powershell` or `elvish`, to standard output, and stops. The script is made
+from the command line of the crucible that runs it, so it completes every
+subcommand and flag of this release. A script written to a file stays as it
+was written: write it again after an upgrade. The command reads no
+configuration, opens no terminal, starts nothing and makes no connection, so it
+is safe to run from a shell's start-up file. A shell it has no script for is
+refused with the list of those it has, exit 2, as any other unknown value is.
+Standard output closing early, as when piped to `head`, ends it quietly with
+exit 0.
+
+Each shell reads the script from a different place. Either write it to a file
+once, which is quick to load, or run the command from the start-up file, which
+is always current and costs one process at every start. A directory below
+that does not exist yet is made first, as with `mkdir -p ~/.zfunc`:
+
+| Shell | Install |
+| --- | --- |
+| bash | `crucible completion bash > ~/.local/share/bash-completion/completions/crucible`, which the `bash-completion` package loads on demand, or `source <(crucible completion bash)` in `~/.bashrc` |
+| zsh | `crucible completion zsh > ~/.zfunc/_crucible` in a directory you own, with `fpath=(~/.zfunc $fpath)` in `~/.zshrc` before `compinit` runs, then start a new shell |
+| fish | `crucible completion fish > ~/.config/fish/completions/crucible.fish` |
+| powershell | `crucible completion powershell \| Out-String \| Invoke-Expression` in your `$PROFILE` |
+| elvish | `crucible completion elvish > ~/.config/elvish/lib/crucible-completion.elv`, then `use crucible-completion` in `~/.config/elvish/rc.elv` |
+
+The script completes the command it was written for, `crucible`. The `cru`
+link the installer makes is a different name to the shell, and completes
+nothing until you tell the shell so: in bash, `complete -F _crucible cru` in
+`~/.bashrc` after `source <(crucible completion bash)`, since `_crucible` does
+not exist before the script is loaded.
+
+## Credentials from the command line
+
+`crucible auth` says, stores and removes the credentials a launch signs
+providers in with, outside any session. Each command takes a provider, such as
+`anthropic`, or the name a `/login` row stores its credential under, such as
+`moonshot@kimi.ai` ([Providers](../providers/providers.md) lists the rows).
+A word that names neither is refused with the names this build serves, and the
+run ends 1. A key is never an argument: a word an `auth` command does not take
+is refused without being repeated, in case it was one, and the run ends 2.
+
+### `auth status [PROVIDER] [--json]`
+
+Says which credential a launch would sign each provider in with, or the one
+named, by the rule a start uses: a deliberately signed-in account, then the
+provider's variable, then a stored API key. It is offline: nothing is sent, no
+account login is renewed, the store's lock is not taken and nothing is
+written. The store is read for the names and lapse times its credentials are
+held under and never for a value, and a variable is only asked whether it is
+set.
+
+```bash
+crucible auth status
+crucible auth status openai --json
+```
+
+Each provider is `configured` (a launch would sign it in), `absent` (a launch
+would find nothing), `expired` (its stored account login's access has lapsed;
+a launch renews it where the account still allows, which only the vendor can
+say) or `unverified` (the store or the user configuration file could not be
+read, or an account login holds no lapse time, so it could not be settled).
+Whether a vendor accepts any credential is never checked, and the report says
+so.
+
+It exits 0 when every provider was settled, and 1 when one could not be, when
+the provider named has nothing to sign in with, or when a name was too long to
+show whole and the report is incomplete. `--json` prints one JSON
+document on one line to standard output instead of the report, with
+`format_version` 1, `kind` `auth-status`, `status` (`complete`, `incomplete`
+or `failed`), `acceptance` `unchecked`, a `problem` sentence or null, a
+`truncated` flag, and `providers`, each with its `provider`, `state`,
+`source` (`environment`, `stored-key`, `account` or null), the `variable` it
+reads a key from with `variable_set` and `variable_configured` (whether
+`apiKeyEnv` named it), `base_url_configured`, what is `stored` for it by
+`name`, `kind` and `expires_at` (seconds since the Unix epoch, or null), and a
+`reason`. In either report, a control character, line break or Unicode format
+character in a name the configuration or the store gave is written as its
+escape rather than sent to the terminal; in the document that is a JSON `\u`
+escape, which reads back as the same character. A run that settled nothing, such as one naming a provider nobody
+serves, still writes a `failed` document, and says why on standard error.
+
+### `auth login PROVIDER [--api-key-stdin]`
+
+Stores a key, or signs in to an account, through the route `/login` takes,
+and says under which name it was stored.
+
+```bash
+printf '%s\n' "$KEY" | crucible auth login anthropic --api-key-stdin
+crucible auth login openai
+```
+
+`--api-key-stdin` reads one key from a pipe: at most 16 KiB, with the
+whitespace around it set aside, and a longer one is refused rather than cut.
+Standard input that is a terminal is refused, since it would show the key as
+it is typed. The key is checked against its row the way the key box checks it
+and written under the row's stored name, replacing the provider's other stored
+credential as `/login` does. Nothing is sent to check it. Where the provider's
+variable is set, the line after says a launch uses the variable first, and
+where a vendor may use what it is sent, that crucible asks before the first
+request.
+
+Without the flag, in a terminal, a key row asks for the key at a prompt that
+does not show it, and an account row signs in the way `/login` does: OpenAI's
+by browser or by device code, Kimi's by device code, with the page to visit and
+any code written to standard error and the browser opened where it can be. A
+control character, line break or Unicode format character the vendor put in
+either, but the zero-width joiner and non-joiner, is written as its escape, so
+neither can add a line to what is asked.
+Where the provider's `baseUrl` is set, the line after says a launch does not
+use the account while it is. A name that is both, such as `openai`, asks
+which. A sign-in whose vendor may use what it is sent shows the vendor's words
+and asks first, and nothing reaches the vendor before a yes. With no terminal to ask on, the run says what to run
+instead and ends 1 rather than waiting. The prompt that hides a key needs
+standard output on the terminal as well, so a key row, or a name that is both,
+with its output redirected is refused the same way before anything is asked;
+an account sign-in needs standard input and standard error alone. On Linux,
+macOS and FreeBSD, a termination or a hang-up while that prompt waits puts the
+terminal back as it found it, showing what is typed again, before the run ends
+by that signal; nothing is stored.
+
+A login that changes which credential the provider is stored with takes
+`providers.<name>.fast` out of the user configuration file, as `/login` does
+([When it goes back to standard](../providers/fast.md#when-it-goes-back-to-standard)).
+It exits 0 once the credential is stored and 1 when nothing was: a key that
+does not fit, a sign-in that failed or was declined, a store that could not be
+written, or a user configuration file that could not be read, since what goes
+with a credential is settled from it. A login never signs another provider in.
+
+### `auth logout PROVIDER`
+
+Takes every credential crucible stored for the provider out of its store, in
+one write under the lock a renewal holds, and leaves every other provider and
+every name this build has no row for as they were. A row's name signs out the
+whole provider: `auth logout moonshot@kimi.ai` takes out every credential
+stored for `moonshot`, a key under the bare `moonshot` row among them, not that
+row's alone. The yes given to a vendor's terms for that sign-in goes with it,
+and where a credential went, so does `providers.<name>.fast` in the user
+configuration file, as for `/logout`.
+
+```bash
+crucible auth logout anthropic
+```
+
+A variable that still holds a key is the shell's, not crucible's, and is never
+touched: the run names it and says to unset it there. It exits 0 once the
+provider's credentials are out of the store, or when it held none, and 1 when
+the store could not be changed, such as while another crucible is writing it,
+or the user configuration file could not be read; in either case nothing was.
 
 ## Windows sandbox maintenance
 
@@ -241,7 +632,7 @@ described under
 Both run inside `crucible.exe` itself; the `crucible-sandbox-broker.exe` that
 a confined command later starts through is not needed for them, and where it
 comes from is under
-[Install it](../getting-started/getting-started.md#install-it). On Linux and
+[Install it](../getting-started/first-session.md#install-it). On Linux and
 macOS the broker is installed beside `crucible` and there is nothing to run
 ([Turning it on](../security/sandboxing.md#turning-it-on)).
 
@@ -274,7 +665,8 @@ the answer too:
 crucible: Windows sandbox maintenance failed: the native Windows sandbox is available only on Windows
 ```
 
-`sandbox` on its own, without `setup` or `uninstall`, is a usage error.
+`sandbox` on its own, without `inspect`, `setup` or `uninstall`, is a usage
+error.
 
 ## Running without a terminal
 
@@ -283,7 +675,7 @@ to type in: each line of input is one prompt, taken in order, and the run ends
 at the end of the input. A blank line is skipped, and a line whose first word
 is a slash followed by letters, such as `/effort high`, is taken as a command,
 as it would be in the box, rather than sent. What the output looks like is under
-[Run it](../getting-started/getting-started.md#run-it), and a permission
+[Run it](../getting-started/first-session.md#run-it), and a permission
 question with nobody to answer it is a refusal
 ([When nobody can answer](../permissions/modes.md#when-nobody-can-answer)).
 Three things end such a run early, each with one line on standard error and
@@ -318,10 +710,10 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, and `--sandbox` whatever the backend answered, both end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why. `config check` on a configuration that does not hold ends here. |
-| 2 | The command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error. `--help` and `--version` are the parser's too, and end 0. |
-| 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
+| 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
+| 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, and the prompt `auth login` hides a key at, or a wait for a key between turns at the prompt or in a panel, is put away with the terminal handed back as it was found, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |
 
 Flags that exclude each other are refused with a line saying one `cannot be
 used with` the other: `--continue` with `--resume`, `--extensions` or

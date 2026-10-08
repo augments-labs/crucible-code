@@ -922,6 +922,11 @@ pub trait SandboxProcess: Send {
     /// it hides those values in what it decodes; only crucible's own proxy
     /// credential is masked there, where the command has one. See
     /// [`SandboxCredentialProjection`].
+    ///
+    /// [`SandboxRead::End`] means the reader was given everything the command
+    /// wrote, short of what a [`SandboxRead::Limited`] said was dropped. A
+    /// backend that must stop serving the stream before its end answers the
+    /// next read with an error instead.
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>>;
 
     /// Takes stderr once, masked as [`Self::take_stdout`] is for a command
@@ -1129,7 +1134,11 @@ pub trait SandboxSession: Send {
 
 /// Backend-neutral confinement service.
 pub trait SandboxService: Send + Sync {
-    /// Exact identity/capabilities, probed without materialization or spawn.
+    /// Exact identity/capabilities, as the backend proves them on this host.
+    ///
+    /// No manifest is materialized and no workload runs, but proving them may
+    /// start processes of the backend's own and read its setup state, so code
+    /// that must start nothing does not call this.
     ///
     /// # Errors
     ///

@@ -786,6 +786,28 @@ fn failures_are_bounded_and_say_where_they_were_cut() {
 }
 
 #[test]
+fn the_text_report_marks_a_sentence_it_cut() {
+    // The document says `truncated`; the text report has only the line, and a
+    // sentence cut mid-word with nothing after it reads as a whole one. A key
+    // longer than the ceiling is quoted by its refusal, so the sentence about
+    // it runs past the cut.
+    let scratch = crate::sample::Scratch::new("check-text-cut");
+    let key = "k".repeat(crate::MAX_FAILURE_BYTES);
+    scratch.write(".crucible/config.json", &format!(r#"{{"{key}": 1}}"#));
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    let cut = report.failures().first().expect("the one refusal");
+    assert!(cut.truncated(), "got {:?}", report.failures());
+    let human = report.human();
+    let line = human
+        .lines()
+        .find(|line| line.contains(&key[..64]))
+        .expect("the cut sentence is on a line of its own");
+    assert!(line.ends_with("… (cut)"), "got {line:?}");
+}
+
+#[test]
 fn the_json_report_is_one_complete_envelope() {
     // The common contract: one document with an explicit version, a kind, a
     // status, bounded data and explicit incompleteness — parseable by the
@@ -961,4 +983,33 @@ fn neither_workspace_file_can_say_yes_to_a_route_for_the_user() {
         assert!(said.contains("home directory"), "got {said}");
     }
     mine(r#"{"contentUse": {"accepted": ["key:google", "api.moonshot.ai"]}}"#).unwrap();
+}
+
+#[test]
+fn a_check_that_read_no_file_is_one_failed_envelope_naming_no_path() {
+    for step in [
+        crate::Unchecked::Here,
+        crate::Unchecked::Workspace,
+        crate::Unchecked::Home,
+    ] {
+        let text = step.json();
+        let (line, rest) = text.split_once('\n').expect("one line ending in a newline");
+        assert_eq!(rest, "", "got {text:?}");
+        let envelope: serde_json::Value = serde_json::from_str(line).expect("one JSON document");
+        assert_eq!(
+            envelope,
+            serde_json::json!({
+                "failures": [],
+                "files": [],
+                "format_version": 1,
+                "kind": "config-check",
+                "problem": {"text": step.said(), "truncated": false},
+                "schema": {"id": crate::shape::schema::ID},
+                "status": "failed",
+                "truncated": false,
+            })
+        );
+        assert!(step.said().len() <= crate::MAX_FAILURE_BYTES);
+        assert!(!step.said().contains('/'), "{step:?} names a path");
+    }
 }

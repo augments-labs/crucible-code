@@ -5,9 +5,12 @@ on:
   push:
     branches: [main, dev]
 
+# A newer push to a pull request replaces its run. A push to main or dev is
+# never cancelled: it is the only run that tests every platform, so each merged
+# commit keeps its own.
 concurrency:
   group: blocking-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -29,14 +32,50 @@ jobs:
     name: Python CI
     uses: ./.github/workflows/python-ci.yml
 
+  # No test that runs only on macOS or Windows reads a document, so a pull
+  # request that changes nothing else leaves those platforms to the run its
+  # merge makes, and Linux still runs every test. scripts/sh/docs-only.sh says
+  # which files count. A pull request's checkout is its merge into the base,
+  # so the merge's first parent is what it changes from.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs-only: ${{ steps.classify.outputs.docs-only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == pull_request ]]; then
+            docs_only=$(git diff --name-only --no-renames -z HEAD^1 HEAD | scripts/sh/docs-only.sh)
+          else
+            docs_only=false
+          fi
+          echo "docs-only: $docs_only"
+          echo "docs-only=$docs_only" >>"$GITHUB_OUTPUT"
+
   rust-ci:
     name: Rust CI
+    needs: changes
     uses: ./.github/workflows/rust-ci.yml
+    # A pull request is tested on the platforms rust-ci.yml names for it; the
+    # push its merge makes is tested on all of them.
+    with:
+      all-platforms: ${{ github.event_name == 'push' }}
+      docs-only: ${{ needs.changes.outputs.docs-only == 'true' }}
 
   required:
     name: CI required
     if: ${{ always() }}
     needs:
+      - changes
       - dependency-policy
       - performance
       - repo-checks
@@ -47,6 +86,7 @@ jobs:
     steps:
       - name: Require successful checks
         env:
+          CHANGES: ${{ needs.changes.result }}
           DEPENDENCY_POLICY: ${{ needs.dependency-policy.result }}
           PERFORMANCE: ${{ needs.performance.result }}
           REPO_CHECKS: ${{ needs.repo-checks.result }}
@@ -57,6 +97,7 @@ jobs:
 
           failed=0
           for result in \
+            "changes=$CHANGES" \
             "dependency-policy=$DEPENDENCY_POLICY" \
             "performance=$PERFORMANCE" \
             "repo-checks=$REPO_CHECKS" \

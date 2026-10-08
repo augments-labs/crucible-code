@@ -168,11 +168,13 @@ pub(super) fn heard(arrived: Pressed) -> Heard {
         | Pressed::Plan
         | Pressed::Pasted(_)
         | Pressed::Clicked { .. }
-        | Pressed::Queue
+        | Pressed::Remove
         | Pressed::Copy
         | Pressed::PasteImage
         | Pressed::Rename
         | Pressed::All
+        | Pressed::SendAll
+        | Pressed::SendNow
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

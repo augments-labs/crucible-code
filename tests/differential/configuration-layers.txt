@@ -39,8 +39,8 @@ Settings {
         "extensions": Object {
             "acme.reviewer": Object {
                 "config": Object {
-                    "audience": String("team"),
-                    "verbosity": String("brief"),
+                    "audience": String("<redacted>"),
+                    "verbosity": String("<redacted>"),
                 },
                 "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
                 "enabled": Bool(true),
@@ -58,7 +58,7 @@ Settings {
         "providers": Object {
             "anthropic": Object {
                 "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
-                "baseUrl": String("https://user.example/v1"),
+                "baseUrl": String("https://user.example/[redacted]"),
                 "effort": String("high"),
                 "model": String("user-model"),
             },
@@ -172,8 +172,8 @@ Settings {
         "extensions": Object {
             "acme.reviewer": Object {
                 "config": Object {
-                    "audience": String("team"),
-                    "verbosity": String("brief"),
+                    "audience": String("<redacted>"),
+                    "verbosity": String("<redacted>"),
                 },
                 "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
                 "enabled": Bool(true),
@@ -192,7 +192,7 @@ Settings {
         "providers": Object {
             "anthropic": Object {
                 "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
-                "baseUrl": String("https://user.example/v1"),
+                "baseUrl": String("https://user.example/[redacted]"),
                 "effort": String("high"),
                 "model": String("project-model"),
             },
@@ -316,8 +316,8 @@ Settings {
         "extensions": Object {
             "acme.reviewer": Object {
                 "config": Object {
-                    "audience": String("team"),
-                    "verbosity": String("brief"),
+                    "audience": String("<redacted>"),
+                    "verbosity": String("<redacted>"),
                 },
                 "digest": String("sha256:0101010101010101010101010101010101010101010101010101010101010101"),
                 "enabled": Bool(true),
@@ -339,7 +339,7 @@ Settings {
         "providers": Object {
             "anthropic": Object {
                 "apiKeyEnv": String("EXAMPLE_KEY_VARIABLE"),
-                "baseUrl": String("https://user.example/v1"),
+                "baseUrl": String("https://user.example/[redacted]"),
                 "effort": String("low"),
                 "model": String("project-model"),
             },

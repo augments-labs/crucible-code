@@ -585,6 +585,9 @@ fn a_read_only_command_ends_while_another_publishes() {
         policy,
         SandboxManifest::empty(),
     );
+    // Held as a writer holds it: another test process's writer would otherwise
+    // be refused as concurrent while this one holds the lock.
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
     let publishing = held_publication(&sample);
 
     let finished = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -649,6 +652,69 @@ fn a_writer_prepared_while_a_publication_will_not_end_is_refused_rather_than_wai
         .expect("a writer is refused while another publication holds the lock");
     assert!(refused.contains("concurrency"), "{refused}");
     assert!(!sample.root().join("after.txt").exists());
+}
+
+#[test]
+fn another_test_process_publishes() {
+    // A helper: in an ordinary run it does nothing.
+    if !super::transaction::tests::started_by_another_test_process() {
+        return;
+    }
+    let sample = Sample::new("sandbox-another-test-process-publishes");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let publishing = held_publication(&sample);
+    super::transaction::tests::held_by_another_test_process();
+    drop(publishing);
+}
+
+#[test]
+fn a_writer_waits_its_turn_behind_a_publication_another_test_process_holds() {
+    // Two `cargo test` runs of one checkout share this user's publication
+    // lock, and a test of one holding it past a preparation's patience had a
+    // writer of the other refused as concurrent: the sandbox tests failed by
+    // the dozen, the setuid test among them, when four ran at once.
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let other = super::transaction::tests::AnotherTestProcess::holding(
+        "linux::publication_tests::another_test_process_publishes",
+    );
+    let sample = Sample::new("sandbox-writer-behind-another-test-process");
+    let writing = request(&sample, SandboxManifest::empty());
+    let (told, hears) = std::sync::mpsc::channel();
+    let writer = thread::spawn(move || {
+        let _serial =
+            super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+        let outcome = (|| {
+            let mut session = crucible_runtime::answered!(service.prepare(writing))
+                .map_err(|problem| problem.to_string())?;
+            crucible_runtime::answered!(session.materialize())
+                .map_err(|problem| problem.to_string())?;
+            let mut process = crucible_runtime::answered!(
+                session.start(command("printf 'after\\n' > after.txt"))
+            )
+            .map_err(|problem| problem.to_string())?;
+            let status = ended_within(process.as_mut(), HUNG);
+            crucible_runtime::answered!(process.stop()).map_err(|problem| problem.to_string())?;
+            Ok::<_, String>(status)
+        })();
+        told.send(outcome)
+            .expect("the test hears how the writer went");
+    });
+    // Longer than a preparation waits for the lock before refusing.
+    let early = hears.recv_timeout(Duration::from_secs(3));
+    other.let_go();
+    let outcome = early
+        .or_else(|_| hears.recv_timeout(super::transaction::tests::OTHER_TEST_PROCESSES))
+        .expect("the writer answers once the other publication is let go");
+    writer.join().expect("the writer thread");
+    let status = outcome.expect("a writer waits out another test process's publication");
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
+        "after\n"
+    );
 }
 
 #[test]
@@ -1963,5 +2029,79 @@ fn a_limit_seen_after_the_final_check_rolls_back_before_publication() {
         !lifecycles.contains(&SandboxLifecycle::Published),
         "{lifecycles:?}"
     );
+    nothing_left_of(sandbox);
+}
+
+#[test]
+fn output_still_in_the_pipe_when_the_ending_seals_reaches_the_reader_whole() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-output-at-the-seal");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let sandbox = writer.id();
+    let (reached, reached_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::sync_channel(1);
+    let _gate = FinalCheckGateGuard {
+        sandbox,
+        release: Some(release.clone()),
+    };
+    super::projection::bounded::install_final_check_gate(sandbox, reached, release_rx);
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    // Well under a pipe's buffer, so all of it is still unread when the
+    // command ends.
+    let mut process = crucible_runtime::answered!(session.start(command(
+        "i=0; while [ $i -lt 400 ]; do printf '%049d\\n' $i; i=$((i + 1)); done"
+    )))
+    .expect("started command");
+    let mut stdout = process.take_stdout().expect("stdout");
+    let handoff = Instant::now() + HUNG;
+    while !super::projection::bounded::final_check_gate_taken() {
+        assert!(Instant::now() < handoff, "the ending was not handed off");
+        match process.try_wait() {
+            Ok(Some(status)) => panic!("the ending settled before its final check: {status}"),
+            Ok(None) => {}
+            Err(problem) => panic!("the ending failed before its final check: {problem}"),
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    reached_rx
+        .recv_timeout(HUNG)
+        .expect("the worker did not reach its final check");
+
+    // The ending goes on to its seal while nothing has been read yet. A reader
+    // that comes to the pipe a moment later is still given what is in it.
+    release
+        .send(())
+        .expect("the worker was released from its final check");
+    thread::sleep(Duration::from_millis(50));
+    let mut output = Vec::new();
+    let deadline = Instant::now() + HUNG;
+    loop {
+        let mut buffer = [0_u8; 512];
+        match stdout.read_ready(&mut buffer).expect("read output") {
+            SandboxRead::Bytes(read) => {
+                output.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+            }
+            SandboxRead::Limited { .. } => panic!("no output ceiling was set"),
+            SandboxRead::Pending => thread::sleep(Duration::from_millis(1)),
+            SandboxRead::End => break,
+        }
+        assert!(Instant::now() < deadline, "the output never ended");
+    }
+    let status = ended_within(process.as_mut(), HUNG);
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
+
+    assert!(status.success(), "{status}");
+    let mut expected = String::new();
+    for line in 0..400 {
+        std::fmt::Write::write_fmt(&mut expected, format_args!("{line:049}\n"))
+            .expect("a line is written");
+    }
+    assert_eq!(output.len(), expected.len(), "the output was cut short");
+    assert_eq!(String::from_utf8(output).expect("utf8"), expected);
     nothing_left_of(sandbox);
 }

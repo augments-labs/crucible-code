@@ -1617,6 +1617,13 @@ mod placed;
 /// Which session `--continue` takes when old and new names share a directory.
 mod latest;
 
+/// What a resume answers a call with that was started and never finished.
+mod started;
+
+/// Which names in the sessions directory are read, and what a link or a pipe
+/// under one costs.
+mod ordinary;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {

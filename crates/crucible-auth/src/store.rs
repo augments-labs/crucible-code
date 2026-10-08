@@ -8,6 +8,9 @@
 //! before it knows whether it needs one, so every shape the file could be in —
 //! absent, truncated, half-written, written by a version that does not exist
 //! yet — resolves to a list of keys and at most one sentence, never to a stop.
+//! Every such read protects the store before it looks, which is itself a
+//! write; the one read that is not is [`Store::inventory`], which reports what
+//! is held, by name, as it finds it.
 //!
 //! Writing is the same three steps every time: take the lock, read what is
 //! there, rename a sibling temporary over the target. The lock is what stops
@@ -256,6 +259,73 @@ impl Store {
             .collect())
     }
 
+    /// What the store holds, by name, and whether others could read it,
+    /// found without changing a thing.
+    ///
+    /// Every other read here protects the store before it looks, which is a
+    /// write: it makes the directory, tightens the file and says it did. A
+    /// report about whether the store is private has to see it as it is, so
+    /// this takes no lock, makes no directory, tightens nothing and follows no
+    /// link, and keeps the names it read, and the time each account login
+    /// lapses, and no key or token. What could not be read is one sentence
+    /// that names the store by its file name alone.
+    #[must_use]
+    pub fn inventory(&self) -> Inventory {
+        let mut stock = Inventory {
+            names: self.names.clone(),
+            held: BTreeSet::new(),
+            lapses: BTreeMap::new(),
+            present: true,
+            exposed: None,
+            trouble: None,
+        };
+        let file = match crucible_privacy::open_read(&self.path) {
+            Ok(file) => file,
+            Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => {
+                stock.present = false;
+                return stock;
+            }
+            Err(problem) => {
+                stock.trouble = Some(format!("{FILE} could not be opened: {problem}").into());
+                return stock;
+            }
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            stock.exposed = file
+                .metadata()
+                .ok()
+                .map(|metadata| metadata.permissions().mode() & 0o077 != 0);
+        }
+
+        let mut bytes = Vec::new();
+        let said = match file.take((MAX_STORE + 1) as u64).read_to_end(&mut bytes) {
+            Err(problem) => Some(format!("{FILE} could not be read: {problem}")),
+            Ok(_) if bytes.len() > MAX_STORE => Some(format!(
+                "{FILE} is larger than {MAX_STORE} bytes, so no stored credential is used"
+            )),
+            Ok(_) => match String::from_utf8(bytes) {
+                Err(_) => Some(format!("{FILE} is not text")),
+                Ok(text) => match document::parse(&text) {
+                    Ok(document) => {
+                        stock.held = held_in(&document);
+                        stock.lapses = document
+                            .subscriptions
+                            .iter()
+                            .map(|(name, tokens)| (name.clone(), tokens.times().0))
+                            .collect();
+                        None
+                    }
+                    Err(problem) => Some(problem.to_string()),
+                },
+            },
+        };
+        stock.trouble = said.map(String::into_boxed_str);
+        stock
+    }
+
     /// Writes `key` under `name`, a row's stored name, replacing one already
     /// there.
     ///
@@ -345,16 +415,32 @@ impl Store {
     /// Every name this build writes the provider's credential under goes, so a
     /// provider left holding two by a roll back is left holding none.
     pub fn forget(&self, provider: &str) -> Result<bool, AuthError> {
-        let mut had = false;
+        Ok(!self.forgotten(provider)?.is_empty())
+    }
+
+    /// [`Store::forget`], saying by map and name what went: nothing where the
+    /// provider held nothing, and never a name this build does not write the
+    /// provider's credential under.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] as [`Store::keep`].
+    ///
+    /// It is one write under the lock a renewal holds while it asks for its
+    /// rotation, so a renewal running when this is called finishes, and is
+    /// then taken out with the rest, rather than writing its rotation back
+    /// after this went.
+    pub fn forgotten(&self, provider: &str) -> Result<Vec<Held>, AuthError> {
+        let mut went = Vec::new();
         let names = self.names.clone();
         self.change(|document| {
             for name in names.of(provider) {
-                had |= !document.take(name, None).is_empty();
+                went.extend(document.take(name, None));
             }
-            had
+            !went.is_empty()
         })?;
 
-        Ok(had)
+        Ok(went)
     }
 
     /// The read-modify-write, under the lock, once.
@@ -737,16 +823,111 @@ impl StoredCredentials {
             .store
             .as_ref()
             .map_or_else(Names::default, |store| store.names.clone());
-        names.of(provider).into_iter().find_map(|name| {
-            if self.subscriptions.contains_key(name) {
-                Some(Held::new(Kind::Account, name))
-            } else if self.keys.contains_key(name) {
-                Some(Held::new(Kind::Key, name))
-            } else {
-                None
-            }
+        serving(&names, provider, |held| match held.kind {
+            Kind::Account => self.subscriptions.contains_key(&held.name),
+            Kind::Key => self.keys.contains_key(&held.name),
         })
     }
+}
+
+/// What a store holds by name, and whether others could read it, as
+/// [`Store::inventory`] found it without changing it.
+///
+/// No key or token is in here: only the map each credential sits in, the
+/// name it is under, which is what a `/login` row is called, and when each
+/// account login's access lapses.
+pub struct Inventory {
+    /// The names this build writes each provider's credential under.
+    names: Names,
+    /// Every credential the store holds, by map and name.
+    held: BTreeSet<Held>,
+    /// When the access of each account login lapses, in seconds since the
+    /// Unix epoch, by name.
+    lapses: BTreeMap<String, u64>,
+    /// Whether there is a store at all.
+    present: bool,
+    /// Whether anyone but its owner may read or write the file, where that
+    /// was looked at: on Unix, and of a store that opened.
+    exposed: Option<bool>,
+    /// What could not be read, in a sentence naming no path.
+    trouble: Option<Box<str>>,
+}
+
+impl Inventory {
+    /// Whether there is a store, readable or not.
+    #[must_use]
+    pub fn present(&self) -> bool {
+        self.present
+    }
+
+    /// How many credentials it holds; none where it could not be read.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.held.len()
+    }
+
+    /// The one credential `provider` is served by, and the name it is under,
+    /// chosen as [`StoredCredentials::held`] chooses it.
+    #[must_use]
+    pub fn held(&self, provider: &str) -> Option<Held> {
+        serving(&self.names, provider, |held| self.held.contains(held))
+    }
+
+    /// Whether it holds a credential in `kind`'s map under `name`.
+    #[must_use]
+    pub fn holds(&self, kind: Kind, name: &str) -> bool {
+        self.held.contains(&Held::new(kind, name))
+    }
+
+    /// When the access of the account login under `name` lapses, in seconds
+    /// since the Unix epoch: `None` where no account login is under it.
+    ///
+    /// The time the store says, and no more: a login past it is renewed at
+    /// its next use where its account still allows it, which only asking the
+    /// vendor could tell.
+    #[must_use]
+    pub fn lapses(&self, name: &str) -> Option<u64> {
+        self.lapses.get(name).copied()
+    }
+
+    /// Whether anyone but its owner may read or write the file: `None` where
+    /// that was not looked at, because there is no store, it did not open, or
+    /// this platform says it with something other than a mode.
+    #[must_use]
+    pub fn exposed(&self) -> Option<bool> {
+        self.exposed
+    }
+
+    /// What could not be read, once, naming the store by its file name.
+    #[must_use]
+    pub fn trouble(&self) -> Option<&str> {
+        self.trouble.as_deref()
+    }
+}
+
+/// Written by hand, to say plainly that it holds names and nothing else.
+impl fmt::Debug for Inventory {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Inventory")
+            .field("held", &self.held)
+            .field("lapses", &self.lapses)
+            .field("present", &self.present)
+            .field("exposed", &self.exposed)
+            .field("trouble", &self.trouble)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The one credential `provider` is served by among those `holds` says are
+/// held: under the names this build writes for it only, the bare name first,
+/// and an account before a key under the same name.
+fn serving(names: &Names, provider: &str, holds: impl Fn(&Held) -> bool) -> Option<Held> {
+    names.of(provider).into_iter().find_map(|name| {
+        [Kind::Account, Kind::Key]
+            .into_iter()
+            .map(|kind| Held::new(kind, name))
+            .find(|held| holds(held))
+    })
 }
 
 /// Written by hand: the derived one would print every key it holds.

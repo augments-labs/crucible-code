@@ -3,9 +3,9 @@
 Every key and mouse action the terminal interface answers, grouped by where
 you are when you press it. A key means one thing at the prompt and can mean
 another inside a panel, so each section below is one place. The prose version
-of most of this is in [Run it](../getting-started/getting-started.md#run-it);
+of most of this is in [Run it](../getting-started/first-session.md#run-it);
 this page is the list. Slash commands are not keys: they are listed under
-[Commands](../getting-started/getting-started.md#commands).
+[Commands](../getting-started/first-session.md#commands).
 
 ## What holds everywhere
 
@@ -19,7 +19,9 @@ this page is the list. Slash commands are not keys: they are listed under
   keys distinctly. Crucible asks for that spelling when it starts, a terminal
   without it discards the request, and there the press arrives as a plain
   <kbd>Enter</kbd>. <kbd>Alt-Enter</kbd> and <kbd>Ctrl+J</kbd> need nothing
-  asked for.
+  asked for. <kbd>Ctrl+Enter</kbd> is the same: VTE terminals such as GNOME
+  Terminal, macOS Terminal, and tmux without `extended-keys` send it as a plain
+  <kbd>Enter</kbd>, and there it does what <kbd>Enter</kbd> does.
 - A mark in any list stops at each end. It never wraps round.
 - The mouse is reported to crucible for the whole session. Hold
   <kbd>Shift</kbd> while you drag to hand the pointer back to your terminal's
@@ -79,12 +81,13 @@ the terminal to copy`.
 | <kbd>←</kbd>, <kbd>→</kbd> | One character. |
 | <kbd>Ctrl+←</kbd>, <kbd>Ctrl+→</kbd>, <kbd>Alt-←</kbd>, <kbd>Alt-→</kbd>, <kbd>Alt-B</kbd>, <kbd>Alt-F</kbd> | One word. A word is a run of anything that is not whitespace, so a path is one word. |
 | <kbd>Home</kbd>, <kbd>End</kbd> | The start or the end of the cursor's line. |
-| <kbd>↑</kbd>, <kbd>↓</kbd> | To the line above or below, keeping the column. A line ends at a newline, not at the edge of the window, so they do not move between the rows of a paragraph that has wrapped. On the first or last line they walk the command list if one is open, and the history otherwise, where <kbd>↓</kbd> needs a walk already open. |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | To the line above or below, keeping the column. A line ends at a newline, not at the edge of the window, so they do not move between the rows of a paragraph that has wrapped. On the first or last line they walk the command list if one is open, the [queue](#the-queue) while prompts wait in it, and the history otherwise, where <kbd>↓</kbd> needs a walk already open. |
 | Click in the box | Puts the cursor where you pointed. |
 
 ### History
 
-<kbd>↑</kbd> on the first line of the box, with no list open, walks back
+<kbd>↑</kbd> on the first line of the box, with no list open and no prompt
+waiting in [the queue](#the-queue), walks back
 through the prompts sent from this directory, newest first, and keeps what it
 interrupted. The box need not be empty. <kbd>↓</kbd> walks forward again, and
 one step past the newest puts that text back. The top border of the box says
@@ -92,7 +95,7 @@ where you are, such as `history 80/100`. Any edit ends the walk and leaves the
 text yours; moving the cursor does not. Each directory keeps at most its last
 hundred prompts between sessions, out of 512 kept across every directory, and a
 blank prompt or one longer than 1024 bytes is never kept. [Run
-it](../getting-started/getting-started.md#run-it) tells the longer story.
+it](../getting-started/first-session.md#run-it) tells the longer story.
 
 ### The command list
 
@@ -106,7 +109,7 @@ many more there are, `↓ 2 more`; once <kbd>↓</kbd> walks the mark past the
 last one shown, the list moves with it and a `↑ N more` row stands over it.
 Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 <kbd>↓</kbd> still move its unseen mark. The commands themselves are under
-[Commands](../getting-started/getting-started.md#commands).
+[Commands](../getting-started/first-session.md#commands).
 
 ### Other keys at the prompt
 
@@ -116,9 +119,11 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. While a turn runs it stands the list only when the turn has no command to leave in the background and one or more commands are left running: see [While a turn runs](#while-a-turn-runs). |
 | <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
-| <kbd>Ctrl+Q</kbd> | Stands the prompts left queued behind a turn that stopped on a used-up plan. See [The queue](#the-queue). Nothing while none are waiting. |
 | <kbd>Esc</kbd> | Closes the command list, keeping the line. Nothing otherwise. |
-| <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
+| <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
+| <kbd>Ctrl+Enter</kbd> | Does what <kbd>Enter</kbd> does. |
+| <kbd>Ctrl+S</kbd> | Sends the highlighted prompt of [the queue](#the-queue) alone, and the rest stay queued. Nothing while none are waiting. |
+| <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
 
 ## While a turn runs
@@ -131,19 +136,21 @@ wheel. These differ:
 | Key | What it does |
 | --- | --- |
 | <kbd>Esc</kbd> | Closes the command list where one is open. Otherwise asks the turn to stop. The row above the box reads `interrupting` until it has. A search or a walk stopped this way answers with what it found: see [Stopping one](../tools/searching.md#stopping-one). |
-| <kbd>Enter</kbd> | Queues the prompt for the running turn. Up to 64 prompts and 1 MiB of text can wait; past either bound the prompt stays in the box and the row says `typed-ahead prompts are limited to 64 lines and 1 MiB`. A prompt that is a command is run or refused instead: see [A command typed while a turn runs](../getting-started/getting-started.md#a-command-typed-while-a-turn-runs). |
+| <kbd>Enter</kbd> | Queues the prompt for the running turn. Up to 64 prompts and 1 MiB of text can wait; past either bound the prompt stays in the box and the row says `typed-ahead prompts are limited to 64 lines and 1 MiB`. A prompt that is a command is run or refused instead: see [A command typed while a turn runs](../getting-started/first-session.md#a-command-typed-while-a-turn-runs). |
 | <kbd>Shift-Tab</kbd> | Steps the mode for the turn that starts next, and the row under the box says which. The running turn keeps the mode it began under. |
 | <kbd>Ctrl+C</kbd> | Clears the box. When it is already empty it offers to leave as at the prompt, and the second press within two seconds stops the turn and ends the session. |
 | <kbd>Ctrl+D</kbd> | Nothing. |
 | <kbd>Ctrl+B</kbd> | Leaves the running command in the background, where it can be, including in the seconds before its row offering `(ctrl+b to background)` is drawn ([`output.pinAfterSeconds`](../configuration/configuration.md#output)). See [Leaving one running](../tools/commands.md#leaving-one-running). Where there is no such command and one or more commands are left running, it stands their `Still running` list, as a click on their count under the box does. Nothing otherwise. |
-| <kbd>Ctrl+Q</kbd> | Stands the prompts waiting in the queue. Nothing while it is empty. |
 | <kbd>Ctrl+O</kbd> | Stands the cut results under the tail of the answer, which goes on arriving above them. |
-| <kbd>Ctrl+E</kbd>, <kbd>Tab</kbd> | Nothing. |
+| <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
+| <kbd>Ctrl+Enter</kbd>, <kbd>Ctrl+S</kbd> | Stop the turn and send [the queue](#the-queue) now: all of it with the line in the box last, or the highlighted prompt alone. Each prompt is sent as the line it was typed as. |
+| <kbd>Tab</kbd> | Nothing. |
 
-While the <kbd>Ctrl+O</kbd> view, the queue or the command list stands over a
-running turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its
-keys are under [Results cut short](#results-cut-short), [The command
-list](#the-command-list) and [The queue](#the-queue).
+While the <kbd>Ctrl+O</kbd> view or the command list stands over a running
+turn, <kbd>Esc</kbd> closes it rather than stopping the turn. Its keys are
+under [Results cut short](#results-cut-short) and [The command
+list](#the-command-list). The queue has nothing to close: <kbd>Esc</kbd> stops
+the turn and leaves the prompts waiting as they are.
 
 ## Reading the conversation
 
@@ -158,7 +165,7 @@ list](#the-command-list) and [The queue](#the-queue).
 | Drag on the scroll rail | Scrolls the transcript with the pointer, holding the thumb where you took it; at the foot it follows the newest line again. |
 
 [Moving through the transcript](../sessions/sessions.md#moving-through-the-transcript)
-describes the scroll rail, and [Run it](../getting-started/getting-started.md#run-it)
+describes the scroll rail, and [Run it](../getting-started/first-session.md#run-it)
 the drag.
 
 ## Answering a permission question
@@ -261,7 +268,7 @@ Typed while a turn runs, the shelf stands with an empty rung strip, and
 `esc to go back`. `Yes` holds the model for the turn that starts next; `No`,
 <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> go back to the shelf. See
 [A command typed while a turn
-runs](../getting-started/getting-started.md#a-command-typed-while-a-turn-runs).
+runs](../getting-started/first-session.md#a-command-typed-while-a-turn-runs).
 
 ### `/effort`
 
@@ -318,7 +325,7 @@ it was. Typed while a turn runs, it stands over the turn.
 <kbd>Enter</kbd> takes what is marked. The specimen is redrawn from the marks
 on every frame, so leaving with <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or
 <kbd>Ctrl+D</kbd> changes nothing.
-[Commands](../getting-started/getting-started.md#commands) describes the two
+[Commands](../getting-started/first-session.md#commands) describes the two
 lists.
 
 ### `/sandbox`
@@ -443,16 +450,27 @@ With one row of room the view gives it to the transcript and closes.
 
 ### The queue
 
-<kbd>Ctrl+Q</kbd> while a turn runs stands the prompts waiting behind it.
-While the view stands the turn takes none of them, and closing it releases
-them all at once. Between turns it reaches the prompts left queued behind a
-turn that stopped on a used-up plan, which wait over the box in the same panel
-until you send a prompt; closing the view leaves them waiting there.
+The prompts waiting behind a running turn stand in one panel over the box
+whenever any are waiting: a title counting them, up to three of them a blank
+row apart with one highlighted, and a footer naming the keys. Between turns the
+same panel holds the prompts left queued behind a turn that stopped on a
+used-up plan, until you send a prompt. You go on typing into the box under it;
+the panel only adds these keys:
 
 | Key | What it does |
 | --- | --- |
-| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. |
-| <kbd>e</kbd>, <kbd>x</kbd> | Takes the marked prompt back into the box, cursor after it, where it can be edited or sent again. When the queue is then empty the view closes with it. A prompt too long to go in beside what the box already holds (1 MiB together) stays queued and marked, and the box is left as it was. The footer names <kbd>e</kbd>. |
-| <kbd>d</kbd>, <kbd>Delete</kbd> | Deletes the marked prompt without taking it back; the box is left as it was. When the queue is then empty the view closes with it. |
-| <kbd>Esc</kbd>, <kbd>Ctrl+Q</kbd> | Closes it. |
-| Anything else | Nothing while it stands, <kbd>Ctrl+C</kbd> included. |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the highlight, once the line in the box has no row above or below to move to and no command list is open. While prompts wait they do not reach the history. The three rows shown follow the highlight. |
+| <kbd>Ctrl+E</kbd> | Takes the highlighted prompt out of the queue and into the box at the cursor, where it can be edited or sent again. A prompt too long to go in beside what the box already holds (1 MiB together) stays queued and highlighted, and the panel says `no room in the box · line stays queued` until the next key. On an approval prompt it opens the explanation instead. |
+| <kbd>Ctrl+X</kbd> | Deletes the highlighted prompt; the box is left as it was. |
+| <kbd>Ctrl+Enter</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends every waiting prompt, oldest first, with the line in the box last, as the next turn, each as the line it was typed as. The panel goes and the box is left empty. With nothing waiting it stops the turn and sends the line in the box; with the box empty too it does nothing. A line in the box past the queue's bound stays there, the row says why, and the turn goes on; one that is a command is run or refused as <kbd>Enter</kbd> runs it. Between turns it is <kbd>Enter</kbd>. |
+| <kbd>Ctrl+S</kbd> | Stops the turn as <kbd>Esc</kbd> does and sends the highlighted prompt alone as the next turn. The rest stay queued in order behind it, to be sent together when it ends, with the highlight on the prompt that followed; the line in the box stays in the box. Between turns it sends the highlighted prompt. Nothing while none are waiting, or once the turn has taken the highlighted one. |
+
+After <kbd>Ctrl+E</kbd> or <kbd>Ctrl+X</kbd>, the highlight stays where it
+was, on the prompt that followed, and the panel goes when the last prompt does.
+A prompt queued later goes to the end and leaves the highlight where it is.
+
+Neither <kbd>Ctrl+Enter</kbd> nor <kbd>Ctrl+S</kbd> asks first: each does in
+one press what <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd> and <kbd>Enter</kbd> already
+do. Otherwise nothing here holds
+the queue: the running turn takes every waiting prompt at its next step,
+whichever is highlighted, and the panel goes with them.

@@ -889,7 +889,8 @@ pub(super) struct ProcessPlan {
     pub(super) sandbox: SandboxId,
     pub(super) invocation: SandboxInvocationMode,
     pub(super) call_result_key: Option<CallResultKey>,
-    /// Writers in one test process run one at a time, for as long as each runs.
+    /// Writers under test run one at a time, in this process and across the
+    /// test processes of this checkout, for as long as each runs.
     #[cfg(test)]
     pub(super) serial: Option<transaction::TestSerialLease>,
 }
@@ -1589,7 +1590,9 @@ impl Ending {
         #[cfg(test)]
         bounded::hold_final_check(self.sandbox);
         // The handoff check above is not the boundary: seal every output read
-        // before publication; a seal timeout discards rather than publishing.
+        // before publication, once the readers have had their bounded while to
+        // reach their pipes' ends; a read still in flight past the bound
+        // discards rather than publishing.
         match self.output_boundary.seal() {
             Ok(true) => {
                 drop(admission);

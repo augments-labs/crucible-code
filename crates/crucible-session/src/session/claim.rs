@@ -68,9 +68,10 @@ pub(super) enum Claimed {
 ///
 /// # Errors
 ///
-/// When the mark beside the log cannot be made. That is not one of the three
-/// answers above and must not be read as one: the lock was never reached, so
-/// nothing was asked about the log and nothing was learned about it. Read as
+/// When the mark beside the log cannot be made, a link or a pipe in its place
+/// among the reasons. That is not one of the three answers above and must not
+/// be read as one: the lock was never reached, so nothing was asked about the
+/// log and nothing was learned about it. Read as
 /// [`Claimed::Lockless`] — the answer it most resembles, being the other one
 /// with no claim in it — a directory that had gone read-only would take the
 /// guard away with nothing said, which is the failure the guard exists for.
@@ -97,11 +98,14 @@ pub(super) fn claim(log: &Path) -> Result<Claimed, io::Error> {
 ///
 /// # Errors
 ///
-/// When the mark beside the log cannot be made. A lock the filesystem cannot
-/// take is not an error, for the reason [`claim`] gives: this sits on the path
-/// every start and every resume walks, so refusing there would refuse all of
-/// them for good, and what the missing guard costs is two simultaneous starts
-/// racing one bounded index replacement rather than anything in a log.
+/// When the mark beside the log cannot be made, a link or a pipe in its place
+/// among the reasons: neither is a lock this process holds, and one taken
+/// through a link would guard a file outside the directory rather than this
+/// one. A lock the filesystem cannot take is not an error, for the reason
+/// [`claim`] gives: this sits on the path every start and every resume walks,
+/// so refusing there would refuse all of them for good, and what the missing
+/// guard costs is two simultaneous starts racing one bounded index replacement
+/// rather than anything in a log.
 pub(super) fn exclusive(log: &Path) -> Result<Claim, io::Error> {
     let held = privacy::mark(&beside(log))?;
     drop(held.lock());

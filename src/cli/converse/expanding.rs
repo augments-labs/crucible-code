@@ -22,9 +22,12 @@
 //! its own until it is closed. While a turn runs it stands under the tail
 //! instead, in the rows the box has: results go on arriving above it, every
 //! frame draws it again underneath them, and the turn never reaches down into
-//! it. The keys are the same either way and so is the picture, which is the
-//! point — a reader pressing Ctrl+O is not asked to know which of the two they
-//! are in, and a view opened under a turn is still open when the turn ends.
+//! it. The keys are the same either way and so is the view's own picture,
+//! which is the point — a reader pressing Ctrl+O is not asked to know which of
+//! the two they are in, and a view opened under a turn is still open when the
+//! turn ends. What a turn adds is what the box had over it: the row saying the
+//! turn is running, which is the one that says how to stop it, kept over the
+//! view's rule out of the view's own rows.
 //!
 //! What it stands over is what had been cut when it opened. A turn writing
 //! underneath it goes on cutting results, and letting those in would slide the
@@ -181,7 +184,7 @@ impl Standing {
 
             // Not this one's. A line, a turn nobody typed and the end of a
             // session are the loop's.
-            Asked::Said(_) | Asked::Woke(_) | Asked::Ended | Asked::Untyped | Asked::Queue => {
+            Asked::Said(_) | Asked::Woke(_) | Asked::Ended | Asked::Untyped => {
                 return false;
             }
         }
@@ -278,6 +281,13 @@ pub(super) fn stand<T: Terminal>(
 /// the view closes it here rather than standing its chrome with no text under
 /// it — the same answer the region gives between turns.
 ///
+/// `working` is the row saying the turn is running, which the box stands over
+/// itself and the view keeps in the box's place: over its rule, with a blank
+/// parting it from the transcript as the box has it. Both come out of the
+/// view's rows, and both are the first to give way: where the view would show
+/// no row of results with them there, it stands at its full height without
+/// them.
+///
 /// # Errors
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on.
@@ -286,6 +296,7 @@ pub(super) fn under<T: Terminal>(
     style: Style,
     kept: &Kept,
     standing: &mut Standing,
+    working: Option<Row>,
 ) -> Result<bool, Fatal> {
     let Standing::Open(view) = standing else {
         return Ok(false);
@@ -297,19 +308,58 @@ pub(super) fn under<T: Terminal>(
     // said now has nowhere at all to appear. How much what stands here may have
     // is the renderer's to say, as it is for the view between turns.
     let room = renderer.room().saturating_sub(1);
-    let rows = laying(kept, view, style.glyphs(), renderer.columns(), room);
-
-    let Some(row) = rows.len().checked_sub(1) else {
+    let columns = renderer.columns();
+    let (blank, rows) = laying_under_a_turn(room, working, |rows| {
+        laying(kept, view, style.glyphs(), columns, rows)
+    });
+    if rows.is_empty() {
         *standing = Standing::Closed;
         return Ok(false);
-    };
+    }
+    let row = blank.iter().len() + rows.len().saturating_sub(1);
 
     // On the view's last row rather than up in the tail, which is where the box
     // parks it too: the cursor sits at the bottom of whatever is standing, and
     // a cursor left in the transcript above reads as a place text is about to
     // appear.
-    renderer.under(&rows, Some(Caret { row, column: 0 }), style.palette())?;
+    renderer.instead(
+        blank.as_slice(),
+        &rows,
+        Some(Caret { row, column: 0 }),
+        style.palette(),
+    )?;
     Ok(true)
+}
+
+/// The view laid in `room` rows under a running turn: the blank parting the
+/// working row from the transcript, and the rows under it, the working row
+/// first.
+///
+/// `lay` lays the view's own rows in the height it is given. The blank is the
+/// transcript's, as it is over the box, and stands beside its rail; the working
+/// row says something about the turn rather than being a line of the
+/// transcript, so it takes no rail and stands across the window. Neither is
+/// laid where the view would show no row of results with them, and no rows at
+/// all where `lay` lays none.
+fn laying_under_a_turn(
+    room: usize,
+    working: Option<Row>,
+    lay: impl FnOnce(usize) -> Vec<Row>,
+) -> (Option<Row>, Vec<Row>) {
+    let working = working.filter(|_| Expanded::seen(room.saturating_sub(2)) > 0);
+    let laid = if working.is_some() {
+        room.saturating_sub(2)
+    } else {
+        room
+    };
+    let mut rows = lay(laid);
+    if rows.is_empty() {
+        return (None, rows);
+    }
+
+    let blank = working.as_ref().map(|_| Row::new());
+    rows.splice(0..0, working);
+    (blank, rows)
 }
 
 /// The rows of the view at this size, and the state the picture agrees with.
@@ -358,7 +408,7 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     // Where the last of them ends, which no step goes to.
     begun.pop();
 
-    expanded.within(columns, rows, glyphs)
+    expanded.within_measured(&heights, columns, rows, glyphs)
 }
 
 /// One result the view stands over: held by the store, or let go of and read
@@ -586,18 +636,28 @@ fn remeasured(
 }
 
 /// How many rows one result comes to at this width, with the blank above it.
+///
+/// A result the store holds is counted once for each width and kept beside
+/// its text, so a frame lays out only what its window reaches. What was read
+/// back is counted again on each frame, and the view holds no more of that
+/// than [`BEYOND`].
 fn measured(
     entry: Entry<'_>,
     at: usize,
     back: &[(Mark, Option<Box<str>>)],
     columns: usize,
 ) -> usize {
-    let one = shown(entry, back);
-    Expanded {
-        shown: std::slice::from_ref(&one),
-        from: 0,
+    let length = |one: Shown<'_>| {
+        Expanded {
+            shown: std::slice::from_ref(&one),
+            from: 0,
+        }
+        .length(columns)
+    };
+    match entry {
+        Entry::Held(whole) => whole.rows(columns, || length(showing(whole))),
+        Entry::Let(_) => length(shown(entry, back)),
     }
-    .length(columns)
     .saturating_add(usize::from(at > 0))
 }
 
@@ -754,11 +814,13 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         | Pressed::Plan
         | Pressed::Clicked { .. }
         | Pressed::Pasted(_)
-        | Pressed::Queue
+        | Pressed::Remove
         | Pressed::Copy
         | Pressed::PasteImage
         | Pressed::Rename
         | Pressed::All
+        | Pressed::SendAll
+        | Pressed::SendNow
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

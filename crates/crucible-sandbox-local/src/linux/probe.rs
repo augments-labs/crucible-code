@@ -1,4 +1,5 @@
-//! Discovery, provenance, version, and functional backend probes.
+//! Discovery, provenance, version, and functional backend probes, and the
+//! discovery an inspection makes without running anything.
 
 use std::fs::File;
 use std::io::{Read, Seek};
@@ -13,6 +14,8 @@ use crucible_sandbox::{
     SandboxCapability, SandboxError, SandboxFeature,
 };
 use sha2::{Digest, Sha256};
+
+use crate::{ObservedVersion, SandboxObservation};
 
 /// Largest local backend artifact hashed during discovery.
 const MAX_BACKEND_BYTES: u64 = 64 * 1024 * 1024;
@@ -70,52 +73,11 @@ pub(super) struct Bwrap {
 
 impl Bwrap {
     pub(super) fn find(excluded: &[&Path]) -> Result<Self, SandboxError> {
-        let search = std::env::var_os("PATH").ok_or_else(|| {
-            unavailable("PATH is unavailable while discovering system Bubblewrap")
-        })?;
-        let current = std::env::current_dir()
-            .ok()
-            .and_then(|path| path.canonicalize().ok());
-        let candidates =
-            discover_candidates(std::env::split_paths(&search), current.as_deref(), excluded);
-        if candidates.is_empty() {
-            return Err(unavailable(
-                "no suitable system Bubblewrap was found outside writable roots; bundled backend unavailable",
-            ));
-        }
-        // The last candidate's verification failure is the reason worth
-        // reporting: a summary that names every possible cause explains none.
-        let mut last_failure = None;
-        first_verified(candidates, |path| match Self::verify(path) {
-            Ok(backend) => Some(backend),
-            Err(problem) => {
-                last_failure = Some(problem);
-                None
-            }
-        })
-        .ok_or_else(|| {
-            last_failure.unwrap_or_else(|| {
-                unavailable(
-                    "discovered system Bubblewrap candidates failed provenance, feature, version, or namespace verification; bundled backend unavailable",
-                )
-            })
-        })
+        first_trusted(excluded, Self::verify)
     }
 
     fn verify(path: PathBuf) -> Result<Self, SandboxError> {
-        let metadata = path
-            .metadata()
-            .map_err(|_| unavailable("could not inspect the system Bubblewrap executable"))?;
-        if !metadata.is_file()
-            || metadata.len() > MAX_BACKEND_BYTES
-            || metadata.uid() != 0
-            || metadata.permissions().mode() & 0o022 != 0
-            || !trusted_parent_chain(&path)
-        {
-            return Err(unavailable(
-                "system Bubblewrap or its parent path is not root-owned and non-writable",
-            ));
-        }
+        let length = trusted(&path)?;
 
         let help = Command::new(&path)
             .arg("--help")
@@ -130,23 +92,13 @@ impl Bwrap {
             ));
         }
 
-        let version = Command::new(&path)
-            .arg("--version")
-            .env_clear()
-            .output()
-            .map_err(|_| unavailable("could not query system Bubblewrap version"))?;
-        let version_text = String::from_utf8_lossy(&version.stdout);
-        let Some(version) = parse_version(&version_text) else {
-            return Err(unavailable("system Bubblewrap returned an invalid version"));
-        };
+        let version = version(&path)?;
 
         functional_probe(&path)?;
-        let digest = digest(&path, metadata.len())?;
-        let id = SandboxBackendId::new("linux-bubblewrap")
-            .map_err(|_| unavailable("invalid built-in Linux backend identity"))?;
+        let digest = digest(&path, length)?;
         let identity = SandboxBackendIdentity::new(
-            id,
-            version.to_owned(),
+            backend_id()?,
+            version,
             SandboxBackendProvenance::System,
             Some(digest),
         )
@@ -166,11 +118,13 @@ impl Bwrap {
     /// running it — that is the very thing it cannot assume.
     #[cfg(test)]
     pub(super) fn unspawned(path: PathBuf) -> Result<Self, SandboxError> {
-        let id = SandboxBackendId::new("linux-bubblewrap")
-            .map_err(|_| unavailable("invalid built-in Linux backend identity"))?;
-        let identity =
-            SandboxBackendIdentity::new(id, "0.0.0", SandboxBackendProvenance::System, None)
-                .map_err(|_| unavailable("invalid test backend identity"))?;
+        let identity = SandboxBackendIdentity::new(
+            backend_id()?,
+            "0.0.0",
+            SandboxBackendProvenance::System,
+            None,
+        )
+        .map_err(|_| unavailable("invalid test backend identity"))?;
         Ok(Self {
             path,
             identity,
@@ -189,6 +143,102 @@ impl Bwrap {
     pub(super) const fn capabilities(&self) -> &SandboxCapabilities {
         &self.capabilities
     }
+}
+
+/// The Bubblewrap a preparation would look for, found and measured without
+/// being started.
+///
+/// The search and the trust checks are [`Bwrap::find`]'s own: the same `PATH`,
+/// the same exclusions, the same ownership of the executable and every
+/// directory above it. What is left out is everything `find` learns by running
+/// it — its options, its version and whether it can make its namespaces here —
+/// so the first trusted candidate is the one reported, where `find` would pass
+/// over one that failed to run.
+pub(super) fn locate(excluded: &[&Path]) -> Result<SandboxObservation, SandboxError> {
+    let digest = first_trusted(excluded, |path| measured(&path))?;
+    Ok(SandboxObservation::new(
+        backend_id()?,
+        SandboxBackendProvenance::System,
+        Some(digest),
+        ObservedVersion::Unverified(
+            "reading it would start Bubblewrap, and inspecting starts nothing",
+        ),
+        capabilities(),
+    ))
+}
+
+/// The SHA-256 of the candidate at `path`, where it passes [`trusted`].
+fn measured(path: &Path) -> Result<[u8; 32], SandboxError> {
+    digest(path, trusted(path)?)
+}
+
+/// The first candidate on `PATH` that `check` accepts, or why none was.
+fn first_trusted<T>(
+    excluded: &[&Path],
+    mut check: impl FnMut(PathBuf) -> Result<T, SandboxError>,
+) -> Result<T, SandboxError> {
+    let search = std::env::var_os("PATH")
+        .ok_or_else(|| unavailable("PATH is unavailable while discovering system Bubblewrap"))?;
+    let current = std::env::current_dir()
+        .ok()
+        .and_then(|path| path.canonicalize().ok());
+    let candidates =
+        discover_candidates(std::env::split_paths(&search), current.as_deref(), excluded);
+    if candidates.is_empty() {
+        return Err(unavailable(
+            "no suitable system Bubblewrap was found outside writable roots; bundled backend unavailable",
+        ));
+    }
+    // The last candidate's verification failure is the reason worth
+    // reporting: a summary that names every possible cause explains none.
+    let mut last_failure = None;
+    first_verified(candidates, |path| match check(path) {
+        Ok(found) => Some(found),
+        Err(problem) => {
+            last_failure = Some(problem);
+            None
+        }
+    })
+    .ok_or_else(|| {
+        last_failure.unwrap_or_else(|| {
+            unavailable(
+                "discovered system Bubblewrap candidates failed provenance, feature, version, or namespace verification; bundled backend unavailable",
+            )
+        })
+    })
+}
+
+/// The length of the executable at `path`, where it and every directory above
+/// it are root-owned and writable by nobody else, and this process may execute
+/// it.
+///
+/// The execute check is the kernel's own, made for this process, so a file
+/// spawning it would be refused is never the one an inspection reports.
+fn trusted(path: &Path) -> Result<u64, SandboxError> {
+    let metadata = path
+        .metadata()
+        .map_err(|_| unavailable("could not inspect the system Bubblewrap executable"))?;
+    if !metadata.is_file()
+        || metadata.len() > MAX_BACKEND_BYTES
+        || metadata.uid() != 0
+        || metadata.permissions().mode() & 0o022 != 0
+        || !trusted_parent_chain(path)
+    {
+        return Err(unavailable(
+            "system Bubblewrap or its parent path is not root-owned and non-writable",
+        ));
+    }
+    if rustix::fs::access(path, rustix::fs::Access::EXEC_OK).is_err() {
+        return Err(unavailable(
+            "system Bubblewrap is not executable by this user",
+        ));
+    }
+    Ok(metadata.len())
+}
+
+fn backend_id() -> Result<SandboxBackendId, SandboxError> {
+    SandboxBackendId::new("linux-bubblewrap")
+        .map_err(|_| unavailable("invalid built-in Linux backend identity"))
 }
 
 fn discover_candidates(
@@ -243,6 +293,67 @@ fn parse_version(version: &str) -> Option<&str> {
         && components.next().is_none()
         && number.matches('.').count() == 2;
     valid.then_some(version)
+}
+
+/// The version the Bubblewrap at `path` reports for itself.
+///
+/// A refusal carries the exit status and what the query printed, since that is
+/// the only account of why a backend that exists cannot be used.
+fn version(path: &Path) -> Result<String, SandboxError> {
+    let version = Command::new(path)
+        .arg("--version")
+        .env_clear()
+        .output()
+        .map_err(|_| unavailable("could not query system Bubblewrap version"))?;
+    if !version.status.success() {
+        return Err(SandboxError::BackendUnavailable {
+            reason: format!(
+                "system Bubblewrap --version failed ({}): {}",
+                version.status,
+                printed(&version.stderr)
+            )
+            .into(),
+        });
+    }
+    let version_text = String::from_utf8_lossy(&version.stdout);
+    let Some(version) = parse_version(&version_text) else {
+        return Err(SandboxError::BackendUnavailable {
+            reason: format!(
+                "system Bubblewrap returned an invalid version: {}",
+                printed(&version.stdout)
+            )
+            .into(),
+        });
+    };
+    Ok(version.to_owned())
+}
+
+/// Most of what a refused query printed that a reason quotes.
+const MAX_PRINTED_BYTES: usize = 200;
+
+/// What a process printed, as one line a reason can quote: control characters
+/// become spaces, the ends are trimmed, and it is cut to [`MAX_PRINTED_BYTES`]
+/// before any character that would not fit.
+fn printed(output: &[u8]) -> String {
+    let text: String = String::from_utf8_lossy(output)
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    let text = text.trim();
+    let mut end = text.len().min(MAX_PRINTED_BYTES);
+    while !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    match text.get(..end) {
+        Some("") | None => "(nothing)".to_owned(),
+        Some(cut) => cut.to_owned(),
+    }
 }
 
 fn trusted_parent_chain(path: &Path) -> bool {
@@ -356,17 +467,32 @@ fn digest(path: &Path, length: u64) -> Result<[u8; 32], SandboxError> {
         .map_err(|_| unavailable("could not inspect system Bubblewrap provenance"))?;
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 16 * 1024];
+    // `length` is what `trusted` measured; a file that grew or shrank since is
+    // not the one that was checked, and reading on would let it grow without
+    // end.
+    let mut read = 0_u64;
     loop {
-        let read = file
+        let count = file
             .read(&mut buffer)
             .map_err(|_| unavailable("could not hash system Bubblewrap provenance"))?;
-        if read == 0 {
+        if count == 0 {
             break;
         }
-        let Some(bytes) = buffer.get(..read) else {
+        read = read.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+        if read > length || read > MAX_BACKEND_BYTES {
+            return Err(unavailable(
+                "system Bubblewrap changed while it was inspected",
+            ));
+        }
+        let Some(bytes) = buffer.get(..count) else {
             return Err(unavailable("invalid Bubblewrap provenance read"));
         };
         digest.update(bytes);
+    }
+    if read != length {
+        return Err(unavailable(
+            "system Bubblewrap changed while it was inspected",
+        ));
     }
     Ok(digest.finalize().into())
 }
@@ -447,6 +573,7 @@ fn unavailable(reason: &'static str) -> SandboxError {
 mod tests {
     use super::*;
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::sample::Sample;
 
@@ -581,6 +708,165 @@ mod tests {
         assert_eq!(
             parse_version(&format!("bubblewrap {}", "x".repeat(129))),
             None
+        );
+    }
+
+    /// A Bubblewrap stand-in that runs `script` for whatever it is asked.
+    ///
+    /// Written by a shell of its own rather than by this process. Tests run
+    /// on threads beside this one start processes, and a child forked while
+    /// this process had the file open for writing keeps it open until it
+    /// runs what it was started for; running the stand-in in that window
+    /// fails as a busy file.
+    fn stand_in(sample: &Sample, script: &str) -> PathBuf {
+        let path = sample.root().join("bwrap");
+        let written = Command::new("/bin/sh")
+            .args(["-c", r#"printf '%s\n' "$1" > "$0" && chmod 755 "$0""#])
+            .arg(&path)
+            .arg(format!("#!/bin/sh\n{script}"))
+            .status()
+            .expect("stand-in");
+        assert!(written.success(), "the stand-in was not written: {written}");
+        path
+    }
+
+    /// Says the work is over when it goes, however it goes: a thread the
+    /// test is scoped over is joined before a failure is reported.
+    struct Ending<'a>(&'a AtomicBool);
+
+    impl Drop for Ending<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn a_stand_in_runs_while_another_thread_is_starting_processes() {
+        // The tests beside these start processes of their own while a
+        // stand-in is being written, and a child forked while it was still
+        // open for writing made running it fail as busy.
+        let over = AtomicBool::new(false);
+        let answered: Vec<_> = thread::scope(|scope| {
+            scope.spawn(|| {
+                while !over.load(Ordering::Relaxed) {
+                    let _ = Command::new("true").status();
+                }
+            });
+            let _ending = Ending(&over);
+            (0..200)
+                .map(|_| {
+                    let sample = Sample::new("sandbox-bwrap-busy");
+                    version(&stand_in(&sample, "echo 'bubblewrap 0.11.1'")).ok()
+                })
+                .collect()
+        });
+
+        let refused = answered
+            .iter()
+            .filter(|answer| answer.as_deref() != Some("bubblewrap 0.11.1"))
+            .count();
+        assert_eq!(
+            refused,
+            0,
+            "of {} stand-ins, {refused} could not be run",
+            answered.len()
+        );
+    }
+
+    fn version_refusal(script: &str) -> String {
+        let sample = Sample::new("sandbox-bwrap-version");
+        match version(&stand_in(&sample, script)) {
+            Err(SandboxError::BackendUnavailable { reason }) => reason.into(),
+            other => panic!("{script:?} was not refused as unavailable: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failed_version_query_names_its_status_and_what_it_printed() {
+        assert_eq!(
+            version_refusal("echo boom >&2; exit 3"),
+            "system Bubblewrap --version failed (exit status: 3): boom"
+        );
+        assert_eq!(
+            version_refusal("exit 3"),
+            "system Bubblewrap --version failed (exit status: 3): (nothing)"
+        );
+        assert_eq!(
+            version_refusal("echo nonsense"),
+            "system Bubblewrap returned an invalid version: nonsense"
+        );
+        assert_eq!(
+            version_refusal("printf '\\377\\376'"),
+            "system Bubblewrap returned an invalid version: \u{fffd}\u{fffd}"
+        );
+        assert_eq!(
+            version_refusal("true"),
+            "system Bubblewrap returned an invalid version: (nothing)"
+        );
+        let sample = Sample::new("sandbox-bwrap-version");
+        assert_eq!(
+            version(&stand_in(&sample, "echo 'bubblewrap 0.11.1'"))
+                .ok()
+                .as_deref(),
+            Some("bubblewrap 0.11.1")
+        );
+    }
+
+    #[test]
+    fn what_a_failed_version_query_printed_is_bounded_and_made_printable() {
+        let prefix = "system Bubblewrap --version failed (exit status: 1): ";
+        let long = version_refusal("printf '%0300d' 0 >&2; exit 1");
+        assert_eq!(long.strip_prefix(prefix), Some("0".repeat(200).as_str()));
+        // The cut falls before a character it would split, not through it.
+        let split = version_refusal(&format!(
+            "printf '{}\\303\\251' >&2; exit 1",
+            "x".repeat(199)
+        ));
+        assert_eq!(split.strip_prefix(prefix), Some("x".repeat(199).as_str()));
+        assert_eq!(
+            version_refusal("printf 'a\\tb\\033[31mc\\r\\n' >&2; exit 1").strip_prefix(prefix),
+            Some("a b [31mc")
+        );
+    }
+
+    #[test]
+    fn a_root_owned_file_nobody_may_execute_is_not_taken_for_bubblewrap() {
+        // Root's, writable by nobody else, under root's own directories: every
+        // check a Bubblewrap passes, except that nobody could start it.
+        let passwd = Path::new("/etc/passwd");
+        let mode = passwd.metadata().expect("/etc/passwd").permissions().mode();
+        assert!(
+            passwd.metadata().expect("/etc/passwd").uid() == 0
+                && mode & 0o133 == 0
+                && trusted_parent_chain(passwd),
+            "this host's /etc/passwd ({mode:o}) is not the root-owned file nobody may execute that this test needs"
+        );
+        assert!(
+            measured(passwd).is_err(),
+            "a file nobody may execute was reported as Bubblewrap"
+        );
+    }
+
+    #[test]
+    fn a_backend_is_hashed_no_further_than_the_length_it_was_measured_at() {
+        let sample = Sample::new("sandbox-bwrap-overlong");
+        let short = sample.root().join("short");
+        std::fs::write(&short, b"more than nothing").expect("fixture");
+        let length = short.metadata().expect("fixture").len();
+        assert!(digest(&short, length).is_ok(), "the length it has");
+        // A procfs file reports a length of nothing and reads on.
+        assert!(
+            digest(&short, 0).is_err(),
+            "a file longer than it said was hashed to its end"
+        );
+
+        let large = sample.root().join("large");
+        File::create(&large)
+            .and_then(|file| file.set_len(MAX_BACKEND_BYTES + 1))
+            .expect("a sparse fixture past the cap");
+        assert!(
+            digest(&large, MAX_BACKEND_BYTES).is_err(),
+            "a file larger than the cap was hashed past it"
         );
     }
 

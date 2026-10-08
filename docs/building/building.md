@@ -64,7 +64,7 @@ compiler comes from:
 
 crucible's own `bash` tool looks for a POSIX shell at runtime as well, and finds
 the one [Git for Windows](https://git-scm.com/download/win) installs. See
-[getting started](../getting-started/getting-started.md).
+[getting started](../getting-started/first-session.md).
 
 ## Build it
 
@@ -105,11 +105,13 @@ also [build for another platform yourself](cross-compiling.md).
 ## The rollback drill
 
 `scripts/sh/rollback-drill.sh` proves the previous release can still read what
-this tree writes. It builds v0.45.2 from the local tag in a scratch worktree
+this tree writes. It builds v0.45.3 from the local tag in a scratch worktree
 (it never fetches) and runs that binary headless over a copy of session
 fixtures the candidate binary has read and recovered: a conversation must
 replay byte-identical, a session ending in an unanswered tool call must recover
-to the same bytes on both sides, and `--sandbox` and `--extensions` must agree.
+to the same bytes on both sides, `--extensions` must agree, and `--sandbox`
+must exit 0 with a report on both sides; its layout changed in 0.46.0, so only
+its exit convention is compared.
 Everything happens under scratch directories with no model selected, so no
 provider is called and no real session is read. The candidate is built from
 the current tree on every run, and a binary given with `--candidate-binary` must

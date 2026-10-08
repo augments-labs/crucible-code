@@ -24,11 +24,12 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_sandbox::{
-    SandboxCommand, SandboxEnvironment, SandboxError, SandboxFilesystemAccess,
-    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest, SandboxNetworkPolicy,
-    SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest, SandboxService,
+    SandboxCommand, SandboxDomainPattern, SandboxDomainPolicy, SandboxEnvironment, SandboxError,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest,
+    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPolicy, SandboxProcess,
+    SandboxRead, SandboxRequest, SandboxService,
 };
-use crucible_sandbox_local::LocalSandbox;
+use crucible_sandbox_local::{LocalSandbox, ObservedVersion};
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use crucible_workspace::Workspace;
 
@@ -395,6 +396,85 @@ fn windows_writes_the_workspace_and_protects_private_and_repository_data() {
             .to_ascii_lowercase()
             .starts_with("cruciblesbx-"),
         "unexpected sandbox identity: {identity}"
+    );
+}
+
+/// The version is crucible's own name for its account, filtering and token
+/// scheme, so an inspection states it rather than calling it unverified, and
+/// states the one a preparation records.
+#[test]
+fn an_inspection_states_the_version_a_preparation_records() {
+    let fixture = Fixture::new("inspected-version");
+    let observed =
+        LocalSandbox::observe(&fixture.request("inspected-version")).expect("observed backend");
+    let session =
+        crucible_runtime::answered!(service().prepare(fixture.request("prepared-version")))
+            .expect("prepared sandbox");
+    let recorded = session.inspection().backend().version();
+    assert!(
+        matches!(observed.version(), ObservedVersion::Stated(stated) if stated == recorded),
+        "inspected {:?}, prepared {recorded}",
+        observed.version()
+    );
+}
+
+/// A policy asking for both an allowlist and an unreadable root is refused
+/// for the same feature by an inspection as by a preparation.
+#[test]
+fn an_inspection_reports_the_refusal_a_preparation_returns() {
+    let fixture = Fixture::new("inspected-refusal");
+    let hidden = fixture.workspace.join("hidden.txt");
+    fs::write(&hidden, "hidden").expect("hidden file");
+    let workspace = Workspace::open(&fixture.workspace).expect("workspace");
+    let base = SandboxPolicy::standard(&workspace).expect("base policy");
+    let unreadable = SandboxFilesystemRule::new(
+        hidden,
+        SandboxFilesystemAccess::Unreadable,
+        SandboxFilesystemProvenance::Descendant,
+    )
+    .expect("unreadable root");
+    let policy = || {
+        SandboxPolicy::new(
+            true,
+            base.filesystem()
+                .iter()
+                .cloned()
+                .chain([unreadable.clone()]),
+            &fixture.workspace,
+            SandboxNetworkPolicy::Domains(
+                SandboxDomainPolicy::new(
+                    [SandboxDomainPattern::new("example.com").expect("granted domain")],
+                    [],
+                    false,
+                    [],
+                    SandboxNetworkProvenance::User,
+                )
+                .expect("allowlist"),
+            ),
+            base.limits(),
+        )
+        .expect("refused policy")
+    };
+    let observed = LocalSandbox::observe(&Fixture::request_with_policy(
+        "windows-inspected-refusal",
+        policy(),
+    ))
+    .expect("observed backend");
+    let prepared = crucible_runtime::answered!(service().prepare(Fixture::request_with_policy(
+        "windows-prepared-refusal",
+        policy()
+    )));
+
+    let Err(SandboxError::Unsupported { feature: refused }) = prepared else {
+        panic!("preparation took a policy it cannot hold");
+    };
+    assert!(
+        matches!(
+            observed.refusal(),
+            Some(SandboxError::Unsupported { feature }) if *feature == refused
+        ),
+        "inspected {:?}, prepared {refused:?}",
+        observed.refusal()
     );
 }
 

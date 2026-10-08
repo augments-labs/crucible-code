@@ -10,10 +10,10 @@
 //!
 //! The one cut is where continuing starts. `--continue` shortens the file to
 //! the end of the last message the replay could settle on — before a line a
-//! crash tore in half, before a tool call nothing ever answered — and does it
-//! before the handle that appends exists. A log already ending there loses
-//! nothing, which is every ordinary run. It is a truncation and not a rewrite:
-//! what survives is byte for byte what was written.
+//! crash tore in half, before a pass of tool calls none of which recorded a
+//! start — and does it before the handle that appends exists. A log already
+//! ending there loses nothing, which is every ordinary run. It is a truncation
+//! and not a rewrite: what survives is byte for byte what was written.
 //!
 //! One thread per session owns the file, for as long as the session lives: a
 //! write to a local file is a call that blocks, and it is made there rather
@@ -75,7 +75,7 @@ pub use glimpse::{Glimpse, glimpse};
 use log::{Placed, Placing, Request as LogRequest, Trouble, make, open, shorten};
 pub use places::Place;
 pub use prompts::{PROMPTS, prompts, remember};
-pub use recent::{Reach, Recorded, Roots, recent};
+pub use recent::{Discovered, Discovery, Reach, Recorded, Roots, discovered, recent};
 pub use replay::Pruned;
 use replay::{Replayed, belongs, newest, replay};
 
@@ -630,7 +630,8 @@ impl Session {
     ///
     /// # Errors
     /// Returns a storage error if queued records cannot be flushed or the
-    /// protected session log cannot be opened. Unrecorded sessions return `None`.
+    /// protected session log cannot be opened or is no longer one ordinary
+    /// file. Unrecorded sessions return `None`.
     pub fn display_history(&self) -> Result<Option<DisplayHistory>, SessionError> {
         if self.id.is_none() {
             return Ok(None);
@@ -639,9 +640,16 @@ impl Session {
             at: self.path.display().to_string().into(),
             source,
         };
-        self.sync_pending_result_source()
-            .map_err(|_| trouble(io::Error::other("could not flush session display history")))?;
-        let file = File::open(&self.path).map_err(trouble)?;
+        // Behind whatever is queued, as a read back is. The log is read here,
+        // not made durable, so the writer having taken every line is enough,
+        // and the name is opened once, by the ordinary-file opener: anything
+        // that can write the directory can swap a link or a pipe in under it.
+        if !self.caught_up() || self.trouble().is_some() {
+            return Err(trouble(io::Error::other(
+                "could not flush session display history",
+            )));
+        }
+        let file = privacy::opened(&self.path).map_err(trouble)?;
         DisplayHistory::open(file).map(Some).map_err(trouble)
     }
 

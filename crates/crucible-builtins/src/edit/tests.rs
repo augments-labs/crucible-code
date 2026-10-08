@@ -282,6 +282,96 @@ fn a_path_outside_the_workspace_is_refused_without_reading_it() {
 }
 
 #[test]
+fn a_link_retargeted_after_the_verdict_to_another_file_inside_changes_neither() {
+    // The verdict was reached about the file the link led to when the question
+    // was put. Text that happens to match in the file it leads to now is not a
+    // yes to change that one.
+    let sample = Sample::new("edit-retargeted-inside");
+    sample.write("inside.txt", "token = 1\n");
+    sample.write(".env", "token = 1\n");
+    crate::sample::symlink(
+        sample.root().join("inside.txt"),
+        sample.root().join("door.txt"),
+    );
+
+    let tool = Edit::new(sample.workspace());
+    let approved = allowed(
+        &tool,
+        r#"{"path":"door.txt","find":"token = 1","replace":"token = 2"}"#,
+    );
+
+    fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
+    crate::sample::symlink(sample.root().join(".env"), sample.root().join("door.txt"));
+
+    let output =
+        crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, ".env"), "token = 1\n");
+    assert_eq!(read(&sample, "inside.txt"), "token = 1\n");
+}
+
+/// Linux alone, as the other tests about names that are not text: macOS
+/// refuses to make such a file, and not every Linux mount keeps one either,
+/// which is why a refusal to make it ends the test rather than failing it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_link_retargeted_after_the_verdict_between_files_whose_names_are_not_text_changes_neither() {
+    // The same, where the two files' names are not text. Spelled as text they
+    // read alike, so the file the question named has to be told apart from
+    // the one the link leads to now by more than its spelling.
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let sample = Sample::new("edit-retargeted-untextual");
+    let named = sample.root().join(OsStr::from_bytes(b"\xff"));
+    let now = sample.root().join(OsStr::from_bytes(b"\xfe"));
+    if fs::write(&named, "token = 1\n").is_err() || fs::write(&now, "token = 1\n").is_err() {
+        return;
+    }
+    crate::sample::symlink(&named, sample.root().join("door.txt"));
+
+    let tool = Edit::new(sample.workspace());
+    let approved = allowed(
+        &tool,
+        r#"{"path":"door.txt","find":"token = 1","replace":"token = 2"}"#,
+    );
+
+    fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
+    crate::sample::symlink(&now, sample.root().join("door.txt"));
+
+    let output =
+        crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(fs::read_to_string(&now).unwrap(), "token = 1\n");
+    assert_eq!(fs::read_to_string(&named).unwrap(), "token = 1\n");
+}
+
+/// Linux alone, as the other tests about names that are not text: macOS
+/// refuses to make such a file, and not every Linux mount keeps one either,
+/// which is why a refusal to make it ends the test rather than failing it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_whose_name_is_not_text_is_changed_when_its_link_still_leads_to_it() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let sample = Sample::new("edit-untextual");
+    let named = sample.root().join(OsStr::from_bytes(b"\xff"));
+    if fs::write(&named, "token = 1\n").is_err() {
+        return;
+    }
+    crate::sample::symlink(&named, sample.root().join("door.txt"));
+
+    let output = edit(
+        &sample,
+        r#"{"path":"door.txt","find":"token = 1","replace":"token = 2"}"#,
+    );
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(fs::read_to_string(&named).unwrap(), "token = 2\n");
+}
+
+#[test]
 fn a_missing_file_says_so() {
     let sample = Sample::new("edit-missing");
 

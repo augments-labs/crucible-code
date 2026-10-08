@@ -105,12 +105,15 @@ pub(crate) enum Journaled {
     /// A tool call that recorded how it ended, and the result it was answered
     /// with.
     Finished(ToolResult),
+    /// A tool call recorded as started: about to run, so it may have taken
+    /// effect whether or not anything after it says how it ended.
+    Started(ToolId),
     /// Anything else the framework records. None of it is a message.
     Other,
 }
 
 /// Whether a whole line is framework history rather than a conversation line,
-/// and the result it holds where it records a call that finished.
+/// and what it says about a call where it records one starting or finishing.
 ///
 /// A finished call's record is the one line a process that died before its
 /// result line leaves behind to answer the call with. Its result is read the
@@ -118,14 +121,31 @@ pub(crate) enum Journaled {
 /// carries no count beside them, so the count comes off the lines' own
 /// totals, which are what the count was taken from. A record whose result
 /// this build cannot read is history like any other line here: the call it
-/// names is then read as though nothing had recorded it.
+/// names is then read as though nothing had recorded it finishing.
+///
+/// A started call's record is written immediately before the call runs, so
+/// it is what says a call may have taken effect when nothing after it does.
 pub(crate) fn journaled(line: &str) -> Option<Journaled> {
     let value = serde_json::from_str::<Value>(line).ok()?;
     let body = value.get("run_item")?.get("body");
-    Some(
-        body.and_then(finished)
-            .map_or(Journaled::Other, Journaled::Finished),
-    )
+    Some(match body {
+        Some(body) => finished(body)
+            .map(Journaled::Finished)
+            .or_else(|| started(body).map(Journaled::Started))
+            .unwrap_or(Journaled::Other),
+        None => Journaled::Other,
+    })
+}
+
+/// The call a started invocation record names.
+fn started(body: &Value) -> Option<ToolId> {
+    if body.get("kind")?.as_str()? != "invocation" {
+        return None;
+    }
+    if body.get("invocation_state")?.get("state")?.as_str()? != "started" {
+        return None;
+    }
+    Some(ToolId::new(body.get("call")?.as_str()?))
 }
 
 /// The result a finished invocation record answered its call with.

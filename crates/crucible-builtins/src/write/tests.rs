@@ -5,8 +5,10 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 
 use crucible_runtime::Cancel;
-use crucible_tools::ToolError;
-use crucible_types::Change;
+use crucible_tools::{
+    Ask, Disposition, Mode, Permission, Remember, Rules, Settled, ToolError, Verdict,
+};
+use crucible_types::{Change, ToolCall, ToolId};
 
 use super::{Ledger, Sensitivity, Tool, ToolArgs, ToolOutput, Write};
 use crate::sample::{
@@ -333,6 +335,66 @@ fn a_link_planted_while_the_question_was_on_screen_is_still_refused() {
 }
 
 #[test]
+fn a_link_retargeted_after_the_verdict_to_another_file_inside_replaces_neither() {
+    // Both files have been read, so the record of what the agent has seen
+    // does not stand in the way; what does is that the verdict was reached
+    // about the file the link led to when the question was put.
+    let sample = Sample::new("write-retargeted-inside");
+    sample.write("inside.txt", "the file the verdict was about\n");
+    sample.write(".env", "nobody was asked about this\n");
+    symlink(
+        sample.root().join("inside.txt"),
+        sample.root().join("door.txt"),
+    );
+    let seen = looked_at(&sample, "inside.txt");
+    seen.record(sample.workspace().existing(".env").unwrap().as_path());
+
+    let tool = Write::new(sample.workspace(), seen);
+    let approved = allowed(&tool, r#"{"path":"door.txt","content":"stolen\n"}"#);
+
+    fs::remove_file(sample.root().join("door.txt")).expect("the link is there");
+    symlink(sample.root().join(".env"), sample.root().join("door.txt"));
+
+    let output =
+        crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, ".env"), "nobody was asked about this\n");
+    assert_eq!(
+        read(&sample, "inside.txt"),
+        "the file the verdict was about\n"
+    );
+}
+
+// A directory link: Windows makes one with a call `sample::symlink` does not use.
+#[cfg(unix)]
+#[test]
+fn a_directory_link_retargeted_after_the_verdict_makes_nothing_where_it_now_leads() {
+    // The file did not exist when the question was put, so what the verdict
+    // names is where the path would have created it then. Neither the file
+    // nor the directory above it is made anywhere else.
+    let sample = Sample::new("write-retargeted-directory");
+    fs::create_dir_all(sample.root().join("drafts")).unwrap();
+    fs::create_dir_all(sample.root().join("private")).unwrap();
+    symlink(sample.root().join("drafts"), sample.root().join("door"));
+
+    let tool = Write::new(sample.workspace(), Ledger::new());
+    let approved = allowed(&tool, r#"{"path":"door/sub/new.txt","content":"x\n"}"#);
+    assert_eq!(
+        approved.sensitivity().to_string(),
+        "change drafts/sub/new.txt"
+    );
+
+    fs::remove_file(sample.root().join("door")).expect("the link is there");
+    symlink(sample.root().join("private"), sample.root().join("door"));
+
+    let output =
+        crucible_runtime::answered!(tool.run(approved, &crate::sample::context())).unwrap();
+    assert!(output.is_failed(), "{}", output.text());
+    assert!(!sample.root().join("private/sub").exists());
+    assert!(!sample.root().join("drafts/sub").exists());
+}
+
+#[test]
 fn a_directory_is_not_a_file_to_write_over() {
     let sample = Sample::new("write-dir");
     sample.write("sub/one.txt", "a\n");
@@ -389,6 +451,187 @@ fn missing_directories_do_not_hide_the_permission_configuration() {
 
         assert_eq!(sensitivity.to_string(), format!("change {path}"));
     }
+}
+
+/// How the engine settles a call, told apart by whether anybody was asked.
+#[derive(Debug, PartialEq, Eq)]
+enum Settles {
+    Forbidden,
+    Asked,
+    Allowed,
+    Refused,
+}
+
+/// How a session in `mode`, with `rules` standing, settles a write to `path`,
+/// any question put to the user answered yes.
+fn settles(sample: &Sample, mode: Mode, rules: &[(Disposition, &str)], path: &str) -> Settles {
+    struct Yes(bool);
+
+    impl Ask for Yes {
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+            self.0 = true;
+            Box::pin(async { (Verdict::Allow, Remember::Never) })
+        }
+    }
+
+    let mut written = Rules::new();
+    for (kind, text) in rules {
+        written.add(*kind, text).expect("a readable rule");
+    }
+
+    let tool = Write::new(sample.workspace(), Ledger::new());
+    let call = ToolCall {
+        id: ToolId::new("parent"),
+        name: super::NAME.into(),
+        args: ToolArgs::new(format!(r#"{{"path":"{path}","content":"{{}}"}}"#)),
+    };
+
+    let mut yes = Yes(false);
+    let settled = crucible_runtime::answered!(Permission::with(mode, written).decide(
+        &call,
+        &tool.sensitivity(&call.args),
+        &mut yes,
+    ));
+    match settled {
+        Settled::Forbidden => Settles::Forbidden,
+        Settled::Refused => Settles::Refused,
+        Settled::Approved(_) if yes.0 => Settles::Asked,
+        Settled::Approved(_) => Settles::Allowed,
+    }
+}
+
+/// What `write` says it would change at `path`.
+fn changing(sample: &Sample, path: &str) -> Sensitivity {
+    Write::new(sample.workspace(), Ledger::new()).sensitivity(&ToolArgs::new(format!(
+        r#"{{"path":"{path}","content":""}}"#
+    )))
+}
+
+const MODES: [Mode; 3] = [Mode::Ask, Mode::AllowEdits, Mode::FullAccess];
+
+#[test]
+fn a_parent_component_to_the_permission_configuration_is_forbidden_in_every_mode() {
+    // The engine refuses a write to its own configuration by the file's
+    // resolved name, so a call that names it through `..` has to be settled as
+    // that file and not as one nobody could name.
+    let sample = Sample::new("write-parent-component-config");
+    fs::create_dir(sample.root().join(".crucible")).unwrap();
+    let through = ".crucible/../.crucible/config.json";
+
+    assert_eq!(
+        changing(&sample, through),
+        changing(&sample, ".crucible/config.json")
+    );
+    for mode in MODES {
+        assert_eq!(
+            settles(&sample, mode, &[], through),
+            Settles::Forbidden,
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_parent_component_does_not_step_round_a_rule_about_the_file() {
+    let sample = Sample::new("write-parent-component-rule");
+    fs::create_dir(sample.root().join("sub")).unwrap();
+    let rules = [(Disposition::Deny, "write(protected.txt)")];
+
+    for mode in MODES {
+        assert_eq!(
+            settles(&sample, mode, &rules, "sub/../protected.txt"),
+            Settles::Forbidden,
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_parent_component_to_a_file_already_there_is_settled_as_that_file() {
+    let sample = Sample::new("write-parent-component-existing");
+    fs::create_dir(sample.root().join("sub")).unwrap();
+    fs::create_dir(sample.root().join(".crucible")).unwrap();
+    sample.write(".crucible/config.json", "{}");
+    sample.write("protected.txt", "kept\n");
+    let rules = [(Disposition::Deny, "write(protected.txt)")];
+
+    for mode in MODES {
+        assert_eq!(
+            settles(&sample, mode, &[], ".crucible/../.crucible/config.json"),
+            Settles::Forbidden,
+            "{mode:?}"
+        );
+        assert_eq!(
+            settles(&sample, mode, &rules, "sub/../protected.txt"),
+            Settles::Forbidden,
+            "{mode:?}"
+        );
+    }
+}
+
+// A directory link: Windows makes one with a call `sample::symlink` does not use.
+#[cfg(unix)]
+#[test]
+fn a_parent_component_after_a_link_is_settled_where_the_filesystem_goes() {
+    // `link/..` is the parent of where the link leads, not the directory the
+    // link sits in, so reading the path as text would name the wrong file.
+    let sample = Sample::new("write-parent-component-link");
+    fs::create_dir_all(sample.root().join("sub/deeper")).unwrap();
+    symlink(sample.root().join("sub/deeper"), sample.root().join("link"));
+    let through = "link/../protected.txt";
+
+    assert_eq!(
+        changing(&sample, through).to_string(),
+        "change sub/protected.txt"
+    );
+    assert_eq!(
+        settles(
+            &sample,
+            Mode::FullAccess,
+            &[(Disposition::Deny, "write(sub/protected.txt)")],
+            through
+        ),
+        Settles::Forbidden
+    );
+    assert_eq!(
+        settles(
+            &sample,
+            Mode::FullAccess,
+            &[(Disposition::Deny, "write(protected.txt)")],
+            through
+        ),
+        Settles::Allowed
+    );
+
+    // And it is the file execution writes.
+    let output = write(&sample, &format!(r#"{{"path":"{through}","content":"x"}}"#));
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "sub/protected.txt"), "x");
+    assert!(!sample.root().join("protected.txt").exists());
+}
+
+#[test]
+fn a_parent_component_after_a_directory_that_is_not_there_is_refused_before_anything_is_made() {
+    // There is no file system answer for where `missing/..` is until `missing`
+    // exists, and the question has to be put before anything is made.
+    let sample = Sample::new("write-parent-component-missing");
+    let tool = Write::new(sample.workspace(), Ledger::new());
+
+    let problem = tool
+        .validate(&ToolArgs::new(
+            r#"{"path":"missing/../one.txt","content":"x"}"#,
+        ))
+        .unwrap_err();
+
+    assert!(
+        problem.to_string().contains("missing/../one.txt"),
+        "{problem}"
+    );
+    assert!(!sample.root().join("missing").exists());
 }
 
 #[test]

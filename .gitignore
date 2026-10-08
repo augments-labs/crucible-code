@@ -6,6 +6,12 @@
 # program, and a stray file under it is one an `add -A` would otherwise commit.
 .tmp/
 
+# Changelog entries waiting for the next release, one file per change, in the
+# checkout releases are cut from. They are drafts for the person writing the
+# release, not part of any change, so none is ever committed; CONTRIBUTING.md
+# says how one is written and RELEASING.md how they become the changelog.
+changelog.d/
+
 # Everything a run writes for a person to read afterwards, sorted by what it
 # wrote: `json/` for a single JSON document, `txt/` for plain text, a folder of
 # its own for a tool that writes a tree. `.tmp/` above is a contributor's own

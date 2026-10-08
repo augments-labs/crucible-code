@@ -4,6 +4,17 @@
 //! control list containing only the current account. Keeping both mechanisms
 //! here gives every piece of sensitive local state the same creation and
 //! durable-replacement boundary without teaching this crate what the file is.
+//!
+//! The readers, [`open_read`], [`open_read_append`] and [`open_read_ordinary`],
+//! and the lock opener, [`lock`], each refuse a final symbolic link or reparse
+//! point, wait on no pipe where Unix can say so, and prove an ordinary file on
+//! the handle they return rather than on a name looked at first. Private state
+//! is also refused when another hard name reaches it, because a second name is
+//! a second way to change it: that is [`open_read`] and [`open_read_append`].
+//! [`open_read_ordinary`] is the one open without that last proof, for a file
+//! that is read and not trusted, where a second name is what a backup made with
+//! hard links leaves on every file, and refusing it would hide the file rather
+//! than protect it.
 
 use std::fs::File;
 use std::io;
@@ -70,6 +81,24 @@ pub fn append(path: &Path) -> Result<File, PrivacyError> {
 /// under one name.
 pub fn open_read(path: &Path) -> Result<File, PrivacyError> {
     platform::open_read(path).map_err(Into::into)
+}
+
+/// Opens one existing ordinary file for bounded inspection, however many hard
+/// names reach it.
+///
+/// What [`open_read`] proves, less the single name: a symbolic link, a
+/// reparse point or a non-file is refused, on the returned handle, and on Unix
+/// the open does not wait on a writer who is not coming. Another hard name is
+/// accepted, so a caller holds nothing it opened through here as private
+/// state it alone can change. Nor does the handle hold the name: on Windows it
+/// allows deletion, so a [`replace`] over the file while it is read goes ahead
+/// and this reader keeps the file it opened, as it would on Unix.
+///
+/// # Errors
+///
+/// [`PrivacyError`] when the file cannot be opened or is not one ordinary file.
+pub fn open_read_ordinary(path: &Path) -> Result<File, PrivacyError> {
+    platform::open_read_ordinary(path).map_err(Into::into)
 }
 
 /// Opens one existing owner-only ordinary file for reading, shortening and
@@ -147,9 +176,17 @@ pub fn create_write(path: &Path) -> Result<File, PrivacyError> {
 
 /// Opens an owner-only lock file for reading and writing, creating it absent.
 ///
+/// A final symbolic link or reparse point is refused rather than followed, so
+/// nothing is created, locked, written or protected where one leads, and a
+/// non-file is refused on the returned handle before it is protected. On Unix
+/// the open does not wait on a pipe's reader; Windows has no pipe to wait on
+/// in a directory. Another hard name is accepted, as [`open_read_ordinary`]
+/// accepts one.
+///
 /// # Errors
 ///
-/// [`PrivacyError`] when the file cannot be opened or protected.
+/// [`PrivacyError`] when the file cannot be opened or protected, or is not one
+/// ordinary file.
 pub fn lock(path: &Path) -> Result<File, PrivacyError> {
     platform::lock(path).map_err(Into::into)
 }
@@ -191,8 +228,8 @@ pub fn sync_parent(path: &Path) -> Result<(), PrivacyError> {
 /// A handle already open on the destination keeps the file it opened while the
 /// name moves on to the new one. On Windows that needs a file system that
 /// supports POSIX rename semantics and a handle that allowed deletion, as a
-/// `std` open does; this crate's own opens do not, and replacing a file one of
-/// them holds fails.
+/// `std` open and [`open_read_ordinary`] do; this crate's other opens do not,
+/// and replacing a file one of them holds fails.
 ///
 /// # Errors
 ///

@@ -107,13 +107,32 @@ a permission question into one. See
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.
 
+A log name in the sessions directory that is a symbolic link or a pipe rather
+than a file is refused as a log that cannot be read is: `--continue` stops with
+`could not read the session log …` and the reason, having read nothing through
+the link and waited on no pipe, rather than continuing an older session in its
+place. `--resume` and the `/resume` preview refuse a link the same way, and
+answer a pipe as an id nothing was recorded under. A log with a second hard
+name, as a backup made with hard links leaves, is read as any other.
+
+A running session reads its own log back the same way, when it draws the
+conversation again or opens a result too old to still be held. If the log's
+name is replaced by a link or a pipe while the session runs, that read is
+refused as a log that cannot be read, rather than showing what the link leads
+to or waiting on the pipe.
+
 Closing the terminal window, or sending crucible a `kill`, while an answer is
 arriving does not lose it. On Linux, macOS and FreeBSD the hang-up or
 termination stops the turn first, the way Escape would: what the model had said
 so far is written to the log, the terminal is handed back, and then the process
 ends by that signal. `--continue` picks the session up with that much of the
-answer in it. Between turns there is nothing in flight and the signal ends
-crucible at once, as it does while a permission question is waiting for a key.
+answer in it. Between turns there is nothing in flight. While crucible waits
+for a key there, at the prompt or in a panel such as the `/login` key box, the
+signal is noticed within a quarter of a second, the terminal is handed back
+with what is typed showing again, and then the process ends by that signal.
+While a command is being carried out, or an account sign-in waits on the
+browser, the signal ends crucible at once, as it does while a permission
+question is waiting for a key.
 A `kill -9` cannot be caught by anything, and on Windows a closing console
 window is not caught either; both end the process where it stands, which is the
 case the next paragraph is about.
@@ -140,11 +159,16 @@ is still there, whole, to look at.
 A log that stops between a tool call and its result is answered from what the
 calls recorded. A call that recorded how it ended, whether it succeeded, failed
 or was stopped, is answered with that result, so the model is told what it did
-instead of being free to run it again, and any other call in the same pass is
-answered as interrupted; that answer is written to the log before anything new
-is. Where no call in the pass recorded how it ended, the last recorded turn does
-not come back: an unanswered question is not something
-to send a provider, so the replay ends before it and the file is cut to match.
+instead of being free to run it again. A call that was started and recorded no
+result may have done what it was asked before the process ended, so it is
+answered as a failure that says so: `interrupted: this call started and no
+result was recorded; it may have taken effect. Check before running it again.`
+Any other call in the same pass recorded no start, and is answered as
+interrupted. These answers are written to the log before anything new is, so a
+later `--continue` reads them back as it reads any other result. Where no call
+in the pass recorded a start, the last recorded turn does not come back: an
+unanswered question is not something to send a provider, so the replay ends
+before it and the file is cut to match.
 
 ## Conversation, journal and checkpoints
 
@@ -180,7 +204,8 @@ the prompt text. Prompt-cache records keep normalized per-attempt decisions,
 usage and cost; invocation records keep stable prepared, started and finished
 states. Conversation replay skips these records, except where a log stops
 before a tool pass's result line: a finished invocation record then answers its
-call, as described under [Continuing](#continuing).
+call, and a started one with nothing finished after it answers that the call
+may have taken effect, as described under [Continuing](#continuing).
 
 Namespaced custom entries use the same framework journal and carry their own
 schema version, source and entry identity. They are not sent to a model unless
@@ -336,7 +361,7 @@ A session put back on the screen is drawn by the code that drew it live, so it
 is the same session rather than a rendering of one. A result too long for its
 row still says how much it left over, still stands out from the rows with
 nothing behind them, and still opens on
-[<kbd>Ctrl+O</kbd> or a click](../getting-started/getting-started.md). The
+[<kbd>Ctrl+O</kbd> or a click](../getting-started/first-session.md). The
 lines are read back out of the log rather than out of the run that produced
 them, and a result too old to still be held is read back from the log when the
 view reaches it.
@@ -580,6 +605,24 @@ are offered back. Each directory keeps its
 newest hundred prompts and no more, and the file itself is bounded again across
 all of them, so it cannot grow either with how long you work or with how many
 checkouts you work in. Deleting it is how you forget what you have typed.
+
+Like a log, none of these is read through a symbolic link or waited on as a
+pipe. A link or a pipe named `recent.sessions` is an index that cannot be read:
+starting a session, `--continue` and `crucible sessions list` stop with
+`could not use the session index …` and the reason, and the welcome lists no
+sessions, until you remove it. One named `prompt.history` offers nothing back
+and is left as it is, so nothing you type is added to it. One among a session's
+saved call results makes that session's log refused as a log that cannot be
+read is.
+
+Nor is anything written, locked or narrowed to your account through one, so
+nothing outside the sessions directory is changed by a link planted in it. A
+link or a pipe named for a session's `.jsonl.lock` is a claim that cannot be
+made: `--continue` stops with `could not claim the session log …`, as above.
+One named `recent.sessions.lock` stops starting a session and `--continue` with
+`could not use the session index …` until you remove it. The index also keeps a
+small mark beside it saying this build put it in order; under a link or a pipe
+that mark is simply not left, and each start scans the directory again.
 
 ### If you used crucible 0.0.2 or earlier
 

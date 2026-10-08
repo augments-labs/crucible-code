@@ -209,11 +209,13 @@ impl<'a> Listing<'a> {
             | Pressed::Expand
             | Pressed::Background
             | Pressed::Plan
-            | Pressed::Queue
+            | Pressed::Remove
             | Pressed::Copy
             | Pressed::PasteImage
             | Pressed::Rename
             | Pressed::All
+            | Pressed::SendAll
+            | Pressed::SendNow
             | Pressed::Clicked { .. }
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }

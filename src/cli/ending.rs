@@ -18,13 +18,25 @@
 //! its `Drop`, and only then is the signal obeyed, by [`Told::obeyed`], so
 //! whoever sent it sees the death it asked for.
 //!
-//! Everywhere else the signal does at once what it always did. Between turns
-//! there is no answer in flight, and the prompt waits on the keyboard with no
-//! clock, so nothing would read a note left there. The same is true inside a
-//! turn wherever this thread waits on a key with no clock — a permission
-//! question, a panel — and [`Ending::unclocked`] marks those stretches: a
-//! signal that was only noted there would be a `kill` that did nothing until
-//! somebody pressed a key. The wait for the log that ends a turn is one more:
+//! Between turns there is no answer in flight, but the keys are still raw:
+//! raw mode is held for the whole session, so a signal obeyed where it lands
+//! while the prompt waits ends the process with no guard's `Drop` run, and
+//! leaves the shell after it showing nothing that is typed. So a wait on the
+//! keyboard between turns — the prompt, and every panel that stands over it,
+//! the `/login` key box among them — is a stretch of its own, through the
+//! [`Recall`] the renderer is given: the signal is noted while the wait lasts,
+//! the wait looks for a note a beat at a time and is called off where it finds
+//! one, and the session unwinds the way it does for a terminal that failed,
+//! every guard handing back what it held, before the note is read and the
+//! signal obeyed. Anywhere else between turns — a command being carried out, a
+//! sign-in waiting on the browser — the signal does at once what it always did.
+//!
+//! Inside a turn, wherever this thread waits on a key with no clock — a
+//! permission question, a panel — [`Ending::unclocked`] marks the stretch and
+//! the signal is obeyed where it lands: one that was only noted there would be
+//! a `kill` that did nothing until somebody pressed a key, and those waits are
+//! not watched, since the stretch they stand in already decides. The wait for
+//! the log that ends a turn is one more:
 //! its worker has handed over everything it held by then, and a log that had
 //! stopped answering would otherwise hold the process against every `kill`.
 //! Once one signal has been read, the next is obeyed at once too, so a turn
@@ -33,6 +45,18 @@
 //! The list of running commands is the one panel a turn can stand that is not
 //! such a stretch: it already wakes on a beat to follow the commands in it, so
 //! it reads the note there and closes, and the turn behind it ends as above.
+//!
+//! The prompt `crucible auth login` hides a key at is the one stretch outside a
+//! session where a signal is noted. It holds the terminal raw so that what is
+//! typed is not shown, and a signal obeyed where it landed would end the
+//! process with no guard's `Drop` run, leaving the shell after it showing
+//! nothing that is typed. So the prompt waits on the keyboard a beat at a
+//! time, through [`Ending::presses`], and ends where a note is found, leaving
+//! it unread; its guard hands the terminal back, and only then is the note
+//! read and the signal obeyed. A second signal before then is held back the
+//! same way. That prompt is the only reason a run with no session installs
+//! the handlers, and it does so as the prompt opens: before it, and after it,
+//! they obey at once.
 //!
 //! The handler cannot see which stretch it is in without being told, so the
 //! one flag that says is stored by this thread and read by the handler, either
@@ -55,10 +79,18 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
+
+use crucible_tui::{Pressed, Recall, TerminalError};
+
+/// How long [`Ending::presses`] waits on the keyboard before it looks for a
+/// note again, and so the longest a signal is held back while a prompt hides
+/// what is typed.
+const BEAT: Duration = Duration::from_millis(250);
 
 /// What this process has been told from outside, and when it may act on it.
 ///
-/// Cloned freely: every clone is the same two atomics.
+/// Cloned freely: every clone is the same three atomics.
 #[derive(Debug, Clone)]
 pub(crate) struct Ending {
     /// The signal that arrived, or zero. Written by the handler alone, apart
@@ -66,12 +98,16 @@ pub(crate) struct Ending {
     told: Arc<AtomicUsize>,
     /// Whether a signal is obeyed where it lands rather than noted.
     at_once: Arc<AtomicBool>,
+    /// How many stretches are open. None is between turns, where a wait on
+    /// the keyboard is the one place a signal is noted.
+    stretched: Arc<AtomicUsize>,
     /// Whether a handler was installed at all. Where none was, a signal is
     /// the system's to act on and nothing here may suggest otherwise.
     listening: bool,
 }
 
-/// The signal a turn was ended by.
+/// The signal that ended a turn, a prompt that hides a key, or the session
+/// while it waited between turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Told(i32);
 
@@ -94,6 +130,7 @@ impl Ending {
         Self {
             told: Arc::new(AtomicUsize::new(0)),
             at_once: Arc::new(AtomicBool::new(true)),
+            stretched: Arc::new(AtomicUsize::new(0)),
             listening: false,
         }
     }
@@ -148,6 +185,36 @@ impl Ending {
         self.stretch(false)
     }
 
+    /// The stretch a prompt that hides what is typed stands for, in which a
+    /// signal is noted for [`Ending::presses`] to find.
+    pub(crate) fn hiding(&self) -> Stretch<'_> {
+        self.stretch(false)
+    }
+
+    /// Keys as they are pressed, waited on a beat at a time, and no more once
+    /// a signal has been noted.
+    ///
+    /// What a prompt that hides what is typed reads from inside
+    /// [`Ending::hiding`]: the prompt ends where the presses do, its guard
+    /// hands the terminal back on the way out, and [`Ending::told`] then says
+    /// whether it was a signal that ended them. The note is looked at here and
+    /// not read: reading it would have a second signal obeyed where it lands
+    /// while the terminal is still raw.
+    pub(crate) fn presses(&self) -> impl Iterator<Item = Result<Pressed, TerminalError>> + '_ {
+        std::iter::from_fn(|| {
+            loop {
+                if self.told.load(Ordering::SeqCst) != 0 {
+                    return None;
+                }
+                match crucible_tui::waiting(BEAT) {
+                    Ok(true) => return Some(crucible_tui::pressed()),
+                    Ok(false) => {}
+                    Err(problem) => return Some(Err(problem)),
+                }
+            }
+        })
+    }
+
     /// A stretch inside a turn where this thread waits on a key with no clock,
     /// so a signal has to be obeyed where it lands or not at all.
     ///
@@ -170,6 +237,7 @@ impl Ending {
     }
 
     fn stretch(&self, at_once: bool) -> Stretch<'_> {
+        self.stretched.fetch_add(1, Ordering::SeqCst);
         let before = if self.listening {
             self.at_once.swap(at_once, Ordering::SeqCst)
         } else {
@@ -194,6 +262,13 @@ impl Ending {
 
         self.at_once.store(true, Ordering::SeqCst);
         i32::try_from(signal).ok().map(Told)
+    }
+
+    /// What lets a wait on the keyboard between turns notice a signal, where
+    /// one is heard at all: see [`Recall`] for `Ending`.
+    pub(crate) fn recall(&self) -> Option<Arc<dyn Recall>> {
+        self.listening
+            .then(|| Arc::new(self.clone()) as Arc<dyn Recall>)
     }
 
     /// Notes `signal` the way the handler does.
@@ -260,6 +335,7 @@ impl Stretch<'_> {
 
 impl Drop for Stretch<'_> {
     fn drop(&mut self) {
+        self.ending.stretched.fetch_sub(1, Ordering::SeqCst);
         if !self.ending.listening {
             return;
         }
@@ -270,6 +346,37 @@ impl Drop for Stretch<'_> {
         self.ending
             .at_once
             .store(self.before || noted, Ordering::SeqCst);
+    }
+}
+
+/// A wait on the keyboard between turns is a stretch of its own: the signal is
+/// noted while it waits, the wait is called off where a note is found, and the
+/// renderer's caller unwinds with every guard handing back what it holds. The
+/// note is left for whoever ends the session to read, as [`Ending::presses`]
+/// leaves it. Inside a stretch the stretch decides, so a wait there is not
+/// watched.
+impl Recall for Ending {
+    fn waiting(&self) -> bool {
+        if self.stretched.load(Ordering::SeqCst) != 0 {
+            return false;
+        }
+
+        // Noted already and the patience spent: the wait is called off at
+        // once, and a second signal meanwhile is obeyed where it lands.
+        if self.told.load(Ordering::SeqCst) == 0 {
+            self.at_once.store(false, Ordering::SeqCst);
+        }
+        true
+    }
+
+    fn recalled(&self) -> bool {
+        self.told.load(Ordering::SeqCst) != 0
+    }
+
+    // Between turns a signal is obeyed at once, and a wait that noted one has
+    // spent the patience: either way the stretch ends obeying.
+    fn waited(&self) {
+        self.at_once.store(true, Ordering::SeqCst);
     }
 }
 

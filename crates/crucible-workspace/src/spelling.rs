@@ -14,6 +14,11 @@
 //! there; the point is that a site not going through this door is not
 //! automatically one to correct.
 //!
+//! A name that is not text — bytes that are not UTF-8, or on Windows a lone
+//! surrogate — comes out with a replacement character where it could not be
+//! written, so two such paths can share one spelling. What has to tell files
+//! apart keeps the path itself beside the spelling rather than trusting this.
+//!
 //! A directory handed to a person to type into a shell is spelled for that
 //! shell instead, by [`typed`]: it is gone to, never matched, so it keeps the
 //! separators the shell reads and drops only what nobody types.
@@ -51,9 +56,11 @@ pub fn written(path: &Path) -> String {
     plain.unwrap_or(&path).replace('\\', "/")
 }
 
-/// A path spelled the way one is written, which is the way it already is. A
-/// backslash here is a character in a filename rather than a separator, and
-/// anything minted from such a file has to keep it.
+/// A path spelled the way one is written, which is the way it already is
+/// unless part of it is not text: those bytes come out as the replacement
+/// character, as the module documentation says. A backslash here is a
+/// character in a filename rather than a separator, and anything minted from
+/// such a file has to keep it.
 #[cfg(not(windows))]
 #[must_use]
 pub fn written(path: &Path) -> String {

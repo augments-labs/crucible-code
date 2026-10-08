@@ -36,6 +36,7 @@ use crate::bands::{Bands, Wants};
 use crate::clipboard;
 use crate::color::{Palette, Slot};
 use crate::escape::Escapes;
+use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::markdown::Markdown;
@@ -48,14 +49,18 @@ use crate::terminal::{Size, Terminal, TerminalError};
 use crate::width;
 
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod frame;
 mod native;
 mod painted;
+mod recall;
 
 use native::Native;
 use painted::Painted;
+pub use recall::Recall;
+use recall::Watch;
 
 /// How far one notch of the wheel moves the transcript, until told otherwise.
 ///
@@ -292,6 +297,9 @@ pub struct Renderer<T: Terminal> {
     /// away and made again between messages, and which checkout this is does
     /// not change while the session runs.
     forge: Option<Forge>,
+    /// The checkout the transcript's links to paths are read against, held
+    /// here for the reason the forge is.
+    files: Option<Files>,
     /// Whether an answer is still arriving.
     ///
     /// Set by the first piece of one and put down by [`Renderer::settle`],
@@ -365,6 +373,8 @@ pub struct Renderer<T: Terminal> {
     /// still while an answer scrolls under it is over whatever is under it now,
     /// which is what a reader watching the screen sees.
     pointing: Option<(usize, usize)>,
+    /// What may call off a wait on the keyboard, where anything may.
+    recall: Option<Arc<dyn Recall>>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -406,6 +416,7 @@ impl<T: Terminal> Renderer<T> {
             escapes: Escapes::default(),
             markdown: Markdown::default(),
             forge: None,
+            files: None,
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
@@ -416,7 +427,14 @@ impl<T: Terminal> Renderer<T> {
             held: None,
             creeps: None,
             pointing: None,
+            recall: None,
         }
+    }
+
+    /// Lets `recall` call off every wait on the keyboard from here on, as it
+    /// says in [`Recall`].
+    pub fn recalled_by(&mut self, recall: Arc<dyn Recall>) {
+        self.recall = Some(recall);
     }
 
     /// Waits for one press, carrying a drag resting at an edge of the
@@ -424,21 +442,38 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// `None` where the scroll rail or the selection consumed the press. A
     /// drag's next step wakes this wait, moves the transcript, and waits again;
-    /// it never becomes a key the caller could mistake for input.
+    /// it never becomes a key the caller could mistake for input. A wait a
+    /// [`Recall`] watches wakes on a beat as well, to ask it, and asks once
+    /// more after the key is read.
     ///
     /// # Errors
     ///
-    /// [`TerminalError::Io`] if the terminal could not be read or written.
+    /// [`TerminalError::Io`] if the terminal could not be read or written, and
+    /// [`TerminalError::Recalled`] if the wait was called off.
     pub fn pressed(&mut self) -> Result<Option<Pressed>, TerminalError> {
+        self.pressed_from(waiting, pressed)
+    }
+
+    /// [`Renderer::pressed`], polling with `poll` and reading with `read`.
+    fn pressed_from(
+        &mut self,
+        mut poll: impl FnMut(Duration) -> Result<bool, TerminalError>,
+        read: impl FnOnce() -> Result<Pressed, TerminalError>,
+    ) -> Result<Option<Pressed>, TerminalError> {
         self.seal()?;
+        let watch = Watch::began(self.recall.as_ref());
         loop {
-            if let Some(patience) = self.rests_in()
-                && !waiting(patience)?
+            watch.held()?;
+            if let Some(patience) = watch.patience(self.rests_in())
+                && !poll(patience)?
             {
                 self.repose()?;
                 continue;
             }
-            return self.took(pressed()?);
+            watch.held()?;
+            let arrived = read()?;
+            watch.over()?;
+            return self.took(arrived);
         }
     }
 
@@ -447,20 +482,42 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// The caller already has something else to watch — a running turn or a
     /// login attempt — so a step taken answers `false` and lets that caller
-    /// make its ordinary pass before polling again.
+    /// make its ordinary pass before polling again. A wait a [`Recall`]
+    /// watches is taken a beat at a time, asking it between beats and once
+    /// more after the last.
     ///
     /// # Errors
     ///
-    /// [`TerminalError::Io`] if the terminal could not be read or written.
+    /// [`TerminalError::Io`] if the terminal could not be read or written, and
+    /// [`TerminalError::Recalled`] if the wait was called off.
     pub fn waiting(&mut self, patience: Duration) -> Result<bool, TerminalError> {
+        self.waiting_from(patience, waiting)
+    }
+
+    /// [`Renderer::waiting`], polling with `poll`.
+    fn waiting_from(
+        &mut self,
+        patience: Duration,
+        mut poll: impl FnMut(Duration) -> Result<bool, TerminalError>,
+    ) -> Result<bool, TerminalError> {
         self.seal()?;
         self.repose()?;
-        let patience = self.rests_in().map_or(patience, |due| due.min(patience));
-        let ready = waiting(patience)?;
-        if !ready {
-            self.repose()?;
+        let watch = Watch::began(self.recall.as_ref());
+        let mut left = self.rests_in().map_or(patience, |due| due.min(patience));
+        loop {
+            watch.held()?;
+            let beat = watch.patience(Some(left)).unwrap_or(left);
+            if poll(beat)? {
+                watch.over()?;
+                return Ok(true);
+            }
+            left = left.saturating_sub(beat);
+            if left.is_zero() {
+                watch.over()?;
+                self.repose()?;
+                return Ok(false);
+            }
         }
-        Ok(ready)
     }
 
     /// What a press means once the scroll rail and the selection have had it.
@@ -986,10 +1043,22 @@ impl<T: Terminal> Renderer<T> {
         self.markdown = self.reader();
     }
 
-    /// A reader for the next message, drawing and counting the way this
-    /// renderer was told to.
+    /// Tells this renderer which checkout a link to a path in the answer is
+    /// read against, and how the terminal reads its line.
+    ///
+    /// Said once, at startup, for the reason [`Renderer::counts`] is. `None`
+    /// hands a path on as it was written.
+    pub fn reads_paths(&mut self, files: Option<Files>) {
+        self.files = files;
+        self.markdown = self.reader();
+    }
+
+    /// A reader for the next message, drawing, counting and opening the way
+    /// this renderer was told to.
     fn reader(&self) -> Markdown {
-        Markdown::new(self.glyphs).counting(self.forge.clone())
+        Markdown::new(self.glyphs)
+            .counting(self.forge.clone())
+            .opening(self.files.clone())
     }
 
     /// Marks the next record line as the start of a prompt.
@@ -1409,19 +1478,83 @@ impl<T: Terminal> Renderer<T> {
         caret: Option<Caret>,
         palette: Palette,
     ) -> Result<(), TerminalError> {
+        self.standing_under(&[], rows, caret, palette)
+    }
+
+    /// Stands `rows` under the transcript, with `turn` over them: rows that
+    /// are still the transcript's, laid out beside the scroll rail at the width
+    /// it leaves and counted as the record's tail, as
+    /// [`Renderer::replace_running`] stands its own `turn`. The caret's row
+    /// counts from the first of `turn`.
+    fn standing_under(
+        &mut self,
+        turn: &[Row],
+        rows: &[Row],
+        caret: Option<Caret>,
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
             return Ok(());
         }
 
-        paint(rows, &palette, self.size.columns, &mut self.standing.turn);
+        paint(
+            turn.iter().chain(rows),
+            &palette,
+            self.size.columns,
+            &mut self.standing.turn,
+        );
+        let folds = self.folds();
         self.standing.drew.clear();
-        self.standing
-            .drew
-            .extend(rows.iter().map(|row| drawn(row, self.size.columns)));
+        self.standing.drew.extend(
+            turn.iter()
+                .map(|row| drawn(row, folds))
+                .chain(rows.iter().map(|row| drawn(row, self.size.columns))),
+        );
         self.standing.running.clear();
-        self.standing.ran = None;
+        self.standing
+            .running
+            .extend(turn.iter().map(|row| row.clipped(folds)));
+        self.standing.ran = (!turn.is_empty()).then_some(palette);
         self.standing.turned = caret;
         self.draw()
+    }
+
+    /// [`Renderer::under`] in the box's place, with `turn` over it as
+    /// [`Renderer::replace_running`] stands it: takes the box off and stands
+    /// `rows` where it was, in one frame.
+    ///
+    /// For a component that takes the rows the box has while a turn runs, and
+    /// so is drawn again on every beat of it. Taking the box off with
+    /// [`Renderer::live`] first would draw every one of those twice, the first
+    /// time with neither the box nor the component's new rows on screen.
+    ///
+    /// `turn` is the rows over `rows` that are still the transcript's, so the
+    /// scroll rail stands beside them and counts them, as it does
+    /// [`Renderer::replace_running`]'s `turn`: they are laid out at the width
+    /// the rail leaves, and the caret's row counts from the first of them.
+    /// Anything else a turn keeps over `rows` goes in `rows`. Empty between
+    /// turns.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn instead(
+        &mut self,
+        turn: &[Row],
+        rows: &[Row],
+        caret: Option<Caret>,
+        palette: Palette,
+    ) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return Ok(());
+        }
+
+        // As an empty slice given to `live` takes it off, without its frame.
+        paint(&[], &palette, self.size.columns, &mut self.standing.prompt);
+        self.standing.prompted = Some(Caret::default());
+        self.prompt_target = None;
+        self.pointed_changed = false;
+        self.standing_under(turn, rows, caret, palette)
     }
 
     /// Ends the line the transcript is still writing to.

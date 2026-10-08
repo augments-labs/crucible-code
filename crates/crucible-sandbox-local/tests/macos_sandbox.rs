@@ -26,7 +26,7 @@ use crucible_sandbox::{
     SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService,
     SandboxUnreadablePattern,
 };
-use crucible_sandbox_local::LocalSandbox;
+use crucible_sandbox_local::{LocalSandbox, ObservedVersion};
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use crucible_workspace::Workspace;
 
@@ -153,6 +153,25 @@ fn read(stream: &mut Option<Box<dyn SandboxOutput>>, retained: &mut Vec<u8>) {
 
 fn native_matrix_requires_fixture() -> bool {
     std::env::var_os("CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX").is_some()
+}
+
+/// The version is crucible's own name for its profile scheme, so an inspection
+/// states it rather than calling it unverified, and states the one a
+/// preparation records.
+#[test]
+fn an_inspection_states_the_version_a_preparation_records() {
+    let fixture = Fixture::new("inspected-version");
+    let observed =
+        LocalSandbox::observe(&fixture.request("inspected-version")).expect("observed backend");
+    let session =
+        crucible_runtime::answered!(service().prepare(fixture.request("prepared-version")))
+            .expect("prepared sandbox");
+    let recorded = session.inspection().backend().version();
+    assert!(
+        matches!(observed.version(), ObservedVersion::Stated(stated) if stated == recorded),
+        "inspected {:?}, prepared {recorded}",
+        observed.version()
+    );
 }
 
 #[test]

@@ -84,10 +84,12 @@ pub(crate) fn advance(character: char) -> Option<usize> {
 /// join an emoji sequence or shape Persian and Indic script, and the terminal
 /// draws them as part of the characters around them.
 ///
-/// Otherwise the same set `crucible_types` drops from a limit's name. Neither
-/// crate may name the other, so the two lists are held to each other by a test
-/// in the command line, which reaches both. U+2065, unassigned between the
-/// invisible operators and the isolates, is taken with them.
+/// Otherwise the same set `crucible_types` drops from a limit's name, which
+/// drops the line and paragraph separators too; they are not format
+/// characters, and the screen draws them a column each. Neither crate may name
+/// the other, so the two lists are held to each other by a test in the command
+/// line, which reaches both. U+2065, unassigned between the invisible
+/// operators and the isolates, is taken with them.
 pub(crate) const fn unshown(character: char) -> bool {
     matches!(
         character,

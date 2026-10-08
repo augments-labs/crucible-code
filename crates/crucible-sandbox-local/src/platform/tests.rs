@@ -108,7 +108,7 @@ fn stderr(child: &mut Child) -> Box<dyn Stream> {
     stream(child.stderr.take().expect("stderr")).expect("a prepared stderr")
 }
 
-fn reaped(mut child: Child) {
+fn reaped(child: &mut Child) {
     let deadline = Instant::now() + WAIT;
     while child.try_wait().expect("a status").is_none() {
         assert!(Instant::now() < deadline, "the command did not exit");
@@ -116,16 +116,73 @@ fn reaped(mut child: Child) {
     }
 }
 
+/// A command killed and reaped when it is dropped, however the test holding it
+/// ends: one that never ends on its own outlives a failed assertion otherwise,
+/// and the test is reported as leaking it as well as failing.
+struct Killing(Child);
+
+impl std::ops::Deref for Killing {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Killing {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+/// Killing one that has ended does nothing, and waiting on one already reaped
+/// answers with the status it was reaped with.
+impl Drop for Killing {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A test that fails holding a command through [`Killing`] leaves nothing
+/// running once it has unwound, though the command would have run on long
+/// after it. The command is `exec`ed, so the process killed is the one that
+/// would have run on rather than a shell above it; and `kill -0` still answers
+/// for a process killed but not yet reaped, so the guard is held to both.
+#[cfg(unix)]
+#[test]
+fn a_command_held_through_a_failing_test_is_killed_and_reaped() {
+    let held = Killing(shell("exec sleep 30"));
+    let process = held.id().to_string();
+    let answers = || {
+        Command::new("kill")
+            .args(["-0", &process])
+            .stderr(Stdio::null())
+            .status()
+            .expect("kill")
+            .success()
+    };
+    assert!(answers(), "the command never started");
+
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _held = held;
+        panic!("an assertion failed while the command ran");
+    }));
+
+    assert!(failed.is_err(), "the test holding the command did not fail");
+    assert!(!answers(), "the command outlived the test that failed");
+}
+
 #[test]
 fn a_waited_read_carries_what_a_read_without_waiting_carries() {
     let mut first = shell(LINES);
     let expected = polled(stdout(&mut first).as_mut());
-    reaped(first);
+    reaped(&mut first);
 
     let mut second = shell(LINES);
     let output = stdout(&mut second);
     let kept = runtime().block_on(async { tokio::time::timeout(WAIT, waited(output, 7)).await });
-    reaped(second);
+    reaped(&mut second);
 
     assert!(expected.len() > 2000 * 6, "only {} bytes", expected.len());
     assert_eq!(kept.expect("the stream ended in time"), expected);
@@ -157,7 +214,7 @@ fn said_back_waiting(told: Vec<u8>) -> Vec<u8> {
             .expect("the command finished speaking in time")
             .expect("the reading task")
     });
-    reaped(child);
+    reaped(&mut child);
     thread
         .end()
         .expect("the input's thread, where there is one, ended");
@@ -176,7 +233,7 @@ fn said_back_polled(told: Vec<u8>) -> Vec<u8> {
         .join()
         .expect("the writer")
         .expect("every byte written");
-    reaped(child);
+    reaped(&mut child);
     kept
 }
 
@@ -217,7 +274,7 @@ fn a_flood_on_standard_error_is_read_beside_standard_output_to_both_ends() {
     let flooding = std::thread::spawn(move || polled(first_stderr.as_mut()));
     let said = polled(first_stdout.as_mut());
     let flooded = flooding.join().expect("the stderr reader");
-    reaped(first);
+    reaped(&mut first);
 
     let mut second = shell(FLOOD);
     let errors = stderr(&mut second);
@@ -233,7 +290,7 @@ fn a_flood_on_standard_error_is_read_beside_standard_output_to_both_ends() {
             .expect("the stderr task");
         (said, flooded)
     });
-    reaped(second);
+    reaped(&mut second);
 
     assert!(flooded.len() > 64 * 1024, "only {} bytes", flooded.len());
     assert_eq!((waited_said, waited_flooded), (said, flooded));
@@ -426,12 +483,19 @@ const DEAF: &str = "for /l %i in (0,0,1) do @rem";
 
 /// A write parked in a real pipe a command never reads is abandoned by the
 /// drop of the input through the platform's own cancellation, not a stand-in
-/// for it: the thread lets go of the pipe within the bound while the command
-/// still runs, and the command's owner then joins it at once.
+/// for it. The drop waits for nothing: it returns while the thread is kept off
+/// the processor, so it cannot be waiting on the thread or the write. Let run
+/// again, the thread lets go of the pipe within the bound while the command
+/// still runs, and the command's owner then joins it.
+///
+/// The drop is not timed. A drop that waits for the thread, as one that asked
+/// for the write's cancellation from the dropping thread did, passes any
+/// timing whenever the host runs that thread quickly, and failed one only on a
+/// busy runner that did not.
 #[cfg(windows)]
 #[test]
 fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
-    let mut child = shell(DEAF);
+    let mut child = Killing(shell(DEAF));
     let thread = InputThread::default();
     let mut input = input(child.stdin.take().expect("stdin"), &thread);
     let parked = runtime().block_on(async {
@@ -449,9 +513,24 @@ fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
     });
     assert!(parked, "the pipe never filled");
 
-    let dropping = Instant::now();
-    drop(input);
-    let took = dropping.elapsed();
+    let held = thread
+        .with_thread(windows::Suspended::new)
+        .expect("the writer's thread")
+        .expect("the writer's thread suspended");
+    let (dropped, returned) = std::sync::mpsc::channel();
+    let dropping = std::thread::spawn(move || {
+        drop(input);
+        let _ = dropped.send(());
+    });
+    // Bounded only so that a drop waiting on the held thread fails rather
+    // than hangs; one that waits for nothing returns whatever the host's load.
+    assert!(
+        returned.recv_timeout(WAIT).is_ok(),
+        "dropping the input waited on its thread"
+    );
+    dropping.join().expect("the dropping thread");
+    assert!(!thread.finished(), "the suspended thread returned");
+    drop(held);
     let deadline = Instant::now() + Duration::from_secs(1);
     while !thread.finished() {
         assert!(
@@ -461,14 +540,12 @@ fn dropping_an_input_parked_in_a_full_pipe_is_heard_within_the_bound() {
         std::thread::sleep(Duration::from_millis(1));
     }
 
-    assert!(took < Duration::from_millis(50), "dropping took {took:?}");
     assert!(
         child.try_wait().expect("a status").is_none(),
         "the command ended, so the pipe closing proves nothing"
     );
-    let ending = Instant::now();
     thread.end().expect("the thread ended");
-    assert!(ending.elapsed() < Duration::from_millis(50));
+    assert!(thread.joined(), "the ended thread was not joined");
     child.kill().expect("the command stopped");
-    reaped(child);
+    reaped(&mut child);
 }

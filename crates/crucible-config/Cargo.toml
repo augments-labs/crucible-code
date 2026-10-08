@@ -25,6 +25,10 @@ crucible-tools.workspace = true
 crucible-types.workspace = true
 # `Workspace`, which a path a setting names is proved against.
 crucible-workspace.workspace = true
+# The `Serialize` trait, which `serde_json` does not re-export, so that the
+# `config check` report can be written through the formatter `crucible-types`
+# escapes a terminal's controls with, rather than through `serde_json`'s own.
+serde_core.workspace = true
 # The document is JSON. Read without `derive`, the same way every other boundary
 # in this workspace reads one: the shape is walked against `shape::DOCUMENT`, so
 # a mirror struct per block would be a second declaration of the same keys and

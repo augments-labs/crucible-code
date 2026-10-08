@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.45.3"
+version = "0.46.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -82,6 +82,13 @@ tokio = { version = "=1.53.1", default-features = false }
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
 clap = { version = "=4.6.7", features = ["derive"] }
+
+# Shell completion scripts written from the command tree `clap` already holds.
+# `std` has no notion of a command tree, and a script written by hand for five
+# shells would drift from the flags the first time one is renamed. Default
+# features only: the dynamic-completion machinery, which would add `clap_lex`,
+# `shlex` and `is_executable`, is not used.
+clap_complete = "=4.6.11"
 
 # Error enums. Every module owns its error type; `thiserror` writes the
 # `Display` and `source` impls for it without erasing the type the way a
@@ -227,6 +234,16 @@ uuid = { version = "=1.26.1", features = ["v7"] }
 # implementations, and the crate has no runtime or platform dependencies.
 sha2 = { version = "=0.11.0", default-features = false }
 
+# A release archive is a gzip-compressed tar, and `std` reads neither format. A
+# hand-written reader of either is the unsafe archive parser the update design
+# rules out, so `tar` reads the members' headers and data and `flate2`
+# decompresses the stream under it, in pure Rust through its default backend.
+# Only their readers are used: nothing is unpacked by `tar`'s own extraction,
+# which is why its extended-attribute support is left off. `flate2` is already
+# in the tree under image decoding, at this version.
+flate2 = { version = "=1.1.9", default-features = false, features = ["rust_backend"] }
+tar = { version = "=0.4.46", default-features = false }
+
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
 # to do what rg does rather than to re-derive it: `ignore` reads .gitignore the
@@ -253,7 +270,8 @@ serde_json = "=1.0.151"
 # a client is hostile input, and the only way to stop reading one at the entry,
 # level or value that goes over its bound, or at a key said twice — rather
 # than after the whole tree is in memory — is to hand the reader a visitor that
-# counts. `serde_json` does not re-export the traits a visitor implements.
+# counts. `serde_json` does not re-export the traits a visitor implements, nor
+# the one a document written through a formatter of its own is driven by.
 # Already in the graph as its dependency, at this version.
 serde_core = "=1.0.229"
 
@@ -280,7 +298,9 @@ unicode-width = "=0.2.2"
 # stopping the pipeline it started rather than the shell at the head of it, and
 # that is `kill` on a negated process group id — which `std` has no call for
 # either. It is a separate feature, so the manifests turning it on are the list
-# of crates that may make that call.
+# of crates that may make that call. The same feature is the one answer to
+# which user a process runs as, `getuid`, which `std` lacks as well; a manifest
+# that turns it on for that alone says so beside it.
 rustix = { version = "=1.1.5", features = ["fs"] }
 
 # Compiles the bounded Linux seccomp program without hand-maintained BPF or
@@ -481,6 +501,7 @@ crucible-app.workspace = true
 # front end makes: the command line is one client of that contract.
 crucible-client-api.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 crucible-attachments.workspace = true
 crucible-auth.workspace = true
 crucible-builtins.workspace = true

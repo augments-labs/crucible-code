@@ -202,12 +202,22 @@ Both durations remember exactly what the question named.
 
 - For a file change, it is the tool **and the resolved path**. `session` on a
   `write` to `src/a.rs` stops asking about that write; another path asks again,
-  and `edit` is separate too.
-- For a command, it is the tool **and the whole command**, with runs of
-  whitespace collapsed. `session` on `cargo test` stops asking about
-  `cargo test`; `cargo build`, the same program but a different command, asks
-  again. Standing permission for a family of commands is a job for an
-  [allow rule](rules.md), which is written down where you can read it back.
+  and `edit` is separate too. A path crucible could not resolve, such as one
+  outside the directories it reaches, is never remembered: `session` allows
+  that one call, and the next is asked about again. Nor is a path whose name
+  is not valid text, which a question can only show with `�` standing in for
+  what it could not print, so two such files would read alike.
+- For a tool that names no file at all, such as `todo_write`, which is asked
+  about only when an `ask` rule names it, it is the tool. `session` stops
+  asking about that tool.
+- For a command, it is the tool **and the whole line the question
+  showed**, operators and the spacing between words included. `session` on `cargo test` stops
+  asking about `cargo test`; `cargo build`, the same program but a different
+  command, asks again, and so does `make; make install` after a yes to
+  `make && make install`, because the operators between commands are part of
+  what you agreed to. Standing permission for a family of commands is a job
+  for an [allow rule](rules.md), which is written down where you can read it
+  back.
 - For a web tool, it is the tool **and the host**. `session` on a `web_fetch`
   from `docs.rs` stops asking about that host; another host asks again.
 

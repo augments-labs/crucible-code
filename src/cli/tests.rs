@@ -310,50 +310,13 @@ fn the_registry_of_commands_left_running_ends_before_the_runtime_is_shut_down() 
 }
 
 #[test]
-fn a_sandbox_report_is_written_even_when_the_shutdown_after_it_ran_out_of_time() {
-    // The report is the answer the flag was asked for, and a cleanup that
-    // failed once it had been made does not make it untrue. The run still ends
-    // on the cleanup's failure, so the exit status says it.
-    let mut out = Vec::new();
-
-    let ended = reported(
-        Ok("confined\n".to_owned()),
-        Err(Fatal::Providerless),
-        &mut out,
-    );
-
-    assert_eq!(String::from_utf8_lossy(&out), "confined\n");
-    assert!(matches!(ended, Err(Fatal::Providerless)), "{ended:?}");
-}
-
-#[test]
-fn a_sandbox_report_that_was_never_made_writes_nothing_and_ends_on_its_own_failure() {
-    let mut out = Vec::new();
-
-    let ended = reported(Err(Fatal::Here(io::Error::other("gone"))), Ok(()), &mut out);
-
-    assert!(out.is_empty(), "{out:?}");
-    assert!(matches!(ended, Err(Fatal::Here(_))), "{ended:?}");
-}
-
-#[test]
-fn a_sandbox_report_after_a_clean_shutdown_is_written_whole() {
-    let mut out = Vec::new();
-
-    let ended = reported(Ok("confined\n".to_owned()), Ok(()), &mut out);
-
-    assert_eq!(String::from_utf8_lossy(&out), "confined\n");
-    assert!(ended.is_ok(), "{ended:?}");
-}
-
-#[test]
 fn windows_sandbox_maintenance_is_an_exclusive_early_action() {
     let setup = Cli::try_parse_from(["crucible", "sandbox", "setup", "--owner", r"MACHINE\person"])
         .expect("targeted setup");
     assert!(matches!(
         setup.command,
         Some(Command::Sandbox {
-            action: SandboxMaintenance::Setup { owner }
+            action: SandboxAction::Maintenance(SandboxMaintenance::Setup { owner })
         }) if owner.as_deref() == Some(std::ffi::OsStr::new(r"MACHINE\person"))
     ));
 
@@ -363,6 +326,43 @@ fn windows_sandbox_maintenance_is_an_exclusive_early_action() {
         vec!["crucible", "--model", "some-model", "sandbox", "setup"],
     ] {
         assert!(Cli::try_parse_from(invalid).is_err());
+    }
+}
+
+#[test]
+fn sandbox_inspect_is_a_read_only_early_action_with_an_optional_json_report() {
+    // `crucible sandbox inspect [--json]`: one spelling, human by default.
+    for (args, json) in [
+        (vec!["crucible", "sandbox", "inspect"], false),
+        (vec!["crucible", "sandbox", "inspect", "--json"], true),
+    ] {
+        let parsed = Cli::try_parse_from(&args).expect("an inspection");
+        assert!(
+            matches!(
+                parsed.command,
+                Some(Command::Sandbox {
+                    action: SandboxAction::Inspect { json: asked }
+                }) if asked == json
+            ),
+            "{args:?}"
+        );
+    }
+
+    // The flag it grew out of is kept, as the same report in text.
+    let alias = Cli::try_parse_from(["crucible", "--sandbox"]).expect("the alias");
+    assert!(alias.sandbox && alias.command.is_none());
+
+    // Anything else is usage, answered by the parser before anything is
+    // opened: a flag nobody shipped, a run's own flags beside it, and the
+    // alias beside the command it stands for.
+    for invalid in [
+        vec!["crucible", "sandbox", "inspect", "--owner", "person"],
+        vec!["crucible", "sandbox", "inspect", "extra"],
+        vec!["crucible", "--model", "some-model", "sandbox", "inspect"],
+        vec!["crucible", "--sandbox", "sandbox", "inspect"],
+        vec!["crucible", "--sandbox", "--continue"],
+    ] {
+        assert!(Cli::try_parse_from(&invalid).is_err(), "{invalid:?}");
     }
 }
 
@@ -435,6 +435,30 @@ fn config_check_is_a_read_only_early_action_with_an_optional_json_report() {
     for invalid in [
         vec!["crucible", "config"],
         vec!["crucible", "config", "bogus"],
+    ] {
+        assert!(Cli::try_parse_from(invalid).is_err());
+    }
+}
+
+#[test]
+fn doctor_is_an_early_action_with_an_optional_json_report() {
+    // `crucible doctor [--json]`: one spelling, human by default.
+    let human = Cli::try_parse_from(["crucible", "doctor"]).expect("the human report");
+    assert!(matches!(
+        human.command,
+        Some(Command::Doctor { json: false })
+    ));
+    let machine = Cli::try_parse_from(["crucible", "doctor", "--json"]).expect("the JSON report");
+    assert!(matches!(
+        machine.command,
+        Some(Command::Doctor { json: true })
+    ));
+
+    // Anything else is usage, answered by the parser before anything is
+    // looked at.
+    for invalid in [
+        vec!["crucible", "doctor", "extra"],
+        vec!["crucible", "doctor", "--bogus"],
     ] {
         assert!(Cli::try_parse_from(invalid).is_err());
     }
@@ -643,4 +667,54 @@ fn a_native_screen_setting_draws_natively_and_the_default_draws_full_screen() {
         drawn_on(crucible_config::ScreenMode::default()),
         crucible_tui::ScreenMode::Fullscreen
     );
+}
+
+/// What [`failing`] writes for `problem`, between `crucible: ` and the line
+/// feed that ends it.
+fn failed(problem: &str) -> String {
+    let line = failing(problem);
+    line.strip_prefix("crucible: ")
+        .and_then(|said| said.strip_suffix('\n'))
+        .unwrap_or_else(|| panic!("one `crucible: ` line: {line:?}"))
+        .to_owned()
+}
+
+#[test]
+fn a_failure_at_the_ceiling_is_said_whole() {
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    let whole = "x".repeat(TEXT_BYTES);
+    assert_eq!(failed(&whole), whole);
+}
+
+#[test]
+fn a_failure_one_byte_past_the_ceiling_is_cut_and_marked() {
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    let over = "x".repeat(TEXT_BYTES + 1);
+    assert_eq!(failed(&over), format!("{}… (cut)", "x".repeat(TEXT_BYTES)));
+}
+
+#[test]
+fn a_failure_is_cut_before_a_character_the_ceiling_falls_inside() {
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    // Two bytes, the first the last one the ceiling holds.
+    let straddling = format!("{}é", "x".repeat(TEXT_BYTES - 1));
+    assert!(!straddling.is_char_boundary(TEXT_BYTES));
+    assert_eq!(
+        failed(&straddling),
+        format!("{}… (cut)", "x".repeat(TEXT_BYTES - 1))
+    );
+}
+
+#[test]
+fn a_cut_failure_still_shows_what_a_terminal_would_act_on_as_its_escape() {
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    let hostile = format!("\u{1b}]0;T\u{7}\n{}", "x".repeat(TEXT_BYTES));
+    let said = failed(&hostile);
+    assert!(said.starts_with(r"\u{1b}]0;T\u{7}\nx"), "{said:?}");
+    assert!(said.ends_with("x… (cut)"), "{said:?}");
+    assert!(!said.chars().any(char::is_control), "{said:?}");
 }

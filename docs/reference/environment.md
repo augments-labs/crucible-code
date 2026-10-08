@@ -14,8 +14,10 @@ in that entry. What it sets, it sets for the processes it starts, which the
 last two sections cover, plus one internal setting it hands its own Windows
 sandbox helper.
 
-Two more are read only if crucible crashes: Rust's own `RUST_BACKTRACE` and
-`RUST_LIB_BACKTRACE` decide whether the crash message carries a backtrace.
+Two more are read only if crucible crashes, when it writes one line naming
+the thread and where it gave up, with any control character in the message
+escaped: Rust's own `RUST_LIB_BACKTRACE`, or where that is unset
+`RUST_BACKTRACE`, decides whether a backtrace follows the line.
 
 ## crucible's own settings
 
@@ -151,6 +153,10 @@ but `auto` decides which table is drawn whatever `COLORFGBG` says. No key in
   containing `256color` gives the indexed table of 256 colours; any other
   value gives the sixteen basic colours. Unset turns colour off, because
   whatever is reading is not saying it is a terminal.
+- `TERMINAL_EMULATOR`: `JetBrains-JediTerm`, which a JetBrains IDE sets in
+  its terminal, writes the line of a link to a file as `:12` after the path,
+  the form that terminal reads. Any other value, or none, writes it as
+  `#12`, which VS Code and kitty read and the desktop's file opener drops.
 - `COLORTERM`: `truecolor` or `24bit` gives exact colours, whatever `TERM`
   says. Any other value is ignored.
 - `COLORFGBG`: `fg;bg`, or `fg;other;bg`, the rxvt convention. The last field
@@ -191,7 +197,7 @@ is set at all. On Windows an unset `TERM` allows colour too; anywhere,
   `the clipboard could not be opened` and the library's reason, written under
   the box. It is opened at the first paste and kept for the later ones. macOS
   and Windows read no variable for this. See
-  [run it](../getting-started/getting-started.md#run-it).
+  [run it](../getting-started/first-session.md#run-it).
 
 ## What a command is started with
 

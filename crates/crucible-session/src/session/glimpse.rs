@@ -12,7 +12,6 @@
 //! open. Continuing a session cuts its file, so the picker has to know before
 //! Enter, not after.
 
-use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::Path;
 
@@ -73,7 +72,8 @@ impl Glimpse {
 /// # Errors
 ///
 /// [`super::SessionError::Unknown`] where this workspace has no such session,
-/// and [`super::SessionError`] where what is there cannot be opened.
+/// and [`super::SessionError`] where what is there cannot be opened, or is a
+/// link or a pipe rather than one ordinary file.
 pub fn glimpse(
     directory: &Path,
     workspace: &Workspace,
@@ -107,7 +107,7 @@ pub fn glimpse(
         source,
     };
 
-    let mut file = File::open(&path).map_err(failed)?;
+    let mut file = super::privacy::opened(&path).map_err(failed)?;
     let length = file.seek(SeekFrom::End(0)).map_err(failed)?;
     let start = length.saturating_sub(TAIL);
     file.seek(SeekFrom::Start(start)).map_err(failed)?;

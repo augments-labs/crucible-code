@@ -8,11 +8,12 @@
 use std::collections::VecDeque;
 
 use crucible_client_api::bounds::{ITEMS, TEXT_BYTES};
+use crucible_client_api::pending::Operation;
 use crucible_client_api::{
     Capabilities, Capability, Decision, ErrorCode, Lasting, Pending, PendingId, Picked, Progress,
-    Refusal, Ruling, Said,
+    Refusal, Ruling, Said, SummaryKind,
 };
-use crucible_tools::{Ask, Remember, Sensitivity, Target, Verdict};
+use crucible_tools::{Argument, Ask, Remember, Sensitivity, Summary, Target, Verdict};
 use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
 use super::deciding::{Deciding, Front, Shown, questions, warned};
@@ -382,6 +383,180 @@ fn a_call_whose_subject_would_be_cut_is_denied_rather_than_put_short() {
     assert_eq!(whole.0.put.len(), 1);
 }
 
+/// A front end that keeps nothing of what it is put but the frame its pending
+/// action travels as, and answers nobody: a client that has only the contract
+/// to read. The identity is left out of the frame, because it is new for every
+/// action and is not what the question says.
+#[derive(Default)]
+struct Framing {
+    frames: Vec<String>,
+}
+
+impl Front for Framing {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> crucible_runtime::BoxFuture<'a, Option<Decision>> {
+        let mut written = pending.written();
+        if let Some(fields) = written.as_object_mut() {
+            fields.remove("id");
+        }
+        self.frames
+            .push(serde_json::to_string(&written).expect("a pending action writes"));
+        Box::pin(async { None })
+    }
+
+    fn refused(&mut self, _refusal: Refusal) {}
+}
+
+/// The one frame a contract-only client is put about `sensitivity`.
+fn framed(call: &ToolCall, sensitivity: &Sensitivity) -> String {
+    let mut front = Framing::default();
+    crucible_runtime::answered!(
+        Deciding::new(&mut front, Capabilities::every()).ask(call, sensitivity)
+    );
+    assert_eq!(front.frames.len(), 1, "put once");
+    front.frames.pop().expect("put once")
+}
+
+/// A call to the shell tool carrying `args`.
+fn shell(args: &str) -> ToolCall {
+    ToolCall {
+        id: ToolId::new("b"),
+        name: "bash".into(),
+        args: ToolArgs::new(args),
+    }
+}
+
+/// `sent`, understood as the simple commands `parts`.
+fn running(sent: &str, parts: &[&str]) -> Sensitivity {
+    Sensitivity::SpawnsProcess {
+        command: crucible_tools::Command::Understood {
+            sent: sent.into(),
+            parts: parts.iter().map(|part| Box::from(*part)).collect(),
+        },
+    }
+}
+
+/// `sent` going to `host`.
+fn reaching(host: &str, sent: &str) -> Sensitivity {
+    Sensitivity::ReachesNetwork {
+        host: crucible_tools::Host::Named {
+            sent: sent.into(),
+            host: host.into(),
+        },
+    }
+}
+
+#[test]
+fn a_client_reading_only_the_pending_action_tells_apart_two_lines_running_the_same_commands() {
+    // The same two commands, the second run only if the first worked, or
+    // whatever the first did.
+    let parts = ["false", "rm -f important.txt"];
+    let call = shell(r#"{"command":"false"}"#);
+
+    assert_ne!(
+        framed(&call, &running("false && rm -f important.txt", &parts)),
+        framed(&call, &running("false; rm -f important.txt", &parts)),
+    );
+}
+
+#[test]
+fn a_client_reading_only_the_pending_action_tells_apart_two_queries_to_one_service() {
+    let call = ToolCall {
+        id: ToolId::new("s"),
+        name: "web_search".into(),
+        args: ToolArgs::new("{}"),
+    };
+
+    assert_ne!(
+        framed(&call, &reaching("search.example", "weather in Paris")),
+        framed(&call, &reaching("search.example", "my bank account number")),
+    );
+}
+
+#[test]
+fn a_client_reading_only_the_pending_action_tells_apart_two_addresses_on_one_host() {
+    let call = ToolCall {
+        id: ToolId::new("f"),
+        name: "web_fetch".into(),
+        args: ToolArgs::new("{}"),
+    };
+
+    assert_ne!(
+        framed(&call, &reaching("docs.example", "https://docs.example/a")),
+        framed(
+            &call,
+            &reaching("docs.example", "https://docs.example/b?q=1")
+        ),
+    );
+}
+
+#[test]
+fn a_client_reading_only_the_pending_action_tells_a_command_left_running_from_one_that_is_not() {
+    let line = running("sleep 60", &["sleep 60"]);
+
+    assert_ne!(
+        framed(&shell(r#"{"command":"sleep 60","background":true}"#), &line),
+        framed(&shell(r#"{"command":"sleep 60"}"#), &line),
+    );
+}
+
+/// Calls whose subject fits the words a pending action carries, but whose line
+/// or address as sent does not.
+fn sent_too_long() -> [(ToolCall, Sensitivity); 2] {
+    let spaced = format!("echo{}hi", " ".repeat(TEXT_BYTES));
+    let address = format!("https://docs.example/{}", "a".repeat(TEXT_BYTES));
+    [
+        (
+            shell(r#"{"command":"echo hi"}"#),
+            running(&spaced, &["echo hi"]),
+        ),
+        (call(), reaching("docs.example", &address)),
+    ]
+}
+
+#[test]
+fn a_call_whose_line_or_address_as_sent_would_be_cut_is_denied_rather_than_put_short() {
+    for (call, sensitivity) in sent_too_long() {
+        let mut front = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Session)]);
+        let handed = crucible_runtime::answered!(
+            Deciding::new(&mut front, Capabilities::every()).ask(&call, &sensitivity)
+        );
+
+        assert_eq!(handed, (Verdict::Deny, Remember::Never), "{sensitivity}");
+        assert!(
+            front.put.is_empty(),
+            "put with what is sent cut: {sensitivity}"
+        );
+    }
+}
+
+#[test]
+fn a_front_that_draws_the_call_itself_is_put_a_line_or_address_too_long_for_the_contract() {
+    // It reads the whole call it is lent, so it is asked as ever; what it is
+    // put says the words were cut rather than passing them off as whole.
+    for (call, sensitivity) in sent_too_long() {
+        let mut whole = Whole(Scripted::saying([Reply::Fitting(
+            Ruling::Allow,
+            Lasting::Once,
+        )]));
+        let handed = crucible_runtime::answered!(
+            Deciding::new(&mut whole, Capabilities::every()).ask(&call, &sensitivity)
+        );
+
+        assert_eq!(handed, (Verdict::Allow, Remember::Never), "{sensitivity}");
+        let Some(Pending::Permission { asked, .. }) = whole.0.put.first() else {
+            panic!("never put: {sensitivity}");
+        };
+        let (Operation::Command { sent, .. } | Operation::Network { sent }) = asked else {
+            panic!("put as nothing that runs or is sent: {asked:?}");
+        };
+        assert!(sent.truncated(), "put as whole: {sensitivity}");
+    }
+}
+
 /// A scripted front end that draws from the whole value it is lent.
 struct Whole(Scripted);
 
@@ -490,6 +665,31 @@ fn a_client_that_never_asked_for_progress_is_handed_none() {
         .with(Capability::Questions);
     assert_eq!(progress(without, &retrying, None), None);
     assert_eq!(progress(Capabilities::none(), &retrying, None), None);
+}
+
+#[test]
+fn a_requested_call_says_which_of_the_four_kinds_its_argument_is() {
+    for (argument, kind) in [
+        (Argument::Path, SummaryKind::Path),
+        (Argument::Address, SummaryKind::Address),
+        (Argument::Command, SummaryKind::Command),
+        (Argument::Other, SummaryKind::Other),
+    ] {
+        let requested = crucible_runner::Event::ToolRequested {
+            call: call(),
+            summary: Summary::of(argument, "said"),
+            backgroundable: false,
+            alone: true,
+            looking: None,
+        };
+        assert!(
+            matches!(
+                progress(Capabilities::every(), &requested, None),
+                Some(Progress::ToolRequested { summary_kind, .. }) if summary_kind == kind
+            ),
+            "{argument:?}"
+        );
+    }
 }
 
 /// What a client is told of a turn that ended `turned`.

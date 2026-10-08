@@ -18,11 +18,23 @@
 //! there too, because which of the two a reader believes is otherwise an
 //! accident of the parser. [`frame`] holds what is written to the same counts,
 //! so this build never sends what it would refuse to read.
+//!
+//! A string is written with every control character escaped, DEL and the C1
+//! range included, and every Unicode format character and the line and
+//! paragraph separators too, which the JSON grammar allows but does not
+//! require: a document is often read off a terminal, a terminal acts on
+//! U+009B as it acts on ESC `[`, a right-to-left override reorders what is
+//! drawn after it, and some terminals and viewers end a line at a separator.
+//! [`crucible_types::shown`] owns the escape, which reads back as the same
+//! character, so nothing a reader decodes changes.
 
 use std::cell::Cell;
 use std::fmt;
 
+use crucible_types::shown::Escaping;
+use serde_core::Serialize as _;
 use serde_core::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde_json::ser::Serializer;
 use serde_json::{Map, Number, Value};
 
 use crate::bounds::{DEPTH, FRAME_BYTES, ITEMS, Name, Said, Text, VALUES};
@@ -206,7 +218,11 @@ pub(crate) fn frame(value: &Value) -> Result<Vec<u8>, Refusal> {
     if !fits(value, DEPTH, &mut { VALUES }) {
         return Err(ErrorCode::TooLarge.into());
     }
-    let bytes = serde_json::to_vec(value).map_err(|_| Refusal::new(ErrorCode::Malformed))?;
+    let mut writing = Serializer::with_formatter(Vec::new(), Escaping);
+    value
+        .serialize(&mut writing)
+        .map_err(|_| Refusal::new(ErrorCode::Malformed))?;
+    let bytes = writing.into_inner();
     if bytes.len() > FRAME_BYTES {
         return Err(ErrorCode::TooLarge.into());
     }

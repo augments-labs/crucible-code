@@ -5,7 +5,11 @@
 //! be written down: a [`Request`] carrying one [`Command`], the [`Response`]
 //! carrying what came of it, the [`Snapshot`] of what is now true, the
 //! [`Progress`] that is only true so far, and the [`Pending`] action a turn
-//! stops on until a [`Decision`] naming it arrives.
+//! stops on until a [`Decision`] naming it arrives. Beside them are three
+//! reports no request asks for, held to the same bounds: the [`inspection`] a
+//! script reads from `crucible sandbox inspect --json`, the [`doctor`]'s report
+//! from `crucible doctor --json`, and the [`sessions`] list from
+//! `crucible sessions list --json`.
 //!
 //! Three things are decided here and nowhere else.
 //!
@@ -67,11 +71,14 @@
 pub mod bounds;
 pub mod command;
 pub mod context;
+pub mod doctor;
 pub mod error;
+pub mod inspection;
 pub mod outcome;
 pub mod pending;
 pub mod progress;
 pub mod request;
+pub mod sessions;
 pub mod snapshot;
 pub mod usage;
 mod wire;
@@ -87,7 +94,7 @@ pub use outcome::{
     Standing, Stop, ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
-pub use progress::Progress;
+pub use progress::{Progress, SummaryKind};
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
 pub use snapshot::{Model, Percent, Snapshot};
 pub use usage::{Cost, Limit, LimitGroup, Limits, Reading, Usage, Used, Window};

@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use super::Settings;
 use crate::env;
+use crate::shape::whole;
 
 /// The most server records one document may write down.
 ///
@@ -39,6 +40,9 @@ pub(crate) const ARGS: usize = 256;
 
 /// The most environment entries one server may be given, in each block.
 pub(crate) const VARIABLES: usize = 256;
+
+/// What [`McpServer::shown_args`] writes where a secret could have been.
+const HIDDEN: &str = McpServer::HIDDEN;
 
 /// What each timeout is where the record does not say, in seconds.
 ///
@@ -96,10 +100,11 @@ pub struct McpServer {
 }
 
 impl fmt::Debug for McpServer {
-    /// Written by hand so `env` is named and not shown.
+    /// Written by hand so `env` is named and not shown, and `args` is shown as
+    /// [`shown_args`](Self::shown_args) shows it.
     ///
-    /// The block is what this server is started with, so a key for it is
-    /// written there and nowhere else. A derive is how one reaches a log line,
+    /// A key for this server is written in the block it is started with, or
+    /// on its command line. A derive is how one reaches a log line,
     /// an error or a panic payload without anybody having decided that it
     /// should, which is why the redaction lives in the type rather than in
     /// whatever prints it.
@@ -110,7 +115,8 @@ impl fmt::Debug for McpServer {
     /// The record is taken apart rather than read field by field, so that a
     /// field added later is a compilation error here instead of a field this
     /// quietly stops printing. That is the one thing the derive gave for free
-    /// and the reason to give it up was `env`, not the rest of the record.
+    /// and the reason to give it up was `env` and `args`, not the rest of the
+    /// record.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             name,
@@ -129,7 +135,7 @@ impl fmt::Debug for McpServer {
         f.debug_struct("McpServer")
             .field("name", name)
             .field("command", command)
-            .field("args", args)
+            .field("args", &shown(args.iter().map(AsRef::as_ref)))
             .field("directory", directory)
             .field("env", &env::Named(env))
             .field("env_from", env_from)
@@ -143,6 +149,10 @@ impl fmt::Debug for McpServer {
 }
 
 impl McpServer {
+    /// What [`shown_args`](Self::shown_args) writes where a secret could have
+    /// been, and what a reader is shown in place of a variable's value.
+    pub const HIDDEN: &str = "<redacted>";
+
     /// The identifier this server's tools are qualified by.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -158,6 +168,41 @@ impl McpServer {
     /// What to pass it, applied verbatim.
     pub fn args(&self) -> impl Iterator<Item = &str> {
         self.args.iter().map(AsRef::as_ref)
+    }
+
+    /// What to pass it, as a reader is shown it: each argument exactly as
+    /// written, or [`HIDDEN`](Self::HIDDEN) in its place where it could carry a
+    /// secret, and never in part.
+    ///
+    /// [`args`](Self::args) is what the server is started with and must stay
+    /// whole; this is for a list somebody reads, and could paste. A key is
+    /// often given to a server on its command line, and a password inside an
+    /// argument can hold any character that would end it, so a reading that
+    /// hides only the password shows the rest of it wherever that reading is
+    /// wrong. An argument is hidden whole instead where:
+    ///
+    /// - a word in it, a run of letters, digits, `-` and `_`, is a name a
+    ///   secret is given under, as in `--api-key=...`, a connection string's
+    ///   `Password=...`, JSON's `"apiKey"` or a query's `?token=...`, or a
+    ///   scheme a credential follows, as in `Basic dXNlcjpwYXNz`;
+    /// - it holds an `@` after a `:`, as `user:password@host` and a URL with a
+    ///   user do;
+    /// - it holds a `?` or `#` after a URL's `://`, or a URL whose host is
+    ///   followed by a `:` and anything but a port number;
+    /// - a run of it is shaped like a token;
+    /// - or the argument before it is hidden for the first of these reasons: it
+    ///   names a secret or a scheme anywhere in it, as `--api-key`,
+    ///   `Authorization:`, `X-Api-Key` and `Bearer` do, however it ends.
+    ///
+    /// A value after a flag whose name says nothing, as `-p`, is shown. More is
+    /// hidden than is secret, on purpose: a value shown in error is the one
+    /// that cannot be taken back. So the argument after `--tokenizer=fast` or
+    /// `keys` is hidden too, though neither names the next: reading where a
+    /// name ends to tell a flag from its own value is the reading that showed
+    /// a secret wherever it was wrong.
+    #[must_use]
+    pub fn shown_args(&self) -> Vec<String> {
+        shown(self.args.iter().map(AsRef::as_ref))
     }
 
     /// The absolute directory to start it in, where one was written.
@@ -246,7 +291,7 @@ impl McpServer {
             shutdown: seconds(record, "shutdownSeconds", SHUTDOWN),
             restarts: record
                 .get("restarts")
-                .and_then(Value::as_u64)
+                .and_then(whole)
                 .and_then(|held| u32::try_from(held).ok())
                 .unwrap_or_default(),
             required: record
@@ -276,7 +321,192 @@ fn block(record: &Value, key: &str) -> Vec<(Box<str>, Box<str>)> {
 
 /// A whole number of seconds, or the default the schema publishes for the key.
 fn seconds(record: &Value, key: &str, usual: u64) -> Duration {
-    Duration::from_secs(record.get(key).and_then(Value::as_u64).unwrap_or(usual))
+    Duration::from_secs(record.get(key).and_then(whole).unwrap_or(usual))
+}
+
+/// What [`McpServer::shown_args`] shows of a list of arguments.
+fn shown<'a>(args: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut follows = false;
+    args.into_iter()
+        .map(|arg| {
+            let hidden = follows || credential(arg);
+            follows = named(arg);
+            if hidden {
+                HIDDEN.to_owned()
+            } else {
+                arg.to_owned()
+            }
+        })
+        .collect()
+}
+
+/// Replaces each server's arguments in a printed document with what
+/// [`McpServer::shown_args`] shows of them.
+///
+/// The document-holding types print through [`env::Redacted`], and a document
+/// holds every server's arguments unread, a key among them as often as not.
+/// An argument list that is not all text, which no document that parsed
+/// holds, is hidden whole.
+pub(crate) fn hide_args(shown_document: &mut Value) {
+    let Some(servers) = shown_document
+        .get_mut("mcp")
+        .and_then(|block| block.get_mut("servers"))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+
+    for record in servers.values_mut() {
+        let Some(args) = record.get_mut("args") else {
+            continue;
+        };
+        let read: Option<Vec<&str>> = args
+            .as_array()
+            .and_then(|held| held.iter().map(Value::as_str).collect());
+        *args = match read {
+            Some(read) => Value::from(shown(read)),
+            None => Value::String(HIDDEN.to_owned()),
+        };
+    }
+}
+
+/// Whether an argument could carry a secret, for any of the reasons
+/// [`McpServer::shown_args`] gives, so that it is hidden whole.
+fn credential(arg: &str) -> bool {
+    named(arg) || has_user(arg) || past_host(arg) || shaped(arg)
+}
+
+/// Whether a word in `arg` is a name a secret is given under, or a scheme a
+/// credential follows, as `Basic` in `Basic dXNlcjpwYXNz`, wherever in the
+/// argument it is written. Such an argument is hidden, and so is the one after
+/// it, which it may be naming.
+fn named(arg: &str) -> bool {
+    words(arg).any(|word| secret(word) || scheme(word))
+}
+
+/// The words of `arg`: its runs of letters, digits, `-` and `_`.
+fn words(arg: &str) -> impl DoubleEndedIterator<Item = &str> {
+    arg.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_')))
+}
+
+/// Whether `arg` holds an `@` after a `:`: a user and its password, with a
+/// scheme in front or without one, or a URL's user.
+fn has_user(arg: &str) -> bool {
+    arg.find(':')
+        .and_then(|colon| arg.get(colon..))
+        .is_some_and(|after| after.contains('@'))
+}
+
+/// Whether a URL in `arg` says more than where it is: a `?` or `#` anywhere
+/// after the first `://`, or a host that is followed by a `:` and anything but
+/// a port number, as `https://user:password/...` written with no `@` is.
+///
+/// A host runs to the first `/`, `?`, `#`, space, quote or other character a
+/// URL is not written with, or `;` or `,`. Each one ends at a `/` at the
+/// latest, so no host is read twice.
+fn past_host(arg: &str) -> bool {
+    const ENDS: [char; 15] = [
+        '/', '?', '#', '"', '\'', '`', '<', '>', '{', '}', '|', '\\', '^', ';', ',',
+    ];
+    let Some((_, after)) = arg.split_once("://") else {
+        return false;
+    };
+    after.contains(['?', '#'])
+        || arg.match_indices("://").any(|(at, sign)| {
+            let rest = arg.get(at + sign.len()..).unwrap_or_default();
+            let end = rest
+                .find(|c: char| ENDS.contains(&c) || c.is_whitespace())
+                .unwrap_or(rest.len());
+            !hosted(rest.get(..end).unwrap_or_default())
+        })
+}
+
+/// Whether a run of `arg` between the characters a token is not written with
+/// is shaped like one.
+fn shaped(arg: &str) -> bool {
+    arg.split(|c: char| !(c.is_ascii_alphanumeric() || SEPARATORS.contains(&c)))
+        .any(opaque)
+}
+
+/// Whether a URL's host, with what follows it up to its path, is a host alone
+/// or a host and a port: nothing after it, or a `:` and digits. A host
+/// written as a bracketed address is read from its closing bracket.
+fn hosted(authority: &str) -> bool {
+    let after = match authority.strip_prefix('[') {
+        Some(inner) => inner.split_once(']').map(|(_, after)| after),
+        None => Some(
+            authority
+                .find(':')
+                .map_or("", |colon| authority.get(colon..).unwrap_or_default()),
+        ),
+    };
+    after.is_some_and(|after| {
+        after.is_empty()
+            || after
+                .strip_prefix(':')
+                .is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+/// Whether a name is one a secret is given under: a flag, a variable, a
+/// header or a query key.
+fn secret(name: &str) -> bool {
+    const STEMS: [&str; 13] = [
+        "token",
+        "key",
+        "secret",
+        "pass",
+        "pwd",
+        "auth",
+        "bearer",
+        "credential",
+        "cookie",
+        "session",
+        "private",
+        "signature",
+        "jwt",
+    ];
+    // Too short to look for inside a longer word: "pat" is in "path".
+    const WORDS: [&str; 1] = ["pat"];
+    let name = unquoted(name).trim_start_matches('-').to_ascii_lowercase();
+    !name.is_empty()
+        && (STEMS.iter().any(|stem| name.contains(stem))
+            || name
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|part| WORDS.contains(&part)))
+}
+
+/// Whether a word is an authorization scheme, which a credential follows.
+fn scheme(word: &str) -> bool {
+    ["bearer", "basic", "token"]
+        .iter()
+        .any(|scheme| unquoted(word).eq_ignore_ascii_case(scheme))
+}
+
+/// What a token is written with besides letters and digits.
+const SEPARATORS: [char; 6] = ['-', '_', '.', '~', '+', '='];
+
+/// Whether a word is shaped like a token: letters and digits run together,
+/// long enough that nobody typed it as a word.
+///
+/// A path, a package name and a version are not: each holds a character a
+/// token is not written with, or no run of letters and digits long enough.
+fn opaque(word: &str) -> bool {
+    let mixed = |part: &str| {
+        part.chars().any(|c| c.is_ascii_digit()) && part.chars().any(|c| c.is_ascii_alphabetic())
+    };
+    word.chars()
+        .all(|c| c.is_ascii_alphanumeric() || SEPARATORS.contains(&c))
+        && mixed(word)
+        && (word.len() >= 32
+            || word
+                .split(SEPARATORS)
+                .any(|part| part.len() >= 16 && mixed(part)))
+}
+
+/// A word with the quotes a shell would take off its front taken off.
+fn unquoted(word: &str) -> &str {
+    word.trim_start_matches(['\'', '"'])
 }
 
 /// Borrowed halves of a retained pair.

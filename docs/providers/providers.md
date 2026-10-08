@@ -496,9 +496,15 @@ and `fast` are read only from the configuration file in your home directory; a
 project file that sets one is refused with `cannot be set here`.
 
 A custom `baseUrl` must use HTTPS unless it is the exact loopback host
-`localhost`, `127.0.0.1` or `[::1]`. User information and fragments are refused,
-and diagnostics show the recipient but redact the path and query because those
-parts often contain tenant identifiers or tokens. Authenticated model requests
+`localhost`, `127.0.0.1` or `[::1]`. User information and fragments are refused.
+Diagnostics, a printed copy of the settings among them, show the recipient (the
+scheme, host and port) but redact the path and query, because those parts often
+contain tenant identifiers or tokens. An address a URL parser would read a
+different host in, because something other than a scheme comes before its first
+`://` or its host holds a `\`, a space or a control character, is shown only as
+`<redacted>`. So is one whose host is followed by anything but a port number,
+or holds a `%`, as when the host is left out of `https://user:password`, where
+the password would otherwise be shown as the port. Authenticated model requests
 never follow redirects; the provider receives the 3xx refusal instead.
 
 A refused response body is read for at most ten seconds and 8 KiB. That deadline

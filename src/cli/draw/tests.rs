@@ -1038,6 +1038,46 @@ fn a_line_is_clipped_to_the_columns_it_takes_not_the_characters_it_holds() {
     assert_eq!(clipped(three, 5, unicode()), format!("{warning}{warning}…"));
 }
 
+#[test]
+fn a_prompt_read_from_its_start_is_clipped_where_the_whole_of_it_would_be() {
+    // Reading only a row's worth is a saving, not a second way of clipping: on
+    // anything a row can show, it comes to what reading all of it does.
+    let warning = "\u{26A0}\u{FE0F}";
+    let lines = [
+        "short".to_owned(),
+        "héllo wörld".to_owned(),
+        "日本語のテキスト".to_owned(),
+        format!("{warning}{warning}{warning}"),
+        "first line\nsecond line".to_owned(),
+        "  padded  ".to_owned(),
+    ];
+
+    for line in &lines {
+        for width in [1, 4, 5, 8, 40] {
+            for glyphs in [unicode(), Glyphs::Ascii] {
+                assert_eq!(
+                    clipped_start(line, width, glyphs),
+                    clipped(line, width, glyphs),
+                    "{line:?} at {width}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_prompt_mostly_of_characters_that_draw_nothing_still_says_it_was_cut() {
+    // Past the few times its width it reads in characters, the rest is left
+    // unread however little of the row the read part filled, and the row says
+    // so rather than drawing what reads as the whole of it.
+    let line = format!("a{}b", "\u{200B}".repeat(100));
+
+    let row = clipped_start(&line, 5, unicode());
+
+    assert!(row.ends_with('\u{2026}'), "{row:?}");
+    assert!(columns(&row) <= 5, "{row:?}");
+}
+
 /// What a question about `sensitivity` leaves on the terminal.
 fn questioned(sensitivity: &Sensitivity) -> String {
     let mut renderer = Renderer::new(Recording::new(80, 24));
@@ -2226,6 +2266,119 @@ fn the_transcript_follows_the_colour_rule() {
     crate::cli::colour_rule::holds("transcript", &rows, |_| false);
 }
 
+#[test]
+fn the_welcome_card_holds_the_colour_rule_at_every_width() {
+    use crucible_tui::{Recent, Welcome};
+
+    let four = [
+        Recent {
+            title: "a search that stops partway",
+            when: "2h ago",
+        },
+        Recent {
+            title: "rule replacement on windows",
+            when: "yesterday",
+        },
+        Recent {
+            title: "column counting in the tail",
+            when: "3d ago",
+        },
+        Recent {
+            title: "the oldest one, never shown",
+            when: "1w ago",
+        },
+    ];
+    // None, which says there is nothing earlier; three, which fill the
+    // column; and one more than that, which adds the way to the rest.
+    let histories: [&[Recent<'_>]; 3] = [&[], &four[..3], &four];
+
+    // Each form the card takes, by how many edges stand on its second row:
+    // none when it is bare, two around one column, three around two.
+    let mut forms = std::collections::BTreeSet::new();
+
+    for window in [40, 79, 80, 120] {
+        for rail in [true, false] {
+            // Laid where the screen lays it: at the transcript's width, which
+            // the rail takes a column of.
+            let mut renderer = Renderer::new(Recording::new(window, 24));
+            renderer.rails(rail);
+            let columns = renderer.transcript_columns();
+
+            for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                for sessions in histories {
+                    let welcome = Welcome {
+                        version: "v0.46.0",
+                        root: "~/code/crucible-code",
+                        sessions,
+                    };
+                    let rows = welcome.rows(columns, glyphs);
+                    let edges = rows.get(1).map_or(0, |row| {
+                        row.spans()
+                            .filter(|(slot, text)| {
+                                *slot == Slot::Accent && *text == glyphs.vertical()
+                            })
+                            .count()
+                    });
+                    forms.insert((columns, edges));
+
+                    // Nothing lit inside the frame but a tip's key, one to a
+                    // row, and the title and version in the slots they have
+                    // always had.
+                    let counts: Vec<usize> = rows
+                        .iter()
+                        .map(crate::cli::colour_rule::card_accents)
+                        .collect();
+                    let keyed = if edges == 0 { 0 } else { 4 };
+                    assert_eq!(
+                        (
+                            counts.iter().filter(|count| **count == 1).count(),
+                            counts.iter().filter(|count| **count > 1).count(),
+                        ),
+                        (keyed, 0),
+                        "{counts:?} at {columns} in {glyphs:?}"
+                    );
+                    if edges > 0 {
+                        let top: Vec<(Slot, &str)> = rows
+                            .first()
+                            .map(|row| row.spans().collect())
+                            .unwrap_or_default();
+                        assert!(
+                            top.contains(&(Slot::Strong, "crucible"))
+                                && top.contains(&(Slot::Quiet, "v0.46.0")),
+                            "{top:?}"
+                        );
+                    }
+
+                    crate::cli::colour_rule::holds_card(
+                        &format!(
+                            "the welcome card at {columns} of {window} in {glyphs:?} \
+                             with {} sessions",
+                            sessions.len()
+                        ),
+                        &rows,
+                    );
+                }
+            }
+        }
+    }
+
+    // Bare at 40 either way, one column at 79 and at 80 with the rail, two at
+    // 80 without it and at 120 either way.
+    assert_eq!(
+        forms.into_iter().collect::<Vec<_>>(),
+        [
+            (39, 0),
+            (40, 0),
+            (78, 2),
+            (79, 2),
+            (80, 3),
+            (119, 3),
+            (120, 3)
+        ],
+        "the widths drew every form the card takes"
+    );
+}
+
 /// The slot of every span of [`ruled_turn`] in colour whose text, trimmed, is
 /// `wanted`, in the order they are drawn.
 fn ruled_slots(wanted: &str) -> Vec<Slot> {
@@ -2546,8 +2699,12 @@ fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
     // a limit's name keeps would be drawn reordering the row, and one only the
     // screen drops would be a name the two disagree about. The zero-width
     // non-joiner and joiner are the exception: on screen they join an emoji
-    // sequence or shape a script, and a limit's name has no use for them.
+    // sequence or shape a script, and a limit's name has no use for them. So
+    // are the line and paragraph separators, which are not format characters:
+    // the screen draws them a column each, and a limit's name drops them, as
+    // text written outside the renderer escapes them.
     const JOINERS: [char; 2] = ['\u{200c}', '\u{200d}'];
+    const SEPARATORS: [char; 2] = ['\u{2028}', '\u{2029}'];
     for character in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
         if character.is_control() {
             continue;
@@ -2555,7 +2712,8 @@ fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
         let said = format!("a{character}b");
         let drawn = crucible_tui::Row::plain(said.as_str()).text() == "ab";
         let named = crucible_types::GroupName::new(&said).is_some_and(|name| name.as_str() == "ab");
-        let screen_drops = named && !JOINERS.contains(&character);
+        let screen_drops =
+            named && !JOINERS.contains(&character) && !SEPARATORS.contains(&character);
         assert_eq!(drawn, screen_drops, "U+{:04X}", u32::from(character));
     }
 }

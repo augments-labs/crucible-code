@@ -739,6 +739,16 @@ impl Rows {
             .find(|row| row.kind == kind && row.stored == name)
     }
 
+    /// Whether `provider` has a row a subscription is signed in on, which is
+    /// whether this build's login registry signs in to it: the answer a
+    /// reader gives that must build no login, held to the registry by a test.
+    #[must_use]
+    pub(crate) fn subscribes(&self, provider: &str) -> bool {
+        self.rows
+            .iter()
+            .any(|row| row.kind == Kind::Account && row.provider == provider)
+    }
+
     /// The row a key from `provider`'s variable belongs to.
     #[must_use]
     pub fn environment(&self, provider: &str) -> Option<&Row> {
@@ -1429,15 +1439,32 @@ pub fn chosen(
     providers: &Providers,
     auth: startup::ProviderAuth<'_>,
 ) -> Result<Option<Served>, AppError> {
+    choosing(providers, auth.settings, |one| {
+        credential_source(one, auth).is_some()
+    })
+}
+
+/// [`chosen`], with whether a provider holds a usable credential answered by
+/// `usable`, so a caller that may not read the store the way a launch does
+/// can still choose the way a launch chooses.
+///
+/// # Errors
+///
+/// As [`chosen`].
+pub(crate) fn choosing(
+    providers: &Providers,
+    settings: &Settings,
+    usable: impl Fn(Served) -> bool,
+) -> Result<Option<Served>, AppError> {
     // Refused here where a name this build has nothing for is a sentence naming
     // the ones it has, rather than carried as "nobody chose" into a session that
     // would then look set up by a credential nobody named.
-    if let Some(named) = auth.settings.provider() {
+    if let Some(named) = settings.provider() {
         let one = served(providers, named)?;
-        return Ok(credential_source(one, auth).is_some().then_some(one));
+        return Ok(usable(one).then_some(one));
     }
 
-    let mut holding = available(providers, auth);
+    let mut holding = offered(providers).filter(|one| usable(*one));
     let (Some(first), second) = (holding.next(), holding.next()) else {
         return Ok(None);
     };
@@ -1525,9 +1552,23 @@ pub fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option
         stored,
         subscriptions,
     } = auth;
-    let held = stored.held(one.name);
+    let subscribed = subscriptions.supports(one.name);
+    sourced(one, settings, from, stored.held(one.name), subscribed)
+}
+
+/// [`credential_source`], from what the store holds for `one` rather than
+/// from the store: `held` is the credential it is served by, by map and name,
+/// however that was found, and `subscribed` is whether this build signs in to
+/// `one` by subscription, however that was asked.
+pub(crate) fn sourced(
+    one: Served,
+    settings: &Settings,
+    from: &dyn Fn(&str) -> Option<String>,
+    held: Option<Held>,
+    subscribed: bool,
+) -> Option<CredentialSource> {
     if settings.base_url(one.name).is_none()
-        && subscriptions.supports(one.name)
+        && subscribed
         && held.as_ref().is_some_and(|held| held.kind == Kind::Account)
     {
         return Some(CredentialSource::Subscription);

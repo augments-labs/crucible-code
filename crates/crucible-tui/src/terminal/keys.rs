@@ -99,12 +99,12 @@ pub enum Pressed {
     /// screen, and the difference between them is that one is about the plan
     /// standing above the box and the other about a result down the transcript.
     Plan,
-    /// Ctrl+Q: show every prompt waiting behind the turn, and take one back.
+    /// Ctrl+X: delete the marked one of whatever is standing over the box.
     ///
-    /// The panel above the box names as many as fit and counts the rest; this
-    /// is the list the count is about, and the only place a queued line can be
-    /// dropped before its turn sends it.
-    Queue,
+    /// Named for the effect, because the one thing that reads it is the panel of
+    /// prompts waiting behind the turn: the mark there is the line it takes
+    /// away, and a line taken away there is never sent.
+    Remove,
     /// Ctrl+Y: put the line in the box on the reader's clipboard.
     ///
     /// A key rather than the terminal's own selection because what a drag over
@@ -134,6 +134,23 @@ pub enum Pressed {
     /// where a listing has a narrower and a wider reach, and every other
     /// component reads it as a key it has no use for.
     All,
+    /// Ctrl+Enter: send everything waiting for the turn now.
+    ///
+    /// Return with control held, which only a terminal asked to spell a
+    /// modified key distinctly can send; one that was not sends Return, and
+    /// the box reads that as the Enter it always was. Its own variant rather
+    /// than a [`Key`], because what it sends is the queue the conversation
+    /// holds and the editor holds none of that. Anything with no use for it
+    /// ignores it, and only the prompt between turns, where there is no turn
+    /// to stop, takes it as Enter.
+    SendAll,
+    /// Ctrl+S: send the highlighted prompt waiting for the turn now, alone.
+    ///
+    /// The terminal's stop-output, but the line discipline that would answer
+    /// it is off while the session holds the terminal, so the letter arrives
+    /// on every terminal; it is the one "send" starts with. Like
+    /// [`Pressed::SendAll`] it means something only where prompts wait.
+    SendNow,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -460,11 +477,11 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // both spelled with.
         KeyCode::Char('b') if bound => Pressed::Background,
 
-        // And last of these. Ctrl+Q is readline's quoted-insert, which is how a
-        // control character reaches a line — this editor takes one as paste and
-        // has no use for the key, so the letter is free and it is the one the
-        // panel of waiting prompts is spelled with.
-        KeyCode::Char('q') if bound => Pressed::Queue,
+        // And another. Ctrl+X is a prefix in one program and cut in the next,
+        // and this editor has no use for either: nothing here edits by chords
+        // or keeps what it cuts. So the letter is free, and an x through a line
+        // is what deleting it looks like on paper.
+        KeyCode::Char('x') if bound => Pressed::Remove,
 
         // And one more of the same kind. Ctrl+Y is readline's yank, which puts
         // back what a rub took out -- this editor keeps nothing it rubs, so the
@@ -486,6 +503,12 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // start on Home and was never given Ctrl+A for it. The letter is free,
         // and it is the one "all" starts with.
         KeyCode::Char('a') if bound => Pressed::All,
+
+        // Ctrl+S is the terminal's stop-output, which the line discipline only
+        // answers while the session has not taken the terminal off it. Here it
+        // never reaches that, so the letter is free on every terminal, and it
+        // is the one "send" starts with.
+        KeyCode::Char('s') if bound => Pressed::SendNow,
 
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
@@ -550,6 +573,10 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // why the prompt still has a newline on a terminal that declined.
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => Pressed::Key(Key::Newline),
         KeyCode::Enter if alt => Pressed::Key(Key::Newline),
+        // Return with control held, which the older encoding has no room for
+        // either: a terminal that declined `Spelling` sends it as Return, and
+        // it is read as the Enter it arrived as.
+        KeyCode::Enter if control => Pressed::SendAll,
         KeyCode::Enter => Pressed::Key(Key::Enter),
 
         // Up and down walk whatever a panel or a list is showing, so they are
@@ -671,13 +698,25 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_enter_and_ctrl_s_arrive_as_the_presses_that_send_what_waits() {
+        // Ctrl+Enter is its own press, not the Enter the bare key is, so a
+        // component with no queue can ignore it rather than take it as
+        // finished. Ctrl+S is the one that sends the highlighted prompt alone.
+        assert_eq!(meaning(control(KeyCode::Enter)), Pressed::SendAll);
+        assert_eq!(meaning(control(KeyCode::Char('s'))), Pressed::SendNow);
+        assert_eq!(meaning(alt(KeyCode::Char('s'))), Pressed::Ignored);
+    }
+
+    #[test]
     fn a_letter_held_with_shift_as_well_is_not_the_binding_control_alone_is() {
         // Ctrl+Shift+C is the copy every desktop has, and a terminal asked to
         // spell modified keys distinctly forwards it rather than answering it
         // itself. Read as Ctrl+C it interrupts the turn and then ends the
         // session, which is the worst possible reading of a key somebody
         // pressed to take a copy.
-        for letter in ['c', 'd', 'e', 'o', 't', 'b', 'q', 'y', 'w', 'u', 'k', 'j'] {
+        for letter in [
+            'c', 'd', 'e', 'o', 't', 'b', 'x', 'y', 'w', 'u', 'k', 'j', 's',
+        ] {
             assert_eq!(
                 meaning(control_shift(KeyCode::Char(letter))),
                 Pressed::Ignored,
@@ -727,11 +766,16 @@ mod tests {
             Pressed::PasteImage,
             "the key that pastes an image was dropped as a modified letter"
         );
+        assert_eq!(
+            meaning(control(KeyCode::Char('x'))),
+            Pressed::Remove,
+            "the key that deletes a waiting prompt was dropped as a modified letter"
+        );
 
         // Its neighbours in that arm, unbound and staying so. Typed as bare
         // characters they would be the letters without the modifier, which is
         // not what was pressed.
-        for letter in ['g', 'x'] {
+        for letter in ['g', 'q'] {
             assert_eq!(
                 meaning(control(KeyCode::Char(letter))),
                 Pressed::Ignored,
@@ -919,9 +963,9 @@ mod tests {
 
     #[test]
     fn a_binding_this_release_has_no_meaning_for_types_nothing() {
-        // Ctrl-X is a prefix in one program and cut in the next. Typing a bare
-        // `x` for it would be the worst of the three.
-        assert_eq!(meaning(control(KeyCode::Char('x'))), Pressed::Ignored);
+        // Ctrl-G is a bell in one program and an abort in the next. Typing a
+        // bare `g` for it would be the worst of the three.
+        assert_eq!(meaning(control(KeyCode::Char('g'))), Pressed::Ignored);
 
         // Alt is the modifier a reader is most likely to be holding for
         // something this program has never heard of — a window manager's, an

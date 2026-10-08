@@ -15,6 +15,8 @@ mod escape_tests;
 #[cfg(test)]
 mod guardrail_tests;
 #[cfg(test)]
+mod observe_tests;
+#[cfg(test)]
 mod publication_tests;
 #[cfg(test)]
 mod resource_tests;
@@ -40,6 +42,7 @@ use crucible_sandbox::{
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 
+pub(crate) use broker::hold_broker_directory;
 pub(super) use projection::BoundedPublication;
 
 pub(super) fn probe(
@@ -48,6 +51,16 @@ pub(super) fn probe(
     let backend = probe::Bwrap::find(excluded)?;
     let _broker = broker::Broker::find(excluded)?;
     Ok((backend.identity().clone(), backend.capabilities().clone()))
+}
+
+/// The backend [`prepare`] would use, found by the trust checks it applies and
+/// started neither for itself nor for its broker.
+pub(super) fn observe(excluded: &[&Path]) -> Result<crate::SandboxObservation, SandboxError> {
+    let backend = probe::locate(excluded)?;
+    let _broker = broker::Broker::find(excluded)?;
+    Ok(backend.leaving(
+        "whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes",
+    ))
 }
 
 #[cfg(test)]
@@ -93,9 +106,11 @@ pub(super) fn prepare(
         }
     })?;
     drop(registry);
-    // Writers in one test process run one at a time, as those tests assume. Taken
-    // here, after the registry is let go and before anything a test times, and
-    // carried with the command until its process is let go.
+    // Writers under test run one at a time, in this process and across the test
+    // processes of this checkout, as those tests assume. Taken here, after the
+    // registry is let go and before anything a test times, since it may wait out
+    // another process's tests, and carried with the command until its process is
+    // let go.
     #[cfg(test)]
     let serial = if request
         .policy()

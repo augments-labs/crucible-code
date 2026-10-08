@@ -6,7 +6,8 @@ parts that vary in angle brackets, and the rest name what you see instead. Each
 says what it means and points at the page that explains it in depth.
 
 A line that starts with `crucible: ` was written to standard error by a run
-that then stopped, with a non-zero exit code. A line that starts with `!` sits
+that then stopped, with a non-zero exit code; one that ends `… (cut)` said
+more than 16 KiB, and the rest was left off. A line that starts with `!` sits
 under a turn in the transcript, and the session carries on. A failed turn is
 written on its own, in the trouble colour, and begins with the provider's name,
 as in `anthropic: HTTP 401: ...`.
@@ -106,7 +107,7 @@ provider is chosen and no model is named, by `--model` or by
 Down a pipe there is nobody to type `/model`, so a run with no terminal ends
 instead, with the same sentence and `No turn was taken.` after it. Give the
 key and the model before running redirected. See [sign in or give it a
-key](getting-started.md#sign-in-or-give-it-a-key), [which
+key](first-session.md#sign-in-or-give-it-a-key), [which
 provider](../providers/providers.md#which-provider) and [which
 model](../providers/providers.md#which-model).
 
@@ -283,7 +284,7 @@ a reason this build does not know`. A narrower question fixes the first,
 asking for less does not help the second, the same prompt again carries on from
 the third, and the last is a stop crucible could not name, so asking again is
 what there is to try. `! stopped` is a turn you ended with <kbd>Esc</kbd>. See
-[when an answer stops early](getting-started.md#when-an-answer-stops-early).
+[when an answer stops early](first-session.md#when-an-answer-stops-early).
 
 ### `■ Usage limit reached · weekly window · resets 5 Oct 09:00`
 
@@ -299,9 +300,10 @@ asking before the reset reaches the same answer. Send a prompt once the window
 starts again; `/usage` shows the window at 100% and when it resets, in your
 local time. `resets soon` is a reset the clock has reached, and
 `resets: not reported` is a refusal that named none, so send later. Prompts you
-queued behind that turn are not sent on to the spent plan: they stay queued over
-the box, where <kbd>Ctrl+Q</kbd> opens them to edit or delete, and follow the
-next prompt you send. The mark is `#` where the glyphs are ASCII.
+queued behind that turn are not sent on to the spent plan: they stay queued in
+the panel over the box, where <kbd>Ctrl+E</kbd> takes the highlighted one back
+and <kbd>Ctrl+X</kbd> deletes it, and follow the next prompt you send. The mark
+is `#` where the glyphs are ASCII.
 
 ## The network and proxies
 
@@ -494,7 +496,7 @@ redirected run rather than a fault: lines are read whole, one prompt each, and
 the mode is written in front of them because there is no row under a box to
 show it. With no colour to read them into, the emphasis markers the model wrote
 are left in the text, which is what makes `crucible < prompts.txt > answers.md`
-a file of markdown. See [run it](getting-started.md#run-it).
+a file of markdown. See [run it](first-session.md#run-it).
 
 ### `crucible: what you typed is longer than 1 MiB; no prompt was accepted`
 
@@ -503,4 +505,4 @@ prompt is held to, and the run stopped without taking it. Split it, or name
 the file in the prompt instead of pasting its contents: a path to a picture or
 a PDF goes with the prompt, and any other path is a word the `read` tool opens
 when the model asks for it. See [naming a file in the
-prompt](getting-started.md#naming-a-file-in-the-prompt).
+prompt](first-session.md#naming-a-file-in-the-prompt).

@@ -878,7 +878,7 @@ fn a_panic_under_the_state_coordination_leaves_it_usable() {
     // the run.
     let (done, finished) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        drop(TestStateChange::read());
+        drop(TestStateChange::read().expect("a reading"));
         drop(TestStateChange::change());
         done.send(())
             .expect("the test is told the coordination answered");
@@ -892,7 +892,7 @@ fn a_panic_under_the_state_coordination_leaves_it_usable() {
 fn a_change_waits_for_a_reading_under_way() {
     // A lease part-way through reading this user's state directory would be
     // refused by a change made now, for a change that is not its own.
-    let reading = TestStateChange::read();
+    let reading = TestStateChange::read().expect("a reading");
     let (asking, asked) = std::sync::mpsc::channel();
     let (holding, held) = std::sync::mpsc::channel();
     let changer = std::thread::spawn(move || {
@@ -992,15 +992,360 @@ fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
 }
 
 /// Another checkout's state directory, removed however a test ends — unless it
-/// is this build's own, which every other test of the process shares.
-struct AnotherCheckout(PathBuf);
+/// is this build's own, which every other test of this checkout shares — and
+/// claimed while it stands, so a test killed before it could remove it leaves
+/// one the next run reclaims.
+struct AnotherCheckout(PathBuf, Option<checkout_state::Claim>);
+
+impl AnotherCheckout {
+    /// The state directory a checkout beside this one would use, named for
+    /// this test process and this test as well: every test process of this
+    /// checkout makes one and removes it when its test ends, so a name for the
+    /// checkout alone had one process remove the directory another was still
+    /// reading. No directory stands at that checkout's path, so once nobody
+    /// holds its claim it reads as a checkout that is gone.
+    fn beside_this_one() -> Self {
+        static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let made = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let shipped = format!(
+            "crucible-code-sandbox-{}-v1",
+            rustix::process::getuid().as_raw()
+        );
+        let checkout = format!(
+            "{}/another-checkout-{}-{made}",
+            env!("CARGO_MANIFEST_DIR"),
+            std::process::id()
+        );
+        let state = state_base_named(&checkout_state_name(&shipped, &checkout))
+            .expect("another checkout's state directory");
+        let claim = checkout_state::claim(
+            state.parent().expect("the state directory's parent"),
+            &shipped,
+            &checkout,
+        )
+        .expect("another checkout's claim");
+        assert_eq!(claim.state(), state);
+        Self(state, Some(claim))
+    }
+}
 
 impl Drop for AnotherCheckout {
     fn drop(&mut self) {
         if state_base().ok().as_deref() != Some(self.0.as_path()) {
             let _ = fs::remove_dir_all(&self.0);
+            if let Some(claim) = self.1.take() {
+                let _ = claim.remove();
+            }
         }
     }
+}
+
+/// The shipped name the reclaiming tests below give their own checkouts, under
+/// a directory of their own.
+const RECLAIM_TEST_SHIPPED: &str = "crucible-code-sandbox-test-v1";
+
+/// A state directory claimed for a checkout under `base`, with something in
+/// it and the lock files a test build keeps beside it.
+fn claimed_state(base: &Path, checkout: &Path) -> checkout_state::Claim {
+    let claim = checkout_state::claim(
+        base,
+        RECLAIM_TEST_SHIPPED,
+        checkout.to_str().expect("a checkout path in UTF-8"),
+    )
+    .expect("a checkout's claim");
+    create_state_directory(claim.state()).expect("a checkout's state directory");
+    fs::write(claim.state().join(REGISTRY_LOCK), b"").expect("a lock in the state");
+    for suffix in checkout_state::TEST_LOCK_SUFFIXES {
+        let mut lock = claim.state().as_os_str().to_owned();
+        lock.push(suffix);
+        fs::write(lock, b"").expect("a lock beside the state");
+    }
+    claim
+}
+
+/// Everything under `base` whose name starts with the state directory's.
+fn left_of(base: &Path, state: &Path) -> Vec<String> {
+    let name = state
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a state directory name");
+    let mut left: Vec<String> = fs::read_dir(base)
+        .expect("the base")
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|entry| entry.starts_with(name))
+        .collect();
+    left.sort();
+    left
+}
+
+#[test]
+fn a_checkouts_state_is_reclaimed_once_its_checkout_is_gone_and_nobody_holds_its_claim() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-reclaimed");
+    let base = sample.root();
+    let checkout = base.join("checkout");
+    create_private_test_directory(&checkout);
+    let claim = claimed_state(base, &checkout);
+    let state = claim.state().to_path_buf();
+    let made = left_of(base, &state);
+    assert_eq!(
+        made.len(),
+        4,
+        "the state, its claim and two locks: {made:?}"
+    );
+
+    // A checkout that still stands is never reclaimed, held or not.
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    drop(claim);
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert_eq!(left_of(base, &state), made);
+
+    // Gone, but a process of it still running holds its claim.
+    let claim = claimed_state(base, &checkout);
+    fs::remove_dir(&checkout).expect("the checkout is removed");
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert_eq!(left_of(base, &state), made);
+
+    // Gone, and nobody left holding it.
+    drop(claim);
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        1
+    );
+    assert_eq!(left_of(base, &state), Vec::<String>::new());
+}
+
+/// The claim beside `state`, as a path.
+fn claim_beside(state: &Path) -> PathBuf {
+    let mut claim = state.as_os_str().to_owned();
+    claim.push(checkout_state::CLAIM_SUFFIX);
+    PathBuf::from(claim)
+}
+
+/// Writes a claim beside `state` recording `checkout`, held by nobody.
+fn free_claim(state: &Path, checkout: &str) -> PathBuf {
+    let claim = claim_beside(state);
+    fs::write(&claim, checkout.as_bytes()).expect("a free claim");
+    claim
+}
+
+/// The state directory's name for a checkout under `base` that does not exist.
+fn gone_checkout(base: &Path, name: &str) -> (String, PathBuf) {
+    let checkout = base.join(name).display().to_string();
+    let state = base.join(checkout_state_name(RECLAIM_TEST_SHIPPED, &checkout));
+    (checkout, state)
+}
+
+/// Every name under `base`, sorted.
+fn names_in(base: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(base)
+        .expect("the base")
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn reclaiming_leaves_what_it_cannot_prove_is_an_abandoned_checkouts() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-kept");
+    let base = sample.root();
+
+    // A checkout's state with no claim beside it, as every one made before
+    // claims were written is: its name alone proves nothing.
+    let (_, unclaimed) = gone_checkout(base, "unclaimed");
+    create_private_test_directory(&unclaimed);
+
+    // A claim naming a gone checkout whose name is not this directory's.
+    let (gone, _) = gone_checkout(base, "gone");
+    let renamed = base.join(checkout_state_name(RECLAIM_TEST_SHIPPED, "elsewhere"));
+    create_private_test_directory(&renamed);
+    let renamed_claim = free_claim(&renamed, &gone);
+
+    // The shipped directory, with a claim beside it naming a gone checkout.
+    let shipped = base.join(RECLAIM_TEST_SHIPPED);
+    create_private_test_directory(&shipped);
+    let shipped_claim = free_claim(&shipped, &gone);
+
+    let before = names_in(base);
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert_eq!(names_in(base), before);
+    assert!(unclaimed.is_dir() && renamed.is_dir() && shipped.is_dir());
+    for claim in [&renamed_claim, &shipped_claim] {
+        assert_eq!(
+            fs::read(claim).expect("a claim that was kept"),
+            gone.as_bytes(),
+            "{} changed",
+            claim.display()
+        );
+    }
+}
+
+#[test]
+fn reclaiming_removes_only_a_directory_at_the_state_path_and_follows_no_link() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-not-a-directory");
+    let base = sample.root();
+    let sentinel = crate::sample::Sample::new("sandbox-checkout-sentinel");
+    let kept = sentinel.root().join("kept");
+    fs::write(&kept, b"kept").expect("a file beyond the base");
+
+    // A free, valid claim for a gone checkout whose state path is a link to a
+    // directory outside the base.
+    let (linked_checkout, linked) = gone_checkout(base, "linked");
+    crate::sample::symlink(sentinel.root(), &linked);
+    let linked_claim = free_claim(&linked, &linked_checkout);
+
+    // And one whose state path is a plain file.
+    let (plain_checkout, plain) = gone_checkout(base, "plain");
+    fs::write(&plain, b"plain").expect("a plain file at the state path");
+    let plain_claim = free_claim(&plain, &plain_checkout);
+
+    let before = names_in(base);
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert_eq!(names_in(base), before);
+    assert!(
+        fs::symlink_metadata(&linked).is_ok_and(|found| found.is_symlink()),
+        "the link at the state path was removed"
+    );
+    assert_eq!(fs::read(&kept).expect("the sentinel's file"), b"kept");
+    assert_eq!(fs::read(&plain).expect("the plain file"), b"plain");
+    assert!(linked_claim.is_file() && plain_claim.is_file());
+}
+
+#[test]
+fn a_claim_that_is_a_link_is_refused_and_its_state_kept() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-linked-claim");
+    let base = sample.root();
+    let (checkout, state) = gone_checkout(base, "gone");
+    create_private_test_directory(&state);
+    fs::write(state.join(REGISTRY_LOCK), b"").expect("a lock in the state");
+    let elsewhere = sample.root().join("elsewhere-claim");
+    fs::write(&elsewhere, checkout.as_bytes()).expect("a valid claim elsewhere");
+    let claim = claim_beside(&state);
+    crate::sample::symlink(&elsewhere, &claim);
+
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert!(state.join(REGISTRY_LOCK).is_file(), "the state was removed");
+    assert!(
+        fs::symlink_metadata(&claim).is_ok_and(|found| found.is_symlink()),
+        "the linked claim was removed"
+    );
+    assert_eq!(
+        fs::read(&elsewhere).expect("the link's target"),
+        checkout.as_bytes()
+    );
+    assert!(
+        checkout_state::claim(base, RECLAIM_TEST_SHIPPED, &checkout).is_err(),
+        "a linked claim was taken"
+    );
+}
+
+#[test]
+fn an_empty_claim_older_than_a_day_is_removed_alone() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-empty-claim");
+    let base = sample.root();
+    let aged = |claim: &Path, age: Duration| {
+        File::options()
+            .write(true)
+            .open(claim)
+            .expect("the claim")
+            .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now() - age))
+            .expect("the claim's age");
+    };
+
+    // Its claimer ended between creating the claim and writing it; what
+    // stands beside it may be a live checkout's, so it is all kept.
+    let (_, stale) = gone_checkout(base, "stale");
+    create_private_test_directory(&stale);
+    fs::write(stale.join(REGISTRY_LOCK), b"").expect("a lock in the state");
+    for suffix in checkout_state::TEST_LOCK_SUFFIXES {
+        let mut lock = stale.as_os_str().to_owned();
+        lock.push(suffix);
+        fs::write(lock, b"").expect("a lock beside the state");
+    }
+    let stale_claim = free_claim(&stale, "");
+    aged(&stale_claim, Duration::from_hours(48));
+
+    // Just made: its claimer may be about to write it.
+    let (_, fresh) = gone_checkout(base, "fresh");
+    create_private_test_directory(&fresh);
+    let fresh_claim = free_claim(&fresh, "");
+    aged(&fresh_claim, Duration::from_hours(1));
+
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert!(!stale_claim.exists(), "the stale empty claim was kept");
+    assert_eq!(
+        left_of(base, &stale).len(),
+        3,
+        "more than the claim went: {:?}",
+        left_of(base, &stale)
+    );
+    assert!(stale.join(REGISTRY_LOCK).is_file());
+    assert!(
+        fresh_claim.is_file() && fresh.is_dir(),
+        "a fresh empty claim went"
+    );
+}
+
+#[test]
+fn another_test_process_claims_a_checkout_and_is_killed() {
+    // A helper: in an ordinary run it does nothing.
+    if !started_by_another_test_process() {
+        return;
+    }
+    let holding = PathBuf::from(std::env::var_os(HELPER_HOLDING).expect("the helper's files"));
+    let base = holding.parent().expect("the helper's files");
+    let claim = claimed_state(base, &base.join("removed-checkout"));
+    held_by_another_test_process();
+    drop(claim);
+}
+
+#[test]
+fn a_test_process_killed_holding_a_claim_leaves_a_state_the_next_run_reclaims() {
+    let mut helper = AnotherTestProcess::holding(
+        "linux::transaction::tests::another_test_process_claims_a_checkout_and_is_killed",
+    );
+    let base = helper.files().to_path_buf();
+    let state = base.join(checkout_state_name(
+        RECLAIM_TEST_SHIPPED,
+        &base.join("removed-checkout").display().to_string(),
+    ));
+    assert!(
+        state.is_dir(),
+        "the helper made no state: {}",
+        state.display()
+    );
+    assert_eq!(
+        checkout_state::reclaim_abandoned(&base, RECLAIM_TEST_SHIPPED),
+        0,
+        "a live process's state was reclaimed"
+    );
+    helper.kill();
+    assert_eq!(
+        checkout_state::reclaim_abandoned(&base, RECLAIM_TEST_SHIPPED),
+        1
+    );
+    assert_eq!(left_of(&base, &state), Vec::<String>::new());
 }
 
 /// A state directory's mode, put back however a test ends.
@@ -1012,22 +1357,212 @@ impl Drop for ModeRestored {
     }
 }
 
+/// Where a helper process says it holds what its test took, set in its copy.
+const HELPER_HOLDING: &str = "CRUCIBLE_TEST_HELPER_HOLDING";
+/// Where a helper process is told it may let go, set in its copy.
+const HELPER_RELEASE: &str = "CRUCIBLE_TEST_HELPER_RELEASE";
+
+/// How long a test here may wait for what it asks of another test process, or
+/// of this one once another has let go: a hang detector, long enough to wait out
+/// the writer tests of every other test process of this checkout, which take
+/// the writers' lease in turn.
+pub(in crate::linux) const OTHER_TEST_PROCESSES: Duration = Duration::from_mins(5);
+
+/// Another process of this test binary, running one helper test alone and
+/// holding what it took until it is let go: what another `cargo test` of this
+/// checkout, running beside this one, holds in this user's state directory.
+pub(in crate::linux) struct AnotherTestProcess {
+    child: Option<std::process::Child>,
+    release: PathBuf,
+    files: crate::sample::Sample,
+}
+
+impl AnotherTestProcess {
+    /// Starts `test` in a copy of this binary, once it holds what it takes.
+    pub(in crate::linux) fn holding(test: &str) -> Self {
+        let files = crate::sample::Sample::new("sandbox-another-test-process");
+        let holding = files.root().join("holding");
+        let release = files.root().join("release");
+        let mut child =
+            std::process::Command::new(std::env::current_exe().expect("this test binary"))
+                .args(["--exact", test, "--nocapture", "--test-threads=1"])
+                .env(HELPER_HOLDING, &holding)
+                .env(HELPER_RELEASE, &release)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("another process of this test binary");
+        let deadline = Instant::now() + OTHER_TEST_PROCESSES;
+        while !holding.exists() {
+            if let Some(ended) = child.try_wait().expect("the helper's status") {
+                panic!("{test} ended before it held anything: {ended}");
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{test} did not hold anything in time");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Self {
+            child: Some(child),
+            release,
+            files,
+        }
+    }
+
+    /// Lets the helper go, and fails where it failed.
+    pub(in crate::linux) fn let_go(mut self) {
+        fs::write(&self.release, b"go\n").expect("the helper is let go");
+        let ended = self
+            .child
+            .take()
+            .expect("a helper not yet let go")
+            .wait()
+            .expect("the helper ends");
+        assert!(ended.success(), "the helper process failed: {ended}");
+    }
+
+    /// The directory the helper says it holds in, which outlives it.
+    pub(in crate::linux) fn files(&self) -> &Path {
+        self.files.root()
+    }
+
+    /// Ends the helper as a kill would, with no chance to unwind.
+    pub(in crate::linux) fn kill(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for AnotherTestProcess {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = fs::write(&self.release, b"go\n");
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Whether this run is the copy of this binary [`AnotherTestProcess`] started.
+pub(in crate::linux) fn started_by_another_test_process() -> bool {
+    std::env::var_os(HELPER_HOLDING).is_some()
+}
+
+/// In the copy of this binary [`AnotherTestProcess`] started, says the helper
+/// holds what it took and waits to be let go; in any other run, `false` at
+/// once, so the helper test passes having done nothing.
+pub(in crate::linux) fn held_by_another_test_process() -> bool {
+    let (Some(holding), Some(release)) = (
+        std::env::var_os(HELPER_HOLDING),
+        std::env::var_os(HELPER_RELEASE),
+    ) else {
+        return false;
+    };
+    fs::write(holding, b"held\n").expect("the helper says it holds");
+    let release = PathBuf::from(release);
+    let deadline = Instant::now() + OTHER_TEST_PROCESSES;
+    while !release.exists() {
+        assert!(Instant::now() < deadline, "the helper was never let go");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+#[test]
+fn another_test_process_changes_this_users_state_directory() {
+    // A helper: in an ordinary run it does nothing.
+    if !started_by_another_test_process() {
+        return;
+    }
+    let own = state_base().expect("this build's state directory");
+    create_state_directory(&own).expect("this build's state directory");
+    let changing = TestStateChange::change();
+    let restore = ModeRestored(
+        own.clone(),
+        fs::metadata(&own)
+            .expect("this build's state directory")
+            .permissions(),
+    );
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o750))
+        .expect("a state directory that is not private");
+    held_by_another_test_process();
+    drop(restore);
+    drop(changing);
+}
+
+#[test]
+fn a_lease_waits_out_a_change_another_test_process_holds() {
+    // Two `cargo test` runs of one checkout share its state directory, and a
+    // test of one that changes it to watch a refusal refused every lease the
+    // other asked for meanwhile: the sandbox tests failed by the dozen, the
+    // setuid test among them, when four ran at once.
+    let own = state_base().expect("this build's state directory");
+    let other = AnotherTestProcess::holding(
+        "linux::transaction::tests::another_test_process_changes_this_users_state_directory",
+    );
+    let (answering, answered) = std::sync::mpsc::channel();
+    let asking = std::thread::spawn(move || {
+        let lease = RegistryLease::acquire_at(&own)
+            .map(drop)
+            .map_err(|problem| problem.to_string());
+        answering
+            .send(lease)
+            .expect("the test is told what the lease answered");
+    });
+    let early = answered.recv_timeout(Duration::from_millis(200));
+    other.let_go();
+    let lease = early
+        .or_else(|_| answered.recv_timeout(OTHER_TEST_PROCESSES))
+        .expect("the lease answers once the change is let go");
+    asking.join().expect("the asking thread");
+    assert!(
+        lease.is_ok(),
+        "a lease was refused for a change another test process held: {lease:?}"
+    );
+}
+
+#[test]
+fn another_test_process_makes_another_checkouts_state() {
+    // A helper: in an ordinary run it does nothing.
+    if !started_by_another_test_process() {
+        return;
+    }
+    let other = AnotherCheckout::beside_this_one();
+    create_state_directory(&other.0).expect("another checkout's state directory");
+    held_by_another_test_process();
+    drop(other);
+}
+
+#[test]
+fn another_checkouts_state_outlasts_the_same_test_in_another_test_process() {
+    // Every test process of this checkout runs the test that makes another
+    // checkout's state directory, and each removes the one it made when it
+    // ends: four concurrent runs had one remove another's while it was still
+    // being read, which then refused it as missing.
+    let other = AnotherCheckout::beside_this_one();
+    create_state_directory(&other.0).expect("another checkout's state directory");
+    AnotherTestProcess::holding(
+        "linux::transaction::tests::another_test_process_makes_another_checkouts_state",
+    )
+    .let_go();
+    assert!(
+        other.0.is_dir(),
+        "another test process removed the state directory this one made: {}",
+        other.0.display()
+    );
+}
+
 #[test]
 fn a_checkout_neither_refuses_nor_recovers_another_checkouts_sandbox_state() {
     // Two checkouts testing at once: this build, and one compiled from another
     // directory. The other is named under this checkout, so the same test
     // running from a third checkout names a directory of its own.
     let own = state_base().expect("this build's state directory");
-    let other = AnotherCheckout(
-        state_base_named(&checkout_state_name(
-            &format!(
-                "crucible-code-sandbox-{}-v1",
-                rustix::process::getuid().as_raw()
-            ),
-            concat!(env!("CARGO_MANIFEST_DIR"), "/another-checkout"),
-        ))
-        .expect("another checkout's state directory"),
-    );
+    let other = AnotherCheckout::beside_this_one();
     create_state_directory(&own).expect("this build's state directory");
     create_state_directory(&other.0).expect("another checkout's state directory");
 

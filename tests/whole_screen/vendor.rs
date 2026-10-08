@@ -26,6 +26,8 @@
 
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -62,9 +64,15 @@ const PINGING: Duration = Duration::from_millis(250);
 ///
 /// Enough at [`PINGING`] to outlast the steps a case takes after that, and no
 /// more: the thread stops the moment crucible is gone, because the write it is
-/// on fails and `answer` returns. A case that waits them out sees the turn end
-/// the way a whole answer ends.
+/// on fails and `answer` returns. A case that needs the turn over says so with
+/// [`Vendor::ends_the_turn`] rather than waiting them out, so this is a ceiling
+/// on a case that forgot to, not a pace any case runs at.
 const HOLDING: usize = 40;
+
+/// How many hold a turn open for a case that queues five prompts behind it
+/// and then works on them: forty seconds, which a loaded machine still takes
+/// every step of such a case inside.
+const HOLDING_LONG: usize = 160;
 
 /// What a case with one call in it names that call.
 const ONE: &str = "toolu_1";
@@ -75,6 +83,9 @@ pub(crate) struct Vendor {
     address: String,
     /// The thread answering them, joined on the way out.
     serving: Option<JoinHandle<()>>,
+    /// Whether the case has said a held turn is over, which every hold, the
+    /// one under way and any after it, ends at.
+    ended: Arc<AtomicBool>,
 }
 
 impl Vendor {
@@ -134,7 +145,12 @@ impl Vendor {
     /// holding the message open afterwards pins the screen and still leaves the
     /// turn where the case wants it.
     pub(crate) fn calling_then_holding(tool: &str, input: &str, text: &str) -> Self {
-        Self::serving(vec![asking(tool, input, ONE), holding(text)])
+        Self::serving(vec![asking(tool, input, ONE), holding(text, HOLDING)])
+    }
+
+    /// The same, held open for [`HOLDING_LONG`] keep-alives.
+    pub(crate) fn calling_then_holding_long(tool: &str, input: &str, text: &str) -> Self {
+        Self::serving(vec![asking(tool, input, ONE), holding(text, HOLDING_LONG)])
     }
 
     /// Starts one whose only answer is `text`, with the message held open
@@ -144,7 +160,7 @@ impl Vendor {
     /// on screen and nothing has said the answer is over: what such a turn
     /// leaves behind is the whole of what the case is asking.
     pub(crate) fn holding(text: &str) -> Self {
-        Self::serving(vec![holding(text)])
+        Self::serving(vec![holding(text, HOLDING)])
     }
 
     /// Starts one that asks for each batch of `batches` at once, then answers
@@ -155,6 +171,20 @@ impl Vendor {
     /// round trip answering all four, which is the unit a run of lookups is
     /// counted over.
     pub(crate) fn calling_batches(batches: &[Vec<(&str, String)>], text: &str) -> Self {
+        Self::batches_then(batches, stream(text))
+    }
+
+    /// The same, except the last answer holds the turn open behind `text`, for
+    /// the reason [`Self::calling_then_holding`] gives.
+    pub(crate) fn calling_batches_then_holding(
+        batches: &[Vec<(&str, String)>],
+        text: &str,
+    ) -> Self {
+        Self::batches_then(batches, holding(text, HOLDING))
+    }
+
+    /// Asks for each of `batches` at once, then answers with `last`.
+    fn batches_then(batches: &[Vec<(&str, String)>], last: Vec<String>) -> Self {
         let mut named = 0;
         let mut bodies: Vec<Vec<String>> = Vec::new();
 
@@ -170,7 +200,7 @@ impl Vendor {
             bodies.push(asking_all(&called));
         }
 
-        bodies.push(stream(text));
+        bodies.push(last);
 
         Self::serving(bodies)
     }
@@ -191,6 +221,8 @@ impl Vendor {
             .expect("the port that was bound")
             .port();
 
+        let ended = Arc::new(AtomicBool::new(false));
+        let ending = Arc::clone(&ended);
         let serving = thread::spawn(move || {
             // Every connection, not one: crucible opens a fresh one per
             // request, and a case that takes two would otherwise hang on the
@@ -198,7 +230,7 @@ impl Vendor {
             let mut asked = 0;
             while let Ok((connection, _)) = listener.accept() {
                 if let Some(body) = bodies.get(asked).or_else(|| bodies.last()) {
-                    answer(connection, body);
+                    answer(connection, body, &ending);
                 }
                 asked += 1;
             }
@@ -207,7 +239,19 @@ impl Vendor {
         Self {
             address: format!("http://127.0.0.1:{port}/v1/messages"),
             serving: Some(serving),
+            ended,
         }
+    }
+
+    /// Ends the turn being held open now, and every one held after it as soon
+    /// as its answer is whole.
+    ///
+    /// For a case that goes on to what happens once the turn is over. Waiting
+    /// out the keep-alives would get there too, but at a pace set by how long a
+    /// loaded machine might need for the steps before, which an idle one then
+    /// spends standing still.
+    pub(crate) fn ends_the_turn(&self) {
+        self.ended.store(true, Ordering::Release);
     }
 
     /// What `providers.anthropic.baseUrl` is set to for this case.
@@ -229,8 +273,9 @@ impl Drop for Vendor {
     }
 }
 
-/// Reads one request whole and writes the canned response back.
-fn answer(mut connection: TcpStream, body: &[String]) {
+/// Reads one request whole and writes the canned response back, leaving out
+/// whatever keep-alives are left once `ended` is set.
+fn answer(mut connection: TcpStream, body: &[String], ended: &AtomicBool) {
     // Read to the end of the headers, keeping the one field that says how much
     // follows them.
     let mut reading = BufReader::new(connection.try_clone().expect("a second handle"));
@@ -268,6 +313,9 @@ fn answer(mut connection: TcpStream, body: &[String]) {
     }
 
     for event in body {
+        if event == PINGED && ended.load(Ordering::Acquire) {
+            continue;
+        }
         if connection.write_all(event.as_bytes()).is_err() {
             return;
         }
@@ -306,10 +354,10 @@ fn stream(text: &str) -> Vec<String> {
 /// still moving on it is not one anything on either end mistakes for a stall.
 /// Closed after them as [`stream`] closes it, because a stream that just stops
 /// is one crucible reports as cut short, and no case here is about that.
-fn holding(text: &str) -> Vec<String> {
+fn holding(text: &str, keep_alives: usize) -> Vec<String> {
     let mut events = opening(text);
 
-    events.extend((0..HOLDING).map(|_| PINGED.to_owned()));
+    events.extend((0..keep_alives).map(|_| PINGED.to_owned()));
     events.push(ENDED.to_owned());
     events.push(stopped("end_turn"));
     events.push(STOPPED.to_owned());

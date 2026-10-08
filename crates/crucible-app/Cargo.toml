@@ -61,6 +61,10 @@ crucible-tools.workspace = true
 crucible-types.workspace = true
 # The directory a run works in, and the proofs a path is under it.
 crucible-workspace.workspace = true
+# The `Serialize` trait, which `serde_json` does not re-export, so that the
+# `auth status` document can be written through the formatter `crucible-types`
+# escapes a terminal's controls with, rather than through `serde_json`'s own.
+serde_core.workspace = true
 # A hosted tool's schema is a JSON document, read once for the sentence it
 # describes itself with; this is the parser the configuration crate compiles.
 serde_json.workspace = true

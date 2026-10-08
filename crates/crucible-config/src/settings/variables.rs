@@ -21,7 +21,7 @@ use std::borrow::Cow;
 use serde_json::Value;
 
 use crate::error::{Accepted, ConfigError};
-use crate::shape::{MOUSE_SCROLL_SPEED, SCROLL_SPEED};
+use crate::shape::{MOUSE_SCROLL_SPEED, SCROLL_SPEED, whole};
 
 use super::Settings;
 
@@ -57,14 +57,14 @@ fn accepted() -> Accepted {
 
 /// What a value in the `env` block says, as the text the readers below take.
 ///
-/// A string is itself. A JSON integer is the digits it is written with, so that
+/// A string is itself. A JSON whole number is its digits, `6.0` as `6`, so that
 /// a number in the file and the same digits in a string or in the shell go
 /// through one reader. Anything else says nothing: the walk that ran before
 /// this has already refused it, and where it has not, there is no answer here.
 pub(crate) fn spelled(held: &Value) -> Option<Cow<'_, str>> {
     match held {
         Value::String(text) => Some(Cow::Borrowed(text)),
-        Value::Number(number) => number.as_u64().map(|whole| Cow::Owned(whole.to_string())),
+        Value::Number(_) => whole(held).map(|whole| Cow::Owned(whole.to_string())),
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     }
 }

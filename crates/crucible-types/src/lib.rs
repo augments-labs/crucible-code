@@ -6,12 +6,16 @@
 //! identity, a message, a call, a recorded result, the persisted half of a
 //! context. A type that only one owner produces belongs with that owner, and a
 //! value that confers authority belongs with whatever issues it.
+//! It also holds [`shown`], how quoted text is escaped before it reaches a
+//! terminal, and [`address`], how much of a provider's address a diagnostic
+//! shows, because the writers that need each may not name each other.
 //!
 //! What that rules out is as important as what it admits. There is no live tool
 //! result here, no permission verdict, no runtime handle and no provider wire
 //! object — those carry authority or behavior, and a crate that only needs to
 //! read a session back should not have to compile them.
 
+pub mod address;
 pub mod ask;
 pub mod cache;
 pub mod call;
@@ -24,6 +28,7 @@ pub mod ids;
 pub mod modality;
 pub mod output;
 pub mod run;
+pub mod shown;
 pub mod tone;
 pub mod transcript;
 pub mod usage;

@@ -16,6 +16,14 @@ cargo build
 cargo run -- --help
 ```
 
+The gate runs the tests through [cargo-nextest](https://nexte.st), which runs
+each test in a process of its own and many at once. Install the version CI
+uses:
+
+```bash
+cargo install cargo-nextest --version '=0.9.146' --locked
+```
+
 On Linux, clone and build under `umask 022`. Many distributions default to
 `umask 002`, which leaves the checkout and `target/` group-writable, and the
 sandbox refuses a broker image that a group member could rewrite, checking every
@@ -53,7 +61,8 @@ then, and the ruleset is what keeps the same rule from reaching `dev` or `main`.
 2. Read the module documentation beside the code being changed.
 3. Start new behavior with a failing test; reproduce a bug before fixing it.
 4. Run the narrow test while working, then the complete local gate.
-5. Update user documentation and the changelog when shipped behavior changes.
+5. Update user documentation, and give the pull request its
+   [changelog entry](#changelog-entries), when shipped behavior changes.
 6. Open a pull request and state what changed and how it was verified.
 
 Coding agents begin in [`AGENTS.md`](AGENTS.md), which holds the repository
@@ -93,6 +102,16 @@ no web tool, no fast form) and the docs say which fact was not settled.
 6. Record where each recorded fixture came from, its link and the day it was
    read, in `crates/crucible-provider/src/<vendor>/fixtures/SOURCES.md`.
 
+### Adding a command
+
+`crucible completion SHELL` writes each shell's completion script from the
+command tree in `src/cli.rs` as it stands, so a new subcommand or flag is in the
+next script with nothing to regenerate. A new subcommand is named in `COMMANDS`
+in `src/cli/completion/tests.rs`, which fails until it is, and the test beside
+it holds that every shell's script completes it. Run
+`cargo test completion` and update the help text in
+`tests/differential/command-line.txt`.
+
 ## Local gates
 
 ```bash
@@ -107,6 +126,11 @@ scripts/sh/rust-checks.sh     # formatting, package isolation, clippy, tests, re
 scripts/sh/repo-checks.sh     # cross-file repository policy and crate layering
 scripts/sh/python-checks.sh   # harness fixtures, campaign reports and this version's release notes
 ```
+
+`scripts/sh/rust-checks.sh --only tests` runs one section, `--skip tests`
+every section but that one, and `--only tests --partition hash:1/4` the first
+quarter of the suite. CI spreads the gate over machines this way; run without
+arguments, it is the whole gate.
 
 `scripts/sh/repo-checks.sh` needs `python3` 3.11 or later: its crate-layering
 check reads Cargo manifests and configuration with the standard library's
@@ -136,7 +160,8 @@ taken from the checkout's path when the build is compiled. Two checkouts, such
 as two worktrees, can then run their tests at once without locking, recovering
 or changing each other's state. `cargo test --workspace` and a narrow
 `cargo test -p` of a package that uses the sandbox turn this on for you, and
-so does `scripts/sh/rust-checks.sh` when it reruns a required case on its own.
+`scripts/sh/rust-checks.sh` reruns a required case in the binary that
+`--workspace` build made.
 A narrow run of the sandbox crate itself has to ask for it, and needs the
 broker built first: its enforcing tests look for `crucible-sandbox-broker`
 in the test binary's directory and the one above it (`target/debug/`), and a
@@ -158,14 +183,27 @@ dev-dependency; a release command that asks for the feature itself is not
 something it reads. A `crucible` binary that `cargo test` left in the
 checkout's `target/` is a test build too, until a plain `cargo build` replaces
 it: it keeps its state in that checkout's directory, so it does not share the
-publication lock with an installed crucible working on the same repository. The
-per-checkout directory stays behind when you remove a worktree; delete it by
+publication lock with an installed crucible working on the same repository.
+
+Beside each per-checkout directory, a test build writes
+`/var/tmp/crucible-code-sandbox-{uid}-v1-{token}.checkout`, holding the
+checkout's path. A test process takes a lock on that claim the first time it
+asks for its sandbox state, not when it starts, and holds it until it ends. At
+that same first request, before claiming its own, it removes every other
+checkout's directory, claim and lock files whose recorded path no longer
+exists and whose claim no process holds. So the next test run of any checkout
+cleans up after a worktree you removed. A checkout that was renamed or moved,
+or that sits on a drive that is not mounted, counts as removed too, and its
+test state is reclaimed the same way; only test state is affected, never the
+shipped directory. A directory with no claim beside it, such as one left by a
+build from before claims were written, is never removed this way; delete it by
 hand if you want it gone.
 
 `scripts/required-cases.json` names the obligations that must keep running
 whatever the tests are called: `scripts/sh/rust-checks.sh` checks that each one
 is still discovered by the same selection the suite runs under, is not ignored,
-still hashes to the source recorded for it, and passes when run by exact name.
+still hashes to the source recorded for it, and passes when run by exact name
+in the test binary that selection built, so the check builds nothing of its own.
 Moving a case is a `source` edit. Changing what one asserts is a `body_sha256`
 edit, and the reviewer is agreeing to the new assertion, not to a green total.
 
@@ -203,8 +241,9 @@ section, kept placeholder text or bundled unrelated changes get the pull
 request closed rather than reviewed. The surfaces it lists — security
 boundaries, durable formats, generated files, platform-specific behavior,
 terminal rendering, performance-sensitive paths and required-case obligations —
-are the ones a reviewer cannot recover from the diff alone. `CHANGELOG.md` is
-for user-visible changes, written for someone deciding whether to upgrade.
+are the ones a reviewer cannot recover from the diff alone. A user-visible
+change gives its [changelog entry](#changelog-entries) under the template's
+surfaces section.
 
 It opens by asking who made the change, because a reviewer reads a generated
 diff with different questions than a hand-written one, and which model, harness
@@ -214,6 +253,35 @@ checks that ran, not about whether the change answers the right problem, so
 that reading is a separate thing a pull request either has or is still waiting
 for — and one nobody has read yet leaves the box empty rather than claiming
 otherwise.
+
+## Changelog entries
+
+An entry is for a user-visible change, written for someone deciding whether to
+upgrade. It is never committed: a pull request gives it in its description,
+and whoever merges writes it to `changelog.d/<name>.md` in the checkout
+releases are cut from, a directory git ignores. Entries are drafts for whoever
+writes the release, so no change has to agree with another about them, and
+only a release commit edits `CHANGELOG.md`.
+
+`<name>` is lower-case letters, digits and hyphens and starts with a letter or
+a digit, such as the branch's last part. The first line is exactly one of the
+headings listed below, the second line is empty, and from the third line on
+come one or more list items, the first opening with a bold lead:
+
+```markdown
+### Fixed
+
+- **A bold lead saying what changed.** At most three sentences, for someone
+  deciding whether to upgrade.
+```
+
+The headings are `### Added`, `### Changed`, `### Fixed`, `### Removed`,
+`### Security`, `### Documentation` and `### Internal`. An entry holds no other
+heading and is at most 4096 bytes. The repository gate fails on any file under
+`changelog.d/` that is committed, and runs
+`python3 scripts/python/changelog-entries.py check`, which holds every entry it
+finds to that shape and `## [Unreleased]` to staying empty.
+[`RELEASING.md`](RELEASING.md) says how the entries become the version section.
 
 ## Dependencies
 

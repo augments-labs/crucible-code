@@ -1,10 +1,17 @@
 name: release
 
-# Pushing the tag is the trigger, as RELEASING.md says. Nothing publishes on a
-# branch push, so a release is always a deliberate act.
+# A release is two runs of this file, as RELEASING.md says. Dispatched on a
+# ref, it stages: it builds every artifact, sums them once, and installs,
+# upgrades and rolls back those exact bytes on every platform a cell covers,
+# publishing nothing. Pushing the tag promotes: it finds the staging run of the
+# tree the tag names, takes the bytes that run staged, and publishes them only
+# where every digest matches. Nothing is rebuilt between the two, because a
+# rebuild is a different binary from the one the cells installed. Nothing
+# publishes on a branch, so a release is always a deliberate act.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 # Read for everything by default. Only one job here writes anything back, and
 # the token every other job is handed is a token that cannot. That matters most
@@ -26,26 +33,37 @@ jobs:
     name: gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       # A tag that disagrees with the manifest ships a binary whose --version
-      # lies. Catch it before anything is built.
+      # lies. Catch it before anything is built. A staging run on a branch has
+      # no tag to hold it to, so the manifest names the version every job below
+      # packages, and the tag that promotes those bytes is held to it here.
       - name: The tag and the manifest agree
+        id: version
         run: |
           manifest=$(cargo metadata --locked --no-deps --format-version 1 |
             jq -r '.packages[] | select(.name == "crucible-code") | .version')
-          if [[ "v$manifest" != "$GITHUB_REF_NAME" ]]; then
+          if [[ $GITHUB_REF_TYPE == tag && "v$manifest" != "$GITHUB_REF_NAME" ]]; then
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml $manifest"
             exit 1
           fi
+          echo "version=$manifest" >>"$GITHUB_OUTPUT"
 
       # Re-run the deterministic local aggregate on the same enforcing sandbox
       # host CI proved it on, so the sandbox tests run here rather than skip.
       # Blocking CI already checked dependency policy and performance before
-      # this commit reached main.
+      # this commit reached main. check.sh runs the suites through
+      # cargo-nextest, the prebuilt one rust-ci.yml installs. Nothing here
+      # restores a cache: a release is built from nothing another ref wrote.
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest@0.9.146
       - uses: ./.github/actions/enforcing-sandbox
       - run: scripts/sh/check.sh
         env:
@@ -54,7 +72,9 @@ jobs:
       # The section's summary and comparison link, not its whole list; the
       # script says why and refuses a section it cannot write them from.
       - name: Release notes from the changelog
-        run: scripts/python/release-notes.py "${GITHUB_REF_NAME#v}" >NOTES.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/python/release-notes.py "$VERSION" >NOTES.md
 
       - name: Stage release metadata
         run: |
@@ -91,10 +111,13 @@ jobs:
   build-linux:
     name: ${{ matrix.stem }}
     needs: gate
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
     container:
-      image: quay.io/centos/centos:stream9@sha256:63e8d0c2a4a4b67c8bd7456283d12106bedf815d8c27d1a72498ebcf173baf09
+      image: quay.io/centos/centos:stream9@sha256:33346f5fe280763eb78e85f968ad52bc2b2013369de85403f67e802db98ed243
     defaults:
       run:
         shell: bash
@@ -141,11 +164,11 @@ jobs:
           cargo build --release --locked --target ${{ matrix.target }} \
             -p crucible-code -p crucible-sandbox-broker
 
-      - name: It runs, and says the version the tag claims
+      - name: It runs, and says the version the manifest claims
         run: |
           said=$(./target/${{ matrix.target }}/release/crucible --version)
-          if [[ $said != "crucible ${GITHUB_REF_NAME#v}" ]]; then
-            echo "--version said '$said', expected 'crucible ${GITHUB_REF_NAME#v}'"
+          if [[ $said != "crucible $VERSION" ]]; then
+            echo "--version said '$said', expected 'crucible $VERSION'"
             exit 1
           fi
 
@@ -162,7 +185,7 @@ jobs:
 
       - name: Package
         run: |
-          name=crucible-${GITHUB_REF_NAME#v}-${{ matrix.stem }}
+          name=crucible-$VERSION-${{ matrix.stem }}
           mkdir -p "$name"
           cp ./target/${{ matrix.target }}/release/crucible "$name/"
           cp ./target/${{ matrix.target }}/release/crucible-sandbox-broker "$name/"
@@ -185,8 +208,11 @@ jobs:
   build:
     name: ${{ matrix.stem }}
     needs: gate
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
     strategy:
       # One target failing is not a reason to stop learning about the other
       # three. A release is cancelled by hand either way.
@@ -225,7 +251,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name=crucible-${GITHUB_REF_NAME#v}-${{ matrix.stem }}
+          name=crucible-$VERSION-${{ matrix.stem }}
           mkdir -p "$name"
           cp ./target/${{ matrix.target }}/release/crucible${{ matrix.exe }} "$name/"
           cp ./target/${{ matrix.target }}/release/crucible-sandbox-broker${{ matrix.exe }} "$name/"
@@ -239,18 +265,18 @@ jobs:
           if [[ -n "${{ matrix.exe }}" ]]; then
             cp "./target/${{ matrix.target }}/release/crucible.exe" "$name.exe"
             cp "./target/${{ matrix.target }}/release/crucible-sandbox-broker.exe" \
-              "crucible-sandbox-broker-${GITHUB_REF_NAME#v}-${{ matrix.stem }}.exe"
+              "crucible-sandbox-broker-$VERSION-${{ matrix.stem }}.exe"
           fi
 
       - name: Both packaged binaries run on their native platform
         shell: bash
         run: |
-          name=crucible-${GITHUB_REF_NAME#v}-${{ matrix.stem }}
+          name=crucible-$VERSION-${{ matrix.stem }}
           mkdir unpacked
           tar xzf "$name.tar.gz" -C unpacked
           said=$("./unpacked/$name/crucible${{ matrix.exe }}" --version)
-          if [[ $said != "crucible ${GITHUB_REF_NAME#v}" ]]; then
-            echo "--version said '$said', expected 'crucible ${GITHUB_REF_NAME#v}'"
+          if [[ $said != "crucible $VERSION" ]]; then
+            echo "--version said '$said', expected 'crucible $VERSION'"
             exit 1
           fi
           status=0
@@ -272,25 +298,22 @@ jobs:
   # rather than cross-compiled from Linux. It costs about a quarter of an hour,
   # and what it buys is the same thing the six above get for free: a binary
   # that ran on the system it is published for.
+  #
+  # There is no FreeBSD runner, so this builds inside a virtual machine an
+  # action brings up on a Linux one, and everything that machine needs is
+  # fetched on infrastructure nobody here can pin, bound or repair. It has hung
+  # on that step for half an hour at a stretch. That used to make it the one
+  # platform a release could ship without; it is not any more, because a
+  # staged release is promoted only once a fresh install of every archive it
+  # will carry has passed, and the FreeBSD archive is one of them. What a hang
+  # costs now is a staging run dispatched again, which builds nothing that
+  # was ever published.
   freebsd-x86_64:
     name: freebsd-x86_64
     needs: gate
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The one platform allowed to be missing. There is no FreeBSD runner, so
-    # this builds inside a virtual machine an action brings up on a Linux one,
-    # and everything that machine needs is fetched on infrastructure nobody
-    # here can pin, bound or repair. It has hung on that step for half an hour
-    # at a stretch, twice in one afternoon, while the other six platforms were
-    # built and waiting.
-    #
-    # So it stops being able to hold them hostage. A release that ships six
-    # platforms today and seven tomorrow is worth more than one that ships
-    # nothing until a machine in somebody else's estate answers. What this may
-    # not become is quiet: the step below names every platform that must be
-    # present and fails without one, and says out loud when this is the one
-    # that is gone.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -327,10 +350,11 @@ jobs:
             cargo build --release --locked --target x86_64-unknown-freebsd
 
             # Written in by Actions before the guest is started. The guest gets
-            # only the environment this action is asked to forward, and a tag
-            # that arrived empty would package an artifact named for no version
-            # at all.
-            version=$(echo '${{ github.ref_name }}' | sed 's/^v//')
+            # only the environment this action is asked to forward, and a
+            # version that arrived empty would package an artifact named for no
+            # version at all.
+            version='${{ needs.gate.outputs.version }}'
+            [ -n "$version" ] || { echo 'the gate named no version'; exit 1; }
             said=$(./target/x86_64-unknown-freebsd/release/crucible --version)
             if [ "$said" != "crucible $version" ]; then
               echo "--version said '$said', expected 'crucible $version'"
@@ -356,6 +380,7 @@ jobs:
   smoke-linux:
     name: smoke linux-x86_64 artifact
     needs: build-linux
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -401,9 +426,9 @@ jobs:
 
   # Every probe carries its own limit and exits non-zero when it is over, so a
   # build that got slower turns this job red. Red on the run, not a blocked
-  # release: `publish` deliberately does not wait for it — the note above
-  # `publish` says why — so what a failure here buys is a reading somebody goes
-  # to the run to see, before or after the tag.
+  # release: the staging verdict deliberately does not wait for it — the note
+  # above `staged` says why — so what a failure here buys is a reading somebody
+  # goes to the staging run to see, before or after the tag.
   #
   # The numbers stay on the run rather than on the release. They are
   # shared-runner trend data, not the quiet-machine reading RELEASING.md
@@ -419,6 +444,7 @@ jobs:
   budgets:
     name: release budgets
     needs: gate
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -471,55 +497,709 @@ jobs:
             generated/txt/budget-environment.txt
           if-no-files-found: error
 
-  # The release is opened once, with everything attached, so there is never a
-  # window where it is public and half the platforms are missing.
+  # The bytes this run staged, named once. Every cell below installs only what
+  # this file lists, as it lists it, and the tag that promotes them publishes
+  # this file as the release's SHA256SUMS once every byte it names is found
+  # unchanged.
+  staged-checksums:
+    name: staged checksums
+    needs: [gate, build, build-linux, freebsd-x86_64]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: run
+
+      # One file rather than one `.sha256` per archive: a reader checking what
+      # they downloaded wants a single line to look up, and `sha256sum -c`
+      # takes the whole thing.
+      - name: One checksum file for the release
+        run: |
+          shopt -s nullglob
+          mkdir assets
+          cp run/notes/* assets/
+          for built in run/{linux,macos,windows,freebsd}-*/crucible-*; do cp "$built" assets/; done
+          cd assets
+          sha256sum crucible-* install.sh uninstall.sh install.ps1 | tee SHA256SUMS
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged-sums
+          path: assets/SHA256SUMS
+          if-no-files-found: error
+
+  # The cells a release must pass before it can be promoted, each run on the
+  # staged bytes rather than on a build of its own, and all at once: none of
+  # them waits for another. Each checks what it installs against the staged
+  # checksums first, and installs with the staged installer.
+  #
+  # Every install is under a fresh directory of the runner's temporary space,
+  # with its own home and a workspace beside it rather than around it: the
+  # broker is trusted only below directories no group can write, and never
+  # inside the tree it is confining.
+  stage-unix:
+    name: staged ${{ matrix.stem }}
+    needs: [gate, staged-checksums]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+      STEM: ${{ matrix.stem }}
+      BACKEND: ${{ matrix.backend }}
+    strategy:
+      fail-fast: false
+      # Linux upgrades and rolls back on both architectures' first platform,
+      # since that is where the flat layouts of earlier releases were
+      # installed; every archive with a sandbox backend gets a fresh install
+      # that finds it.
+      matrix:
+        include:
+          - { stem: linux-x86_64, runner: ubuntu-latest, backend: linux-bubblewrap, upgrades: true, rollback: true }
+          - { stem: linux-aarch64, runner: ubuntu-24.04-arm, backend: linux-bubblewrap, upgrades: true, rollback: false }
+          - { stem: macos-aarch64, runner: macos-latest, backend: macos-seatbelt, upgrades: false, rollback: false }
+          - { stem: macos-x86_64, runner: macos-15-intel, backend: macos-seatbelt, upgrades: false, rollback: false }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The same Bubblewrap and user namespaces the Rust gate's sandbox tests
+      # run with, so a Linux install finds the backend it would on a machine
+      # set up as the documentation says.
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/enforcing-sandbox
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ matrix.stem }}
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notes
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-sums
+          path: staged
+
+      - name: What this cell installs is what was staged
+        working-directory: staged
+        run: |
+          sums=SHA256SUMS
+          for name in "crucible-$VERSION-$STEM.tar.gz" install.sh uninstall.sh; do
+            awk -v name="$name" '$2 == name' "$sums"
+          done >mine
+          if [[ $(wc -l <mine) -ne 3 ]]; then
+            echo "::error::the staged checksums do not list everything this cell installs"
+            exit 1
+          fi
+          if command -v sha256sum >/dev/null; then
+            sha256sum --check --strict mine
+          else
+            shasum -a 256 --check mine
+          fi
+          rm mine
+
+      - name: A fresh install of the staged bytes
+        run: |
+          root=$(mktemp -d "$RUNNER_TEMP/fresh.XXXXXX")
+          mkdir -p "$root/home/.crucible" "$root/ws"
+          export HOME=$root/home CRUCIBLE_CODE_HOME=$root/home/.crucible
+          printf '%s\n' '{"sandbox":{"enabled":true},"updates":{"check":"never"}}' >"$CRUCIBLE_CODE_HOME/config.json"
+          bin=$root/bin
+          sums=$PWD/staged/SHA256SUMS
+          bash staged/install.sh --dir "$bin" --version "$VERSION" \
+            --archive "$PWD/staged/crucible-$VERSION-$STEM.tar.gz" --checksums "$sums"
+          for name in crucible cru; do
+            said=$("$bin/$name" --version)
+            if [[ $said != "crucible $VERSION" ]]; then
+              echo "::error::$name --version said '$said', expected 'crucible $VERSION'"
+              exit 1
+            fi
+          done
+          status=0
+          report=$(cd "$root/ws" && "$bin/crucible" --sandbox) || status=$?
+          printf '%s\n' "$report"
+          if [[ $status != 0 ]] || ! grep -q "^  backend   $BACKEND," <<<"$report"; then
+            echo "::error::the staged install did not find its $BACKEND sandbox"
+            exit 1
+          fi
+          bash staged/uninstall.sh --dir "$bin"
+          left=$(ls -A "$bin")
+          if [[ -n $left ]]; then
+            echo "::error::the uninstall left $left"
+            exit 1
+          fi
+
+      # The two layouts installs before the release unit had: each installed
+      # flat by the installer of its own release, a session held open on it,
+      # and the staged installer run underneath that session. The session must
+      # still answer afterwards, and the install must be the staged one.
+      - name: Upgrade flat installs with a process running
+        if: matrix.upgrades
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FLAT_RELEASES: 0.45.3 0.43.0
+        run: |
+          for from in $FLAT_RELEASES; do
+            echo "::group::a flat $from install, upgraded under a running session"
+            root=$(mktemp -d "$RUNNER_TEMP/flat.XXXXXX")
+            mkdir -p "$root/home/.crucible" "$root/ws" "$root/prior"
+            gh release download "v$from" --repo "$GITHUB_REPOSITORY" --dir "$root/prior" \
+              --pattern "crucible-$from-$STEM.tar.gz" --pattern SHA256SUMS
+            export HOME=$root/home CRUCIBLE_CODE_HOME=$root/home/.crucible
+            printf '%s\n' '{"sandbox":{"enabled":true},"updates":{"check":"never"}}' >"$CRUCIBLE_CODE_HOME/config.json"
+            bin=$root/bin
+            sums=$root/prior/SHA256SUMS
+            bash "tests/fixtures/installer/install-$from.sh" --dir "$bin" --version "$from" \
+              --archive "$root/prior/crucible-$from-$STEM.tar.gz" --checksums "$sums"
+            if [[ ! -f $bin/crucible || -L $bin/crucible ]]; then
+              echo "::error::the $from installer left no flat install"
+              exit 1
+            fi
+            mkfifo "$root/held.in"
+            (cd "$root/ws" && exec "$bin/crucible" <"$root/held.in" >"$root/held.out" 2>&1) &
+            held=$!
+            exec 3>"$root/held.in"
+            # Bounded: a session that stops answering is the failure, and
+            # waiting on it longer than a minute would only hide that.
+            answered() {
+              for _ in $(seq 60); do
+                (($(grep -c "available: $BACKEND" "$root/held.out") >= $1)) && return 0
+                kill -0 "$held" 2>/dev/null || break
+                sleep 1
+              done
+              cat "$root/held.out"
+              echo "::error::the session held on the flat $from install gave no sandbox report $1"
+              return 1
+            }
+            printf '/sandbox\n' >&3
+            answered 1
+            sums=$PWD/staged/SHA256SUMS
+            bash staged/install.sh --dir "$bin" --version "$VERSION" \
+              --archive "$PWD/staged/crucible-$VERSION-$STEM.tar.gz" --checksums "$sums"
+            printf '/sandbox\n' >&3
+            answered 2
+            exec 3>&-
+            status=0
+            wait "$held" || status=$?
+            if [[ $status != 0 ]]; then
+              cat "$root/held.out"
+              echo "::error::the session started on the flat $from install exited $status"
+              exit 1
+            fi
+            said=$("$bin/crucible" --version)
+            if [[ $said != "crucible $VERSION" ]]; then
+              echo "::error::after upgrading from $from, --version said '$said'"
+              exit 1
+            fi
+            report=$(cd "$root/ws" && "$bin/crucible" --sandbox)
+            printf '%s\n' "$report"
+            if ! grep -q "^  backend   $BACKEND," <<<"$report"; then
+              echo "::error::the install upgraded from $from did not find its $BACKEND sandbox"
+              exit 1
+            fi
+            bash staged/uninstall.sh --dir "$bin"
+            echo "::endgroup::"
+          done
+
+      # Back to the release the rollback drill names, with the staged
+      # installer, after the staged release was installed over it. Then the
+      # drill itself, with the staged binary as the candidate and the
+      # rolled-back one as the prior, so what it proves is about these bytes.
+      # No release is named here: the drill's PRIOR_TAG is the one to move.
+      - name: Roll back to the release before
+        if: matrix.rollback
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # >>> rollback
+          tag=$(sed -n 's/^readonly PRIOR_TAG=//p' scripts/sh/rollback-drill.sh)
+          if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::scripts/sh/rollback-drill.sh names no PRIOR_TAG"
+            exit 1
+          fi
+          prior=${tag#v}
+          if [[ $prior == "$VERSION" ]]; then
+            echo "::error::PRIOR_TAG is the release being staged; it should name the one before"
+            exit 1
+          fi
+          root=$(mktemp -d "$RUNNER_TEMP/rollback.XXXXXX")
+          mkdir -p "$root/home/.crucible" "$root/ws" "$root/prior"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$root/prior" \
+            --pattern "crucible-$prior-$STEM.tar.gz" --pattern SHA256SUMS
+          export HOME=$root/home CRUCIBLE_CODE_HOME=$root/home/.crucible
+          printf '%s\n' '{"sandbox":{"enabled":true},"updates":{"check":"never"}}' >"$CRUCIBLE_CODE_HOME/config.json"
+          bin=$root/bin
+          install_release() {
+            local release=$1 from=$2
+            local sums=$from/SHA256SUMS
+            bash staged/install.sh --dir "$bin" --version "$release" \
+              --archive "$from/crucible-$release-$STEM.tar.gz" --checksums "$sums"
+            said=$("$bin/crucible" --version)
+            if [[ $said != "crucible $release" ]]; then
+              echo "::error::after installing $release, --version said '$said'"
+              exit 1
+            fi
+          }
+          install_release "$prior" "$root/prior"
+          install_release "$VERSION" "$PWD/staged"
+          install_release "$prior" "$root/prior"
+          scripts/sh/rollback-drill.sh \
+            --candidate-binary "$bin/.crucible-install/releases/$VERSION/crucible" \
+            --prior-binary "$bin/crucible"
+          bash staged/uninstall.sh --dir "$bin"
+          # <<< rollback
+
+  # The FreeBSD archive, installed fresh in the same guest the installer's
+  # tests run in. FreeBSD has no sandbox backend, so what this proves is that
+  # the staged installer installs it, both names run and say the staged
+  # version, and the uninstall takes it all back.
+  stage-freebsd:
+    name: staged freebsd-x86_64
+    needs: [gate, staged-checksums]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: freebsd-x86_64
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notes
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-sums
+          path: staged
+
+      # Checked here, on the host, since the guest reads this same directory.
+      - name: What this cell installs is what was staged
+        working-directory: staged
+        run: |
+          sums=SHA256SUMS
+          for name in "crucible-$VERSION-freebsd-x86_64.tar.gz" install.sh uninstall.sh; do
+            awk -v name="$name" '$2 == name' "$sums"
+          done >mine
+          if [[ $(wc -l <mine) -ne 3 ]]; then
+            echo "::error::the staged checksums do not list everything this cell installs"
+            exit 1
+          fi
+          sha256sum --check --strict mine
+          rm mine
+
+      - uses: vmactions/freebsd-vm@a2f9a41fa97f6848b8c3b791087dfcdaa5b473ff # v1.5.8
+        with:
+          release: "14.4"
+          usesh: true
+          prepare: pkg install -y bash
+          run: |
+            set -e
+            version='${{ needs.gate.outputs.version }}'
+            [ -n "$version" ] || { echo 'the gate named no version'; exit 1; }
+            root=$(mktemp -d /tmp/fresh.XXXXXX)
+            export HOME="$root/home"
+            mkdir -p "$HOME"
+            bin=$root/bin
+            sums=$PWD/staged/SHA256SUMS
+            bash staged/install.sh --dir "$bin" --version "$version" \
+              --archive "$PWD/staged/crucible-$version-freebsd-x86_64.tar.gz" --checksums "$sums"
+            for name in crucible cru; do
+              said=$("$bin/$name" --version)
+              if [ "$said" != "crucible $version" ]; then
+                echo "$name --version said '$said', expected 'crucible $version'"
+                exit 1
+              fi
+            done
+            bash staged/uninstall.sh --dir "$bin"
+            left=$(ls -A "$bin")
+            if [ -n "$left" ]; then
+              echo "the uninstall left $left"
+              exit 1
+            fi
+
+  # The Windows x86-64 release as a Windows user gets it: install.ps1 installs
+  # the staged archive flat, both names say the staged version, a sandboxed
+  # command runs, which it can only do through the broker the install put
+  # beside crucible.exe, and the uninstall leaves the directory empty. The
+  # command is asked for by a model answering on loopback, so nothing here
+  # reaches a vendor.
+  stage-windows:
+    name: staged windows-x86_64
+    needs: [gate, staged-checksums]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+      STEM: windows-x86_64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-x86_64
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notes
+          path: staged
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-sums
+          path: staged
+
+      - name: What this cell installs is what was staged
+        working-directory: staged
+        shell: bash
+        run: |
+          sums=SHA256SUMS
+          for name in "crucible-$VERSION-$STEM.tar.gz" install.ps1; do
+            awk -v name="$name" '$2 == name' "$sums"
+          done >mine
+          if [[ $(wc -l <mine) -ne 2 ]]; then
+            echo "::error::the staged checksums do not list everything this cell installs"
+            exit 1
+          fi
+          sha256sum --check --strict mine
+          rm mine
+
+      - name: install.ps1 installs the staged bytes flat
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP 'staged-bin'
+          $archive = Join-Path $PWD "staged/crucible-$env:VERSION-$env:STEM.tar.gz"
+          $sums = Join-Path $PWD 'staged/SHA256SUMS'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File staged/install.ps1 -Version $env:VERSION -Archive $archive -Checksums $sums -Dir $bin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "STAGED_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          foreach ($name in 'crucible.exe', 'crucible-sandbox-broker.exe', 'cru.exe') {
+            if (-not (Test-Path -LiteralPath (Join-Path $bin $name) -PathType Leaf)) {
+              Write-Output "::error::install.ps1 left no $name in $bin"
+              exit 1
+            }
+          }
+          foreach ($name in 'crucible.exe', 'cru.exe') {
+            $said = & (Join-Path $bin $name) --version
+            if ($LASTEXITCODE -ne 0 -or $said -ne "crucible $env:VERSION") {
+              Write-Output "::error::$name --version said '$said', expected 'crucible $env:VERSION'"
+              exit 1
+            }
+          }
+
+      # The runner is elevated, so the setup the sandboxing guide asks an
+      # administrator for runs here as the installed crucible.exe does it.
+      - name: The installed crucible sets up its sandbox
+        shell: pwsh
+        run: |
+          & (Join-Path $env:STAGED_BIN 'crucible.exe') sandbox setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: A sandboxed command runs through the staged broker
+        shell: bash
+        run: |
+          # Paths are this shell's own, and converted with cygpath for each
+          # Windows program handed one, rather than left to Git Bash to guess.
+          root=$(mktemp -d "$(cygpath -u "$RUNNER_TEMP")/command.XXXXXX")
+          mkdir -p "$root/home" "$root/ws"
+          # A model that asks for one command, then reads what it returned.
+          python - "$(cygpath -w "$root/port")" "$(cygpath -w "$root/result")" <<'PY' &
+          import http.server, json, sys
+          MARK = "staged-sandbox-ok"
+          def stream(blocks, stop):
+              events = [{"type": "message_start", "message": {"id": "m", "usage": {"input_tokens": 1, "output_tokens": 0}}}]
+              for index, block in enumerate(blocks):
+                  if block["type"] == "tool_use":
+                      events.append({"type": "content_block_start", "index": index, "content_block": dict(block, input={})})
+                      events.append({"type": "content_block_delta", "index": index,
+                                     "delta": {"type": "input_json_delta", "partial_json": json.dumps(block["input"])}})
+                  else:
+                      events.append({"type": "content_block_start", "index": index, "content_block": block})
+                  events.append({"type": "content_block_stop", "index": index})
+              events.append({"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {"output_tokens": 1}})
+              events.append({"type": "message_stop"})
+              return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode()
+          class Model(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+                  results = [part for message in body.get("messages", []) if isinstance(message.get("content"), list)
+                             for part in message["content"] if part.get("type") == "tool_result"]
+                  if results:
+                      with open(sys.argv[2], "w") as kept:
+                          json.dump(results[-1], kept)
+                      answer = stream([{"type": "text", "text": "done"}], "end_turn")
+                  else:
+                      answer = stream([{"type": "tool_use", "id": "call-1", "name": "bash",
+                                        "input": {"command": f"echo {MARK}"}}], "tool_use")
+                  self.send_response(200)
+                  self.send_header("content-type", "text/event-stream")
+                  self.send_header("content-length", str(len(answer)))
+                  self.end_headers()
+                  self.wfile.write(answer)
+              def log_message(self, *args):
+                  pass
+          server = http.server.HTTPServer(("127.0.0.1", 0), Model)
+          with open(sys.argv[1], "w") as port:
+              port.write(str(server.server_address[1]))
+          server.serve_forever()
+          PY
+          model=$!
+          for _ in $(seq 30); do [[ -s $root/port ]] && break; sleep 1; done
+          if [[ ! -s $root/port ]]; then
+            echo "::error::the loopback model never started"
+            exit 1
+          fi
+          printf '{"provider":"anthropic","providers":{"anthropic":{"baseUrl":"http://127.0.0.1:%s/v1/messages","model":"claude-staging"}},"sandbox":{"enabled":true},"permissions":{"allow":["bash(echo staged-sandbox-ok)"]},"updates":{"check":"never"}}\n' \
+            "$(<"$root/port")" >"$root/home/config.json"
+          bin=$(cygpath -u "$STAGED_BIN")
+          status=0
+          (cd "$root/ws" && printf 'run it\n' |
+            CRUCIBLE_CODE_HOME=$(cygpath -w "$root/home") ANTHROPIC_API_KEY=loopback-only \
+            timeout 300 "$bin/crucible.exe") || status=$?
+          kill "$model"
+          if [[ $status != 0 || ! -s $root/result ]]; then
+            echo "::error::the staged crucible.exe exited $status, and no result of its command came back"
+            exit 1
+          fi
+          python - "$(cygpath -w "$root/result")" <<'PY'
+          import json, sys
+          result = json.load(open(sys.argv[1]))
+          print(json.dumps(result))
+          if result.get("content") != "staged-sandbox-ok" or result.get("is_error"):
+              print("::error::the sandboxed command did not run through the staged broker")
+              sys.exit(1)
+          PY
+
+      # Always, once something was installed: the sandbox account and firewall
+      # rules setup made, then the three files install.ps1 wrote, and nothing
+      # may be left behind them.
+      - name: The uninstall leaves nothing
+        if: always() && env.STAGED_BIN != ''
+        shell: pwsh
+        run: |
+          & (Join-Path $env:STAGED_BIN 'crucible.exe') sandbox uninstall
+          $status = $LASTEXITCODE
+          foreach ($name in 'crucible.exe', 'crucible-sandbox-broker.exe', 'cru.exe') {
+            Remove-Item -LiteralPath (Join-Path $env:STAGED_BIN $name) -Force -ErrorAction SilentlyContinue
+          }
+          $left = @(Get-ChildItem -LiteralPath $env:STAGED_BIN -Force)
+          if ($left.Count -ne 0) {
+            Write-Output "::error::the uninstall left $($left.Name -join ', ')"
+            exit 1
+          }
+          if ($status -ne 0) { exit $status }
+
+  # The verdict a tag is promoted on, and the only record that one may be.
+  # Every cell above is in its `needs`, it runs whatever they did, and the one
+  # thing it keeps, the staged checksums under the name `staged`, is uploaded
+  # only after every one of them passed. A stage that failed, was skipped or was
+  # cancelled leaves no `staged` artifact, so there is nothing for a tag to
+  # promote and a dispatch again is the only way on. Any action in the run can
+  # upload an artifact by that name too, so `publish` takes it only from a run
+  # whose one job named `staged`, this one, concluded success.
+  #
   # `budgets` is deliberately not among these. It is the slowest job here — the
   # grep probe alone runs twenty paired rounds across three workloads — and by
   # its own note above its numbers never reach the release: they are
   # shared-runner trend data, kept on the run for whoever goes looking. A
   # measurement that contributes nothing to the download should not stand
-  # between a green build and the download, and it was standing there for
-  # minutes after every other job had passed.
+  # between a green build and the download.
   #
-  # What that gives up, said plainly: a blown budget no longer blocks a release.
+  # What that gives up, said plainly: a blown budget does not block a release.
   # The reading that decides that question is the quiet-machine one
   # `RELEASING.md` requires before the tag exists, and a shared runner's numbers
-  # were never fit to overrule it — a red here still fails the run and is still
-  # there to be read.
+  # were never fit to overrule it — a red here still fails the staging run and
+  # is still there to be read before the tag.
   #
   # `smoke-linux` is off the list for now. The job still runs and a red is still
-  # on the run to be read; publication does not wait on it. Restoring the block
+  # on the run to be read; the verdict does not wait on it. Restoring the block
   # is putting the name back in `needs`.
+  staged:
+    name: staged
+    needs: [gate, staged-checksums, stage-unix, stage-freebsd, stage-windows]
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every required cell passed on the staged bytes
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          # >>> staged verdict
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ.get("NEEDS") or "{}")
+          unpassed = sorted(job for job, outcome in needs.items() if outcome.get("result") != "success")
+          if not needs or unpassed:
+              print("::error::nothing staged here may be promoted; not passed: " + (", ".join(unpassed) or "no cell reported"))
+              sys.exit(1)
+          print("passed on the staged bytes: " + ", ".join(sorted(needs)))
+          PY
+          # <<< staged verdict
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-sums
+          path: staged
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged
+          path: staged/SHA256SUMS
+          if-no-files-found: error
+
+  # The tag promotes; it builds nothing. It finds the staging run of the tree
+  # the tag names, takes that run's artifacts, and publishes them only once
+  # every byte matches the checksums its cells passed on. The release is
+  # created as a draft with everything attached, downloaded back and held to
+  # those checksums again, and only then made public, so there is never a
+  # window where it is public, half the platforms are missing, or a byte
+  # differs from the one that was installed.
+  #
+  # The gate runs again here because it is what holds the tag to the manifest
+  # and the tree to the repository's checks, and both are about this push.
   publish:
-    needs: [build, build-linux, freebsd-x86_64]
+    needs: gate
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      actions: read # finds the staging run and downloads what it staged
       contents: write # creates the GitHub Release and uploads the archives
       id-token: write # signs the artifact attestation
       attestations: write
       artifact-metadata: write
+    env:
+      STAGED_SUMS: ${{ github.workspace }}/run/staged/SHA256SUMS
     steps:
+      # The newest dispatched run of release.yml, in this repository, whose
+      # commit has the tagged commit's tree, which has finished, which kept
+      # one `staged` artifact, and whose one `staged` job concluded success
+      # with that artifact made and last changed while it ran.
+      # The tree rather than the commit, so a staging run of the release
+      # branch promotes once its merge leaves the tree unchanged. No such run
+      # is a refusal, never a rebuild.
+      - name: The staging run of this tree
+        id: stage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # >>> staging run
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          from datetime import datetime
+          repo = os.environ["GITHUB_REPOSITORY"]
+          def api(path):
+              answer = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+              if answer.returncode != 0:
+                  print(f"::error::gh api {path} failed: {answer.stderr.strip()}")
+                  sys.exit(1)
+              return json.loads(answer.stdout)
+          # A time GitHub reported, or None when it is missing, unreadable or
+          # has no offset to compare it by, which every caller refuses. GitHub
+          # writes UTC as a trailing `Z`, which Python reads from 3.11; an
+          # older one refuses every run rather than guess.
+          def moment(value):
+              try:
+                  parsed = datetime.fromisoformat(value)
+              except (TypeError, ValueError):
+                  return None
+              return parsed if parsed.tzinfo is not None else None
+          trees = {}
+          def tree(commit):
+              if commit not in trees:
+                  trees[commit] = api(f"repos/{repo}/git/commits/{commit}")["tree"]["sha"]
+              return trees[commit]
+          wanted = tree(os.environ["GITHUB_SHA"])
+          runs = api(f"repos/{repo}/actions/workflows/release.yml/runs?event=workflow_dispatch&per_page=100")
+          for run in runs["workflow_runs"]:
+              if run["event"] != "workflow_dispatch" or run["head_repository"]["full_name"] != repo:
+                  continue
+              if tree(run["head_sha"]) != wanted:
+                  continue
+              kept = api(f"repos/{repo}/actions/runs/{run['id']}/artifacts?name=staged")["artifacts"]
+              staged = [artifact for artifact in kept if artifact["name"] == "staged" and not artifact["expired"]]
+              if not staged:
+                  continue
+              if len(staged) != 1:
+                  print(f"::warning::run {run['id']} kept {len(staged)} staged artifacts; not promoting it")
+                  continue
+              # A job that is not among the verdict's needs can still be running
+              # after it, so only a run that has finished is read; what a re-run
+              # uploads falls outside the window below.
+              if run.get("status") != "completed":
+                  print(f"::warning::run {run['id']} has not finished; not promoting it")
+                  continue
+              # Any action in the run could have uploaded an artifact by that
+              # name, so it counts only beside the run's one `staged` job,
+              # concluded success, and only when it was made and last changed
+              # while that job ran. A run has about twenty jobs and one page
+              # holds a hundred; a run that does not fit is refused, not half read.
+              jobs = api(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
+              if jobs["total_count"] > len(jobs["jobs"]):
+                  print(f"::warning::run {run['id']} has more jobs than one page holds; not promoting it")
+                  continue
+              verdicts = [job for job in jobs["jobs"] if job["name"] == "staged"]
+              concluded = [job.get("conclusion") for job in verdicts]
+              if concluded != ["success"]:
+                  print(f"::warning::run {run['id']} kept a staged artifact, but its staged jobs "
+                        f"concluded {concluded or 'nothing'}; not promoting it")
+                  continue
+              began, ended = (moment(verdicts[0].get(key)) for key in ("started_at", "completed_at"))
+              made = [moment(staged[0].get(key)) for key in ("created_at", "updated_at")]
+              if began is None or ended is None or not all(at is not None and began <= at <= ended for at in made):
+                  print(f"::warning::run {run['id']} kept a staged artifact its staged job cannot be shown "
+                        "to have made; not promoting it")
+                  continue
+              with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                  output.write(f"run={run['id']}\n")
+              print(f"promoting what run {run['id']} staged: {run['html_url']}")
+              sys.exit(0)
+          print(f"::error::no staging run of tree {wanted} passed its cells; dispatch release.yml "
+                "on this commit, wait for that run to finish, then re-run this one")
+          sys.exit(1)
+          PY
+          # <<< staging run
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: assets
-          merge-multiple: true
+          run-id: ${{ steps.stage.outputs.run }}
+          github-token: ${{ github.token }}
+          path: run
 
-      # The upload below is a glob, and a glob ships whatever is there. That
-      # is fine for the one platform allowed to be absent and wrong for every
-      # other, so what must be present is written out and counted rather than
-      # trusted to a wildcard. Six required archives and four executables; the
-      # seventh is best-effort and its absence is a warning, loud enough to
-      # reach the release notes and quiet enough not to stop them.
+      - name: The release, as it was staged
+        run: |
+          shopt -s nullglob
+          mkdir assets
+          cp run/notes/* assets/
+          for built in run/{linux,macos,windows,freebsd}-*/crucible-*; do cp "$built" assets/; done
+
+      # The upload below is a glob, and a glob ships whatever is there, so what
+      # must be present is written out and counted rather than trusted to a
+      # wildcard: seven archives and four executables.
       - name: Every platform this release promises is here
         working-directory: assets
-        env:
-          BEST_EFFORT: freebsd-x86_64
         run: |
           version=${GITHUB_REF_NAME#v}
           missing=
           for stem in linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64 \
-                      windows-x86_64 windows-aarch64; do
+                      windows-x86_64 windows-aarch64 freebsd-x86_64; do
             [ -f "crucible-$version-$stem.tar.gz" ] || missing="$missing $stem"
           done
           for stem in windows-x86_64 windows-aarch64; do
@@ -530,17 +1210,27 @@ jobs:
             echo "::error::required platforms missing:$missing"
             exit 1
           fi
-          if [ ! -f "crucible-$version-$BEST_EFFORT.tar.gz" ]; then
-            echo "::warning::$BEST_EFFORT did not build; this release ships without it"
-          fi
           ls -1 crucible-*
 
-      # One file rather than one `.sha256` per archive: a reader checking what
-      # they downloaded wants a single line to look up, and `sha256sum -c`
-      # takes the whole thing.
-      - name: One checksum file for the release
+      # The checksums the cells passed on are the release's, so they are
+      # published as they were staged rather than computed again here: every
+      # file to publish must be one they list, every file they list must be
+      # here, and every byte must match.
+      - name: Every byte to publish is a byte that was staged
         working-directory: assets
-        run: sha256sum crucible-* install.sh uninstall.sh install.ps1 | tee SHA256SUMS
+        run: |
+          # >>> promote by digest
+          published=(crucible-* install.sh uninstall.sh install.ps1)
+          here=$(printf '%s\n' "${published[@]}" | sort)
+          listed=$(awk '{ print $2 }' "$STAGED_SUMS" | sort)
+          if [[ $here != "$listed" ]]; then
+            echo "::error::the files to publish are not the files that were staged"
+            diff <(printf '%s\n' "$listed") <(printf '%s\n' "$here") || true
+            exit 1
+          fi
+          sha256sum --check --strict "$STAGED_SUMS"
+          cp "$STAGED_SUMS" SHA256SUMS
+          # <<< promote by digest
 
       - name: Attest release artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -552,13 +1242,40 @@ jobs:
             assets/uninstall.sh
             assets/install.ps1
 
-      - name: Publish
+      - name: Publish, as a draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
+            --draft --verify-tag \
             --title "crucible ${GITHUB_REF_NAME#v}" \
             --notes-file assets/NOTES.md \
             assets/crucible-* assets/install.sh assets/uninstall.sh assets/install.ps1 \
             assets/SHA256SUMS
+
+      # What the release holds, read back from it rather than from the files
+      # handed to it. Any difference leaves the draft unpublished.
+      - name: The draft holds exactly the staged bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # >>> published as staged
+          mkdir published
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir published
+          cd published
+          here=$(ls -1A | sort)
+          listed=$({ awk '{ print $2 }' "$STAGED_SUMS"; echo SHA256SUMS; } | sort)
+          if [[ $here != "$listed" ]]; then
+            echo "::error::the draft does not hold the files that were staged"
+            diff <(printf '%s\n' "$listed") <(printf '%s\n' "$here") || true
+            exit 1
+          fi
+          cmp SHA256SUMS "$STAGED_SUMS"
+          sha256sum --check --strict SHA256SUMS
+          # <<< published as staged
+
+      - name: Make the release public
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

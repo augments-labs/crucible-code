@@ -411,3 +411,97 @@ fn the_footer_at_40_columns_loses_the_result_count_whole() {
 fn the_footer_at_20_columns_keeps_only_the_way_out() {
     assert_eq!(seven_from_the_second(20).as_deref(), Some("esc to close"));
 }
+
+#[test]
+fn a_window_laid_from_measured_lengths_is_the_window_laid_from_everything() {
+    // A caller that kept each result's length hands it over instead of having
+    // the whole list laid out again, and only the results the window reaches
+    // are laid. The rows are the ones the whole list laid out gives, at every
+    // width, every height and every row the window can open on, and so is the
+    // length the list comes to; lengths that do not say one for each result
+    // are measured again rather than trusted.
+    let texts = [
+        counted(3),
+        "x".repeat(130),
+        String::new(),
+        "two words\n\n\tand a tab\x1b[31m red\x1b[0m".to_owned(),
+        "宽".repeat(50),
+        counted(12),
+    ];
+    let shown: Vec<Shown<'_>> = texts
+        .iter()
+        .map(|text| Shown {
+            called: "Bash(make)\nand a second line of it",
+            text,
+        })
+        .collect();
+
+    for columns in [0, 3, 7, 40, 200] {
+        let lengths: Vec<usize> = shown
+            .iter()
+            .enumerate()
+            .map(|(at, one)| {
+                Expanded {
+                    shown: std::slice::from_ref(one),
+                    from: 0,
+                }
+                .length(columns)
+                    + usize::from(at > 0)
+            })
+            .collect();
+        let whole = Expanded {
+            shown: &shown,
+            from: 0,
+        };
+        let laid = whole.laid(columns);
+        assert_eq!(whole.lengths(columns), lengths, "{columns} columns");
+        assert_eq!(
+            lengths.iter().sum::<usize>(),
+            laid.len(),
+            "{columns} columns"
+        );
+
+        for room in [0, 4, 5, 6, 12, 400] {
+            for from in 0..=laid.len() + 1 {
+                let expanded = Expanded {
+                    shown: &shown,
+                    from,
+                };
+                let held = Expanded::seen(room);
+                let top = from.min(laid.len().saturating_sub(held));
+                let window: Vec<Row> = if held == 0 {
+                    Vec::new()
+                } else {
+                    laid.iter().skip(top).take(held).cloned().collect()
+                };
+                let begun = (0..shown.len())
+                    .filter(|at| lengths.iter().take(*at).sum::<usize>() <= top)
+                    .count();
+                let counted = footer(laid.len() > held, begun, shown.len(), columns);
+                let measured = expanded.within_measured(&lengths, columns, room, Glyphs::Unicode);
+                let said = format!("{columns} columns, {room} rows, from {from}");
+
+                assert_eq!(
+                    measured
+                        .get(2..measured.len().saturating_sub(2))
+                        .unwrap_or_default(),
+                    window.as_slice(),
+                    "{said}"
+                );
+                if held > 0 {
+                    assert_eq!(measured.last().map(Row::text), Some(counted), "{said}");
+                }
+                assert_eq!(
+                    expanded.within_measured(
+                        lengths.get(1..).unwrap_or_default(),
+                        columns,
+                        room,
+                        Glyphs::Unicode,
+                    ),
+                    measured,
+                    "{said}"
+                );
+            }
+        }
+    }
+}

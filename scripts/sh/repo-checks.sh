@@ -117,6 +117,32 @@ if ! grep -qE '^ +assets/install\.ps1$' .github/workflows/release.yml; then
     failed=1
 fi
 
+section "a pull request that changes only documentation"
+# blocking-ci.yml asks scripts/sh/docs-only.sh whether a pull request changes
+# nothing but documentation, and then leaves macOS and Windows to the run its
+# merge makes. A wrong yes skips a platform that a change could break, so each
+# case below is one the answer must get right.
+docs_only_case() {
+    local want=$1 got
+    shift
+    got=$(printf '%s\0' "$@" | scripts/sh/docs-only.sh) || got="exit $?"
+    if [[ "$got" != "$want" ]]; then
+        printf '    FAIL docs-only says %s, not %s, for:%s\n' "$got" "$want" "$(printf ' %q' "$@")"
+        failed=1
+    fi
+}
+docs_only_case true docs/reference/cli.md
+docs_only_case true README.md "docs/user guide/a b.md" docs/assets/flow.svg .github/PULL_REQUEST_TEMPLATE.md
+docs_only_case false docs/reference/cli.md crates/crucible-app/src/lib.rs
+# The release notes are compiled into the binary.
+docs_only_case false CHANGELOG.md
+docs_only_case false docs/reference/cli.md CHANGELOG.md
+docs_only_case false .github/workflows/rust-ci.yml
+docs_only_case false notes.md.rs
+docs_only_case false scripts/sh/install.sh
+# A pull request that changes no file has nothing to say it is documentation.
+docs_only_case false
+
 section "tracked source secrets"
 # Deliberately narrow signatures: each names a credential format whose prefix is
 # part of the provider's contract. Generic entropy and words such as `password`
@@ -639,6 +665,30 @@ for reader in crates/crucible-builtins/src/read.rs src/cli/converse/attaching.rs
     fi
 done
 
+section "every crate says what it is for"
+# AGENTS.md sends a reader to the first line of each crate's `src/lib.rs` for the
+# map of the workspace, so a crate that opens with anything else is missing from
+# it: line 1 is `//! ` and at least three words.
+crate_dirs=(crates/*/)
+if ((${#crate_dirs[@]} == 0)); then
+    printf '    FAIL no crate under crates/; this check read nothing\n'
+    failed=1
+fi
+for dir in "${crate_dirs[@]}"; do
+    lib="${dir}src/lib.rs"
+    if [[ ! -f "$lib" ]]; then
+        printf '    FAIL %s is missing; a crate says what it is for on its first line\n' "$lib"
+        failed=1
+        continue
+    fi
+    opening=""
+    IFS= read -r opening <"$lib" || true
+    if [[ ! "$opening" =~ ^//!\ [^[:space:]]+([[:space:]]+[^[:space:]]+){2} ]]; then
+        printf '    FAIL %s: line 1 is not `//! ` and at least three words saying what the crate is for\n' "$lib"
+        failed=1
+    fi
+done
+
 member_manifests=(crates/*/Cargo.toml)
 manifests=(Cargo.toml "${member_manifests[@]}")
 
@@ -1093,7 +1143,11 @@ section "shipping source boundary"
 # rest are still named in the files listed here, each for something that reads a
 # key or draws a cell around a concrete value, and the list is a ratchet: a name
 # in a file that is not listed fails, and so does a line whose file no longer
-# names the crate, so the list can only get shorter.
+# names the crate, so the list can only get shorter. One line was added on
+# purpose since: `src/main.rs` settles where the sandbox broker is looked for
+# before anything else runs, because only then does the executable's path still
+# name the release the process was started from, and the application is built
+# after that.
 #
 # Files that compile only under test are left out, because a fixture has to
 # build the thing it stands in for -- which is why a test module that names one
@@ -1154,7 +1208,8 @@ src/cli/converse/resuming.rs crucible_session
 src/cli/converse/typing.rs crucible_builtins
 src/cli/draw.rs crucible_builtins
 src/cli/draw/opening.rs crucible_session
-src/cli/standing.rs crucible_builtins'
+src/cli/standing.rs crucible_builtins
+src/main.rs crucible_sandbox_local'
 concrete=$(grep -E ' crucible_(auth|builtins|privacy|provider|sandbox_broker|sandbox_local|session)$' <<<"$named")
 while IFS= read -r line; do
     [[ -z "$line" ]] && continue
@@ -1399,6 +1454,24 @@ while IFS= read -r file; do
     fi
 done <<<"$naming"
 
+section "changelog entries"
+# Entries wait in `changelog.d/`, which git ignores, in the checkout releases
+# are cut from; only a release commit writes the changelog, assembling the
+# section from them. An entry committed anyway, with `git add -f`, is one every
+# checkout would then carry into its next release; an entry the release could
+# not assemble, where the directory exists, or a line written under
+# `## [Unreleased]` by hand, is caught before it is relied on.
+while IFS= read -r tracked; do
+    printf '    FAIL %s is committed; changelog entries stay untracked in changelog.d/, so remove it with git rm --cached\n' "$tracked"
+    failed=1
+done < <(git ls-files -- changelog.d)
+if ! entry_problems=$(PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/changelog-entries.py check); then
+    while IFS= read -r said; do
+        printf '    FAIL %s\n' "$said"
+    done <<<"${entry_problems:-changelog-entries.py check failed without saying why}"
+    failed=1
+fi
+
 section "the release notes reach nothing outside the binary"
 # `/release-notes` reads the changelog the binary was built with, and so opens
 # no socket and reads no file, which is what lets it be asked with no network
@@ -1609,13 +1682,497 @@ if [[ -n "$unjustified" ]]; then
     failed=1
 fi
 
+section "release staging"
+# A release is built once, by a dispatched run of release.yml that publishes
+# nothing, and the tag promotes exactly the bytes that run staged and its cells
+# installed. What keeps that true is spread across one workflow, so it is held
+# here: the jobs that existed before staging are still there, nothing but the
+# promote job can publish and it waits for a tag, every required cell feeds the
+# staging verdict, and the shell that decides each question is run below
+# against fixtures rather than trusted to read right.
+staging_workflow=.github/workflows/release.yml
+staging_fail() {
+    printf '    FAIL %s\n' "$1"
+    failed=1
+}
+# The body of one job, comments left out unless a second argument asks for
+# them, so a check never reads another job's lines or a sentence explaining one.
+staging_job() {
+    awk -v job="  $1:" -v keep="${2:-}" '
+        /^jobs:$/ { jobs = 1; next }
+        !jobs { next }
+        /^  [A-Za-z0-9_-]+:$/ { inside = ($0 == job); next }
+        /^[^ ]/ { inside = 0 }
+        inside && (keep != "" || !/^[[:space:]]*#/) { print }
+    ' "$staging_workflow"
+}
+# The shell between `# >>> NAME` and `# <<< NAME`, at the indentation the step
+# runs it with. Nothing is printed, and the status is 1, when either is missing.
+staging_block() {
+    awk -v opening="# >>> $1" -v closing="# <<< $1" '
+        { line = $0; sub(/^[[:space:]]+/, "", line) }
+        !inside && line == opening { match($0, /^[[:space:]]*/); cut = RLENGTH; inside = 1; next }
+        inside && line == closing { inside = 0; found = 1; next }
+        inside { body = body substr($0, cut + 1) "\n" }
+        END { if (!found) exit 1; printf "%s", body }
+    ' "$staging_workflow"
+}
+# What an Actions `run:` step is, so a block behaves here as it does there.
+staging_run() {
+    local block=$1 dir=$2
+    shift 2
+    (cd "$dir" && env "$@" bash --noprofile --norc -eo pipefail -c "$block") >"$staging_scratch/last.log" 2>&1
+}
+# The install step in FILE whose `tool:` names cargo-nextest, wherever it
+# stands among the others the file installs.
+staging_nextest_step() {
+    awk '
+        { before = last; last = this; this = $0 }
+        before ~ /uses: taiki-e\/install-action@/ && last ~ /^ *with:$/ && this ~ /^ *tool: cargo-nextest@/ {
+            print before; print last; print this; exit
+        }
+    ' "$1"
+}
+# Every file a release runs under ROOT: the workflow, each local action it
+# uses, and each local action those use, under whichever of its two names the
+# action is kept. A local action with neither is put in staging_unreached, for
+# a cache it holds cannot be read.
+staging_reach() {
+    local root=$2 queue=("$2/$1") seen=" " file dir
+    staging_reached=()
+    staging_unreached=()
+    while ((${#queue[@]})); do
+        file=${queue[0]}
+        queue=("${queue[@]:1}")
+        staging_reached+=("$file")
+        while IFS= read -r dir; do
+            dir=${dir%/}
+            [[ $seen == *" $dir "* ]] && continue
+            seen+="$dir "
+            if [[ -f $root/$dir/action.yml ]]; then
+                queue+=("$root/$dir/action.yml")
+            elif [[ -f $root/$dir/action.yaml ]]; then
+                queue+=("$root/$dir/action.yaml")
+            else
+                staging_unreached+=("$dir")
+            fi
+        done < <(sed -n -E "s/^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*['\"]?\.\/([^'\"[:space:]]*)['\"]?([[:space:]].*)?$/\2/p" "$file" | sort -u)
+    done
+}
+# Reads the files given as PATH CONTENT pairs as a release made of them, with
+# w.yml its workflow, and fails unless the guard reads it as EXPECTED: clean,
+# cached, or unreached for a local action it cannot find.
+staging_cache_case() {
+    local name=$1 expected=$2 repo got
+    shift 2
+    repo=$(mktemp -d)
+    while (($# > 1)); do
+        mkdir -p "$repo/$(dirname "$1")"
+        printf '%s\n' "$2" >"$repo/$1"
+        shift 2
+    done
+    staging_reach w.yml "$repo"
+    if ((${#staging_unreached[@]})); then
+        got=unreached
+    else
+        staging_cached "${staging_reached[@]}" >/dev/null
+        case $? in
+            0) got=cached ;;
+            1) got=clean ;;
+            *) got=unreadable ;;
+        esac
+    fi
+    rm -rf "$repo"
+    [[ $got == "$expected" ]] || staging_fail "the release cache guard reads $name as $got, not $expected"
+}
+# The lines of FILES that restore or keep a cache, comments left out: a cache
+# action under any owner's spelling, quoted or not, sccache in any form, and a
+# `cache:` input such as a setup action takes. The status is 1 when there is
+# none and 2 when a file could not be read.
+staging_cache_pattern="uses:[[:space:]]*['\"]?[^'\"[:space:]#]*(actions/cache|rust-cache)|sccache|(^|[{,])[[:space:]]*(-[[:space:]]+)?cache:"
+staging_cached() {
+    local found status
+    found=$(grep -HniE -- "$staging_cache_pattern" "$@")
+    status=$?
+    ((status > 1)) && return 2
+    [[ -n $found ]] || return 1
+    grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' <<<"$found"
+}
+if [[ ! -f $staging_workflow ]]; then
+    staging_fail "$staging_workflow is missing; this check measured nothing"
+else
+    # Everything release.yml did before it could stage still runs. A job may
+    # move to the staging run; it may not go.
+    for job in gate build-linux build freebsd-x86_64 smoke-linux budgets publish; do
+        [[ -n $(staging_job "$job") ]] || staging_fail "release.yml has no $job job"
+    done
+    triggers=$(awk '/^on:$/ { on = 1; next } on && /^[^ #]/ { exit } on && !/^[[:space:]]*(#|$)/ { print }' "$staging_workflow")
+    expected_triggers=$'  push:\n    tags: ["v*"]\n  workflow_dispatch:'
+    if [[ $triggers != "$expected_triggers" ]]; then
+        staging_fail "release.yml runs on more than a v* tag and a dispatch, or on less:"
+        printf '%s\n' "$triggers"
+    fi
+    if [[ $(awk '/^permissions:$/ { p = 1; next } p && /^[^ ]/ { exit } p { print }' "$staging_workflow") != "  contents: read" ]]; then
+        staging_fail "release.yml's default token can do more than read"
+    fi
+
+    # The gate runs scripts/sh/check.sh, which runs the suites through
+    # cargo-nextest, so it installs the cargo-nextest rust-ci.yml installs,
+    # before check.sh runs. Nothing a release runs restores a cache: a release
+    # is built from nothing another ref wrote.
+    gate_job=$(staging_job gate)
+    nextest_fixture=$'      - uses: taiki-e/install-action@1 # v1\n        with:\n          tool: cargo-deny@1\n      - uses: taiki-e/install-action@2 # v2\n        with:\n          tool: cargo-nextest@2'
+    if [[ $(staging_nextest_step <(printf '%s\n' "$nextest_fixture")) != "$(tail -n3 <<<"$nextest_fixture")" ]]; then
+        staging_fail "the cargo-nextest step is not picked out when another install-action step comes first"
+    fi
+    nextest_step=$(staging_nextest_step .github/workflows/rust-ci.yml)
+    if [[ $nextest_step != *'tool: cargo-nextest@'* ]]; then
+        staging_fail "rust-ci.yml installs no cargo-nextest for this check to hold the release gate to"
+    else
+        nextest_at=$(grep -nxF -- "$(tail -n1 <<<"$nextest_step")" <<<"$gate_job" | head -n1 | cut -d: -f1)
+        check_at=$(grep -nE '^ +- run: scripts/sh/check\.sh$' <<<"$gate_job" | head -n1 | cut -d: -f1)
+        if [[ -z $nextest_at || $(staging_nextest_step <(printf '%s\n' "$gate_job")) != "$nextest_step" ]]; then
+            staging_fail "the release gate does not install cargo-nextest as rust-ci.yml does:"
+            printf '%s\n' "$nextest_step"
+        elif [[ -z $check_at ]] || ((check_at < nextest_at)); then
+            staging_fail "the release gate runs check.sh before it installs cargo-nextest"
+        fi
+    fi
+    staging_reach "$staging_workflow" .
+    for dir in ${staging_unreached[@]+"${staging_unreached[@]}"}; do
+        staging_fail "a release uses $dir, which holds no action.yml or action.yaml"
+    done
+    cached=$(staging_cached "${staging_reached[@]}")
+    case $? in
+        0) staging_fail "a release restores a cache another ref may have written: $cached" ;;
+        2) staging_fail "a file a release runs could not be read for a cache: ${staging_reached[*]}" ;;
+    esac
+    staging_cache_case "a release with no cache" clean \
+        w.yml $'steps:\n  # restores no cache\n  - uses: actions/checkout@v4\n  - uses: ./a' \
+        a/action.yml $'runs:\n  steps:\n    - run: true'
+    staging_cache_case "actions/cache" cached w.yml '  - uses: actions/cache@v4'
+    staging_cache_case "a lowercase owner" cached w.yml '  - uses: swatinem/rust-cache@v2'
+    staging_cache_case "a quoted name" cached w.yml '  - uses: "actions/cache@v4"'
+    staging_cache_case "a single-quoted name" cached w.yml "  - uses: 'Swatinem/rust-cache@v2'"
+    staging_cache_case "the sccache action" cached w.yml '  - uses: mozilla-actions/sccache-action@v0.0.9'
+    staging_cache_case "sccache as the compiler wrapper" cached w.yml $'env:\n  RUSTC_WRAPPER: sccache'
+    staging_cache_case "a setup action's cache input" cached \
+        w.yml $'  - uses: actions/setup-python@v5\n    with:\n      cache: pip'
+    staging_cache_case "a cache input written inline" cached \
+        w.yml '  - uses: actions/setup-node@v4
+    with: {node-version: 22, cache: npm}'
+    staging_cache_case "a cache named only in a comment" clean \
+        w.yml $'  - uses: actions/checkout@v4\n    # uses: actions/cache@v4\n    # cache: pip'
+    staging_cache_case "a cache in a local action another uses" cached \
+        w.yml '  - uses: ./a' a/action.yml '    - uses: ./b' b/action.yml '    - uses: actions/cache/restore@v4'
+    staging_cache_case "a cache in an action.yaml" cached \
+        w.yml '  - uses: ./c' c/action.yaml '    - uses: actions/cache@v4'
+    staging_cache_case "a local action that is not there" unreached w.yml '  - uses: ./gone'
+
+    # Publication is one job, and that job never runs on a branch. Another job
+    # may download a published release, which is how a cell installs the one it
+    # upgrades from; it may do nothing else with one.
+    publish_job=$(staging_job publish)
+    while IFS= read -r job; do
+        [[ $job == publish ]] && continue
+        body=$(staging_job "$job")
+        if grep -E 'gh +release' <<<"$body" | grep -qvE 'gh +release +download ' ||
+            grep -qE 'gh +api.*releases|action-gh-release|contents: *write' <<<"$body"; then
+            staging_fail "$job can publish or write to the repository; only publish may"
+        fi
+    done < <(sed -n 's/^  \([A-Za-z0-9_-]*\):$/\1/p' <(sed -n '/^jobs:$/,$p' "$staging_workflow"))
+    if ! grep -qxF "    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" <<<"$publish_job"; then
+        staging_fail "publish does not run on a pushed v* tag alone"
+    fi
+    grep -qxF '    needs: gate' <<<"$publish_job" || staging_fail "publish does not wait for the gate"
+    if grep -qE '^ +(run: *)?cargo ' <<<"$publish_job"; then
+        staging_fail "publish builds something; it promotes what the staging run built"
+    fi
+    # Every download in publish reads the staging run the finder named, never
+    # an artifact this run could have built.
+    unbound=$(awk '
+        function close_step() { if (pending) print step; pending = 0 }
+        /^      - / { close_step(); step = $0 }
+        /uses: actions\/download-artifact@/ { pending = 1 }
+        /^ +run-id: \$\{\{ steps\.stage\.outputs\.run \}\}$/ { pending = 0 }
+        END { close_step() }
+    ' <<<"$publish_job")
+    [[ -z $unbound ]] || staging_fail "publish downloads from a run the finder did not name: $unbound"
+
+    # Every required cell feeds the verdict, and none of them may fail quietly.
+    staged_job=$(staging_job staged)
+    staged_needs=$(sed -n 's/^    needs: *\[\(.*\)\]$/\1/p' <<<"$staged_job" | tr -d ' ' | tr ',' '\n')
+    cells=(staged-checksums stage-unix stage-freebsd stage-windows)
+    while IFS= read -r job; do cells+=("$job"); done < <(sed -n 's/^  \(stage-[A-Za-z0-9_-]*\):$/\1/p' "$staging_workflow")
+    for job in "${cells[@]}"; do
+        body=$(staging_job "$job")
+        if [[ -z $body ]]; then
+            staging_fail "release.yml has no $job job"
+            continue
+        fi
+        grep -qxF "$job" <<<"$staged_needs" || staging_fail "the staged verdict does not wait for $job"
+        grep -q 'continue-on-error' <<<"$body" && staging_fail "$job may fail without failing the stage"
+    done
+    grep -q 'continue-on-error' <<<"$staged_job" && staging_fail "the staged verdict may fail without failing the stage"
+    if ! grep -qxF "    if: always() && github.event_name == 'workflow_dispatch'" <<<"$staged_job"; then
+        staging_fail "the staged verdict does not run whenever a stage does"
+    fi
+    grep -qE '^ {6,}if:' <<<"$staged_job" && staging_fail "a step of the staged verdict can be skipped"
+    staged_steps=$(staging_job staged keep)
+    verdict_line=$(grep -n '# >>> staged verdict' <<<"$staged_steps" | cut -d: -f1)
+    upload_line=$(grep -n 'uses: actions/upload-artifact@' <<<"$staged_steps" | head -n1 | cut -d: -f1)
+    if [[ -z $verdict_line || -z $upload_line ]] || ((upload_line < verdict_line)); then
+        staging_fail "the staged artifact is not uploaded after, and only after, the verdict"
+    fi
+    for cell in 'stem: linux-x86_64, runner: ubuntu-latest, backend: linux-bubblewrap, upgrades: true, rollback: true' \
+                'stem: linux-aarch64, runner: ubuntu-24.04-arm, backend: linux-bubblewrap, upgrades: true, rollback: false' \
+                'stem: macos-aarch64, runner: macos-latest, backend: macos-seatbelt, upgrades: false, rollback: false' \
+                'stem: macos-x86_64, runner: macos-15-intel, backend: macos-seatbelt, upgrades: false, rollback: false'; do
+        grep -qF -- "- { $cell }" <<<"$(staging_job stage-unix)" || staging_fail "stage-unix lost the cell { $cell }"
+    done
+
+    # The rollback cell names no release: the drill says which one it rolls
+    # back to, so the release that follows moves one line and no workflow.
+    if ! rollback=$(staging_block rollback); then
+        staging_fail "release.yml has no rollback block for this check to read"
+    else
+        grep -qF "sed -n 's/^readonly PRIOR_TAG=//p' scripts/sh/rollback-drill.sh" <<<"$rollback" ||
+            staging_fail "the rollback cell does not read PRIOR_TAG from scripts/sh/rollback-drill.sh"
+        if named=$(grep -E '[0-9]+\.[0-9]+\.[0-9]+' <<<"$rollback"); then
+            staging_fail "the rollback cell names a release: $named"
+        fi
+    fi
+    canary_jobs=$(sed -n 's/^  \([A-Za-z0-9_-]*\):$/\1/p' <(sed -n '/^jobs:$/,$p' .github/workflows/release-canary.yml) | tr '\n' ' ')
+    [[ $canary_jobs == "latest container windows " ]] ||
+        staging_fail "release-canary.yml runs '$canary_jobs', not latest, container and windows"
+    grep -qF 'scripts/ps1/release-canary.ps1' .github/workflows/release-canary.yml ||
+        staging_fail "release-canary.yml does not run scripts/ps1/release-canary.ps1"
+
+    # The shell that decides, run against fixtures. A block that reads an
+    # Actions expression could not run here, and would be a block whose
+    # decision nobody tested, so one is refused.
+    staging_scratch=$(mktemp -d)
+    mkdir -p "$staging_scratch/bin"
+    if ! command -v sha256sum >/dev/null; then
+        printf '#!/bin/sh\nexec shasum -a 256 "$@"\n' >"$staging_scratch/bin/sha256sum"
+    fi
+    # `gh api PATH` answers with the file named for PATH, and `gh release
+    # download` copies what a release is made to hold. Anything else is an error.
+    cat >"$staging_scratch/bin/gh" <<'GH'
+#!/usr/bin/env bash
+case $1 in
+    api)
+        answer=$FAKE_GH/api/$(printf '%s' "$2" | tr '/?&=' '____').json
+        [[ $# == 2 && -f $answer ]] || { echo "fake gh: nothing for $*" >&2; exit 1; }
+        cat "$answer"
+        ;;
+    release)
+        [[ $2 == download ]] || { echo "fake gh: no release $2" >&2; exit 1; }
+        shift 2
+        dir=.
+        while (($#)); do
+            case $1 in --dir) dir=$2; shift 2 ;; *) shift ;; esac
+        done
+        mkdir -p "$dir" && cp "$FAKE_GH"/release/* "$dir"/
+        ;;
+    *) echo "fake gh: $1 is not faked" >&2; exit 1 ;;
+esac
+GH
+    chmod 755 "$staging_scratch"/bin/*
+    staging_path=$staging_scratch/bin:$PATH
+    staging_blocks=()
+    for name in 'promote by digest' 'staged verdict' 'staging run' 'published as staged'; do
+        if ! body=$(staging_block "$name"); then
+            staging_fail "release.yml has no '$name' block for this check to run"
+        elif grep -qF '${{' <<<"$body"; then
+            staging_fail "the '$name' block reads an Actions expression, so it cannot be run here"
+        else
+            staging_blocks+=("$name")
+            printf '%s\n' "$body" >"$staging_scratch/$name.sh"
+        fi
+    done
+    staging_has() { [[ " ${staging_blocks[*]} " == *" $1 "* ]]; }
+    # A release made of six small files, and the sums its staging run kept.
+    staging_release() {
+        rm -rf "$1" && mkdir -p "$1"
+        for asset in crucible-1.2.3-linux-x86_64.tar.gz crucible-1.2.3-windows-x86_64.exe \
+                     crucible-sandbox-broker-1.2.3-windows-x86_64.exe install.sh uninstall.sh install.ps1; do
+            printf '%s bytes\n' "$asset" >"$1/$asset"
+        done
+        (cd "$1" && sha256sum -- * >"$staging_scratch/staged.sums")
+        printf 'notes\n' >"$1/NOTES.md"
+    }
+    staging_expect() {
+        local expect=$1 what=$2 status=$3
+        if [[ $expect == pass && $status != 0 ]]; then
+            staging_fail "$what: refused, expected to pass"
+            sed 's/^/         /' "$staging_scratch/last.log"
+        elif [[ $expect == refuse && $status == 0 ]]; then
+            staging_fail "$what: passed, expected a refusal"
+        fi
+    }
+
+    if staging_has 'promote by digest'; then
+        block=$(<"$staging_scratch/promote by digest.sh")
+        assets=$staging_scratch/assets
+        sums=STAGED_SUMS=$staging_scratch/staged.sums
+        staging_release "$assets"
+        status=0; staging_run "$block" "$assets" PATH="$staging_path" "$sums" || status=$?
+        staging_expect pass "promote: the staged bytes" "$status"
+        cmp -s "$assets/SHA256SUMS" "$staging_scratch/staged.sums" ||
+            staging_fail "promote: the published SHA256SUMS is not the staged one"
+        # The failing-first case: a rebuilt archive is a different archive.
+        staging_release "$assets"
+        printf 'rebuilt\n' >>"$assets/crucible-1.2.3-linux-x86_64.tar.gz"
+        status=0; staging_run "$block" "$assets" PATH="$staging_path" "$sums" || status=$?
+        staging_expect refuse "promote: an archive whose digest is not the staged one" "$status"
+        staging_release "$assets"
+        printf 'extra\n' >"$assets/crucible-1.2.3-macos-aarch64.tar.gz"
+        status=0; staging_run "$block" "$assets" PATH="$staging_path" "$sums" || status=$?
+        staging_expect refuse "promote: an archive the staging run never checked" "$status"
+        staging_release "$assets"
+        rm "$assets/install.ps1"
+        status=0; staging_run "$block" "$assets" PATH="$staging_path" "$sums" || status=$?
+        staging_expect refuse "promote: a staged file missing" "$status"
+    fi
+
+    if staging_has 'staged verdict'; then
+        block=$(<"$staging_scratch/staged verdict.sh")
+        for needs in 'pass {"a":{"result":"success"},"b":{"result":"success"}}' \
+                     'refuse {"a":{"result":"success"},"b":{"result":"failure"}}' \
+                     'refuse {"a":{"result":"success"},"b":{"result":"skipped"}}' \
+                     'refuse {"a":{"result":"cancelled"},"b":{"result":"success"}}' \
+                     'refuse {}' 'refuse '; do
+            status=0; staging_run "$block" "$staging_scratch" PATH="$staging_path" NEEDS="${needs#* }" || status=$?
+            staging_expect "${needs%% *}" "staged verdict: ${needs#* }" "$status"
+        done
+    fi
+
+    if staging_has 'staging run'; then
+        block=$(<"$staging_scratch/staging run.sh")
+        # A commit's tree, a dispatched run of one commit, and what it kept.
+        staging_api() { printf '%s\n' "$2" >"$staging_scratch/gh/api/$(printf '%s' "$1" | tr '/?&=' '____').json"; }
+        staging_find() {
+            local expect=$1 what=$2 runs=$3
+            shift 3
+            rm -rf "$staging_scratch/gh" && mkdir -p "$staging_scratch/gh/api"
+            staging_api repos/o/r/git/commits/tagged '{"tree":{"sha":"t1"}}'
+            staging_api repos/o/r/git/commits/same-tree '{"tree":{"sha":"t1"}}'
+            staging_api repos/o/r/git/commits/other-tree '{"tree":{"sha":"t2"}}'
+            staging_api 'repos/o/r/actions/workflows/release.yml/runs?event=workflow_dispatch&per_page=100' "{\"workflow_runs\":[$runs]}"
+            # `ID=JSON` is what run ID kept; `jobs:ID=JSON` is the jobs it ran.
+            local fixture
+            for fixture in "$@"; do
+                case $fixture in
+                    jobs:*) fixture=${fixture#jobs:}
+                            staging_api "repos/o/r/actions/runs/${fixture%%=*}/jobs?per_page=100" "${fixture#*=}" ;;
+                    *) staging_api "repos/o/r/actions/runs/${fixture%%=*}/artifacts?name=staged" "${fixture#*=}" ;;
+                esac
+            done
+            : >"$staging_scratch/output"
+            status=0
+            staging_run "$block" "$staging_scratch" PATH="$staging_path" FAKE_GH="$staging_scratch/gh" \
+                GITHUB_REPOSITORY=o/r GITHUB_SHA=tagged GITHUB_OUTPUT="$staging_scratch/output" || status=$?
+            staging_expect "$expect" "staging run: $what" "$status"
+        }
+        staging_dispatch() { printf '{"id":%s,"event":"workflow_dispatch","status":"%s","head_sha":"%s","head_repository":{"full_name":"%s"},"html_url":"u"}' "$1" "${4:-completed}" "$2" "${3:-o/r}"; }
+        # Every `staged` job below ran from 01:00 to 01:10, and the artifact it
+        # kept was made at 01:09 unless a case says otherwise.
+        at() { printf '2026-10-04T%s:00Z' "$1"; }
+        artifact() { printf '{"name":"staged","expired":false,"created_at":"%s","updated_at":"%s"}' "$1" "${2:-$1}"; }
+        staging_kept() { printf '{"total_count":%s,"artifacts":[%s]}' "$1" "$2"; }
+        kept=$(staging_kept 1 "$(artifact "$(at 01:09)")")
+        none='{"total_count":0,"artifacts":[]}'
+        staging_find refuse "no staging run at all" ''
+        # The restoration case: a stage that failed kept no verdict, and
+        # leaves nothing a tag could publish.
+        staging_find refuse "a run of this tree whose stage failed" "$(staging_dispatch 11 same-tree)" "11=$none"
+        staging_find refuse "a staged run of another tree" "$(staging_dispatch 12 other-tree)" "12=$kept"
+        staging_find refuse "a staged run from another repository" "$(staging_dispatch 13 tagged x/r)" "13=$kept"
+        staging_find refuse "a staged run whose verdict expired" "$(staging_dispatch 14 tagged)" \
+            '14={"total_count":1,"artifacts":[{"name":"staged","expired":true}]}'
+        # Any action in a staging run can upload an artifact named `staged`, so
+        # the artifact counts only beside a `staged` job that passed.
+        staging_jobs() { printf '{"total_count":%s,"jobs":[%s]}' "$1" "$2"; }
+        verdict() { printf '{"name":"staged","conclusion":"%s","started_at":"%s","completed_at":"%s"}' "$1" "${2:-$(at 01:00)}" "${3:-$(at 01:10)}"; }
+        cell='{"name":"staged linux-x86_64","conclusion":"success"}'
+        staging_find refuse "a staged artifact whose staged job failed" "$(staging_dispatch 17 tagged)" "17=$kept" \
+            "jobs:17=$(staging_jobs 2 "$cell,$(verdict failure)")"
+        staging_find refuse "a staged artifact whose staged job has not finished" "$(staging_dispatch 18 tagged)" "18=$kept" \
+            "jobs:18=$(staging_jobs 1 '{"name":"staged","conclusion":null}')"
+        staging_find refuse "a staged artifact from a run with no staged job" "$(staging_dispatch 19 tagged)" "19=$kept" \
+            "jobs:19=$(staging_jobs 1 "$cell")"
+        staging_find refuse "a staged artifact from a run with two staged jobs" "$(staging_dispatch 20 tagged)" "20=$kept" \
+            "jobs:20=$(staging_jobs 2 "$(verdict success),$(verdict success)")"
+        staging_find refuse "a staged artifact from a run with more jobs than one page" "$(staging_dispatch 21 tagged)" "21=$kept" \
+            "jobs:21=$(staging_jobs 101 "$(verdict success)")"
+        staging_find refuse "a staged run that has not finished" "$(staging_dispatch 22 tagged o/r in_progress)" "22=$kept" \
+            "jobs:22=$(staging_jobs 1 "$(verdict success)")"
+        # A job outside the verdict's needs can outlive it, so an artifact
+        # counts only when it was made, and last changed, while `staged` ran.
+        staging_find refuse "a staged artifact made after its staged job finished" "$(staging_dispatch 23 tagged)" \
+            "23=$(staging_kept 1 "$(artifact "$(at 02:00)")")" "jobs:23=$(staging_jobs 1 "$(verdict success)")"
+        staging_find refuse "a staged artifact changed after its staged job finished" "$(staging_dispatch 24 tagged)" \
+            "24=$(staging_kept 1 "$(artifact "$(at 01:09)" "$(at 02:00)")")" "jobs:24=$(staging_jobs 1 "$(verdict success)")"
+        staging_find refuse "a staged artifact made before its staged job started" "$(staging_dispatch 25 tagged)" \
+            "25=$(staging_kept 1 "$(artifact "$(at 00:59)")")" "jobs:25=$(staging_jobs 1 "$(verdict success)")"
+        staging_find refuse "two staged artifacts" "$(staging_dispatch 26 tagged)" \
+            "26=$(staging_kept 2 "$(artifact "$(at 01:08)"),$(artifact "$(at 01:09)")")" \
+            "jobs:26=$(staging_jobs 1 "$(verdict success)")"
+        # A time that cannot be read is a time that cannot be shown inside.
+        staging_find refuse "a staged artifact with no creation time" "$(staging_dispatch 27 tagged)" \
+            '27={"total_count":1,"artifacts":[{"name":"staged","expired":false,"updated_at":"2026-10-04T01:09:00Z"}]}' \
+            "jobs:27=$(staging_jobs 1 "$(verdict success)")"
+        staging_find refuse "a staged job whose finish cannot be read" "$(staging_dispatch 28 tagged)" "28=$kept" \
+            "jobs:28=$(staging_jobs 1 "$(verdict success "$(at 01:00)" soon)")"
+        staging_find refuse "times with no offset" "$(staging_dispatch 29 tagged)" \
+            "29=$(staging_kept 1 "$(artifact 2026-10-04T01:09:00)")" \
+            "jobs:29=$(staging_jobs 1 "$(verdict success 2026-10-04T01:00:00 2026-10-04T01:10:00)")"
+        staging_find pass "a staged artifact made as its staged job started and changed as it finished" "$(staging_dispatch 30 tagged)" \
+            "30=$(staging_kept 1 "$(artifact "$(at 01:00)" "$(at 01:10)")")" "jobs:30=$(staging_jobs 1 "$(verdict success)")"
+        staging_find pass "a staged run of this tree" \
+            "$(staging_dispatch 17 tagged),$(staging_dispatch 15 same-tree),$(staging_dispatch 16 tagged)" \
+            "17=$kept" "jobs:17=$(staging_jobs 2 "$cell,$(verdict failure)")" \
+            "15=$kept" "jobs:15=$(staging_jobs 2 "$cell,$(verdict success)")" "16=$none"
+        [[ $(<"$staging_scratch/output") == run=15 ]] ||
+            staging_fail "staging run: named '$(<"$staging_scratch/output")', expected run=15"
+        unset -f staging_dispatch staging_jobs verdict at artifact staging_kept
+    fi
+
+    if staging_has 'published as staged'; then
+        block=$(<"$staging_scratch/published as staged.sh")
+        published() {
+            local expect=$1 what=$2
+            rm -rf "$staging_scratch/gh" "$staging_scratch/promote" && mkdir -p "$staging_scratch/promote"
+            staging_release "$staging_scratch/gh/release"
+            rm "$staging_scratch/gh/release/NOTES.md"
+            cp "$staging_scratch/staged.sums" "$staging_scratch/gh/release/SHA256SUMS"
+            "${@:3}"
+            status=0
+            staging_run "$block" "$staging_scratch/promote" PATH="$staging_path" FAKE_GH="$staging_scratch/gh" \
+                STAGED_SUMS="$staging_scratch/staged.sums" GITHUB_REF_NAME=v1.2.3 GITHUB_REPOSITORY=o/r || status=$?
+            staging_expect "$expect" "published as staged: $what" "$status"
+        }
+        published pass "the staged bytes" true
+        published refuse "an asset changed after staging" \
+            sh -c "printf x >>'$staging_scratch/gh/release/install.sh'"
+        published refuse "an asset the staging run never checked" \
+            sh -c "printf x >'$staging_scratch/gh/release/crucible-1.2.3-macos-aarch64.tar.gz'"
+        published refuse "a staged asset missing" rm "$staging_scratch/gh/release/install.ps1"
+        published refuse "a SHA256SUMS that is not the staged one" \
+            sh -c "printf '\n' >>'$staging_scratch/gh/release/SHA256SUMS'"
+        unset -f published
+    fi
+    rm -rf "$staging_scratch"
+fi
+
 section "github actions pinning"
 workflow_count=0
 if [[ -d .github/workflows ]]; then
     while IFS= read -r workflow; do
         workflow_count=$((workflow_count + 1))
     done < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \))
-    floating=$(grep -rn 'uses:' .github/workflows |
+    floating=$(grep -rn 'uses:' .github/workflows .github/actions |
         grep -vE 'uses: *\./' |
         grep -vE 'uses: *[^@]+@[0-9a-f]{40} +# ' || true)
     if [[ -n "$floating" ]]; then

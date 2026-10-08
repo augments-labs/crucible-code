@@ -13,7 +13,7 @@ use std::fmt;
 
 use crucible_models::{Effort, Speed};
 use crucible_tools::Rules;
-use crucible_types::PromptCachePolicy;
+use crucible_types::{PromptCachePolicy, address};
 use serde_json::{Map, Value};
 
 use crate::document::Document;
@@ -71,10 +71,12 @@ pub struct Settings {
 }
 
 impl fmt::Debug for Settings {
-    /// Written by hand so the `env` block is redacted. This type is what the
-    /// wiring above holds for the whole session, so it is the one most likely
-    /// to end up inside somebody's diagnostic — and it holds every variable
-    /// the two private layers set, values and all.
+    /// Written by hand so the `env` block is redacted, each server's
+    /// arguments shown as a reader is shown them, what an extension was told
+    /// is hidden, and a `baseUrl` shows its recipient alone. This type is
+    /// what the wiring above holds for the whole session, so it is the one
+    /// most likely to end up inside somebody's diagnostic — and it holds
+    /// every variable the two private layers set, values and all.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Settings")
             .field("value", &env::Redacted(&self.value))
@@ -377,6 +379,65 @@ fn merge(base: &mut Value, near: &Value, shape: &'static Shape) {
     }
 }
 
+/// Replaces every value an extension was told in a printed document, keeping
+/// the names, as [`Settings::extension_settings`] lists them.
+///
+/// The document-holding types print through [`env::Redacted`]. Crucible cannot
+/// read these names, so it cannot tell which of them holds a key, and every
+/// value goes: a nested block or list is replaced whole rather than descended
+/// into, as a nested object under `env` is. A `config` that is not a block,
+/// which no document that parsed holds, is replaced whole.
+pub(crate) fn hide_extension_settings(shown_document: &mut Value) {
+    let Some(extensions) = shown_document
+        .get_mut("extensions")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+
+    for record in extensions.values_mut() {
+        let Some(config) = record.get_mut("config") else {
+            continue;
+        };
+        match config.as_object_mut() {
+            Some(written) => {
+                for value in written.values_mut() {
+                    *value = Value::String(env::REDACTED.to_owned());
+                }
+            }
+            None => *config = Value::String(env::REDACTED.to_owned()),
+        }
+    }
+}
+
+/// Replaces each provider's `baseUrl` in a printed document with the
+/// recipient alone, as [`address::redacted`] shows it.
+///
+/// The wiring refuses some addresses and sends to others, but the document
+/// holds what was written either way, and a line that says which host a turn
+/// would have gone to is the one a reader of a diagnostic needs. The user and
+/// password, the path and the query are not that, and are where a credential,
+/// a tenant or a token is written. A `baseUrl` that is not text, which no
+/// document that parsed holds, is replaced whole.
+pub(crate) fn hide_base_url_targets(shown_document: &mut Value) {
+    let Some(providers) = shown_document
+        .get_mut("providers")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+
+    for record in providers.values_mut() {
+        let Some(base_url) = record.get_mut("baseUrl") else {
+            continue;
+        };
+        *base_url = Value::String(match base_url.as_str() {
+            Some(written) => address::redacted(written),
+            None => env::REDACTED.to_owned(),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::document::Origin;
@@ -604,6 +665,112 @@ mod tests {
 
         let printed = format!("{:?}", Settings::resolve(vec![user]));
         assert!(printed.contains("from-home"), "got {printed}");
+    }
+
+    #[test]
+    fn printing_the_settings_names_what_an_extension_was_told_and_shows_none_of_it() {
+        // An extension's block is opaque to crucible, so any value in it may be
+        // the key the extension was told to use, whatever its kind. The names
+        // stay, as a variable's do; every value goes, and what is nested under
+        // one goes with it.
+        let text = r#"{"extensions": {"acme.reviewer": {"enabled": true, "config": {
+                         "token": "sk-not-a-real-one", "nested": {"inner": "deep-fake-value"},
+                         "list": ["listed-fake-value"]}},
+                       "acme.quiet": {"config": {"depth": 3}}}}"#;
+        let document = Document::sample(text, Origin::User);
+        let settings = Settings::resolve(vec![document.clone()]);
+
+        for printed in [format!("{settings:?}"), format!("{document:?}")] {
+            assert!(printed.contains("token"), "got {printed}");
+            assert!(printed.contains("depth"), "got {printed}");
+            for value in [
+                "sk-not-a-real-one",
+                "deep-fake-value",
+                "listed-fake-value",
+                "Number(3)",
+            ] {
+                assert!(!printed.contains(value), "{value} in {printed}");
+            }
+        }
+
+        // And the extension is still told what was written.
+        assert_eq!(
+            settings.extension_settings("acme.reviewer"),
+            vec!["list", "nested", "token"]
+        );
+    }
+
+    #[test]
+    fn printing_the_settings_shows_where_a_base_url_goes_and_not_who_it_goes_as() {
+        // A user and a password in the address is refused where it is applied,
+        // but it is held, and printed, before that. The host is what a reader
+        // of the line needs; the userinfo is what nobody should read.
+        let text = r#"{"providers": {"anthropic": {
+                         "baseUrl": "https://user:pa55word@host.example/v1"}}}"#;
+        let document = Document::sample(text, Origin::User);
+        let settings = Settings::resolve(vec![document.clone()]);
+
+        for printed in [format!("{settings:?}"), format!("{document:?}")] {
+            assert!(
+                printed.contains("https://host.example/[redacted]"),
+                "got {printed}"
+            );
+            assert!(!printed.contains("pa55word"), "got {printed}");
+            assert!(!printed.contains("user:"), "got {printed}");
+            assert!(!printed.contains("user@"), "got {printed}");
+        }
+
+        // What is applied is what was written.
+        assert_eq!(
+            settings.base_url("anthropic"),
+            Some("https://user:pa55word@host.example/v1")
+        );
+    }
+
+    #[test]
+    fn printing_the_settings_shows_where_a_base_url_goes_and_not_its_path_or_query() {
+        // A gateway's path and query are where a tenant or a token is put, so
+        // a printed setting names the recipient alone, as the provider's own
+        // diagnostics do.
+        let text = r#"{"providers": {"openai": {"baseUrl":
+                         "https://host.example:8443/tenant-fake/v1?api-key=not-a-real-key"}}}"#;
+        let document = Document::sample(text, Origin::User);
+        let settings = Settings::resolve(vec![document.clone()]);
+
+        for printed in [format!("{settings:?}"), format!("{document:?}")] {
+            assert!(
+                printed.contains("https://host.example:8443/[redacted]"),
+                "got {printed}"
+            );
+            for hidden in ["tenant-fake", "api-key", "not-a-real-key"] {
+                assert!(!printed.contains(hidden), "{hidden} in {printed}");
+            }
+        }
+
+        // What is applied is what was written.
+        assert_eq!(
+            settings.base_url("openai"),
+            Some("https://host.example:8443/tenant-fake/v1?api-key=not-a-real-key")
+        );
+    }
+
+    #[test]
+    fn a_base_url_spelled_so_its_authority_cannot_be_read_is_hidden_whole() {
+        // Which spellings those are is the address module's to say; this is
+        // that a printed setting takes its word, in the placeholder every
+        // other hidden value here is printed as.
+        assert_eq!(address::HIDDEN, env::REDACTED);
+        let text = r#"{"providers": {"openai": {"baseUrl":
+                         "https:user:pa55word@host.example/x://y"}}}"#;
+        let document = Document::sample(text, Origin::User);
+        let settings = Settings::resolve(vec![document.clone()]);
+
+        for printed in [format!("{settings:?}"), format!("{document:?}")] {
+            assert!(printed.contains(env::REDACTED), "got {printed}");
+            for hidden in ["user", "pa55word", "host.example"] {
+                assert!(!printed.contains(hidden), "{hidden} in {printed}");
+            }
+        }
     }
 
     #[test]

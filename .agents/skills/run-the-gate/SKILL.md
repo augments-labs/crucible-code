@@ -21,7 +21,11 @@ scripts/sh/repo-checks.sh   # cross-file repository policy
 scripts/sh/python-checks.sh # harness fixtures, campaign reports and this version's release notes
 ```
 
-CI calls the named scripts through their owning workflows. New ecosystems get
+CI calls the named scripts through their owning workflows, and runs the Rust
+gate in parts: `--only tests --partition hash:K/N` on several machines, and
+`--skip` naming only what those leave out, so a section added to
+`rust-checks.sh` runs in CI without anyone listing it. A section name the
+script does not know is refused. New ecosystems get
 a peer script and workflow; do not hide another language's setup inside the
 Rust gate.
 

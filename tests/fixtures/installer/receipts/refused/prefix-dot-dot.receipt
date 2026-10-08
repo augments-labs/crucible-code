@@ -1,0 +1,9 @@
+crucible-installer-receipt 1
+manager=crucible-installer
+installation=5c0f9d2e8a4b47e1b3d6a09f7c21e845
+target=linux-x86_64
+layout=versioned
+prefix=/home/someone/../root/.crucible-install
+version=0.46.0
+sha256.crucible=bbf308e56f782e40ea76779157105414cfaff9f5b7e41e0121354e26775a6ecb
+sha256.crucible-sandbox-broker=6f085a0cd321911ff232b81442e2f797182e1f909ba26a3f5b7cbb945ee314c1

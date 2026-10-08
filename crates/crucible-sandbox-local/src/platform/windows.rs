@@ -9,7 +9,10 @@
 //! A pipe read or written asynchronously is handed to a thread of its own
 //! (the `owned` module), because no runtime here is told when an anonymous pipe
 //! becomes ready. A write that thread is parked in is abandoned by cancelling
-//! the pipe's pending I/O, which is what dropping the writer asks for.
+//! the pipe's pending I/O, which is what dropping the writer asks for. The
+//! cancellation runs on the writing thread itself, because one asked for from
+//! another thread was seen to return only once the writing thread had run,
+//! though `CancelIoEx` is documented as waiting for nothing.
 #![allow(
     unsafe_code,
     reason = "Windows exposes job objects and anonymous-pipe polling only through its system API"
@@ -42,8 +45,10 @@ use windows_sys::Win32::System::JobObjects::{
     TerminateJobObject,
 };
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+#[cfg(test)]
+use windows_sys::Win32::System::Threading::SuspendThread;
 use windows_sys::Win32::System::Threading::{
-    CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+    CREATE_SUSPENDED, OpenThread, QueueUserAPC, ResumeThread, THREAD_SUSPEND_RESUME,
 };
 
 use super::ReadState;
@@ -478,29 +483,91 @@ impl Write for Shared {
     }
 }
 
-/// Abandons whatever write `thread` is parked in on `pipe`.
+/// Abandons whatever write `thread` is parked in on `pipe`, waiting for
+/// nothing.
 ///
 /// The interruption calls this with the pipe held for the call, so the handle
 /// it names is open throughout.
 ///
-/// The standard library writes a child's input through an overlapped handle,
-/// which `CancelIoEx` reaches from any thread; a synchronous write, which the
-/// handle could also be given, is reached by `CancelSynchronousIo` on the
-/// thread instead. Either answers failure when nothing is pending, which is
-/// the case the caller retries.
+/// The standard library writes a child's input through an overlapped handle
+/// and waits for the write alertably. `CancelIoEx` reaches that write, but
+/// called from another thread it was seen to return only once the thread that
+/// issued the write had run, though it is documented as waiting for nothing, so
+/// a writing thread the scheduler holds off would hold the caller too. The
+/// cancellation is therefore queued to the writing thread, which runs it in
+/// that wait; queuing it waits for nothing. One queued between writes runs in
+/// the next, which only happens once the writer is being dropped or ended. A
+/// synchronous write, which the handle could also be given, waits without being
+/// alerted and is reached by `CancelSynchronousIo` on the thread instead.
+/// Neither result is read: the caller interrupts again until the thread has
+/// returned.
 fn abandon(pipe: &ChildStdin, thread: &JoinHandle<()>) {
-    // SAFETY: `pipe` is borrowed from an `Arc` the caller upgraded and holds
-    // for the call, so its handle is open throughout, and `thread` is borrowed
-    // from the join handle that owns the thread's handle. Neither call writes through a pointer, and a
-    // null `OVERLAPPED` asks for every pending request on the handle.
+    let thread = thread.as_raw_handle() as HANDLE;
+    // SAFETY: `thread` is borrowed from the join handle that owns the thread's
+    // handle, opened with every access, so it is open for both calls. The
+    // queued routine dereferences nothing: it hands the pipe's handle back to
+    // `CancelIoEx` on the writing thread. It runs there either as the thread
+    // starts, while its unrun closure owns `pipe`, or in an alertable wait,
+    // and the only one that closure enters is a write through `pipe`, which it
+    // holds. What is still queued once the closure has let go of `pipe` is
+    // dropped unrun when the thread exits, and nothing the thread runs in
+    // between is known to wait alertably; if something did, the routine would
+    // cancel requests on a stale handle value and touch no memory. Neither call here writes through
+    // a pointer.
     unsafe {
-        CancelIoEx(raw(pipe), std::ptr::null());
-        CancelSynchronousIo(thread.as_raw_handle() as HANDLE);
+        QueueUserAPC(Some(cancel_here), thread, raw(pipe).expose_provenance());
+        CancelSynchronousIo(thread);
     }
+}
+
+/// Cancels every request pending on the pipe whose handle is `pipe`; queued
+/// by [`abandon`] to run on the thread that writes it.
+unsafe extern "system" fn cancel_here(pipe: usize) {
+    // SAFETY: as [`abandon`] says, this runs on the writing thread while its
+    // closure holds the pipe open, and a null `OVERLAPPED` asks for every
+    // pending request on the handle.
+    unsafe {
+        CancelIoEx(
+            std::ptr::with_exposed_provenance_mut(pipe),
+            std::ptr::null(),
+        )
+    };
 }
 
 fn lost() -> io::Error {
     io::Error::other("the command's pipe is no longer held here")
+}
+
+/// A thread kept off the processor until this is dropped, which lets a test
+/// tell a drop that waits for the thread from one that waits for nothing.
+///
+/// `SuspendThread` can return before the thread stops, but a thread parked in
+/// the kernel takes the suspension before it next runs code of its own.
+#[cfg(test)]
+pub(super) struct Suspended(HANDLE);
+
+#[cfg(test)]
+impl Suspended {
+    /// Suspends `thread`, borrowed from the join handle that owns it, which
+    /// must outlive the guard.
+    pub(super) fn new(thread: &JoinHandle<()>) -> io::Result<Self> {
+        let handle = thread.as_raw_handle() as HANDLE;
+        // SAFETY: the handle is owned by the borrowed join handle, opened with
+        // every access, and stays open while the caller keeps it.
+        if unsafe { SuspendThread(handle) } == u32::MAX {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Self(handle))
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for Suspended {
+    fn drop(&mut self) {
+        // SAFETY: the join handle that owns this handle outlives the guard.
+        unsafe { ResumeThread(self.0) };
+    }
 }
 
 #[cfg(test)]

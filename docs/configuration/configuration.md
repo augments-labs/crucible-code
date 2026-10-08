@@ -71,6 +71,9 @@ cannot choose an unbounded startup allocation.
 
 ## What you can set
 
+A key that takes a whole number also takes it written with a zero fraction, so
+`6.0` is read as `6` and held to the same bounds; `6.5` is still refused.
+
 ### `provider`
 
 Which provider to ask, by the name `--model` qualifies a model with:
@@ -538,7 +541,7 @@ you with no way to send at all.
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in; `Monokai Extended` by default. |
 | `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window; `compact` by default. Clipped details remain expandable: recent ones from memory, older ones read back from the session log when the view reaches them, where the session has a log. |
 | `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt, and while a turn runs it also stands beside what the turn is showing, which it counts as the end of the transcript; a click off the thumb scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. The prompt you are reading under has a larger mark, and a pointer on the rail lights the track and marks and enlarges the mark under it. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
-| `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. `/clear` and `/resume` leave the earlier transcript in the terminal's scrollback. A line already written there is never changed afterwards, so a mark a finished reply gains later, or an offer to expand a clipped detail that is later withdrawn, stays as it was first written. A list or panel standing over the box, as `/model`, `/settings`, the `/` list and the Ctrl+O view do, takes at most half the window, or the least it can be drawn in where that is more; the transcript rows it takes within that stay in the terminal's scrollback, and when it closes the box stays at the foot of the window, and the rows the panel stood in are left blank between the transcript and the box. On a terminal that does not rewrap its lines when the window narrows, narrowing it can take a few finished lines off the visible screen; the session file still has them. [What native mode cannot do](#what-native-mode-cannot-do) tells what you do instead. |
+| `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. `/clear` and `/resume` leave the earlier transcript in the terminal's scrollback. A line already written there is never changed afterwards, so a mark a finished reply gains later, or an offer to expand a clipped detail that is later withdrawn, stays as it was first written. A list or panel standing over the box, as `/model`, `/settings`, the `/` list, the queue and the Ctrl+O view do, takes at most half the window, or the least it can be drawn in where that is more; the transcript rows it takes within that stay in the terminal's scrollback, and when it closes the box stays at the foot of the window, and the rows the panel stood in are left blank between the transcript and the box. On a terminal that does not rewrap its lines when the window narrows, narrowing it can take a few finished lines off the visible screen; the session file still has them. [What native mode cannot do](#what-native-mode-cannot-do) tells what you do instead. |
 | `pinAfterSeconds` | `0` to `60` | How many seconds a running tool call waits before it is drawn above the row that says a turn is running, with the end of its output and `(ctrl+b to background)`; `3` by default. A call that finishes sooner is only written to the transcript, so the rows over the box do not appear and vanish on every quick command, and Ctrl+B still leaves a running command in the background before its row is shown. `0` draws every call the moment it is asked for. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
@@ -1184,7 +1187,8 @@ keys still move one step at a time.
 { "env": { "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": 12 } }
 ```
 
-The value may be a JSON integer, as above, or a string such as `"12"`.
+The value may be a JSON whole number, as above or as `12.0`, or a string of
+digits such as `"12"`.
 
 Written in `env` like any other variable, so it layers like one: a project can
 set it for everybody who clones the repository, your home directory can set it
@@ -1363,11 +1367,29 @@ configuration invalid
 
 Each file is `valid`, `invalid` or `absent`, and each error is the one a
 startup would stop on, including two layers whose rules contradict each other.
+An error longer than 4096 bytes is cut there and ends `… (cut)`; in `--json`
+its `truncated` is `true`.
 It does not look up a provider's name or check a `baseUrl` address; a start
 refuses an unknown provider, and an address that is neither `https` nor `http`
 on `localhost`, `127.0.0.1` or `[::1]`, so a file that passes here can still
 stop one.
 It exits 0 when everything holds and 1 otherwise, repeating the first error on
-standard error. `--json` prints one JSON document instead, with the same
-`status`, `files`, `failures` and `schema`. Neither report carries a secret; a
-path, a rule or a rejected value an error quotes appears as it does above.
+standard error; there an error longer than 16 KiB is cut at 16 KiB and ends
+`… (cut)`, as every `crucible: ` line is. `--json` prints one JSON document
+instead, with the same `status`, `files`, `failures` and `schema`. Where no
+file could be read at all, because the directory it was started in could not
+be read, is not one crucible can work in, or crucible's home could not be
+found, it says why on standard error and exits 1, and the text report is not
+printed; `--json` then still prints a document, with a `status` of `failed`,
+which only the document has, `files` and `failures` as empty lists, and a
+`problem` naming the step that stopped and no path. Neither report carries a
+secret; a path, a rule or a rejected value an error quotes appears as it does
+above.
+In the report, and in the error repeated on standard error, a control
+character, a line break, the line or paragraph separator, or a Unicode format
+character such as a right-to-left override in a key, a value or a path is
+shown as its escape, `\n`, `\u{2028}` or `\u{202e}`, rather than sent to the
+terminal, so a checkout cannot add a line to either or rewrite the screen. The zero-width joiner and non-joiner are
+kept there, as the terminal keeps them, because they shape a word and move
+nothing. In `--json` each is a JSON escape, `\n`, `\u2028` or `\u202e`, which
+a JSON reader decodes back to the same character.

@@ -38,22 +38,19 @@ impl std::fmt::Debug for Steer {
 
         f.debug_struct("Steer")
             .field("lines", &format_args!("{} redacted", waiting.lines.len()))
-            .field("held", &waiting.held)
             .finish()
     }
 }
 
-/// The lines, and whether the turn may have them yet.
+/// The lines waiting for the turn.
 ///
-/// One lock over both, because the two are one fact: a turn that read the lines
-/// and the hold separately could take a line the reader had just opened the
-/// queue to edit.
+/// Taken, forgotten and pushed under one lock, so a line is either still on
+/// offer or already the turn's: a reader taking one back and a turn draining
+/// the queue cannot both have it.
 #[derive(Default)]
 struct Waiting {
     /// The lines, oldest first.
     lines: VecDeque<String>,
-    /// Whether the reader has the queue open in front of them.
-    held: bool,
 }
 
 impl Steer {
@@ -70,29 +67,6 @@ impl Steer {
     /// already decided the line was finished.
     pub fn say(&self, line: String) {
         self.waiting().lines.push_back(line);
-    }
-
-    /// Holds every line where it is, until [`Steer::release`].
-    ///
-    /// Called on the thread that draws, when the reader opens the queue to go
-    /// over it. A line still being edited is not a line the agent should be
-    /// reading, and one taken mid-edit is in the transcript, where the reader
-    /// cannot take it back.
-    ///
-    /// The turn goes on running while it is held. A held queue answers
-    /// [`Steer::take`] the way an empty one does, which is what the exchange
-    /// loop already meets at almost every pass.
-    pub fn hold(&self) {
-        self.waiting().held = true;
-    }
-
-    /// Lets the turn have them again, at its next pass boundary.
-    ///
-    /// All of them at once, the ones that were edited and the ones that were
-    /// not, because that is what the queue was for: a burst typed and then gone
-    /// over is still one course-correction.
-    pub fn release(&self) {
-        self.waiting().held = false;
     }
 
     /// Drops the oldest line that says `line`, and answers whether there was
@@ -116,14 +90,10 @@ impl Steer {
         waiting.lines.remove(at).is_some()
     }
 
-    /// Whether a line is waiting to be worked in, and may be.
-    ///
-    /// A held queue answers no however many lines are in it: they are the
-    /// reader's until they say otherwise.
+    /// Whether a line is waiting to be worked in.
     #[must_use]
     pub fn any(&self) -> bool {
-        let waiting = self.waiting();
-        !waiting.held && !waiting.lines.is_empty()
+        !self.waiting().lines.is_empty()
     }
 
     /// Takes every line waiting, oldest first.
@@ -133,15 +103,9 @@ impl Steer {
     /// typed in a pass are one course-correction, and the next request carries
     /// them together.
     ///
-    /// Nothing while the queue is held: see [`Steer::hold`]. That is the same
-    /// answer an empty queue gives, so a turn meeting it is a turn carrying on.
+    /// A line taken here is the turn's: [`Steer::forget`] no longer finds it.
     pub fn take(&self) -> Vec<String> {
-        let mut waiting = self.waiting();
-        if waiting.held {
-            return Vec::new();
-        }
-
-        waiting.lines.drain(..).collect()
+        self.waiting().lines.drain(..).collect()
     }
 
     /// The queue, whether or not a thread came apart while holding it.
@@ -187,14 +151,6 @@ mod tests {
             "a line the reader took back was reported as never having been there"
         );
 
-        steer.hold();
-        assert!(
-            steer.take().is_empty(),
-            "a hold the reader asked for was dropped, and the turn read a line \
-             they still had open"
-        );
-        steer.release();
-
         assert!(steer.any());
         assert_eq!(
             steer.take(),
@@ -234,50 +190,29 @@ mod tests {
     }
 
     #[test]
-    fn a_held_queue_says_it_has_nothing_and_gives_nothing_up() {
-        // The reader has it open in front of them, so a turn asking is told the
-        // same thing an empty queue tells it — which is what lets the turn go on
-        // running rather than waiting on a reader who may be a minute.
-        let steer = Steer::new();
-        steer.say("use the mock".to_owned());
-        steer.hold();
-
-        assert!(!steer.any());
-        assert!(steer.take().is_empty());
-        assert!(!steer.any(), "the line was still there to be released");
-    }
-
-    #[test]
-    fn releasing_gives_up_every_line_at_once() {
-        // Including the ones typed while it was held: what the reader closes the
-        // queue on is one course-correction, and it arrives as one.
-        let steer = Steer::new();
-        steer.say("use the mock".to_owned());
-        steer.hold();
-        steer.say("and the fake clock".to_owned());
-        steer.release();
-
-        assert!(steer.any());
-        assert_eq!(
-            steer.take(),
-            vec!["use the mock".to_owned(), "and the fake clock".to_owned()]
-        );
-    }
-
-    #[test]
     fn a_line_taken_back_is_not_worked_in_when_the_rest_are() {
-        // The reader dropped it while the queue was held. A line forgotten here
-        // and left in the panel — or the other way about — is the one thing the
-        // hold exists to make impossible.
+        // The reader took it back out of the panel before the turn reached
+        // it. A line forgotten in the panel and left here is a prompt the
+        // reader deleted that the turn works in anyway.
         let steer = Steer::new();
         steer.say("first".to_owned());
         steer.say("second".to_owned());
-        steer.hold();
 
         assert!(steer.forget("first"));
         assert!(!steer.forget("first"), "there was only ever one of it");
 
-        steer.release();
         assert_eq!(steer.take(), vec!["second".to_owned()]);
+    }
+
+    #[test]
+    fn a_line_the_turn_has_taken_is_past_forgetting() {
+        // The caller drops a line from the panel only on a yes here, so a yes
+        // for a line already drained would show it deleted while the turn
+        // works it in.
+        let steer = Steer::new();
+        steer.say("first".to_owned());
+        assert_eq!(steer.take(), vec!["first".to_owned()]);
+
+        assert!(!steer.forget("first"), "a taken line was forgotten");
     }
 }

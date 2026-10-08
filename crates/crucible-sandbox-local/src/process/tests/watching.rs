@@ -16,8 +16,9 @@ const ANSWERS_WITHIN: Duration = Duration::from_millis(250);
 
 /// How long a stop may take while a cancel it cannot shorten runs: its kill,
 /// its reap and its wait for the cancel, each bounded, with room for a loaded
-/// machine.
-const STOPS_WITHIN: Duration = Duration::from_millis(1500);
+/// machine. Still short of [`CANCEL_TAKES`], so a stop that waited the cancel
+/// out cannot pass.
+const STOPS_WITHIN: Duration = REAP.saturating_add(Duration::from_millis(1250));
 
 /// A command that runs until it is stopped, and says nothing.
 #[cfg(unix)]

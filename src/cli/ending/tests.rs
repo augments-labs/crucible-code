@@ -173,3 +173,88 @@ fn a_signal_noted_beside_a_failure_is_how_the_turn_is_said_to_have_ended() {
     assert!(matches!(ended, Err(Fatal::Ended(told)) if told == Told(1)));
     assert!(finished.get() >= 1);
 }
+
+#[test]
+fn a_hidden_prompt_ends_over_a_note_without_spending_it_while_the_terminal_is_still_raw() {
+    let ending = heard();
+    let hiding = ending.hiding();
+    ending.tell(15);
+
+    // The note ends the presses without a key being waited on, and it is left
+    // unread: the terminal is still raw until the prompt's guard drops, and a
+    // second signal obeyed before then would leave it so.
+    assert!(
+        ending.presses().next().is_none(),
+        "a noted signal let the prompt stand"
+    );
+    assert!(
+        !at_once(&ending),
+        "a second signal would be obeyed with the terminal still raw"
+    );
+
+    drop(hiding);
+    assert!(at_once(&ending), "the run after the prompt notes nothing");
+    assert_eq!(ending.told(), Some(Told(15)));
+}
+
+#[test]
+fn a_wait_for_a_key_between_turns_notes_a_signal_and_is_called_off_by_it() {
+    let ending = heard();
+    let recall = ending
+        .recall()
+        .expect("a listening ending can call a wait off");
+
+    assert!(recall.waiting(), "the prompt between turns is not watched");
+    assert!(
+        !at_once(&ending),
+        "a signal at the prompt is obeyed with the keys raw"
+    );
+    assert!(
+        !recall.recalled(),
+        "a wait was called off with nothing noted"
+    );
+
+    ending.tell(15);
+    assert!(
+        recall.recalled(),
+        "the prompt went on waiting over a signal"
+    );
+    recall.waited();
+    assert!(
+        at_once(&ending),
+        "a second signal is held back past the wait"
+    );
+
+    // Left for whoever ends the session, once the guards are put away.
+    assert_eq!(ending.told(), Some(Told(15)));
+}
+
+#[test]
+fn a_wait_for_a_key_inside_a_turn_is_left_to_the_stretch_it_stands_in() {
+    let ending = heard();
+    let recall = ending
+        .recall()
+        .expect("a listening ending can call a wait off");
+
+    let turn = ending.turn();
+    assert!(
+        !recall.waiting(),
+        "a key read while a turn runs was watched"
+    );
+    assert!(!at_once(&ending), "a turn notes a signal for its loop");
+
+    let asking = ending.unclocked().expect("nothing has been noted");
+    assert!(!recall.waiting(), "a permission question was watched");
+    assert!(at_once(&ending), "a question with no clock noted a signal");
+
+    drop(asking);
+    drop(turn);
+    assert!(recall.waiting(), "the prompt after the turn is not watched");
+    recall.waited();
+    assert!(at_once(&ending));
+}
+
+#[test]
+fn an_ending_that_hears_nothing_calls_off_no_wait() {
+    assert!(Ending::deaf().recall().is_none());
+}

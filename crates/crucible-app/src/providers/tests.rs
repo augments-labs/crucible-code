@@ -1338,6 +1338,33 @@ fn every_sign_in_row_is_one_the_subscription_registry_starts_and_sends_to_its_ad
     assert_eq!(names.len(), registered.len(), "{registered:?}");
 }
 
+#[test]
+fn the_rows_say_which_providers_sign_in_by_subscription_as_the_registry_does() {
+    // The doctor asks the rows, so that it builds no login; a start asks the
+    // registry. A provider the two disagree about is one whose credential the
+    // doctor would say comes from somewhere a start would not take it.
+    let rows = Rows::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let mut providers: Vec<&str> = every().iter().map(|one| one.name).collect();
+    providers.extend(rows.all().iter().map(|row| row.provider));
+    providers.extend(
+        subscriptions
+            .accounts()
+            .iter()
+            .map(|account| account.provider()),
+    );
+    providers.push("no-such-provider");
+    for provider in providers {
+        assert_eq!(
+            rows.subscribes(provider),
+            subscriptions.supports(provider),
+            "{provider}"
+        );
+    }
+    assert!(rows.subscribes("openai"));
+    assert!(!Rows::new(Vec::new()).subscribes("openai"));
+}
+
 /// Setting a provider up again tells the run's consent what it is now served
 /// on, so an origin two rows share follows the credential just stored.
 #[test]

@@ -29,6 +29,8 @@ authors.workspace = true
 # are already parsed when they arrive here, so this is the type they are held in
 # rather than a parser this crate runs: writing a second representation of it
 # would be a second thing for a fragment to disagree with itself about.
+# Its `Formatter` is also what `shown` escapes a terminal's controls through, so
+# every JSON document quoting a checkout's text is written by one escaper.
 [dependencies]
 serde_json.workspace = true
 sha2.workspace = true

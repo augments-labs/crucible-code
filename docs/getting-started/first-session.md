@@ -52,17 +52,22 @@ The script requires Bash. Linux and macOS installations normally have it;
 FreeBSD keeps it in the `bash` package rather than the base system. Without
 Bash, use the manual path below. The script detects the platform, verifies
 exactly the archive it downloads
-against the release's `SHA256SUMS`, and atomically installs `crucible` plus a
-`cru` alias in `~/.local/bin`. On Linux and macOS it also installs
-`crucible-sandbox-broker` beside `crucible`; confined commands use this native
-helper, and it is trusted only when every directory above it belongs to root
-or to you and is writable by neither group nor others; the installer points out
-a directory that breaks that rule, with the `chmod` that fixes it. It
+against the release's `SHA256SUMS`, installs the release in a directory of its
+own under `~/.local/bin/.crucible-install`, and links `crucible` and a `cru`
+alias in `~/.local/bin` to it, as
+[where a release goes](#where-the-shell-installer-puts-a-release) shows. On
+Linux and macOS the release also holds `crucible-sandbox-broker` beside
+`crucible`; confined commands use this native helper, and it is trusted only
+when every directory above it belongs to root or to you and is writable by
+neither group nor others; the installer points out a directory that breaks
+that rule, with the `chmod` that fixes it. It
 never asks for `sudo` or edits a shell profile. Use `--version`, `--dir` or
 `--dry-run` when the defaults are not the ones you want. The matching
-`uninstall.sh` removes only those executables and preserves `~/.crucible`;
-deleting configuration, credentials and sessions requires the explicit
-`--purge --yes` pair. In a terminal the installer shows each step as it runs,
+`uninstall.sh` removes the links, and in each release under
+`.crucible-install` the executables and receipt that release's receipt
+describes, and preserves `~/.crucible`; deleting configuration,
+credentials and sessions requires the explicit `--purge --yes` pair. In a
+terminal the installer shows each step as it runs,
 with a bar while the archive downloads; piped, or under `NO_COLOR` or
 `TERM=dumb`, it prints one plain line per step instead. Either way a failure
 while it detects the platform, downloads, verifies, unpacks or installs names
@@ -109,6 +114,73 @@ available separately as `crucible-sandbox-broker-<version>-windows-x86_64.exe`
 [administrator setup instructions](../security/sandboxing.md#windows-setup-maintenance)
 before enabling the sandbox. A standalone Crucible executable without its
 broker supports sessions with sandboxing disabled.
+
+### Where the shell installer puts a release
+
+`install.sh` keeps each release in a directory of its own and links to the one
+in use. In the default directory, `~/.local/bin`, that is:
+
+```text
+~/.local/bin/crucible -> .crucible-install/current/crucible
+~/.local/bin/cru -> crucible
+~/.local/bin/.crucible-install/current -> releases/<version>
+~/.local/bin/.crucible-install/releases/<version>/crucible
+~/.local/bin/.crucible-install/releases/<version>/crucible-sandbox-broker
+~/.local/bin/.crucible-install/releases/<version>/receipt
+```
+
+The broker is there on Linux and macOS only. The receipt records the
+installation's identifier, the platform, the `.crucible-install` directory,
+the version and the SHA-256 of each executable beside it. A release is put
+together in a hidden directory beside the others, its receipt written last,
+and renamed into place whole; only then is `current` switched to it, by one
+rename. An install stopped at any point, by a crash, a kill or, on Linux, a
+power loss, leaves the release that was active before it still active, or the
+new one active and complete, and running the same install again finishes it.
+
+One install runs at a time. While it does, it holds `.crucible-install/lock`,
+and a second install waits for it, giving up after about a minute. An install
+that was killed can leave the lock behind, and the next one then refuses and
+names it, at once or, when another program now has the number of the install
+that held it, after that minute. Once no install is running, remove the lock and
+run the install again.
+
+Installing a version that is already there uses its directory again when it
+holds the same build, and refuses, changing nothing, when it holds a different
+one. So `--version` with an earlier release still under `releases/` switches
+back to it. The installer never removes a release: earlier ones stay under
+`releases/`, and any but the one `current` names can be deleted by hand.
+
+Each directory of the layout must belong to root or to you and be writable by
+neither group nor others; the installer refuses one that is not, with the
+`chmod go-w` that fixes it. It also refuses an installation directory whose name holds a control character, and a
+version that is not three numbers with no suffix and no leading zero, so
+`--version 1.2.3-rc.1` stops at `invalid version`.
+
+On Linux each file and directory is flushed to disk before `current` switches.
+On macOS and FreeBSD `sync` only schedules the writes, so a power loss soon
+after an install can undo that install, and the release that was active
+before it is the one in use.
+
+An installer of 0.43.0 to 0.45.3 copied `crucible` and
+`crucible-sandbox-broker` into the directory as files, with `cru` linked to
+`crucible`. Installing over that moves it to this layout: the release goes in
+place and becomes `current` first, and only then is `crucible` replaced by the
+link, in one rename, so it runs one complete release throughout. The old
+`crucible-sandbox-broker` stays in the directory, since a crucible already
+running from the old file finds its broker there, and the installer says so;
+`--dry-run` names the file it would replace. Anything else at those names, such
+as a `crucible` with no `cru` beside it, or a broker that is a directory or a
+link, is refused and left as it is.
+
+`uninstall.sh` removes `crucible`, `cru` and that old broker from the
+directory, and under `.crucible-install` only what the installer made:
+`current`, what a stopped install left, and in each release the executables
+and receipt that its receipt describes. A file you put there, an executable
+that no longer matches its receipt, or anything else is kept, and named as
+`uninstall: preserving <path>`. It refuses, removing nothing, while
+`.crucible-install/lock` is there, and when a directory of the layout is not
+one it trusts. `--dry-run` lists each path it would remove.
 
 ## Build it
 
@@ -396,27 +468,39 @@ and the clock after that, since all three are recoverable: the key is named
 under the box, and the other two will be back next second. The word is the last
 thing left.
 
-The prompts waiting behind the turn stand in a panel over the box, framed the
-way the box is because they are the same thing a moment apart. They are your own
+The prompts waiting behind the turn stand in a panel over the box, under the
+row saying a turn is running, for as long as any are waiting. They are your own
 words, one of them being typed and the rest already sent for:
 
 ```
-╭─ 4 queued ───────────────────────────────────────────────╮
-│ › fix the failing test                                   │
-│ › then run the gate                                      │
-│ › and write the changelog                                │
-│   … +1 more                                              │
-╰──────────────────────────────────────────── ctrl+q edit ─╯
+────────────────────────────────────────────────────────────────────
+
+4 queued · ctrl+enter to send all now
+
+› fix the failing test
+
+  then run the gate
+
+  and write the changelog
+
+↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now
 ```
 
-The bottom edge names the key that opens the queue, for one waiting prompt as
-for many. Three are named and the rest are counted, oldest first, which is the
-order they will be said in. A line too wide for the window is cut at the right.
-On a window too narrow to open a frame the panel is one indented row saying
-how many are waiting, since that is the fact that cannot go, and on one too
-short for everything standing over the box it gives its rows up before the row
-saying a turn is running does: a queued prompt has its own turn coming, and
-that row is written nowhere else.
+Three are named at most, oldest first, which is the order they will be said
+in, and the title counts them all. One is highlighted, the first when the panel
+appears; a prompt queued later goes to the end and leaves the highlight where
+it is. You go on typing in the box while the panel stands. Once the line in the
+box has no row above or below to move to, <kbd>↑</kbd> and <kbd>↓</kbd> walk
+the highlight rather than the history, and the three named follow it.
+<kbd>Ctrl+E</kbd> takes the highlighted prompt back into the box at the cursor,
+to be edited or sent ahead of the rest, and <kbd>Ctrl+X</kbd> deletes it. The
+highlight stays where it was, on the prompt that followed, and the panel goes
+with the last one. A prompt too long to go in beside what the box already holds
+stays queued, and the panel says `no room in the box · line stays queued` until
+the next key. A line too wide for the window is cut at the right. On one too
+short for everything standing over the box the panel names fewer prompts, and
+gives its rows up before the row saying a turn is running does: a queued prompt
+has its own turn coming, and that row is written nowhere else.
 
 They go together. When the turn ends the whole queue is one turn: the oldest is
 its prompt and the rest are handed to the same turn before it asks anything, so
@@ -425,24 +509,14 @@ turn are one thing you wanted said, and answering the first before reading the
 third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
 write. A turn that stopped on a used-up plan is the exception: the queue waits
-over the box, where <kbd>Ctrl+Q</kbd> opens it to edit or delete, until you send
-a prompt, since sent on its own it would reach a plan that is spent.
+in the same panel over the box, where the same keys edit or delete it, until
+you send a prompt, since sent on its own it would reach a plan that is spent.
 
-<kbd>Ctrl+Q</kbd> stands the whole queue where the box was, with a footer naming
-the keys that work. Up and down walk it, <kbd>e</kbd> takes the marked line back
-into the box to be edited or sent ahead of the rest, <kbd>d</kbd> deletes it
-without taking it back, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes
-it. While it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view
-rather than interrupting the turn. In a window too short for the whole queue the
-view scrolls, so the line the keys act on is always drawn, from its first row.
-
-Nothing leaves the queue while it stands open. The turn above goes on writing,
-tools go on running, the answer goes on arriving; what waits is the one moment
-those lines would cross into the transcript, and it waits exactly as long as you
-hold the view open. A line already in the transcript cannot be taken back, which
-is why the ones you are still going over are kept out of it. Closing the view
-gives the whole batch up at once, edited and untouched alike, and the turn works
-them in at its next pass.
+Nothing holds the queue while you look at it. The turn above goes on writing,
+tools go on running, and the turn takes every waiting prompt at its next step,
+whichever is highlighted. A line already in the transcript cannot be taken
+back, so a prompt you want back is one you take before then; <kbd>Esc</kbd>
+stops the turn as it always does and leaves the queue as it is.
 
 While room is being made, a second line under the word says how far the notes
 have got:
@@ -490,7 +564,7 @@ Seven tasks are shown and the rest are counted: `… +4 more · ctrl+t to expand
 <kbd>Ctrl+T</kbd> takes that bound off and puts it back, and what it adds
 arrives underneath the rows already on screen, so nothing you were reading
 moves. On a window with no room for all of this, the panel is measured before
-the rows around it: the call line and the queued prompt give way first, since a
+the rows around it: the call line and the queue's panel give way first, since a
 call joins the transcript the moment its tool answers and a queued prompt has
 its own turn coming, while what the agent is working to is on screen nowhere
 else.
@@ -769,6 +843,14 @@ A link is read the same way, and is drawn as its words: underlined in the
 accent and carrying the address, so a terminal that opens links opens it from
 the words without the address written out after them. A bracket that was not a
 link is left exactly as it was written.
+
+A link to a file, such as one to `src/main.rs:12`, points at that file in the
+checkout you are in, so clicking it opens the file in the editor your terminal
+opens files with, at line 12 where the terminal passes a line on. The line can
+be written `:12` or `#L12`, and a path can be relative or absolute. VS Code and
+kitty read the line from `#12` after the address, and a terminal that hands the
+address to the desktop's opener opens the file without it; in a JetBrains
+terminal the line is written `:12` instead, which is how that one reads it.
 
 A bare `#487`, or `PR #487` and `issue #487` with the word included, is read the
 same way, and points at the repository you are in. The

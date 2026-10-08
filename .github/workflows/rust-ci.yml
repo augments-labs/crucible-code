@@ -2,14 +2,73 @@ name: rust-ci
 
 on:
   workflow_call:
+    inputs:
+      all-platforms:
+        description: Test on every platform, not only those a pull request waits for
+        type: boolean
+        default: true
+      docs-only:
+        description: The pull request changes only documentation, so macOS and Windows are left to its merge
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      all-platforms:
+        description: Test on every platform, not only those a pull request waits for
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
+# Line tables are what a backtrace reads; the rest of the debug information
+# only makes every test binary slower to link and every cache larger.
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+# The gate is spread over machines so that a run waits for its slowest part
+# rather than for the sum of them. Each machine builds the tests it runs for
+# itself, which costs less than handing it binaries built elsewhere. A part of
+# the suite is chosen by hashing each test's name, so a test added lands in one
+# part without anyone listing it, and a section added to the Rust gate is run
+# by the job that names only what it leaves out.
 jobs:
-  linux:
-    name: Linux
+  linux-tests:
+    name: Linux tests ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Every part builds the same tests, so one of them saves what it built.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: tests-ubuntu-latest
+          save-if: ${{ matrix.shard == 1 }}
+      # A prebuilt cargo-nextest, checked against its published checksum, in
+      # seconds rather than the minutes building it would take.
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest@0.9.146
+
+      # The gate runs on the enforcing sandbox host, and a missing backend is
+      # a failure rather than a skip; the action says why.
+      - uses: ./.github/actions/enforcing-sandbox
+      - run: scripts/sh/rust-checks.sh --only tests --partition hash:${{ matrix.shard }}/4
+        env:
+          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
+      # A test that regenerated a committed file found it stale.
+      - uses: ./.github/actions/check-clean-worktree
+
+  # The required cases rerun sandbox tests among others, so this job runs on
+  # the enforcing host too.
+  linux-required:
+    name: Linux required cases
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -17,40 +76,70 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      # The gate runs on the enforcing sandbox host, and a missing backend is
-      # a failure rather than a skip; the action says why.
+        with:
+          shared-key: tests-ubuntu-latest
+          save-if: false
       - uses: ./.github/actions/enforcing-sandbox
-      - run: scripts/sh/rust-checks.sh
+      - run: scripts/sh/rust-checks.sh --only examples,required
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - uses: ./.github/actions/check-clean-worktree
 
-  platforms:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    # The macOS Intel job runs 12 to 19 minutes and has gone past 20 under
-    # load. The limit is there to catch a hang, not to time the suite.
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macOS Intel
-            os: macos-15-intel
-          - name: macOS Apple silicon
-            os: macos-26
-          - name: Windows x86_64
-            os: windows-latest
-          - name: Windows ARM64
-            os: windows-11-arm
+  linux-checks:
+    name: Linux checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - if: ${{ runner.os == 'Windows' && !cancelled() }}
+        with:
+          shared-key: checks-ubuntu-latest
+      - run: scripts/sh/rust-checks.sh --skip tests,examples,required
+      - uses: ./.github/actions/check-clean-worktree
+
+  platform-tests:
+    name: ${{ matrix.name }} tests ${{ matrix.shard }}/${{ matrix.shards }}
+    if: ${{ !inputs.docs-only }}
+    runs-on: ${{ matrix.os }}
+    # The macOS Intel tests have run 12 to 19 minutes in one job and gone past
+    # 20 under load. The limit is there to catch a hang, not to time the suite.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # macOS Intel and Windows ARM64 are the slowest platforms to test, so a
+      # pull request leaves them to the run on dev that follows its merge,
+      # and compiles for Windows ARM64 in the job below instead. Apple silicon
+      # runs its tests in one part: macOS machines are the ones a run queues
+      # longest for, and a second one costs more waiting than it saves.
+      matrix:
+        include: >-
+          ${{ fromJSON(inputs.all-platforms && '[
+          {"name": "macOS Intel", "os": "macos-15-intel", "shard": 1, "shards": 2},
+          {"name": "macOS Intel", "os": "macos-15-intel", "shard": 2, "shards": 2},
+          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 1, "shards": 1},
+          {"name": "Windows x86_64", "os": "windows-latest", "shard": 1, "shards": 2},
+          {"name": "Windows x86_64", "os": "windows-latest", "shard": 2, "shards": 2},
+          {"name": "Windows ARM64", "os": "windows-11-arm", "shard": 1, "shards": 2},
+          {"name": "Windows ARM64", "os": "windows-11-arm", "shard": 2, "shards": 2}]' || '[
+          {"name": "macOS Apple silicon", "os": "macos-26", "shard": 1, "shards": 1},
+          {"name": "Windows x86_64", "os": "windows-latest", "shard": 1, "shards": 2},
+          {"name": "Windows x86_64", "os": "windows-latest", "shard": 2, "shards": 2}]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: tests-${{ matrix.os }}
+          save-if: ${{ matrix.shard == 1 }}
+      # A prebuilt cargo-nextest, checked against its published checksum, in
+      # seconds rather than the minutes building it would take.
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest@0.9.146
+      - if: ${{ runner.os == 'Windows' }}
         name: Build and provision the native Windows sandbox
         shell: pwsh
         run: |
@@ -58,19 +147,57 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-setup
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - if: ${{ runner.os == 'macOS' && !cancelled() }}
-        run: cargo test --workspace --locked
+      # On Windows, a common initialized MSYS parent prevents concurrent Git
+      # Bash children from racing while creating their shared mount table
+      # (add_item EPERM). The documentation examples run beside the first part.
+      - shell: bash
+        run: |
+          cargo nextest run --workspace --locked --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
+          if [[ ${{ matrix.shard }} == 1 ]]; then cargo test --workspace --locked --doc; fi
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
-      - if: ${{ runner.os == 'Windows' && !cancelled() }}
-        # A common initialized MSYS parent prevents concurrent Git Bash children
-        # from racing while creating their shared mount table (add_item EPERM).
-        shell: bash
-        run: cargo test --workspace --locked
-        env:
-          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
-      - if: ${{ runner.os != 'macOS' && runner.os != 'Windows' && !cancelled() }}
-        run: cargo test --workspace --locked
+      - if: ${{ runner.os == 'Windows' && always() }}
+        name: Remove the native Windows sandbox setup
+        shell: pwsh
+        run: |
+          if (Test-Path .\target\debug\crucible-sandbox-broker.exe) {
+            & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-uninstall
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - uses: ./.github/actions/check-clean-worktree
+
+  platform-checks:
+    name: ${{ matrix.name }} checks
+    if: ${{ !inputs.docs-only }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # The same platforms as the tests above. A macOS cell runs the rollback
+      # drill too, rather than queueing for a macOS machine of its own, so its
+      # cache is kept apart: it also holds the build the drill makes.
+      matrix:
+        include: >-
+          ${{ fromJSON(inputs.all-platforms && '[
+          {"name": "macOS Intel", "os": "macos-15-intel", "drill": true},
+          {"name": "macOS Apple silicon", "os": "macos-26", "drill": true},
+          {"name": "Windows x86_64", "os": "windows-latest", "drill": false},
+          {"name": "Windows ARM64", "os": "windows-11-arm", "drill": false}]' || '[
+          {"name": "macOS Apple silicon", "os": "macos-26", "drill": true},
+          {"name": "Windows x86_64", "os": "windows-latest", "drill": false}]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ${{ matrix.drill && 'checks-drill' || 'checks' }}-${{ matrix.os }}
+      # First, so its steps meet the job as they would in the drill's own job,
+      # and every check after it runs whatever it found.
+      - if: ${{ matrix.drill }}
+        uses: ./.github/actions/rollback-drill
+      - if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - if: ${{ !cancelled() }}
         run: cargo doc --workspace --all-features --no-deps --locked
         env:
@@ -86,14 +213,71 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/ps1/install-tests.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - if: ${{ runner.os == 'Windows' && always() }}
-        name: Remove the native Windows sandbox setup
-        shell: pwsh
-        run: |
-          if (Test-Path .\target\debug\crucible-sandbox-broker.exe) {
-            & .\target\debug\crucible-sandbox-broker.exe --windows-sandbox-uninstall
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
+      - uses: ./.github/actions/check-clean-worktree
+
+  # FreeBSD's mv, ln, install, sync and checksum tools differ from both GNU and
+  # macOS, and the installer depends on how each renames over a link. GitHub
+  # hosts no FreeBSD runner, so the installer's tests run in the same guest the
+  # release builds in. The update's activation renames over the same link and
+  # shares the installer's lock, so its tests, which kill an update at each
+  # point it changes the install and recover from what it left, run there
+  # too. Unlike that release job, this one is required: it builds one crate's
+  # tests rather than the release, so the guest is most of what it waits on.
+  freebsd-installer:
+    name: FreeBSD installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BOOTSTRAP_RUSTUP_VERSION: "1.29.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: vmactions/freebsd-vm@a2f9a41fa97f6848b8c3b791087dfcdaa5b473ff # v1.5.8
+        with:
+          release: "14.4"
+          usesh: true
+          prepare: pkg install -y bash curl
+          # `--default-toolchain none` leaves the choice to
+          # rust-toolchain.toml, so this guest compiles with the version every
+          # other machine here does rather than whatever pkg happens to carry.
+          # `set -e` so the installer's tests failing fails the job even when
+          # the update's tests after them pass.
+          run: |
+            set -e
+            rustup_sha256=c3fdfa4553e088edad701ea74776eb707644bed9f4a44f42a077e733201e966a
+            url="https://static.rust-lang.org/rustup/archive/${{ env.BOOTSTRAP_RUSTUP_VERSION }}/x86_64-unknown-freebsd/rustup-init"
+            curl --proto '=https' --tlsv1.2 --fail --location --silent \
+              --show-error --output rustup-init "$url"
+            if [ "$(sha256 -q rustup-init)" != "$rustup_sha256" ]; then
+              echo 'rustup-init checksum did not match'
+              exit 1
+            fi
+            chmod 755 rustup-init
+            ./rustup-init -y --no-modify-path --profile minimal \
+              --default-toolchain none
+            rm rustup-init
+            . "$HOME/.cargo/env"
+
+            scripts/sh/install-tests.sh
+            cargo test -p crucible-update --locked
+
+  # Windows ARM64 cannot be cross-built from Linux, so a pull request that
+  # leaves its tests to dev still compiles every target there. It starts from
+  # the cache the full run on dev saves.
+  windows-arm64-build:
+    name: Windows ARM64 build
+    if: ${{ !inputs.all-platforms && !inputs.docs-only }}
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: checks-windows-11-arm
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - uses: ./.github/actions/check-clean-worktree
 
   rollback-drill:
@@ -102,115 +286,23 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # The same platforms as the tests above, with Linux, less macOS, whose
+      # drill runs in its checks job.
       matrix:
-        include:
-          - name: Linux
-            os: ubuntu-latest
-          - name: macOS Intel
-            os: macos-15-intel
-          - name: macOS Apple silicon
-            os: macos-26
-          - name: Windows x86_64
-            os: windows-latest
-          - name: Windows ARM64
-            os: windows-11-arm
+        include: >-
+          ${{ fromJSON(inputs.all-platforms && '[
+          {"name": "Linux", "os": "ubuntu-latest"},
+          {"name": "Windows x86_64", "os": "windows-latest"},
+          {"name": "Windows ARM64", "os": "windows-11-arm"}]' || inputs.docs-only && '[
+          {"name": "Linux", "os": "ubuntu-latest"}]' || '[
+          {"name": "Linux", "os": "ubuntu-latest"},
+          {"name": "Windows x86_64", "os": "windows-latest"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      # The tag the drill rolls back to, read from the drill so it is named in
-      # one place, and fetched without credentials. The drill itself never
-      # fetches; it builds whatever tag is already local.
-      - name: Fetch the previous release tag
-        shell: bash
-        run: |
-          tag=$(sed -n 's/^readonly PRIOR_TAG=//p' scripts/sh/rollback-drill.sh)
-          [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "::error::scripts/sh/rollback-drill.sh names no PRIOR_TAG"
-            exit 1
-          }
-          echo "PRIOR_TAG=$tag" >>"$GITHUB_ENV"
-          # The runner image, since a binary built on a newer image may not
-          # start on an older one while a label rolls between them.
-          echo "PRIOR_IMAGE=${ImageOS:-unknown}" >>"$GITHUB_ENV"
-          # A runner that loses github.com for a minute or so has not found a
-          # broken drill, so the fetch is tried three times, with pauses.
-          for pause in 30 60 ''; do
-            git fetch --depth=1 origin tag "$tag" && break
-            [[ -n $pause ]] || exit 1
-            echo "::warning::could not fetch $tag; trying again in ${pause}s"
-            sleep "$pause"
-          done
-      # The previous binary depends on nothing but the tag and the platform, so
-      # it is restored from the cache once a run on `dev` has saved it.
-      - name: Restore the previous release binary
-        id: prior
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/prior-bin
-          key: rollback-prior-${{ runner.os }}-${{ env.PRIOR_IMAGE }}-${{ runner.arch }}-${{ env.PRIOR_TAG }}
-      # Built in a worktree of this checkout so the candidate tree is untouched.
-      # No sandbox setup: the drill runs the binaries headless with redirected
-      # input and compares replay, pending-action recovery and read-only
-      # commands — it starts no sandboxed command.
-      - name: Build the previous release binary
-        id: build-prior
-        if: ${{ steps.prior.outputs.cache-hit != 'true' }}
-        shell: bash
-        run: |
-          git worktree add --detach "$RUNNER_TEMP/prior-src" "$PRIOR_TAG"
-          # The tag built when it was released, and the crates it locks that
-          # the cache lacks are downloaded here. A failure is nearly always the
-          # registry out of reach for a minute, so it is tried three times too.
-          for pause in 30 60 ''; do
-            (cd "$RUNNER_TEMP/prior-src" && cargo build --locked --bin crucible) && break
-            [[ -n $pause ]] || exit 1
-            echo "::warning::could not build $PRIOR_TAG; trying again in ${pause}s"
-            sleep "$pause"
-          done
-          mkdir -p "$RUNNER_TEMP/prior-bin"
-          for name in crucible crucible.exe; do
-            built="$RUNNER_TEMP/prior-src/target/debug/$name"
-            if [[ -f $built ]]; then cp "$built" "$RUNNER_TEMP/prior-bin/"; fi
-          done
-          # An empty directory would be cached under a key no run replaces.
-          [[ -n $(ls -A "$RUNNER_TEMP/prior-bin") ]] || {
-            echo "::error::the build of $PRIOR_TAG left no crucible binary"
-            exit 1
-          }
-      - name: Cache the previous release binary
-        if: ${{ steps.prior.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/prior-bin
-          key: ${{ steps.prior.outputs.cache-primary-key }}
-      # The drill builds the candidate from this checkout itself, so no step
-      # builds it beforehand, and the self-test's runs find it current.
-      - name: Run the rollback drill
-        shell: bash
-        run: |
-          prior="$RUNNER_TEMP/prior-bin/crucible"
-          [[ -x $prior ]] || prior="$prior.exe"
-          scripts/sh/rollback-drill.sh --prior-binary "$prior"
-      # A second, independent gate, so it runs whatever the drill did. It is
-      # handed the same previous binary, so the release is built once here
-      # rather than again inside the self-test, and it waits for that binary:
-      # when it was never built, the step that failed to build it says why.
-      - name: Run the rollback drill self-test
-        if: ${{ always() && (steps.prior.outputs.cache-hit == 'true' || steps.build-prior.outcome == 'success') }}
-        shell: bash
-        run: |
-          prior="$RUNNER_TEMP/prior-bin/crucible"
-          [[ -x $prior ]] || prior="$prior.exe"
-          scripts/sh/rollback-drill-selftest.sh --prior-binary "$prior"
-      - name: Remove the previous release worktree
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          if [[ -d $RUNNER_TEMP/prior-src ]]; then
-            git worktree remove --force "$RUNNER_TEMP/prior-src"
-          fi
-      # A check whose only value is as a check, like the self-test above.
+      - uses: ./.github/actions/rollback-drill
+      # A check whose only value is as a check, like the drill's self-test.
       - uses: ./.github/actions/check-clean-worktree
         if: ${{ always() }}

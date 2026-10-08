@@ -22,9 +22,10 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 72] = [
+const KEYS: [&str; 73] = [
     "ambiguous",
     "answers",
+    "summary_kind",
     "asks",
     "cache",
     "call",
@@ -98,7 +99,7 @@ const KEYS: [&str; 72] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 49] = [
+const MORE_KEYS: [&str; 52] = [
     "added",
     "api_ms",
     "cache_read",
@@ -148,6 +149,58 @@ const MORE_KEYS: [&str; 49] = [
     "setting",
     "value",
     "by",
+    "asked",
+    "sent",
+    "left_running",
+];
+
+/// The field names of the inspection document, kept apart for the same reason.
+const INSPECTION_KEYS: [&str; 31] = [
+    "access",
+    "allowed",
+    "amount",
+    "backend",
+    "build",
+    "ceilings",
+    "claim",
+    "confined",
+    "cwd",
+    "denied",
+    "effective",
+    "feature",
+    "format_version",
+    "hidden",
+    "identity",
+    "local_binding",
+    "nanos",
+    "network",
+    "omitted",
+    "persistent",
+    "policy",
+    "provenance",
+    "refusal",
+    "requested",
+    "roots",
+    "snapshots",
+    "staged",
+    "status",
+    "unchecked",
+    "unit",
+    "unix_sockets",
+];
+
+/// The field names of the doctor's report that no other value carries.
+const DOCTOR_KEYS: [&str; 3] = ["checks", "reason", "remedy"];
+
+/// The field names of the sessions list that no other value carries.
+const SESSIONS_KEYS: [&str; 7] = [
+    "branch",
+    "index_full",
+    "sessions",
+    "started",
+    "title",
+    "unindexed",
+    "unreadable",
 ];
 
 /// What a field name may not say, whatever else it says.
@@ -191,13 +244,29 @@ fn retained() -> Retained {
     }
 }
 
-fn permission() -> Pending {
-    Pending::Permission {
+/// A permission question for every arm of what it can be about.
+fn permissions() -> [Pending; 3] {
+    let about = |effect, asked| Pending::Permission {
         id: PendingId::new(7),
         tool: marked(),
-        effect: Effect::SpawnsProcess,
+        effect,
         subject: marked(),
-    }
+        asked,
+    };
+    [
+        about(
+            Effect::SpawnsProcess,
+            pending::Operation::Command {
+                sent: marked(),
+                left_running: true,
+            },
+        ),
+        about(
+            Effect::ReachesNetwork,
+            pending::Operation::Network { sent: marked() },
+        ),
+        about(Effect::MutatesFile, pending::Operation::Other),
+    ]
 }
 
 fn questions() -> Pending {
@@ -713,6 +782,25 @@ fn progress() -> Vec<Progress> {
             call: marked(),
             tool: marked(),
             summary: marked(),
+            summary_kind: SummaryKind::Path,
+        },
+        Progress::ToolRequested {
+            call: marked(),
+            tool: marked(),
+            summary: marked(),
+            summary_kind: SummaryKind::Address,
+        },
+        Progress::ToolRequested {
+            call: marked(),
+            tool: marked(),
+            summary: marked(),
+            summary_kind: SummaryKind::Command,
+        },
+        Progress::ToolRequested {
+            call: marked(),
+            tool: marked(),
+            summary: marked(),
+            summary_kind: SummaryKind::Other,
         },
         Progress::ToolFinished {
             call: marked(),
@@ -743,8 +831,10 @@ fn progress() -> Vec<Progress> {
 }
 
 fn snapshots() -> Vec<Snapshot> {
-    [Some(permission()), Some(questions()), Some(warning()), None]
+    permissions()
+        .map(Some)
         .into_iter()
+        .chain([Some(questions()), Some(warning()), None])
         .map(|pending| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
             provider: pending.as_ref().map(|_| name("anthropic")),
@@ -822,6 +912,36 @@ fn specimens() -> Vec<Specimen> {
         });
     }
 
+    for one in inspection::tests::inspections(&marked()) {
+        let frame = one.encode().unwrap();
+        assert_eq!(inspection::Inspection::decode(&frame).unwrap(), one);
+        all.push(Specimen {
+            what: format!("inspection {}", one.status()),
+            debug: format!("{one:?}"),
+            frame,
+        });
+    }
+
+    for one in doctor::tests::reports(&marked()) {
+        let frame = one.encode().unwrap();
+        assert_eq!(doctor::Report::decode(&frame).unwrap(), one);
+        all.push(Specimen {
+            what: format!("doctor {}", one.status()),
+            debug: format!("{one:?}"),
+            frame,
+        });
+    }
+
+    for one in sessions::tests::reports(&marked()) {
+        let frame = one.encode().unwrap();
+        assert_eq!(sessions::Report::decode(&frame).unwrap(), one);
+        all.push(Specimen {
+            what: format!("sessions {}", one.status()),
+            debug: format!("{one:?}"),
+            frame,
+        });
+    }
+
     all
 }
 
@@ -864,6 +984,14 @@ const fn pending_arm(one: &Pending) -> (usize, usize) {
         Pending::Permission { .. } => (0, 3),
         Pending::Questions { .. } => (1, 3),
         Pending::Warning { .. } => (2, 3),
+    }
+}
+
+const fn operation_arm(one: &pending::Operation) -> (usize, usize) {
+    match one {
+        pending::Operation::Command { .. } => (0, 3),
+        pending::Operation::Network { .. } => (1, 3),
+        pending::Operation::Other => (2, 3),
     }
 }
 
@@ -1043,6 +1171,134 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
     }
 }
 
+/// Every arm of every enum the inspection document carries, and each of its
+/// optional fields with and without, as `seen` counts them.
+fn inspection_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
+    use inspection::{BackendVersion, Claim, Inspection, Network, Requirement, Unit};
+
+    let mut count = |what: &str, (arm, of): (usize, usize)| {
+        seen.insert((what.to_owned(), arm, of));
+    };
+    let claim = |claim: Claim| match claim {
+        Claim::Enforced => (0, 3),
+        Claim::Observed => (1, 3),
+        Claim::Unsupported => (2, 3),
+    };
+    for one in inspection::tests::inspections(&marked()) {
+        let inspected = match one {
+            Inspection::Inspected(inspected) => {
+                count("inspection", (0, 2));
+                inspected
+            }
+            Inspection::Failed(_) => {
+                count("inspection", (1, 2));
+                continue;
+            }
+        };
+        count(
+            "inspection.mode",
+            match inspected.mode {
+                Requirement::Optional => (0, 2),
+                Requirement::Required => (1, 2),
+            },
+        );
+        count(
+            "inspection.backend",
+            (usize::from(inspected.backend.is_some()), 2),
+        );
+        count(
+            "inspection.unchecked",
+            (usize::from(inspected.unchecked.is_some()), 2),
+        );
+        count(
+            "inspection.refusal",
+            (usize::from(inspected.refusal.is_some()), 2),
+        );
+        for plan in [&inspected.requested, &inspected.effective] {
+            count(
+                "inspection.network",
+                match plan.network {
+                    Network::Closed => (0, 2),
+                    Network::Domains { .. } => (1, 2),
+                },
+            );
+            for ceiling in &plan.ceilings {
+                count("inspection.ceiling.claim", claim(ceiling.claim));
+                count(
+                    "inspection.unit",
+                    match ceiling.unit {
+                        Unit::Seconds => (0, 4),
+                        Unit::Bytes => (1, 4),
+                        Unit::Count => (2, 4),
+                        Unit::Micros => (3, 4),
+                    },
+                );
+            }
+        }
+        if let Some(backend) = inspected.backend {
+            count(
+                "inspection.build",
+                (usize::from(backend.build.is_some()), 2),
+            );
+            count(
+                "inspection.version",
+                match backend.version {
+                    BackendVersion::Stated(_) => (0, 2),
+                    BackendVersion::Unverified(_) => (1, 2),
+                },
+            );
+            for capability in backend.capabilities {
+                count("inspection.capability.claim", claim(capability.claim));
+            }
+        }
+    }
+}
+
+/// Every arm of a doctor's check, and its remedy with and without, as `seen`
+/// counts them.
+fn doctor_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
+    use doctor::Status;
+
+    for report in doctor::tests::reports(&marked()) {
+        for check in report.checks {
+            let arm = match check.status {
+                Status::Ok => (0, 4),
+                Status::Warning => (1, 4),
+                Status::Failed => (2, 4),
+                Status::Unavailable => (3, 4),
+            };
+            seen.insert(("doctor.status".to_owned(), arm.0, arm.1));
+            seen.insert((
+                "doctor.remedy".to_owned(),
+                usize::from(check.remedy.is_some()),
+                2,
+            ));
+        }
+    }
+}
+
+/// Every arm of a sessions list, and a session's branch and title with and
+/// without, as `seen` counts them.
+fn sessions_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
+    for report in sessions::tests::reports(&marked()) {
+        let arm = match &report {
+            sessions::Report::Listed(listing) => {
+                for session in &listing.sessions {
+                    for (what, there) in [
+                        ("sessions.branch", session.branch.is_some()),
+                        ("sessions.title", session.title.is_some()),
+                    ] {
+                        seen.insert((what.to_owned(), usize::from(there), 2));
+                    }
+                }
+                usize::from(report.status() == "incomplete")
+            }
+            sessions::Report::Failed(_) => 2,
+        };
+        seen.insert(("sessions.status".to_owned(), arm, 3));
+    }
+}
+
 /// Fails unless `seen` holds every arm `0..of` for each name in it.
 fn whole(seen: &BTreeSet<(String, usize, usize)>) {
     for (what, _, of) in seen {
@@ -1131,10 +1387,17 @@ fn every_arm_that_crosses_has_a_specimen() {
         let (arm, of) = decision_arm(&decision);
         seen.insert(("decision".to_owned(), arm, of));
     }
+    inspection_arms(&mut seen);
+    doctor_arms(&mut seen);
+    sessions_arms(&mut seen);
     for snapshot in snapshots() {
         if let Some(pending) = &snapshot.pending {
             let (arm, of) = pending_arm(pending);
             seen.insert(("pending".to_owned(), arm, of));
+            if let Pending::Permission { asked, .. } = pending {
+                let (arm, of) = operation_arm(asked);
+                seen.insert(("asked".to_owned(), arm, of));
+            }
         }
     }
     whole(&seen);
@@ -1142,7 +1405,13 @@ fn every_arm_that_crosses_has_a_specimen() {
 
 #[test]
 fn no_value_that_crosses_names_a_field_for_a_secret_a_path_or_a_handle() {
-    let allowed: BTreeSet<&str> = KEYS.into_iter().chain(MORE_KEYS).collect();
+    let allowed: BTreeSet<&str> = KEYS
+        .into_iter()
+        .chain(MORE_KEYS)
+        .chain(INSPECTION_KEYS)
+        .chain(DOCTOR_KEYS)
+        .chain(SESSIONS_KEYS)
+        .collect();
     for word in &allowed {
         for stem in FORBIDDEN {
             assert!(!word.contains(stem), "the allowed field {word} says {stem}");
@@ -1265,7 +1534,7 @@ fn framed(value: &Value) -> Vec<u8> {
 }
 
 fn asking(command: &Value) -> Value {
-    json!({"version": 2, "capabilities": [], "correlation": 41, "command": command})
+    json!({"version": 3, "capabilities": [], "correlation": 41, "command": command})
 }
 
 /// `frame` with `field` saying `value` instead.
@@ -1287,7 +1556,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 1, 3, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 4, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1348,9 +1617,9 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
         (b"{\"version\": 2".to_vec(), None),
-        (framed(&json!({"version": 2})), None),
+        (framed(&json!({"version": 3})), None),
         (
-            framed(&json!({"version": 2, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 3, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
@@ -1373,7 +1642,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 2, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 3, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -1612,10 +1881,10 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":2,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":3,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -1625,7 +1894,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":2,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -1788,7 +2057,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 1, 3, 65_536, u64::MAX] {
+        for version in [0, 1, 2, 4, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -1920,7 +2189,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (2, 17_377_940_167_198_915_265),
+        (3, 9_249_023_251_157_594_290),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2089,7 +2358,7 @@ fn plan_limit_a_failed_turn_carrying_it_reads_back_as_it_was_written() {
 
 #[test]
 fn plan_limit_is_spoken_under_the_second_revision_and_not_the_first() {
-    assert_eq!(Version::CURRENT.number(), 2);
+    assert!(Version::CURRENT.number() >= 2);
     assert!(Version::CURRENT.spoken());
     assert!(!Version::numbered(1).spoken());
 

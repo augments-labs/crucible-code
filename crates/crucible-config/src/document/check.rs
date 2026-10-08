@@ -12,11 +12,15 @@ mod tests;
 use std::fmt::Write as _;
 use std::path::Path;
 
+use crucible_types::shown::{Escaping, escaped};
+use serde_core::Serialize as _;
+use serde_json::Value;
+use serde_json::ser::Serializer;
+
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
 use crate::settings;
-use crate::shape::Shape;
-use serde_json::Value;
+use crate::shape::{Shape, whole};
 
 use super::Origin;
 
@@ -89,17 +93,14 @@ impl Reader<'_> {
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Count => self.count(value, shape, spot),
             Shape::Limit(maximum) => {
-                if value
-                    .as_u64()
-                    .is_some_and(|value| (1..=*maximum).contains(&value))
-                {
+                if whole(value).is_some_and(|value| (1..=*maximum).contains(&value)) {
                     Ok(())
                 } else {
                     Err(self.wrong_type(shape, spot))
                 }
             }
             Shape::Within(bounds) => {
-                if value.as_u64().is_some_and(|value| {
+                if whole(value).is_some_and(|value| {
                     (u64::from(bounds.least)..=u64::from(bounds.most)).contains(&value)
                 }) {
                     Ok(())
@@ -145,7 +146,7 @@ impl Reader<'_> {
     /// Either may still be out of range, which is not this layer's to say. A
     /// fraction, a negative and a boolean are not whole numbers at all.
     fn whole_at(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
-        if value.is_string() || value.as_u64().is_some() {
+        if value.is_string() || whole(value).is_some() {
             return Ok(());
         }
         Err(self.wrong_type(shape, spot))
@@ -153,12 +154,12 @@ impl Reader<'_> {
 
     /// A whole number that is not negative, and nothing else.
     ///
-    /// `as_u64` is the whole of the check: it refuses a string that looks like
+    /// [`whole`] is the whole of the check: it refuses a string that looks like
     /// a number, a negative, and a fraction together, which are the three ways
     /// a count gets written wrong. A number too large for it is refused for the
     /// same reason a negative is — nothing here can mean it.
     fn count(&self, value: &Value, shape: &Shape, spot: Spot<'_>) -> Result<(), ConfigError> {
-        if value.as_u64().is_some() {
+        if whole(value).is_some() {
             return Ok(());
         }
         Err(self.wrong_type(shape, spot))
@@ -598,6 +599,10 @@ fn join(path: &str, key: &str) -> String {
 /// the whole report small enough to print and to carry as one JSON document.
 pub const MAX_FAILURE_BYTES: usize = 4096;
 
+/// What the text report puts after a sentence it cut, the mark the other
+/// command-line listings put after a string they cut.
+const CUT: &str = "… (cut)";
+
 /// What the check found in one of the three files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileCheck {
@@ -730,6 +735,14 @@ impl CheckReport {
     /// secret-sentinel test beside this one plants one and looks for it.
     /// Non-secret values do arrive in failure sentences — a path, a rule's
     /// text, a rejected choice — quoted by the refusal, by design.
+    ///
+    /// What a file or its directory chose, a file's name and each sentence,
+    /// is written [`escaped`]: a key that carries a line break shows it as
+    /// `\n` rather than opening a line of the report, and one that carries
+    /// ESC or a right-to-left override shows its escape rather than acting on
+    /// the terminal. Every line break here is the report's own. A sentence
+    /// cut at [`MAX_FAILURE_BYTES`] ends `… (cut)`, after its escapes, so a
+    /// reader without the document's `truncated` does not take it as whole.
     #[must_use]
     pub fn human(&self) -> String {
         let mut said = String::from(if self.valid() {
@@ -743,17 +756,24 @@ impl CheckReport {
                 FileState::Valid => "valid",
                 FileState::Invalid => "invalid",
             };
-            let _ = writeln!(said, "  {} config {}: {state}", file.layer, file.file);
+            let _ = writeln!(
+                said,
+                "  {} config {}: {state}",
+                file.layer,
+                escaped(&file.file)
+            );
         }
         for failure in &self.failures {
-            let _ = writeln!(said, "  {}", failure.message);
+            let cut = if failure.truncated { CUT } else { "" };
+            let _ = writeln!(said, "  {}{cut}", escaped(&failure.message));
         }
         let _ = writeln!(said, "  schema: {}", self.schema_id());
         said
     }
 
     /// The report as one JSON document: `format_version`, the `config-check`
-    /// kind, the `valid`/`invalid` status, the schema identity, one entry per
+    /// kind, the `valid`/`invalid` status (a check that read no file is
+    /// [`Unchecked::json`]'s `failed` one), the schema identity, one entry per
     /// file with its provenance, the bounded failures, and whether any
     /// sentence was cut. Keys are alphabetical, which is what makes the order
     /// stable. Ends in a newline, so it can share a stdout nothing else
@@ -761,7 +781,10 @@ impl CheckReport {
     ///
     /// The same redaction as [`human`](Self::human): names and redacted
     /// sentences, with no secret or credential values; the non-secret values
-    /// a failure sentence quotes arrive here too.
+    /// a failure sentence quotes arrive here too. Strings are written through
+    /// [`Escaping`], so DEL, the C1 controls, the format characters and the
+    /// line and paragraph separators a file chose leave as `\u` escapes, which
+    /// read back as the same characters.
     #[must_use]
     pub fn json(&self) -> String {
         let files: Vec<serde_json::Value> = self
@@ -790,18 +813,16 @@ impl CheckReport {
                 })
             })
             .collect();
-        let mut text = serde_json::json!({
+        let document = serde_json::json!({
             "failures": failures,
             "files": files,
-            "format_version": 1,
-            "kind": "config-check",
+            "format_version": FORMAT_VERSION,
+            "kind": KIND,
             "schema": {"id": self.schema_id()},
             "status": if self.valid() { "valid" } else { "invalid" },
             "truncated": self.failures.iter().any(|failure| failure.truncated),
-        })
-        .to_string();
-        text.push('\n');
-        text
+        });
+        written(&document)
     }
 
     /// The first refusal met, for the exit the command leaves by.
@@ -815,6 +836,77 @@ impl CheckReport {
             None => Ok(()),
         }
     }
+}
+
+/// The number the `config check` document says it is written in.
+const FORMAT_VERSION: u64 = 1;
+
+/// What the `config check` document says it is.
+const KIND: &str = "config-check";
+
+/// Why `config check` never reached the files, as far as its `failed`
+/// document says it.
+///
+/// Each refusal behind one leads with a path, the directory crucible was
+/// started in or the home it looked for, so the document says only which step
+/// stopped and the whole sentence goes to standard error. `crucible sessions
+/// list --json` says the same steps in these words, so the two documents agree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unchecked {
+    /// The directory crucible was started in could not be read.
+    Here,
+    /// That directory is not one crucible can work in.
+    Workspace,
+    /// Crucible's home directory could not be found.
+    Home,
+}
+
+impl Unchecked {
+    /// The step that stopped, in words that name no file.
+    #[must_use]
+    pub const fn said(self) -> &'static str {
+        match self {
+            Self::Here => "the directory crucible was started in could not be read",
+            Self::Workspace => {
+                "this directory is not one crucible can work in; standard error says why"
+            }
+            Self::Home => "crucible's home directory could not be found; standard error says why",
+        }
+    }
+
+    /// The `config check --json` document for a check that read no file:
+    /// `format_version`, the `config-check` kind, the `failed` status, the
+    /// schema identity, no files and no failures, and a `problem` naming the
+    /// step that stopped as `text` with its own `truncated` flag, the shape
+    /// the sessions list's failed document has. Each sentence is one of three
+    /// fixed ones, well inside [`MAX_FAILURE_BYTES`], so none is ever cut.
+    /// Ends in a newline, like [`CheckReport::json`].
+    #[must_use]
+    pub fn json(self) -> String {
+        let document = serde_json::json!({
+            "failures": [],
+            "files": [],
+            "format_version": FORMAT_VERSION,
+            "kind": KIND,
+            "problem": {"text": self.said(), "truncated": false},
+            "schema": {"id": crate::shape::schema::ID},
+            "status": "failed",
+            "truncated": false,
+        });
+        written(&document)
+    }
+}
+
+/// `document` on one line, through [`Escaping`], ending in a line break.
+fn written(document: &Value) -> String {
+    let mut written = Vec::new();
+    // Into memory a `Value` is always written: its keys are strings, its
+    // numbers finite, and a `Vec` refuses no byte. What is written is UTF-8,
+    // since every escape is ASCII and every fragment a `str`.
+    let _ = document.serialize(&mut Serializer::with_formatter(&mut written, Escaping));
+    let mut text = String::from_utf8_lossy(&written).into_owned();
+    text.push('\n');
+    text
 }
 
 /// Reads the three files and validates the effective configuration.

@@ -12,21 +12,25 @@
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
 
+mod auth;
 mod browser;
 mod choice;
 mod client;
 #[cfg(test)]
 mod colour_rule;
+mod completion;
 mod converse;
 mod counting;
 mod draw;
 mod ending;
+mod failure;
 #[cfg(test)]
 mod fake;
 mod freed;
 mod gathering;
 mod kept;
-mod panicked;
+mod opening;
+pub(super) mod panicked;
 #[cfg(test)]
 mod sample;
 mod seen;
@@ -39,6 +43,7 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 use crucible_app::AppError;
 use crucible_app::content_use;
 use crucible_app::providers::{
@@ -62,6 +67,7 @@ use crucible_workspace::Workspace;
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
 use crate::cli::draw::Opening;
+use crate::cli::failure::failing;
 use crate::cli::style::Style;
 
 /// How long the terminal is given to say what colour its background is.
@@ -145,24 +151,39 @@ started in. Nearer wins; the command line is nearer than all of them.
 Sessions are written one file per session, and --continue picks up the most \
 recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
-/resume inside a session lists the rest.
+/resume inside a session lists the rest. sessions list says which sessions \
+were recorded for this directory, newest first, with when each started, how \
+many messages it holds, its branch and its saved title, and stops; --json \
+writes it as one JSON document instead. It reads the session index and the \
+first line of each log, so nothing anybody wrote in a session is shown, and \
+no session is opened, resumed or written to.
 
---extensions lists what is installed in ~/.crucible/extensions (or the \
+extensions list says what is installed in ~/.crucible/extensions (or the \
 extensions directory under CRUCIBLE_CODE_HOME), with what each \
 manifest asks to be allowed to do and the digest crucible took over its bytes, \
-and stops. Nothing installed is run to produce that list, which is the point of \
-being able to read it.
+and stops; --extensions is the same list. Nothing installed is run to produce \
+that list, which is the point of being able to read it.
 
---sandbox prints the confinement a command in this directory would run under — \
-which backend enforces it, what that backend can and cannot hold, the reach and \
-ceilings a command would get, and anything given up along the way — and stops. \
-No command is run to produce it, and every path in it but the workspace root \
-is a digest.
+sandbox inspect prints the confinement a command in this directory would run \
+under — which backend would enforce it, what that backend can and cannot hold, \
+the reach and ceilings a command would get, and why it would be refused — and \
+stops; --json writes it as one JSON document instead. Nothing is started to \
+produce it, so what only starting the backend could tell is said to be \
+unverified, and every path in it but the workspace root is a digest. --sandbox \
+is the same report as text.
 
 --with-mcp names a server written down under mcp.servers and hosts it for this \
 run, and may be repeated. A configuration file is a list of servers you could \
 run; nothing is started until a run names one. What a hosted server offers is \
-called as mcp:<server>/<tool>, and it runs confined the way a command does.
+called as mcp:<server>/<tool>, and it runs confined the way a command does. \
+mcp list says which servers your home configuration writes down, and mcp get \
+NAME how one would be started, with every variable's value and whatever in \
+its arguments could be a secret left out, and stops. Neither starts a server, \
+so neither says whether one would start.
+
+completion SHELL writes a completion script for bash, zsh, fish, powershell \
+or elvish, made from this command line as it is, and stops. It reads no \
+configuration and opens no terminal.
 
 Flags, session files and config are unstable for the whole 0.x line.",
     args_conflicts_with_subcommands = true
@@ -202,7 +223,7 @@ struct Cli {
     extensions: bool,
 
     /// Print the confinement a command in this directory would run under and
-    /// stop, without running one.
+    /// stop, without starting anything. The same as `sandbox inspect`.
     #[arg(
         long,
         conflicts_with_all = ["continue", "resume", "model", "effort", "with_mcp", "extensions"]
@@ -216,15 +237,110 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Provision or remove native sandbox support.
+    /// Inspect confinement here, or provision or remove native sandbox
+    /// support.
     Sandbox {
         #[command(subcommand)]
-        action: SandboxMaintenance,
+        action: SandboxAction,
     },
     /// Parse and validate the effective configuration, and stop.
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+    /// Check whether this machine is ready to run a conversation, offline,
+    /// and stop.
+    Doctor {
+        /// Print one JSON document to stdout instead of the human report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Say, store or remove the credentials crucible signs providers in
+    /// with, offline but for a sign-in.
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
+    /// Say which MCP servers your configuration writes down, without
+    /// starting any of them, and stop.
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+    /// Say what is installed in crucible's extensions directory, without
+    /// running any of it, and stop.
+    Extensions {
+        #[command(subcommand)]
+        action: ExtensionsAction,
+    },
+    /// Say which sessions were recorded for this directory, without opening
+    /// any of them, and stop.
+    Sessions {
+        #[command(subcommand)]
+        action: SessionsAction,
+    },
+    /// Write a completion script for a shell to standard output, and stop.
+    Completion {
+        /// The shell to write the script for.
+        shell: Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionsAction {
+    /// List the sessions recorded for this directory, newest first, and stop.
+    List {
+        /// Print one JSON document to stdout instead of the human list.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ExtensionsAction {
+    /// List every installed extension and stop. The same as `--extensions`.
+    List,
+}
+
+#[derive(Debug, Subcommand)]
+enum McpAction {
+    /// List every server written down under mcp.servers, and stop.
+    List,
+    /// Say how one server would be started, with secrets left out, and stop.
+    Get {
+        /// The server's name under mcp.servers.
+        name: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthAction {
+    /// Say which credential a launch would sign each provider in with,
+    /// without sending or renewing anything, and stop.
+    Status {
+        /// A provider, or a /login row's stored name such as
+        /// moonshot@kimi.ai. Left off, every provider.
+        provider: Option<String>,
+        /// Print one JSON document to stdout instead of the human report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Store a key for a provider, or sign in to its account, the way /login
+    /// does.
+    Login {
+        /// A provider, or a /login row's stored name such as
+        /// moonshot@kimi.ai.
+        provider: String,
+        /// Read the key from standard input rather than a hidden prompt.
+        /// A key is never an argument.
+        #[arg(long)]
+        api_key_stdin: bool,
+    },
+    /// Take the credentials crucible stored for a provider out of its login
+    /// store, the way /logout does.
+    Logout {
+        /// A provider, or a /login row's stored name.
+        provider: String,
     },
 }
 
@@ -236,6 +352,19 @@ enum ConfigAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum SandboxAction {
+    /// Print the confinement a command in this directory would run under, and
+    /// stop, without starting anything.
+    Inspect {
+        /// Print one JSON document to stdout instead of the human report.
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(flatten)]
+    Maintenance(SandboxMaintenance),
 }
 
 #[derive(Debug, Subcommand)]
@@ -272,6 +401,16 @@ pub(crate) enum Fatal {
     /// Native sandbox provisioning or removal could not complete.
     #[error("Windows sandbox maintenance failed: {0}")]
     SandboxMaintenance(io::Error),
+
+    /// A sandbox inspection was made, and the document it would be written as
+    /// could not carry it.
+    #[error(transparent)]
+    Inspection(crucible_app::sandbox::Unwritten),
+
+    /// A sessions list was made, and the document it would be written as
+    /// could not carry it.
+    #[error(transparent)]
+    Sessions(crucible_app::sessions::Unwritten),
 
     /// The terminal could not be drawn on.
     #[error(transparent)]
@@ -324,12 +463,13 @@ pub(crate) enum Fatal {
     Lost,
 
     /// The process was told to stop from outside while a turn ran, and the
-    /// turn has been ended and written down.
+    /// turn has been ended and written down, or while the keyboard was waited
+    /// on between turns.
     ///
     /// Carried as an error because it leaves by the way a failed terminal
     /// does, and never printed as one: [`start`] obeys the signal instead,
     /// once everything this run held has been given back.
-    #[error("the turn was ended from outside")]
+    #[error("the session was ended from outside")]
     Ended(ending::Told),
 }
 
@@ -357,15 +497,48 @@ through_the_application!(
 /// Reads the command line and does what it says.
 pub(crate) fn start() -> ExitCode {
     freed::handed_back();
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(refused) => return unparsed(&refused),
+    };
 
     let done = match (&cli.command, cli.extensions, cli.sandbox) {
-        (Some(Command::Sandbox { action }), _, _) => maintain_sandbox(action),
+        (Some(Command::Sandbox { action }), _, _) => match action {
+            SandboxAction::Inspect { json } => inspected(*json),
+            SandboxAction::Maintenance(action) => maintain_sandbox(action),
+        },
         (Some(Command::Config { action }), _, _) => match action {
             ConfigAction::Check { json } => checked(*json),
         },
-        (None, true, _) => listed(),
-        (None, _, true) => confined(),
+        (Some(Command::Doctor { json }), _, _) => return diagnosed(*json),
+        (Some(Command::Auth { action }), _, _) => {
+            return match action {
+                AuthAction::Status { provider, json } => auth::status(provider.as_deref(), *json),
+                AuthAction::Login {
+                    provider,
+                    api_key_stdin,
+                } => auth::login(provider, *api_key_stdin),
+                AuthAction::Logout { provider } => auth::logout(provider),
+            };
+        }
+        (Some(Command::Completion { shell }), _, _) => return completion::completed(*shell),
+        (Some(Command::Mcp { action }), _, _) => declared(action),
+        (
+            Some(Command::Sessions {
+                action: SessionsAction::List { json },
+            }),
+            _,
+            _,
+        ) => recalled(*json),
+        (
+            Some(Command::Extensions {
+                action: ExtensionsAction::List,
+            }),
+            _,
+            _,
+        )
+        | (None, true, _) => listed(),
+        (None, _, true) => inspected(false),
         (None, _, _) => run(&cli),
     };
 
@@ -377,6 +550,38 @@ pub(crate) fn start() -> ExitCode {
         Err(Fatal::Ended(told)) => told.obeyed(),
         Err(problem) => fail(&problem),
     }
+}
+
+/// Says why the command line did not parse, and exits as the parser would.
+///
+/// The parser's own sentence quotes the word it did not expect, and on an
+/// `auth` command line that word may be a key somebody typed where it is not
+/// taken. There the sentence is replaced by one that quotes nothing, unless it
+/// is help, a version, or a missing argument, none of which repeats a word.
+fn unparsed(refused: &clap::Error) -> ExitCode {
+    use clap::error::ErrorKind;
+
+    let code = u8::try_from(refused.exit_code()).unwrap_or(2);
+    let quotes_nothing = matches!(
+        refused.kind(),
+        ErrorKind::DisplayHelp
+            | ErrorKind::DisplayVersion
+            | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            | ErrorKind::MissingRequiredArgument
+            | ErrorKind::MissingSubcommand
+    );
+    if quotes_nothing || !std::env::args_os().skip(1).any(|word| word == "auth") {
+        let _ = refused.print();
+        return ExitCode::from(code);
+    }
+    let _ = io::stderr().write_all(
+        b"error: crucible auth was given a word it does not take, which is not repeated here \
+          in case it was a key\n\n\
+          A key is never an argument: pipe it to `crucible auth login PROVIDER --api-key-stdin`, \
+          or leave the flag off in a terminal to be asked for it.\n\n\
+          For more information, try 'crucible auth --help'.\n",
+    );
+    ExitCode::from(code)
 }
 
 #[cfg(target_os = "windows")]
@@ -416,11 +621,39 @@ fn maintain_sandbox(_action: &SandboxMaintenance) -> Result<(), Fatal> {
 /// A write that fails is dropped for the reason [`listed`] drops one. Where
 /// the files do not hold, the first refusal leaves as the process's failure;
 /// a command line that does not parse never reaches here, and the parser
-/// answers those with its own usage exit.
+/// answers those with its own usage exit. The report quotes what the files
+/// said, keys a checkout chose among it, and is written by
+/// [`crucible_config::CheckReport`] with what a terminal would act on shown
+/// as its escape, so it is written here as it stands.
+///
+/// Where no file could be read at all, because the directory crucible was
+/// started in could not be read or is not one it can work in, or its home
+/// could not be found, the text report is not written and the failure is said
+/// on standard error alone; `json` still writes one document, a failed one
+/// naming the step that stopped and no path, as [`recalled`] does, so a
+/// script reading standard output never finds it empty.
 fn checked(json: bool) -> Result<(), Fatal> {
-    let here = std::env::current_dir().map_err(Fatal::Here)?;
-    let workspace = Workspace::open(here)?;
-    let home = Home::find(&|name| std::env::var_os(name))?;
+    use crucible_config::Unchecked;
+
+    let reached = std::env::current_dir()
+        .map_err(|why| (Unchecked::Here, Fatal::Here(why)))
+        .and_then(|here| {
+            Workspace::open(here).map_err(|why| (Unchecked::Workspace, Fatal::from(why)))
+        })
+        .and_then(|workspace| {
+            Home::find(&|name| std::env::var_os(name))
+                .map(|home| (workspace, home))
+                .map_err(|why| (Unchecked::Home, Fatal::from(why)))
+        });
+    let (workspace, home) = match reached {
+        Ok(reached) => reached,
+        Err((step, why)) => {
+            if json {
+                let _ = io::stdout().write_all(step.json().as_bytes());
+            }
+            return Err(why);
+        }
+    };
     let report = crucible_config::check(&home, workspace.root());
 
     let said = if json { report.json() } else { report.human() };
@@ -430,13 +663,54 @@ fn checked(json: bool) -> Result<(), Fatal> {
     Ok(())
 }
 
+/// Writes whether this machine is ready to run a conversation, and exits with
+/// what the report says: 0 healthy, 1 for warnings alone, 2 for a failure.
+///
+/// Answered here rather than inside [`run`] for the reason [`checked`] is, and
+/// further than it: a configuration that does not parse, a missing home or a
+/// directory that cannot be read is a check the report fails, not a failure of
+/// the run, so the report always comes and standard error stays empty.
+/// [`crucible_app::doctor`] owns what is looked at and promises that nothing
+/// is written, launched, refreshed or dialled while it is.
+///
+/// A write that fails is dropped for the reason [`listed`] drops one. A
+/// report that could not be written as a document is said where a failure is
+/// said, and exits as a failure.
+fn diagnosed(json: bool) -> ExitCode {
+    let here = std::env::current_dir().ok();
+    let home = Home::find(&|name| std::env::var_os(name));
+    let report = crucible_app::doctor::examine(crucible_app::doctor::Host {
+        here: here.as_deref(),
+        home: home.as_ref(),
+        from: &|name| std::env::var(name).ok(),
+        running: env!("CARGO_PKG_VERSION"),
+    });
+    let written = if json {
+        report.encode()
+    } else {
+        Ok(crucible_app::doctor::human(&report).into_bytes())
+    };
+    match written {
+        Ok(bytes) => {
+            let _ = io::stdout().write_all(&bytes);
+            ExitCode::from(report.exit())
+        }
+        Err(refused) => {
+            let line = format!("crucible: the doctor's report could not be written: {refused}\n");
+            let _ = io::stderr().write_all(line.as_bytes());
+            ExitCode::from(2)
+        }
+    }
+}
+
 /// Writes what is installed to standard output, and stops.
 ///
 /// Answered here rather than inside [`run`] so that it is answered before
-/// anything is built: the flag exists so somebody can read what crucible found
-/// *before* deciding whether any of it should ever run, and a listing that had
-/// opened a workspace, read a credential or started a session on the way would
-/// be a poor thing to reach for when an extension is the suspect.
+/// anything is built: `extensions list`, and `--extensions` before it, exist so
+/// somebody can read what crucible found *before* deciding whether any of it
+/// should ever run, and a listing that had opened a workspace, read a
+/// credential or started a session on the way would be a poor thing to reach
+/// for when an extension is the suspect.
 ///
 /// A write that fails is dropped the way [`fail`] drops one. Standard output
 /// closing early is a `head` on the other end of a pipe, and there is nothing
@@ -449,51 +723,120 @@ fn listed() -> Result<(), Fatal> {
     Ok(())
 }
 
-/// Writes the confinement a command here would run under, and stops.
-///
-/// What the report is made of, and why a backend's refusal is an answer rather
-/// than a failure, is [`crucible_app::sandbox::confinement`]'s to say. The
-/// backend is asked on the application's runtime, and what a shutdown of it
-/// that ran out of time does to the answer is [`reported`]'s to say.
-fn confined() -> Result<(), Fatal> {
-    let here = std::env::current_dir().map_err(Fatal::Here)?;
+/// Writes the MCP servers the home configuration declares, or the one asked
+/// for, and stops.
+fn declared(action: &McpAction) -> Result<(), Fatal> {
     let home = Home::find(&|name| std::env::var_os(name))?;
-    let (said, stopped) = crucible_app::services::serving(|services| {
-        let runtime = services.runtime().handle().map_err(AppError::from)?;
-        runtime.block_on(crucible_app::sandbox::confinement(&here, &home))
-    });
-    reported(
-        said.map_err(Fatal::from),
-        stopped.map_err(|unstopped| AppError::from(unstopped).into()),
-        &mut io::stdout(),
-    )
+    let said = match action {
+        McpAction::List => crucible_app::mcp::list(&home)?,
+        McpAction::Get { name } => crucible_app::mcp::get(&home, name)?,
+    };
+    let _ = io::stdout().write_all(said.as_bytes());
+    Ok(())
 }
 
-/// Writes a report to `out` where one was made, and answers with how the run
-/// ends once its services have been shut down.
+/// Writes the sessions recorded for this directory, and stops.
 ///
-/// A report that was made is written whether or not the shutdown after it
-/// finished: it is the answer the flag was asked for, and a cleanup that failed
-/// once it existed does not make it untrue. The run still ends on that
-/// failure, so the exit status says it. Where no report was made, the report's
-/// own failure is the one the run ends with, and a cleanup that failed as well
-/// is said first, the way [`run`] says one. A write that fails is dropped for
-/// the reason [`listed`] drops one.
-fn reported(
-    said: Result<String, Fatal>,
-    stopped: Result<(), Fatal>,
-    out: &mut impl io::Write,
-) -> Result<(), Fatal> {
-    match (said, stopped) {
-        (Ok(said), stopped) => {
-            let _ = out.write_all(said.as_bytes());
-            stopped
+/// What is read, and why nothing a session recorded can reach the list, is
+/// [`crucible_app::sessions::list`]'s to say. Answered here rather than inside
+/// [`run`] for the reason [`listed`] gives: no session is started, resumed or
+/// appended to on the way.
+///
+/// A list that was made is written and the run succeeds, an incomplete one
+/// included, since what kept it from being whole is part of it. Where none
+/// could be made, `json` still writes one document, a failed one naming the
+/// step that stopped and no path, and the run ends with the whole error on
+/// standard error, as [`inspected`] does. The text escapes every word read
+/// from a file itself, so it is written as it stands.
+fn recalled(json: bool) -> Result<(), Fatal> {
+    use crucible_app::sessions::{Unmade, failure};
+
+    let listed = std::env::current_dir().map(|here| {
+        Home::find(&|name| std::env::var_os(name))
+            .map_err(AppError::from)
+            .and_then(|home| crucible_app::sessions::list(&here, &home))
+    });
+    if !json {
+        let listed = listed.map_err(Fatal::Here)??;
+        let now = std::time::SystemTime::now();
+        let said = listed.human(&|started| draw::when::ago(started, now));
+        let _ = io::stdout().write_all(said.as_bytes());
+        return Ok(());
+    }
+
+    let (written, ended) = match listed {
+        Err(why) => (failure(Unmade::Here), Err(Fatal::Here(why))),
+        Ok(Err(why)) => (failure(Unmade::Listing(&why)), Err(Fatal::App(why))),
+        Ok(Ok(listed)) => match listed.json() {
+            Ok(written) => (Ok(written), Ok(())),
+            Err(unwritten) => (
+                failure(Unmade::Unwritten(&unwritten)),
+                Err(Fatal::Sessions(unwritten)),
+            ),
+        },
+    };
+    match written {
+        Ok(written) => {
+            let _ = io::stdout().write_all(&written);
+            ended
         }
-        (Err(first), Ok(())) => Err(first),
-        (Err(first), Err(unstopped)) => {
-            let _ = fail(&unstopped);
-            Err(first)
+        // Only a failure's own document is left, and it is one sentence cut to
+        // its bound, which is always written; this is the refusal said anyway.
+        Err(unwritten) => ended.and(Err(Fatal::Sessions(unwritten))),
+    }
+}
+
+/// Writes the confinement a command here would run under, and stops.
+///
+/// What the report is made of, why a backend's refusal is an answer rather
+/// than a failure, and why nothing is started to make it, is
+/// [`crucible_app::sandbox::inspection`]'s to say. Answered here rather than
+/// inside [`run`], before anything is built, for the reason [`checked`] gives.
+///
+/// A report that was made is written and the run succeeds, whatever it says:
+/// "no command could be run here" is the answer that was asked for. Where no
+/// report could be made, `json` still writes one document, a failed one naming
+/// the step that stopped, so a script reading standard output never finds it
+/// empty; the run then ends with the whole error, file and all, on standard
+/// error. A write that fails is dropped for the reason [`listed`] drops one.
+/// The text names the directory asked about, which a checkout chose, and
+/// [`crucible_app::sandbox::Observed::human`] writes it with every character
+/// [`crucible_types::shown::escaped`] escapes as its escape, a line break among
+/// them, so the report keeps only lines of its own; it is then written
+/// [`visible`] as well, for any other word in it a terminal would act on.
+fn inspected(json: bool) -> Result<(), Fatal> {
+    use crucible_app::sandbox::{Unmade, failure};
+
+    let observed = std::env::current_dir().map(|here| {
+        Home::find(&|name| std::env::var_os(name))
+            .map_err(AppError::from)
+            .and_then(|home| crucible_app::sandbox::inspection(&here, &home))
+    });
+    if !json {
+        let observed = observed.map_err(Fatal::Here)??;
+        let _ = io::stdout().write_all(visible(&observed.human()).as_bytes());
+        return Ok(());
+    }
+
+    let (written, ended) = match observed {
+        Err(why) => (failure(Unmade::Here), Err(Fatal::Here(why))),
+        Ok(Err(why)) => (failure(Unmade::Inspecting(&why)), Err(Fatal::App(why))),
+        Ok(Ok(observed)) => match observed.json() {
+            Ok(written) => (Ok(written), Ok(())),
+            Err(unwritten) => (
+                failure(Unmade::Unwritten(&unwritten)),
+                Err(Fatal::Inspection(unwritten)),
+            ),
+        },
+    };
+    match written {
+        Ok(written) => {
+            let _ = io::stdout().write_all(&written);
+            ended
         }
+        // Only a failure's own document is left, and it is one sentence cut to
+        // its bound, which is always written; this is the refusal said anyway.
+        Err(unwritten) => ended.and(Err(Fatal::Inspection(unwritten))),
     }
 }
 
@@ -815,6 +1158,15 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // before.
     renderer.counts(counting::forge(workspace.root()));
 
+    // And the checkout a link to a path is read against, so `src/main.rs:12` in
+    // the answer opens the file rather than asking a terminal to open a word.
+    // Read here for the reason the forge is, and beside it the one fact about
+    // the terminal that decides how the line is spelled.
+    renderer.reads_paths(Some(opening::files(
+        workspace.root(),
+        from("TERMINAL_EMULATOR").as_deref(),
+    )));
+
     // And how far one notch of the wheel moves the transcript. Read here rather
     // than where the wheel is answered, because it is answered on the render
     // path and the render path opens no file — and because a wheel is hardware
@@ -1042,14 +1394,34 @@ fn resuming(cli: &Cli) -> Result<startup::Resuming, Fatal> {
 ///
 /// Straight to standard error rather than through the renderer: the renderer is
 /// one of the things that can fail here, and by this point there is no live
-/// region left to protect.
+/// region left to protect. It is written as [`failing`] says it.
 fn fail(problem: &Fatal) -> ExitCode {
-    let mut line = String::from("crucible: ");
-    line.push_str(&problem.to_string());
-    line.push('\n');
-
-    let _ = io::stderr().write_all(line.as_bytes());
+    let _ = io::stderr().write_all(failing(&problem.to_string()).as_bytes());
     ExitCode::FAILURE
+}
+
+/// `text` as it may reach a terminal outside the renderer: every control
+/// character but a line break, the line and paragraph separators, and every
+/// Unicode format character but the zero-width joiner and non-joiner, written
+/// as its escape, `\u{1b}` for ESC, `\u{2028}` for a line separator and
+/// `\u{202e}` for a right-to-left override.
+///
+/// A terminal acts on ESC, BEL and the C1 controls rather than drawing them,
+/// so a name that carries one could retitle the window or clear the screen
+/// instead of being read; an override reorders what is drawn after it, and
+/// some terminals and viewers end a line at either separator. Escaped, it is
+/// still the name, and the person who sees it can tell which directory or key
+/// it was; [`crucible_types::shown`] owns the escape. A line break is kept
+/// because the reports and prompts written this way run over lines of their
+/// own, so a break in a value one quotes is the quoting owner's to escape, as
+/// the configuration check and `auth status` reports and the sign-in prompt
+/// do. A failure [`fail`] reports is one line, and is written [`failing`]
+/// instead.
+fn visible(text: &str) -> String {
+    text.split('\n')
+        .map(crucible_types::shown::escaped)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// What a start reads its credentials from `home` as, and the one sentence

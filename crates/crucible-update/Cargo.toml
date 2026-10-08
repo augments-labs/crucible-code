@@ -1,6 +1,6 @@
 [package]
 name = "crucible-update"
-description = "Release discovery and the cached release check."
+description = "Release discovery, the cached release check and the installed release's receipt."
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -24,11 +24,28 @@ crucible-runtime.workspace = true
 crucible-types.workspace = true
 # GitHub's release answer is JSON, parsed once after its bounded body read.
 serde_json.workspace = true
+# The receipt records each executable's SHA-256, and std has no hash of that
+# kind; the layout is taken only when the files hash to what it records.
+sha2.workspace = true
 # The cleanup result has one typed error for the application to report.
 thiserror.workspace = true
 # The runtime handle, task ownership and the request/body clock. This crate
 # never builds a runtime of its own.
 tokio = { workspace = true, features = ["rt", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+# An install may be made only of root's files and those of the user running
+# crucible, and `std` cannot say who that is, nor whether the process an
+# install's lock names still runs, nor this host's name the lock carries as
+# `uname -n` prints it. `process` is turned on for `getuid` and for signal 0,
+# which stops nothing; only the tests kill, and only their own process.
+# `system` is turned on for `uname`.
+rustix = { workspace = true, features = ["process", "system"] }
+# A release unit is staged from the gzip-compressed tar the release ships;
+# `flate2` decompresses it and `tar` reads its members, and only on the
+# platforms whose installs are managed.
+flate2.workspace = true
+tar.workspace = true
 
 [dev-dependencies]
 # The tests use an OS-assigned loopback listener and a small multi-thread

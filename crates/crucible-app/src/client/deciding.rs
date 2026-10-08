@@ -17,10 +17,10 @@
 //!
 //! An action is put only where it can be put whole. Questions with more
 //! answers than a list holds, or an answer whose name would be cut, are
-//! declined without being put; a call whose tool or subject would be cut is
-//! denied without being put, unless the front end says it draws from the
-//! whole value it is lent ([`Front::draws_whole`]). Either way no identity is
-//! spent on an action nobody was shown.
+//! declined without being put; a call whose tool, subject, or line or address
+//! as sent would be cut is denied without being put, unless the front end says
+//! it draws from the whole value it is lent ([`Front::draws_whole`]). Either
+//! way no identity is spent on an action nobody was shown.
 //!
 //! A decision is never a permission. It is read here, against the action this
 //! module itself put, and what the engine is handed is a
@@ -55,6 +55,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_client_api::bounds::ITEMS;
+use crucible_client_api::pending::Operation;
 use crucible_client_api::{
     Asked, Capabilities, Capability, Choice, Decision, Effect, ErrorCode, Lasting, Pending,
     PendingId, Picked, Refusal, Ruling, Said, Text,
@@ -144,11 +145,11 @@ pub trait Front: Send + Sync {
     /// Whether whoever answers is shown the whole [`Shown`] value, rather than
     /// the [`Pending`] whose words are cut to the contract's ceilings.
     ///
-    /// No, unless a front end says otherwise, and then a call whose tool or
-    /// subject would be cut is denied without being put: a yes to half a
-    /// command line is a yes to a line nobody read. A front end standing on
-    /// the host that draws the call itself says yes here and is put every
-    /// call.
+    /// No, unless a front end says otherwise, and then a call whose tool,
+    /// subject, or line or address as sent would be cut is denied without
+    /// being put: a yes to half a command line is a yes to a line nobody
+    /// read. A front end standing on the host that draws the call itself says
+    /// yes here and is put every call.
     fn draws_whole(&self) -> bool {
         false
     }
@@ -263,11 +264,18 @@ impl Ask for Deciding<'_> {
 
             // Words cut for a reader who has nothing else to read are not the
             // question, so it is not asked, and the call is refused as it is
-            // where nobody answers. Decided before an identity is minted for
-            // it.
+            // where nobody answers. That holds for the line or address as
+            // sent as much as for the subject: a yes to the start of a line
+            // is a yes to a line nobody read. Decided before an identity is
+            // minted for it.
             let tool = Text::cut(&call.name);
             let subject = Text::cut(&sensitivity.to_string());
-            if (tool.truncated() || subject.truncated()) && !self.front.draws_whole() {
+            let asked = operation(call, sensitivity);
+            let cut = match &asked {
+                Operation::Command { sent, .. } | Operation::Network { sent } => sent.truncated(),
+                Operation::Other => false,
+            };
+            if (tool.truncated() || subject.truncated() || cut) && !self.front.draws_whole() {
                 return DENIED;
             }
 
@@ -276,6 +284,7 @@ impl Ask for Deciding<'_> {
                 tool,
                 effect: effect(sensitivity),
                 subject,
+                asked,
             };
             let shown = Shown::Call { call, sensitivity };
 
@@ -444,6 +453,27 @@ const fn effect(sensitivity: &Sensitivity) -> Effect {
         Sensitivity::MutatesFile { .. } => Effect::MutatesFile,
         Sensitivity::SpawnsProcess { .. } => Effect::SpawnsProcess,
         Sensitivity::ReachesNetwork { .. } => Effect::ReachesNetwork,
+    }
+}
+
+/// What exactly a call would run or send, as the call carried it.
+///
+/// The subject is the engine's spelling, which is the one a rule is matched
+/// against and drops what tells two such calls apart; this is what the
+/// terminal's panel quotes instead. A read or a change of a file is said whole
+/// by its subject.
+fn operation(call: &ToolCall, sensitivity: &Sensitivity) -> Operation {
+    match sensitivity {
+        Sensitivity::SpawnsProcess { command } => Operation::Command {
+            sent: Text::cut(command.sent()),
+            left_running: crucible_builtins::backgrounded(&call.args),
+        },
+        Sensitivity::ReachesNetwork { host } => Operation::Network {
+            sent: Text::cut(host.sent()),
+        },
+        Sensitivity::ReadOnly { .. }
+        | Sensitivity::ReadsOutside { .. }
+        | Sensitivity::MutatesFile { .. } => Operation::Other,
     }
 }
 

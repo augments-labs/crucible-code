@@ -240,3 +240,31 @@ fn what_a_terminal_would_act_on_does_not_survive_a_tool_result_either() {
         Some("two\nlines[31m")
     );
 }
+
+/// A link named as a log leads out of the sessions directory, and a preview of
+/// it would show a conversation nothing says was recorded here. Refused the way
+/// `--resume` refuses it, since Enter on the row would ask the same.
+#[cfg(unix)]
+#[test]
+fn a_log_that_is_a_link_is_refused_rather_than_previewed() {
+    let sample = Sample::new("glimpse-link");
+    let id = "0000000000001-000001";
+    planted(&sample, id, &spoken("read through a link", "it was"));
+    let named = sample.logs().join(format!("{id}.jsonl"));
+    std::fs::create_dir_all(sample.home()).expect("a home");
+    let outside = sample.home().join(format!("{id}.jsonl"));
+    std::fs::rename(&named, &outside).expect("a log outside the sessions directory");
+    std::os::unix::fs::symlink(&outside, &named).expect("a link");
+
+    let refused = glimpse(
+        &sample.logs(),
+        &sample.workspace(),
+        &SessionId::from_str(id).expect("a well-formed session id"),
+    );
+
+    assert!(
+        matches!(&refused, Err(crate::SessionError::Log { .. })),
+        "{:?}",
+        refused.map(|glimpse| said(&glimpse))
+    );
+}

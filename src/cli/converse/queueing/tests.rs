@@ -1,7 +1,6 @@
-use crucible_runner::Breakdown;
-use crucible_tui::{Key, Recording};
+use crucible_tui::{Glyphs, Key};
 
-use super::super::Retained;
+use super::super::{QUEUED_LINES, Retained};
 use super::*;
 
 /// A queue with these lines waiting, and the offer the turn reads holding the
@@ -24,414 +23,430 @@ fn queued(lines: &[&str]) -> (Prompts, Steer) {
     (queue, steer)
 }
 
-/// One key against a standing view, with the three things it acts on.
-fn against(standing: &mut Standing, arrived: &Pressed, queue: &mut Prompts, steer: &Steer) -> bool {
-    let mut editor = Editor::new();
-    standing.against(
-        arrived,
-        Reading {
-            queue,
-            editor: &mut editor,
-            steer,
-        },
-    )
+/// The rows of the panel as plain text, one string each.
+fn said(laid: &[Row]) -> Vec<String> {
+    laid.iter().map(Row::text).collect()
+}
+
+/// The lines still waiting, oldest first.
+fn waiting(queue: &Prompts) -> Vec<&str> {
+    queue.waiting_all().collect()
+}
+
+const FIVE: [&str; 5] = ["first", "second", "third", "fourth", "fifth"];
+
+#[test]
+fn nothing_waiting_lays_no_panel_out() {
+    assert!(panel(&Prompts::default(), 80, 40, Style::plain()).is_empty());
 }
 
 #[test]
-fn nothing_opens_on_an_empty_queue() {
-    // The key is offered by the panel that names what is waiting, so a session
-    // with nothing waiting has made no offer -- and a frame put up for a press
-    // nobody meant is one that took the box away for no reason.
-    let (queue, steer) = queued(&[]);
-    let mut standing = Standing::default();
-
-    standing.open(&queue, &steer);
-
-    assert!(!standing.is_open());
-    assert!(
-        !steer.any(),
-        "an empty queue was held for a view nobody saw"
-    );
-}
-
-#[test]
-fn the_turn_takes_nothing_while_the_queue_stands_open() {
-    // The whole of what the view is for. A line the reader is still going over
-    // is not one the agent should be reading, and one taken mid-edit is in the
-    // transcript, where it cannot be taken back.
-    let (mut queue, steer) = queued(&["first", "second"]);
-    let mut standing = Standing::default();
-
-    standing.open(&queue, &steer);
-    assert!(standing.is_open());
-
-    assert!(
-        !steer.any(),
-        "the turn was told there was something to take"
-    );
-    assert!(steer.take().is_empty(), "the turn took a line mid-edit");
-
-    // And the walk over it changes nothing about that: every key but the way
-    // out leaves the queue where it is.
-    against(&mut standing, &Pressed::Down, &mut queue, &steer);
-
-    assert!(steer.take().is_empty());
-}
-
-#[test]
-fn closing_it_gives_the_whole_batch_back_at_once() {
-    // Edited or not, together: what the reader closes the queue on is one
-    // course-correction, and the turn works it in at one pass boundary.
-    let (mut queue, steer) = queued(&["first", "second"]);
-    let mut standing = Standing::default();
-
-    standing.open(&queue, &steer);
-    against(&mut standing, &Pressed::Escape, &mut queue, &steer);
-
-    assert!(!standing.is_open());
-    assert!(steer.any());
-    assert_eq!(steer.take(), vec!["first".to_owned(), "second".to_owned()]);
-}
-
-#[test]
-fn a_line_taken_back_leaves_the_queue_the_turn_reads_as_well() {
-    // The panel and the turn's own offer hold the same line. One dropped from
-    // the panel alone is a prompt the reader deleted that the turn goes on to
-    // work in anyway -- which is the one thing holding the queue cannot save
-    // them from on its own.
-    let (mut queue, steer) = queued(&["first", "second", "third"]);
-    let mut editor = Editor::new();
-    let mut standing = Standing::default();
-
-    standing.open(&queue, &steer);
-    against(&mut standing, &Pressed::Down, &mut queue, &steer);
-    standing.against(
-        &Pressed::Key(Key::Char('x')),
-        Reading {
-            queue: &mut queue,
-            editor: &mut editor,
-            steer: &steer,
-        },
-    );
+fn the_panel_names_three_lines_under_a_title_that_counts_them_all() {
+    // A rule, the count and the key that sends them all, three lines with the
+    // highlighted one marked, and a footer naming every key that works.
+    let (queue, _) = queued(&FIVE);
+    let rule = "─".repeat(80);
 
     assert_eq!(
-        queue.waiting_all().collect::<Vec<_>>(),
-        vec!["first", "third"]
-    );
-    assert_eq!(editor.text(), "second", "it went back into the box");
-
-    against(&mut standing, &Pressed::Escape, &mut queue, &steer);
-
-    assert_eq!(steer.take(), vec!["first".to_owned(), "third".to_owned()]);
-}
-
-#[test]
-fn taking_the_last_line_back_closes_it_and_gives_the_queue_back() {
-    // The list it was read from is then empty, so the way out is the same key
-    // that emptied it -- and a view left standing over nothing would go on
-    // holding a queue with nothing in it.
-    let (mut queue, steer) = queued(&["only"]);
-    let mut standing = Standing::default();
-
-    standing.open(&queue, &steer);
-    against(
-        &mut standing,
-        &Pressed::Key(Key::Char('x')),
-        &mut queue,
-        &steer,
-    );
-
-    assert!(!standing.is_open());
-    assert_eq!(queue.waiting_count(), 0);
-    assert!(steer.take().is_empty(), "the line was taken back, not sent");
-    assert!(!steer.any());
-}
-
-#[test]
-fn a_line_typed_while_it_stands_goes_out_with_the_rest() {
-    // The box is still live under the view's own keys, and a line finished in
-    // it is still queued. What arrives while the queue is held is held with it
-    // rather than reaching the turn on its own.
-    let (queue, steer) = queued(&["first"]);
-    let mut standing = Standing::default();
-
-    standing.open(&queue, &steer);
-    steer.say("second".to_owned());
-    assert!(!steer.any());
-
-    steer.release();
-    assert_eq!(steer.take(), vec!["first".to_owned(), "second".to_owned()]);
-}
-
-/// The rows of the view as plain text, one string each.
-fn said(laid: &[crucible_tui::Row]) -> Vec<String> {
-    laid.iter().map(crucible_tui::Row::text).collect()
-}
-
-/// Takes the key against a standing view of `lines` with the mark on `at`, and
-/// hands back what is left: the queue, the box, and the offer the turn reads.
-fn after(lines: &[&str], at: usize, key: Key) -> (Standing, Prompts, Editor, Steer) {
-    let (mut queue, steer) = queued(lines);
-    let mut editor = Editor::new();
-    let mut standing = Standing::default();
-
-    standing.open(&queue, &steer);
-    for _ in 0..at {
-        against(&mut standing, &Pressed::Down, &mut queue, &steer);
-    }
-    standing.against(
-        &Pressed::Key(key),
-        Reading {
-            queue: &mut queue,
-            editor: &mut editor,
-            steer: &steer,
-        },
-    );
-
-    (standing, queue, editor, steer)
-}
-
-#[test]
-fn the_queue_view_stands_as_a_panel_with_the_keys_named_in_its_footer() {
-    // The panel every other list follows: a rule, a title, the rows, and a
-    // footer naming every key that is offered. The marked line leads with the
-    // mark and the rest stand two columns in under it.
-    let (queue, _) = queued(&["first", "second", "third"]);
-    let laid = rows(&queue, 1, 80, 20, Style::plain());
-
-    assert_eq!(
-        said(&laid),
+        said(&panel(&queue, 80, 40, Style::plain())),
         vec![
-            "\u{2500}".repeat(80),
-            String::new(),
-            "3 queued".to_owned(),
-            String::new(),
-            "  first".to_owned(),
-            "\u{203a} second".to_owned(),
-            "  third".to_owned(),
-            String::new(),
-            "\u{2191}\u{2193} to walk \u{b7} e edit \u{b7} d delete \u{b7} esc to close".to_owned(),
+            rule.as_str(),
+            "",
+            "5 queued · ctrl+enter to send all now",
+            "",
+            "› first",
+            "",
+            "  second",
+            "",
+            "  third",
+            "",
+            "↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now",
+            "",
         ]
     );
 }
 
 #[test]
-fn the_queue_view_marks_the_line_the_keys_act_on_in_the_accent() {
-    // A key's target is never a guess: the mark and the words of the marked
-    // line are the accent, the rest read plain, and the footer is quiet.
-    use crucible_tui::Slot;
+fn the_panel_in_ascii_says_the_same_in_the_glyphs_every_terminal_has() {
+    let (queue, _) = queued(&FIVE);
+    let rule = "-".repeat(80);
 
-    let (queue, _) = queued(&["first", "second"]);
-    let laid = rows(&queue, 1, 40, 20, Style::plain());
-    let slots = |at: usize| {
-        laid.get(at)
-            .expect("a row there")
-            .spans()
-            .map(|(slot, _)| slot)
-            .filter(|slot| *slot != Slot::Plain)
-            .collect::<Vec<_>>()
-    };
-
-    assert_eq!(slots(0), vec![Slot::Accent], "the rule");
-    assert_eq!(slots(2), vec![Slot::Strong], "the title");
-    assert!(slots(4).is_empty(), "the unmarked line: {:?}", said(&laid));
     assert_eq!(
-        slots(5),
-        vec![Slot::Accent, Slot::Accent],
-        "the marked line"
-    );
-    assert!(
-        slots(8).iter().all(|slot| *slot == Slot::Quiet),
-        "the footer"
+        said(&panel(&queue, 80, 40, Style::drawn(Glyphs::Ascii))),
+        vec![
+            rule.as_str(),
+            "",
+            "5 queued - ctrl+enter to send all now",
+            "",
+            "> first",
+            "",
+            "  second",
+            "",
+            "  third",
+            "",
+            "^v to walk - ctrl+e to edit - ctrl+x to delete - ctrl+s to send now",
+            "",
+        ]
     );
 }
 
 #[test]
-fn the_queue_view_wraps_a_line_and_its_footer_in_a_narrow_window() {
-    // Lines are cut to a row in the box and wrap here, where they are read
-    // whole; a wrapped line hangs under its own first word. Nothing is wider
-    // than the window, which is the whole of what narrow asks.
-    let (queue, _) = queued(&[
-        "and add a test for the windows path",
-        "keep the old error text",
-    ]);
-    let laid = rows(&queue, 0, 40, 20, Style::plain());
-    let rows = said(&laid);
+fn a_narrow_window_folds_the_footer_rather_than_cutting_a_key_off_it() {
+    let (queue, _) = queued(&FIVE);
+    let laid = said(&panel(&queue, 40, 40, Style::plain()));
 
+    assert!(laid.iter().all(|row| crucible_tui::columns(row) <= 40));
     assert_eq!(
-        rows.get(4).map(String::as_str),
-        Some("\u{203a} and add a test for the windows path")
+        laid.get(laid.len() - 3..),
+        Some(
+            &[
+                "↑↓ to walk · ctrl+e to edit · ctrl+x to".to_owned(),
+                "delete · ctrl+s to send now".to_owned(),
+                String::new(),
+            ][..]
+        )
     );
-    assert!(
-        rows.iter().all(|row| crucible_tui::columns(row) <= 40),
-        "{rows:?}"
-    );
-    assert_eq!(
-        rows.get(laid.len() - 2).map(String::as_str),
-        Some("\u{2191}\u{2193} to walk \u{b7} e edit \u{b7} d delete \u{b7} esc to"),
-        "{rows:?}"
-    );
-    assert_eq!(rows.last().map(String::as_str), Some("close"), "{rows:?}");
-
-    let narrow = said(&self::rows(&queue, 0, 24, 20, Style::plain()));
-    assert!(
-        narrow.iter().all(|row| crucible_tui::columns(row) <= 24),
-        "{narrow:?}"
-    );
-    assert!(narrow.contains(&"  windows path".to_owned()), "{narrow:?}");
 }
 
 #[test]
-fn a_window_with_no_room_for_a_name_lays_nothing_out() {
-    // Which both callers read as the view closing. Chrome with nothing under it
-    // is a frame that took the box away and put nothing in its place.
-    let (queue, _) = queued(&["first"]);
+fn the_arrows_walk_the_highlight_and_stop_at_either_end() {
+    // Stopping rather than going round leaves the highlight at the end it was
+    // walked to; the arrow past it goes nowhere else while a prompt waits.
+    let (mut queue, _) = queued(&["first", "second"]);
 
-    assert!(rows(&queue, 0, 80, 6, Style::plain()).is_empty());
-    assert!(!rows(&queue, 0, 80, 7, Style::plain()).is_empty());
-
-    // The footer is a row more where it wraps, and that row is chrome too.
-    assert!(rows(&queue, 0, 40, 7, Style::plain()).is_empty());
-    assert!(!rows(&queue, 0, 40, 8, Style::plain()).is_empty());
+    assert!(!queue.walk(true), "nothing is before the first");
+    assert!(queue.walk(false));
+    assert_eq!(queue.highlighted(), 1);
+    assert!(!queue.walk(false), "nothing is after the last");
+    assert!(queue.walk(true));
+    assert_eq!(queue.highlighted(), 0);
 }
 
 #[test]
-fn walking_past_the_last_drawn_line_scrolls_so_the_marked_line_is_always_drawn() {
-    // The defect this pins: the list was always drawn from its first line, so in
-    // a window short of the whole queue the mark could stand on a line that was
-    // not on screen, and `d` would delete words the reader had never seen.
-    let lines = ["one", "two", "three", "four", "five", "six"];
-    let (queue, _) = queued(&lines);
+fn a_line_queued_behind_the_highlight_leaves_it_on_the_line_it_was_on() {
+    // A line typed while the reader is partway down the queue joins it at the
+    // end. The keys go on acting on the line the reader walked to.
+    let (mut queue, _) = queued(&["first", "second", "third"]);
+    assert!(queue.walk(false));
+    assert!(queue.walk(false));
 
-    // Two rows for lines: the footer is one row at 80 columns.
-    for (at, line) in lines.iter().enumerate() {
-        let drawn = said(&rows(&queue, at, 80, CHROME + 1 + 2, Style::plain()));
+    let mut editor = Editor::new();
+    for key in "fourth".chars() {
+        editor.press(Key::Char(key));
+    }
+    assert_eq!(queue.accept(&mut editor), Retained::Accepted);
 
-        assert!(
-            drawn.contains(&format!("\u{203a} {line}")),
-            "{at}: {line} is marked and not drawn in {drawn:?}"
-        );
-        assert_eq!(
-            drawn
-                .iter()
-                .filter(|row| row.starts_with('\u{203a}'))
-                .count(),
-            1,
-            "{at}: {drawn:?}"
-        );
+    assert_eq!(queue.highlighted(), 2, "the highlight moved off the third");
+}
+
+#[test]
+fn the_three_named_follow_the_highlight_down_the_queue() {
+    let (mut queue, _) = queued(&FIVE);
+    for _ in 0..3 {
+        queue.walk(false);
     }
 
-    // And what `d` removes there is exactly the line the mark stood on.
-    let (_, queue, editor, _) = after(&lines, 5, Key::Char('d'));
+    let laid = said(&panel(&queue, 80, 40, Style::plain()));
     assert_eq!(
-        queue.waiting_all().collect::<Vec<_>>(),
-        vec!["one", "two", "three", "four", "five"]
-    );
-    assert_eq!(editor.text(), "");
-}
-
-#[test]
-fn the_view_scrolls_by_wrapped_rows_and_keeps_a_tall_line_drawn_from_its_start() {
-    let first = "alpha beta gamma delta epsilon zeta eta theta iota";
-    let second = "kappa lambda mu nu xi omicron pi rho sigma tau";
-    let (queue, _) = queued(&[first, "short", second]);
-
-    // Forty columns fold each long line over two rows, so the third is the
-    // marked one and the room for lines is three rows: it takes two of them
-    // and the line before it takes the third.
-    let drawn = said(&rows(&queue, 2, 40, CHROME + 2 + 3, Style::plain()));
-    let whole = drawn.join("\n");
-    assert!(
-        whole.contains("\u{203a} kappa lambda mu nu xi omicron pi"),
-        "{whole}"
-    );
-    assert!(whole.contains("sigma tau"), "{whole}");
-    assert!(whole.contains("short"), "{whole}");
-    assert!(!whole.contains("alpha"), "{whole}");
-
-    // A line taller than all the room is drawn from its first row.
-    let drawn = said(&rows(&queue, 0, 40, CHROME + 2 + 1, Style::plain())).join("\n");
-    assert!(drawn.contains("\u{203a} alpha beta gamma delta"), "{drawn}");
-}
-
-#[test]
-fn a_window_that_holds_the_list_only_without_the_working_row_draws_the_whole_list() {
-    // The row that says a turn is running is the first to give way: the list is
-    // what the reader opened, and a window one row short of both draws the list
-    // whole rather than the row and no list (which would close the view).
-    let (queue, steer) = queued(&["first"]);
-    let turning = Turning::started(Breakdown::default());
-    let working = turning.working(80, Style::plain()).text();
-
-    // Seven rows is the least the list takes at this width, and one row of the
-    // window always stays with the transcript.
-    let drawn = |window: usize| {
-        let mut standing = Standing::default();
-        standing.open(&queue, &steer);
-        let mut render = Renderer::new(Recording::new(80, window));
-        let stood = under(
-            &mut render,
-            Style::plain(),
-            &queue,
-            &mut standing,
-            &steer,
-            &turning,
+        laid.get(4..9),
+        Some(
+            &[
+                "  second".to_owned(),
+                String::new(),
+                "  third".to_owned(),
+                String::new(),
+                "› fourth".to_owned(),
+            ][..]
         )
-        .expect("drawn");
-        (stood, render.terminal().written().to_owned())
-    };
-
-    let (stood, tight) = drawn(8);
-    assert!(stood);
-    assert!(tight.contains("first"), "{tight:?}");
-    assert!(tight.contains("esc to close"), "{tight:?}");
-    assert!(!tight.contains(working.trim()), "{tight:?}");
-
-    // One row more and the row stands over the rule as well.
-    let (stood, roomy) = drawn(9);
-    assert!(stood);
-    assert!(roomy.contains(working.trim()), "{roomy:?}");
-    assert!(roomy.contains("first"), "{roomy:?}");
+    );
 }
 
 #[test]
-fn editing_a_queued_line_moves_its_words_to_the_box_and_leaves_the_rest() {
-    // `e` is the key the footer names, and it does what `x` always did: the
-    // line leaves the queue, in both places it is held, and the box has it with
-    // the cursor after it.
-    let (standing, queue, mut editor, steer) =
-        after(&["first", "second", "third"], 1, Key::Char('e'));
+fn ctrl_x_deletes_the_highlighted_line_from_the_queue_and_the_turn() {
+    // The panel and the turn's own offer hold the same line. One dropped from
+    // the panel alone is a prompt the reader deleted that the turn goes on to
+    // work in anyway.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    queue.walk(false);
 
+    assert!(queue.delete(Offer::Turn(&steer)));
+
+    assert_eq!(waiting(&queue), vec!["first", "third"]);
     assert_eq!(
-        queue.waiting_all().collect::<Vec<_>>(),
-        vec!["first", "third"]
+        queue.highlighted(),
+        1,
+        "on the line that came up into its place"
     );
-    assert_eq!(editor.text(), "second");
-    editor.press(Key::Char('!'));
-    assert_eq!(editor.text(), "second!", "the cursor is after the line");
-    assert!(standing.is_open(), "two lines are still being read");
-
-    assert!(!steer.any(), "the view holds what is left");
-    steer.release();
+    assert_eq!(queue.bytes, "first".len() + "third".len());
     assert_eq!(steer.take(), vec!["first".to_owned(), "third".to_owned()]);
 }
 
 #[test]
-fn x_still_edits_what_e_edits() {
-    // Kept for the hands that learned it; the footer names the one key.
-    let (_, queue, editor, _) = after(&["first", "second"], 0, Key::Char('x'));
+fn deleting_the_last_line_in_the_queue_leaves_the_highlight_on_the_new_last() {
+    let (mut queue, steer) = queued(&["first", "second"]);
+    queue.walk(false);
 
-    assert_eq!(queue.waiting_all().collect::<Vec<_>>(), vec!["second"]);
-    assert_eq!(editor.text(), "first");
+    assert!(queue.delete(Offer::Turn(&steer)));
+    assert_eq!(queue.highlighted(), 0);
+
+    assert!(queue.delete(Offer::Turn(&steer)));
+    assert_eq!(queue.waiting_count(), 0);
+    assert!(
+        panel(&queue, 80, 40, Style::plain()).is_empty(),
+        "the panel goes"
+    );
+    assert!(!steer.any(), "a deleted line was sent anyway");
+    assert!(
+        !queue.delete(Offer::Turn(&steer)),
+        "nothing is left to delete"
+    );
 }
 
 #[test]
-fn editing_a_queued_line_the_box_cannot_take_keeps_it_queued() {
-    // The box already holds a draft, and the marked line is too long to go in
-    // beside it. Taken out of the queue before the box refused it, the line was
-    // in neither place: something the reader typed, gone without a word.
-    use crucible_tui::Typed;
+fn a_line_the_turn_has_already_taken_is_past_deleting_or_taking_back() {
+    // The turn takes its whole offer at a pass boundary and says which lines
+    // it took a moment later. A key in between finds the line still named here
+    // but already the turn's: deleted, it would be sent anyway, and taken back
+    // it would be sent twice. It stays named until the turn says it took it.
+    let (mut queue, steer) = queued(&["first", "second"]);
+    let taken = steer.take();
+    let mut editor = Editor::new();
 
+    assert!(
+        !queue.delete(Offer::Turn(&steer)),
+        "a line the turn took was shown deleted"
+    );
+    assert!(
+        !queue.take_back(&mut editor, Offer::Turn(&steer)),
+        "a line the turn took was put back in the box"
+    );
+    assert!(editor.is_empty(), "the box holds a line the turn will send");
+    assert_eq!(waiting(&queue), vec!["first", "second"]);
+    assert_eq!(queue.bytes, "first".len() + "second".len());
+
+    for line in &taken {
+        assert!(
+            queue.steered(line),
+            "{line} was not waiting when the turn said it took it"
+        );
+    }
+    assert_eq!(queue.waiting_count(), 0);
+}
+
+#[test]
+fn ctrl_e_takes_the_highlighted_line_back_into_the_box() {
+    // At the cursor, out of the queue, and out of what the turn will read: a
+    // line being edited is not one the reader has sent.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    let mut editor = Editor::new();
+    queue.walk(false);
+
+    assert!(queue.take_back(&mut editor, Offer::Turn(&steer)));
+
+    assert_eq!(editor.text(), "second");
+    editor.press(Key::Char('!'));
+    assert_eq!(editor.text(), "second!", "the cursor is after the line");
+    assert_eq!(waiting(&queue), vec!["first", "third"]);
+    assert_eq!(queue.highlighted(), 1);
+    assert_eq!(steer.take(), vec!["first".to_owned(), "third".to_owned()]);
+}
+
+#[test]
+fn between_turns_the_panel_holds_the_only_copy_and_both_keys_reach_it() {
+    // A used-up plan held these lines with no turn running, so no steer has
+    // them: the keys act on the panel alone, and nothing else is asked.
+    let (mut queue, _) = queued(&["first", "second", "third"]);
+    let mut editor = Editor::new();
+
+    assert!(queue.take_back(&mut editor, Offer::Nowhere));
+    assert_eq!(editor.text(), "first");
+    assert!(queue.delete(Offer::Nowhere));
+
+    assert_eq!(waiting(&queue), vec!["third"]);
+}
+
+/// The box, holding `line` as though it had been typed there.
+fn typed(line: &str) -> Editor {
+    let mut editor = Editor::new();
+    for key in line.chars() {
+        editor.press(Key::Char(key));
+    }
+    editor
+}
+
+#[test]
+fn ctrl_enter_readies_every_line_then_the_box_and_holds_them_from_the_turn() {
+    // The turn being stopped takes none of them on its way out, and the next
+    // takes them as one: the oldest its prompt and the rest offered to it, in
+    // the order they were typed, the box's line last.
+    let (mut queue, steer) = queued(&["first", "second"]);
+    let mut editor = typed("third");
+
+    assert_eq!(queue.send_all(&mut editor, &steer), Now::Sending);
+
+    assert!(
+        editor.is_empty(),
+        "the box's line was not sent with the rest"
+    );
+    assert_eq!(waiting(&queue), vec!["first", "second", "third"]);
+    assert!(!steer.any(), "the turn being stopped can still take a line");
+    assert!(matches!(queue.offer(&steer), Offer::Nowhere));
+
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
+    assert_eq!(steer.take(), vec!["second".to_owned(), "third".to_owned()]);
+    assert_eq!(queue.waiting_count(), 0);
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
+fn ctrl_enter_sends_the_box_alone_where_nothing_is_waiting_and_nothing_where_it_is_empty() {
+    let steer = Steer::new();
+
+    let mut queue = Prompts::default();
+    let mut editor = Editor::new();
+    assert_eq!(
+        queue.send_all(&mut editor, &steer),
+        Now::Nothing,
+        "the turn was stopped with nothing to send"
+    );
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+
+    let mut editor = typed("only");
+    assert_eq!(queue.send_all(&mut editor, &steer), Now::Sending);
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("only"));
+    assert!(!steer.any());
+}
+
+#[test]
+fn ctrl_enter_whose_box_line_meets_a_ceiling_stops_nothing() {
+    // Stopped anyway, the turn would be sent everything but the line the
+    // reader pressed the key to send with it.
+    let lines: Vec<String> = (0..QUEUED_LINES).map(|n| format!("line {n}")).collect();
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let (mut queue, steer) = queued(&lines);
+    let mut editor = typed("one more");
+
+    assert_eq!(queue.send_all(&mut editor, &steer), Now::Refused);
+
+    assert_eq!(editor.text(), "one more", "the box lost a line it refused");
+    assert_eq!(queue.waiting_count(), QUEUED_LINES);
+    assert!(steer.any(), "the running turn's offer was taken from it");
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
+fn ctrl_s_readies_the_highlighted_line_alone_and_the_rest_wait_behind_its_turn() {
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    queue.walk(false);
+
+    assert!(queue.send_now(&steer));
+    assert!(!steer.any(), "the turn being stopped can still take a line");
+
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("second"));
+    assert!(!steer.any(), "a line was sent with the one sent alone");
+    assert_eq!(waiting(&queue), vec!["first", "third"]);
+    assert_eq!(
+        queue.highlighted(),
+        1,
+        "on the line that followed the one sent"
+    );
+    assert!(
+        matches!(queue.offer(&steer), Offer::Nowhere),
+        "the rest are offered to the turn they wait behind"
+    );
+
+    // Once that turn is over they are taken whole, as any queue is.
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
+    assert_eq!(steer.take(), vec!["third".to_owned()]);
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
+fn ctrl_s_whose_line_is_deleted_before_the_turn_stops_sends_no_other_line_alone() {
+    // The stop lands when the turn next looks, and keys go on working until
+    // then. The reader who walks back to the line Ctrl+S sent and deletes it
+    // has chosen nothing to go alone, so what is left goes as any queue does,
+    // and not whichever line came up into the front.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    queue.walk(false);
+    assert!(queue.send_now(&steer));
+
+    // Back past the line it was moved ahead of, to the front, where it went.
+    queue.walk(true);
+    queue.walk(true);
+    assert_eq!(queue.highlighted(), 0);
+    assert!(queue.delete(queue.offer(&steer)));
+
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
+    assert_eq!(steer.take(), vec!["third".to_owned()]);
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+}
+
+#[test]
+fn ctrl_e_and_ctrl_x_reach_the_lines_ctrl_s_holds_back() {
+    // Held back from the turn, the lines are on offer to nothing but the
+    // panel, so its keys act on them there alone: asking the turn to give back
+    // a line it was never offered would refuse every one of them.
+    let (mut queue, steer) = queued(&["first", "second", "third", "fourth"]);
+    assert!(queue.send_now(&steer));
+    assert_eq!(queue.highlighted(), 1);
+
+    assert!(queue.delete(queue.offer(&steer)));
+    let mut editor = Editor::new();
+    assert!(queue.take_back(&mut editor, queue.offer(&steer)));
+
+    assert_eq!(editor.text(), "third");
+    assert_eq!(waiting(&queue), vec!["first", "fourth"]);
+    assert!(
+        matches!(queue.offer(&steer), Offer::Nowhere),
+        "what is left is offered to the turn it waits behind"
+    );
+}
+
+#[test]
+fn ctrl_enter_after_ctrl_s_sends_every_line_rather_than_the_one_alone() {
+    // The later key asks for all of it, so nothing is left to go alone.
+    let (mut queue, steer) = queued(&["first", "second", "third"]);
+    queue.walk(false);
+    assert!(queue.send_now(&steer));
+
+    assert_eq!(queue.send_all(&mut Editor::new(), &steer), Now::Sending);
+
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("second"));
+    assert_eq!(steer.take(), vec!["first".to_owned(), "third".to_owned()]);
+}
+
+#[test]
+fn ctrl_s_on_the_last_line_leaves_the_highlight_on_the_new_last() {
+    let (mut queue, steer) = queued(&["first", "second"]);
+    queue.walk(false);
+
+    assert!(queue.send_now(&steer));
+    assert_eq!(batched(&mut queue, &steer).as_deref(), Some("second"));
+    assert_eq!(waiting(&queue), vec!["first"]);
+    assert_eq!(queue.highlighted(), 0);
+}
+
+#[test]
+fn ctrl_s_sends_nothing_the_turn_has_taken_or_that_is_not_there() {
+    // A line the turn took is in its transcript already: sent again it would
+    // be said twice. Where nothing is queued there is nothing to send, and
+    // the turn goes on.
+    let (mut queue, steer) = queued(&["first"]);
+    drop(steer.take());
+
+    assert!(!queue.send_now(&steer));
+    assert_eq!(waiting(&queue), vec!["first"]);
+    assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
+
+    assert!(!Prompts::default().send_now(&steer));
+}
+
+#[test]
+fn a_line_the_box_has_no_room_for_stays_queued_and_the_panel_says_so() {
+    // The box already holds a draft, and the highlighted line is too long to
+    // go in beside it. Taken out of the queue before the box refused it, the
+    // line would be in neither place.
     let (mut queue, steer) = queued(&["first"]);
     let long = "y".repeat(Editor::MAX_BYTES - 16);
     let mut typing = Editor::new();
@@ -442,98 +457,251 @@ fn editing_a_queued_line_the_box_cannot_take_keeps_it_queued() {
     let draft = "a draft still being written";
     let mut editor = Editor::new();
     assert_eq!(editor.paste(draft), Typed::Changed);
+    queue.walk(false);
 
-    let mut standing = Standing::default();
-    standing.open(&queue, &steer);
-    against(&mut standing, &Pressed::Down, &mut queue, &steer);
+    assert!(
+        queue.take_back(&mut editor, Offer::Turn(&steer)),
+        "the panel owes a frame"
+    );
 
-    for key in ['e', 'x'] {
-        standing.against(
-            &Pressed::Key(Key::Char(key)),
-            Reading {
-                queue: &mut queue,
-                editor: &mut editor,
-                steer: &steer,
-            },
-        );
-
-        // Compared by length, so a failure does not print a megabyte.
-        assert_eq!(
-            queue.waiting_all().map(str::len).collect::<Vec<_>>(),
-            vec!["first".len(), long.len()],
-            "{key} lost a line the box could not take"
-        );
-        assert_eq!(queue.waiting_all().nth(1), Some(long.as_str()));
-        assert_eq!(queue.bytes, "first".len() + long.len());
-        assert_eq!(editor.text(), draft, "the draft is as it was");
-        assert_eq!(standing, Standing::Open(1), "the mark is still on it");
-    }
-
-    steer.release();
-    let taken = steer.take();
+    // Compared by length, so a failure does not print a megabyte.
     assert_eq!(
-        taken.iter().map(String::len).collect::<Vec<_>>(),
+        queue.waiting_all().map(str::len).collect::<Vec<_>>(),
+        vec!["first".len(), long.len()]
+    );
+    assert_eq!(queue.bytes, "first".len() + long.len());
+    assert_eq!(queue.highlighted(), 1, "the highlight is still on it");
+    assert_eq!(editor.text(), draft, "the draft is as it was");
+    assert_eq!(
+        steer.take().iter().map(String::len).collect::<Vec<_>>(),
         vec!["first".len(), long.len()],
         "the turn still reads it"
     );
-    assert!(taken.last().is_some_and(|last| *last == long));
+
+    let laid = said(&panel(&queue, 80, 40, Style::plain()));
+    assert_eq!(
+        laid.get(2).map(String::as_str),
+        Some("2 queued · ctrl+enter to send all now · no room in the box · line stays queued"),
+        "beside the title, where the row holds both"
+    );
+
+    assert!(queue.settle(), "the next key clears it");
+    assert!(!queue.settle(), "and only once");
+    let laid = said(&panel(&queue, 80, 40, Style::plain()));
+    assert_eq!(
+        laid.get(2).map(String::as_str),
+        Some("2 queued · ctrl+enter to send all now")
+    );
 }
 
 #[test]
-fn deleting_a_queued_line_removes_it_without_taking_it_back() {
-    // The line is gone from the queue and from what the turn reads, and the box
-    // is exactly as it was: nothing was put there to be sent by accident.
-    for key in [Key::Char('d'), Key::Delete] {
-        let (standing, queue, editor, steer) = after(&["first", "second", "third"], 1, key);
+fn a_narrow_window_says_the_box_had_no_room_under_the_title() {
+    let (mut queue, steer) = queued(&["first"]);
+    let mut editor = Editor::new();
+    assert_eq!(
+        editor.paste(&"y".repeat(Editor::MAX_BYTES - 2)),
+        Typed::Changed
+    );
+    queue.take_back(&mut editor, Offer::Turn(&steer));
 
-        assert_eq!(
-            queue.waiting_all().collect::<Vec<_>>(),
-            vec!["first", "third"]
-        );
-        assert_eq!(queue.waiting_count(), 2);
-        assert_eq!(editor.text(), "", "the line was deleted, not taken back");
-        assert!(standing.is_open());
+    let laid = said(&panel(&queue, 40, 40, Style::plain()));
+    assert_eq!(
+        laid.get(2..5),
+        Some(
+            &[
+                "1 queued · ctrl+enter to send all now".to_owned(),
+                "no room in the box · line stays queued".to_owned(),
+                "› first".to_owned(),
+            ][..]
+        ),
+        "in the blank that parted the title from the lines"
+    );
 
-        steer.release();
-        assert_eq!(steer.take(), vec!["first".to_owned(), "third".to_owned()]);
+    let laid = said(&panel(&queue, 24, 40, Style::plain()));
+    assert!(laid.iter().all(|row| crucible_tui::columns(row) <= 24));
+    assert!(
+        laid.iter().any(|row| row == "line stays queued"),
+        "folded, not cut: {laid:?}"
+    );
+}
+
+#[test]
+fn a_line_leaving_from_before_the_highlight_keeps_it_on_the_same_line() {
+    // What the turn taking the oldest line does while the reader has walked
+    // further down: the line they were on is still the one the keys act on.
+    let (mut queue, _) = queued(&["first", "second", "third"]);
+    queue.walk(false);
+    queue.walk(false);
+
+    assert!(queue.steered("first"));
+
+    assert_eq!(waiting(&queue), vec!["second", "third"]);
+    assert_eq!(queue.highlighted(), 1);
+    assert_eq!(queue.waiting_all().nth(queue.highlighted()), Some("third"));
+}
+
+#[test]
+fn a_short_window_names_fewer_lines_and_none_below_one() {
+    // At 80 columns the rows around the lines are seven: the rule and its
+    // blank, the title and its blank, the blank over the footer, the footer
+    // and the blank under it. Each line past the first costs a blank too.
+    let (queue, _) = queued(&FIVE);
+    let named = |room| {
+        said(&panel(&queue, 80, room, Style::plain()))
+            .iter()
+            .filter(|row| {
+                row.ends_with("first") || row.ends_with("second") || row.ends_with("third")
+            })
+            .count()
+    };
+
+    assert_eq!(named(7), 0);
+    assert!(panel(&queue, 80, 7, Style::plain()).is_empty());
+    assert_eq!(named(8), 1);
+    assert_eq!(named(10), 2);
+    assert_eq!(named(12), 3);
+    assert_eq!(named(40), 3);
+    for room in 0..40 {
+        assert!(panel(&queue, 80, room, Style::plain()).len() <= room);
     }
 }
 
 #[test]
-fn deleting_the_last_queued_line_closes_the_view_and_sends_nothing() {
-    let (standing, queue, editor, steer) = after(&["only"], 0, Key::Char('d'));
+fn a_megabyte_line_is_cut_to_its_row() {
+    let long = "y".repeat(Editor::MAX_BYTES - 1);
+    let (queue, _) = queued(&[long.as_str()]);
+    let style = Style::plain();
 
-    assert!(!standing.is_open());
-    assert_eq!(queue.waiting_count(), 0);
-    assert_eq!(editor.text(), "");
-    assert!(!steer.any());
-    assert!(steer.take().is_empty(), "the deleted line was sent anyway");
+    let laid = said(&panel(&queue, 80, 40, style));
+    let named = laid.get(4).map(String::as_str).unwrap_or_default();
+    assert_eq!(crucible_tui::columns(named), 80);
+    assert!(named.starts_with("› yyy"));
+    assert!(named.ends_with(style.glyphs().ellipsis()));
 }
 
 #[test]
 fn deleting_a_queued_line_gives_back_the_bytes_it_held() {
     // The ceiling is on what is waiting, so a deleted line is room for another.
-    let (_, queue, _, _) = after(&["first", "second"], 0, Key::Char('d'));
+    let (mut queue, steer) = queued(&["first", "second"]);
+    queue.delete(Offer::Turn(&steer));
 
     assert_eq!(queue.bytes, "second".len());
 }
 
 #[test]
-fn the_queue_view_follows_the_colour_rule() {
-    // The marked line is the accent from its mark to its last word; the rest
-    // read plain and the footer quiet.
-    let (queue, _) = queued(&[
+fn the_panel_follows_the_colour_rule() {
+    // The highlighted line is the accent from its mark to its last word; the
+    // rule is the one other accent, and every other row reads plain or quiet.
+    let (mut queue, steer) = queued(&[
         "first",
-        "a second line long enough to wrap in a narrow window, and then some",
+        "a second line long enough to be cut in a narrow window, and then some",
         "third",
     ]);
-    for (columns, glyphs) in [(80, Style::plain()), (40, Style::plain())] {
-        for at in 0..3 {
-            let laid = rows(&queue, at, columns, 20, glyphs);
+    let mut full = Editor::new();
+    assert_eq!(
+        full.paste(&"y".repeat(Editor::MAX_BYTES - 2)),
+        Typed::Changed
+    );
 
-            crate::cli::colour_rule::holds(&format!("queue view at {columns}"), &laid, |row| {
-                crate::cli::colour_rule::marked(row)
-            });
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for columns in [80, 40, 24] {
+            for at in 0..3 {
+                while queue.walk(true) {}
+                for _ in 0..at {
+                    queue.walk(false);
+                }
+                for refused in [false, true] {
+                    queue.settle();
+                    if refused {
+                        queue.take_back(&mut full, Offer::Turn(&steer));
+                    }
+                    let laid = panel(&queue, columns, 40, Style::drawn(glyphs));
+
+                    crate::cli::colour_rule::holds(
+                        &format!("queue panel at {columns}, {at}, {refused}"),
+                        &laid,
+                        crate::cli::colour_rule::marked,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_window_too_narrow_for_a_line_beside_its_mark_lays_no_panel_out() {
+    // Two columns are the mark and the space after it, so a window that wide
+    // has nowhere to put any of the line; one wider has, and every row it
+    // lays out stays inside the window in either glyph set.
+    let (queue, _) = queued(&FIVE);
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let style = Style::drawn(glyphs);
+        for columns in 0..=MARKED {
+            assert!(
+                panel(&queue, columns, 40, style).is_empty(),
+                "{columns} {glyphs:?}"
+            );
+        }
+        for columns in MARKED + 1..=12 {
+            let laid = panel(&queue, columns, 80, style);
+            assert!(!laid.is_empty(), "{columns} {glyphs:?}");
+            for row in said(&laid) {
+                assert!(
+                    crucible_tui::columns(&row) <= columns,
+                    "{columns} {glyphs:?}: {row:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_state_of_the_panel_fits_every_window_it_is_given() {
+    // The panel's own fit sweep, since it is laid out here and not among the
+    // components the crate's sweep walks: fresh, walked into the middle,
+    // walked to the end, and saying the box had no room — each at every width
+    // and every room it decides anything at, in either glyph set.
+    let fresh = queued(&FIVE).0;
+    let mut middle = queued(&FIVE).0;
+    middle.walk(false);
+    middle.walk(false);
+    let mut end = queued(&FIVE).0;
+    for _ in 0..FIVE.len() {
+        end.walk(false);
+    }
+    let (mut refused, steer) = queued(&FIVE);
+    let mut editor = Editor::new();
+    assert_eq!(
+        editor.paste(&"y".repeat(Editor::MAX_BYTES - 2)),
+        Typed::Changed
+    );
+    refused.take_back(&mut editor, Offer::Turn(&steer));
+
+    for (state, queue) in [
+        ("fresh", &fresh),
+        ("middle", &middle),
+        ("end", &end),
+        ("refused", &refused),
+    ] {
+        let marked = queue.waiting_all().nth(queue.highlighted()).unwrap();
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let style = Style::drawn(glyphs);
+            for columns in 1..=200 {
+                for room in 0..=24 {
+                    let laid = said(&panel(queue, columns, room, style));
+                    let at = format!("{state} {glyphs:?} {columns}x{room}");
+                    assert!(laid.len() <= room, "{at}: {laid:?}");
+                    for row in &laid {
+                        assert!(crucible_tui::columns(row) <= columns, "{at}: {row:?}");
+                    }
+                    if columns >= 12 && !laid.is_empty() {
+                        assert!(
+                            laid.iter().any(|row| row.contains(marked)),
+                            "{at}: the highlighted line is not named in {laid:?}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

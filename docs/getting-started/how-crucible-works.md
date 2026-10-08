@@ -64,13 +64,13 @@ answers without asking for a tool. It can also end sooner, for example when:
 
 - You press <kbd>Esc</kbd>. The turn stops at its next step and nothing is
   killed, as
-  [When an answer stops early](getting-started.md#when-an-answer-stops-early)
+  [When an answer stops early](first-session.md#when-an-answer-stops-early)
   describes.
 - You say no at a permission question.
 - The answer stops early: it reached the model's output-token ceiling, the
   provider's filter cut it, or the provider paused it. The turn ends there,
   and the line under it says which.
-  [When an answer stops early](getting-started.md#when-an-answer-stops-early)
+  [When an answer stops early](first-session.md#when-an-answer-stops-early)
   explains what to do next.
 - The turn produces more tokens than the `spendCeiling` in
   [configuration](../configuration/configuration.md#compaction). It is off
@@ -93,7 +93,7 @@ A line you type while the turn runs is offered to it. The turn takes it at the
 start of its next round, never in the middle of an answer or while a tool is
 out, and the model adjusts course from there. A turn that was already
 finishing leaves the line to be answered as a turn of its own;
-[Getting started](getting-started.md#run-it) says how the box behaves while
+[Getting started](first-session.md#run-it) says how the box behaves while
 you type.
 
 When something the model was told changes, such as a tool it found with

@@ -55,8 +55,8 @@ pub(crate) enum Shape {
     /// every layer's own set to decide what each may add or narrow.
     TextSet { maximum: usize, bytes: usize },
 
-    /// A whole number between two bounds, written as a JSON integer or as the
-    /// string the environment would hold.
+    /// A whole number between two bounds, written as a JSON whole number (`6`
+    /// or `6.0`) or as the string the environment would hold.
     ///
     /// A string is allowed because the one place this appears is `env`, and the
     /// environment holds strings — see [`VALUE`]. The bounds are what the
@@ -69,7 +69,7 @@ pub(crate) enum Shape {
     Whole(&'static Whole),
 
     /// A whole number between two bounds, both included, written as a JSON
-    /// integer and nothing else.
+    /// whole number (`6` or `6.0`) and nothing else.
     ///
     /// What a [`Limit`](Shape::Limit) is where nought means something: a
     /// delay of none is a delay, and a ceiling of none is not a ceiling. Not a
@@ -316,16 +316,16 @@ const PROVIDER: Shape = Shape::Fields(&[
 /// Text for every variable, because this block is the environment and the
 /// environment holds strings. The one exception is the declared whole number,
 /// [`MOUSE_SCROLL_SPEED`] within [`SCROLL_SPEED`], which also takes a JSON
-/// integer: `spelled` gives its digits, so a command sees the same variable
-/// either way.
+/// whole number: `spelled` gives its digits, so a command sees the same
+/// variable either way.
 const VALUE: Shape = Shape::Text;
 
 /// The bounds a whole number is allowed to fall between: one in the `env` block,
 /// or a [`Shape::Within`] anywhere else.
 ///
 /// The block is the environment, so the number may be written as the string the
-/// environment holds or as a JSON integer. The schema publishes the bounds for
-/// the integer as `minimum` and `maximum`, and for the string as a pattern
+/// environment holds or as a JSON whole number. The schema publishes the bounds
+/// for the number as `minimum` and `maximum`, and for the string as a pattern
 /// generated from the same two numbers, so neither can say what the other
 /// refuses. The reader is `settings::variables`, which takes decimal digits
 /// only — no sign, no leading zero, no space — so that the pattern, which has
@@ -335,6 +335,35 @@ pub(crate) struct Whole {
     pub(crate) least: u16,
     /// The largest.
     pub(crate) most: u16,
+}
+
+/// The whole number a JSON value stands for, if it stands for one that is not
+/// negative.
+///
+/// What the walk checks a whole-number key against and what every reader of
+/// one takes, so a key can never be accepted in one spelling and read in
+/// another. The schema calls these keys `integer`, and an editor holds `6.0`
+/// to be one, so a number with a zero fraction is the integer it equals.
+/// Only up to 2^53, past which a float no longer holds every whole number and
+/// `6.0` would be a neighbour of what was written; `-0.0` is nought. A
+/// fraction, a negative, a string and anything too large to hold exactly are
+/// nothing.
+pub(crate) fn whole(value: &serde_json::Value) -> Option<u64> {
+    /// 2^53, the last whole number past which a float skips some.
+    const EXACT: f64 = 9_007_199_254_740_992.0;
+
+    let number = value.as_number()?;
+    if let Some(whole) = number.as_u64() {
+        return Some(whole);
+    }
+    let real = number.as_f64()?;
+    // An infinity's fraction is not nought, so the first test refuses it too.
+    if real.fract() != 0.0 || !(0.0..=EXACT).contains(&real) {
+        return None;
+    }
+    // Written out and read back rather than cast: a float's decimal form is
+    // exact for every whole number this far down, and has no exponent.
+    real.abs().to_string().parse().ok()
 }
 
 /// How far one notch of the wheel may be asked to move the transcript.

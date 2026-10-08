@@ -30,8 +30,10 @@ same way afterwards.
 ## Before you tag
 
 1. **`dev` is green, and so is the release branch.** CI passed on the commit
-   you intend to tag. `main` is only as green as what you are about to merge
-   into it, so the reading that matters is the one on the release pull request.
+   you intend to tag. A pull request's run leaves the macOS Intel and Windows
+   ARM64 tests to the run its merge starts, so the readings that matter are the
+   run on the `dev` commit the release branch is cut from, and the run the
+   release merge starts on `main`, which step 3 waits for.
 2. **Gates pass locally.**
 
    ```bash
@@ -62,8 +64,8 @@ same way afterwards.
      times slower; a smaller slowdown is this run's to catch.
    - This run, here, on a quiet machine, is the authoritative one for the
      release. It is what decides whether the tag is cut.
-   - The release workflow runs them again on a shared runner. Publication does
-     not wait for that; the budget was already decided here.
+   - The release workflow's staging run runs them again on a shared runner.
+     Its verdict does not wait for that; the budget was already decided here.
 
    When a shared-runner probe goes red and this machine holds, the answer is
    not to re-run until it passes. Either the probe is measuring something the
@@ -71,17 +73,24 @@ same way afterwards.
    looks — both are decisions to make in the open, by editing the limit in the
    probe with the reason written next to it, so the next person inherits a
    number somebody chose.
-4. **The changelog is real.** Move everything under `Unreleased` into a new
-   version section with today's date, and add the comparison link. Written for
-   someone deciding whether to upgrade, not generated from commit subjects.
-   Open the section with a summary above its first `###` list: a bold lead and
-   at most three sentences saying what the release changes for that person.
+4. **The changelog is real.** Each change since the last release left its
+   entry in a file of its own in this checkout's `changelog.d/`, which git
+   ignores, and `CHANGELOG.md` is edited by this commit alone.
+   `python3 scripts/python/changelog-entries.py assemble --version X --date D`
+   writes the version section with today's date from those files and deletes
+   them; it refuses, changing nothing, when there is none, an entry or
+   `Unreleased` breaks the rules `check` holds them to, or the section
+   exists. Then read the lists it wrote and add the comparison link. Written
+   for someone deciding whether to upgrade, not generated from commit
+   subjects. Open the section with a summary above its first `###` list: a
+   bold lead and at most three sentences saying what the release changes for
+   that person.
    The release page shows that summary, the comparison link and a link to the
    changelog, and
    `scripts/python/release-notes.py <version>` prints it as it will appear.
 5. **The install path works from scratch** — advisory for now: the release
-   workflow still runs its smoke job but no longer waits for it before
-   publishing, and this local run is
+   workflow's staging run still runs its smoke job but its verdict does not
+   wait for it, and this local run is
    likewise worth doing when the packaging changed rather than on every tag.
    Every gate above builds from this tree with this machine's toolchain, so
    none of them can see what a shipped binary needs from the machine it lands
@@ -105,7 +114,7 @@ same way afterwards.
    and a home directory that did not exist a moment ago. It reports the glibc
    floor, which is the number that decides which distributions this release
    leaves behind, and fails when that floor rises above glibc 2.34, the floor
-   `docs/getting-started/getting-started.md` promises. Raising the promise is a
+   `docs/getting-started/first-session.md` promises. Raising the promise is a
    product decision: change the script's ceiling and that page together.
 
    The run stops short of a completed turn unless `CRUCIBLE_SMOKE_KEY` is set,
@@ -136,10 +145,11 @@ new language workflows become peers. The ruleset has no bypass and therefore
 applies to the release change too.
 
 ```bash
-# 1. Bump the single version, and update the changelog in the same commit.
+# 1. Bump the single version, and build the changelog section in the same commit.
 git switch dev && git pull
 git switch -c release/v0.0.1
-$EDITOR Cargo.toml CHANGELOG.md
+python3 scripts/python/changelog-entries.py assemble --version 0.0.1 --date "$(date -u +%F)"
+$EDITOR Cargo.toml CHANGELOG.md   # the version, the summary and the comparison links
 cargo build                     # refresh Cargo.lock with the new version
 
 scripts/sh/check.sh
@@ -152,12 +162,21 @@ gh pr create --base main --title "release: 0.0.1"
 gh pr checks --watch
 gh pr merge --merge
 
-# 3. Tag the commit CI just proved green.
+# 3. Wait for the run the merge started on main, which tests every platform,
+#    then stage that commit's release and wait for its verdict.
 git switch main && git pull
+gh run watch --exit-status "$(gh run list --workflow blocking-ci.yml --branch main \
+  --event push --commit "$(git rev-parse HEAD)" --json databaseId -q '.[0].databaseId')"
+gh workflow run release.yml --ref main
+sleep 10   # the dispatched run takes a moment to be listed
+gh run watch --exit-status "$(gh run list --workflow release.yml --branch main \
+  --event workflow_dispatch --commit "$(git rev-parse HEAD)" --json databaseId -q '.[0].databaseId')"
+
+# 4. Tag the commit that staged, which publishes what it staged.
 git tag -a v0.0.1 -m "crucible 0.0.1"
 git push origin v0.0.1
 
-# 4. Give the bump back to the branch the next change is written on.
+# 5. Give the bump back to the branch the next change is written on.
 git switch dev && git pull
 git switch -c chore/merge-v0.0.1
 git merge main
@@ -168,7 +187,7 @@ gh pr checks --watch
 gh pr merge --merge
 ```
 
-Step 4 carries the bump over a branch rather than opening `main` against `dev`
+Step 5 carries the bump over a branch rather than opening `main` against `dev`
 directly, because whatever the merge needs, a conflict resolved or `dev`
 brought in, would have to be pushed to the head, and the ruleset refuses
 pushes to `main`. A branch cut from `dev` takes the merge where it can be
@@ -179,7 +198,7 @@ it did.
 is up to date with the base. Only a release branch or a hotfix reaches `main`,
 one at a time.
 
-Step 4 is not bookkeeping either. Until it runs, `dev` builds a binary that
+Step 5 is not bookkeeping either. Until it runs, `dev` builds a binary that
 reports the previous version and a changelog with no entry for the release that
 just went out, and the next release branch cut from it would bump from the
 wrong number. A release branch cut before the merge back is itself behind
@@ -200,10 +219,40 @@ change or on its clock, so many pull requests never receive it. Deterministic
 license and source policy is part of `CI required` through the always-called
 dependency workflow.
 
-Pushing the tag is the trigger. The release workflow builds every artifact,
-checksums and attests them, and opens the GitHub Release with the changelog
-section's summary, its comparison link and a link to the full changelog as its
-body.
+A release is two runs of the release workflow, and only the second publishes.
+
+The dispatched run stages. It builds every artifact, writes the one
+`SHA256SUMS` for them, and then installs those exact bytes in a cell per
+platform, each checking what it installs against that file first: a fresh
+install on Linux x86-64 and ARM64, macOS Apple silicon and Intel and FreeBSD;
+an upgrade, with a session running, of a flat 0.45.3 and a flat 0.43.0 install
+on both Linux architectures; a rollback to the release
+`scripts/sh/rollback-drill.sh` names in `PRIOR_TAG`, followed by that drill on
+the staged binary; and on Windows, `install.ps1` installing the archive, both
+names reporting the version, a sandboxed command running through the installed
+broker, and nothing left after the uninstall. Its verdict job, `staged`, keeps
+the checksums as an artifact named `staged` only when every one of those cells
+passed. A run without that artifact staged nothing: read its red, fix it,
+dispatch again. A required cell that cannot run, because its runner never came
+or its virtual machine never booted, is a red like any other and blocks the
+release. Nothing in a dispatched run can publish.
+
+Pushing the tag promotes. The workflow runs the gate again, then finds the
+newest dispatched run of this repository whose commit has the tagged commit's
+tree, which has finished, and which kept one `staged` artifact, made and last
+changed while its one `staged` job ran and passed, because a job outside that
+verdict can outlive it; it refuses when there is none. It takes that run's
+artifacts, rebuilds nothing, and publishes them only when every file it
+would publish is one `staged` lists and every byte matches; the release's
+`SHA256SUMS` is the staged file itself. It attests them, creates the GitHub
+Release as a draft with the changelog section's summary, its comparison link
+and a link to the full changelog as its body, downloads the draft back and
+holds it to the staged checksums again, and only then makes it public.
+
+When the promote job refuses before the draft exists, dispatch the staging run
+on the tagged commit, wait for that run to finish, and re-run the failed job.
+When it refuses after, the draft is still private: delete it with
+`gh release delete v0.0.1 --yes`, which leaves the tag, and re-run the job.
 
 ## Artifacts
 
@@ -217,13 +266,12 @@ body.
 | Windows ARM64 | `aarch64-pc-windows-msvc` | `crucible-<version>-windows-aarch64.tar.gz`, `.exe` |
 | FreeBSD x86-64 | `x86_64-unknown-freebsd` | `crucible-<version>-freebsd-x86_64.tar.gz` |
 
-Six of those seven block the release. FreeBSD does not: it is built in a
-virtual machine on a Linux runner, on infrastructure this project cannot pin or
-repair, and it has held six finished platforms for half an hour at a time
-waiting for that machine. So it is best-effort, and the publish job counts the
-other six before uploading anything — a release short of any of them fails, and
-a release short of this one carries a warning saying so. Read the warnings on a
-release run before announcing it.
+All seven block the release. FreeBSD is built in a virtual machine on a Linux
+runner, on infrastructure this project cannot pin or repair, and it can hold
+the six finished platforms for half an hour waiting for that machine; it still
+blocks, because a release is published only as it was staged and installed,
+and a cell that never ran installed nothing. The promote job counts all seven
+before uploading anything, and a release short of any of them fails.
 
 `install.sh` and `uninstall.sh` are standalone release assets and are also in
 every archive. The Bash installer is for Unix targets. `install.ps1`, the
@@ -319,8 +367,8 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    somebody is running. That is why the schema's own description says the format
    is unstable for the whole 0.x line — an editor is a hint, and the program is
    the authority.
-3. Open a fresh `Unreleased` section in the changelog, on `dev`, once the
-   merge back has landed.
+3. Leave `Unreleased` empty: `assemble` wrote the section beneath it, and
+   the next change merged into `dev` leaves its entry in `changelog.d/`.
 4. Point the rollback drill at the release just published, on `dev`: the tag
    in `scripts/sh/rollback-drill.sh`, which its self-test and CI read, and the
    sentence in `docs/building/building.md` that names it. The drill proves the
@@ -351,16 +399,25 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    line, and until `publish` runs there is no line.
 
    A tag that published nothing is therefore the other case, and it is not the
-   same one. When a job fails before `publish`, there is no release, no
-   artifact, and so no checksum for a move to invalidate. Spending a version
-   number on infrastructure that was never the code's fault only leaves the next
-   reader comparing two versions that carry identical code. Confirm it shipped
-   nothing — `gh release view v<version>` answering `release not found` is the
-   check — then land the repair on `main` the way a hotfix does, relax the
-   `release tags` ruleset,
-   move the annotated tag onto the commit carrying the repair, and put the
-   ruleset back before anything else. Restoring it is part of the procedure,
-   not a follow-up.
+   same one. When the tag's run fails before the release is made public, there
+   is no published release, and so no checksum for a move to invalidate; a
+   draft it left behind is private, and nobody has recorded it. Spending a
+   version number on infrastructure that was never the code's fault only leaves
+   the next reader comparing two versions that carry identical code. In order:
+
+   1. Confirm it shipped nothing, and clear what it left.
+      `gh release list --json tagName,isDraft --jq '.[] | select(.tagName == "v<version>")'`
+      prints nothing, or one row whose `isDraft` is `true`. Delete such a draft
+      with `gh release delete v<version> --yes`, as [Cutting it](#cutting-it)
+      says. A row that is not a draft was published, and this case does not
+      apply.
+   2. Land the repair on `main` the way a hotfix does.
+   3. Stage the repair commit and wait for that run to finish, as step 3 of
+      [Cutting it](#cutting-it) does. The run the moved tag starts promotes
+      only what a staging run of that tree staged, and refuses without one.
+   4. Relax the `release tags` ruleset, move the annotated tag onto the commit
+      carrying the repair, and put the ruleset back before anything else.
+      Restoring it is part of the procedure, not a follow-up.
 
    The friction is deliberate. The published release is the usual case; this
    one is the exception, and it has to be shown to apply before it is used.
@@ -370,6 +427,6 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
 Yank is not available for a binary distribution, so:
 
 1. Mark the GitHub Release as a pre-release so it stops being "latest".
-2. Add a `### Removed` note to the changelog saying what was wrong and which
-   version supersedes it.
+2. Add a `### Removed` entry to `changelog.d/` saying what was wrong and
+   which version supersedes it; the replacement's section carries it.
 3. Ship the replacement the same day if the defect risks data or credentials.
