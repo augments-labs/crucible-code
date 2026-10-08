@@ -967,6 +967,19 @@ impl ToolOutput {
         }
     }
 
+    /// Replaces what the result says with `text`, keeping what the call did.
+    ///
+    /// For a call that ran and whose words there is no room for: whether it
+    /// failed, what it changed and who answered it all still hold, so they
+    /// stay. The files it asked the model to look at go with its words, since
+    /// they are part of what it was going to say; so does the capture-time
+    /// elision, which counted the words being replaced.
+    pub fn leave_out(&mut self, text: impl Into<Box<str>>) {
+        self.text = text.into();
+        self.capture = None;
+        self.attachments = Box::new([]);
+    }
+
     /// Finishes this live result into the value persistence acknowledges.
     ///
     /// The crossing runs one way. The change lines come off here and their
