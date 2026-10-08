@@ -595,6 +595,15 @@ newest hundred prompts and no more, and the file itself is bounded again across
 all of them, so it cannot grow either with how long you work or with how many
 checkouts you work in. Deleting it is how you forget what you have typed.
 
+Like a log, none of these is read through a symbolic link or waited on as a
+pipe. A link or a pipe named `recent.sessions` is an index that cannot be read:
+starting a session, `--continue` and `crucible sessions list` stop with
+`could not use the session index …` and the reason, and the welcome lists no
+sessions, until you remove it. One named `prompt.history` offers nothing back
+and is left as it is, so nothing you type is added to it. One among a session's
+saved call results makes that session's log refused as a log that cannot be
+read is.
+
 ### If you used crucible 0.0.2 or earlier
 
 Sessions used to live under `$XDG_DATA_HOME/crucible/sessions`, falling back to

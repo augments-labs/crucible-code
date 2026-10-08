@@ -21,8 +21,9 @@
 //! as untrusted as anything else read from one. It is not drawn — it is put
 //! into the editor, which already refuses every control character a line is
 //! not allowed to carry — so the flattening a title needs has no owner here.
+//! And it is read as one ordinary file, through [`super::privacy::opened`],
+//! so a link or a pipe under its name is a history that will not read.
 
-use std::fs::File;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
@@ -32,6 +33,7 @@ use serde_json::{Value, json};
 use super::SessionError;
 use super::beside::Beside;
 use super::claim;
+use super::privacy::opened;
 
 /// What the file is called. Its suffix deliberately cannot be a log's.
 const NAME: &str = "prompt.history";
@@ -190,8 +192,12 @@ impl Entry {
 }
 
 /// Every whole prompt the file holds, oldest first, empty where there is none.
+///
+/// A link or a pipe under the history's name is a history that cannot be
+/// read, refused without following the one or waiting on the other, and so
+/// left alone as one in a format this build does not know is.
 fn read(path: &Path) -> Result<Vec<Entry>, SessionError> {
-    let opened = match File::open(path) {
+    let opened = match opened(path) {
         Ok(file) => file,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(source) => return Err(problem(path, source)),

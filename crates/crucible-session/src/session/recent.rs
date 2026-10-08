@@ -35,7 +35,7 @@ use crucible_types::{Message, SessionId};
 
 use super::SessionError;
 use super::index;
-use super::replay::opened;
+use super::privacy::opened;
 use super::wire;
 
 /// How many logs the first frame may open before the scan gives up.

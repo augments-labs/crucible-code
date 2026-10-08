@@ -30,8 +30,11 @@
 //! crash leaves either complete version. A newly minted identifier is indexed
 //! before its header is written: a crash in between leaves a candidate readers
 //! validate and skip, rather than a complete log discovery can never find.
+//!
+//! Both files are read as one ordinary file each, through
+//! [`super::privacy::opened`]: an index under a link or a pipe is one that
+//! cannot be read, and a mark under either vouches for nothing.
 
-use std::fs::File;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
@@ -41,6 +44,7 @@ use crucible_types::SessionId;
 use super::SessionError;
 use super::beside::Beside;
 use super::claim;
+use super::privacy::opened;
 use super::replay::logs as legacy_logs;
 
 /// What the index file is called. Its suffix deliberately cannot be a log's.
@@ -251,8 +255,11 @@ fn read(path: &Path) -> Result<Option<Vec<Entry>>, SessionError> {
 }
 
 /// The index file's text, bounded, `None` where there is none yet.
+///
+/// A link or a pipe under the index's name is an index that cannot be read,
+/// refused without following the one or waiting on the other.
 fn text(path: &Path) -> Result<Option<String>, SessionError> {
-    let opened = match File::open(path) {
+    let opened = match opened(path) {
         Ok(file) => file,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(problem(path, source)),
@@ -385,9 +392,13 @@ fn digest(text: &str) -> String {
 }
 
 /// Whether the mark says this build wrote `text` last.
+///
+/// A mark that is a link or a pipe vouches for nothing, as one that will not
+/// open does: the next start scans once more rather than taking the word of a
+/// file outside the directory or waiting on a writer.
 fn vouched(directory: &Path, text: &str) -> bool {
     let mut held = String::new();
-    File::open(directory.join(ORDERED))
+    opened(&directory.join(ORDERED))
         .and_then(|mark| mark.take(MARK_BYTES).read_to_string(&mut held))
         .is_ok_and(|_| held == digest(text))
 }
