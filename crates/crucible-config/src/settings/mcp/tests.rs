@@ -418,7 +418,7 @@ fn printing_a_server_record_shows_its_arguments_as_a_reader_is_shown_them() {
 }
 
 #[test]
-fn printing_the_settings_shows_nothing_of_a_variable_written_under_a_server() {
+fn printing_the_settings_shows_nothing_of_a_secret_written_under_a_server() {
     // The document-level redaction reaches the block a user writes at the top
     // of a file. A server's own block is nested inside `mcp.servers`, and a
     // secret written there is the same secret.

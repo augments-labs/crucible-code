@@ -59,7 +59,8 @@ pub(crate) fn too_late(name: &str) -> bool {
 }
 
 /// A document, as `Debug` may write it: every `env` value replaced, wherever
-/// the block holding it is written.
+/// the block holding it is written, and each server's arguments shown as a
+/// reader is shown them.
 ///
 /// The block is the environment, so what a user puts in it is whatever the
 /// commands they run need — a token among them, in the two layers that are

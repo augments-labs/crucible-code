@@ -71,7 +71,8 @@ pub struct Settings {
 }
 
 impl fmt::Debug for Settings {
-    /// Written by hand so the `env` block is redacted. This type is what the
+    /// Written by hand so the `env` block is redacted, and each server's
+    /// arguments shown as a reader is shown them. This type is what the
     /// wiring above holds for the whole session, so it is the one most likely
     /// to end up inside somebody's diagnostic — and it holds every variable
     /// the two private layers set, values and all.
