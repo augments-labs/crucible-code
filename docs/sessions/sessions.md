@@ -609,6 +609,15 @@ and is left as it is, so nothing you type is added to it. One among a session's
 saved call results makes that session's log refused as a log that cannot be
 read is.
 
+Nor is anything written, locked or narrowed to your account through one, so
+nothing outside the sessions directory is changed by a link planted in it. A
+link or a pipe named for a session's `.jsonl.lock` is a claim that cannot be
+made: `--continue` stops with `could not claim the session log …`, as above.
+One named `recent.sessions.lock` stops starting a session and `--continue` with
+`could not use the session index …` until you remove it. The index also keeps a
+small mark beside it saying this build put it in order; under a link or a pipe
+that mark is simply not left, and each start scans the directory again.
+
 ### If you used crucible 0.0.2 or earlier
 
 Sessions used to live under `$XDG_DATA_HOME/crucible/sessions`, falling back to

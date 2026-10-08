@@ -22,6 +22,10 @@
 //! one of those names, and each reader refuses either the way it refuses a
 //! file of its own that will not open. The one exception is a running session
 //! reading back the log it created and is still writing, by the name it made.
+//!
+//! The marks beside them — the lock beside a log, the index's lock and the
+//! index's digest — are opened to write through [`mark`], which follows no
+//! link and waits on no pipe either.
 
 use std::fs::File;
 use std::io;
@@ -31,13 +35,13 @@ use std::path::Path;
 mod unix;
 
 #[cfg(unix)]
-pub(super) use unix::{directory, fresh, log, mark};
+pub(super) use unix::{directory, fresh, log};
 
 #[cfg(windows)]
 mod windows;
 
 #[cfg(windows)]
-pub(super) use windows::{directory, fresh, log, mark};
+pub(super) use windows::{directory, fresh, log};
 
 /// The file at `path`, opened to read, where it is one ordinary file.
 ///
@@ -67,6 +71,35 @@ pub(super) use windows::{directory, fresh, log, mark};
 /// the file as it reports one that will not open.
 pub(super) fn opened(path: &Path) -> Result<File, io::Error> {
     crucible_privacy::open_read_ordinary(path).map_err(crucible_privacy::PrivacyError::into_io)
+}
+
+/// Opens the mark at `path`, making it if it is not there, out of reach.
+///
+/// A mark is what a session that is open is locked by, what the index is
+/// locked by while it is replaced, and the digest beside the index. Each is
+/// held at what a log is held at: it is named for what it marks and sits in
+/// the same directory, so what it gives away by existing is what the file
+/// beside it gives away.
+///
+/// Opened to read and write, never truncated by the open. The access is what a
+/// lock needs: `flock` asks for none, but `LockFileEx` takes a lock only on a
+/// handle carrying read or write access, and a handle opened only to append
+/// carries neither, so a mark opened that way is a claim that is never taken.
+/// And the mark another crucible holds this instant is a file this call opens,
+/// so the open is not one that should change it.
+///
+/// The name is opened as the privacy crate opens a lock: a final link is
+/// refused rather than followed, so nothing is locked, written or put at a
+/// mark's mode wherever one leads, and on Unix a pipe is refused without
+/// waiting on its reader, on the handle that opened. What a refused mark means
+/// is each caller's: a claim that could not be attempted, or a digest not
+/// left.
+///
+/// # Errors
+///
+/// What the open said, or that what opened is not one ordinary file.
+pub(super) fn mark(path: &Path) -> Result<File, io::Error> {
+    crucible_privacy::lock(path).map_err(crucible_privacy::PrivacyError::into_io)
 }
 
 #[cfg(test)]

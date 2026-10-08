@@ -1,5 +1,5 @@
-//! Which names in the sessions directory are read, and what a link or a pipe
-//! under one costs.
+//! Which names in the sessions directory are read or written, and what a link
+//! or a pipe under one costs.
 //!
 //! A name in the sessions directory is still a name anything that can write
 //! there could have put a link or a pipe under. A link would continue whatever
@@ -8,7 +8,10 @@
 //! log that will not open is, and a log with a second hard name is not. The
 //! files beside the logs — the index, its mark, the prompt history and a
 //! deferred call's result — are read the same way, each refusing a link or a
-//! pipe as it refuses a file of its own that will not open.
+//! pipe as it refuses a file of its own that will not open. The marks, a
+//! log's lock, the index's lock and the index's digest, are written without
+//! following a link or waiting on a pipe, so nothing outside the directory is
+//! changed through one.
 
 #[cfg(unix)]
 use std::path::Path;
@@ -345,4 +348,148 @@ fn a_durable_result_that_is_a_pipe_is_refused_without_waiting_for_a_writer() {
     let outcome = within_a_bound(move || results::load(&log).map(drop));
 
     assert!(outcome.is_err());
+}
+
+/// A file outside the sessions directory, at a mode a mark is never held at,
+/// with a link to it left under `named`; returns the file.
+#[cfg(unix)]
+fn outside_behind(sample: &Sample, named: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fs::create_dir_all(sample.home()).expect("a home");
+    let outside = sample.home().join("outside");
+    fs::write(&outside, "not a mark").expect("a file outside the sessions directory");
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o644)).expect("a mode");
+    let _ = fs::remove_file(named);
+    std::os::unix::fs::symlink(&outside, named).expect("a link");
+    outside
+}
+
+/// What the file outside holds, and the mode it is at.
+#[cfg(unix)]
+fn untouched(outside: &Path) -> (String, u32) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    (
+        fs::read_to_string(outside).expect("the file outside"),
+        fs::metadata(outside)
+            .expect("the file outside")
+            .permissions()
+            .mode()
+            & 0o777,
+    )
+}
+
+/// The mark the index leaves is written once the index is, and a link under
+/// its name would carry that write, and the mode a mark is held at, to
+/// whatever file it leads to.
+#[cfg(unix)]
+#[test]
+fn a_mark_that_is_a_link_is_not_written_through() {
+    let sample = Sample::new("ordinary-mark-link-written");
+    planted(&sample, OLDER, "indexed");
+    index::ensure(&sample.logs()).expect("an index");
+    planted(&sample, NEWER, "not indexed yet");
+    let outside = outside_behind(&sample, &sample.logs().join("recent.sessions.ordered"));
+
+    index::ensure(&sample.logs()).expect("an index merged again");
+
+    assert_eq!(untouched(&outside), ("not a mark".to_owned(), 0o644));
+    assert_eq!(indexed(&sample), [NEWER, OLDER]);
+}
+
+/// A link to nothing under the mark's name would have the mark created
+/// wherever it leads.
+#[cfg(unix)]
+#[test]
+fn a_mark_that_is_a_dangling_link_makes_nothing_where_it_leads() {
+    let sample = Sample::new("ordinary-mark-link-dangling");
+    planted(&sample, NEWER, "not indexed yet");
+    fs::create_dir_all(sample.home()).expect("a home");
+    let nowhere = sample.home().join("nowhere");
+    std::os::unix::fs::symlink(&nowhere, sample.logs().join("recent.sessions.ordered"))
+        .expect("a link");
+
+    index::ensure(&sample.logs()).expect("an index");
+
+    assert!(!nowhere.exists(), "a mark was made outside the directory");
+    assert_eq!(indexed(&sample), [NEWER]);
+}
+
+/// The index's lock under a link would lock, and hold at a mark's mode, a
+/// file outside the directory. It is refused, as an index under a link is,
+/// rather than taken as a lock this process holds.
+#[cfg(unix)]
+#[test]
+fn an_index_lock_that_is_a_link_is_refused_rather_than_followed() {
+    let sample = Sample::new("ordinary-index-lock-link");
+    planted(&sample, NEWER, "the real one");
+    let outside = outside_behind(&sample, &sample.logs().join("recent.sessions.lock"));
+
+    let outcome = index::ensure(&sample.logs());
+
+    assert!(
+        matches!(&outcome, Err(SessionError::Index { at, .. }) if at.contains("recent.sessions")),
+        "{outcome:?}"
+    );
+    assert_eq!(untouched(&outside), ("not a mark".to_owned(), 0o644));
+}
+
+/// The index's lock under a pipe is no lock to hold, and is refused without
+/// waiting on a reader.
+#[cfg(unix)]
+#[test]
+fn an_index_lock_that_is_a_pipe_is_refused_without_waiting() {
+    let sample = Sample::new("ordinary-index-lock-pipe");
+    planted(&sample, NEWER, "the real one");
+    pipe_at(&sample.logs().join("recent.sessions.lock"));
+    let logs = sample.logs();
+
+    let outcome = within_a_bound(move || index::ensure(&logs));
+
+    assert!(
+        matches!(&outcome, Err(SessionError::Index { at, .. }) if at.contains("recent.sessions")),
+        "{outcome:?}"
+    );
+}
+
+/// The mark that says a session is open, under a link, would be a lock on a
+/// file outside the directory. `--continue` refuses it as a claim it could
+/// not attempt rather than continuing behind a guard on somebody else's file.
+#[cfg(unix)]
+#[test]
+fn a_session_lock_that_is_a_link_is_refused_by_continue_rather_than_followed() {
+    let sample = Sample::new("ordinary-claim-link");
+    let log = planted(&sample, NEWER, "the real one");
+    let outside = outside_behind(&sample, &PathBuf::from(format!("{}.lock", log.display())));
+    let before = fs::read(&log).expect("the log");
+
+    let outcome = continued(&sample);
+
+    assert!(
+        matches!(&outcome, Err(SessionError::Claim { at, .. }) if at.contains(NEWER)),
+        "{outcome:?}"
+    );
+    assert_eq!(untouched(&outside), ("not a mark".to_owned(), 0o644));
+    assert_eq!(fs::read(&log).expect("the log"), before);
+}
+
+/// The same mark under a pipe is refused the same way, without waiting.
+#[cfg(unix)]
+#[test]
+fn a_session_lock_that_is_a_pipe_is_refused_by_continue_without_waiting() {
+    let sample = Sample::new("ordinary-claim-pipe");
+    let log = planted(&sample, NEWER, "the real one");
+    pipe_at(&PathBuf::from(format!("{}.lock", log.display())));
+    let logs = sample.logs();
+    let workspace = sample.workspace();
+
+    let outcome = within_a_bound(move || {
+        Session::resume(&logs, &workspace).map(|(session, _)| session.path().to_owned())
+    });
+
+    assert!(
+        matches!(&outcome, Err(SessionError::Claim { at, .. }) if at.contains(NEWER)),
+        "{outcome:?}"
+    );
 }

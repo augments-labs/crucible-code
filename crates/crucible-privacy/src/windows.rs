@@ -187,13 +187,18 @@ pub(super) fn create_write(path: &Path) -> io::Result<File> {
 }
 
 pub(super) fn lock(path: &Path) -> io::Result<File> {
+    // A final reparse point is opened as itself rather than followed, so a
+    // link to nothing makes nothing where it leads, and what is proved is the
+    // handle that opened. The protected list is then written by name, as
+    // everywhere in this module.
     let file = OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
         .truncate(false)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)?;
-    reject_reparse(path)?;
+    regular(&file)?;
     narrow(path, 0)?;
     Ok(file)
 }

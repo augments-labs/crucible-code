@@ -374,3 +374,43 @@ fn every_created_kind_remains_reachable_by_its_owner() {
     assert_eq!(fs::read(scratch.0.join("partial")).unwrap(), b"secret");
     assert!(fs::read_dir(&scratch.0).unwrap().count() >= 2);
 }
+
+/// A pipe standing where a lock is taken is no file to lock, and opening one
+/// for writing can wait on a reader that is not coming.
+#[cfg(unix)]
+#[test]
+fn a_pipe_where_a_lock_is_taken_is_refused_without_waiting() {
+    let scratch = Scratch::new("lock-pipe");
+    fs::create_dir_all(&scratch.0).unwrap();
+    let at = scratch.0.join("pipe");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&at)
+        .status()
+        .expect("mkfifo is available on Unix");
+    assert!(made.success());
+
+    let opened = answered("locking a pipe standing where a lock is kept", move || {
+        lock(&at).map(drop)
+    });
+
+    assert_eq!(
+        opened.unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput,
+        "a pipe standing where a lock is kept was opened"
+    );
+}
+
+/// A link to nothing where a lock is taken would have the lock made wherever
+/// it leads.
+#[cfg(unix)]
+#[test]
+fn a_dangling_link_where_a_lock_is_taken_makes_nothing_where_it_leads() {
+    let scratch = Scratch::new("lock-dangling");
+    fs::create_dir_all(&scratch.0).unwrap();
+    let nowhere = scratch.0.join("nowhere");
+    let link = scratch.0.join("link");
+    std::os::unix::fs::symlink(&nowhere, &link).unwrap();
+
+    assert!(lock(&link).is_err());
+    assert!(!nowhere.exists());
+}

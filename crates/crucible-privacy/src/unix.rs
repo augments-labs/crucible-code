@@ -121,11 +121,17 @@ pub(super) fn create_write(path: &Path) -> io::Result<File> {
 }
 
 pub(super) fn lock(path: &Path) -> io::Result<File> {
+    // Opened without waiting for a peer, as `open_read` opens, so a pipe under
+    // the name is opened only to be refused below rather than held open on a
+    // reader. The proof comes before `narrow`, so nothing that is not one
+    // regular file has its mode set. On a regular file the flag bears on
+    // neither a lock nor a write.
     let file = opened(
         path,
-        OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
         private_file(),
     )?;
+    regular(&file)?;
     narrow(&file, FILE)?;
     Ok(file)
 }
