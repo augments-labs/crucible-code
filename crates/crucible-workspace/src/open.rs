@@ -175,8 +175,12 @@ impl WorkspacePath {
     /// directory. A failure before the rename leaves the destination untouched.
     /// `expected` names the descriptor an edit was derived from; a different
     /// file at the destination when it is checked makes the replacement fail.
-    /// The identity check and rename are separate operating-system calls, so
-    /// this is detection rather than a portable compare-and-swap primitive.
+    /// So does the same file when `unchanged`, asked of it then, says its
+    /// content is no longer what the caller derived the replacement from;
+    /// what counts as unchanged is the caller's to say, and it is not asked
+    /// when there is no `expected`. The checks and the rename are separate
+    /// operating-system calls, so this is detection rather than a portable
+    /// compare-and-swap primitive.
     /// `permissions` preserves an existing file's mode; `None` uses the
     /// account's ordinary creation mode for a new file.
     ///
@@ -195,8 +199,9 @@ impl WorkspacePath {
         permissions: Option<Permissions>,
         expected: Option<&File>,
         write: impl FnOnce(&mut File) -> Result<(), Error>,
+        unchanged: impl FnOnce(&mut File) -> bool,
     ) -> Result<(), PathError> {
-        descent::replaced(self, permissions, expected, write)
+        descent::replaced(self, permissions, expected, write, unchanged)
     }
 
     /// The path led somewhere else by the time it was opened.

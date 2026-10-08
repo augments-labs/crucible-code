@@ -1487,15 +1487,15 @@ fn tools(
     let mut tools = Tools::looking_up(startup.revealed.clone());
     let mut held: Vec<Held> = Vec::new();
 
-    // Which files have been read is learned by one tool and asked by another,
+    // Which files have been read is learned by one tool and asked by others,
     // and this is the only place that may know they share it. The record itself
     // comes from the caller: `/clear` and `/resume` empty it when they leave
-    // the session those files were read in, and neither tool can reach the
-    // other to be told.
+    // the session those files were read in, and no tool can reach the others
+    // to be told.
     tools.add_builtin(Read::new(workspace.clone(), seen.clone()))?;
     tools.add_builtin(Grep::new(workspace.clone()))?;
     tools.add_builtin(Glob::new(workspace.clone()))?;
-    tools.add_builtin(Edit::new(workspace.clone()))?;
+    tools.add_builtin(Edit::new(workspace.clone(), seen.clone()))?;
     tools.add_builtin(Write::new(workspace.clone(), seen.clone()))?;
 
     // The whole `env` block goes to the commands crucible runs. crucible does

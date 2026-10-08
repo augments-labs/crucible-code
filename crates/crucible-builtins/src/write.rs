@@ -3,11 +3,13 @@
 //! Whatever was at the name is gone afterwards, which makes this the one call
 //! here that can destroy work. So it refuses a file nobody has looked at: the
 //! agent may replace what it has read and what it wrote itself, and has to go
-//! and read anything else first. The refusal is a result rather than an error,
-//! so the turn continues and the model can do exactly that.
+//! and read anything else first. It refuses too a file whose content is no
+//! longer what the agent last saw, changed in place or replaced since, because
+//! what changed is what would be lost. Each refusal is a result rather than an
+//! error, so the turn continues and the model can read the file and try again.
 
 use std::fs;
-use std::io::Read as _;
+use std::io::{Read as _, Seek as _};
 use std::path::{Component, Path};
 
 use crucible_runtime::{BoxFuture, Cancel};
@@ -23,7 +25,7 @@ use std::sync::LazyLock;
 use crate::args::Args;
 use crate::atomic;
 use crate::changed;
-use crate::ledger::{Ledger, Shown};
+use crate::ledger::{Fingerprint, Ledger, Shown};
 use crate::schema::{Field, Schema, Shape};
 use crate::summary;
 use crate::target;
@@ -207,12 +209,17 @@ fn put(
     // read is one it cannot know it is discarding — including one another
     // program wrote a moment ago, which is the case a model has no way at
     // all to see.
-    if replaced && !seen.holds(path.as_path()) {
-        return Ok(ToolOutput::failed(format!(
-            "{requested} has not been read, so replacing it would discard what is in it: read it first"
-        ))
-        .into());
-    }
+    let read = if replaced {
+        let Some(read) = seen.fingerprint(path.as_path()) else {
+            return Ok(ToolOutput::failed(format!(
+                "{requested} has not been read, so replacing it would discard what is in it: read it first"
+            ))
+            .into());
+        };
+        Some(read)
+    } else {
+        None
+    };
 
     let mut original = if replaced {
         let file = match path.open_regular_to_change() {
@@ -223,6 +230,28 @@ fn put(
     } else {
         None
     };
+
+    // Asked of the file about to be replaced rather than of the name, so a
+    // file changed in place and one put at the name since the read are the
+    // same case: what is there is not what the agent saw.
+    if let (Some(file), Some(read)) = (original.as_mut(), read) {
+        let now = Fingerprint::read(&mut *file, || cancel.requested())
+            .and_then(|now| file.rewind().map(|()| now))
+            .map_err(|source| ToolError::Io {
+                tool: NAME.into(),
+                problem: format!("could not read {requested}").into(),
+                source,
+            })?;
+        let Some(now) = now else {
+            return Err(ToolError::Cancelled(NAME.into()));
+        };
+        if now != read {
+            return Ok(ToolOutput::failed(format!(
+                "{requested} changed since it was read, so replacing it would discard what changed: read it again"
+            ))
+            .into());
+        }
+    }
     let permissions = original
         .as_ref()
         .map(|file| file.metadata().map(|metadata| metadata.permissions()))
@@ -250,10 +279,10 @@ fn put(
     // changes atomically. Unix also flushes the directory; Windows flushes
     // the renamed file because its handle-relative rename has no
     // write-through form. A failure before commit leaves the old file
-    // whole, and a file whose identity changed before the final pre-commit
-    // check is refused rather than overwritten.
-    if let Err(problem) = atomic::replace(&path, content.as_bytes(), permissions, original.as_ref())
-    {
+    // whole, and a file whose identity or content changed before the final
+    // pre-commit check is refused rather than overwritten.
+    let expected = original.as_ref().zip(read);
+    if let Err(problem) = atomic::replace(&path, content.as_bytes(), permissions, expected) {
         return Ok(ToolOutput::failed(problem.to_string()).into());
     }
 
@@ -275,7 +304,10 @@ fn put(
     // learning what the same turn wrote.
     Ok(Shown {
         output,
-        file: Some(path.as_path().to_path_buf()),
+        file: Some((
+            path.as_path().to_path_buf(),
+            Fingerprint::of(content.as_bytes()),
+        )),
     })
 }
 

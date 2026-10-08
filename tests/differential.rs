@@ -384,7 +384,7 @@ fn every_built_in_tool_advertises_what_it_did() {
             Arc::new(crucible_sandbox_local::LocalSandbox::new()),
         )),
         Box::new(BashOutput::new(crucible_builtins::Background::new())),
-        Box::new(Edit::new(workspace.clone())),
+        Box::new(Edit::new(workspace.clone(), ledger.clone())),
         Box::new(Glob::new(workspace.clone())),
         Box::new(Grep::new(workspace.clone())),
         Box::new(Read::new(workspace.clone(), ledger.clone())),
