@@ -485,16 +485,41 @@ pub fn reopening(
 /// most recent one is the whole plan — the tool replaces the list every time —
 /// so the search stops at the first it finds from the end.
 ///
+/// Only a call whose result succeeded is read. One that was refused, declined,
+/// cancelled or never run, or that has no result because the log stops before
+/// one, asked for a plan that never took effect, and the plan in force is still
+/// the one before it; so such a call is passed over. The record is what decides
+/// this, so a call that wrote its plan and was then answered as failed — its
+/// answer would not fit the turn, or could not be kept — is passed over too,
+/// and the plan stood up is the last one the model was told it had written.
+///
 /// Nothing is said where there is none, and nothing is said where the call
 /// cannot be read: this is a picture of the work, drawn again from the record,
 /// and a session that is picked up without one opens the way a new session does.
 pub fn planned(plan: &Plan, transcript: &Transcript) {
-    let called = transcript.messages().iter().rev().find_map(|message| {
+    let messages = transcript.messages();
+    let called = messages.iter().enumerate().rev().find_map(|(at, message)| {
         let Message::Agent { calls, .. } = message else {
             return None;
         };
 
-        calls.iter().rev().find(|call| &*call.name == PLANNING)
+        // The results answering this message's calls come after it and before
+        // whatever the model or the user says next.
+        let results = messages
+            .iter()
+            .skip(at.saturating_add(1))
+            .take_while(|next| !matches!(next, Message::Agent { .. } | Message::User { .. }))
+            .find_map(|next| match next {
+                Message::ToolResults(results) => Some(results),
+                _ => None,
+            })?;
+
+        calls.iter().rev().find(|call| {
+            &*call.name == PLANNING
+                && results
+                    .iter()
+                    .any(|result| result.id == call.id && !result.output.is_failed())
+        })
     });
 
     if let Some(call) = called {

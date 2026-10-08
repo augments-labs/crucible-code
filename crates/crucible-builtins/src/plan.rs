@@ -232,7 +232,7 @@ impl Plan {
     /// Fills the plan from a call this session already made.
     ///
     /// What a resumed session runs over the last `todo_write` in the transcript
-    /// it replayed. Reading the call again rather than storing the plan
+    /// it replayed whose result succeeded. Reading the call again rather than storing the plan
     /// anywhere is what keeps a session file a record of what happened and
     /// nothing else, and it is the same reading the tool did — so a call the
     /// tool refused is refused again here, rather than seeding a plan that was
