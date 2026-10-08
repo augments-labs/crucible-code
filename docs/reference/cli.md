@@ -473,7 +473,8 @@ exit 0.
 
 Each shell reads the script from a different place. Either write it to a file
 once, which is quick to load, or run the command from the start-up file, which
-is always current and costs one process at every start:
+is always current and costs one process at every start. A directory below
+that does not exist yet is made first, as with `mkdir -p ~/.zfunc`:
 
 | Shell | Install |
 | --- | --- |
@@ -485,9 +486,9 @@ is always current and costs one process at every start:
 
 The script completes the command it was written for, `crucible`. The `cru`
 link the installer makes is a different name to the shell, and completes
-nothing until you tell the shell so, once the script is loaded: in bash,
-`complete -F _crucible cru` after `crucible`'s completion has been loaded
-(`_crucible` does not exist before it).
+nothing until you tell the shell so: in bash, `complete -F _crucible cru` in
+`~/.bashrc` after `source <(crucible completion bash)`, since `_crucible` does
+not exist before the script is loaded.
 
 ## Credentials from the command line
 

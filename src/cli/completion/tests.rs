@@ -5,7 +5,8 @@
 //! reaches every shell's script, and that the tree declares only the commands
 //! this file names. A command added without being named here turns the second
 //! red, which is what makes adding one a decision about its completion rather
-//! than an accident of it.
+//! than an accident of it. Every long flag the tree declares is held the same
+//! way, in each shell's script, beside a list of flags held by name.
 
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -182,9 +183,12 @@ fn flags(command: &Command) -> BTreeSet<(Vec<String>, String)> {
 ///
 /// Held where a shell's script keeps one command's words apart from the next:
 /// bash's case arm, PowerShell's and elvish's block, fish's condition on each
-/// line. zsh nests every command inside its parent's function, so there it is
-/// held to the flag being offered at all, which still fails for a flag the
-/// tree declares and the script never mentions.
+/// line. zsh's script names each command's arm by its last word alone, and
+/// those repeat, as `list` and `check` do under more than one parent, so text
+/// cannot find one command's arm there. There a flag is held to being offered
+/// at all, which still fails for a flag the tree declares and the script never
+/// mentions, and a flag several commands share, as `--json` and `--owner` are,
+/// is held once for all of them.
 fn completes_flag(shell: Shell, script: &str, path: &[String], flag: &str) -> bool {
     let between = |opening: &str, closing: &str| -> bool {
         script.find(opening).is_some_and(|start| {
