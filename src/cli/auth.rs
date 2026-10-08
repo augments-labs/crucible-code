@@ -170,7 +170,7 @@ fn said(text: &str) {
 }
 
 fn refused(problem: &str) -> ExitCode {
-    said(&format!("crucible: {problem}\n"));
+    said(&format!("crucible: {}\n", super::failure::cut(problem)));
     ExitCode::FAILURE
 }
 

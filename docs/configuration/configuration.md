@@ -1374,7 +1374,8 @@ refuses an unknown provider, and an address that is neither `https` nor `http`
 on `localhost`, `127.0.0.1` or `[::1]`, so a file that passes here can still
 stop one.
 It exits 0 when everything holds and 1 otherwise, repeating the first error on
-standard error. `--json` prints one JSON document instead, with the same
+standard error; there an error longer than 16 KiB is cut at 16 KiB and ends
+`… (cut)`, as every `crucible: ` line is. `--json` prints one JSON document instead, with the same
 `status`, `files`, `failures` and `schema`. Where no file could be read at
 all, because the directory it was started in could not be read, is not one
 crucible can work in, or crucible's home could not be found, it says why on

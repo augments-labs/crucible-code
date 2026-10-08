@@ -1,7 +1,7 @@
 //! What `crucible sandbox inspect` and `--sandbox` answer on this machine, and
 //! the exit each answer ends with; and, beside them, what `crucible config
-//! check` makes of the same hostile configuration key, and what it writes
-//! where it could read no file at all.
+//! check` makes of the same hostile configuration key and of a value too long
+//! to repeat whole, and what it writes where it could read no file at all.
 //!
 //! The built binary is run in a directory and a home of the test's own, with
 //! an environment cleared down to what it needs, so nothing the machine running
@@ -560,6 +560,46 @@ fn a_failure_quoting_a_key_that_holds_line_breaks_is_said_on_one_line() {
         assert!(
             line.contains(r"a\ncrucible: forged\rcrucible: also\u{2028}crucible: and this"),
             "{args:?} did not name the key: {told:?}"
+        );
+    }
+}
+
+#[test]
+fn a_configuration_check_cuts_a_long_rejected_value_on_standard_error_and_marks_it() {
+    // The report cuts the sentence quoting the value; the repeat on standard
+    // error is the shared failure line, which holds it to the client
+    // contract's ceiling for an error's words and says where it cut.
+    use crucible_client_api::bounds::TEXT_BYTES;
+
+    let value = "v".repeat(64 * 1024);
+    for (probe, args) in [
+        ("long-check-text", &["config", "check"][..]),
+        ("long-check-json", &["config", "check", "--json"][..]),
+    ] {
+        let scratch = Scratch::new(probe);
+        fs::create_dir_all(scratch.work().join(".crucible")).expect("a project directory");
+        let document = serde_json::json!({ "output": { "color": value } }).to_string();
+        fs::write(scratch.work().join(".crucible/config.json"), document).expect("a project file");
+
+        let answered = asked(&scratch, args, false);
+        assert_eq!(answered.status.code(), Some(1), "{args:?}");
+        let told = String::from_utf8(answered.stderr).expect("UTF-8");
+        let (line, rest) = told
+            .split_once('\n')
+            .unwrap_or_else(|| panic!("{args:?}: a line on standard error"));
+        assert_eq!(rest, "", "{args:?} said more than one line");
+        assert!(line.starts_with("crucible: "), "{args:?}: {line:.200}");
+        assert!(line.contains("output.color"), "{args:?}: {line:.200}");
+        assert!(
+            line.ends_with("v… (cut)"),
+            "{args:?} did not mark the cut: {} bytes ending {:?}",
+            line.len(),
+            line.get(line.len().saturating_sub(40)..)
+        );
+        assert!(
+            told.len() <= "crucible: ".len() + TEXT_BYTES + "… (cut)\n".len(),
+            "{args:?} wrote {} bytes to standard error",
+            told.len()
         );
     }
 }
