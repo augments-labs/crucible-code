@@ -321,3 +321,59 @@ fn what_is_installed_is_read_in_a_settled_order_rather_than_the_filesystems() {
 
     assert_eq!(read, ["acme.alpha", "acme.bravo", "acme.charlie"]);
 }
+
+/// A pipe standing where a manifest is read waits for a writer that is not
+/// coming, and the extension list is read before anything else can be done, so
+/// one planted in an install directory would hold the run with no bound. It is
+/// refused as soon as the handle is asked what it opened, and every other
+/// installation is still read.
+#[cfg(unix)]
+#[test]
+fn a_fifo_where_a_manifest_is_read_is_refused_without_waiting_for_a_writer() {
+    let scratch = Scratch::new("extensions-fifo");
+    scratch.write(
+        "home/extensions/a/manifest.json",
+        &manifest("acme.reviewer"),
+    );
+    scratch.make("home/extensions/b");
+    let made = std::process::Command::new("mkfifo")
+        .arg(scratch.at("home/extensions/b/manifest.json"))
+        .status()
+        .expect("mkfifo is available on Unix");
+    assert!(made.success());
+
+    // Swept on a thread of its own because the read under test is the one thing
+    // here that may never come back, and a test that waits for it on this
+    // thread waits for it forever.
+    let home = scratch.at("home");
+    let (send, answer) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = send.send(Extensions::discover(&home));
+    });
+    let found = answer
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the sweep came back rather than waiting on the pipe");
+
+    assert_eq!(said_found(&found), ["acme.reviewer"]);
+    let [refused] = found.refused() else {
+        panic!("expected one refusal, got: {}", said(&found));
+    };
+    assert!(
+        matches!(refused, Refusal::Unreadable { .. }),
+        "{refused} is not an unreadable manifest"
+    );
+    assert!(
+        refused.to_string().contains("not a regular file"),
+        "{refused}"
+    );
+}
+
+/// Every identifier read, in the order it was answered.
+#[cfg(unix)]
+fn said_found(found: &Extensions) -> Vec<&str> {
+    found
+        .found()
+        .iter()
+        .map(|one| one.manifest().id())
+        .collect()
+}
