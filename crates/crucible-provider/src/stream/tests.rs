@@ -1,8 +1,8 @@
 //! A cancel ends a response that keeps talking without saying anything.
 //!
-//! Each test is a loopback source that answers once and then sends a line the
-//! framing reads and throws away, every 100 ms, for as long as it is allowed
-//! to. Every one of those lines is something arriving, so the quiet wait below
+//! Each test is a loopback source that answers once and then, every 100 ms for
+//! as long as it is allowed to, sends lines that never make an event. Every
+//! one of those lines is something arriving, so the quiet wait below
 //! the stream never runs out; what ends the read is the cancel, or nothing.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -26,7 +26,7 @@ const PROMPTLY: Duration = Duration::from_secs(1);
 /// How long a test waits before calling a read that has not come back stuck.
 const STUCK: Duration = Duration::from_secs(5);
 
-/// How often the source repeats its line.
+/// How often the source repeats its lines.
 const BEAT: Duration = Duration::from_millis(100);
 
 /// How long the source talks before the cancel is raised: long enough that
@@ -191,6 +191,19 @@ async fn a_cancel_ends_a_recap_under_comments_within_a_second() {
     };
     let cancel = Cancel::new();
     let mut stream = provider.stream(request, &cancel).await.unwrap();
+    let raised = raised_later(&cancel);
+
+    cancelled_promptly(stream.as_mut(), &raised).await;
+}
+
+/// Lines that do go into an event, sent forever with no blank line to finish
+/// it: nothing is ever dispatched, the same as a comment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancel_ends_an_event_that_never_finishes_as_it_does_comments() {
+    let url = beating("event: ping\ndata: {}\n");
+    let transport = shared();
+    let cancel = Cancel::new();
+    let mut stream = opened(&transport, &url, &cancel).await;
     let raised = raised_later(&cancel);
 
     cancelled_promptly(stream.as_mut(), &raised).await;
