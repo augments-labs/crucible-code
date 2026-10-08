@@ -102,8 +102,9 @@ impl Roots<'_> {
 /// The first message is the first line after the header, so this is reached
 /// only by a prompt with a pasted file in it. Reading stops there and the
 /// session is left out, rather than the startup path being handed a length
-/// somebody else chose.
-const READ: u64 = 64 * 1024;
+/// somebody else chose. The header `--continue` reads is held to the same
+/// ceiling, so a log this list can read the start of is one it can take too.
+pub(super) const READ: u64 = 64 * 1024;
 
 /// How much of that message is kept.
 ///
