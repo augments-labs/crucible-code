@@ -1789,7 +1789,7 @@ staging_cache_case() {
 # action under any owner's spelling, quoted or not, sccache in any form, and a
 # `cache:` input such as a setup action takes. The status is 1 when there is
 # none and 2 when a file could not be read.
-staging_cache_pattern="uses:[[:space:]]*['\"]?[^'\"[:space:]#]*(actions/cache|rust-cache)|sccache|^[[:space:]]*(-[[:space:]]+)?cache:"
+staging_cache_pattern="uses:[[:space:]]*['\"]?[^'\"[:space:]#]*(actions/cache|rust-cache)|sccache|(^|[{,])[[:space:]]*(-[[:space:]]+)?cache:"
 staging_cached() {
     local found status
     found=$(grep -HniE -- "$staging_cache_pattern" "$@")
@@ -1839,7 +1839,7 @@ else
         fi
     fi
     staging_reach "$staging_workflow" .
-    for dir in "${staging_unreached[@]}"; do
+    for dir in ${staging_unreached[@]+"${staging_unreached[@]}"}; do
         staging_fail "a release uses $dir, which holds no action.yml or action.yaml"
     done
     cached=$(staging_cached "${staging_reached[@]}")
@@ -1858,6 +1858,11 @@ else
     staging_cache_case "sccache as the compiler wrapper" cached w.yml $'env:\n  RUSTC_WRAPPER: sccache'
     staging_cache_case "a setup action's cache input" cached \
         w.yml $'  - uses: actions/setup-python@v5\n    with:\n      cache: pip'
+    staging_cache_case "a cache input written inline" cached \
+        w.yml '  - uses: actions/setup-node@v4
+    with: {node-version: 22, cache: npm}'
+    staging_cache_case "a cache named only in a comment" clean \
+        w.yml $'  - uses: actions/checkout@v4\n    # uses: actions/cache@v4\n    # cache: pip'
     staging_cache_case "a cache in a local action another uses" cached \
         w.yml '  - uses: ./a' a/action.yml '    - uses: ./b' b/action.yml '    - uses: actions/cache/restore@v4'
     staging_cache_case "a cache in an action.yaml" cached \
