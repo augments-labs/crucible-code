@@ -5,15 +5,15 @@
 //! here gives every piece of sensitive local state the same creation and
 //! durable-replacement boundary without teaching this crate what the file is.
 //!
-//! Every open of a file that is already there refuses a final symbolic link or
-//! reparse point, waits on no pipe where Unix can say so, and proves an
-//! ordinary file on the handle it returns rather than on a name looked at
-//! first. Private state is also refused when another hard name reaches it,
-//! because a second name is a second way to change it: that is [`open_read`]
-//! and [`open_read_append`]. [`open_read_ordinary`] is the one open without
-//! that last proof, for a file that is read and not trusted, where a second
-//! name is what a backup made with hard links leaves on every file, and
-//! refusing it would hide the file rather than protect it.
+//! The readers, [`open_read`], [`open_read_append`] and [`open_read_ordinary`],
+//! each refuse a final symbolic link or reparse point, wait on no pipe where
+//! Unix can say so, and prove an ordinary file on the handle they return rather
+//! than on a name looked at first. Private state is also refused when another
+//! hard name reaches it, because a second name is a second way to change it:
+//! that is [`open_read`] and [`open_read_append`]. [`open_read_ordinary`] is
+//! the one open without that last proof, for a file that is read and not
+//! trusted, where a second name is what a backup made with hard links leaves on
+//! every file, and refusing it would hide the file rather than protect it.
 
 use std::fs::File;
 use std::io;
