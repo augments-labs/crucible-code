@@ -32,7 +32,7 @@ use std::fmt;
 use serde_json::Value;
 
 /// What stands in a printed document where a value must not.
-const REDACTED: &str = "<redacted>";
+pub(crate) const REDACTED: &str = "<redacted>";
 
 /// The prefix on every environment variable crucible reads for itself.
 ///
@@ -59,8 +59,9 @@ pub(crate) fn too_late(name: &str) -> bool {
 }
 
 /// A document, as `Debug` may write it: every `env` value replaced, wherever
-/// the block holding it is written, and each server's arguments shown as a
-/// reader is shown them.
+/// the block holding it is written, each server's arguments shown as a reader
+/// is shown them, every value an extension was told replaced, and the user in
+/// each provider's `baseUrl` replaced.
 ///
 /// The block is the environment, so what a user puts in it is whatever the
 /// commands they run need — a token among them, in the two layers that are
@@ -82,7 +83,10 @@ pub(crate) fn too_late(name: &str) -> bool {
 /// already what the refusals in [`crate::error`] are allowed to say.
 ///
 /// A server's arguments are the other place its key is written, so each
-/// record's `args` is printed as [`McpServer::shown_args`] shows it.
+/// record's `args` is printed as [`McpServer::shown_args`] shows it. An
+/// extension's `config` holds names crucible cannot read, so it is printed as
+/// an `env` block is, names and no values. A `baseUrl` is printed with the
+/// host it goes to and without the user and password it would go as.
 ///
 /// [`McpServer::shown_args`]: crate::settings::McpServer::shown_args
 pub(crate) struct Redacted<'a>(pub(crate) &'a Value);
@@ -96,6 +100,8 @@ impl fmt::Debug for Redacted<'_> {
         let mut shown = self.0.clone();
         redact(&mut shown);
         crate::settings::mcp::hide_args(&mut shown);
+        crate::settings::hide_extension_settings(&mut shown);
+        crate::settings::hide_base_url_users(&mut shown);
         shown.fmt(f)
     }
 }

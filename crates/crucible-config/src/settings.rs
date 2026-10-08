@@ -71,8 +71,9 @@ pub struct Settings {
 }
 
 impl fmt::Debug for Settings {
-    /// Written by hand so the `env` block is redacted, and each server's
-    /// arguments shown as a reader is shown them. This type is what the
+    /// Written by hand so the `env` block is redacted, each server's
+    /// arguments shown as a reader is shown them, and what an extension was
+    /// told and the user in a `baseUrl` are hidden. This type is what the
     /// wiring above holds for the whole session, so it is the one most likely
     /// to end up inside somebody's diagnostic — and it holds every variable
     /// the two private layers set, values and all.
@@ -378,6 +379,112 @@ fn merge(base: &mut Value, near: &Value, shape: &'static Shape) {
     }
 }
 
+/// Replaces every value an extension was told in a printed document, keeping
+/// the names, as [`Settings::extension_settings`] lists them.
+///
+/// The document-holding types print through [`env::Redacted`]. Crucible cannot
+/// read these names, so it cannot tell which of them holds a key, and every
+/// value goes: a nested block or list is replaced whole rather than descended
+/// into, as a nested object under `env` is. A `config` that is not a block,
+/// which no document that parsed holds, is replaced whole.
+pub(crate) fn hide_extension_settings(shown_document: &mut Value) {
+    let Some(extensions) = shown_document
+        .get_mut("extensions")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+
+    for record in extensions.values_mut() {
+        let Some(config) = record.get_mut("config") else {
+            continue;
+        };
+        match config.as_object_mut() {
+            Some(written) => {
+                for value in written.values_mut() {
+                    *value = Value::String(env::REDACTED.to_owned());
+                }
+            }
+            None => *config = Value::String(env::REDACTED.to_owned()),
+        }
+    }
+}
+
+/// Replaces the user and password in each provider's `baseUrl` in a printed
+/// document, and leaves where the address goes.
+///
+/// The wiring refuses an address with a user in it, but the document holds
+/// what was written until then, and a line that says which host a turn would
+/// have gone to is the one a reader of a diagnostic needs. A `baseUrl` that is
+/// not text, which no document that parsed holds, is replaced whole.
+pub(crate) fn hide_base_url_users(shown_document: &mut Value) {
+    let Some(providers) = shown_document
+        .get_mut("providers")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+
+    for record in providers.values_mut() {
+        let Some(address) = record.get_mut("baseUrl") else {
+            continue;
+        };
+        *address = Value::String(match address.as_str() {
+            Some(written) => without_user(written),
+            None => env::REDACTED.to_owned(),
+        });
+    }
+}
+
+/// `address` with whatever stands before the last `@` of its authority replaced.
+///
+/// The authority is read as running from the first `://` to the first `/`, `?`
+/// or `#`. A URL parser starts it there too, and ends it at one of those three
+/// or sooner, so any user it reads is inside the one read here, which is what
+/// is replaced. The parser skips a run of `/` and `\` after the scheme and
+/// drops a tab or a line break wherever one is written, and an authority read
+/// from the first `://` would then not be the one it reads. So an address this
+/// cannot read the parser's way is replaced whole if it holds an `@` anywhere:
+/// one with no plain `scheme://` in front, one whose authority starts with a
+/// `/`, a `\`, a space or a control character, and one whose authority holds a
+/// `\`, a space or a control character.
+fn without_user(address: &str) -> String {
+    let unread = || {
+        if address.contains('@') {
+            env::REDACTED.to_owned()
+        } else {
+            address.to_owned()
+        }
+    };
+    let Some((scheme, rest)) = address.split_once("://") else {
+        return unread();
+    };
+    let plain = !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !plain {
+        return unread();
+    }
+
+    let skipped = |c: char| c == '\\' || c.is_ascii_whitespace() || c.is_ascii_control();
+    if rest.starts_with(|c: char| c == '/' || skipped(c)) {
+        return unread();
+    }
+
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let Some((authority, after)) = rest.split_at_checked(end) else {
+        return unread();
+    };
+    if authority.contains(skipped) {
+        return unread();
+    }
+    match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{scheme}://{}@{host}{after}", env::REDACTED),
+        None => address.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::document::Origin;
@@ -605,6 +712,108 @@ mod tests {
 
         let printed = format!("{:?}", Settings::resolve(vec![user]));
         assert!(printed.contains("from-home"), "got {printed}");
+    }
+
+    #[test]
+    fn printing_the_settings_names_what_an_extension_was_told_and_shows_none_of_it() {
+        // An extension's block is opaque to crucible, so any value in it may be
+        // the key the extension was told to use, whatever its kind. The names
+        // stay, as a variable's do; every value goes, and what is nested under
+        // one goes with it.
+        let text = r#"{"extensions": {"acme.reviewer": {"enabled": true, "config": {
+                         "token": "sk-not-a-real-one", "nested": {"inner": "deep-fake-value"},
+                         "list": ["listed-fake-value"]}},
+                       "acme.quiet": {"config": {"depth": 3}}}}"#;
+        let document = Document::sample(text, Origin::User);
+        let settings = Settings::resolve(vec![document.clone()]);
+
+        for printed in [format!("{settings:?}"), format!("{document:?}")] {
+            assert!(printed.contains("token"), "got {printed}");
+            assert!(printed.contains("depth"), "got {printed}");
+            for value in [
+                "sk-not-a-real-one",
+                "deep-fake-value",
+                "listed-fake-value",
+                "Number(3)",
+            ] {
+                assert!(!printed.contains(value), "{value} in {printed}");
+            }
+        }
+
+        // And the extension is still told what was written.
+        assert_eq!(
+            settings.extension_settings("acme.reviewer"),
+            vec!["list", "nested", "token"]
+        );
+    }
+
+    #[test]
+    fn printing_the_settings_shows_where_a_base_url_goes_and_not_who_it_goes_as() {
+        // A user and a password in the address is refused where it is applied,
+        // but it is held, and printed, before that. The host is what a reader
+        // of the line needs; the userinfo is what nobody should read.
+        let text = r#"{"providers": {"anthropic": {
+                         "baseUrl": "https://user:pa55word@host.example/v1"}}}"#;
+        let document = Document::sample(text, Origin::User);
+        let settings = Settings::resolve(vec![document.clone()]);
+
+        for printed in [format!("{settings:?}"), format!("{document:?}")] {
+            assert!(printed.contains("host.example/v1"), "got {printed}");
+            assert!(!printed.contains("pa55word"), "got {printed}");
+            assert!(!printed.contains("user:"), "got {printed}");
+            assert!(!printed.contains("user@"), "got {printed}");
+        }
+
+        // What is applied is what was written.
+        assert_eq!(
+            settings.base_url("anthropic"),
+            Some("https://user:pa55word@host.example/v1")
+        );
+    }
+
+    #[test]
+    fn a_base_url_spelled_so_its_authority_cannot_be_read_is_hidden_whole() {
+        // Nothing may be read as a host that a URL parser would read as a user,
+        // so an address with no plain `scheme://` in front and an `@` anywhere
+        // is not shown at all. One with no `@` has no user to hide.
+        for written in [
+            "https:user:pa55word@host.example/v1",
+            "user:pa55word@host.example",
+            "https:user:pa55word@host.example/x://y",
+        ] {
+            assert_eq!(without_user(written), env::REDACTED, "{written}");
+        }
+        assert_eq!(
+            without_user("https://a:b@c:d@host.example:8443/v1?q=1"),
+            "https://<redacted>@host.example:8443/v1?q=1"
+        );
+        assert_eq!(
+            without_user("https://host.example/v1/@path"),
+            "https://host.example/v1/@path"
+        );
+        assert_eq!(without_user("localhost:8080"), "localhost:8080");
+    }
+
+    #[test]
+    fn a_base_url_whose_authority_follows_a_run_of_slashes_is_hidden_whole() {
+        // A URL parser skips every `/` and `\` after `https://`, and drops a
+        // tab or a line break wherever one is written, so in each of these it
+        // reads `user:pa55word` as the user. Read from the first `://`, the
+        // authority would be empty and the password printed beside it.
+        // Every spelling is tried before the assertion, so a failure names all
+        // of the ones that print rather than the first.
+        let printed: Vec<(&str, String)> = [
+            "https:///user:pa55word@host.example/v1",
+            "https://\\/user:pa55word@host.example",
+            "https:////user:pa55word@host.example",
+            "https://\t/user:pa55word@host.example/v1",
+            "https://\n/user:pa55word@host.example/v1",
+        ]
+        .into_iter()
+        .map(|written| (written, without_user(written)))
+        .filter(|(_, shown)| shown != env::REDACTED)
+        .collect();
+        assert!(printed.is_empty(), "shown: {printed:?}");
     }
 
     #[test]
