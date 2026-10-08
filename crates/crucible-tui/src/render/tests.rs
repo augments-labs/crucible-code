@@ -6,6 +6,8 @@
 //! the thing that stays readable when the sequences underneath it change. The
 //! sequences themselves are asserted once, next to the type that writes them.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use unicode_width::UnicodeWidthStr;
 
 use super::*;
@@ -2783,4 +2785,101 @@ fn a_press_on_the_rail_beside_a_running_turn_steers_the_transcript() {
         drawn.screen().rows()
     );
     assert!(rail_down(&drawn).ends_with('┃'));
+}
+
+// A wait on the keyboard something outside can call off.
+
+/// A recall that is called off once `noted` is set, as a signal would set it.
+#[derive(Debug, Default)]
+struct Noting {
+    /// Whether the word to call the wait off has come.
+    noted: AtomicBool,
+    /// Whether the word comes as the wait says it is over, as a signal landing
+    /// after the wait last looked would.
+    as_it_ends: bool,
+}
+
+impl Noting {
+    fn note(&self) {
+        self.noted.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Recall for Noting {
+    fn waiting(&self) -> bool {
+        true
+    }
+
+    fn recalled(&self) -> bool {
+        self.noted.load(Ordering::SeqCst)
+    }
+
+    fn waited(&self) {
+        if self.as_it_ends {
+            self.note();
+        }
+    }
+}
+
+/// A renderer whose waits `recall` watches.
+fn watched_by(recall: &Arc<Noting>) -> Renderer<Recording> {
+    let mut render = Renderer::new(Recording::new(80, 24));
+    render.recalled_by(Arc::clone(recall) as Arc<dyn Recall>);
+    render
+}
+
+#[test]
+fn a_recall_during_the_last_beat_of_a_wait_calls_it_off() {
+    // The beat that runs the patience out is a beat like any other: a word
+    // that came while it slept is not left for nobody to read.
+    let recall = Arc::new(Noting::default());
+    let mut render = watched_by(&recall);
+
+    let waited = render.waiting_from(Duration::from_millis(10), |_| {
+        recall.note();
+        Ok(false)
+    });
+
+    assert!(matches!(waited, Err(TerminalError::Recalled)), "{waited:?}");
+}
+
+#[test]
+fn a_recall_while_the_key_is_read_calls_the_wait_off() {
+    let recall = Arc::new(Noting::default());
+    let mut render = watched_by(&recall);
+
+    let pressed = render.pressed_from(
+        |_| Ok(true),
+        || {
+            recall.note();
+            Ok(Pressed::Ignored)
+        },
+    );
+
+    assert!(
+        matches!(pressed, Err(TerminalError::Recalled)),
+        "{pressed:?}"
+    );
+}
+
+#[test]
+fn a_recall_as_a_wait_ends_calls_it_off() {
+    // After the wait has last looked and before it has said it is over, the
+    // recall's word is noted rather than acted on where it lands, so the wait
+    // looks once more after saying so.
+    let recall = Arc::new(Noting {
+        as_it_ends: true,
+        ..Noting::default()
+    });
+    let mut render = watched_by(&recall);
+
+    let waited = render.waiting_from(Duration::from_millis(10), |_| Ok(true));
+    assert!(matches!(waited, Err(TerminalError::Recalled)), "{waited:?}");
+
+    recall.noted.store(false, Ordering::SeqCst);
+    let pressed = render.pressed_from(|_| Ok(true), || Ok(Pressed::Ignored));
+    assert!(
+        matches!(pressed, Err(TerminalError::Recalled)),
+        "{pressed:?}"
+    );
 }
