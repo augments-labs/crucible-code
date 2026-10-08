@@ -32,11 +32,11 @@ and each macOS checks job runs that platform's rollback drill, through
 | `performance.yml` | Blocking startup, typed-tool, memory, search and rendering budgets with a JSON artifact |
 | `build-observations.yml` | Weekly/manual same-runner clean and incremental Cargo comparison; observational only |
 | `provider-canaries.yml` | Weekly/manual non-blocking multi-turn typed-tool and normalized usage/cache canaries |
-| `release-canary.yml` | Weekly/manual install, execute and uninstall check of the newest published release, and that the release container digest still resolves |
+| `release-canary.yml` | Weekly/manual install, execute and uninstall check of the newest published release on Linux and Windows, and that the release container digest still resolves |
 | `task-campaign.yml` | Manual baseline/candidate coding-task campaign with independent fixture verification |
 | `audit.yml` | Advisories whose answer changes as databases are published |
 | `codeql.yml` | GitHub code scanning |
-| `release.yml` | Tag validation, artifacts, attestations and publication |
+| `release.yml` | Dispatched: the gate, artifacts and staged cells, which install, upgrade and roll back those exact bytes. On a tag: the gate again with tag validation, promotion of a staged run's bytes by digest, attestations and publication |
 
 A new language gets a peer reusable workflow such as `python-ci.yml` or
 `js-ci.yml`, then one call and one dependency in `blocking-ci.yml`. Do not add
@@ -97,11 +97,13 @@ of one artifact rather than readings from different machines.
 
 `release-canary.yml` installs the newest public release into a temporary prefix,
 runs `--version`, uninstalls it with the repository script and proves all owned
-executables are gone. It complements the hermetic archive and rollback matrix;
-public release availability is intentionally not a merge condition. Its second
-job runs `scripts/sh/release-container.sh`, which asks the registry for the
-container digest `release.yml` pins and fails once the registry has collected
-it, so a dead pin is repointed before a tag needs it.
+executables are gone. Its Windows job runs `scripts/ps1/release-canary.ps1`,
+which does the same with the published `install.ps1`. It complements the
+hermetic archive and rollback matrix; public release availability is
+intentionally not a merge condition. Its `container` job runs
+`scripts/sh/release-container.sh`, which asks the registry for the container
+digest `release.yml` pins and fails once the registry has collected it, so a
+dead pin is repointed before a tag needs it.
 
 `task-campaign.yml` is manual-only. Supply a provider-qualified model and a
 baseline release version. It runs the versioned suite in
