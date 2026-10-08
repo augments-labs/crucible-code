@@ -32,7 +32,7 @@ use std::time::SystemTime;
 use crucible_client_api::bounds::ITEMS;
 use crucible_client_api::sessions::{Listing, Report, Session};
 use crucible_client_api::{Refusal, Text};
-use crucible_config::Home;
+use crucible_config::{Home, Unchecked};
 use crucible_session::{Discovered, Discovery, Roots};
 use crucible_types::shown::escaped;
 use crucible_workspace::Workspace;
@@ -220,15 +220,15 @@ impl Unmade<'_> {
     /// Each error a list can stop on leads with the file it is about, so the
     /// document says which step stopped and leaves the rest to standard error,
     /// where the run ends with the whole sentence.
+    ///
+    /// The three steps `crucible config check` can stop on before it reads a
+    /// file are said in [`Unchecked`]'s words, so the two documents name the
+    /// same step the same way.
     fn said(self) -> String {
         match self {
-            Self::Here => "the directory crucible was started in could not be read".to_owned(),
-            Self::Listing(AppError::Workspace(_)) => {
-                "this directory is not one crucible can work in; standard error says why".to_owned()
-            }
-            Self::Listing(AppError::Config(_)) => {
-                "crucible's home directory could not be found; standard error says why".to_owned()
-            }
+            Self::Here => Unchecked::Here.said().to_owned(),
+            Self::Listing(AppError::Workspace(_)) => Unchecked::Workspace.said().to_owned(),
+            Self::Listing(AppError::Config(_)) => Unchecked::Home.said().to_owned(),
             Self::Listing(AppError::Session(_)) => {
                 "the session index could not be read; standard error says why".to_owned()
             }

@@ -396,7 +396,15 @@ crucible config check --json
 It exits 0 when everything holds and 1 otherwise, saying the first failure
 again on standard error. `--json` prints one JSON document to standard output
 instead, with `format_version` 1, `kind` `config-check`, `status`, `files`,
-`failures`, `schema` and a `truncated` flag. In either report, a control
+`failures`, `schema` and a `truncated` flag. `status` is `valid` or
+`invalid`, and `failed` when no file could be read at all, because the
+directory it was started in could not be read, is not one crucible can work
+in, or crucible's home could not be found: then there is no text report, the
+reason is one line beginning `crucible: ` on standard error and the run ends
+1, and with `--json` a document with `status` `failed`, empty `files` and
+`failures`, and a `problem` that names the step that stopped as `text` with
+its own `truncated` flag, and no path, is written to standard output as well.
+In either report, a control
 character, line break, line or paragraph separator or Unicode format character
 a file chose is written as its escape rather than sent to the terminal; the
 text report keeps the zero-width joiner and non-joiner, which shape a word.

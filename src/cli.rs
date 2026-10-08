@@ -623,10 +623,35 @@ fn maintain_sandbox(_action: &SandboxMaintenance) -> Result<(), Fatal> {
 /// said, keys a checkout chose among it, and is written by
 /// [`crucible_config::CheckReport`] with what a terminal would act on shown
 /// as its escape, so it is written here as it stands.
+///
+/// Where no file could be read at all, because the directory crucible was
+/// started in could not be read or is not one it can work in, or its home
+/// could not be found, the text report is not written and the failure is said
+/// on standard error alone; `json` still writes one document, a failed one
+/// naming the step that stopped and no path, as [`recalled`] does, so a
+/// script reading standard output never finds it empty.
 fn checked(json: bool) -> Result<(), Fatal> {
-    let here = std::env::current_dir().map_err(Fatal::Here)?;
-    let workspace = Workspace::open(here)?;
-    let home = Home::find(&|name| std::env::var_os(name))?;
+    use crucible_config::Unchecked;
+
+    let reached = std::env::current_dir()
+        .map_err(|why| (Unchecked::Here, Fatal::Here(why)))
+        .and_then(|here| {
+            Workspace::open(here).map_err(|why| (Unchecked::Workspace, Fatal::from(why)))
+        })
+        .and_then(|workspace| {
+            Home::find(&|name| std::env::var_os(name))
+                .map(|home| (workspace, home))
+                .map_err(|why| (Unchecked::Home, Fatal::from(why)))
+        });
+    let (workspace, home) = match reached {
+        Ok(reached) => reached,
+        Err((step, why)) => {
+            if json {
+                let _ = io::stdout().write_all(step.json().as_bytes());
+            }
+            return Err(why);
+        }
+    };
     let report = crucible_config::check(&home, workspace.root());
 
     let said = if json { report.json() } else { report.human() };

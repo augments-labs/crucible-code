@@ -1375,7 +1375,13 @@ on `localhost`, `127.0.0.1` or `[::1]`, so a file that passes here can still
 stop one.
 It exits 0 when everything holds and 1 otherwise, repeating the first error on
 standard error. `--json` prints one JSON document instead, with the same
-`status`, `files`, `failures` and `schema`. Neither report carries a secret; a
+`status`, `files`, `failures` and `schema`. Where no file could be read at
+all, because the directory it was started in could not be read, is not one
+crucible can work in, or crucible's home could not be found, it says why on
+standard error and exits 1, and the text report is not printed; `--json`
+then still prints a document, with a `status` of `failed`, which only the
+document has, `files` and `failures` as empty lists, and a `problem` naming
+the step that stopped and no path. Neither report carries a secret; a
 path, a rule or a rejected value an error quotes appears as it does above.
 In the report, and in the error repeated on standard error, a control
 character, a line break, the line or paragraph separator, or a Unicode format
