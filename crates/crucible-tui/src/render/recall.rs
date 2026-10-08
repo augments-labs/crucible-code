@@ -43,7 +43,8 @@ pub trait Recall: fmt::Debug + Send + Sync {
 }
 
 /// One wait on the keyboard, watched for a recall where the recall asked for
-/// that, and said to be over when this is dropped.
+/// that, and said to be over by [`Watch::over`] or, failing that, when this is
+/// dropped.
 #[derive(Debug)]
 pub(super) struct Watch(Option<Arc<dyn Recall>>);
 
