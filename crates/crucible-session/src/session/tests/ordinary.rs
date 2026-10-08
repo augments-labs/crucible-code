@@ -5,11 +5,13 @@
 //! there could have put a link or a pipe under. A link would continue whatever
 //! it leads to, out of the directory, and append the next turn to it; a pipe
 //! would hold the start until something wrote to it. Both are refused the way a
-//! log that will not open is, and a log with a second hard name is not. The
-//! files beside the logs — the index, its mark, the prompt history and a
+//! log that will not open is, and a log with a second hard name is not. A
+//! running session reads its own log back the same way, so a link or a pipe
+//! swapped in under its name while it runs is neither followed nor waited on.
+//! The files beside the logs — the index, its mark, the prompt history and a
 //! deferred call's result — are read the same way, each refusing a link or a
-//! pipe as it refuses a file of its own that will not open. The marks, a
-//! log's lock, the index's lock and the index's digest, are written without
+//! pipe as it refuses a file of its own that will not open. The marks, a log's
+//! lock, the index's lock and the index's digest, are written without
 //! following a link or waiting on a pipe, so nothing outside the directory is
 //! changed through one.
 
@@ -490,6 +492,121 @@ fn a_session_lock_that_is_a_pipe_is_refused_by_continue_without_waiting() {
 
     assert!(
         matches!(&outcome, Err(SessionError::Claim { at, .. }) if at.contains(NEWER)),
+        "{outcome:?}"
+    );
+}
+
+/// A session still being written, with one result it has placed, and that
+/// place.
+#[cfg(unix)]
+fn live(sample: &Sample) -> (Session, crate::session::Place) {
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    session.append(&calling("call-1", "read", r#"{"path":"a.rs"}"#));
+    session.append(&answered(
+        "call-1",
+        RecordedToolOutput::ok("what a.rs held"),
+    ));
+    let [place] = session.take_placed().try_into().expect("one placed result");
+    (session, place)
+}
+
+/// Swaps the log a running session is writing for a link to a copy of it
+/// outside the sessions directory, whose result says something else in the
+/// same number of bytes, so every place still lines up.
+#[cfg(unix)]
+fn swapped_for_a_link(sample: &Sample, session: &Session) {
+    let log = session.path();
+    let copied = fs::read_to_string(log)
+        .expect("the log")
+        .replace("what a.rs held", "planted words!");
+    fs::create_dir_all(sample.home()).expect("a home");
+    let outside = sample.home().join("planted.jsonl");
+    fs::write(&outside, copied).expect("a planted log outside the sessions directory");
+    fs::remove_file(log).expect("the log's name freed");
+    std::os::unix::fs::symlink(&outside, log).expect("a link");
+}
+
+/// A running session reads a result back from its log by name, so a link
+/// swapped in under that name would hand it whatever the file it leads to
+/// says the call returned.
+#[cfg(unix)]
+#[test]
+fn a_live_log_swapped_for_a_link_is_not_read_back_through_it() {
+    let sample = Sample::new("ordinary-live-read-back-link");
+    let (session, place) = live(&sample);
+    swapped_for_a_link(&sample, &session);
+
+    let outcome = session.read_back(&place);
+
+    assert!(
+        matches!(
+            &outcome,
+            Err(SessionError::Log { at, source })
+                if at.contains(".jsonl") && source.kind() == std::io::ErrorKind::InvalidInput
+        ),
+        "{outcome:?}"
+    );
+}
+
+/// The same name under a pipe would hold whoever opened the row until
+/// something wrote to it.
+#[cfg(unix)]
+#[test]
+fn a_live_log_swapped_for_a_pipe_is_not_read_back_waiting_for_a_writer() {
+    let sample = Sample::new("ordinary-live-read-back-pipe");
+    let (session, place) = live(&sample);
+    pipe_at(session.path());
+
+    let outcome = within_a_bound(move || session.read_back(&place).map(drop));
+
+    assert!(
+        matches!(
+            &outcome,
+            Err(SessionError::Log { at, source })
+                if at.contains(".jsonl") && source.kind() == std::io::ErrorKind::InvalidInput
+        ),
+        "{outcome:?}"
+    );
+}
+
+/// The history a running session draws again is read from its log by name,
+/// and through a link would draw a conversation the file it leads to holds.
+#[cfg(unix)]
+#[test]
+fn a_live_log_swapped_for_a_link_draws_no_history_through_it() {
+    let sample = Sample::new("ordinary-live-history-link");
+    let (session, _) = live(&sample);
+    swapped_for_a_link(&sample, &session);
+
+    let outcome = session.display_history().map(|history| history.is_some());
+
+    assert!(
+        matches!(
+            &outcome,
+            Err(SessionError::Log { at, source })
+                if at.contains(".jsonl") && source.kind() == std::io::ErrorKind::InvalidInput
+        ),
+        "{outcome:?}"
+    );
+}
+
+/// And under a pipe would hold the screen until something wrote to it.
+#[cfg(unix)]
+#[test]
+fn a_live_log_swapped_for_a_pipe_draws_no_history_waiting_for_a_writer() {
+    let sample = Sample::new("ordinary-live-history-pipe");
+    let (session, _) = live(&sample);
+    pipe_at(session.path());
+
+    let outcome =
+        within_a_bound(move || session.display_history().map(|history| history.is_some()));
+
+    assert!(
+        matches!(
+            &outcome,
+            Err(SessionError::Log { at, source })
+                if at.contains(".jsonl") && source.kind() == std::io::ErrorKind::InvalidInput
+        ),
         "{outcome:?}"
     );
 }

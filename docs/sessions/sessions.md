@@ -115,6 +115,12 @@ place. `--resume` and the `/resume` preview refuse a link the same way, and
 answer a pipe as an id nothing was recorded under. A log with a second hard
 name, as a backup made with hard links leaves, is read as any other.
 
+A running session reads its own log back the same way, when it draws the
+conversation again or opens a result too old to still be held. If the log's
+name is replaced by a link or a pipe while the session runs, that read is
+refused as a log that cannot be read, rather than showing what the link leads
+to or waiting on the pipe.
+
 Closing the terminal window, or sending crucible a `kill`, while an answer is
 arriving does not lose it. On Linux, macOS and FreeBSD the hang-up or
 termination stops the turn first, the way Escape would: what the model had said

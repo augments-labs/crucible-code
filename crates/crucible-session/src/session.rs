@@ -630,7 +630,8 @@ impl Session {
     ///
     /// # Errors
     /// Returns a storage error if queued records cannot be flushed or the
-    /// protected session log cannot be opened. Unrecorded sessions return `None`.
+    /// protected session log cannot be opened or is no longer one ordinary
+    /// file. Unrecorded sessions return `None`.
     pub fn display_history(&self) -> Result<Option<DisplayHistory>, SessionError> {
         if self.id.is_none() {
             return Ok(None);
@@ -639,9 +640,16 @@ impl Session {
             at: self.path.display().to_string().into(),
             source,
         };
-        self.sync_pending_result_source()
-            .map_err(|_| trouble(io::Error::other("could not flush session display history")))?;
-        let file = File::open(&self.path).map_err(trouble)?;
+        // Behind whatever is queued, as a read back is. The log is read here,
+        // not made durable, so the writer having taken every line is enough,
+        // and the name is opened once, by the ordinary-file opener: anything
+        // that can write the directory can swap a link or a pipe in under it.
+        if !self.caught_up() || self.trouble().is_some() {
+            return Err(trouble(io::Error::other(
+                "could not flush session display history",
+            )));
+        }
+        let file = privacy::opened(&self.path).map_err(trouble)?;
         DisplayHistory::open(file).map(Some).map_err(trouble)
     }
 
