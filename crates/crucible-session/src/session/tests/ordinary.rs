@@ -539,7 +539,11 @@ fn a_live_log_swapped_for_a_link_is_not_read_back_through_it() {
     let outcome = session.read_back(&place);
 
     assert!(
-        matches!(&outcome, Err(SessionError::Log { at, .. }) if at.contains(".jsonl")),
+        matches!(
+            &outcome,
+            Err(SessionError::Log { at, source })
+                if at.contains(".jsonl") && source.kind() == std::io::ErrorKind::InvalidInput
+        ),
         "{outcome:?}"
     );
 }
@@ -556,7 +560,11 @@ fn a_live_log_swapped_for_a_pipe_is_not_read_back_waiting_for_a_writer() {
     let outcome = within_a_bound(move || session.read_back(&place).map(drop));
 
     assert!(
-        matches!(&outcome, Err(SessionError::Log { at, .. }) if at.contains(".jsonl")),
+        matches!(
+            &outcome,
+            Err(SessionError::Log { at, source })
+                if at.contains(".jsonl") && source.kind() == std::io::ErrorKind::InvalidInput
+        ),
         "{outcome:?}"
     );
 }
@@ -573,7 +581,11 @@ fn a_live_log_swapped_for_a_link_draws_no_history_through_it() {
     let outcome = session.display_history().map(|history| history.is_some());
 
     assert!(
-        matches!(&outcome, Err(SessionError::Log { at, .. }) if at.contains(".jsonl")),
+        matches!(
+            &outcome,
+            Err(SessionError::Log { at, source })
+                if at.contains(".jsonl") && source.kind() == std::io::ErrorKind::InvalidInput
+        ),
         "{outcome:?}"
     );
 }
@@ -590,7 +602,11 @@ fn a_live_log_swapped_for_a_pipe_draws_no_history_waiting_for_a_writer() {
         within_a_bound(move || session.display_history().map(|history| history.is_some()));
 
     assert!(
-        matches!(&outcome, Err(SessionError::Log { at, .. }) if at.contains(".jsonl")),
+        matches!(
+            &outcome,
+            Err(SessionError::Log { at, source })
+                if at.contains(".jsonl") && source.kind() == std::io::ErrorKind::InvalidInput
+        ),
         "{outcome:?}"
     );
 }
