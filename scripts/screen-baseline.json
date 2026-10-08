@@ -39,7 +39,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"click-count-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "836dac6f440cfee2a652efd56585d2c611f98f0e19fa438a729ba67f9266488a"
+      "sha256": "84a61a90f6600395fa28df2096ff27d48afdc67271a3cdde45a2022ded540a78"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it.snap",
@@ -367,7 +367,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"ctrl-b-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "836dac6f440cfee2a652efd56585d2c611f98f0e19fa438a729ba67f9266488a"
+      "sha256": "84a61a90f6600395fa28df2096ff27d48afdc67271a3cdde45a2022ded540a78"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_results_opened.snap",
@@ -831,7 +831,7 @@
       "opened": [
         "Watched::native(\"native-ctrl-b-mid-turn\", 60, 24, &vendor)"
       ],
-      "sha256": "eec9cfe349f4ec9e762b7f1c2b2addfe5fee8228f3ffaeab2c7aff5b68fde502"
+      "sha256": "62522ae60e7bbca7635b8ce44d1b590b3f94978f8364ac9c32847cf2e8d407db"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_o_stands_at_the_foot_and_escape_leaves_no_row_of_it_in_native_mode.snap",
