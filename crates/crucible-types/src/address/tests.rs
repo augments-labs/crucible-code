@@ -16,6 +16,10 @@ fn the_recipient_is_shown_and_nothing_after_it() {
         ),
         ("http://127.0.0.1:9/v1", "http://127.0.0.1:9/[redacted]"),
         ("https://[::1]:8080/x", "https://[::1]:8080/[redacted]"),
+        (
+            "https://host.example:65535/x",
+            "https://host.example:65535/[redacted]",
+        ),
         ("https://[::1]", "https://[::1]"),
         (
             "https://[2001:db8::7]/v1",
@@ -105,6 +109,9 @@ fn an_authority_that_is_not_a_host_and_a_numeric_port_is_not_shown() {
         "https://[::1]:8080:pa55word-fake",
         "https://[user:pa55word-fake]/v1",
         "https://[::1/v1",
+        "https://user:1234567890",
+        "https://user:65536/v1",
+        "https://[::1]:99999/v1",
     ] {
         assert_eq!(redacted(written), HIDDEN, "{written:?}");
     }

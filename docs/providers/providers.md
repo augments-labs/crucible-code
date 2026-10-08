@@ -502,7 +502,7 @@ scheme, host and port) but redact the path and query, because those parts often
 contain tenant identifiers or tokens. An address a URL parser would read a
 different host in, because something other than a scheme comes before its first
 `://` or its host holds a `\`, a space or a control character, is shown only as
-`<redacted>`. So is one whose host is followed by anything but a numeric port,
+`<redacted>`. So is one whose host is followed by anything but a port number,
 or holds a `%`, as when the host is left out of `https://user:password`, where
 the password would otherwise be shown as the port. Authenticated model requests
 never follow redirects; the provider receives the 3xx refusal instead.
