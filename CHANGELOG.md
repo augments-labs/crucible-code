@@ -8,6 +8,186 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-08
+
+**Crucible 0.46.0 adds commands that work outside a session, installs each
+release in a directory of its own, and holds approvals to exactly what you
+approved.**
+`crucible auth`, `doctor`, `sandbox inspect`, `completion` and read-only `mcp`,
+`extensions` and `sessions` lists run without starting a conversation. A yes
+now covers only the exact command line, file or directory it was asked about,
+and printed settings and refusals no longer show a base URL's password or path.
+Links and pipes planted in the sessions directory are no longer followed or
+waited on.
+
+### Added
+
+- **`crucible auth` says, stores and removes credentials outside a session.**
+  `auth status [--json]` reports per provider whether a launch would sign in from the environment, a stored key or an account, offline and without renewing anything; `auth login PROVIDER --api-key-stdin` stores a piped key (or signs in interactively in a terminal), and `auth logout PROVIDER` removes only that provider's stored credentials and names any variable that still applies.
+- **`crucible completion SHELL` writes shell completion.** It prints a script for bash, zsh, fish, powershell or elvish, made from the command line as it is, and reads no configuration. `docs/reference/cli.md` says where each shell loads it from.
+- **`crucible doctor` checks a machine offline.** It reports the
+  configuration, private-state permissions, stored and exported credentials by
+  name, the provider a start would open, the sandbox backend and policy,
+  extensions and declared MCP servers, each under a stable id with a reason
+  and a remedy. Nothing is sent, renewed, started or written, and `--json`
+  prints the same report as one document. It exits 0 when healthy, 1 for
+  warnings and 2 for a failure.
+- **Installing over a 0.43–0.45 install moves it to the versioned layout.** `crucible` becomes a link to the new release in one rename, and the old `crucible-sandbox-broker` stays beside it for any crucible already running. `uninstall.sh` now removes that layout, deleting only what a release's receipt describes and naming anything else it keeps.
+- **Read-only `mcp`, `extensions` and `sessions` lists.** `crucible mcp list` and `crucible mcp get NAME` say what each declared MCP server would be started with, without starting it and with variables, keys in arguments and credentials in URLs redacted. `crucible extensions list` prints the same listing as `--extensions`, which stays. `crucible sessions list [--json]` lists this directory's sessions, newest first, from the index and each log's first line, without opening, resuming or writing any, and says when the list is incomplete.
+- **`crucible sandbox inspect [--json]` reports confinement without starting anything.** It names the first trusted backend a command here would try, its build digest and what it can hold, the reach and ceilings a command would get, and why it would be refused, and starts no backend, helper or command to do so. `--json` writes one document with `format_version` 1, and `--sandbox` is now the same report as text. The report carries no path but the workspace root, and a version only starting the backend could confirm, as Bubblewrap's on Linux, is shown as `unverified` with the reason.
+- **Ctrl+Enter and Ctrl+S stop the running turn to send queued prompts now.**
+  Ctrl+Enter stops the running turn and sends every queued prompt, then the line in the box, as the next turn; Ctrl+S stops it and sends the highlighted prompt alone, and the rest follow once it ends.
+  VTE terminals such as GNOME Terminal, macOS Terminal and tmux without `extended-keys` send Ctrl+Enter as Enter; Ctrl+S works everywhere.
+
+### Changed
+
+- **A running Crucible keeps the sandbox broker of the release it was started from.** When an install makes a newer release active, a Crucible that is already running keeps using its own release's broker. It looks for the broker beside its executable first, with links resolved as it starts, then in the directory above it.
+- **A client with no terminal is told what kind of thing a requested call names.**
+  The `tool_requested` progress frame carries `summary_kind`, one of `path`, `address`, `command` or `other`, so a client can tell a file from an address or a command without guessing from the words. The client protocol moves to revision 3, and a frame that says revision 2 is refused as an unsupported version.
+- **`crucible config check --json` always writes a document.** When the directory it was started in cannot be read or worked in, or crucible's home cannot be found, it now prints a `config-check` document with `status` `failed` and a `problem` naming the step that stopped, where before it printed nothing. It still exits 1 and gives the full reason on standard error.
+- **Prompts queued behind a turn stand in one panel you act on while you type.**
+  The panel stays over the box while any prompt waits: the arrows walk its highlight, Ctrl+E takes the highlighted prompt back into the box and Ctrl+X deletes it, and Ctrl+Q and the view it opened are gone.
+  Looking at the queue no longer holds it, so the running turn still takes what waits, and a prompt too long for the box says so and stays queued.
+- **The shell installer keeps each release in a directory of its own and switches to it in one step.**
+  `install.sh` puts a release under `.crucible-install/releases/<version>` in the installation directory, with a receipt of what it holds, and links `crucible` and `cru` to the active one, so an interrupted install leaves the previous release in use or the new one complete. Earlier releases stay in place, and installing one of them again switches back to it. A version with a suffix or a leading zero, such as `1.2.3-rc.1`, is now refused.
+- **The colour rule now covers the welcome card, which looks as before.**
+  The rule names the card's frame: the runs of bar either side of its name, the edges down both sides and the edge between its two columns.
+  Inside that frame no row lights more than one thing, a tip's key, at any width, in Unicode or ASCII.
+
+### Fixed
+
+- **A base URL missing its host no longer shows its password.** A mistyped `baseUrl` such as `https://user:password` with the host left out used to show the password as the port, both in its refusal and in printed settings. It is now shown as `<redacted>`.
+- **When the system Bubblewrap cannot report its version, the sandbox says why.**
+  The reason names the exit status of `bwrap --version` and what it printed, cut to 200 bytes, instead of only calling the version invalid.
+- **`crucible config check` no longer lets a checked-out configuration write
+  to your terminal.** A project configuration key or value carrying an escape
+  sequence, an 8-bit control such as U+009B, a line break or a right-to-left
+  override used to reach the terminal raw, where it could clear the screen,
+  retitle the window or add a forged line to the report. Both the text report
+  and `--json` now show each such character as its escape, and the JSON still
+  decodes to the same strings.
+- **`crucible config check` now says when it cut a failure.** A failure sentence longer than 4096 bytes in the text report ends with `… (cut)` instead of reading as whole. `--json` already reported it as `truncated` and is unchanged.
+- **`crucible config check` no longer passes a line or paragraph separator
+  through to your terminal.** A project configuration key, value or path
+  containing U+2028 or U+2029 is now shown as `\u{2028}` / `\u{2029}` in the
+  text report and on `crucible:` error lines, and as ` ` / ` ` in `--json`,
+  which reads back as the same character. Some terminals and log viewers end a
+  line at these characters, so a checkout could otherwise add a line the
+  report never wrote.
+- **`/context` names a remembered yes for a tool with no path by the tool alone.** It listed `todo_write` as "a path it could not resolve", although nothing failed to resolve; it now reads `todo_write`.
+- **`--continue` no longer reads a whole log to check its first line.** A log whose first line never ends is passed over after 64 KiB, as the welcome screen already did, instead of being read into memory whole.
+- **The results view opened with Ctrl+O stays quick over long runs.** It now
+  lays out only the results it shows instead of every one it stands over on
+  each frame, so walking many long results no longer slows each step down.
+- **Ctrl+O while a turn runs keeps the row saying the turn is running.**
+  The results view now shows the working row, with its clock and "esc to interrupt", directly over its rule, as it stands over the queue's panel. The view gives up two lines for it, and drops it before it would show no row of results at all.
+- **A failure stays on one line.** A configuration key or directory name holding a line break could add a forged `crucible: ` line to standard error when a failure quoted it; the break is now shown as `\n`, so the value is still readable. The page and code a vendor sends for an account sign-in are shown the same way.
+- **A long error no longer floods standard error.** When a run fails, the `crucible: ` line it ends with is now cut at 16 KiB and ends `… (cut)`. Before, `crucible config check` repeated a rejected configuration value whole after its report had already cut it.
+- **A link to a file in an answer opens the file in any terminal that opens links, at its line where the terminal reads one.**
+  A relative path such as `src/main.rs:12` is now handed to the terminal as an absolute `file://` address in the checkout, which VS Code, JetBrains IDEs, kitty and the desktop opener can each open.
+  Before, a path was handed on as written, which most terminals could not open.
+- **`sandbox inspect` no longer lets a directory's name add lines to its text
+  report.** A checkout directory whose name held a line break, a line or
+  paragraph separator or another control character could forge a line in the
+  report. The name is now shown with each such character written as its
+  escape; `--json` never carried the path and is unchanged.
+- **A terminal install no longer prints a stray `printf: write error` line.** Stopping the progress spinner could interrupt one of its frames. The shell then reported the failed write on the terminal, above the step's row. The spinner's own errors are now discarded, and the installer's errors are shown as before.
+- **A whole number written as `6.0` in a configuration file loads.** The
+  published schema already accepted it, so an editor could pass a file that
+  crucible then refused to start with. It is read as `6` and held to the same
+  bounds, and `6.5` is still refused.
+- **A key of exactly 16 KiB pasted into the `auth login` prompt with a line break or spaces around it is taken.** It was refused as longer than 16384 bytes though the key itself fit and `--api-key-stdin` took it. The prompt now holds the same whitespace room as standard input.
+- **A running session no longer reads its log through a link or waits on a pipe.** If a session log's name is replaced by a symbolic link or a pipe while the session runs, redrawing the conversation or opening an old result now fails with "could not read the session log". Before, it showed what the link led to, or hung.
+- **A printed configuration no longer shows an MCP server's key argument.** Formatting a server, a document, or the settings for a log or an error now shows a server's arguments as `crucible mcp get` shows them, so the value after `--api-key` and the like is hidden. The server is still started with its arguments whole.
+- **`mcp get` hides the argument after any that names a secret.** A server
+  argument that came after one naming a secret or a scheme, such as
+  `--api.key,`, `password=.` or `X-Api-Key`, could be shown in full when the
+  naming argument ended in a way `mcp get` misread. Any argument hidden for its
+  name now hides the next one too, so a few harmless values are hidden as well,
+  such as the path after `--tokenizer=fast`.
+- **Permission questions no longer say a path failed to resolve when a call
+  names none.** A call such as `ask_user`, `todo_write` or `bash_output` is
+  now asked about as "act on no file" instead of "read a path it could not
+  resolve". A path that was asked for and did not resolve keeps its wording.
+- **Files whose names are not valid text are asked about every time.** A
+  "don't ask again this session" answer about one such file could also settle
+  a later call about a different one. Deny rules still apply to them.
+- **A crash is written as one escaped line.** A panic message no longer writes control characters or extra lines from its text to your terminal, whether it happens during a session or outside one. A backtrace, when asked for, follows that line.
+- **`crucible auth login` no longer leaves your terminal hiding what you type when it is killed at the key prompt.** On Linux, macOS and FreeBSD, a termination or hang-up while the prompt waits now restores the terminal before the process ends by that signal, so the shell echoes again. Nothing is stored.
+- **A refused base URL no longer repeats its password or path.** When a `baseUrl` is spelled so that a URL parser would read its host differently, for example a user before the first `://` or a backslash in the host, the error now shows it only as `<redacted>`. Text that is not an address at all is shown the same way.
+- **A command stopped on a slow Windows machine is no longer reported as unstopped.** A terminated command now has up to a second to finish exiting before its stop is called a failure. Before, a command that was already dead could be reported as "could not stop the command".
+- **The welcome screen no longer hangs on a pipe in the sessions directory or follows a link out of it.** A session log that is a pipe or a link is now left out of the recent-session picker, as `crucible sessions list` already counted it unreadable. Each log is opened once and checked as an ordinary file on that open, so one swapped in after a check is no longer read.
+- **Ctrl+O while a turn runs stands the results in the prompt box's place.**
+  The box no longer stays drawn under the view, so the view's last rows and its footer, which says how to close it, are on screen again.
+- **A sandboxed command's last output is no longer lost when it ends.**
+  On Linux, output still in the pipe when a command finished could be cut off and read as if it were the whole output, so a tool could tell the model it had everything. The sandbox now gives the reader a moment to take all of it, and a reader it still has to cut off is told so rather than handed part of the output as the whole.
+- **A pipe or link in the sessions directory no longer hangs or redirects crucible.** A pipe named `recent.sessions`, `recent.sessions.ordered` or `prompt.history` used to hold a session's start, the welcome screen or `crucible sessions list` until something wrote to it, and a link there was read wherever it led. Now a link or a pipe under any of these names is refused instead of followed, as one under a log's name already was.
+- **`--continue` and `--resume` no longer follow a link out of the sessions directory or hang on a pipe.** A log name that is a symbolic link or a pipe is refused as an unreadable log, and nothing is read, cut or appended through it. The `/resume` preview refuses it the same way.
+- **A link or pipe planted in the session directory is no longer written through.** Session marks and locks now refuse a symbolic link, a reparse point or a pipe instead of following it or waiting on it. A link or pipe at `recent.sessions.lock` stops a start, and one at a log's `.lock` stops `--continue`, until it is removed.
+- **Printed settings no longer show a provider base URL's path or query.** They show only the scheme, host and port, as provider diagnostics already did, so a key or tenant carried in the address stays out of the printed copy.
+- **A printed configuration no longer shows an extension's settings or a base URL's password.** Formatting the settings or a document for a log or an error now shows each value under an extension's `config` as `<redacted>`, and a provider's `baseUrl` with its user and password hidden. What crucible applies and sends is unchanged.
+- **A signal that lands as a key wait ends now hands the terminal back.** A first SIGTERM or SIGHUP that arrived just as crucible finished waiting for a key between turns could go unread until the next wait, and a second one ended crucible with the terminal still in raw mode. It now unwinds at once, as it does anywhere else in the wait.
+- **A signal no longer leaves your shell without echo between turns.** On Linux, macOS and FreeBSD, closing the window or sending `kill` while crucible waits at the prompt or in a panel, such as the `/login` key box, now hands the terminal back before crucible exits by that signal.
+- **`--continue` keeps a tool call that was running when crucible stopped.** If the log recorded that the call started, it is now answered with a failure saying it may have taken effect, so the model checks before running it again instead of losing the whole tool pass.
+- **A checked-out directory or configuration can no longer send control
+  sequences to your terminal.** Before this change, a directory name or a
+  project configuration key could retitle, recolour or clear the terminal when
+  it appeared in the text output of `crucible sandbox inspect` or `crucible
+  config check`, or in an error line. Those three now show each control
+  character as a visible escape such as `\u{1b}`. The `--json` document from
+  `crucible sandbox inspect` now also escapes DEL and C1 controls as `\u00XX`,
+  and it still decodes to the same text.
+- **`uninstall.sh` lines up its details the way the installer does.**
+  In a terminal too narrow for one of its details, every detail now goes on the line under its step, instead of a short one staying beside its step while a long one moved under it.
+- **Dropping a command's input no longer waits for its writer thread on
+  Windows.** Cancelling a write the command was not reading used to wait until
+  the writing thread was scheduled, which a busy machine could delay by tens
+  of milliseconds. The cancellation now runs on the writing thread itself.
+- **A `write` path containing `..` is settled as the file it reaches.**
+  The question and your permission rules see that file, following the path
+  the way your system does. A `..` after a name that is not an existing
+  directory is refused before anything is created.
+
+### Security
+
+- **A link's address can no longer carry terminal instructions.**
+  The address of a link in an answer is now sent to the terminal in printable characters only, with anything else percent-escaped, so a model cannot end the link early and have the rest read as a command.
+  Links still open where they pointed.
+- **A permission question tells a client with no terminal what will run or be sent.**
+  The `permission` pending action carries `asked`: the command line exactly as it would run and whether it is left running, or the address or query as it would be sent, so two calls a rule treats as one no longer reach a client as the same question. A question whose line or address is too long to carry whole is denied for a client that reads only the contract, as a cut tool name or subject already is. The field is part of client protocol revision 3, and `a_client_reading_only_the_pending_action_tells_apart_two_lines_running_the_same_commands` holds it.
+- **On Unix, the new content of a file that `edit` or `write` replaces can be opened only by you while it is being written.**
+  It is given the original's mode just before it takes the original's place, as before. The `crucible-workspace` test `a_replaced_files_preparation_file_is_owner_only_from_the_moment_it_is_made` holds this.
+- **Spaces inside a quoted argument are part of the command a rule or an approval is about.**
+  `rm -f "report final.txt"` and `rm -f "report  final.txt"` name two files, and they are now two commands to an allow rule and to a `session` answer.
+  Runs of spaces between words still collapse, so `cargo   test` is still `cargo test`.
+- **A command allowed for the session covers only the exact line it was asked about.**
+  The same commands joined by another operator are asked about again, while allow rules still cover each command in a line as before.
+  The `remembered` tests in `crucible-tools`, such as `a_remembered_command_does_not_cover_its_commands_run_regardless_of_each_other`, hold this.
+- **`read`, `edit`, `write`, `grep` and `glob` act only on the file or directory you approved, inside the workspace as well as outside it.**
+  If a path leads somewhere else by the time the call runs, the call is refused before anything is read, created or changed.
+  The tests named `retargeted` in `crucible-builtins` hold this.
+- **A yes for the session to a path crucible could not resolve now allows that one call.** The next call to such a path is asked about again, and a yes to a resolved file is remembered by its full path. Tools that name no file, such as `todo_write`, still remember a session yes.
+
+### Internal
+
+- **crucible can now make a staged release active, and the one before it active again, under the installer's lock.**
+  It checks the staged release again, switches with one rename and keeps the release before it, so a kill at any point leaves one whole release active, and a lock left by an install that stopped is refused with how to remove it, never taken. Nothing calls it yet.
+- **Changelog entries wait in the checkout a release is cut from.** A pull
+  request gives its entry in its body, whoever merges writes it under
+  `changelog.d/`, which git ignores, and the release commit builds the version
+  section from those files with `scripts/python/changelog-entries.py assemble`.
+- **The repository gate fails when a crate's `src/lib.rs` does not open by saying what the crate is for.**
+  Its first line has to be crate documentation of at least three words, so the map of the workspace that contributors read from those lines has no gap.
+- **The Windows installer's midway-failure test now proves the put-back ran.** It fails unless the broker alone was moved aside before the executable's move failed, so an install that stops before replacing anything no longer passes it.
+- **A Windows install that fails midway is tested to leave every file as it was.**
+- **crucible can now check an installer-managed release against its receipt.**
+  It finds the install from its own executable, requires each directory and file there to belong to root or to the user running it and to be writable by nobody else, and refuses a link where none belongs, a receipt that breaks its format and a file whose SHA-256 is not the recorded one. Nothing acts on the result yet.
+- **Account sign-in and renewal requests can no longer leave without the content-use hold.**
+  An owner of renewals that was never given its hold used to fall back to an unheld client; it now refuses every account request with a typed error before anything is dialled. The application already handed the hold in before its first request, so no shipped run changes.
+- **Several test runs of one checkout no longer refuse each other's sandbox tests.** Test processes of a checkout now take turns at its shared sandbox state, so four concurrent `cargo test --workspace` runs pass where each used to fail. Nothing shipped changes.
+- **A release tag promotes only a `staged` artifact its own verdict made.** The promote job now needs the staging run to have finished, and exactly one `staged` artifact created and last changed while that run's passing `staged` job ran. Nothing uploaded after that job finished can be promoted. A time it cannot read is a refusal.
+- **Releases publish only bytes that were installed first.** A dispatched run of the release workflow builds every artifact and installs those exact bytes before anything is published: a fresh install on every platform, upgrades of 0.45.3 and 0.43.0 installs with a session running, a rollback, and a sandboxed command on Windows. A tag then publishes that run's bytes, checked file by file against its checksums, as a draft that is verified again before it opens.
+
 ## [0.45.3] - 2026-10-06
 
 **Native mode keeps the box at the foot of the window and stops leaving
@@ -5084,7 +5264,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.45.3...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/augments-labs/crucible-code/compare/v0.45.3...v0.46.0
 [0.45.3]: https://github.com/augments-labs/crucible-code/compare/v0.45.2...v0.45.3
 [0.45.2]: https://github.com/augments-labs/crucible-code/compare/v0.45.1...v0.45.2
 [0.45.1]: https://github.com/augments-labs/crucible-code/compare/v0.45.0...v0.45.1
