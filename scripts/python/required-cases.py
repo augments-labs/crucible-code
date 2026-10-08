@@ -47,6 +47,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 MANIFEST = "scripts/required-cases.json"
 
@@ -104,13 +105,18 @@ def fenced_region(lines, index):
 
 
 def find_function(root, name):
-    """Every place `name` is defined below `root`, so an ambiguity can be told."""
+    """Every place `name` is defined below `root`, so an ambiguity can be told.
+
+    A hidden directory holds no source of the workspace, but it can hold whole
+    other checkouts of it — a worktree, an archived copy — whose cases would
+    read as more definitions of the same name.
+    """
     opening = re.compile(
         r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+" + re.escape(name) + r"\s*[(<]"
     )
     found = []
     for base, directories, files in os.walk(root):
-        directories[:] = [one for one in directories if one not in ("target", ".git")]
+        directories[:] = [one for one in directories if one != "target" and not one.startswith(".")]
         for file in files:
             if not file.endswith(".rs"):
                 continue
@@ -209,6 +215,16 @@ def self_test():
     if examples != ["cargo", "test", "--workspace", "--locked", "--doc", "--", "Trouble::one"]:
         print("    FAIL a rerun of the examples would not ask for the selection the suite ran")
         return 1
+
+    with tempfile.TemporaryDirectory() as root:
+        for where in ("tests", os.path.join(".worktrees", "other", "tests")):
+            os.makedirs(os.path.join(root, where))
+            with open(os.path.join(root, where, "main.rs"), "w", encoding="utf-8") as file:
+                file.write("fn a_named_case() {\n}\n")
+        found = [slashed(os.path.relpath(one[0], root)) for one in find_function(root, "a_named_case")]
+        if found != ["tests/main.rs"]:
+            print("    FAIL the required-case finder read a checkout nested under a hidden directory")
+            return 1
     return 0
 
 
