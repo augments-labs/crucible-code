@@ -13,7 +13,9 @@
 //! stands: a removed worktree, or a test fixture whose process was killed
 //! before it could clean up. A directory with no claim, such as one a build
 //! made before claims were written, or the shipped directory, is never
-//! touched, since its name alone proves nothing about who uses it.
+//! touched, since its name alone proves nothing about who uses it. A claim
+//! left empty for more than a day, by a process that ended before writing it,
+//! is removed alone, since it names no checkout whose state could go with it.
 
 use std::fs::{self, File};
 use std::io::{self, Read as _};
@@ -42,6 +44,10 @@ const TOKEN_DIGITS: usize = 16;
 
 /// The longest checkout path a claim is read for; longer is no claim.
 const MAX_CLAIM_BYTES: u64 = 4096;
+
+/// How old an empty claim must be before it is taken for one whose claimer
+/// ended before writing it.
+const EMPTY_CLAIM_AGE: std::time::Duration = std::time::Duration::from_hours(24);
 
 /// How often a claim is opened again after a reclaim removed the one opened.
 const CLAIM_ATTEMPTS: u32 = 8;
@@ -201,7 +207,18 @@ fn reclaim(base: &Path, state: &str, shipped: &str) -> io::Result<bool> {
     else {
         return Ok(false);
     };
-    if checkout.is_empty() || checkout_state_name(shipped, &checkout) != state {
+    if checkout.is_empty() {
+        // A process that ended between creating its claim and writing it left
+        // one that names no checkout. Once it is old enough that no claimer
+        // can still be about to write it, only the claim goes: what stands
+        // beside it may be a live checkout's, whose next claim writes a fresh
+        // one.
+        if abandoned_empty(&marker)? {
+            fs::remove_file(&path)?;
+        }
+        return Ok(false);
+    }
+    if checkout_state_name(shipped, &checkout) != state {
         return Ok(false);
     }
     match fs::symlink_metadata(&checkout) {
@@ -221,7 +238,13 @@ fn reclaim(base: &Path, state: &str, shipped: &str) -> io::Result<bool> {
         lock.push(suffix);
         match fs::remove_file(&lock) {
             Ok(()) => {}
-            Err(problem) if problem.kind() == io::ErrorKind::NotFound => {}
+            // A lock this user may not remove is left; the claim still goes,
+            // so the state is not examined again on every run.
+            Err(problem)
+                if matches!(
+                    problem.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) => {}
             Err(problem) => return Err(problem),
         }
     }
@@ -229,6 +252,15 @@ fn reclaim(base: &Path, state: &str, shipped: &str) -> io::Result<bool> {
     // opens a fresh one.
     fs::remove_file(&path)?;
     Ok(true)
+}
+
+/// Whether an empty claim was last written longer ago than
+/// [`EMPTY_CLAIM_AGE`].
+fn abandoned_empty(claim: &File) -> io::Result<bool> {
+    let written = claim.metadata()?.modified()?;
+    Ok(std::time::SystemTime::now()
+        .duration_since(written)
+        .is_ok_and(|age| age > EMPTY_CLAIM_AGE))
 }
 
 /// The claim at `path`, refused unless it is this user's plain file.

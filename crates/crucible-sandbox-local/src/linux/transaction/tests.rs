@@ -1123,6 +1123,37 @@ fn a_checkouts_state_is_reclaimed_once_its_checkout_is_gone_and_nobody_holds_its
     assert_eq!(left_of(base, &state), Vec::<String>::new());
 }
 
+/// The claim beside `state`, as a path.
+fn claim_beside(state: &Path) -> PathBuf {
+    let mut claim = state.as_os_str().to_owned();
+    claim.push(checkout_state::CLAIM_SUFFIX);
+    PathBuf::from(claim)
+}
+
+/// Writes a claim beside `state` recording `checkout`, held by nobody.
+fn free_claim(state: &Path, checkout: &str) -> PathBuf {
+    let claim = claim_beside(state);
+    fs::write(&claim, checkout.as_bytes()).expect("a free claim");
+    claim
+}
+
+/// The state directory's name for a checkout under `base` that does not exist.
+fn gone_checkout(base: &Path, name: &str) -> (String, PathBuf) {
+    let checkout = base.join(name).display().to_string();
+    let state = base.join(checkout_state_name(RECLAIM_TEST_SHIPPED, &checkout));
+    (checkout, state)
+}
+
+/// Every name under `base`, sorted.
+fn names_in(base: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(base)
+        .expect("the base")
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
 #[test]
 fn reclaiming_leaves_what_it_cannot_prove_is_an_abandoned_checkouts() {
     let sample = crate::sample::Sample::new("sandbox-checkout-kept");
@@ -1130,41 +1161,150 @@ fn reclaiming_leaves_what_it_cannot_prove_is_an_abandoned_checkouts() {
 
     // A checkout's state with no claim beside it, as every one made before
     // claims were written is: its name alone proves nothing.
-    let unclaimed = base.join(checkout_state_name(
-        RECLAIM_TEST_SHIPPED,
-        &base.join("unclaimed").display().to_string(),
-    ));
+    let (_, unclaimed) = gone_checkout(base, "unclaimed");
     create_private_test_directory(&unclaimed);
 
     // A claim naming a gone checkout whose name is not this directory's.
-    let gone = base.join("gone").display().to_string();
+    let (gone, _) = gone_checkout(base, "gone");
     let renamed = base.join(checkout_state_name(RECLAIM_TEST_SHIPPED, "elsewhere"));
     create_private_test_directory(&renamed);
-    let mut marker = renamed.as_os_str().to_owned();
-    marker.push(checkout_state::CLAIM_SUFFIX);
-    fs::write(&marker, gone.as_bytes()).expect("a claim for another name");
+    let renamed_claim = free_claim(&renamed, &gone);
 
     // The shipped directory, with a claim beside it naming a gone checkout.
     let shipped = base.join(RECLAIM_TEST_SHIPPED);
     create_private_test_directory(&shipped);
-    let mut marker = shipped.as_os_str().to_owned();
-    marker.push(checkout_state::CLAIM_SUFFIX);
-    fs::write(&marker, gone.as_bytes()).expect("a claim beside the shipped state");
+    let shipped_claim = free_claim(&shipped, &gone);
 
-    let before: Vec<_> = fs::read_dir(base)
-        .expect("the base")
-        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-        .collect();
+    let before = names_in(base);
     assert_eq!(
         checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
         0
     );
-    let after: Vec<_> = fs::read_dir(base)
-        .expect("the base")
-        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-        .collect();
-    assert_eq!(before.len(), after.len(), "{before:?} became {after:?}");
+    assert_eq!(names_in(base), before);
     assert!(unclaimed.is_dir() && renamed.is_dir() && shipped.is_dir());
+    for claim in [&renamed_claim, &shipped_claim] {
+        assert_eq!(
+            fs::read(claim).expect("a claim that was kept"),
+            gone.as_bytes(),
+            "{} changed",
+            claim.display()
+        );
+    }
+}
+
+#[test]
+fn reclaiming_removes_only_a_directory_at_the_state_path_and_follows_no_link() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-not-a-directory");
+    let base = sample.root();
+    let sentinel = crate::sample::Sample::new("sandbox-checkout-sentinel");
+    let kept = sentinel.root().join("kept");
+    fs::write(&kept, b"kept").expect("a file beyond the base");
+
+    // A free, valid claim for a gone checkout whose state path is a link to a
+    // directory outside the base.
+    let (linked_checkout, linked) = gone_checkout(base, "linked");
+    crate::sample::symlink(sentinel.root(), &linked);
+    let linked_claim = free_claim(&linked, &linked_checkout);
+
+    // And one whose state path is a plain file.
+    let (plain_checkout, plain) = gone_checkout(base, "plain");
+    fs::write(&plain, b"plain").expect("a plain file at the state path");
+    let plain_claim = free_claim(&plain, &plain_checkout);
+
+    let before = names_in(base);
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert_eq!(names_in(base), before);
+    assert!(
+        fs::symlink_metadata(&linked).is_ok_and(|found| found.is_symlink()),
+        "the link at the state path was removed"
+    );
+    assert_eq!(fs::read(&kept).expect("the sentinel's file"), b"kept");
+    assert_eq!(fs::read(&plain).expect("the plain file"), b"plain");
+    assert!(linked_claim.is_file() && plain_claim.is_file());
+}
+
+#[test]
+fn a_claim_that_is_a_link_is_refused_and_its_state_kept() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-linked-claim");
+    let base = sample.root();
+    let (checkout, state) = gone_checkout(base, "gone");
+    create_private_test_directory(&state);
+    fs::write(state.join(REGISTRY_LOCK), b"").expect("a lock in the state");
+    let elsewhere = sample.root().join("elsewhere-claim");
+    fs::write(&elsewhere, checkout.as_bytes()).expect("a valid claim elsewhere");
+    let claim = claim_beside(&state);
+    crate::sample::symlink(&elsewhere, &claim);
+
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert!(state.join(REGISTRY_LOCK).is_file(), "the state was removed");
+    assert!(
+        fs::symlink_metadata(&claim).is_ok_and(|found| found.is_symlink()),
+        "the linked claim was removed"
+    );
+    assert_eq!(
+        fs::read(&elsewhere).expect("the link's target"),
+        checkout.as_bytes()
+    );
+    assert!(
+        checkout_state::claim(base, RECLAIM_TEST_SHIPPED, &checkout).is_err(),
+        "a linked claim was taken"
+    );
+}
+
+#[test]
+fn an_empty_claim_older_than_a_day_is_removed_alone() {
+    let sample = crate::sample::Sample::new("sandbox-checkout-empty-claim");
+    let base = sample.root();
+    let aged = |claim: &Path, age: Duration| {
+        File::options()
+            .write(true)
+            .open(claim)
+            .expect("the claim")
+            .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now() - age))
+            .expect("the claim's age");
+    };
+
+    // Its claimer ended between creating the claim and writing it; what
+    // stands beside it may be a live checkout's, so it is all kept.
+    let (_, stale) = gone_checkout(base, "stale");
+    create_private_test_directory(&stale);
+    fs::write(stale.join(REGISTRY_LOCK), b"").expect("a lock in the state");
+    for suffix in checkout_state::TEST_LOCK_SUFFIXES {
+        let mut lock = stale.as_os_str().to_owned();
+        lock.push(suffix);
+        fs::write(lock, b"").expect("a lock beside the state");
+    }
+    let stale_claim = free_claim(&stale, "");
+    aged(&stale_claim, Duration::from_hours(48));
+
+    // Just made: its claimer may be about to write it.
+    let (_, fresh) = gone_checkout(base, "fresh");
+    create_private_test_directory(&fresh);
+    let fresh_claim = free_claim(&fresh, "");
+    aged(&fresh_claim, Duration::from_hours(1));
+
+    assert_eq!(
+        checkout_state::reclaim_abandoned(base, RECLAIM_TEST_SHIPPED),
+        0
+    );
+    assert!(!stale_claim.exists(), "the stale empty claim was kept");
+    assert_eq!(
+        left_of(base, &stale).len(),
+        3,
+        "more than the claim went: {:?}",
+        left_of(base, &stale)
+    );
+    assert!(stale.join(REGISTRY_LOCK).is_file());
+    assert!(
+        fresh_claim.is_file() && fresh.is_dir(),
+        "a fresh empty claim went"
+    );
 }
 
 #[test]
