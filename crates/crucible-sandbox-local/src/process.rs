@@ -50,8 +50,17 @@ use crate::platform::{self, ReadState, Scope, Stream, Terminator};
 /// Absolute ceiling even where a policy omits a smaller one.
 pub(super) const MAX_LOCAL_COMMANDS: usize = 16;
 
-/// Bounded reap interval inside synchronous `stop`. Not only Drop reaches it.
-const REAP: Duration = Duration::from_millis(250);
+/// How long a synchronous `stop` waits for the leader it has terminated to
+/// become reapable. Not only Drop reaches it.
+///
+/// By then the kill has been delivered (on Windows, the job has been seen
+/// empty), so what is left is the system finishing an exit it has begun: a
+/// moment, except on a loaded machine, where Windows has been seen to take
+/// longer than a quarter of a second. Giving up before the system finishes
+/// reports a command that has been stopped as one that could not be, so this
+/// allows a second; a leader still not reapable after it is reported as failed
+/// cleanup, and left for a retry.
+const REAP: Duration = Duration::from_secs(1);
 
 /// How often a command's status task looks at it. It bounds deadline
 /// overshoot, and how late an exit nobody asked about is seen, without
@@ -1446,19 +1455,30 @@ fn reap(child: &mut Child, status: &mut Option<ExitStatus>) -> io::Result<()> {
     if status.is_some() {
         return Ok(());
     }
-    let deadline = Instant::now() + REAP;
+    *status = Some(reaped_within(REAP, || child.try_wait())?);
+    Ok(())
+}
+
+/// Asks `exited` for the terminated leader's status until it has one, or
+/// `allowed` has passed. The last ask comes after the bound, so a leader that
+/// became reapable while this thread waited for the processor is reaped.
+fn reaped_within(
+    allowed: Duration,
+    mut exited: impl FnMut() -> io::Result<Option<ExitStatus>>,
+) -> io::Result<ExitStatus> {
+    let deadline = Instant::now() + allowed;
     loop {
-        if let Some(exited) = child.try_wait()? {
-            *status = Some(exited);
-            return Ok(());
+        let late = Instant::now() >= deadline;
+        if let Some(status) = exited()? {
+            return Ok(status);
         }
-        if Instant::now() >= deadline {
+        if late {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "sandbox process did not become reapable after termination",
             ));
         }
-        thread::sleep(Duration::from_millis(5));
+        thread::sleep(SUPERVISE);
     }
 }
 
@@ -1561,6 +1581,11 @@ pub(super) fn testing_plan(
         credentials: Vec::new(),
     })
 }
+
+// How long a terminated leader is waited for, on every platform.
+#[cfg(test)]
+#[path = "process/tests/reaping.rs"]
+mod reaping;
 
 // What watches a command's status, on every platform that runs one.
 #[cfg(test)]
