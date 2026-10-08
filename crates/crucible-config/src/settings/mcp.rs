@@ -188,21 +188,24 @@ impl McpServer {
     /// - it holds a `?` or `#` after a URL's `://`, or a URL whose host is
     ///   followed by a `:` and anything but a port number;
     /// - a run of it is shaped like a token;
-    /// - or the argument before it ends naming it, as `--api-key`,
-    ///   `Authorization:` and `Bearer` do, also where a quote joins that name
-    ///   to what comes before it, as in `https://host'--api-key'`.
+    /// - or the argument before it is hidden for the first of these reasons: it
+    ///   names a secret or a scheme anywhere in it, as `--api-key`,
+    ///   `Authorization:`, `X-Api-Key` and `Bearer` do, however it ends.
     ///
     /// A value after a flag whose name says nothing, as `-p`, is shown. More is
     /// hidden than is secret, on purpose: a value shown in error is the one
-    /// that cannot be taken back.
+    /// that cannot be taken back. So the argument after `--tokenizer=fast` or
+    /// `keys` is hidden too, though neither names the next: reading where a
+    /// name ends to tell a flag from its own value is the reading that showed
+    /// a secret wherever it was wrong.
     #[must_use]
     pub fn shown_args(&self) -> Vec<String> {
-        let mut named = false;
+        let mut follows = false;
         self.args
             .iter()
             .map(|arg| {
-                let hidden = named || credential(arg);
-                named = names_next(arg);
+                let hidden = follows || credential(arg);
+                follows = named(arg);
                 if hidden {
                     HIDDEN.to_owned()
                 } else {
@@ -339,7 +342,8 @@ fn credential(arg: &str) -> bool {
 
 /// Whether a word in `arg` is a name a secret is given under, or a scheme a
 /// credential follows, as `Basic` in `Basic dXNlcjpwYXNz`, wherever in the
-/// argument it is written.
+/// argument it is written. Such an argument is hidden, and so is the one after
+/// it, which it may be naming.
 fn named(arg: &str) -> bool {
     words(arg).any(|word| secret(word) || scheme(word))
 }
@@ -387,36 +391,6 @@ fn shaped(arg: &str) -> bool {
     arg.split(|c: char| !(c.is_ascii_alphanumeric() || SEPARATORS.contains(&c)))
         .any(opaque)
 }
-
-/// Whether an argument ends naming the next one as a secret's value: on a
-/// flag named for a secret, as `--api-key`, on a name for one before `=` or
-/// `:`, as `Authorization:`, or on a scheme word, as `Bearer`, which a
-/// credential follows.
-///
-/// Read from the end of its last whitespace-separated part, with the quotes
-/// and brackets that close it taken off, twice: after the last mark in it, as
-/// `Authorization=Bearer` ends on `Bearer` and `--api.key` names a secret, and
-/// as its last word, as `https://host'--api-key'` ends on `--api-key`. Either
-/// reading is enough.
-fn names_next(arg: &str) -> bool {
-    let Some(last) = arg.split_whitespace().last() else {
-        return false;
-    };
-    let last = last.trim_end_matches(CLOSES);
-    let (name, marked) = last
-        .strip_suffix(['=', ':'])
-        .map_or((last, false), |name| (name, true));
-    let names =
-        |word: &str| scheme(word) || (secret(word) && (marked || unquoted(word).starts_with('-')));
-    names(name.rsplit(MARKS).next().unwrap_or(name))
-        || names(words(name).next_back().unwrap_or(name))
-}
-
-/// What separates one pair in a word from the next, or a name from its value.
-const MARKS: [char; 5] = ['=', ':', ';', '&', ','];
-
-/// What closes a quoted or bracketed word after its last character.
-const CLOSES: [char; 5] = ['\'', '"', ')', ']', '}'];
 
 /// Whether a URL's host, with what follows it up to its path, is a host alone
 /// or a host and a port: nothing after it, or a `:` and digits. A host

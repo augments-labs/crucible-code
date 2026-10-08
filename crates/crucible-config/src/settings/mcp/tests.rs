@@ -454,6 +454,7 @@ fn secrets() -> Vec<Case> {
         where_a_cut_could_show_part_of_one(),
         after_a_scheme_word_in_the_same_argument(),
         after_a_name_joined_to_what_comes_before_it(),
+        after_an_argument_that_names_one_however_it_ends(),
     ]
     .concat()
 }
@@ -914,8 +915,9 @@ fn after_a_scheme_word_in_the_same_argument() -> Vec<Case> {
     cases
 }
 
-/// A flag or a scheme word joined to what comes before it by a quote, with
-/// or without a closing mark after it, which names the argument after it.
+/// A flag or a scheme word, alone or joined to what comes before it by a
+/// quote, with or without a closing mark or other punctuation after it, which
+/// names the argument after it.
 fn after_a_name_joined_to_what_comes_before_it() -> Vec<Case> {
     let word = WORD;
     let names = [
@@ -925,14 +927,59 @@ fn after_a_name_joined_to_what_comes_before_it() -> Vec<Case> {
         "https://h.example.test'Bearer",
         "https://h.example.test\"Basic",
         "https://h.example.test'Token",
+        "--api-key",
+    ];
+    let after = [
+        "", "'", "\"", ")", "]", "}", ".", ">", "|", "!", "?", "*", "#", "\\", "`", "\u{200b}",
+        ".'", "'.", "..",
     ];
     names
         .iter()
         .flat_map(|name| {
-            ["", "'", "\"", ")", "]", "}"]
-                .map(|close| case(&[&format!("{name}{close}"), word], &[HIDDEN, HIDDEN]))
+            after.map(|close| case(&[&format!("{name}{close}"), word], &[HIDDEN, HIDDEN]))
         })
         .collect()
+}
+
+/// An argument that names a secret or a scheme anywhere in it, and so is
+/// hidden, ending in whatever way: a mark, punctuation, room, a quote no shell
+/// takes off, or a name with no `-` and no mark at all. The argument after it
+/// is hidden too, however the name before it is read.
+fn after_an_argument_that_names_one_however_it_ends() -> Vec<Case> {
+    let word = WORD;
+    let mut cases: Vec<Case> = [
+        "--api.key,",
+        "https://h.example.test'--api.key",
+        "--client.secret;",
+        "password=.",
+        "password=(",
+        "password==",
+        "Authorization:>",
+        "Authorization::",
+        "Authorization:\u{201d}",
+        "{\"password\":\u{201d}",
+        "password: '",
+        "--api-key .",
+        "Authorization: Bearer )",
+        "Bearer.",
+        "X-Api-Key",
+    ]
+    .iter()
+    .map(|name| case(&[name, word], &[HIDDEN, HIDDEN]))
+    .collect();
+    cases.extend([
+        case(
+            &["--header", "Authorization:\u{200b}", word],
+            &["--header", HIDDEN, HIDDEN],
+        ),
+        case(
+            &["--header", "X-Api-Key", word],
+            &["--header", HIDDEN, HIDDEN],
+        ),
+        // A hidden name that names the next one hides it in turn.
+        case(&["--api-key", "Bearer", word], &[HIDDEN, HIDDEN, HIDDEN]),
+    ]);
+    cases
 }
 
 #[test]
@@ -983,6 +1030,18 @@ fn an_argument_shaped_like_one_that_holds_a_secret_is_hidden_though_it_holds_non
     ];
 
     assert_eq!(shown(&shaped), [HIDDEN; 6]);
+}
+
+#[test]
+fn the_argument_after_one_that_names_a_secret_is_hidden_though_it_holds_none() {
+    // Telling a name's own value from the flag's is the reading that showed a
+    // secret wherever it was wrong, so a path after such an argument goes
+    // too, even where the argument already holds its own value.
+    assert_eq!(
+        shown(&["--tokenizer=fast", "/srv/models", "--port", "8080"]),
+        [HIDDEN, HIDDEN, "--port", "8080"]
+    );
+    assert_eq!(shown(&["keys", "/srv/docs", "-y"]), [HIDDEN, HIDDEN, "-y"]);
 }
 
 #[test]

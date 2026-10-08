@@ -231,6 +231,7 @@ fn no_secret_a_record_holds_reaches_either_stream() {
         r#"{{"mcp": {{"servers": {{"docs": {{
             "command": "docs-mcp",
             "args": [
+                "--port", "8080",
                 "--api-key", "{SECRET}",
                 "--password={SECRET}",
                 "-H", "Authorization: Bearer {SECRET}",
@@ -254,10 +255,12 @@ fn no_secret_a_record_holds_reaches_either_stream() {
     assert!(described.contains("DOCS_TOKEN=<redacted>"), "{described}");
     assert!(
         described.contains(
-            "  arguments  <redacted>\n\
+            "  arguments  --port\n\
+             \x20            8080\n\
              \x20            <redacted>\n\
              \x20            <redacted>\n\
-             \x20            -H\n\
+             \x20            <redacted>\n\
+             \x20            <redacted>\n\
              \x20            <redacted>\n\
              \x20            <redacted>\n\
              \x20            <redacted>\n\
