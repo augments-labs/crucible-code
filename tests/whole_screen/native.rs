@@ -1021,7 +1021,6 @@ fn a_refused_take_back_says_so_beside_the_title_in_native_mode() {
 // alternate screen before it records anything.
 
 #[test]
-#[ignore = "at 80x24 native mode leaves the queue panel no room, so a prompt queued during a turn shows no sign of it"]
 fn five_waiting_prompts_stand_in_one_panel_over_the_box_in_native_mode() {
     let vendor = crate::a_turn_still_running_long();
     let mut window = Watched::allowing_drawn(
@@ -1034,9 +1033,29 @@ fn five_waiting_prompts_stand_in_one_panel_over_the_box_in_native_mode() {
     crate::waiting_behind_a_turn(&mut window, 5);
 
     window.assert_never_alternate();
-    crate::draws(&window, crate::WAITING_80);
+    crate::draws(&window, WAITING_80_STOOD_TALLER);
     insta::assert_snapshot!(crate::steadied_picture(&window.picture()));
 }
+
+/// Five prompts waiting at 80x24 in native mode. Half the window has no room
+/// to name one of them, so the panel stands taller, at the least it can be
+/// drawn in: the count, the highlighted line alone and the keys.
+const WAITING_80_STOOD_TALLER: &[&str] = &[
+    "✳ writing (0s · ↓ 4 · esc to interrupt)",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "",
+    "5 queued · ctrl+enter to send all now",
+    "",
+    "› and add a test for the windows path",
+    "",
+    "↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now",
+    "",
+    "                                                                 99% window left",
+    "╭──────────────────────────────────────────────────────────────────────────────╮",
+    "│ ›                                                                            │",
+    "╰──────────────────────────────────────────────────────────────────────────────╯",
+    "ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1",
+];
 
 #[test]
 fn context_stands_over_a_fresh_session_and_closes_on_escape_in_native_mode() {
@@ -1375,7 +1394,7 @@ fn a_native_session_that_is_left_says_how_to_come_back_to_it() {
 }
 
 /// What `command` printed in a window too short for its panel, read back once
-/// the window is made each of `WIDTHS` wide and tall enough to hold it all,
+/// the window is made each of `widths` wide and tall enough to hold it all,
 /// beside what the same command prints when it is run at that width from the
 /// start. In native mode when `native`, in the full screen otherwise; read
 /// through the row that says `last`.
@@ -1384,8 +1403,8 @@ fn printed_then_resized(
     command: &str,
     last: &str,
     native: bool,
+    widths: [u16; 2],
 ) -> Vec<(u16, Vec<String>, Vec<String>)> {
-    const WIDTHS: [u16; 2] = [40, 80];
     const TALL: u16 = 100;
     let vendor = Vendor::answering("Hello.");
     let open = |name: &str, columns: u16| {
@@ -1409,7 +1428,116 @@ fn printed_then_resized(
     };
 
     let mut window = open(case, 80);
-    WIDTHS
+    widths
+        .into_iter()
+        .map(|columns| {
+            window.resize(columns, TALL);
+            if native {
+                // The rows are read from the first echo of the command, so a
+                // copy written at an earlier width and left in the scrollback
+                // by the replay would be the one compared. Said on its own,
+                // since that is the replay failing and not the block.
+                let all = everything(&window);
+                let echo = format!("› {command}");
+                let echoes = drawn(&all)
+                    .into_iter()
+                    .filter(|row| row.trim_matches('|').trim_end() == echo)
+                    .count();
+                assert_eq!(
+                    echoes, 1,
+                    "{command} at {columns} columns: a copy outlived the replay\n{all}"
+                );
+            }
+            let mut fresh = open(&format!("{case}-fresh-{columns}"), columns);
+            fresh.resize(columns, TALL);
+            (columns, read(&window), read(&fresh))
+        })
+        .collect()
+}
+
+/// Fails where a printed block kept the width it was printed at once the
+/// window narrowed to the first of `widths` or widened again to the second, in
+/// either screen mode. The narrower has to be one some row of the block does
+/// not fit, or the block laid once reads the same as the block laid again.
+fn assert_laid_again(case: &str, command: &str, last: &str, widths: [u16; 2]) {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        for (columns, resized, fresh) in
+            printed_then_resized(&format!("{case}-{mode}"), command, last, native, widths)
+        {
+            assert_eq!(resized, fresh, "{command} at {columns} columns, {mode}");
+        }
+    }
+}
+
+#[test]
+fn usage_printed_is_laid_again_at_each_width_it_is_read_at() {
+    assert_laid_again("usage-relaid", "/usage", "limits not reported", [40, 80]);
+}
+
+#[test]
+fn context_printed_is_laid_again_at_each_width_it_is_read_at() {
+    assert_laid_again("context-relaid", "/context", "free", [40, 80]);
+}
+
+#[test]
+fn settings_printed_is_laid_again_at_each_width_it_is_read_at() {
+    // Every row the listing writes fits forty columns, so it is read at
+    // thirty, which `Cache retention` and its value do not fit: a listing laid
+    // once is cut there, where one laid again folds the value under its name.
+    assert_laid_again("settings-relaid", "/settings", "Persistent cache", [30, 80]);
+}
+
+#[test]
+fn model_listing_printed_is_laid_again_at_each_width_it_is_read_at() {
+    assert_laid_again("model-relaid", "/model", "zai/glm-5.2", [40, 80]);
+}
+
+/// What `/resume` printed of the one session it found, in a window `printed`
+/// columns wide and too short for the picker, read back once the window is
+/// made each of `widths` wide and tall enough to hold it all, beside the
+/// listing printed when the window had that width from the start. Each window
+/// records a session of its own, so the id is read as `#`s.
+fn resume_listed_then_resized(
+    case: &str,
+    native: bool,
+    printed: u16,
+    widths: [u16; 2],
+) -> Vec<(u16, Vec<String>, Vec<String>)> {
+    const TALL: u16 = 100;
+    let vendor = Vendor::answering("Hello.");
+    let open = |name: &str, columns: u16| {
+        let mut window = if native {
+            Watched::native(name, columns, 24, &vendor)
+        } else {
+            fullscreen(name, columns, 24, &vendor)
+        };
+        window.types_until(
+            "summarise the release notes for the payments service\r",
+            "Hello.",
+        );
+        // Five rows leave the picker no room to stand, so the listing prints,
+        // the id leading each row of it.
+        let id = recorded_id(&window);
+        window.resize(columns, 5);
+        window.types_until("/resume\r", &id);
+        window
+    };
+    let read = |window: &Watched| {
+        let id = recorded_id(window);
+        let seen = if native {
+            everything(window)
+        } else {
+            window.picture()
+        };
+        reply(&seen, "/resume", &id)
+            .into_iter()
+            .map(|row| row.replace(&id, &"#".repeat(id.len())))
+            .collect()
+    };
+
+    let mut window = open(case, printed);
+    widths
         .into_iter()
         .map(|columns| {
             window.resize(columns, TALL);
@@ -1420,38 +1548,62 @@ fn printed_then_resized(
         .collect()
 }
 
-/// Fails where a printed block kept the width it was printed at once the
-/// window narrowed or widened again, in either screen mode.
-fn assert_laid_again(case: &str, command: &str, last: &str) {
+#[test]
+fn resume_listing_printed_is_laid_again_at_each_width_it_is_read_at() {
+    // Printed at sixty columns, where the title has a few columns left, so a
+    // listing laid once keeps that cut title when the window widens.
     for native in [false, true] {
         let mode = if native { "native" } else { "fullscreen" };
         for (columns, resized, fresh) in
-            printed_then_resized(&format!("{case}-{mode}"), command, last, native)
+            resume_listed_then_resized(&format!("resume-relaid-{mode}"), native, 60, [80, 40])
         {
-            assert_eq!(resized, fresh, "{command} at {columns} columns, {mode}");
+            assert_eq!(resized, fresh, "/resume at {columns} columns, {mode}");
         }
     }
 }
 
-#[test]
-fn usage_printed_is_laid_again_at_each_width_it_is_read_at() {
-    assert_laid_again("usage-relaid", "/usage", "limits not reported");
+/// The rows of the command list standing over the box: from the one marked
+/// `/help` to the blank row that parts the list from what is under it.
+fn command_list(window: &Watched) -> Vec<String> {
+    let picture = window.picture();
+    drawn(&picture)
+        .into_iter()
+        .map(|row| row.trim_matches('|').trim_end().to_owned())
+        .skip_while(|row| !row.starts_with("› /help"))
+        .take_while(|row| !row.is_empty())
+        .collect()
 }
 
 #[test]
-fn context_printed_is_laid_again_at_each_width_it_is_read_at() {
-    assert_laid_again("context-relaid", "/context", "free");
-}
-
-#[test]
-fn settings_printed_is_laid_again_at_each_width_it_is_read_at() {
-    // Not reproduced: every row the listing writes fits forty columns, so a
-    // narrower window cut none of them before the others were laid again.
-    // Kept so that a longer row is caught.
-    assert_laid_again("settings-relaid", "/settings", "Persistent cache");
-}
-
-#[test]
-fn model_listing_printed_is_laid_again_at_each_width_it_is_read_at() {
-    assert_laid_again("model-relaid", "/model", "zai/glm-5.2");
+fn the_command_list_is_laid_again_at_each_width_it_is_read_at() {
+    // Standing rather than printed, so the list is laid out by every frame
+    // at the width the window has: widened and narrowed again, it reads as
+    // the list opened at that width does. Opened narrow, since a list laid
+    // wide and cut at a narrower window reads as one laid narrow, and a list
+    // laid narrow reads short once the window widens.
+    let vendor = Vendor::answering("Hello.");
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let open = |name: &str, columns: u16| {
+            let mut window = if native {
+                Watched::native(name, columns, 24, &vendor)
+            } else {
+                fullscreen(name, columns, 24, &vendor)
+            };
+            window.types("/");
+            window
+        };
+        let mut window = open(&format!("commands-relaid-{mode}"), 40);
+        for columns in [80, 40] {
+            window.resize(columns, 24);
+            let fresh = open(&format!("commands-relaid-{mode}-fresh-{columns}"), columns);
+            let resized = command_list(&window);
+            assert!(!resized.is_empty(), "{}", window.picture());
+            assert_eq!(
+                resized,
+                command_list(&fresh),
+                "/ at {columns} columns, {mode}"
+            );
+        }
+    }
 }

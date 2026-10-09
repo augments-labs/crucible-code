@@ -12,7 +12,9 @@
 //!
 //! The tests can also have activation's sync of one directory refused on
 //! their own thread, standing in for a file system that cannot sync it,
-//! which a shipped build never does.
+//! which a shipped build never does: from a call on, or once, just after
+//! that thread crosses a named boundary, for a sync no test can reach
+//! between two calls.
 
 /// Says that `boundary` has just been crossed.
 #[cfg(not(test))]
@@ -30,6 +32,13 @@ pub(super) fn crossed(boundary: &'static str) {
 
     static COUNT: AtomicUsize = AtomicUsize::new(0);
 
+    let armed = ARMED.with_borrow_mut(|armed| match armed {
+        Some((at, _)) if *at == boundary => armed.take(),
+        _ => None,
+    });
+    if let Some((_, directory)) = armed {
+        ONCE.set(Some(directory));
+    }
     if let Some(record) = std::env::var_os(CROSSED) {
         let mut file = std::fs::OpenOptions::new()
             .create(true)
@@ -60,14 +69,21 @@ pub(super) const CROSSED: &str = "CRUCIBLE_TEST_UPDATE_CROSSED";
 pub(super) const KILL_AT: &str = "CRUCIBLE_TEST_UPDATE_KILL_AT";
 
 /// Refuses to sync the directory holding the name `at` when it is the one
-/// [`refusing_sync`] named on this thread, standing in for a file system
-/// that cannot sync it.
+/// [`refusing_sync`] named on this thread, or the one
+/// [`refusing_sync_after`] named once its boundary was crossed, standing in
+/// for a file system that cannot sync it.
 #[cfg(test)]
 pub(super) fn refuse_sync(at: &std::path::Path) -> std::io::Result<()> {
-    UNSYNCABLE.with_borrow(|refused| match refused {
-        Some(refused) if at.parent() == Some(refused.as_path()) => Err(std::io::Error::other(
-            "the test refuses to sync this directory",
-        )),
+    let refused = || std::io::Error::other("the test refuses to sync this directory");
+    let once = ONCE.with_borrow_mut(|once| match once {
+        Some(directory) if at.parent() == Some(directory.as_path()) => once.take(),
+        _ => None,
+    });
+    if once.is_some() {
+        return Err(refused());
+    }
+    UNSYNCABLE.with_borrow(|unsyncable| match unsyncable {
+        Some(directory) if at.parent() == Some(directory.as_path()) => Err(refused()),
         _ => Ok(()),
     })
 }
@@ -79,9 +95,24 @@ pub(super) fn refusing_sync(directory: Option<std::path::PathBuf>) {
     UNSYNCABLE.set(directory);
 }
 
+/// Makes [`refuse_sync`] refuse the next sync of `directory` on this thread
+/// once this thread crosses `boundary`, and only that one.
+#[cfg(test)]
+pub(crate) fn refusing_sync_after(boundary: &'static str, directory: std::path::PathBuf) {
+    ONCE.set(None);
+    ARMED.set(Some((boundary, directory)));
+}
+
 #[cfg(test)]
 thread_local! {
     /// The directory this thread's test refuses to sync.
     static UNSYNCABLE: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+    /// The boundary after which this thread's test refuses one sync, and of
+    /// which directory.
+    static ARMED: std::cell::RefCell<Option<(&'static str, std::path::PathBuf)>> =
+        const { std::cell::RefCell::new(None) };
+    /// The directory whose next sync this thread's test refuses.
+    static ONCE: std::cell::RefCell<Option<std::path::PathBuf>> =
         const { std::cell::RefCell::new(None) };
 }

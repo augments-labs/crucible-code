@@ -7,9 +7,9 @@
 //! creates something new.
 //!
 //! Deciding that needs tools to agree, and none owns the answer: `read` learns
-//! it, and `write` and `edit` act on it. So the answer lives here, in one value
-//! each is handed when it is built, and the binary is the only place that knows
-//! they share it.
+//! it, and `write` and `edit` act on it and record what they leave behind. So
+//! the answer lives here, in one value each is handed when it is built, and the
+//! binary is the only place that knows they share it.
 //!
 //! Knowing a file was looked at is not knowing what is in it now: another
 //! program can change it in place or put a new file at its name after the
@@ -21,13 +21,23 @@
 //! file, so that what changed in the part the agent was not shown is caught
 //! too.
 //!
+//! A file can also be known without having been read. What a successful
+//! `edit` leaves in a file is content the session produced, so the file is
+//! held to that content whether or not it was read first. That is an
+//! allowance, not a claim that the agent saw the file: an edit of one it never
+//! read showed it only the text it quoted, and a `write` after it may discard
+//! the rest unseen. What stays refused is replacing content the session
+//! neither saw nor made: an edit that was not made records nothing, and a
+//! change by anyone else after the edit is refused as it would be after a
+//! read.
+//!
 //! It is a session's memory, so it starts again when the session does. Nothing
 //! bounds how long one runs, though, so it is bounded like every other thing
 //! this program holds. Forgetting costs a read: a file
 //! remembered long enough ago to have been evicted is refused and read again,
-//! which is a wasted call rather than a wrong answer. Forgetting in the other
-//! direction — claiming a file was seen when it was not — is the failure this
-//! module exists to prevent, and no bound can cause it.
+//! which is a wasted call rather than a wrong answer. Erring in the other
+//! direction, holding a file to content the session neither saw nor made, is
+//! the failure this module exists to prevent, and no bound can cause it.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -40,11 +50,11 @@ use sha2::{Digest as _, Sha256};
 
 /// How many files are remembered at once.
 ///
-/// A path is a hundred-odd bytes and its digest thirty-two, so this is a tenth of a megabyte against the
-/// thirty-five this program is allowed — and, unlike the count of files a
-/// session reads, it does not move with how long the session runs. Generous
-/// against a real session: a turn that touches a thousand distinct files has
-/// spent its context long before it spends this.
+/// A path is a hundred-odd bytes and its digest thirty-two, so this is a tenth
+/// of a megabyte against the thirty-five this program is allowed, and unlike
+/// the count of files a session reads, it does not move with how long the
+/// session runs. Generous against a real session: a turn that touches a
+/// thousand distinct files has spent its context long before it spends this.
 const REMEMBERED: usize = 1_024;
 
 /// The files this session has looked at, each with what was in it.
@@ -102,8 +112,8 @@ impl Ledger {
         }
     }
 
-    /// What `path` held when this session last saw it, or `None` when it has
-    /// not seen it.
+    /// What `path` held when this session last read, wrote or edited it, or
+    /// `None` when it has done none of those.
     pub(crate) fn fingerprint(&self, path: &Path) -> Option<Fingerprint> {
         let seen = self.seen.lock().ok()?;
         seen.iter()
@@ -117,12 +127,12 @@ impl Ledger {
         self.fingerprint(path).is_some()
     }
 
-    /// The answer a call came to, remembering the file it showed the agent.
+    /// The answer a call came to, remembering the file it read or changed.
     ///
     /// Asked by the call once its work has answered, and never by the work.
     /// Work handed to a worker runs on after its call is dropped, and what it
-    /// comes to then reaches nobody: remembering the file it read would let
-    /// `write` replace a file the agent was never shown.
+    /// comes to then reaches nobody: remembering the file it read or changed
+    /// would let `write` replace a file the agent was never told about.
     pub(crate) fn shown(&self, shown: Shown) -> ToolOutput {
         if let Some((file, fingerprint)) = &shown.file {
             self.record(file, *fingerprint);
@@ -138,8 +148,8 @@ impl Ledger {
     }
 }
 
-/// What a call's work came to: the answer, and the file it showed the agent
-/// where it showed one, with the digest of what the agent was shown.
+/// What a call's work came to: the answer, and the file it read or changed
+/// where it did, with the digest of what that file then held.
 ///
 /// The file travels beside the answer rather than into the record, for the
 /// reason [`Ledger::shown`] gives.
@@ -147,7 +157,8 @@ impl Ledger {
 pub(crate) struct Shown {
     /// What the model is answered with.
     pub(crate) output: ToolOutput,
-    /// The resolved path of the file the answer showed, and what was in it.
+    /// The resolved path of the file the call read or changed, and what was in
+    /// it once the call was done.
     pub(crate) file: Option<(PathBuf, Fingerprint)>,
 }
 
@@ -160,8 +171,8 @@ impl From<ToolOutput> for Shown {
 
 /// The SHA-256 of a file's whole content.
 ///
-/// Compared, never shown: it says whether a file is still what it was, and
-/// nothing about what that was.
+/// Compared, never shown: it says whether a file is still what it was, and it
+/// confirms what that was to anyone who already has a copy.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Fingerprint([u8; 32]);
 
@@ -239,7 +250,9 @@ impl<R: Read> Read for Fingerprinting<R> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fingerprint, Fingerprinting, Ledger, REMEMBERED};
+    use super::{Fingerprint, Fingerprinting, Ledger, REMEMBERED, Shown};
+    use crucible_tools::ToolOutput;
+    use sha2::{Digest as _, Sha256};
 
     fn at(name: usize) -> std::path::PathBuf {
         std::path::PathBuf::from(format!("/w/file-{name:05}.txt"))
@@ -251,12 +264,43 @@ mod tests {
 
     #[test]
     fn a_fingerprint_is_compared_and_never_shown() {
-        // The digest says nothing about the content, but it is the same value
-        // an attachment keeps out of its `Debug`, so it is kept out here too.
+        // A digest is not reversible, but it confirms what a file held to
+        // anyone who already has a copy. That is why an attachment keeps the
+        // same value out of its `Debug`, and it is kept out here for the same
+        // reason.
         assert_eq!(
             format!("{:?}", Fingerprint::of(b"content")),
             "Fingerprint(\"[redacted]\")"
         );
+    }
+
+    /// Whether `rendering` carries `digest` in any form a `Debug` would print
+    /// it: the bytes as a derive lists them, or as hex either way up.
+    fn shows(rendering: &str, digest: [u8; 32]) -> bool {
+        let hex = digest.map(|byte| format!("{byte:02x}")).concat();
+        rendering.contains(&format!("{digest:?}"))
+            || rendering.contains(&hex)
+            || rendering.contains(&hex.to_uppercase())
+    }
+
+    #[test]
+    fn what_holds_a_fingerprint_never_shows_it_either() {
+        // The redaction is on `Fingerprint`, and the types holding one show it
+        // through their own `Debug`. Today that is derived and asks the field,
+        // but one written by hand could print what the field keeps back.
+        let digest: [u8; 32] = Sha256::digest(b"content").into();
+        let ledger = Ledger::new();
+        ledger.record(&at(1), Fingerprint::from(digest));
+        let shown = Shown {
+            output: ToolOutput::ok("content"),
+            file: Some((at(1), Fingerprint::from(digest))),
+        };
+
+        let ledger = format!("{ledger:?}");
+        let shown = format!("{shown:?}");
+
+        assert!(!shows(&ledger, digest), "{ledger}");
+        assert!(!shows(&shown, digest), "{shown}");
     }
 
     #[test]

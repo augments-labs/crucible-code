@@ -1056,20 +1056,20 @@ impl Laid {
 /// For an answer whose source is still in hand once it is written: rows laid
 /// once would be cut by a narrower window and left as narrow as they were by a
 /// wider one, when what laid them could simply lay them again.
+///
+/// Laid out once to be written: the rows laid for the window there is now are
+/// what the record keeps and what it charges against its ceiling, as near as
+/// anything to what `lay` holds for an answer drawn from a few figures. A
+/// source much larger than the rows it lays would be charged short here, and
+/// goes through [`Renderer::responsive`] with its own size instead.
 fn relaid<T: Terminal>(
     renderer: &mut Renderer<T>,
     laid: Laid,
     lay: impl Fn(usize) -> Vec<Row> + 'static,
 ) -> Result<(), Fatal> {
-    // What the source comes to, as near as the rows it lays out now.
-    let retained = lay(laid.columns(renderer))
-        .iter()
-        .map(|row| row.text().len())
-        .sum();
-    Ok(renderer.responsive(
-        retained,
-        Box::new(move |columns| lay(columns.saturating_sub(laid.short()))),
-    )?)
+    Ok(renderer.responsive_as_laid(Box::new(move |columns| {
+        lay(columns.saturating_sub(laid.short()))
+    }))?)
 }
 
 /// Says one thing back, quietly, wrapped to the window it is said in.

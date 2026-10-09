@@ -408,6 +408,43 @@ fn the_footer_at_40_columns_loses_the_result_count_whole() {
 }
 
 #[test]
+fn the_footer_in_ascii_glyphs_draws_no_arrow_or_dot_outside_them() {
+    // A terminal that shows box drawing as hollow squares shows these arrows
+    // and this dot the same way, so the footer is drawn in the glyphs asked
+    // for, and as wide as it is in the others.
+    let texts: Vec<String> = (0..7).map(|_| counted(10)).collect();
+    let shown: Vec<Shown<'_>> = texts
+        .iter()
+        .map(|text| Shown {
+            called: "Read(one)",
+            text,
+        })
+        .collect();
+    let expanded = Expanded {
+        shown: &shown,
+        from: 12,
+    };
+    for (columns, said) in [
+        (
+            80,
+            "esc to close - ^v pgup pgdn to see more - <> result 2 of 7",
+        ),
+        (40, "esc to close - ^v pgup pgdn to see more"),
+        (20, "esc to close"),
+    ] {
+        assert_eq!(
+            expanded
+                .within(columns, 10, Glyphs::Ascii)
+                .last()
+                .map(Row::text)
+                .as_deref(),
+            Some(said),
+            "{columns} columns"
+        );
+    }
+}
+
+#[test]
 fn the_footer_at_20_columns_keeps_only_the_way_out() {
     assert_eq!(seven_from_the_second(20).as_deref(), Some("esc to close"));
 }
@@ -477,7 +514,13 @@ fn a_window_laid_from_measured_lengths_is_the_window_laid_from_everything() {
                 let begun = (0..shown.len())
                     .filter(|at| lengths.iter().take(*at).sum::<usize>() <= top)
                     .count();
-                let counted = footer(laid.len() > held, begun, shown.len(), columns);
+                let counted = footer(
+                    laid.len() > held,
+                    begun,
+                    shown.len(),
+                    columns,
+                    Glyphs::Unicode,
+                );
                 let measured = expanded.within_measured(&lengths, columns, room, Glyphs::Unicode);
                 let said = format!("{columns} columns, {room} rows, from {from}");
 
