@@ -24,12 +24,12 @@
 //!
 //! The cancel is looked at between events, and what makes that prompt is that
 //! the framing below hands the turn back rather than blocking on the socket:
-//! when it gives up waiting, and after every line that finishes no event. So
-//! a provider that has stopped talking costs one bounded wait and not an
+//! when it gives up waiting, and after every line that finishes no event. So a
+//! provider that has stopped talking costs one bounded wait and not an
 //! indefinite one, one that keeps sending comments, or lines of an event it
 //! never finishes, costs one line and not as many as it cares to send, and a
-//! wait that expired ends nothing: the
-//! response is still open, and only the user or the socket closes it.
+//! wait that expired ends nothing: the response is still open, and only the
+//! user or the socket closes it.
 //!
 //! That wait happens on whichever thread polls the stream: the future
 //! [`DeltaStream::next`] hands back does the whole read the first time it is
