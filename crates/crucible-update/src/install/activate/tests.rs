@@ -505,15 +505,39 @@ fn a_switch_that_cannot_be_synced_says_the_next_release_is_active() {
     let (activation, staged) = staged(&install);
 
     refusing_sync(Some(install.prefix()));
-    let refused = activation.activate(staged);
+    let activated = activation.activate(staged);
     refusing_sync(None);
 
+    let Ok(mut activated) = activated else {
+        panic!("a switch made but not synced is not refused");
+    };
+    let unsynced = activated.unsynced();
     assert!(
-        matches!(refused, Err(ActivationError::Unsynced(_))),
-        "{refused:?}"
+        matches!(unsynced, Some(ActivationError::Unsynced(_))),
+        "{unsynced:?}"
     );
+    assert!(activated.unsynced().is_none(), "said more than once");
     assert_eq!(install.active(), NEXT);
     assert_eq!(install.inconsistent(&[NEXT]), None);
+    drop(activated);
+    assert_eq!(install.leftovers(), Vec::<String>::new());
+}
+
+#[test]
+fn a_switch_that_cannot_be_synced_can_still_be_rolled_back() {
+    let install = Install::new("unsynced-switch-rolled");
+    let (activation, staged) = staged(&install);
+
+    refusing_sync(Some(install.prefix()));
+    let activated = activation.activate(staged);
+    refusing_sync(None);
+
+    let Ok(activated) = activated else {
+        panic!("a switch made but not synced is not refused");
+    };
+    assert!(activated.roll_back().is_ok(), "the rollback was refused");
+    assert_eq!(install.active(), ACTIVE);
+    assert_eq!(install.inconsistent(&[ACTIVE]), None);
     assert_eq!(install.leftovers(), Vec::<String>::new());
 }
 
