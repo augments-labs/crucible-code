@@ -796,9 +796,43 @@ fn a_settled_native_resize_writes_every_kept_row_once_at_the_new_width() {
     assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 
-    // Given once: the next wait writes nothing of it again.
+    // Given once: the next wait clears nothing and writes nothing of it again.
     render.settled(Instant::now() + SETTLE).unwrap();
-    assert!(!window.take().contains("said"));
+    let again = window.take();
+    assert!(
+        !again.contains("\x1b[3J"),
+        "the scrollback was cleared a second time: {again:?}"
+    );
+    assert!(!again.contains("said"), "{again:?}");
+}
+
+#[test]
+fn a_native_resize_before_the_first_frame_draws_at_the_new_size_and_clears_nothing() {
+    // The window changes size between the renderer being made and its first
+    // frame. Nothing it wrote was cut at the old width, so there is nothing
+    // to give back: the first frame is drawn at the new width, and settling
+    // leaves the reader's scrollback, and the shell's lines in it, alone.
+    let window = Window::new(40, 10);
+    window.clone().write("$ crucible\r\n").unwrap();
+    let mut render = native(&window);
+
+    window.resize(30, 10);
+    stands(&mut render);
+    assert_eq!(render.columns(), 30);
+    assert_eq!(
+        render.settles_in(Instant::now()),
+        None,
+        "a window not yet drawn in waits to be given everything again"
+    );
+    render.settled(Instant::now() + SETTLE).unwrap();
+
+    let written = window.take();
+    assert!(
+        !written.contains("\x1b[3J"),
+        "the scrollback was cleared: {written:?}"
+    );
+    assert_eq!(window.rows_saying("$ crucible"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
 
 #[test]
@@ -859,6 +893,51 @@ fn a_native_replay_of_an_opening_partly_sent_writes_each_of_its_rows_once() {
             window.all()
         );
     }
+}
+
+#[test]
+fn a_native_replay_lays_an_opening_wholly_sent_afresh_at_the_new_width() {
+    // The card went out whole at forty columns and the terminal holds it as
+    // it was laid then. Given back once the window settles at thirty, it is
+    // laid again for thirty, as the full screen would draw it, rather than
+    // written as the rows it was cut into at forty.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render
+        .opens(Box::new(|columns, _| {
+            vec![row(&format!("card laid at {columns}")), row("card foot")]
+        }))
+        .unwrap();
+    stands(&mut render);
+    render.commit("said under the card").unwrap();
+    render.seal().unwrap();
+    assert!(
+        render.record.first() > 2,
+        "the card was not wholly sent: {:#?}",
+        window.all()
+    );
+
+    settles_at(&window, &mut render, 30, 10);
+
+    assert_eq!(
+        window.rows_saying("card laid at 30"),
+        1,
+        "{:#?}",
+        window.all()
+    );
+    assert_eq!(
+        window.rows_saying("card laid at 40"),
+        0,
+        "{:#?}",
+        window.all()
+    );
+    assert_eq!(window.rows_saying("card foot"), 1, "{:#?}", window.all());
+    assert_eq!(
+        window.rows_saying("said under the card"),
+        1,
+        "{:#?}",
+        window.all()
+    );
 }
 
 #[test]
