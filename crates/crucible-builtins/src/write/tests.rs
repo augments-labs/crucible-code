@@ -896,14 +896,19 @@ fn a_write_on_a_worker_that_has_stopped_is_an_error_and_changes_nothing() {
 /// Reads `at` through the real `read` tool, so the record holds what that
 /// tool keeps about a file it showed rather than what a test fills in.
 fn shown(sample: &Sample, at: &str) -> Ledger {
+    reading(sample, &format!(r#"{{"path":"{at}"}}"#)).0
+}
+
+/// Calls the real `read` tool with `args`, and answers with the record it
+/// left and what it showed.
+fn reading(sample: &Sample, args: &str) -> (Ledger, ToolOutput) {
     let seen = Ledger::new();
     let reader = crate::Read::new(sample.workspace(), seen.clone());
-    let args = format!(r#"{{"path":"{at}"}}"#);
     let output =
-        crucible_runtime::answered!(reader.run(allowed(&reader, &args), &crate::sample::context()))
+        crucible_runtime::answered!(reader.run(allowed(&reader, args), &crate::sample::context()))
             .unwrap();
     assert!(!output.is_failed(), "{}", output.text());
-    seen
+    (seen, output)
 }
 
 #[test]
@@ -973,4 +978,99 @@ fn a_file_rewritten_with_what_was_read_is_not_stale() {
 
     assert!(!output.is_failed(), "{}", output.text());
     assert_eq!(read(&sample, "one.txt"), "new\n");
+}
+
+#[test]
+fn a_write_after_reading_one_page_is_refused_when_a_line_is_added_past_it() {
+    // The agent was shown one line, but what it holds is the whole file as it
+    // was then, so a change in the part it was never shown is still a change
+    // since it looked. The file is many times one buffer of it long, so the
+    // line that changes lies past anything the page pulled in on its way.
+    let sample = Sample::new("write-stale-past-the-page");
+    let lines = (1..=4_096)
+        .map(|number| format!("line {number}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    sample.write("long.txt", &lines);
+    let (seen, page) = reading(&sample, r#"{"path":"long.txt","limit":1}"#);
+    assert!(
+        page.text().contains("more follows"),
+        "the read was meant to stop after one line: {}",
+        page.text()
+    );
+
+    std::io::Write::write_all(
+        &mut fs::OpenOptions::new()
+            .append(true)
+            .open(sample.root().join("long.txt"))
+            .unwrap(),
+        b"added past the page\n",
+    )
+    .unwrap();
+    let output = writing(&sample, r#"{"path":"long.txt","content":"new\n"}"#, &seen);
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(
+        read(&sample, "long.txt"),
+        format!("{lines}added past the page\n")
+    );
+    assert_eq!(
+        output.text(),
+        "long.txt changed since it was read, so replacing it would discard what changed: read it again"
+    );
+}
+
+#[test]
+fn a_write_after_reading_one_page_of_a_file_nobody_changed_is_not_stale() {
+    // The other half of the case above: what the record holds has to be the
+    // whole file and not only the part the page pulled in, or every write
+    // after one page of a long file would be refused though nothing changed.
+    let sample = Sample::new("write-not-stale-past-the-page");
+    let lines = (1..=4_096)
+        .map(|number| format!("line {number}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    sample.write("long.txt", &lines);
+    let (seen, page) = reading(&sample, r#"{"path":"long.txt","limit":1}"#);
+    assert!(
+        page.text().contains("more follows"),
+        "the read was meant to stop after one line: {}",
+        page.text()
+    );
+
+    let output = writing(&sample, r#"{"path":"long.txt","content":"new\n"}"#, &seen);
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "long.txt"), "new\n");
+}
+
+/// The eight bytes that make a file a PNG, which is all `read` asks of one
+/// before it attaches it.
+const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+#[test]
+fn a_picture_the_read_tool_attached_may_be_replaced() {
+    // A picture is shown by attaching it, and the record then holds the digest
+    // the attachment took rather than one `read` took itself. `write` takes its
+    // own digest of the file it is about to replace, so the two have to be the
+    // same digest of the same bytes for a picture the agent was shown to be one
+    // it may replace.
+    let sample = Sample::new("write-over-picture");
+    sample.write_bytes("shot.png", PNG);
+    let (seen, shown) = reading(&sample, r#"{"path":"shot.png"}"#);
+    assert_eq!(
+        shown.attachments().len(),
+        1,
+        "the picture was meant to be attached: {}",
+        shown.text()
+    );
+
+    let output = writing(
+        &sample,
+        r#"{"path":"shot.png","content":"replaced\n"}"#,
+        &seen,
+    );
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "shot.png"), "replaced\n");
 }
