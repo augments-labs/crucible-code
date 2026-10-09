@@ -30,13 +30,14 @@
 //! the way a terminal does, keeps the rows pushed off the top as a scrollback
 //! the case can read, and puts everything it holds at the new width when the
 //! window changes. It also clears the screen and that scrollback when asked,
-//! which is how a native session gives a resized window everything again. How it does that is the terminal's [`Profile`]: by default
-//! it rewraps, which is what the renderer's own count of how far back its
-//! region is assumes of the terminal, and a case can open one that keeps its
-//! rows as they were cut instead. Each is still refused on a fullscreen launch, where
-//! a frame that moved relatively is one the renderer never composed. Entering
-//! the alternate screen is remembered in both, because a native case proves it
-//! ran in native mode by that and not by its rows.
+//! which is how a native session gives a resized window everything again. How
+//! it does that is the terminal's [`Profile`]: by default it rewraps, which is
+//! what the renderer's own count of how far back its region is assumes of the
+//! terminal, and a case can open one that keeps its rows as they were cut
+//! instead. Each is still refused on a fullscreen launch, where a frame that
+//! moved relatively is one the renderer never composed. Entering the alternate
+//! screen is remembered in both, because a native case proves it ran in native
+//! mode by that and not by its rows.
 //!
 //! A new size is told to the screen at the point in crucible's output where
 //! the window took it, and takes effect one frame later at most. Crucible reads
