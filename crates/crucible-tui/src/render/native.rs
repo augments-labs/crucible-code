@@ -602,6 +602,9 @@ impl<T: Terminal> Renderer<T> {
             .write(&out)
             .and_then(|()| self.terminal.flush());
 
+        // A replay the terminal refused is still owed: nothing says how much
+        // of it arrived, so the next frame clears and gives it all again.
+        native.replays = replays && written.is_err();
         native.shown.clear();
         native
             .shown
