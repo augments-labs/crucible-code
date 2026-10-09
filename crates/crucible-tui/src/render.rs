@@ -1361,9 +1361,10 @@ impl<T: Terminal> Renderer<T> {
     /// Writes a responsive block into the transcript, keeping what draws it.
     ///
     /// For committed components whose width-independent source remains in hand:
-    /// prompts and file changes. The closure is retained by the bounded record
-    /// and called only when the terminal width changes; ordinary frames read the
-    /// rows built for the current width. `retained` is the source bytes it closes
+    /// prompts, file changes, and a command's answer drawn from figures it
+    /// still holds. The closure is retained by the bounded record and called
+    /// only when the terminal width changes; ordinary frames read the rows
+    /// built for the current width. `retained` is the source bytes it closes
     /// over, charged against that record's ceiling. Each width it is handed is
     /// [`Self::transcript_columns`], as for [`Self::present`].
     ///
