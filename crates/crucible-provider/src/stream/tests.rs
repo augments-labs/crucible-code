@@ -1,9 +1,10 @@
 //! A cancel ends a response that keeps talking without saying anything.
 //!
 //! Each test is a loopback source that answers once and then, every 100 ms for
-//! as long as it is allowed to, sends lines that never make an event. Every
-//! one of those lines is something arriving, so the quiet wait below
-//! the stream never runs out; what ends the read is the cancel, or nothing.
+//! as long as it is allowed to, sends lines that never make an event, or more
+//! of one line that never ends. Every one of those sends is something
+//! arriving, so the quiet wait below the stream never runs out; what ends the
+//! read is the cancel, or nothing.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
