@@ -18,11 +18,13 @@
 //! source, once a minute at most — and the block's last row says so until the
 //! answer comes and the block is drawn again. A plan that never answers, with
 //! nothing known, is said to have reported none. Printed rather than stood,
-//! the panel waits for the answer first, since a printed block cannot be
-//! drawn again: where keys are read, only until a key is pressed, after which
-//! the question is given up and what is known is printed. A panel closed with
-//! the question still out gives it up the same way, so the request is
-//! answered with what is known. A question given up still counts toward the
+//! the panel waits for the answer first, since a printed block keeps the
+//! figures it was printed with: a resize lays them out again at the new
+//! width, but an answer that comes later never reaches them. Where keys are
+//! read, it waits only until a key is pressed, after which the question is
+//! given up and what is known is printed. A panel closed with the question
+//! still out gives it up the same way, so the request is answered with what
+//! is known. A question given up still counts toward the
 //! minute, so opening the panel again within it asks nothing and shows what
 //! is known.
 //!
@@ -70,7 +72,7 @@ use crate::cli::client::{Out, astray};
 
 use super::context::closing;
 use super::region::{self, Ended, Moved};
-use super::{Counted, HUNG, Terms};
+use super::{Counted, Laid, Terms, relaid};
 
 /// The narrowest window a label is drawn beside its value in; below it a
 /// window's bar beside its label would be under thirty cells, so each label
@@ -265,8 +267,7 @@ pub(super) fn run<T: Terminal>(
         shown.watched(terms, conversation, true);
     }
     // Hung under the line that asked, so laid out short of the mark.
-    let columns = renderer.transcript_columns().saturating_sub(HUNG);
-    Ok(renderer.present(&shown.body(columns, terms.style().glyphs()))?)
+    shown.printed(renderer, Laid::Hung, terms.style().glyphs())
 }
 
 /// Waits for the plan's answer before a block is printed where keys are read,
@@ -336,8 +337,7 @@ pub(super) fn live<T: Terminal>(
 ) -> Result<(), Fatal> {
     let mut shown = Shown::of(terms, counted.serving, counted.usage.clone());
     if stood(renderer, terms, &mut shown, while_waiting, None)? == Ended::Cramped {
-        let columns = renderer.transcript_columns();
-        renderer.present(&shown.body(columns, terms.style().glyphs()))?;
+        shown.printed(renderer, Laid::Flush, terms.style().glyphs())?;
     }
     Ok(())
 }
@@ -419,6 +419,27 @@ impl Shown {
             }
             _ => closing(pressed),
         }
+    }
+
+    /// Writes the figures where they stand, laid out again at each width the
+    /// window takes, as they were read and against the clock they were read
+    /// by: a resize is not a new reading.
+    fn printed<T: Terminal>(
+        self,
+        renderer: &mut Renderer<T>,
+        laid: Laid,
+        glyphs: Glyphs,
+    ) -> Result<(), Fatal> {
+        let asking = self.out.as_ref().map(Out::provider);
+        let Self {
+            heading,
+            usage,
+            clock,
+            ..
+        } = self;
+        relaid(renderer, laid, move |columns| {
+            body(&heading, &usage, asking, columns, glyphs, &clock)
+        })
     }
 
     fn body(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {

@@ -1038,11 +1038,38 @@ enum Laid {
 impl Laid {
     /// How wide a row standing here may be.
     fn columns<T: Terminal>(self, renderer: &Renderer<T>) -> usize {
+        renderer.transcript_columns().saturating_sub(self.short())
+    }
+
+    /// How many columns short of the transcript a row standing here is.
+    const fn short(self) -> usize {
         match self {
-            Self::Hung => renderer.transcript_columns().saturating_sub(HUNG),
-            Self::Flush => renderer.transcript_columns(),
+            Self::Hung => HUNG,
+            Self::Flush => 0,
         }
     }
+}
+
+/// Writes the rows `lay` lays out for where they stand, and lays them out
+/// again at each width the window takes from then on.
+///
+/// For an answer whose source is still in hand once it is written: rows laid
+/// once would be cut by a narrower window and left as narrow as they were by a
+/// wider one, when what laid them could simply lay them again.
+fn relaid<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    laid: Laid,
+    lay: impl Fn(usize) -> Vec<Row> + 'static,
+) -> Result<(), Fatal> {
+    // What the source comes to, as near as the rows it lays out now.
+    let retained = lay(laid.columns(renderer))
+        .iter()
+        .map(|row| row.text().len())
+        .sum();
+    Ok(renderer.responsive(
+        retained,
+        Box::new(move |columns| lay(columns.saturating_sub(laid.short()))),
+    )?)
 }
 
 /// Says one thing back, quietly, wrapped to the window it is said in.

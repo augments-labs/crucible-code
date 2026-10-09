@@ -25,9 +25,10 @@
 //! *flows*: the model's answer and a tool's output were written as text and a
 //! wrap is the only thing deciding where a row ends, so the width they are
 //! folded at is whatever the window is now. A component whose source is still
-//! held is *responsive*: a prompt or a diff is laid out again at the new width.
-//! Everything else is *set*: a table or a box laid out by something that is gone
-//! is clipped rather than pretending it can be rebuilt.
+//! held is *responsive*: a prompt, a diff, or a command's answer drawn from
+//! figures it still holds is laid out again at the new width. Everything else
+//! is *set*: a table or a box laid out by something that is gone is clipped
+//! rather than pretending it can be rebuilt.
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
