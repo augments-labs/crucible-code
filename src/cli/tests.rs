@@ -694,9 +694,11 @@ fn a_native_screen_setting_draws_natively_and_the_default_draws_full_screen() {
 
 /// A recording terminal a test keeps hold of while a renderer draws on it, so
 /// the window can change size under the renderer.
+#[cfg(unix)]
 #[derive(Debug, Clone)]
 struct Shared(std::rc::Rc<std::cell::RefCell<crucible_tui::Recording>>);
 
+#[cfg(unix)]
 impl crucible_tui::Terminal for Shared {
     fn size(&self) -> Result<crucible_tui::Size, TerminalError> {
         self.0.borrow().size()
