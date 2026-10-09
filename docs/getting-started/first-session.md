@@ -1244,7 +1244,8 @@ scrolling into it.
 
 With [`output.screen`](../configuration/configuration.md) set to `native` the
 screen is your terminal's, so `/clear` and `/resume` leave the earlier
-transcript in its scrollback, above what replaces it.
+transcript in its scrollback, above what replaces it, until the window is
+resized and crucible writes only the new transcript again.
 
 `/resume` stands this directory's [sessions](../sessions/sessions.md) over the
 whole shell: a search line across the top, the sessions in one pane newest

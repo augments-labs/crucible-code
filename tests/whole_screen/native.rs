@@ -1302,12 +1302,12 @@ fn narrowed_under_a_held_row(name: &str, vendor: &Vendor, profile: Profile) -> W
     window
 }
 
+/// Narrowing redraws what the session kept once the window has settled, so a
+/// finished row is found once whether or not the terminal rewraps its lines,
+/// and the turn still holding the last of it is never doubled.
 #[test]
-fn a_held_row_narrowed_on_a_terminal_that_rewraps_keeps_every_row_once_in_native_mode() {
+fn a_held_row_narrowed_keeps_every_row_once_on_every_terminal_in_native_mode() {
     for (name, profile) in PROFILES {
-        if !matches!(profile.reflow, Reflow::Rewraps) {
-            continue;
-        }
         let vendor = Vendor::holding(&held_answer());
         let window = narrowed_under_a_held_row(name, &vendor, profile);
 
@@ -1316,42 +1316,28 @@ fn a_held_row_narrowed_on_a_terminal_that_rewraps_keeps_every_row_once_in_native
     }
 }
 
-/// On a terminal that does not rewrap its lines when the window narrows,
-/// narrowing it can take a few finished lines off the visible screen; the
-/// session file still has them. This is that loss, held to its size: the two
-/// finished paragraphs go, what the turn still holds stays once, and the log
-/// has all of it once the turn ends.
+/// A window made shorter than the live region it is drawing: the rows the
+/// terminal pushes into its scrollback are not left there as copies of the
+/// region, and every finished row is still found once.
 #[test]
-fn a_held_row_narrowed_on_a_terminal_that_keeps_its_lines_loses_finished_rows_only_from_the_screen_in_native_mode()
- {
+fn a_window_shortened_below_the_live_region_keeps_every_row_once_in_native_mode() {
     for (name, profile) in PROFILES {
-        if !matches!(profile.reflow, Reflow::Keeps) {
-            continue;
-        }
         let vendor = Vendor::holding(&held_answer());
-        let window = narrowed_under_a_held_row(name, &vendor, profile);
+        let mut window = Watched::native_on(
+            &format!("native-held-shortened-{name}"),
+            80,
+            24,
+            &vendor,
+            profile,
+        );
+        window.types_and_catches("say it\r", "nettle");
+        // Tall enough for the whole box, which a shorter window cuts to a
+        // share of itself in either mode.
+        window.resize(80, 8);
+        window.assert_never_alternate();
 
         let lost = lost_or_doubled(&window, &HELD_LABELS);
-        assert_eq!(
-            lost,
-            ["jade 0 times", "kelp 0 times"],
-            "{name}\n{}",
-            everything(&window)
-        );
-
-        vendor.ends_the_turn();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
-        while !HELD_LABELS
-            .iter()
-            .all(|label| window.recorded().contains(&format!("{label} sun")))
-        {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{name}: the answer never reached the log\n{}",
-                window.recorded()
-            );
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
+        assert!(lost.is_empty(), "{name}: {lost:?}\n{}", everything(&window));
     }
 }
 

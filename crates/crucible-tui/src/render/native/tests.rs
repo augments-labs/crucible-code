@@ -3,8 +3,9 @@
 //! [`Picture`](crate::Picture) is a screen this process owns: a row is named
 //! and nothing scrolls. Native mode writes into a buffer that does, so these
 //! tests replay its bytes into [`Emulator`], which moves the cursor relatively,
-//! wraps, scrolls rows off the top into a scrollback and erases to the end of
-//! the screen — the handful of things a native frame says — and rewraps what it
+//! wraps, scrolls rows off the top into a scrollback, erases to the end of the
+//! screen, and clears the screen and the scrollback for a resize to be given
+//! everything again — the handful of things a native frame says — and rewraps what it
 //! holds when the window changes width, as most terminals now do. Each cell
 //! keeps the colour it was written in. What a reader would find on scrolling
 //! back is then a list of strings to assert on.
@@ -14,6 +15,7 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use super::super::*;
+use super::SETTLE;
 use crate::color::{Palette, Slot};
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -168,6 +170,18 @@ impl Emulator {
                     usize::max(row, 1).min(self.rows) - 1,
                     usize::max(column, 1).min(self.columns) - 1,
                 );
+            }
+            'J' if parameters == "2" => {
+                for line in &mut self.screen {
+                    line.clear();
+                }
+                for ran_on in &mut self.ran_on {
+                    *ran_on = false;
+                }
+            }
+            'J' if parameters == "3" => {
+                self.scrollback.clear();
+                self.ran_on_back.clear();
             }
             'J' => {
                 let (row, column) = self.at;
@@ -717,6 +731,158 @@ fn a_native_resize_redraws_only_the_live_region() {
     assert_eq!(window.rows_saying("and so is this"), 1);
     assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+}
+
+/// Draws `said` as finished rows over the box and a running turn, as a native
+/// session stands before its window changes size.
+fn finished(render: &mut Renderer<Window>, said: &[String]) {
+    stands(render);
+    for line in said {
+        render.commit(line).unwrap();
+    }
+    render.seal().unwrap();
+    render
+        .under(&[row("* thinking")], None, Palette::plain())
+        .unwrap();
+}
+
+/// Resizes `window` to `columns` by `rows`, tells `render`, and lets the window
+/// settle at that size.
+fn settles_at(window: &Window, render: &mut Renderer<Window>, columns: usize, rows: usize) {
+    window.resize(columns, rows);
+    render.resized().unwrap();
+    render.settled(Instant::now() + SETTLE).unwrap();
+}
+
+#[test]
+fn a_settled_native_resize_writes_every_kept_row_once_at_the_new_width() {
+    // What the terminal kept was cut at forty columns, and no two terminals
+    // put that at twenty the same way. Once the window has kept its new size,
+    // the screen and the scrollback are cleared and every finished row is
+    // written again, folded at twenty, and the region under it once.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    let said: Vec<String> = (0..8)
+        .map(|at| format!("said {at:02} in words that fold at twenty"))
+        .collect();
+    finished(&mut render, &said);
+    window.take();
+
+    window.resize(20, 6);
+    render.resized().unwrap();
+    render.settled(Instant::now()).unwrap();
+    let before = window.take();
+    assert!(
+        !before.contains("\x1b[3J"),
+        "a window still being dragged was given everything again: {before:?}"
+    );
+
+    render.settled(Instant::now() + SETTLE).unwrap();
+    let after = window.take();
+    assert!(after.contains("\x1b[2J\x1b[3J"), "{after:?}");
+    for at in 0..8 {
+        assert_eq!(
+            window.rows_saying(&format!("said {at:02} in")),
+            1,
+            "said {at:02}: {:#?}",
+            window.all()
+        );
+    }
+    assert!(
+        window.all().iter().any(|row| row == "that fold at twenty"),
+        "a finished row was not folded at the new width: {:#?}",
+        window.all()
+    );
+    assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+
+    // Given once: the next wait writes nothing of it again.
+    render.settled(Instant::now() + SETTLE).unwrap();
+    assert!(!window.take().contains("said"));
+}
+
+#[test]
+fn a_native_replay_after_the_ceiling_dropped_rows_says_the_rest_is_in_the_session_log() {
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    stands(&mut render);
+    let mut at = 0;
+    while !render.record.spilled() {
+        render.commit(&format!("said {at:05}")).unwrap();
+        at += 1;
+        assert!(at < 100_000, "the ceiling never dropped a row");
+    }
+    render.seal().unwrap();
+    stands(&mut render);
+
+    settles_at(&window, &mut render, 50, 6);
+
+    let all = window.all();
+    assert_eq!(
+        all.iter()
+            .filter(|row| row.as_str() == "Earlier output is in the session log.")
+            .count(),
+        1,
+        "{:#?}",
+        all.get(..4)
+    );
+    assert_eq!(window.rows_saying("said 00000"), 0, "{:#?}", all.get(..4));
+    assert_eq!(window.rows_saying(&format!("said {:05}", at - 1)), 1);
+}
+
+#[test]
+fn a_native_replay_of_an_opening_partly_sent_writes_each_of_its_rows_once() {
+    // A window shorter than the card sends its top rows out and keeps the rest
+    // in the region. What is given back is what went out, and the region
+    // draws the rest under it, so no row of the card is written twice.
+    let window = Window::new(40, 5);
+    let mut render = native(&window);
+    render
+        .opens(Box::new(|_, _| {
+            (1..=6).map(|at| row(&format!("card row {at}"))).collect()
+        }))
+        .unwrap();
+    stands(&mut render);
+    assert!(
+        render.record.first() > 0 && render.record.first() < 6,
+        "the card was not partly sent: {:#?}",
+        window.all()
+    );
+
+    settles_at(&window, &mut render, 30, 5);
+
+    for at in 1..=6 {
+        assert_eq!(
+            window.rows_saying(&format!("card row {at}")),
+            1,
+            "card row {at}: {:#?}",
+            window.all()
+        );
+    }
+}
+
+#[test]
+fn a_native_replay_after_a_clear_gives_back_nothing_from_before_it() {
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    finished(&mut render, &["said before the clear".to_owned()]);
+    render.empties().unwrap();
+    finished(&mut render, &["said after the clear".to_owned()]);
+
+    settles_at(&window, &mut render, 30, 6);
+
+    assert_eq!(
+        window.rows_saying("before the clear"),
+        0,
+        "{:#?}",
+        window.all()
+    );
+    assert_eq!(
+        window.rows_saying("after the clear"),
+        1,
+        "{:#?}",
+        window.all()
+    );
 }
 
 #[test]

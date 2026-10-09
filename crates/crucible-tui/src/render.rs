@@ -1167,21 +1167,29 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// How long an input wait may sleep before a drag resting at an edge of
-    /// the transcript carries it another row. `None` where none is pending.
+    /// the transcript carries it another row, or a native window that changed
+    /// size has settled. `None` where neither is pending.
     #[must_use]
     fn rests_in(&self) -> Option<Duration> {
         let now = Instant::now();
-        self.creeps.map(|due| due.saturating_duration_since(now))
+        let creeps = self.creeps.map(|due| due.saturating_duration_since(now));
+        match (creeps, self.settles_in(now)) {
+            (Some(creeps), Some(settles)) => Some(creeps.min(settles)),
+            (creeps, settles) => creeps.or(settles),
+        }
     }
 
     /// Does whatever fell due while an input wait slept: carries the
-    /// transcript a row towards a drag resting at its edge.
+    /// transcript a row towards a drag resting at its edge, and gives a native
+    /// window that has settled at a new size what was kept.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the frame could not be drawn.
     fn repose(&mut self) -> Result<bool, TerminalError> {
-        self.crept()
+        let crept = self.crept()?;
+        self.settled(Instant::now())?;
+        Ok(crept)
     }
 
     /// Tells this renderer how far one notch of the wheel moves the transcript.
@@ -1780,10 +1788,10 @@ impl<T: Terminal> Renderer<T> {
     /// conversation, and putting it under what was there would leave a reader
     /// scrolling back through two of them, joined at a point nothing marks.
     ///
-    /// In native mode what was there stays in the terminal's scrollback, which
-    /// nothing written can take back, so the next block is parted from the
-    /// last row that went out there rather than from nothing, and
-    /// [`Renderer::divides`] is what marks the point.
+    /// In native mode what was there stays in the terminal's scrollback until
+    /// a resize clears it, and is not given back then, so the next block is
+    /// parted from the last row that went out there rather than from nothing,
+    /// and [`Renderer::divides`] is what marks the point.
     ///
     /// The record's numbering carries on past the lines it drops, so a number
     /// some other part of the program is holding names the line it named and
