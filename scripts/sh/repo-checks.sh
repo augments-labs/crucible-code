@@ -222,8 +222,13 @@ if ((counted == 0)); then
 fi
 
 section "no process memory in shipped files"
+# A work item is named by capitals, a hyphen and a number (`AB-12`), by one
+# capital and a word (`A-NAME`), or by capitals and one or two capitals with a
+# number (`AB-C3`, `AB-CD3`). Capitals on both sides, as `JSON-RPC` or a device
+# code a test makes up, cannot be told from a work item by shape, so they are
+# not read.
 scan=0
-memory=$(grep -rIonE '\b[A-Z]{1,6}-[0-9]{1,4}\b|sdlc-skills|\bADR\b|\.claude/|\.agents/|\.codex/' \
+memory=$(grep -rIonE '\b[A-Z]{1,6}-[0-9]{1,4}\b|\b[A-Z]-[A-Z][A-Z0-9]+\b|\b[A-Z]{1,6}-[A-Z]{1,2}[0-9]{1,3}\b|sdlc-skills|\bADR\b|\.claude/|\.agents/|\.codex/' \
     --include='*.rs' --include='*.md' --include='*.json' --include='*.toml' \
     crates src docs schema README.md Cargo.toml) || scan=$?
 case $scan in
