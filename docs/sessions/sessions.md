@@ -40,18 +40,17 @@ crucible borrows no screen: each finished line is written once into your
 terminal's scrollback as the session goes, and only the part still changing at
 the foot is drawn again. When the window changes size, crucible waits for it to
 stop changing and then writes the whole conversation again at the new width,
-clearing the terminal's scrollback first. The transcript is still above your shell prompt when
-crucible ends, so the same two lines are all it writes, whether you leave with
-`/exit` or with <kbd>Ctrl+C</kbd> pressed twice; a log that stopped part-way
-through was reported at the time, and that report is in the scrollback too.
-`/clear` and `/resume`, which on the full screen empty it and draw the opening
-card again, cannot take back what the terminal already holds here, so the
-earlier transcript stays in its scrollback and the new one starts under a
-single divider row, `new session` or `session resumed`, with no second card.
-The earlier transcript stays there until the window is resized, when only the
-new one is written again. A
-`/clear` before anything has been said writes no divider, only `nothing had
-been said`, since no session ended there.
+clearing the terminal's scrollback first. The transcript is still above your
+shell prompt when crucible ends, so the same two lines are all it writes,
+whether you leave with `/exit` or with <kbd>Ctrl+C</kbd> pressed twice; a log
+that stopped part-way through was reported at the time, and that report is in
+the scrollback too. `/clear` and `/resume`, which on the full screen empty it
+and draw the opening card again, cannot take back what the terminal already
+holds here, so the earlier transcript stays in its scrollback and the new one
+starts under a single divider row, `new session` or `session resumed`, with no
+second card. The earlier transcript stays there until the window is resized,
+when only the new one is written again. A `/clear` before anything has been said
+writes no divider, only `nothing had been said`, since no session ended there.
 
 Nothing is written in a run whose input or output is not a terminal. Nothing
 was hidden from you in one, and nobody was at the keys to be told.

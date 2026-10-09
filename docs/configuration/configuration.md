@@ -541,7 +541,7 @@ you with no way to send at all.
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in; `Monokai Extended` by default. |
 | `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window; `compact` by default. Clipped details remain expandable: recent ones from memory, older ones read back from the session log when the view reaches them, where the session has a log. |
 | `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt, and while a turn runs it also stands beside what the turn is showing, which it counts as the end of the transcript; a click off the thumb scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. The prompt you are reading under has a larger mark, and a pointer on the rail lights the track and marks and enlarges the mark under it. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
-| `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. `/clear` and `/resume` leave the earlier transcript in the terminal's scrollback until the window is resized. A line already written there does not change while the window keeps its size, so a mark a finished reply gains later stays as it was first written, and an offer to expand a clipped detail that is later withdrawn stays until the next resize. When you resize the window, crucible waits for it to stop changing, then clears the screen and the terminal's scrollback and writes the conversation again at the new width, with the box under it. Lines from before a `/clear` or `/resume`, and whatever your shell printed before crucible started, are not written again. In a session long enough that crucible has stopped keeping its oldest lines, the redraw opens with a line saying the earlier output is in the session log. A list or panel standing over the box, as `/model`, `/settings`, the `/` list, the queue and the Ctrl+O view do, takes at most half the window, or the least it can be drawn in where that is more; the transcript rows it takes within that stay in the terminal's scrollback, and when it closes the box stays at the foot of the window, and the rows the panel stood in are left blank between the transcript and the box. [What native mode cannot do](#what-native-mode-cannot-do) tells what you do instead. |
+| `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. The rest of what it changes, and what you do instead, is under [What native mode cannot do](#what-native-mode-cannot-do). |
 | `pinAfterSeconds` | `0` to `60` | How many seconds a running tool call waits before it is drawn above the row that says a turn is running, with the end of its output and `(ctrl+b to background)`; `3` by default. A call that finishes sooner is only written to the transcript, so the rows over the box do not appear and vanish on every quick command, and Ctrl+B still leaves a running command in the background before its row is shown. `0` draws every call the moment it is asked for. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
@@ -660,6 +660,23 @@ does on a screen of crucible's own.
 ### What native mode cannot do
 
 Your terminal keeps scrolling, selection and search. In return, crucible can change what it has written there only by writing all of it again, which it does when the window changes size.
+
+`/clear` and `/resume` leave the earlier transcript in the terminal's scrollback
+until the window is resized. A line already written there does not change while
+the window keeps its size, so a mark a finished reply gains later stays as it
+was first written, and an offer to expand a clipped detail that is later
+withdrawn stays until the next resize. When you resize the window, crucible
+waits for it to stop changing, then clears the screen and the terminal's
+scrollback and writes the conversation again at the new width, with the box
+under it. Lines from before a `/clear` or `/resume`, and whatever your shell
+printed before crucible started, are not written again. In a session long enough
+that crucible has stopped keeping its oldest lines, the redraw opens with a line
+saying the earlier output is in the session log. A list or panel standing over
+the box, as `/model`, `/settings`, the `/` list, the queue and the Ctrl+O view
+do, takes at most half the window, or the least it can be drawn in where that is
+more; the transcript rows it takes within that stay in the terminal's
+scrollback, and when it closes the box stays at the foot of the window, and the
+rows the panel stood in are left blank between the transcript and the box.
 
 | Limitation | What you do instead |
 | --- | --- |
