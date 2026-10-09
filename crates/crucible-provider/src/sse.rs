@@ -419,12 +419,12 @@ mod tests {
         let stream = "event: one\r\ndata: {\"a\":1}\r\n\r\n:keep-alive\n\nevent: two\ndata: line\ndata: and another\n\n";
         let pauses = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&pauses);
-        let paused = tokio::io::BufReader::new(crate::transport::SyncReader::new(
+        let source = tokio::io::BufReader::new(crate::transport::SyncReader::new(
             crate::transport::Paused::dawdling(stream, 3).meanwhile(move || {
                 counted.fetch_add(1, Ordering::Relaxed);
             }),
         ));
-        let mut framing = Events::new(paused);
+        let mut framing = Events::new(source);
         let mut out = Vec::new();
         let mut paused_in_all = 0;
 
