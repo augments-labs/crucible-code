@@ -274,11 +274,11 @@ What counts as having looked:
 - A `write` call that created or replaced it. What the agent just put down it
   has by definition seen, so correcting it does not cost a round trip spent
   learning what the same turn wrote.
-- An `edit` call that changed it, whether or not the file was read first. What
-  the edit left there is what this session made, so a second change needs no
-  read in between. For a file never read this is an allowance rather than a
-  look: the agent was shown only the text it quoted, so a `write` after the
-  edit can discard the rest of the file unseen. An `edit` that was not made
+- An `edit` call that changed it, whether or not the file was read first. From
+  then on the file is held to what the edit left there, so a second change
+  needs no read in between. For a file never read this is an allowance rather
+  than a look: the agent was shown only the text it quoted, so a `write` after
+  the edit can discard the rest of the file unseen. An `edit` that was not made
   counts for nothing.
 
 Having looked is held to what was there when it looked. If the file has

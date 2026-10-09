@@ -127,7 +127,7 @@ impl Ledger {
         self.fingerprint(path).is_some()
     }
 
-    /// The answer a call came to, remembering the file it showed the agent.
+    /// The answer a call came to, remembering the file it read or changed.
     ///
     /// Asked by the call once its work has answered, and never by the work.
     /// Work handed to a worker runs on after its call is dropped, and what it

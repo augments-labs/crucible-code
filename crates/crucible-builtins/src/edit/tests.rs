@@ -843,3 +843,29 @@ fn an_edit_of_a_file_never_read_that_was_not_made_leaves_it_unread() {
         "one.rs has not been read, so replacing it would discard what is in it: read it first"
     );
 }
+
+#[test]
+fn an_edit_refused_as_stale_leaves_the_file_held_to_what_was_read() {
+    // A stale edit put nothing down, so the file is still held to what the
+    // session read, and a `write` over the outside change is refused too.
+    let sample = Sample::new("edit-stale-then-write");
+    sample.write("one.rs", "let a = 1;\n");
+    let seen = shown(&sample, "one.rs");
+
+    sample.write("one.rs", "let a = 1;\nlet b = 2;\n");
+    let stale = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 1;","replace":"let a = 3;"}"#,
+        &seen,
+    );
+    let written = writing(&sample, "one.rs", "let a = 4;\\n", &seen);
+
+    for output in [&stale, &written] {
+        assert!(output.is_failed(), "{}", output.text());
+    }
+    assert_eq!(read(&sample, "one.rs"), "let a = 1;\nlet b = 2;\n");
+    assert_eq!(
+        written.text(),
+        "one.rs changed since it was read, so replacing it would discard what changed: read it again"
+    );
+}
