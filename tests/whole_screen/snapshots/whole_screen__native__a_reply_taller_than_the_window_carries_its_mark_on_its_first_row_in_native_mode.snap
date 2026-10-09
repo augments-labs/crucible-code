@@ -17,7 +17,6 @@ expression: "crate::timeless(&everything(&window))"
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
-|                                                                                |
 |› /usage                                                                        |
 |⎿ Usage · anthropic · API key                                                   |
 |                                                                                |
@@ -32,7 +31,7 @@ expression: "crate::timeless(&everything(&window))"
 |    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0% used  |
 |                                                                                |
 |  Plan limits                                                                   |
-80x5 cursor 4,4 scrollback 30
+80x5 cursor 4,4 scrollback 29
 |    limits not reported                                                         |
 |                                                                                |
 |                                                                                |

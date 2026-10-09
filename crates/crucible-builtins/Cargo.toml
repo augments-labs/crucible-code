@@ -24,6 +24,11 @@ grep-regex.workspace = true
 grep-searcher.workspace = true
 ignore.workspace = true
 serde_json.workspace = true
+# SHA-256 of a file's whole content, which a write or an edit holds the file to
+# so that a change made since it was read is refused rather than overwritten.
+# Already in the graph for the session log and the credential store, so this is
+# the same version compiled once; the tests also identify a finished result by it.
+sha2.workspace = true
 # Each command left running is owned by a task on the application's runtime,
 # handed in: `rt` is the handle it is spawned onto and the join handle the
 # registry keeps, and `time` is the pause between the task's looks. Nothing here
@@ -37,9 +42,6 @@ tokio = { workspace = true, features = ["rt", "time"] }
 # this checkout rather than the one every checkout of this user would share.
 crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 
-# SHA-256 of a finished test result, so its receipt is identified by what it
-# contains rather than by when it was put there.
-sha2.workspace = true
 # `answered!`, which the tests ask a tool's future once with.
 crucible-runtime = { workspace = true, features = ["proof"] }
 

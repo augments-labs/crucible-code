@@ -89,6 +89,17 @@ const PROSE: &str = "a search that stops partway through a directory nobody mean
 /// gives up columns everywhere except on the one thing it cannot cut.
 const LONG: &str = "crucible-code/crates/crucible-tui/src/welcome/parts.rs";
 
+/// Prose in glyphs two columns wide, with an emoji sequence among them: a row
+/// counted in characters is half as wide as this one is.
+const WIDE: &str = "\u{691c}\u{7d22}\u{304c} \u{9014}\u{4e2d}\u{3067} \u{6b62}\u{307e}\u{3063}\u{305f} \
+                    \u{2600}\u{fe0f} \u{30c7}\u{30a3}\u{30ec}\u{30af}\u{30c8}\u{30ea} \u{3092} \
+                    \u{958b}\u{304f} \u{3064}\u{3082}\u{308a}\u{306f} \u{306a}\u{304b}\u{3063}\u{305f}";
+
+/// Prose with a combining mark on every few letters: a row counted in
+/// characters is wider than this one is.
+const MARKED: &str = "a re\u{301}sume\u{301} of a nai\u{308}ve cafe\u{301} that stops \
+                      partway through, and says so on the ro\u{302}w it stopped on";
+
 /// Sweeps `laid` across every width in both fonts.
 #[track_caller]
 fn across(what: &str, laid: impl Fn(usize, Glyphs) -> Vec<Row>) {
@@ -310,12 +321,14 @@ fn the_command_list_fits_the_window_it_opens_over() {
 
 #[test]
 fn a_notice_fits_the_window_it_is_read_in() {
-    let notice = Notice {
-        heading: "the session log stopped recording",
-        said: PROSE,
-        named: Some(LONG),
-    };
-    across("a notice", |columns, glyphs| notice.rows(columns, glyphs));
+    for said in [PROSE, WIDE, MARKED] {
+        let notice = Notice {
+            heading: "the session log stopped recording",
+            said,
+            named: Some(LONG),
+        };
+        across("a notice", |columns, glyphs| notice.rows(columns, glyphs));
+    }
 }
 
 #[test]
@@ -464,7 +477,7 @@ fn a_view_of_what_was_cut_fits_the_window_it_is_read_in() {
 
 #[test]
 fn a_permission_question_fits_the_window_it_is_answered_in() {
-    const PAYLOAD: [&str; 2] = [PROSE, LONG];
+    const PAYLOAD: [&str; 4] = [PROSE, LONG, WIDE, MARKED];
     const EXPLANATION: [&str; 1] = [PROSE];
     const ANSWERS: [&str; 3] = ["yes", "no", LONG];
 

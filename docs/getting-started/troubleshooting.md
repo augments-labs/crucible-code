@@ -498,6 +498,17 @@ show it. With no colour to read them into, the emphasis markers the model wrote
 are left in the text, which is what makes `crucible < prompts.txt > answers.md`
 a file of markdown. See [run it](first-session.md#run-it).
 
+### A symbol at the right edge of a row is cut off
+
+Some terminals draw a symbol that has a picture form, such as ☀ or ✂, as a
+picture two columns wide, where crucible counts it as one. A row crucible fitted
+to the window then reaches past its right edge. While crucible draws, your
+terminal is told not to carry what crosses the edge on to the next row, so the
+row keeps its place and loses what does not fit instead of pushing the rows
+under it down. Carrying it on is put back when crucible exits. Only the
+screen is cut: the session file keeps the whole row. A terminal or font that
+draws these symbols one column wide shows all of it.
+
 ### `crucible: what you typed is longer than 1 MiB; no prompt was accepted`
 
 A line of redirected input was longer than 1 MiB, which is as much as one

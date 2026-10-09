@@ -936,7 +936,9 @@ fn subscribed<T: Terminal>(
                     }
                 }
             }
-            Pressed::Resized => renderer.resized()?,
+            // The renderer took the new size as it read the press; the view
+            // is shown again for it below.
+            Pressed::Resized => {}
             pressed => {
                 if !view.press(pressed, &attempt)? {
                     continue;

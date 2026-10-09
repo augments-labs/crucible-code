@@ -35,7 +35,7 @@ use crate::cli::client::astray;
 use crate::cli::draw;
 
 use super::region::{self, Ended, Moved};
-use super::{HUNG, Terms};
+use super::{Laid, Terms, relaid};
 
 /// The narrowest window the rows keep the two-cell swatch and the wider
 /// columns in; below it they close up behind a single cell.
@@ -68,8 +68,7 @@ pub(super) fn run<T: Terminal>(
         return Ok(());
     }
     // Hung under the line that asked, so laid out short of the mark.
-    let columns = renderer.transcript_columns().saturating_sub(HUNG);
-    Ok(renderer.present(&body(&context, columns, terms.style().glyphs()))?)
+    printed(renderer, Laid::Hung, context, terms.style().glyphs())
 }
 
 /// Stands the panel over a running turn, with the figures of the last
@@ -86,10 +85,27 @@ pub(super) fn live<T: Terminal>(
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<(), Fatal> {
     if stood(renderer, terms, context, while_waiting)? == Ended::Cramped {
-        let columns = renderer.transcript_columns();
-        renderer.present(&body(context, columns, terms.style().glyphs()))?;
+        printed(
+            renderer,
+            Laid::Flush,
+            context.clone(),
+            terms.style().glyphs(),
+        )?;
     }
     Ok(())
+}
+
+/// Writes the breakdown where it stands, laid out again at each width the
+/// window takes, as it was read: a resize is not a new reading.
+fn printed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    laid: Laid,
+    context: api::Context,
+    glyphs: Glyphs,
+) -> Result<(), Fatal> {
+    relaid(renderer, laid, move |columns| {
+        body(&context, columns, glyphs)
+    })
 }
 
 /// Stands the panel until it is closed, or says there was no room.

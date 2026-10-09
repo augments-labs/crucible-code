@@ -106,7 +106,7 @@ mod tests {
                 Argument::Path,
             ),
             (
-                Box::new(Edit::new(workspace.clone())),
+                Box::new(Edit::new(workspace.clone(), Ledger::new())),
                 "edit",
                 r#"{"path":"src/lib.rs","find":"a","replace":"b"}"#,
                 "src/lib.rs",

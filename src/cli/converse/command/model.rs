@@ -41,7 +41,7 @@ use crucible_app::providers::{
 };
 use crucible_app::startup::served;
 
-use super::{Asked, Laid, Terms, about, say, say_at};
+use super::{Asked, Laid, Terms, about, relaid, say, say_at};
 
 mod narrowing;
 
@@ -861,9 +861,14 @@ fn listed<T: Terminal>(
     // list is taller than a window can be, and laid down at once only the
     // rows that fit the window are ever drawn. Folded rather than cut where
     // the window is narrower, since what a line ends with, `trains`, is the
-    // part that must be read.
+    // part that must be read, and folded again at each width the window takes.
     for line in lines {
-        say(renderer, &line)?;
+        relaid(renderer, Laid::Hung, move |columns| {
+            fold(&line, columns)
+                .into_iter()
+                .map(|part| Row::new().then(Slot::Quiet, part))
+                .collect()
+        })?;
     }
     Ok(())
 }

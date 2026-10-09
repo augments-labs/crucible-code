@@ -47,6 +47,7 @@ mod watched;
 
 use std::fmt::Write as _;
 
+use screen::{Profile, Widths};
 use vendor::Vendor;
 use watched::Watched;
 
@@ -419,6 +420,15 @@ fn a_first_run_with_nothing_set_up_draws_the_welcome_the_warning_and_the_box() {
 }
 
 #[test]
+fn the_welcome_in_colour() {
+    // The first run's screen, read for what it is drawn in: the colour a slot
+    // of the welcome card moves to changes this and leaves the picture above.
+    let window = Watched::in_default_colours("welcome-in-colour", (80, 24), None, None);
+
+    insta::assert_snapshot!(window.picture_in_colour());
+}
+
+#[test]
 fn a_remembered_provider_without_its_credential_still_opens_the_session() {
     // `/model` persists all three names, but the credential may belong only to
     // the shell that selected them. Once that variable is unset, the remembered
@@ -543,6 +553,46 @@ fn an_answer_longer_than_the_window_leaves_the_box_whole_under_it() {
     window.types_until("say something long\r", ANSWER_END);
 
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_row_the_terminal_draws_wider_than_crucible_counts_leaves_no_cell_on_another_row() {
+    // Each paragraph is a row crucible counted narrower than this terminal
+    // draws it. Whatever of a row the terminal could not fit in the window
+    // belongs to that row: carried on to the start of the next, it sits on a
+    // row whose text has not changed, which nothing then draws again.
+    const LABELS: [&str; 3] = ["oak", "pine", "rowan"];
+    let answer = LABELS
+        .iter()
+        .map(|label| native::pictured_row(label))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let vendor = Vendor::answering_each(&[&answer, "Nothing more."]);
+    let mut window = Watched::answering_on(
+        "pictured",
+        80,
+        24,
+        &vendor,
+        Profile {
+            widths: Widths::Pictured,
+            ..Profile::default()
+        },
+    );
+    window.types_until("say it\r", "rowan");
+    window.types_until("say it again\r", "Nothing more.");
+
+    let picture = window.picture();
+    let strays: Vec<&str> = picture
+        .lines()
+        .skip(1)
+        .filter(|row| row.contains('\u{2600}'))
+        .filter(|row| {
+            !LABELS
+                .iter()
+                .any(|label| row.starts_with(&format!("|{label} weather")))
+        })
+        .collect();
+    assert!(strays.is_empty(), "{strays:#?}\n{picture}");
 }
 
 /// Where the count of what is still running lands, as the row of the window
@@ -1169,6 +1219,23 @@ fn five_waiting_prompts_stand_in_one_panel_over_the_box() {
 
     draws(&window, WAITING_80);
     insta::assert_snapshot!(steadied_picture(&window.picture()));
+}
+
+#[test]
+fn five_waiting_prompts_in_colour() {
+    // The panel above, read for what the next prompt, the rest and the keys
+    // are drawn in under a turn that is still running.
+    let vendor = a_turn_still_running_long();
+    let mut window = Watched::in_default_colours(
+        "queue-panel-in-colour",
+        (80, 24),
+        Some(&vendor),
+        Some("bash(*)"),
+    );
+    waiting_behind_a_turn(&mut window, 5);
+
+    draws(&window, WAITING_80);
+    insta::assert_snapshot!(steadied_picture(&window.picture_in_colour()));
 }
 
 #[test]
@@ -2038,6 +2105,29 @@ fn a_call_that_changed_a_file_is_drawn_with_the_change() {
     assert_eq!(after, BEFORE.replace("# trend data", "# what stops a tag"));
 
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_call_that_changed_a_file_in_colour() {
+    // The turn above, read for what the call, its result and the lines it
+    // moved are drawn in.
+    let vendor = Vendor::calling(
+        "edit",
+        r##"{"path":"release.yml","find":"# trend data","replace":"# what stops a tag"}"##,
+        "Renamed. Nothing else in the file moved.",
+    );
+    let mut window = Watched::in_default_colours(
+        "tool-called-in-colour",
+        (80, 24),
+        Some(&vendor),
+        Some("edit(*)"),
+    );
+    let file = window.workspace().join("release.yml");
+    std::fs::write(&file, BEFORE).expect("a file for the call to change");
+
+    window.types_until("rename that comment\r", "Nothing else in the file moved");
+
+    insta::assert_snapshot!(window.picture_in_colour());
 }
 
 /// How many lines the file in [`change_header_survives_resume`] has, on each
@@ -4053,6 +4143,7 @@ fn a_signal_sent_while_the_prompt_waits_hands_the_terminal_back() {
             (false, false),
             "{signal}: the keys were never raw"
         );
+        assert!(!window.wraps(), "{signal}: autowrap was never turned off");
 
         let (ended, wrote) = window.ends_on(signal);
 
@@ -4061,6 +4152,7 @@ fn a_signal_sent_while_the_prompt_waits_hands_the_terminal_back() {
             (true, true),
             "{signal}: the terminal was left without echo or whole lines"
         );
+        assert!(window.wraps(), "{signal}: autowrap was left off");
         assert!(
             wrote.contains("\u{1b}[?25h\u{1b}[?1049l"),
             "{signal}: the screen and the cursor were never handed back: {wrote:?}"
@@ -5823,6 +5915,17 @@ fn usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape
         let closed = window.picture();
         assert!(!closed.contains("esc to close"), "{closed}");
     }
+}
+
+#[test]
+fn usage_in_colour() {
+    // `/usage` after a turn on a key, read for what its rows are drawn in.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::in_default_colours("usage-in-colour", (80, 30), Some(&vendor), None);
+    window.types_until("say hello\r", "Hello.");
+    window.types_until("/usage\r", "esc to close");
+
+    insta::assert_snapshot!(timeless(&window.picture_in_colour()));
 }
 
 #[test]

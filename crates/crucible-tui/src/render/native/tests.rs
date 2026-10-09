@@ -3,8 +3,9 @@
 //! [`Picture`](crate::Picture) is a screen this process owns: a row is named
 //! and nothing scrolls. Native mode writes into a buffer that does, so these
 //! tests replay its bytes into [`Emulator`], which moves the cursor relatively,
-//! wraps, scrolls rows off the top into a scrollback and erases to the end of
-//! the screen — the handful of things a native frame says — and rewraps what it
+//! wraps, scrolls rows off the top into a scrollback, erases to the end of the
+//! screen, and clears the screen and the scrollback for a resize to be given
+//! everything again — the handful of things a native frame says — and rewraps what it
 //! holds when the window changes width, as most terminals now do. Each cell
 //! keeps the colour it was written in. What a reader would find on scrolling
 //! back is then a list of strings to assert on.
@@ -14,6 +15,7 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use super::super::*;
+use super::SETTLE;
 use crate::color::{Palette, Slot};
 use crate::row::Row;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -169,6 +171,18 @@ impl Emulator {
                     usize::max(column, 1).min(self.columns) - 1,
                 );
             }
+            'J' if parameters == "2" => {
+                for line in &mut self.screen {
+                    line.clear();
+                }
+                for ran_on in &mut self.ran_on {
+                    *ran_on = false;
+                }
+            }
+            'J' if parameters == "3" => {
+                self.scrollback.clear();
+                self.ran_on_back.clear();
+            }
             'J' => {
                 let (row, column) = self.at;
                 if let Some(line) = self.screen.get_mut(row) {
@@ -222,15 +236,18 @@ impl Emulator {
             });
     }
 
-    /// The window made `columns` wide, as a reader dragging its corner would,
-    /// with everything it holds rewrapped to the new width.
+    /// The window made `columns` wide and `rows` tall in one step, as a
+    /// reader dragging its corner would, with everything it holds rewrapped
+    /// to the new width.
     ///
     /// Rows that ran on into each other by wrapping are one line again, and
     /// each line is folded at the new width. The cursor keeps its place in the
     /// line it was on; nothing below it that is empty is kept; and the screen
-    /// is the foot of what is left, the rest above it being scrollback.
-    fn resize(&mut self, columns: usize) {
+    /// is the foot of what is left at the new height, the rest above it being
+    /// scrollback.
+    fn resize(&mut self, columns: usize, rows: usize) {
         let was = self.columns;
+        self.rows = rows;
         let cursor = self.scrollback.len() + self.at.0;
         let back = self.scrollback.drain(..).zip(self.ran_on_back.drain(..));
         let rows: Vec<(Vec<Cell>, bool)> = back
@@ -361,6 +378,8 @@ struct Seen {
     unsizable: usize,
     /// The size the terminal reports, where that is not the size it draws at.
     reports: Option<Size>,
+    /// How many times the terminal was asked its size.
+    asked: usize,
 }
 
 /// A terminal with a scrollback, for a renderer to own and a test to read.
@@ -375,6 +394,7 @@ impl Window {
             is_terminal: true,
             unsizable: 0,
             reports: None,
+            asked: 0,
         })))
     }
 
@@ -389,6 +409,11 @@ impl Window {
     /// rows all the same.
     fn reports(&self, size: Size) {
         self.0.borrow_mut().reports = Some(size);
+    }
+
+    /// How many times the terminal was asked its size.
+    fn asked(&self) -> usize {
+        self.0.borrow().asked
     }
 
     fn redirected(columns: usize, rows: usize) -> Self {
@@ -418,8 +443,8 @@ impl Window {
         self.0.borrow().emulator.at
     }
 
-    fn resize(&self, columns: usize) {
-        self.0.borrow_mut().emulator.resize(columns);
+    fn resize(&self, columns: usize, rows: usize) {
+        self.0.borrow_mut().emulator.resize(columns, rows);
     }
 
     fn scrollback(&self) -> Vec<String> {
@@ -435,6 +460,7 @@ impl Window {
 impl Terminal for Window {
     fn size(&self) -> Result<Size, TerminalError> {
         let mut seen = self.0.borrow_mut();
+        seen.asked += 1;
         if seen.unsizable > 0 {
             seen.unsizable = seen.unsizable.saturating_sub(1);
             return Err(TerminalError::Io(std::io::Error::other(
@@ -516,7 +542,7 @@ fn a_native_frame_never_names_a_screen_row() {
         .unwrap();
     render.seal().unwrap();
     render.settle().unwrap();
-    window.resize(50);
+    window.resize(50, 10);
     render.resized().unwrap();
     stands(&mut render);
     drop(render);
@@ -689,7 +715,7 @@ fn a_native_resize_redraws_only_the_live_region() {
         .unwrap();
     window.take();
 
-    window.resize(60);
+    window.resize(60, 10);
     render.resized().unwrap();
     stands(&mut render);
     render
@@ -705,6 +731,158 @@ fn a_native_resize_redraws_only_the_live_region() {
     assert_eq!(window.rows_saying("and so is this"), 1);
     assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+}
+
+/// Draws `said` as finished rows over the box and a running turn, as a native
+/// session stands before its window changes size.
+fn finished(render: &mut Renderer<Window>, said: &[String]) {
+    stands(render);
+    for line in said {
+        render.commit(line).unwrap();
+    }
+    render.seal().unwrap();
+    render
+        .under(&[row("* thinking")], None, Palette::plain())
+        .unwrap();
+}
+
+/// Resizes `window` to `columns` by `rows`, tells `render`, and lets the window
+/// settle at that size.
+fn settles_at(window: &Window, render: &mut Renderer<Window>, columns: usize, rows: usize) {
+    window.resize(columns, rows);
+    render.resized().unwrap();
+    render.settled(Instant::now() + SETTLE).unwrap();
+}
+
+#[test]
+fn a_settled_native_resize_writes_every_kept_row_once_at_the_new_width() {
+    // What the terminal kept was cut at forty columns, and no two terminals
+    // put that at twenty the same way. Once the window has kept its new size,
+    // the screen and the scrollback are cleared and every finished row is
+    // written again, folded at twenty, and the region under it once.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    let said: Vec<String> = (0..8)
+        .map(|at| format!("said {at:02} in words that fold at twenty"))
+        .collect();
+    finished(&mut render, &said);
+    window.take();
+
+    window.resize(20, 6);
+    render.resized().unwrap();
+    render.settled(Instant::now()).unwrap();
+    let before = window.take();
+    assert!(
+        !before.contains("\x1b[3J"),
+        "a window still being dragged was given everything again: {before:?}"
+    );
+
+    render.settled(Instant::now() + SETTLE).unwrap();
+    let after = window.take();
+    assert!(after.contains("\x1b[2J\x1b[3J"), "{after:?}");
+    for at in 0..8 {
+        assert_eq!(
+            window.rows_saying(&format!("said {at:02} in")),
+            1,
+            "said {at:02}: {:#?}",
+            window.all()
+        );
+    }
+    assert!(
+        window.all().iter().any(|row| row == "that fold at twenty"),
+        "a finished row was not folded at the new width: {:#?}",
+        window.all()
+    );
+    assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+
+    // Given once: the next wait writes nothing of it again.
+    render.settled(Instant::now() + SETTLE).unwrap();
+    assert!(!window.take().contains("said"));
+}
+
+#[test]
+fn a_native_replay_after_the_ceiling_dropped_rows_says_the_rest_is_in_the_session_log() {
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    stands(&mut render);
+    let mut at = 0;
+    while !render.record.spilled() {
+        render.commit(&format!("said {at:05}")).unwrap();
+        at += 1;
+        assert!(at < 100_000, "the ceiling never dropped a row");
+    }
+    render.seal().unwrap();
+    stands(&mut render);
+
+    settles_at(&window, &mut render, 50, 6);
+
+    let all = window.all();
+    assert_eq!(
+        all.iter()
+            .filter(|row| row.as_str() == "Earlier output is in the session log.")
+            .count(),
+        1,
+        "{:#?}",
+        all.get(..4)
+    );
+    assert_eq!(window.rows_saying("said 00000"), 0, "{:#?}", all.get(..4));
+    assert_eq!(window.rows_saying(&format!("said {:05}", at - 1)), 1);
+}
+
+#[test]
+fn a_native_replay_of_an_opening_partly_sent_writes_each_of_its_rows_once() {
+    // A window shorter than the card sends its top rows out and keeps the rest
+    // in the region. What is given back is what went out, and the region
+    // draws the rest under it, so no row of the card is written twice.
+    let window = Window::new(40, 5);
+    let mut render = native(&window);
+    render
+        .opens(Box::new(|_, _| {
+            (1..=6).map(|at| row(&format!("card row {at}"))).collect()
+        }))
+        .unwrap();
+    stands(&mut render);
+    assert!(
+        render.record.first() > 0 && render.record.first() < 6,
+        "the card was not partly sent: {:#?}",
+        window.all()
+    );
+
+    settles_at(&window, &mut render, 30, 5);
+
+    for at in 1..=6 {
+        assert_eq!(
+            window.rows_saying(&format!("card row {at}")),
+            1,
+            "card row {at}: {:#?}",
+            window.all()
+        );
+    }
+}
+
+#[test]
+fn a_native_replay_after_a_clear_gives_back_nothing_from_before_it() {
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    finished(&mut render, &["said before the clear".to_owned()]);
+    render.empties().unwrap();
+    finished(&mut render, &["said after the clear".to_owned()]);
+
+    settles_at(&window, &mut render, 30, 6);
+
+    assert_eq!(
+        window.rows_saying("before the clear"),
+        0,
+        "{:#?}",
+        window.all()
+    );
+    assert_eq!(
+        window.rows_saying("after the clear"),
+        1,
+        "{:#?}",
+        window.all()
+    );
 }
 
 #[test]
@@ -731,7 +909,7 @@ fn a_native_narrowing_keeps_the_finished_rows_that_still_fit_on_screen() {
     );
     window.take();
 
-    window.resize(20);
+    window.resize(20, 10);
     render.resized().unwrap();
     stands(&mut render);
     render.under(&thinking, None, Palette::plain()).unwrap();
@@ -779,7 +957,7 @@ fn a_native_frame_drawn_before_the_resize_is_reported_takes_the_new_width() {
         .unwrap();
     window.take();
 
-    window.resize(20);
+    window.resize(20, 10);
     render.stream("hotel ").unwrap();
     render.stream("india ").unwrap();
     render.resized().unwrap();
@@ -799,6 +977,131 @@ fn a_native_frame_drawn_before_the_resize_is_reported_takes_the_new_width() {
         "a row was written wider than the window: {:#?}",
         window.all()
     );
+}
+
+#[test]
+fn a_native_frame_with_no_resize_since_the_last_asks_the_window_nothing() {
+    // Told of a resize by the operating system, a frame has no reason to ask
+    // the window its size, and an answer streaming at speed draws many.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.watches_size(ResizeFlag::default());
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    let before = window.asked();
+    for word in ["alfa ", "bravo ", "charlie ", "delta "] {
+        render.stream(word).unwrap();
+    }
+
+    assert_eq!(window.asked(), before, "a frame asked the size unprompted");
+}
+
+#[test]
+fn a_native_frame_after_a_resize_is_told_of_asks_once_and_takes_the_new_width() {
+    // The same narrowing as the frame drawn before the resize is reported,
+    // told by the flag rather than found by asking: the first frame after it
+    // takes the new width, and the frames after that ask nothing again.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    let resizes = ResizeFlag::default();
+    render.watches_size(resizes.clone());
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render
+        .stream("alfa bravo charlie delta echo foxtrot golf ")
+        .unwrap();
+    window.take();
+
+    window.resize(20, 10);
+    resizes.raise();
+    render.stream("hotel ").unwrap();
+    let asked = window.asked();
+    render.stream("india ").unwrap();
+    stands(&mut render);
+
+    assert_eq!(
+        window.asked(),
+        asked,
+        "a frame asked again after the resize"
+    );
+    let after = window.take();
+    assert!(
+        !after.contains("> asked"),
+        "a frame wrote a finished row again: {after:?}"
+    );
+    for word in ["alfa", "delta", "golf", "hotel", "india"] {
+        assert_eq!(window.rows_saying(word), 1, "{word}: {:#?}", window.all());
+    }
+    assert!(
+        window.all().iter().all(|row| row.chars().count() <= 20),
+        "a row was written wider than the window: {:#?}",
+        window.all()
+    );
+}
+
+#[test]
+fn a_native_window_narrowed_twice_and_widened_keeps_every_finished_row_once() {
+    // Three resizes in one answer, each taken while it is still arriving: the
+    // window narrowed, narrowed again, and widened back to where it began.
+    // Each is a step a reader can take, and a rewind counted wrong at any of
+    // them leaves a row twice or takes one away, which only the whole
+    // sequence shows.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    for (words, columns) in [
+        ("alfa bravo charlie delta ", 30),
+        ("echo foxtrot golf hotel ", 20),
+        ("india juliett kilo lima ", 40),
+    ] {
+        render.stream(words).unwrap();
+        window.resize(columns, 10);
+        render.resized().unwrap();
+        stands(&mut render);
+    }
+
+    for word in ["> asked", "alfa", "echo", "india", "lima"] {
+        assert_eq!(window.rows_saying(word), 1, "{word}: {:#?}", window.all());
+    }
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+}
+
+#[test]
+fn a_native_window_shortened_and_narrowed_in_one_step_keeps_every_finished_row_once() {
+    // A corner dragged on the diagonal: the window loses rows and columns in
+    // the same resize, with the region still short enough to fit what is
+    // left of it.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    for at in 0..6 {
+        render.commit(&format!("said {at:02}")).unwrap();
+    }
+    render.seal().unwrap();
+    window.take();
+
+    window.resize(30, 7);
+    render.resized().unwrap();
+    stands(&mut render);
+
+    for at in 0..6 {
+        assert_eq!(
+            window.rows_saying(&format!("said {at:02}")),
+            1,
+            "said {at:02}: {:#?}",
+            window.all()
+        );
+    }
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+    assert_eq!(window.screen().len(), 7);
 }
 
 #[test]
@@ -848,6 +1151,108 @@ fn a_native_frame_whose_size_query_fails_is_drawn_at_the_size_already_known() {
         window.all()
     );
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+}
+
+#[test]
+fn a_native_resize_inside_a_frame_keeps_the_box_and_the_turn_on_screen() {
+    // A frame finds the window narrowed while an answer streams. What stands
+    // at the foot was laid out for the old width, and the caller lays it out
+    // again only when the press reporting the resize is read; until then the
+    // frame draws it cut at the new edge rather than drawing without it.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render
+        .under(&[row("* thinking")], None, Palette::plain())
+        .unwrap();
+    render.stream("alfa bravo ").unwrap();
+
+    window.resize(30, 10);
+    render.stream("charlie ").unwrap();
+
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("| > typed"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("charlie"), 1, "{:#?}", window.all());
+}
+
+#[test]
+fn a_standing_row_handed_in_before_a_resize_is_written_no_wider_than_the_window() {
+    // Laid out at forty columns and still standing when the window narrows to
+    // twenty: the frame writes it cut at twenty, so the terminal has nothing
+    // to wrap onto a row the region did not count.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    render
+        .live(
+            &[row("a box row that is thirty-four wide")],
+            Caret::default(),
+            Palette::plain(),
+        )
+        .unwrap();
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+
+    window.resize(20, 10);
+    render.stream("alfa ").unwrap();
+
+    assert_eq!(
+        window.rows_saying("a box row that is th"),
+        1,
+        "{:#?}",
+        window.all()
+    );
+    assert!(
+        window.all().iter().all(|row| row.chars().count() <= 20),
+        "a row was written wider than the window: {:#?}",
+        window.all()
+    );
+}
+
+#[test]
+fn a_resize_press_whose_size_query_fails_keeps_the_size_already_known() {
+    // The press says the window changed and the query that should say how
+    // fails. That is no news of a size, as it is no news on the frame's path:
+    // the session is not folded again for a window of eighty, and the region
+    // is not rewound as though it were eighty wide.
+    let window = Window::new(100, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render
+        .stream(
+            "alfa bravo charlie delta echo foxtrot golf hotel india juliett kilo lima mike oscar",
+        )
+        .unwrap();
+
+    window.loses_size(1);
+    render.resized().unwrap();
+    stands(&mut render);
+
+    assert_eq!(render.columns(), 100);
+    let said: Vec<String> = window
+        .all()
+        .into_iter()
+        .filter(|row| row.contains("alfa") || row.contains("oscar"))
+        .collect();
+    assert_eq!(
+        said.len(),
+        1,
+        "the row was folded for a window of eighty: {:#?}",
+        window.all()
+    );
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+
+    let mut full = Renderer::drawing(window.clone(), ScreenMode::Fullscreen);
+    window.loses_size(1);
+    full.resized().unwrap();
+    assert_eq!(full.columns(), 100);
 }
 
 /// A palette that writes every hue it has, so a row's colours are on the
@@ -1035,6 +1440,28 @@ fn a_native_region_closed_before_the_renderer_goes_is_left_alone_after() {
 
     assert!(!closed.is_empty(), "closing wrote nothing");
     assert_eq!(window.written(), "", "the renderer drew after closing");
+}
+
+#[test]
+fn a_native_region_turns_autowrap_off_once_and_back_on_when_it_closes() {
+    // Off in the first frame and in no later one, and on again as the last
+    // thing the region writes, so the shell gets its wrapping lines back.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    let first = window.take();
+    render.commit("> hello").unwrap();
+    render.seal().unwrap();
+    stands(&mut render);
+    let later = window.take();
+    drop(render);
+    let closing = window.take();
+
+    assert_eq!(first.matches("\x1b[?7l").count(), 1, "{first:?}");
+    assert!(!later.contains("\x1b[?7l"), "a later frame: {later:?}");
+    assert!(!first.contains("\x1b[?7h") && !later.contains("\x1b[?7h"));
+    assert!(closing.ends_with("\x1b[?7h"), "closing: {closing:?}");
 }
 
 #[test]

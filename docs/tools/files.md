@@ -275,6 +275,22 @@ What counts as having looked:
   has by definition seen, so correcting it does not cost a round trip spent
   learning what the same turn wrote.
 
+Having looked is held to what was there when it looked. If the file has
+changed since, whether another program edited it in place or put a new file at
+its name, `write` refuses it:
+
+```
+notes.md changed since it was read, so replacing it would discard what changed: read it again
+```
+
+A read of part of a file counts for the whole of it, so a change in the lines
+it was not shown is caught too. `edit` refuses a file this run has read and
+that has changed since in the same way, ending `so the edit was not made: read
+it again`. Both look once more just before the change lands, and leave the file
+alone if it no longer holds what the change was made from. A change made in
+the instant between that last look and the file being swapped in is not seen,
+because no platform offers a way to look and swap in one step.
+
 Files are remembered by their resolved path, so `./notes.md` and `notes.md` are
 one file rather than two. The last 1024 of them are kept and reading one again
 moves it back to the front, which is enough for any real session; past that the

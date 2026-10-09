@@ -1388,6 +1388,7 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
 mod conformance;
 mod following;
 mod lending;
+mod restoring;
 mod unserved;
 mod windows;
 

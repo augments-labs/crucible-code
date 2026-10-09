@@ -28,9 +28,12 @@
 //! into the scrollback, so the screen opened for one applies the three
 //! sequences that mode is made of — erase below, cursor up, cursor to column —
 //! the way a terminal does, keeps the rows pushed off the top as a scrollback
-//! the case can read, and rewraps everything it holds when the window changes
-//! width, which is what the renderer's own count of how far back its region is
-//! assumes of the terminal. Each is still refused on a fullscreen launch, where
+//! the case can read, and puts everything it holds at the new width when the
+//! window changes. It also clears the screen and that scrollback when asked,
+//! which is how a native session gives a resized window everything again. How it does that is the terminal's [`Profile`]: by default
+//! it rewraps, which is what the renderer's own count of how far back its
+//! region is assumes of the terminal, and a case can open one that keeps its
+//! rows as they were cut instead. Each is still refused on a fullscreen launch, where
 //! a frame that moved relatively is one the renderer never composed. Entering
 //! the alternate screen is remembered in both, because a native case proves it
 //! ran in native mode by that and not by its rows.
@@ -61,12 +64,34 @@
 //! a case may read: [`Screen::shows`] answers only between frames, because a
 //! read that ends inside one would otherwise see what no terminal ever showed.
 //!
-//! Columns are counted in characters here rather than from a width table.
-//! Everything these cases put on screen — ASCII, box drawing, the block glyphs
-//! of the wordmark, the arrows — is one column wide, so the two counts agree,
-//! and counting characters keeps the checker independent of the crate whose
-//! arithmetic is under test. A case that drew a CJK glyph would need the table,
-//! and until one does the count is the honest one to make.
+//! Every character is kept with what it was drawn in: the whole state the
+//! colour sequences before it left in force, which is not the last sequence
+//! alone. [`Screen::picture`] leaves that out, so a text snapshot reads the
+//! same in any theme; [`Screen::picture_in_colour`] writes each span's state
+//! under its row, which is how a case sees a slot that changed colour. A
+//! colour parameter outside the set crucible promises is refused like any
+//! other sequence, since a span drawn in it would be captured without it.
+//!
+//! Columns are counted in characters by default rather than from a width
+//! table. Most of what these cases put on screen (ASCII, box drawing, the
+//! block glyphs of the wordmark, the arrows) is one column wide, so the two
+//! counts agree, and counting characters keeps the checker independent of the
+//! crate whose arithmetic is under test. A case that draws wide glyphs or
+//! combining marks says which terminal it stands for instead: one that counts
+//! as crucible does, or one that draws a whole emoji sequence as a single wide
+//! glyph, which is where the two disagree. A wide glyph takes two cells, and a
+//! mark that takes no column is not kept, so a picture shows the letter it
+//! sits on.
+//!
+//! A third terminal draws a symbol that has a picture form as the picture, two
+//! columns wide, where crucible counts it one. On it a row crucible fitted to
+//! the window can be wider than the window, and that is the terminal's doing
+//! rather than a broken promise, so it is not refused: what crosses the edge
+//! goes on at the start of the next row, as a terminal with autowrap on does,
+//! or with autowrap off is drawn in the last columns over what was there.
+//! Autowrap is on when a screen opens, and turning it off and on are among the
+//! sequences crucible promises, so a case can ask whether a session left it as
+//! it found it.
 
 /// The byte that opens a sequence.
 const ESCAPE: u8 = 0x1b;
@@ -103,18 +128,66 @@ enum Mode {
     Native,
 }
 
+/// The terminal a native screen stands for: what it does with its rows when
+/// the window changes width, and how many columns it gives each character.
+///
+/// The default is the terminal every case was written against, and the one
+/// the native renderer assumes. The others are terminals that disagree with
+/// it, for a case that asks what a reader of one of those is left with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Profile {
+    pub(crate) reflow: Reflow,
+    pub(crate) widths: Widths,
+}
+
+/// What a terminal does with the rows it holds when the window changes width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Reflow {
+    /// Joins each line that was folded and folds it again at the new width,
+    /// as most terminals now do.
+    #[default]
+    Rewraps,
+    /// Cuts every row at the new width and joins nothing when the window
+    /// widens again, so what was cut stays lost.
+    Keeps,
+}
+
+/// How many columns a terminal gives each character.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Widths {
+    /// One column each, whatever the character.
+    #[default]
+    Characters,
+    /// What the Unicode width table says, counted the way crucible counts it.
+    Unicode,
+    /// The same, except that a terminal drawing an emoji sequence as one glyph
+    /// gives nothing to an emoji joined on after a zero-width joiner, or to a
+    /// skin tone after a wide glyph. Crucible counts each part, so on this
+    /// terminal a row with one of those is narrower than crucible thinks.
+    Clustered,
+    /// The same, except that a symbol with an emoji form is drawn as the
+    /// picture, two columns wide, even where no selector asks for it, as a
+    /// terminal whose font has the picture may draw it. Crucible counts such a
+    /// symbol as one column, so on this terminal a row with one is wider than
+    /// crucible thinks, and can run past the edge of a window crucible fitted
+    /// it to.
+    Pictured,
+}
+
 /// A screen, and everything crucible did to it.
 #[derive(Debug, Clone)]
 pub(crate) struct Screen {
     /// Which screen this is.
     mode: Mode,
+    /// Which terminal it stands for.
+    profile: Profile,
     /// How wide the terminal is.
     columns: usize,
     /// How tall it is.
     rows: usize,
     /// What is on it, one row per line of the window, each as wide as what was
     /// written on it rather than as wide as the window.
-    grid: Vec<Vec<char>>,
+    grid: Vec<Vec<Cell>>,
     /// Whether each row of the window is the fold of a wider line, running on
     /// into the row under it — which only a resize of a native screen makes,
     /// and which the next resize needs so as to join the pieces again.
@@ -132,11 +205,17 @@ pub(crate) struct Screen {
     scrolled: usize,
     /// The rows pushed off the top of a native window, oldest first: what a
     /// reader would find on scrolling back.
-    scrollback: Vec<Vec<char>>,
+    scrollback: Vec<Vec<Cell>>,
     /// Whether each row of the scrollback ran on into the one under it.
     ran_on_back: Vec<bool>,
+    /// What the next character written is drawn in.
+    pen: Pen,
     /// Whether the session entered the alternate screen.
     alternate: bool,
+    /// Whether a character written past the last column goes on at the start
+    /// of the next row, which is what a terminal does until it is told not to.
+    /// Told not to, it draws the character in the last columns instead.
+    wraps: bool,
     /// What crucible did that it does not promise to do, in the order it was
     /// first done, each said once.
     refused: Vec<String>,
@@ -178,6 +257,257 @@ struct Awaiting {
     spare: bool,
 }
 
+/// One column of a row: the character drawn there, and what it was drawn in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cell {
+    character: char,
+    pen: Pen,
+}
+
+impl Cell {
+    /// A column nothing was drawn in, which a row is padded with to reach the
+    /// cursor.
+    const BLANK: Self = Self {
+        character: ' ',
+        pen: Pen::DEFAULT,
+    };
+
+    /// The column a terminal leaves empty at the end of a row when the wide
+    /// glyph after it would straddle the fold.
+    const SKIPPED: Self = Self {
+        character: SKIPPED,
+        pen: Pen::DEFAULT,
+    };
+
+    /// What a picture shows in this column: nothing for the second half of a
+    /// wide glyph, which the glyph already covers.
+    fn shown(self) -> Option<char> {
+        match self.character {
+            TAIL => None,
+            SKIPPED => Some(' '),
+            character => Some(character),
+        }
+    }
+}
+
+/// What stands in the second column of a wide glyph, in the glyph's pen.
+///
+/// A noncharacter, which no text is meant to hold, so it is never mistaken
+/// for a character crucible wrote. Keeping it in a cell of its own is what
+/// keeps a row's cells and its columns the same count.
+const TAIL: char = '\u{fdd0}';
+
+/// What stands in the column a fold left empty, so that joining the fold
+/// again takes the gap away with it.
+const SKIPPED: char = '\u{fdd1}';
+
+/// The zero-width joiner, which joins the emoji after it to the one before.
+const JOINER: char = '\u{200d}';
+
+impl Widths {
+    /// The columns this terminal gives `character`, written after `before`.
+    fn of(self, character: char, before: Option<char>) -> usize {
+        match self {
+            Self::Characters => 1,
+            Self::Unicode => measured(character, before),
+            Self::Clustered => match (before, character) {
+                (Some(JOINER), _) => 0,
+                (Some(base), '\u{1f3fb}'..='\u{1f3ff}') if measured(base, None) == 2 => 0,
+                _ => measured(character, before),
+            },
+            Self::Pictured => match measured(character, before) {
+                1 if ('\u{2600}'..='\u{27bf}').contains(&character) => 2,
+                counted => counted,
+            },
+        }
+    }
+
+    /// Whether a row crucible fitted to the window can be wider than it on
+    /// this terminal, so that what runs past the edge is the terminal's doing
+    /// rather than crucible writing past the window.
+    fn widens_rows(self) -> bool {
+        matches!(self, Self::Pictured)
+    }
+}
+
+/// The columns crucible counts `character` as adding to a row after
+/// `before`, which is how a selector that widens the character before it is
+/// counted at all.
+fn measured(character: char, before: Option<char>) -> usize {
+    let before = before.map(String::from).unwrap_or_default();
+
+    crucible_tui::columns(&format!("{before}{character}"))
+        .saturating_sub(crucible_tui::columns(&before))
+}
+
+/// What a character is drawn in: the whole state the colour sequences before
+/// it left in force, which is not the same as the last of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Pen {
+    /// Which [`Attribute`]s are on, one bit each.
+    attributes: u8,
+    foreground: Option<Colour>,
+    background: Option<Colour>,
+}
+
+/// An attribute a colour sequence turns on or off, in the order a capture
+/// spells them.
+#[derive(Debug, Clone, Copy)]
+enum Attribute {
+    Bold,
+    Dim,
+    Italic,
+    Underline,
+    Reverse,
+    Struck,
+}
+
+impl Attribute {
+    const ALL: [Self; 6] = [
+        Self::Bold,
+        Self::Dim,
+        Self::Italic,
+        Self::Underline,
+        Self::Reverse,
+        Self::Struck,
+    ];
+
+    /// This attribute's bit in [`Pen::attributes`].
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+
+    /// The word a capture writes for it.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Bold => "bold",
+            Self::Dim => "dim",
+            Self::Italic => "italic",
+            Self::Underline => "underline",
+            Self::Reverse => "reverse",
+            Self::Struck => "strikethrough",
+        }
+    }
+}
+
+impl Pen {
+    /// The terminal's own colours, with no attribute set.
+    const DEFAULT: Self = Self {
+        attributes: 0,
+        foreground: None,
+        background: None,
+    };
+
+    /// This pen with the colour sequence `params` applied, or `None` when the
+    /// sequence holds a parameter outside the set crucible promises.
+    ///
+    /// The set is what a span is said to be drawn in: the six attributes the
+    /// renderer sets, strikethrough last, each one's way back off, the sixteen
+    /// colours, the 256 and the exact ones, and the way back to the terminal's
+    /// own. A parameter outside it is refused rather than passed over, since a
+    /// span drawn in it would be captured in a state that leaves it out.
+    fn applied(self, params: &str) -> Option<Self> {
+        let mut pen = self;
+        let mut codes = params.split(';');
+
+        while let Some(code) = codes.next() {
+            match code {
+                "" | "0" => pen = Self::DEFAULT,
+                "1" => pen.turn(&[Attribute::Bold], true),
+                "2" => pen.turn(&[Attribute::Dim], true),
+                "3" => pen.turn(&[Attribute::Italic], true),
+                "4" => pen.turn(&[Attribute::Underline], true),
+                "7" => pen.turn(&[Attribute::Reverse], true),
+                "9" => pen.turn(&[Attribute::Struck], true),
+                "22" => pen.turn(&[Attribute::Bold, Attribute::Dim], false),
+                "23" => pen.turn(&[Attribute::Italic], false),
+                "24" => pen.turn(&[Attribute::Underline], false),
+                "27" => pen.turn(&[Attribute::Reverse], false),
+                "29" => pen.turn(&[Attribute::Struck], false),
+                "39" => pen.foreground = None,
+                "49" => pen.background = None,
+                "38" => pen.foreground = Some(Colour::chosen(&mut codes)?),
+                "48" => pen.background = Some(Colour::chosen(&mut codes)?),
+                _ => match code.parse::<u16>().ok()? {
+                    named @ (30..=37 | 90..=97) => pen.foreground = Some(Colour::Named(named)),
+                    named @ (40..=47 | 100..=107) => pen.background = Some(Colour::Named(named)),
+                    _ => return None,
+                },
+            }
+        }
+
+        Some(pen)
+    }
+
+    /// Turns each of `attributes` on, or off.
+    fn turn(&mut self, attributes: &[Attribute], on: bool) {
+        for attribute in attributes {
+            if on {
+                self.attributes |= attribute.bit();
+            } else {
+                self.attributes &= !attribute.bit();
+            }
+        }
+    }
+
+    /// What this pen draws in, in the fixed order a capture spells it: the
+    /// attributes, then the foreground and the background as the parameters
+    /// that chose them. Empty for the terminal's own colours.
+    fn described(self) -> String {
+        let colours = [
+            self.foreground
+                .map(|colour| format!("fg={}", colour.params(38))),
+            self.background
+                .map(|colour| format!("bg={}", colour.params(48))),
+        ];
+
+        Attribute::ALL
+            .into_iter()
+            .filter(|attribute| self.attributes & attribute.bit() != 0)
+            .map(|attribute| attribute.name().to_owned())
+            .chain(colours.into_iter().flatten())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+impl Colour {
+    /// The colour `38` or `48` goes on to name: `5` and an index, or `2` and
+    /// red, green and blue.
+    fn chosen<'a>(codes: &mut impl Iterator<Item = &'a str>) -> Option<Self> {
+        let mut next = || codes.next().and_then(|code| code.parse::<u8>().ok());
+
+        match next()? {
+            5 => Some(Self::Indexed(next()?)),
+            2 => Some(Self::Exact(next()?, next()?, next()?)),
+            _ => None,
+        }
+    }
+
+    /// The parameters that choose this colour, where `lead` is `38` for the
+    /// foreground and `48` for the background.
+    fn params(self, lead: u16) -> String {
+        match self {
+            Self::Named(named) => named.to_string(),
+            Self::Indexed(index) => format!("{lead};5;{index}"),
+            Self::Exact(red, green, blue) => format!("{lead};2;{red};{green};{blue}"),
+        }
+    }
+}
+
+/// A colour, in the form the sequence that chose it named it in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Colour {
+    /// One of the sixteen a terminal has, by the parameter that chose it:
+    /// `30` to `37` and `90` to `97` for the foreground, ten more for the
+    /// background.
+    Named(u16),
+    /// One of the 256-colour palette.
+    Indexed(u8),
+    /// An exact colour, red, green and blue.
+    Exact(u8, u8, u8),
+}
+
 /// The version this build draws on its opening screen.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -195,17 +525,34 @@ const MASK: char = '#';
 impl Screen {
     /// An empty screen of that size, for a fullscreen launch.
     pub(crate) fn new(columns: usize, rows: usize) -> Self {
-        Self::opened(Mode::Fullscreen, columns, rows)
+        Self::fullscreen_on(columns, rows, Profile::default())
+    }
+
+    /// The same, standing for the terminal `profile` describes.
+    pub(crate) fn fullscreen_on(columns: usize, rows: usize, profile: Profile) -> Self {
+        Self {
+            profile,
+            ..Self::opened(Mode::Fullscreen, columns, rows)
+        }
     }
 
     /// An empty screen of that size, for a native launch.
     pub(crate) fn native(columns: usize, rows: usize) -> Self {
-        Self::opened(Mode::Native, columns, rows)
+        Self::native_on(columns, rows, Profile::default())
+    }
+
+    /// The same, standing for the terminal `profile` describes.
+    pub(crate) fn native_on(columns: usize, rows: usize, profile: Profile) -> Self {
+        Self {
+            profile,
+            ..Self::opened(Mode::Native, columns, rows)
+        }
     }
 
     fn opened(mode: Mode, columns: usize, rows: usize) -> Self {
         Self {
             mode,
+            profile: Profile::default(),
             columns,
             rows,
             grid: vec![Vec::new(); rows],
@@ -215,7 +562,9 @@ impl Screen {
             scrolled: 0,
             scrollback: Vec::new(),
             ran_on_back: Vec::new(),
+            pen: Pen::default(),
             alternate: false,
+            wraps: true,
             refused: Vec::new(),
             commanded: Vec::new(),
             holding: false,
@@ -368,20 +717,19 @@ impl Screen {
     /// wrote — and the count exists to catch a frame reaching past the bottom
     /// of a screen this process owns.
     ///
-    /// A native screen rewraps instead, as most terminals now do and as the
-    /// native renderer assumes when it works out how far back the top of its
-    /// region is: see [`Self::rewrap`].
+    /// A native screen reflows instead, as its [`Profile`] says: see
+    /// [`Self::reflow`].
     fn fit(&mut self, columns: usize, rows: usize) {
         match self.mode {
             Mode::Fullscreen => self.clip(columns, rows),
-            Mode::Native => self.rewrap(columns, rows),
+            Mode::Native => self.reflow(columns, rows),
         }
     }
 
     /// Clips every row to the new width and the window to the new height.
     fn clip(&mut self, columns: usize, rows: usize) {
         for row in &mut self.grid {
-            row.truncate(columns);
+            cut(row, columns);
         }
 
         while self.grid.len() > rows {
@@ -397,31 +745,44 @@ impl Screen {
         self.row = self.row.min(rows.saturating_sub(1));
     }
 
-    /// Folds everything the terminal holds to the new width, the way a reader
-    /// dragging the corner of a rewrapping terminal would see it.
+    /// Puts everything the terminal holds at the new width, the way a reader
+    /// dragging the corner of the window would see it.
     ///
-    /// Rows that ran on into each other are one line again, and each line is
-    /// folded at the new width. The cursor keeps its place in the line it was
-    /// on; nothing empty below it is kept; and the window is the foot of what
-    /// is left, the rest above it being scrollback.
-    fn rewrap(&mut self, columns: usize, rows: usize) {
+    /// A terminal that rewraps, which is what the native renderer assumes when
+    /// it works out how far back the top of its region is, joins rows that ran
+    /// on into each other into one line again and folds each line at the new
+    /// width, never through a wide glyph. One that keeps its rows cuts each at
+    /// the new width instead and joins none, not even two that one line ran
+    /// on across, so it has nothing to join when it widens again.
+    /// Either way the cursor keeps its place in the line it was on, nothing
+    /// empty below it is kept, and the window is the foot of what is left, the
+    /// rest above it being scrollback.
+    fn reflow(&mut self, columns: usize, rows: usize) {
         let was = self.columns;
         let cursor = self.scrollback.len() + self.row;
         let back = self.scrollback.drain(..).zip(self.ran_on_back.drain(..));
-        let held: Vec<(Vec<char>, bool)> = back
+        let held: Vec<(Vec<Cell>, bool)> = back
             .chain(self.grid.drain(..).zip(self.ran_on.drain(..)))
             .collect();
 
         // Rows back into lines, with where in its line the cursor was.
-        let mut lines: Vec<Vec<char>> = Vec::new();
+        let mut lines: Vec<Vec<Cell>> = Vec::new();
         let mut line = Vec::new();
         let mut caret = (0, 0);
         for (index, (mut row, ran_on)) in held.into_iter().enumerate() {
+            let (column, ran_on) = match self.profile.reflow {
+                Reflow::Rewraps => (self.column, ran_on),
+                Reflow::Keeps => {
+                    cut(&mut row, columns);
+                    (self.column.min(columns), false)
+                }
+            };
             if index == cursor {
-                caret = (lines.len(), line.len() + self.column);
+                caret = (lines.len(), line.len() + column);
             }
             if ran_on {
-                row.resize(was, ' ');
+                row.resize(was, Cell::BLANK);
+                row.retain(|cell| cell.character != SKIPPED);
                 line.extend(row);
             } else {
                 line.extend(row);
@@ -437,21 +798,18 @@ impl Screen {
 
         // And lines into rows at the new width.
         let width = columns.max(1);
-        let mut folded: Vec<(Vec<char>, bool)> = Vec::new();
+        let mut folded: Vec<(Vec<Cell>, bool)> = Vec::new();
         let mut at = (0, 0);
         for (index, line) in lines.into_iter().enumerate() {
             let first = folded.len();
-            let pieces: Vec<Vec<char>> = if line.is_empty() {
-                vec![Vec::new()]
-            } else {
-                line.chunks(width).map(<[char]>::to_vec).collect()
-            };
+            let offset = if index == caret.0 { caret.1 } else { 0 };
+            let (pieces, landed) = fold(&line, width, offset);
             let count = pieces.len();
             for (piece, row) in pieces.into_iter().enumerate() {
                 folded.push((row, piece + 1 < count));
             }
             if index == caret.0 {
-                at = (first + caret.1 / width, caret.1 % width);
+                at = (first + landed.0, landed.1);
                 while folded.len() <= at.0 {
                     folded.push((Vec::new(), false));
                 }
@@ -474,6 +832,11 @@ impl Screen {
         self.column = at.1;
         self.columns = columns;
         self.rows = rows;
+    }
+
+    /// Whether autowrap is on, as the last sequence that set it left it.
+    pub(crate) fn wraps(&self) -> bool {
+        self.wraps
     }
 
     /// What crucible did that it does not promise to do.
@@ -526,7 +889,19 @@ impl Screen {
     /// re-accept — which is how a picture stops being read and becomes a file
     /// that gets a yes. [`MASK`] is what stands there instead, one per character.
     pub(crate) fn picture(&self) -> String {
-        let header = match self.mode {
+        let header = self.header();
+        let rows = self.framed(&self.grid);
+        if rows.is_empty() {
+            header
+        } else {
+            format!("{header}\n{rows}")
+        }
+    }
+
+    /// The line a picture opens with: the size, the cursor, and how many rows
+    /// left the top of the window.
+    fn header(&self) -> String {
+        match self.mode {
             Mode::Fullscreen => format!(
                 "{}x{} cursor {},{} scrolled {}",
                 self.columns, self.rows, self.row, self.column, self.scrolled
@@ -539,32 +914,57 @@ impl Screen {
                 self.column,
                 self.scrollback.len()
             ),
-        };
-
-        let rows = self.framed(&self.grid);
-        if rows.is_empty() {
-            header
-        } else {
-            format!("{header}\n{rows}")
         }
+    }
+
+    /// The screen as [`picture`](Self::picture) draws it, with what each row
+    /// was drawn in under it.
+    ///
+    /// Under each row that holds a span not in the terminal's own colours is
+    /// one line per such span, in column order: `  <first>..<last> <state>`,
+    /// columns counted from one, and the state as [`Pen::described`] spells
+    /// it. A slot that moves to another colour changes this and leaves the
+    /// picture as it was.
+    pub(crate) fn picture_in_colour(&self) -> String {
+        let mut lines = vec![self.header()];
+
+        for row in &self.grid {
+            lines.push(self.framed_row(row));
+
+            let mut first = 0;
+            for span in row.chunk_by(|one, other| one.pen == other.pen) {
+                let last = first + span.len();
+                if let Some(cell) = span.first()
+                    && cell.pen != Pen::DEFAULT
+                {
+                    lines.push(format!("  {}..{last} {}", first + 1, cell.pen.described()));
+                }
+                first = last;
+            }
+        }
+
+        lines.join("\n")
     }
 
     /// `rows` as the lines of a picture: each padded to the full width, closed
     /// with a bar, and with this build's version masked out.
-    fn framed(&self, rows: &[Vec<char>]) -> String {
-        let mut lines = Vec::with_capacity(rows.len());
+    fn framed(&self, rows: &[Vec<Cell>]) -> String {
+        rows.iter()
+            .map(|row| self.framed_row(row))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 
-        for row in rows {
-            let mut line: String = row.iter().collect();
-            for _ in row.len()..self.columns {
-                line.push(' ');
-            }
-            lines.push(format!("|{line}|"));
+    /// One row as a line of a picture.
+    fn framed_row(&self, row: &[Cell]) -> String {
+        let mut line: String = row.iter().filter_map(|cell| cell.shown()).collect();
+        for _ in row.len()..self.columns {
+            line.push(' ');
         }
 
         let masked = MASK.to_string().repeat(VERSION.len());
 
-        lines.join("\n").replace(VERSION, &masked)
+        format!("|{line}|").replace(VERSION, &masked)
     }
 
     /// Says once that crucible did something it does not promise to do.
@@ -625,20 +1025,58 @@ impl Screen {
     }
 
     /// Writes characters where the cursor is, padding the row to reach it.
+    ///
+    /// Each takes the columns the profile gives it: a wide glyph is followed
+    /// by a [`TAIL`], and a character given none is not kept, since what it
+    /// changes is how the one before it is drawn and a picture holds letters.
+    ///
+    /// On a terminal that can draw a row wider than crucible counted it, a
+    /// character that would cross the edge is where the terminal acts: it
+    /// goes on at the start of the next row, which then runs on from this
+    /// one, or, with that turned off, is drawn in the last columns over what
+    /// was there. Anywhere else, crossing the edge is crucible writing past
+    /// the window, and is refused below.
     fn put(&mut self, text: &str) {
         let mut column = self.column;
+        let widths = self.profile.widths;
 
-        if let Some(row) = self.grid.get_mut(self.row) {
+        let mut before = self.grid.get_mut(self.row).and_then(|row| {
             while row.len() < column {
-                row.push(' ');
+                row.push(Cell::BLANK);
             }
-            for character in text.chars() {
-                match row.get_mut(column) {
-                    Some(cell) => *cell = character,
-                    None => row.push(character),
+            row.get(..column)
+                .and_then(|left| left.iter().rev().find(|cell| cell.character != TAIL))
+                .map(|cell| cell.character)
+        });
+        for character in text.chars() {
+            let wide = widths.of(character, before);
+            if widths.widens_rows() && wide > 0 && column + wide > self.columns {
+                if self.wraps {
+                    if let Some(ran_on) = self.ran_on.get_mut(self.row) {
+                        *ran_on = true;
+                    }
+                    self.down();
+                    column = 0;
+                } else {
+                    column = self.columns.saturating_sub(wide);
                 }
+            }
+            let Some(row) = self.grid.get_mut(self.row) else {
+                break;
+            };
+            let drawn = Cell {
+                character,
+                pen: self.pen,
+            };
+            let tail = Cell {
+                character: TAIL,
+                ..drawn
+            };
+            for cell in [drawn, tail].into_iter().take(wide) {
+                place(row, column, cell);
                 column += 1;
             }
+            before = Some(character);
         }
 
         if column > self.columns {
@@ -678,7 +1116,7 @@ impl Screen {
     /// Erases from the cursor to the end of the row it is on.
     fn erase_row(&mut self) {
         if let Some(row) = self.grid.get_mut(self.row) {
-            row.truncate(self.column);
+            cut(row, self.column);
         }
         if let Some(ran_on) = self.ran_on.get_mut(self.row) {
             *ran_on = false;
@@ -695,6 +1133,22 @@ impl Screen {
         for ran_on in self.ran_on.iter_mut().skip(self.row + 1) {
             *ran_on = false;
         }
+    }
+
+    /// Erases every row of the window, leaving the cursor where it is.
+    fn erase_screen(&mut self) {
+        for row in &mut self.grid {
+            row.clear();
+        }
+        for ran_on in &mut self.ran_on {
+            *ran_on = false;
+        }
+    }
+
+    /// Forgets every row pushed off the top of the window.
+    fn erase_scrollback(&mut self) {
+        self.scrollback.clear();
+        self.ran_on_back.clear();
     }
 
     /// Moves the cursor up `params` rows, one when none is given, and stops at
@@ -750,8 +1204,9 @@ impl Screen {
     /// rest of a row, colour, the two that hold a frame until all of it has
     /// arrived, the modes crucible borrows from the terminal — the screen it
     /// draws on among them — and the one question it asks. A native launch
-    /// adds the three its frames are made of: erase to the end of the screen,
-    /// cursor up and cursor to a column.
+    /// adds the three its frames are made of, erase to the end of the screen,
+    /// cursor up and cursor to a column, and the two that clear the screen and
+    /// the scrollback before what was kept is written again.
     fn act(&mut self, params: &str, ends: char) {
         if params == "?1049" && ends == 'h' {
             self.alternate = true;
@@ -760,6 +1215,8 @@ impl Screen {
         if self.mode == Mode::Native {
             match (params, ends) {
                 ("" | "0", 'J') => return self.erase_below(),
+                ("2", 'J') => return self.erase_screen(),
+                ("3", 'J') => return self.erase_scrollback(),
                 (_, 'A') => return self.up(params),
                 (_, 'G') => return self.across(params),
                 _ => {}
@@ -767,8 +1224,14 @@ impl Screen {
         }
 
         match (params, ends) {
-            // Colour, the modes crucible borrows from the terminal, and the
-            // device-attributes question it asks once at startup. None of them
+            // Colour moves nothing, but it is what the characters after it
+            // are drawn in, so the pen takes it.
+            (_, 'm') => match self.pen.applied(params) {
+                Some(pen) => self.pen = pen,
+                None => self.refuse(format!("wrote ESC[{params}{ends}")),
+            },
+            // The modes crucible borrows from the terminal, and the
+            // device-attributes question it asks once at startup. Neither
             // moves the cursor or fills a column: the modes are state handed
             // back by a guard, and the last is a question.
             //
@@ -785,10 +1248,14 @@ impl Screen {
             // a terminal replies in the order it was asked — without it, a
             // terminal implementing neither would be waited on for the whole
             // patience rather than answered at once.
-            (_, 'm')
-            | ("?1000" | "?1002" | "?1003" | "?1006" | "?2004" | "?25" | "?1049", 'h' | 'l')
+            ("?1000" | "?1002" | "?1003" | "?1006" | "?2004" | "?25" | "?1049", 'h' | 'l')
             | (">1" | "<", 'u')
             | ("", 'c') => {}
+            // Autowrap, which a native session turns off so that a row the
+            // terminal draws wider than crucible counted it loses its last
+            // cells rather than running on into a row crucible never counted.
+            ("?7", 'h') => self.wraps = true,
+            ("?7", 'l') => self.wraps = false,
             (_, 'H') => self.park(params),
             ("" | "0", 'K') => self.erase_row(),
             ("?2026", 'h') => self.hold(),
@@ -883,6 +1350,81 @@ impl Screen {
     }
 }
 
+/// Puts `cell` in `column` of `row`, blanking what a wide glyph it lands on
+/// half of leaves behind, as a terminal does.
+fn place(row: &mut Vec<Cell>, column: usize, cell: Cell) {
+    if cell.character != TAIL
+        && row.get(column).is_some_and(|old| old.character == TAIL)
+        && let Some(glyph) = column.checked_sub(1).and_then(|left| row.get_mut(left))
+    {
+        *glyph = Cell::BLANK;
+    }
+    if let Some(tail) = row
+        .get_mut(column + 1)
+        .filter(|next| next.character == TAIL)
+    {
+        *tail = Cell::BLANK;
+    }
+
+    match row.get_mut(column) {
+        Some(old) => *old = cell,
+        None => row.push(cell),
+    }
+}
+
+/// Cuts `row` at `columns`, blanking a wide glyph the cut goes through rather
+/// than keeping half of it.
+fn cut(row: &mut Vec<Cell>, columns: usize) {
+    if row.get(columns).is_some_and(|cell| cell.character == TAIL)
+        && let Some(glyph) = columns.checked_sub(1).and_then(|last| row.get_mut(last))
+    {
+        *glyph = Cell::BLANK;
+    }
+    row.truncate(columns);
+}
+
+/// `line` folded into rows `width` columns wide, and the row and column the
+/// cell `offset` into it lands on.
+///
+/// A wide glyph that would straddle a fold goes down whole, leaving a
+/// [`SKIPPED`] column where it would have started. An offset past the end of
+/// the line lands where the cells after it would have.
+fn fold(line: &[Cell], width: usize, offset: usize) -> (Vec<Vec<Cell>>, (usize, usize)) {
+    let mut rows = Vec::new();
+    let mut row: Vec<Cell> = Vec::new();
+    let mut landed = None;
+
+    for (index, cell) in line.iter().enumerate() {
+        let wide = line
+            .get(index + 1)
+            .is_some_and(|next| next.character == TAIL);
+        let needs = if wide { 2 } else { 1 };
+        if cell.character != TAIL && !row.is_empty() && row.len() + needs > width {
+            row.resize(width, Cell::SKIPPED);
+            rows.push(std::mem::take(&mut row));
+        }
+        if index == offset {
+            landed = Some((rows.len(), row.len()));
+        }
+        row.push(*cell);
+    }
+
+    let end = if row.len() >= width {
+        (rows.len() + 1, 0)
+    } else {
+        (rows.len(), row.len())
+    };
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    let landed = landed.unwrap_or_else(|| {
+        let column = end.1 + offset.saturating_sub(line.len());
+        (end.0 + column / width, column % width)
+    });
+
+    (rows, landed)
+}
+
 /// How much of `data` can be read now.
 ///
 /// Everything, unless it ends in the middle of something. Three things can be
@@ -940,7 +1482,7 @@ fn finished(tail: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::Screen;
+    use super::{Profile, Reflow, Screen, Widths};
 
     /// One of everything the renderer writes, in the shapes it writes it.
     ///
@@ -989,6 +1531,46 @@ mod tests {
             "the picture names the version it was drawn by:\n{picture}"
         );
         assert!(picture.contains("crucible v#"), "{picture}");
+    }
+
+    #[test]
+    fn a_picture_in_colour_says_what_each_span_was_drawn_in() {
+        // Each span is drawn in everything still in force when it was written,
+        // not in the last sequence alone: `22;23` turns two attributes off and
+        // leaves the background the sequence before it chose.
+        let mut screen = Screen::new(12, 2);
+        screen.feed(
+            concat!(
+                "\x1b[1;38;5;30mab\x1b[0mc \x1b[3m\x1b[48;2;1;2;3md\x1b[22;23mef\x1b[m",
+                "\r\n\x1b[1;43;30mok\x1b[m",
+            )
+            .as_bytes(),
+        );
+
+        assert_eq!(
+            screen.picture_in_colour(),
+            [
+                "12x2 cursor 1,2 scrolled 0",
+                "|abc def     |",
+                "  1..2 bold fg=38;5;30",
+                "  5..5 italic bg=48;2;1;2;3",
+                "  6..7 bg=48;2;1;2;3",
+                "|ok          |",
+                "  1..2 bold fg=30 bg=43",
+            ]
+            .join("\n")
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_colour_the_screen_cannot_name_is_refused() {
+        // Blinking is nothing crucible promises, and a span drawn in it would
+        // otherwise be captured in a state that leaves it out.
+        let mut screen = Screen::new(12, 2);
+        screen.feed(b"\x1b[5mx\x1b[38;5mx");
+
+        assert_eq!(screen.refusals(), ["wrote ESC[5m", "wrote ESC[38;5m"]);
     }
 
     #[test]
@@ -1289,6 +1871,19 @@ mod tests {
     }
 
     #[test]
+    fn clearing_a_native_screen_and_its_scrollback_leaves_neither() {
+        // What a native session writes before giving a resized window
+        // everything again: once both are cleared, the rows that follow are
+        // the only copy a reader can find.
+        let mut screen = Screen::native(8, 2);
+        screen.feed(b"one\r\ntwo\r\nthree\x1b[H\x1b[2J\x1b[3J\x1b[Hfour");
+
+        assert_eq!(screen.scrollback(), "");
+        assert_eq!(rows(&screen.picture()), ["four    ", "        "]);
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
     fn a_row_scrolled_off_a_native_screen_is_in_its_scrollback() {
         // In the terminal's own buffer a row pushed off the top is kept, and
         // what a reader could scroll back to is half of what a native case
@@ -1353,6 +1948,169 @@ mod tests {
             "{}",
             screen.picture()
         );
+    }
+
+    /// A screen standing for a terminal that counts columns by `widths`.
+    fn counting(widths: Widths, columns: usize) -> Screen {
+        Screen::native_on(
+            columns,
+            2,
+            Profile {
+                widths,
+                ..Profile::default()
+            },
+        )
+    }
+
+    #[test]
+    fn a_unicode_terminal_counts_wide_glyphs_and_marks_as_crucible_does() {
+        // Two columns for each wide glyph, two for a sun asked to draw as an
+        // emoji, none for the joiner or the accent. A mark is not kept in the
+        // picture, which shows the letter it sits on.
+        for said in [
+            "漢字",
+            "☀\u{fe0f}",
+            "e\u{301}",
+            "👨\u{200d}👩\u{200d}👧",
+            "👍🏽",
+        ] {
+            let mut screen = counting(Widths::Unicode, 12);
+            screen.feed(said.as_bytes());
+
+            let columns = crucible_tui::columns(said);
+            assert!(
+                screen
+                    .picture()
+                    .starts_with(&format!("12x2 cursor 0,{columns} ")),
+                "{said:?} is {columns} columns to crucible:\n{}",
+                screen.picture()
+            );
+        }
+
+        let mut screen = counting(Widths::Unicode, 12);
+        screen.feed("漢字e\u{301}x".as_bytes());
+        assert_eq!(
+            rows(&screen.picture()).first().map(String::as_str),
+            Some("漢字ex      ")
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_clustered_terminal_counts_an_emoji_sequence_as_one_wide_glyph() {
+        // The family is six columns to crucible, a man, a woman and a girl
+        // with a joiner between each, and two on a terminal that draws it as
+        // one glyph. The thumb and its skin tone are four and two.
+        for (said, clustered) in [("👨\u{200d}👩\u{200d}👧", 2), ("👍🏽", 2)] {
+            let mut screen = counting(Widths::Clustered, 12);
+            screen.feed(said.as_bytes());
+
+            assert_ne!(crucible_tui::columns(said), clustered, "{said:?}");
+            assert!(
+                screen
+                    .picture()
+                    .starts_with(&format!("12x2 cursor 0,{clustered} ")),
+                "{said:?}:\n{}",
+                screen.picture()
+            );
+        }
+    }
+
+    #[test]
+    fn a_wide_glyph_is_folded_whole_and_joined_again() {
+        // At five columns the second glyph would straddle the fold, so the
+        // terminal leaves the last column of the first row empty and moves it
+        // down whole. Widened again, the gap goes with the fold.
+        let mut screen = counting(Widths::Unicode, 6);
+        screen.feed("ab漢字".as_bytes());
+
+        screen.fit(5, 2);
+        assert_eq!(rows(&screen.picture()), ["ab漢 ", "字   "]);
+
+        screen.fit(6, 2);
+        assert_eq!(rows(&screen.picture()), ["ab漢字", "      "]);
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_terminal_that_keeps_its_rows_cuts_them_and_never_joins_them_again() {
+        // What a terminal that does not rewrap shows a reader who narrows the
+        // window and widens it again: each row as far as the narrow window
+        // reached, and nothing past it.
+        let mut screen = Screen::native_on(
+            8,
+            4,
+            Profile {
+                reflow: Reflow::Keeps,
+                ..Profile::default()
+            },
+        );
+        screen.feed(b"abcdefgh\r\nij\r\n");
+
+        screen.fit(4, 4);
+        assert_eq!(rows(&screen.picture()), ["abcd", "ij  ", "    ", "    "]);
+        assert!(
+            screen.picture().starts_with("4x4 cursor 2,0 scrollback 0"),
+            "{}",
+            screen.picture()
+        );
+
+        screen.fit(8, 4);
+        assert_eq!(
+            rows(&screen.picture()),
+            ["abcd    ", "ij      ", "        ", "        "]
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_row_drawn_wider_than_crucible_counted_runs_on_until_autowrap_is_off() {
+        // Crucible counts each of the three symbols one column, so the row is
+        // five columns to it. Drawn as pictures they are two each, and the
+        // last would cross the edge: it goes on at the start of the next row,
+        // or, with autowrap off, is drawn over the one before it.
+        let said = "ab\u{2600}\u{2601}\u{2602}";
+        assert_eq!(crucible_tui::columns(said), 5);
+
+        let mut screen = counting(Widths::Pictured, 6);
+        screen.feed(said.as_bytes());
+        assert_eq!(
+            rows(&screen.picture()),
+            ["ab\u{2600}\u{2601}", "\u{2602}    "]
+        );
+        assert!(screen.wraps());
+
+        let mut screen = counting(Widths::Pictured, 6);
+        screen.feed(b"\x1b[?7l");
+        screen.feed(said.as_bytes());
+        assert_eq!(rows(&screen.picture()), ["ab\u{2600}\u{2602}", "      "]);
+        assert!(!screen.wraps());
+
+        screen.feed(b"\x1b[?7h");
+        assert!(screen.wraps());
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
+    }
+
+    #[test]
+    fn a_terminal_that_keeps_its_rows_leaves_a_row_it_ran_on_as_the_rows_it_drew() {
+        // The same row run on across two, on a terminal that does not rewrap:
+        // widened, it joins neither, as it joins no other row.
+        let mut screen = Screen::native_on(
+            6,
+            2,
+            Profile {
+                reflow: Reflow::Keeps,
+                widths: Widths::Pictured,
+            },
+        );
+        screen.feed("ab\u{2600}\u{2601}\u{2602}".as_bytes());
+
+        screen.fit(8, 2);
+        assert_eq!(
+            rows(&screen.picture()),
+            ["ab\u{2600}\u{2601}  ", "\u{2602}      "]
+        );
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
     }
 
     #[test]

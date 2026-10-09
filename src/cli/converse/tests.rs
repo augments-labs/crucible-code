@@ -1943,21 +1943,45 @@ fn a_huge_line_without_a_newline_is_refused_before_it_is_retained() {
 }
 
 #[test]
-fn a_session_that_took_no_screen_has_nothing_to_say_about_where_it_went() {
-    // The reader kept everything: with no screen taken, the transcript was
-    // drawn into their own scrollback and is still above the cursor. A line
-    // sending them to a file to read what they can see would be noise, and
-    // noise at the one moment the terminal is theirs again.
+fn a_session_in_the_readers_own_buffer_says_only_how_to_come_back() {
+    // The reader kept the transcript: it was drawn into their own scrollback
+    // and is still above the cursor, and so is anything said about the log
+    // while the session ran. A line sending them to a file to read what they
+    // can see would be noise. The session's id is not on the screen, though,
+    // and it is the only way back to this exact session.
     let file = PathBuf::from("/sessions/one.jsonl");
 
     assert_eq!(
-        Parting::of(false, Some(file.clone()), None),
+        Parting::of(Drew::Scrollback, Some(file.clone()), None),
+        Parting::Stayed(file.clone())
+    );
+    assert_eq!(
+        Parting::of(
+            Drew::Scrollback,
+            Some(file.clone()),
+            Some("no room left on the device")
+        ),
+        Parting::Stayed(file)
+    );
+}
+
+#[test]
+fn a_session_on_no_terminal_has_no_reader_to_tell() {
+    let file = PathBuf::from("/sessions/one.jsonl");
+
+    assert_eq!(
+        Parting::of(Drew::Nowhere, Some(file.clone()), None),
         Parting::Nothing
     );
     assert_eq!(
-        Parting::of(false, Some(file), Some("no room left on the device")),
+        Parting::of(
+            Drew::Nowhere,
+            Some(file),
+            Some("no room left on the device")
+        ),
         Parting::Nothing
     );
+    assert_eq!(Parting::of(Drew::Scrollback, None, None), Parting::Nothing);
 }
 
 #[test]
@@ -2030,7 +2054,7 @@ fn a_session_that_ended_cleanly_leaves_only_the_way_back() {
     let file = PathBuf::from("/sessions/one.jsonl");
 
     assert_eq!(
-        Parting::of(true, Some(file.clone()), None),
+        Parting::of(Drew::Borrowed, Some(file.clone()), None),
         Parting::Kept(file)
     );
 }
@@ -2044,7 +2068,11 @@ fn a_log_that_stopped_recording_is_not_pointed_at_as_the_whole_transcript() {
     let file = PathBuf::from("/sessions/one.jsonl");
 
     assert_eq!(
-        Parting::of(true, Some(file.clone()), Some("no room left on the device")),
+        Parting::of(
+            Drew::Borrowed,
+            Some(file.clone()),
+            Some("no room left on the device")
+        ),
         Parting::Lost(file)
     );
 }
@@ -2053,7 +2081,7 @@ fn a_log_that_stopped_recording_is_not_pointed_at_as_the_whole_transcript() {
 fn a_run_that_asked_not_to_be_kept_is_not_sent_anywhere() {
     // No file, so nowhere to send anybody -- and the screen having been taken
     // does not conjure one.
-    assert_eq!(Parting::of(true, None, None), Parting::Nothing);
+    assert_eq!(Parting::of(Drew::Borrowed, None, None), Parting::Nothing);
 }
 
 mod research;

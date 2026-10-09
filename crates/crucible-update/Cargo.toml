@@ -14,6 +14,10 @@ repository.workspace = true
 # bounded response reader. The release check owns its own client over these
 # pieces rather than sharing a provider's pool.
 crucible-http.workspace = true
+# `CRUCIBLE_CODE_UPDATE_SOURCE` and a download's redirect are URLs, and which
+# host one names is a URI grammar's answer, bracketed IPv6 and user info
+# included, not a prefix to compare.
+http.workspace = true
 # The cached version is private local state and is replaced through the same
 # owner-only filesystem boundary as the other durable user state.
 crucible-privacy.workspace = true

@@ -10,23 +10,90 @@
 //! write-through flag that proves the directory entry durable. Its public path
 //! can become a directory reparse point meanwhile without changing where the
 //! commit lands.
+//!
+//! A replacement of an existing file is derived from what the caller saw in
+//! it, so the last check before the commit asks both whether the file at the
+//! name is still the one that was opened and whether its content is still
+//! what the caller saw. A change made after that check and before the rename
+//! is not seen: no platform offers a compare-and-rename.
 
 use std::fs::{File, Permissions};
 use std::io::{self, Write as _};
 
 use crucible_workspace::{PathError, WorkspacePath};
 
+use crate::ledger::Fingerprint;
+
 #[cfg(windows)]
 mod windows;
 
 /// Replaces `path` with `content`, preserving `permissions` when it existed.
+///
+/// `expected` is the file the replacement was derived from and the digest of
+/// what the caller saw in it; the file at the name when the replacement is
+/// committed has to be that file and still hold that.
 pub(crate) fn replace(
     path: &WorkspacePath,
     content: &[u8],
     permissions: Option<Permissions>,
-    expected: Option<&File>,
+    expected: Option<(&File, Fingerprint)>,
 ) -> Result<(), PathError> {
-    replace_with(path, permissions, expected, |file| file.write_all(content))
+    let (expected, seen) = expected.unzip();
+    replace_with(
+        path,
+        permissions,
+        expected,
+        |file| {
+            file.write_all(content)?;
+            #[cfg(test)]
+            interruption::admit(path);
+            Ok(())
+        },
+        |current| {
+            // A file that cannot be read to its end is not one known to be
+            // unchanged.
+            Fingerprint::read(current, || false).is_ok_and(|now| now.is_some() && now == seen)
+        },
+    )
+}
+
+/// Another writer let in between a replacement being prepared and committed.
+///
+/// That interval is a race in use, and too short to lose on purpose; this is
+/// how a test of a tool loses it every time.
+#[cfg(test)]
+pub(crate) mod interruption {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, PoisonError};
+
+    use crucible_workspace::WorkspacePath;
+
+    /// A writer waiting for the replacement of the path beside it.
+    type Waiting = (PathBuf, Box<dyn FnOnce() + Send>);
+
+    /// Shared by every test of the crate, which is why each entry names the
+    /// file it is for: a replacement of any other file lets in nobody.
+    static WAITING: Mutex<Vec<Waiting>> = Mutex::new(Vec::new());
+
+    /// Runs `writer` once, the next time a replacement of `path` has been
+    /// prepared and before it is committed.
+    pub(crate) fn before_commit(path: &Path, writer: impl FnOnce() + Send + 'static) {
+        WAITING
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((path.to_path_buf(), Box::new(writer)));
+    }
+
+    pub(super) fn admit(path: &WorkspacePath) {
+        let writer = {
+            let mut waiting = WAITING.lock().unwrap_or_else(PoisonError::into_inner);
+            let at = waiting.iter().position(|(at, _)| at == path.as_path());
+            at.map(|at| waiting.remove(at).1)
+        };
+        if let Some(writer) = writer {
+            writer();
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -35,8 +102,9 @@ fn replace_with(
     permissions: Option<Permissions>,
     expected: Option<&File>,
     write: impl FnOnce(&mut File) -> io::Result<()>,
+    unchanged: impl FnOnce(&mut File) -> bool,
 ) -> Result<(), PathError> {
-    path.replace_with(permissions, expected, write)
+    path.replace_with(permissions, expected, write, unchanged)
 }
 
 #[cfg(windows)]
@@ -45,8 +113,9 @@ fn replace_with(
     permissions: Option<Permissions>,
     expected: Option<&File>,
     write: impl FnOnce(&mut File) -> io::Result<()>,
+    unchanged: impl FnOnce(&mut File) -> bool,
 ) -> Result<(), PathError> {
-    windows::replace_with(path, permissions, expected, write)
+    windows::replace_with(path, permissions, expected, write, unchanged)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -55,8 +124,9 @@ fn replace_with(
     permissions: Option<Permissions>,
     expected: Option<&File>,
     write: impl FnOnce(&mut File) -> io::Result<()>,
+    unchanged: impl FnOnce(&mut File) -> bool,
 ) -> Result<(), PathError> {
-    let _ = (permissions, expected, write);
+    let _ = (permissions, expected, write, unchanged);
     Err(PathError::Unreplaced {
         at: path.to_string().into(),
         source: io::Error::new(
@@ -79,10 +149,16 @@ mod tests {
         let permissions = path.open().unwrap().metadata().unwrap().permissions();
 
         let original = path.open().unwrap();
-        let problem = replace_with(&path, Some(permissions), Some(&original), |file| {
-            file.write_all(b"partial")?;
-            Err(io::Error::other("injected write failure"))
-        })
+        let problem = replace_with(
+            &path,
+            Some(permissions),
+            Some(&original),
+            |file| {
+                file.write_all(b"partial")?;
+                Err(io::Error::other("injected write failure"))
+            },
+            |_| true,
+        )
         .expect_err("the injected failure");
 
         assert!(problem.to_string().contains("injected write failure"));
@@ -103,10 +179,16 @@ mod tests {
         let path = sample.workspace().creatable("one.txt").unwrap();
         let planted = sample.root().join("one.txt");
 
-        let problem = replace_with(&path, None, None, |file| {
-            file.write_all(b"ours")?;
-            std::fs::write(&planted, "theirs")
-        })
+        let problem = replace_with(
+            &path,
+            None,
+            None,
+            |file| {
+                file.write_all(b"ours")?;
+                std::fs::write(&planted, "theirs")
+            },
+            |_| true,
+        )
         .expect_err("the destination was claimed first");
 
         assert!(problem.to_string().contains("could not be replaced"));
@@ -128,11 +210,17 @@ mod tests {
         let moved = sample.root().join("moved.txt");
         let planted = sample.root().join("one.txt");
 
-        let problem = replace_with(&path, Some(permissions), Some(&original), |file| {
-            file.write_all(b"replacement\n")?;
-            std::fs::rename(&planted, &moved)?;
-            std::fs::write(&planted, "concurrent\n")
-        })
+        let problem = replace_with(
+            &path,
+            Some(permissions),
+            Some(&original),
+            |file| {
+                file.write_all(b"replacement\n")?;
+                std::fs::rename(&planted, &moved)?;
+                std::fs::write(&planted, "concurrent\n")
+            },
+            |_| true,
+        )
         .expect_err("the destination changed identity");
 
         assert!(matches!(problem, PathError::Changed { .. }), "{problem:?}");

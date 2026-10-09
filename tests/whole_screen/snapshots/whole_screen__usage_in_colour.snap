@@ -1,0 +1,75 @@
+---
+source: tests/whole_screen/main.rs
+expression: timeless(&window.picture_in_colour())
+---
+80x30 cursor 29,0 scrolled 0
+|│                                                                             ││|
+  1..1 fg=38;5;30
+  79..79 fg=38;5;30
+  80..80 fg=90
+|│ · /          opens the command list                                         ││|
+  1..1 fg=38;5;30
+  3..3 fg=90
+  5..5 fg=38;5;30
+  79..79 fg=38;5;30
+  80..80 fg=90
+|│ · \ enter    adds a line without sending                                    ││|
+  1..1 fg=38;5;30
+  3..3 fg=90
+  5..11 fg=38;5;30
+  79..79 fg=38;5;30
+  80..80 fg=90
+|│ · shift+tab  steps the permission mode                                      ││|
+  1..1 fg=38;5;30
+  3..3 fg=90
+  5..13 fg=38;5;30
+  79..79 fg=38;5;30
+  80..80 fg=90
+|│ · ctrl+c     clears the line typed so far                                   ││|
+  1..1 fg=38;5;30
+  3..3 fg=90
+  5..10 fg=38;5;30
+  79..79 fg=38;5;30
+  80..80 fg=90
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+  1..79 fg=38;5;30
+  80..80 fg=90
+|                                                                               ┃|
+  80..80 fg=38;5;30
+|› say hello                                                                    ┃|
+  1..79 bg=48;5;234
+  80..80 fg=38;5;30
+|                                                                               ┃|
+  80..80 fg=38;5;30
+|Hello.                                                                         ┃|
+  80..80 fg=38;5;30
+|                                                                               ┃|
+  80..80 fg=38;5;30
+|› /usage                                                                       ●|
+  1..79 bg=48;5;234
+  80..80 fg=38;5;30
+|────────────────────────────────────────────────────────────────────────────────|
+  1..80 fg=38;5;30
+|                                                                                |
+|Usage · anthropic · API key                                                     |
+  1..27 bold fg=38;5;30
+|                                                                                |
+|Session                                                                         |
+|  Total cost       not priced                                                   |
+  20..29 fg=90
+|  API time         Ns                                                           |
+|  Wall time        Ns                                                           |
+|  Lines changed    +0 −0                                                        |
+|  Tokens           0 in · 4 out · 0 cache read · 0 cache write                  |
+|                                                                                |
+|Context                                                                         |
+|  █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   1% used  |
+  3..3 fg=38;5;30
+  4..68 fg=90
+|                                                                                |
+|Plan limits                                                                     |
+|  limits not reported                                                           |
+  3..21 fg=90
+|                                                                                |
+|esc to close                                                                    |
+  1..12 fg=90

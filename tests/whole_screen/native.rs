@@ -10,6 +10,7 @@
 //! and what they can scroll back to. A case that asserts a line went out once
 //! reads both.
 
+use crate::screen::{Profile, Reflow, Widths};
 use crate::vendor::Vendor;
 use crate::watched::Watched;
 
@@ -178,6 +179,25 @@ fn ended_then_relaunched(case: &str, vendor: &Vendor) -> (Watched, Watched, Stri
 
     let second = Watched::native(case, 80, 24, vendor);
     (first, second, id)
+}
+
+#[test]
+fn a_native_session_leaves_autowrap_on_as_it_found_it() {
+    // Off while the region is drawn, so a row the terminal draws wider than
+    // crucible counted it costs its last cells rather than a row; on again once
+    // the session ends, since the shell's lines wrap.
+    let vendor = Vendor::answering("The first thing.");
+    let mut window = Watched::native("native-autowrap", 80, 24, &vendor);
+
+    window.types_until("say something\r", "The first thing.");
+    assert!(
+        !window.wraps(),
+        "autowrap stayed on while the region was drawn"
+    );
+
+    window.ends_on("TERM");
+    window.assert_never_alternate();
+    assert!(window.wraps(), "autowrap was left off");
 }
 
 #[test]
@@ -993,4 +1013,445 @@ fn a_refused_take_back_says_so_beside_the_title_in_native_mode() {
     window.types_and_catches("\x05", "no room in the box - line stays queued");
     crate::draws_the_panel(&window, crate::REFUSED_80_ASCII);
     window.assert_never_alternate();
+}
+
+// Five screens opened in native mode the way their fullscreen cases open them,
+// at the same size, and recorded as text. The rows can match a fullscreen
+// capture line for line, so each case asks the window whether it ever took the
+// alternate screen before it records anything.
+
+#[test]
+#[ignore = "at 80x24 native mode leaves the queue panel no room, so a prompt queued during a turn shows no sign of it"]
+fn five_waiting_prompts_stand_in_one_panel_over_the_box_in_native_mode() {
+    let vendor = crate::a_turn_still_running_long();
+    let mut window = Watched::allowing_drawn(
+        "native-queue-panel-over-the-box",
+        (80, 24),
+        &vendor,
+        "bash(*)",
+        ("unicode", "native"),
+    );
+    crate::waiting_behind_a_turn(&mut window, 5);
+
+    window.assert_never_alternate();
+    crate::draws(&window, crate::WAITING_80);
+    insta::assert_snapshot!(crate::steadied_picture(&window.picture()));
+}
+
+#[test]
+fn context_stands_over_a_fresh_session_and_closes_on_escape_in_native_mode() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-context-fresh", 80, 24, &vendor);
+    window.types_until("/context\r", "esc to close");
+
+    window.assert_never_alternate();
+    let picture = window.picture();
+    assert!(picture.contains("Context"), "{picture}");
+    assert!(picture.contains("system prompt"), "{picture}");
+    insta::assert_snapshot!(picture);
+
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape_in_native_mode() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-usage-key", 80, 30, &vendor);
+    window.types_until("say hello\r", "Hello.");
+    window.types_until("/usage\r", "esc to close");
+
+    window.assert_never_alternate();
+    let picture = window.picture();
+    // Native mode holds a panel to half the window, so the plan limits are
+    // below the fold here, a scroll away.
+    assert!(picture.contains("Usage · anthropic · API key"), "{picture}");
+    assert!(picture.contains("more"), "{picture}");
+    insta::assert_snapshot!(crate::timeless(&picture));
+
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn settings_opens_on_config_and_shows_each_tab_and_a_search_in_native_mode() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-settings-tabs", 80, 30, &vendor);
+    window.types_until("/settings\r", "esc to close");
+
+    window.assert_never_alternate();
+    let config = window.picture();
+    assert!(config.contains("Config"), "{config}");
+    insta::assert_snapshot!(config);
+
+    window.types_until("\x1b", "ask mode on");
+    let closed = window.picture();
+    assert!(!closed.contains("esc to close"), "{closed}");
+}
+
+#[test]
+fn release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest_in_native_mode() {
+    // Recorded by its shape, as the fullscreen case is: its rows are the
+    // changelog's newest, which every release moves. Held to half the window,
+    // the list shows the releases it has room for, and the row that reveals the
+    // rest is a walk away.
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::native("native-release-notes-list", 80, 24, &vendor);
+    window.types_until("/release-notes\r", "enter opens it");
+
+    window.assert_never_alternate();
+    let picture = window.picture();
+    assert!(picture.contains("Release notes"), "{picture}");
+    insta::assert_snapshot!(crate::shape(&picture));
+}
+
+/// The four terminals the sweep runs on: each way of putting what it holds at
+/// a new width, with each way of counting an emoji sequence.
+const PROFILES: [(&str, Profile); 4] = [
+    (
+        "rewraps",
+        Profile {
+            reflow: Reflow::Rewraps,
+            widths: Widths::Unicode,
+        },
+    ),
+    (
+        "rewraps-clustered",
+        Profile {
+            reflow: Reflow::Rewraps,
+            widths: Widths::Clustered,
+        },
+    ),
+    (
+        "keeps",
+        Profile {
+            reflow: Reflow::Keeps,
+            widths: Widths::Unicode,
+        },
+    ),
+    (
+        "keeps-clustered",
+        Profile {
+            reflow: Reflow::Keeps,
+            widths: Widths::Clustered,
+        },
+    ),
+];
+
+/// A family of three, joined.
+const FAMILY: &str = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}";
+
+/// A thumb with a skin tone.
+const THUMB: &str = "\u{1f44d}\u{1f3fd}";
+
+/// The row of the box a prompt is typed on, once in any picture with a box.
+///
+/// Not the footer under it, which a short window leaves out.
+const BOX: &str = "\u{2502} \u{203a}";
+
+/// A paragraph seventy columns wide as crucible counts it, opening with
+/// `label` and holding each glyph a terminal may count differently: a
+/// selector that widens the sun before it, two wide ideographs, a combining
+/// mark, two joined families and two skin tones. A terminal that draws each
+/// emoji sequence as one glyph counts it twelve columns narrower, so it fits
+/// in sixty columns where crucible folds it.
+fn glyph_row(label: &str) -> String {
+    let mut row = format!(
+        "{label} sun \u{2600}\u{fe0f} kanji \u{6f22}\u{5b57} cafe\u{301} family \
+         {FAMILY} {FAMILY} thumbs {THUMB} {THUMB}"
+    );
+    while crucible_tui::columns(&row) < 70 {
+        row.push('.');
+    }
+    row
+}
+
+/// One paragraph for each of `labels`.
+fn paragraphs(labels: &[&str]) -> String {
+    labels
+        .iter()
+        .map(|label| glyph_row(label))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Each of `labels`, and the box, that a reader of `window` cannot find
+/// exactly once in the scrollback and the window together, with how often
+/// they can.
+fn lost_or_doubled(window: &Watched, labels: &[&str]) -> Vec<String> {
+    let all = everything(window);
+    labels
+        .iter()
+        .chain([&BOX])
+        .filter_map(|label| {
+            let count = all.matches(label).count();
+            (count != 1).then(|| format!("{label} {count} times"))
+        })
+        .collect()
+}
+
+/// Three answers, the window narrowed to sixty while the first arrives, to
+/// forty while the second does, and widened to eighty again under the third.
+#[test]
+fn every_answer_row_is_kept_once_through_two_narrowings_and_a_widening_on_every_terminal_in_native_mode()
+ {
+    const ANSWERS: [[&str; 3]; 3] = [
+        ["amber", "basil", "cedar"],
+        ["dune", "ember", "fjord"],
+        ["grove", "heath", "inlet"],
+    ];
+    let texts: Vec<String> = ANSWERS.iter().map(|labels| paragraphs(labels)).collect();
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let labels: Vec<&str> = ANSWERS.iter().flatten().copied().collect();
+
+    for (name, profile) in PROFILES {
+        let vendor = Vendor::answering_each(&texts);
+        let mut window = Watched::native_on(
+            &format!("native-narrowed-twice-{name}"),
+            80,
+            24,
+            &vendor,
+            profile,
+        );
+        for (keys, caught, (columns, rows)) in [
+            ("say one\r", "amber", (60, 24)),
+            ("say two\r", "dune", (40, 24)),
+            ("say three\r", "grove", (80, 24)),
+        ] {
+            window.types_and_catches(keys, caught);
+            window.resize(columns, rows);
+        }
+
+        window.assert_never_alternate();
+        let lost = lost_or_doubled(&window, &labels);
+        assert!(lost.is_empty(), "{name}: {lost:?}\n{}", everything(&window));
+    }
+}
+
+/// A paragraph seventy-six columns wide as crucible counts it, opening with
+/// `label` and made otherwise of a symbol crucible counts as one column. A
+/// terminal that draws the symbol as its picture gives it two, so the
+/// paragraph is wider than the window there.
+pub(crate) fn pictured_row(label: &str) -> String {
+    let mut row = format!("{label} weather");
+    while crucible_tui::columns(&row) < 76 {
+        row.push_str(" \u{2600}");
+    }
+    row
+}
+
+/// An answer the terminal draws wider than crucible counted it, streamed into
+/// the region and redrawn as it arrives: each row is still found once, and
+/// the box under it once.
+#[test]
+fn a_row_the_terminal_draws_wider_than_crucible_counts_is_kept_once_in_native_mode() {
+    const LABELS: [&str; 3] = ["oak", "pine", "rowan"];
+    let answer = LABELS
+        .iter()
+        .map(|label| pictured_row(label))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let vendor = Vendor::answering_each(&[&answer, "Nothing more."]);
+    let mut window = Watched::native_on(
+        "native-pictured",
+        80,
+        24,
+        &vendor,
+        Profile {
+            reflow: Reflow::Rewraps,
+            widths: Widths::Pictured,
+        },
+    );
+    window.types_until("say it\r", "rowan");
+    window.types_until("say it again\r", "Nothing more.");
+
+    window.assert_never_alternate();
+    let lost = lost_or_doubled(&window, &LABELS);
+    assert!(lost.is_empty(), "{lost:?}\n{}", everything(&window));
+}
+
+/// Two finished paragraphs, then one three rows long still in the region,
+/// held there by a turn that has not ended.
+const HELD_LABELS: [&str; 5] = ["jade", "kelp", "loam", "marsh", "nettle"];
+
+/// The answer [`HELD_LABELS`] name, with its last three paragraphs run
+/// together into the one the turn holds open.
+fn held_answer() -> String {
+    let [finished @ .., _, _, _] = HELD_LABELS;
+    let held: Vec<String> = HELD_LABELS[2..]
+        .iter()
+        .map(|label| glyph_row(label))
+        .collect();
+    format!("{}\n\n{}", paragraphs(&finished), held.join(" "))
+}
+
+/// The window narrowed from eighty to sixty under [`held_answer`].
+fn narrowed_under_a_held_row(name: &str, vendor: &Vendor, profile: Profile) -> Watched {
+    let mut window = Watched::native_on(
+        &format!("native-held-narrowed-{name}"),
+        80,
+        24,
+        vendor,
+        profile,
+    );
+    window.types_and_catches("say it\r", "nettle");
+    window.resize(60, 24);
+    window.assert_never_alternate();
+    window
+}
+
+/// Narrowing redraws what the session kept once the window has settled, so a
+/// finished row is found once whether or not the terminal rewraps its lines,
+/// and the turn still holding the last of it is never doubled.
+#[test]
+fn a_held_row_narrowed_keeps_every_row_once_on_every_terminal_in_native_mode() {
+    for (name, profile) in PROFILES {
+        let vendor = Vendor::holding(&held_answer());
+        let window = narrowed_under_a_held_row(name, &vendor, profile);
+
+        let lost = lost_or_doubled(&window, &HELD_LABELS);
+        assert!(lost.is_empty(), "{name}: {lost:?}\n{}", everything(&window));
+    }
+}
+
+/// A window made shorter than the live region it is drawing: the rows the
+/// terminal pushes into its scrollback are not left there as copies of the
+/// region, and every finished row is still found once.
+#[test]
+fn a_window_shortened_below_the_live_region_keeps_every_row_once_in_native_mode() {
+    for (name, profile) in PROFILES {
+        let vendor = Vendor::holding(&held_answer());
+        let mut window = Watched::native_on(
+            &format!("native-held-shortened-{name}"),
+            80,
+            24,
+            &vendor,
+            profile,
+        );
+        window.types_and_catches("say it\r", "nettle");
+        // Tall enough for the whole box, which a shorter window cuts to a
+        // share of itself in either mode.
+        window.resize(80, 8);
+        window.assert_never_alternate();
+
+        let lost = lost_or_doubled(&window, &HELD_LABELS);
+        assert!(lost.is_empty(), "{name}: {lost:?}\n{}", everything(&window));
+    }
+}
+
+#[test]
+fn a_native_session_that_is_left_says_how_to_come_back_to_it() {
+    // In native mode the transcript is still in the reader's scrollback, so
+    // there is nothing to say about where it went. The session's id is the
+    // one thing that has never been on the screen, and it is the only way back
+    // to this exact session, so leaving says it as the full screen does,
+    // whichever of the two ways the session was left.
+    for (case, leaves) in [
+        ("native-left-by-exit", "/exit"),
+        ("native-left-by-ctrl-c", "ctrl+c"),
+    ] {
+        let vendor = Vendor::answering("Said.");
+        let mut window = Watched::native(case, 80, 24, &vendor);
+        window.types_until("say it\r", "Said.");
+
+        let (ended, _) = if leaves == "/exit" {
+            window.ends_after("/exit\r")
+        } else {
+            window.types_until("\x03", "again to leave");
+            window.ends_after("\x03")
+        };
+
+        assert!(ended.success(), "{leaves}: {ended:?}");
+        let all = everything(&window);
+        assert!(
+            all.contains("Resume this session with:") && all.contains("crucible --resume "),
+            "{leaves} left no way back\n{all}"
+        );
+        assert_eq!(all.matches("Said.").count(), 1, "{leaves}\n{all}");
+        window.assert_never_alternate();
+    }
+}
+
+/// What `command` printed in a window too short for its panel, read back once
+/// the window is made each of `WIDTHS` wide and tall enough to hold it all,
+/// beside what the same command prints when it is run at that width from the
+/// start. In native mode when `native`, in the full screen otherwise; read
+/// through the row that says `last`.
+fn printed_then_resized(
+    case: &str,
+    command: &str,
+    last: &str,
+    native: bool,
+) -> Vec<(u16, Vec<String>, Vec<String>)> {
+    const WIDTHS: [u16; 2] = [40, 80];
+    const TALL: u16 = 100;
+    let vendor = Vendor::answering("Hello.");
+    let open = |name: &str, columns: u16| {
+        let mut window = if native {
+            Watched::native(name, columns, 24, &vendor)
+        } else {
+            fullscreen(name, columns, 24, &vendor)
+        };
+        // Five rows leave no panel room to stand, so the command prints.
+        window.resize(columns, 5);
+        window.types_until(&format!("{command}\r"), last);
+        window
+    };
+    let read = |window: &Watched| {
+        let seen = if native {
+            everything(window)
+        } else {
+            window.picture()
+        };
+        reply(&crate::timeless(&seen), command, last)
+    };
+
+    let mut window = open(case, 80);
+    WIDTHS
+        .into_iter()
+        .map(|columns| {
+            window.resize(columns, TALL);
+            let mut fresh = open(&format!("{case}-fresh-{columns}"), columns);
+            fresh.resize(columns, TALL);
+            (columns, read(&window), read(&fresh))
+        })
+        .collect()
+}
+
+/// Fails where a printed block kept the width it was printed at once the
+/// window narrowed or widened again, in either screen mode.
+fn assert_laid_again(case: &str, command: &str, last: &str) {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        for (columns, resized, fresh) in
+            printed_then_resized(&format!("{case}-{mode}"), command, last, native)
+        {
+            assert_eq!(resized, fresh, "{command} at {columns} columns, {mode}");
+        }
+    }
+}
+
+#[test]
+fn usage_printed_is_laid_again_at_each_width_it_is_read_at() {
+    assert_laid_again("usage-relaid", "/usage", "limits not reported");
+}
+
+#[test]
+fn context_printed_is_laid_again_at_each_width_it_is_read_at() {
+    assert_laid_again("context-relaid", "/context", "free");
+}
+
+#[test]
+fn settings_printed_is_laid_again_at_each_width_it_is_read_at() {
+    // Not reproduced: every row the listing writes fits forty columns, so a
+    // narrower window cut none of them before the others were laid again.
+    // Kept so that a longer row is caught.
+    assert_laid_again("settings-relaid", "/settings", "Persistent cache");
+}
+
+#[test]
+fn model_listing_printed_is_laid_again_at_each_width_it_is_read_at() {
+    assert_laid_again("model-relaid", "/model", "zai/glm-5.2");
 }

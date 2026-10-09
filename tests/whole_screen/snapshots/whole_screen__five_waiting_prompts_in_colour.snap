@@ -1,0 +1,55 @@
+---
+source: tests/whole_screen/main.rs
+expression: steadied_picture(&window.picture_in_colour())
+---
+80x24 cursor 21,4 scrolled 0
+|                                                                               │|
+  80..80 fg=90
+|● Bash(sleep 30)                                                               │|
+  3..6 bold
+  7..16 fg=90
+  80..80 fg=90
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                              │|
+  3..49 fg=90
+  80..80 fg=90
+|                                                                               │|
+  80..80 fg=90
+|It is started. That is all.                                                    ●|
+  80..80 fg=38;5;30
+|                                                                               ┃|
+  80..80 fg=38;5;30
+|✳ writing (0s · ↓ 4 · esc to interrupt)                                         |
+  1..1 fg=38;5;30
+  10..39 fg=90
+|────────────────────────────────────────────────────────────────────────────────|
+  1..80 fg=38;5;30
+|                                                                                |
+|5 queued · ctrl+enter to send all now                                           |
+  1..8 bold fg=38;5;30
+  9..37 fg=90
+|                                                                                |
+|› and add a test for the windows path                                           |
+  1..1 fg=38;5;30
+  3..37 fg=38;5;30
+|                                                                                |
+|  then run the whole gate                                                       |
+|                                                                                |
+|  check the ascii glyphs too                                                    |
+|                                                                                |
+|↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now             |
+  1..67 fg=90
+|                                                                                |
+|                                                                 99% window left|
+  1..80 fg=90
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+  1..80 fg=90
+|│ ›                                                                            │|
+  1..1 fg=90
+  3..3 fg=38;5;30
+  80..80 fg=90
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+  1..80 fg=90
+|ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1|
+  1..35 fg=90
+  36..44 fg=38;5;30
+  56..80 fg=90

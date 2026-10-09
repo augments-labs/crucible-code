@@ -198,7 +198,7 @@ fn glob_latency(driver: &Driver, scratch: &Scratch) -> Result<f64, ProbeError> {
 }
 
 fn edit_latency(driver: &Driver, scratch: &Scratch) -> Result<f64, ProbeError> {
-    let tool = Edit::new(scratch.workspace.clone());
+    let tool = Edit::new(scratch.workspace.clone(), Ledger::new());
     let mut readings = Vec::with_capacity(RUNS);
     for number in 0..RUNS {
         let path = format!("edit-{number:02}.txt");

@@ -1,18 +1,14 @@
 use std::fs;
-use std::io::Write as _;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use flate2::Compression;
-use flate2::write::GzEncoder;
-use sha2::{Digest as _, Sha256};
-use tar::{Builder, EntryType, Header};
-
 use super::super::boundary::{CROSSED, KILL_AT, refusing_sync};
-use super::super::layout::{BROKER, CRUCIBLE, PREFIX, RECEIPT};
-use super::super::{Digest, Target};
+use super::super::fixture::{
+    archive_name, executable, file, hex, installed, receipt, release_archive, unit,
+};
+use super::super::layout::{CRUCIBLE, PREFIX, RECEIPT};
 use super::*;
 
 /// The release each test install has active.
@@ -20,9 +16,6 @@ const ACTIVE: &str = "0.46.0";
 
 /// The release each test stages and activates.
 const NEXT: &str = "0.46.1";
-
-/// The installation each test install's receipt names.
-const INSTALLATION: &str = "5c0f9d2e8a4b47e1b3d6a09f7c21e845";
 
 /// The test the kill-point tests start as the update they kill.
 const UPDATE: &str = "install::activate::tests::the_update_the_kill_point_tests_stop";
@@ -48,21 +41,8 @@ impl Install {
         let _ = fs::remove_dir_all(&at);
         fs::create_dir_all(&at).expect("a temporary directory");
         let dir = at.canonicalize().expect("a canonical temporary directory");
+        installed(&dir, ACTIVE);
         let install = Self { dir };
-        directory(&install.prefix());
-        directory(&install.releases());
-        install.release(ACTIVE, &executable(ACTIVE));
-        symlink(
-            format!("{RELEASES}/{ACTIVE}"),
-            install.prefix().join(CURRENT),
-        )
-        .expect("the active-release link");
-        symlink(
-            format!("{PREFIX}/{CURRENT}/{CRUCIBLE}"),
-            install.dir.join(CRUCIBLE),
-        )
-        .expect("the command's link");
-        symlink(CRUCIBLE, install.dir.join("cru")).expect("the alias");
         fs::create_dir(install.downloads()).expect("the downloads");
         install.publish(NEXT);
         install
@@ -96,12 +76,7 @@ impl Install {
 
     /// Writes a whole unit for `version` whose `crucible` holds `crucible`.
     fn release(&self, version: &str, crucible: &[u8]) {
-        let unit = self.unit(version);
-        directory(&unit);
-        file(&unit.join(CRUCIBLE), crucible, 0o755);
-        file(&unit.join(BROKER), &broker(version), 0o755);
-        let receipt = receipt(&self.prefix(), version, crucible);
-        file(&unit.join(RECEIPT), receipt.as_bytes(), 0o644);
+        unit(&self.prefix(), version, crucible);
     }
 
     /// Publishes `version`'s archive and `SHA256SUMS`.
@@ -270,85 +245,6 @@ impl Drop for Install {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
-}
-
-fn directory(at: &Path) {
-    fs::create_dir(at).expect("a directory");
-    fs::set_permissions(at, fs::Permissions::from_mode(0o755)).expect("its mode");
-}
-
-fn file(at: &Path, bytes: &[u8], mode: u32) {
-    fs::write(at, bytes).expect("a file");
-    fs::set_permissions(at, fs::Permissions::from_mode(mode)).expect("its mode");
-}
-
-fn hex(bytes: &[u8]) -> String {
-    Digest::new(Sha256::digest(bytes).into()).to_string()
-}
-
-fn target() -> &'static str {
-    Target::running().expect("a supported target").as_str()
-}
-
-fn archive_name(version: &str) -> String {
-    format!("crucible-{version}-{}.tar.gz", target())
-}
-
-/// A `crucible` that says it is `version`, as the installer asks it to.
-fn executable(version: &str) -> Vec<u8> {
-    format!("#!/bin/sh\necho 'crucible {version}'\n").into_bytes()
-}
-
-/// A broker of `version`.
-fn broker(version: &str) -> Vec<u8> {
-    format!("#!/bin/sh\n# crucible-sandbox-broker {version}\n").into_bytes()
-}
-
-/// The receipt of a unit of `version` holding `crucible` and its broker.
-fn receipt(prefix: &Path, version: &str, crucible: &[u8]) -> String {
-    format!(
-        "crucible-installer-receipt 1\n\
-         manager=crucible-installer\n\
-         installation={INSTALLATION}\n\
-         target={}\n\
-         layout=versioned\n\
-         prefix={}\n\
-         version={version}\n\
-         sha256.crucible={}\n\
-         sha256.crucible-sandbox-broker={}\n",
-        target(),
-        prefix.display(),
-        hex(crucible),
-        hex(&broker(version)),
-    )
-}
-
-/// The archive `version` ships, as the release packs it.
-fn release_archive(version: &str) -> Vec<u8> {
-    let stem = format!("crucible-{version}-{}", target());
-    let mut builder = Builder::new(Vec::new());
-    let mut entry = |name: &str, kind: EntryType, data: &[u8]| {
-        let mut header = Header::new_gnu();
-        header
-            .set_path(format!("{stem}/{name}"))
-            .expect("a member's name");
-        header.set_entry_type(kind);
-        header.set_size(data.len() as u64);
-        header.set_mode(0o755);
-        header.set_cksum();
-        builder.append(&header, data).expect("a member");
-    };
-    entry("", EntryType::Directory, b"");
-    entry(CRUCIBLE, EntryType::Regular, &executable(version));
-    entry(BROKER, EntryType::Regular, &broker(version));
-    entry("README.md", EntryType::Regular, b"# crucible\n");
-    entry("LICENSE", EntryType::Regular, b"MIT\n");
-    entry("install.sh", EntryType::Regular, b"#!/bin/sh\n");
-    entry("uninstall.sh", EntryType::Regular, b"#!/bin/sh\n");
-    let tar = builder.into_inner().expect("a finished archive");
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-    encoder.write_all(&tar).expect("compressed");
-    encoder.finish().expect("a finished gzip stream")
 }
 
 /// Stages and activates the next release, and rolls it back when it is set

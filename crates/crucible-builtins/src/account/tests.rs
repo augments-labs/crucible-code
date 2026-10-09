@@ -25,7 +25,7 @@ fn inviting(workspace: &Workspace) -> Vec<ToolDescriptor> {
             std::sync::Arc::new(crate::sample::sandbox()),
         )),
         descriptor(&Write::new(workspace.clone(), Ledger::new())),
-        descriptor(&Edit::new(workspace.clone())),
+        descriptor(&Edit::new(workspace.clone(), Ledger::new())),
     ]
 }
 

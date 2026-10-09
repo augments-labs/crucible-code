@@ -10,11 +10,16 @@
 //! Reading the size is not one syscall, whatever it looks like here. `crossterm`
 //! opens `/dev/tty` before the `TIOCGWINSZ` it is being called for, and where
 //! there is no controlling terminal to open it falls back to running `tput`
-//! twice. Nothing on the render path asks: the size is read once when a renderer
-//! is built and again at a prompt, and [`crate::Renderer::columns`] is what the
-//! render path reads instead.
+//! twice. So the render path asks only when it has a reason to: the size is read
+//! when a renderer is built, again when a resize is reported, and by the first
+//! frame after a [`ResizeFlag`] says the window changed, and
+//! [`crate::Renderer::columns`] is what the render path reads in between. A
+//! native region given no flag asks on every frame instead, because a frame
+//! drawn at a width the window no longer has leaves a second copy behind.
 
 use std::io::{self, IsTerminal, StdoutLock, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Size, Terminal, TerminalError};
 
@@ -38,6 +43,35 @@ impl SystemTerminal {
             is_terminal: out.is_terminal(),
             out,
         }
+    }
+}
+
+/// Whether the window has changed size since a frame last asked.
+///
+/// Raised from outside, by whatever hears the operating system say the window
+/// changed, and lowered by the frame that asks the window its size because of
+/// it. A clone is the same flag.
+#[derive(Debug, Clone, Default)]
+pub struct ResizeFlag(Arc<AtomicBool>);
+
+impl ResizeFlag {
+    /// The flag itself, for a signal handler to raise: storing `true` in it is
+    /// all a handler may do, and all this needs.
+    #[must_use]
+    pub fn raised_by(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.0)
+    }
+
+    /// Says the window has changed size, as the handler does.
+    #[cfg(test)]
+    pub(crate) fn raise(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    /// Whether the window changed size since this was last asked, lowering the
+    /// flag as it answers.
+    pub(crate) fn taken(&self) -> bool {
+        self.0.swap(false, Ordering::AcqRel)
     }
 }
 

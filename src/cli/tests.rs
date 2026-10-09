@@ -464,6 +464,29 @@ fn doctor_is_an_early_action_with_an_optional_json_report() {
     }
 }
 
+#[test]
+fn update_checks_or_dry_runs_but_not_both() {
+    for (words, check, dry_run) in [
+        (vec!["crucible", "update"], false, false),
+        (vec!["crucible", "update", "--check"], true, false),
+        (vec!["crucible", "update", "--dry-run"], false, true),
+    ] {
+        let cli = Cli::try_parse_from(&words).expect("an update");
+        assert!(
+            matches!(cli.command, Some(Command::Update { check: c, dry_run: d }) if c == check && d == dry_run),
+            "{words:?}"
+        );
+    }
+
+    for invalid in [
+        vec!["crucible", "update", "--check", "--dry-run"],
+        vec!["crucible", "update", "0.47.1"],
+        vec!["crucible", "update", "--force"],
+    ] {
+        assert!(Cli::try_parse_from(&invalid).is_err(), "{invalid:?}");
+    }
+}
+
 /// A store 0.43.3 left after a roll back: its kimi.com key beside the kimi.ai
 /// sign-in the release after it wrote. Fabricated.
 const TWO_HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
@@ -666,6 +689,56 @@ fn a_native_screen_setting_draws_natively_and_the_default_draws_full_screen() {
     assert_eq!(
         drawn_on(crucible_config::ScreenMode::default()),
         crucible_tui::ScreenMode::Fullscreen
+    );
+}
+
+/// A recording terminal a test keeps hold of while a renderer draws on it, so
+/// the window can change size under the renderer.
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct Shared(std::rc::Rc<std::cell::RefCell<crucible_tui::Recording>>);
+
+#[cfg(unix)]
+impl crucible_tui::Terminal for Shared {
+    fn size(&self) -> Result<crucible_tui::Size, TerminalError> {
+        self.0.borrow().size()
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        self.0.borrow_mut().write(text)
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        self.0.borrow_mut().flush()
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.0.borrow().is_terminal()
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_window_resized_while_nothing_reads_the_keyboard_is_drawn_at_its_new_size() {
+    // The signal is what says so: no press reports this resize, and the next
+    // frame is drawn for the window as it is now. Raised on this thread, so
+    // the handler has run by the time the frame is asked for. Nothing else in
+    // this binary listens for it, and its default is to do nothing.
+    let window = Shared(std::rc::Rc::new(std::cell::RefCell::new(
+        crucible_tui::Recording::new(20, 8),
+    )));
+    let mut renderer = Renderer::new(window.clone());
+    watch_size(&mut renderer);
+    renderer.commit("the quick brown fox jumps").unwrap();
+
+    window.0.borrow_mut().resize(40, 8);
+    signal_hook::low_level::raise(signal_hook::consts::SIGWINCH).unwrap();
+    renderer.commit("over the lazy dog").unwrap();
+
+    assert_eq!(renderer.columns(), 40);
+    assert_eq!(
+        window.0.borrow().picture().row(0),
+        "the quick brown fox jumps"
     );
 }
 

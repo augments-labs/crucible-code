@@ -8,11 +8,13 @@
 //! looking at. What falls off the top is not lost: the session log holds every
 //! message, and the line a session ends on says where that is.
 //!
-//! In native mode the terminal's own scrollback keeps it instead, and a line
-//! written there is let go of here as it is written, numbered as if it had
-//! fallen off the top: the record then holds only what has not gone out yet,
-//! and remembers only whether the last line to go was blank, so the next block
-//! is parted from it as it would be from a line still held.
+//! In native mode the terminal's own scrollback shows it instead, and a line
+//! written there is marked as sent rather than dropped: the live region draws
+//! only what has not gone out yet, and what has is kept under the same ceiling,
+//! so that a window that changes size can be given the whole of it again at
+//! the width it has now. The terminal cannot do that on its own: what it keeps
+//! was cut at the width it was written at, and no two terminals put it at a
+//! new one the same way.
 //!
 //! A line is held as a [`Row`] — spans carrying slots — rather than as the
 //! bytes a terminal would receive, so a narrower window re-wraps rather than
@@ -23,9 +25,10 @@
 //! *flows*: the model's answer and a tool's output were written as text and a
 //! wrap is the only thing deciding where a row ends, so the width they are
 //! folded at is whatever the window is now. A component whose source is still
-//! held is *responsive*: a prompt or a diff is laid out again at the new width.
-//! Everything else is *set*: a table or a box laid out by something that is gone
-//! is clipped rather than pretending it can be rebuilt.
+//! held is *responsive*: a prompt, a diff, or a command's answer drawn from
+//! figures it still holds is laid out again at the new width. Everything else
+//! is *set*: a table or a box laid out by something that is gone is clipped
+//! rather than pretending it can be rebuilt.
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
@@ -277,6 +280,19 @@ pub(crate) struct Record {
     /// The mark a reply still being written is hung under, from
     /// [`Self::hangs`] until [`Self::subordinate`] or [`Self::unhangs`].
     hanging: Option<Hanging>,
+    /// One past the last line written out to the terminal's own scrollback, in
+    /// native mode, counted from the first of the session.
+    ///
+    /// Lines before it are kept for [`Self::kept`] to give again, and are not
+    /// the live region's to draw. Never moves in the full screen, where
+    /// nothing is sent and every line is the band's.
+    sent: usize,
+    /// The first line of what the record now holds, as it began: the first of
+    /// the session, or the first after the boundary the last emptying left.
+    ///
+    /// Only the ceiling drops a line otherwise, so where [`Self::gone`] has
+    /// moved past this, what [`Self::kept`] gives back is not all there was.
+    began: usize,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -317,6 +333,8 @@ impl Record {
             parting: None,
             open: false,
             hanging: None,
+            sent: 0,
+            began: 0,
         }
     }
 
@@ -395,6 +413,15 @@ impl Record {
         // card — it is the bottom of one. Dropped rather than redrawn, which
         // leaves those lines standing as any other set rows do.
         if opening.from < self.gone {
+            return;
+        }
+
+        // Some or all of it has gone out to the terminal's scrollback. Laying
+        // it again here would change how many lines there are under every
+        // number the session has handed out since, so it is kept as it was
+        // laid, and [`Self::kept`] lays it afresh once all of it has gone.
+        if opening.from < self.sent {
+            self.opening = Some(opening);
             return;
         }
 
@@ -617,7 +644,9 @@ impl Record {
     /// still names the line it named, and names nothing once that line has gone.
     ///
     /// The opening goes too, and cannot come back: what a resize redraws is a
-    /// card whose lines are still held, and these are not.
+    /// card whose lines are still held, and these are not. So do the lines a
+    /// native session kept to give again after a resize: what replaces them
+    /// is the conversation a resize now gives back.
     pub(crate) fn empties(&mut self) {
         // Advance past a reset boundary as well as every removed line, so a
         // stable boundary taken before the reset cannot alias the first line of
@@ -637,6 +666,7 @@ impl Record {
         self.opening = None;
         self.open = false;
         self.parted_before = true;
+        self.began = self.gone;
     }
 
     /// Drop every line as [`Self::empties`] does, where what was said is still
@@ -678,7 +708,7 @@ impl Record {
             .take()
             .filter(|hanging| hanging.from == from)
             .map_or((from, true), |hanging| (hanging.next, hanging.first));
-        if next < self.gone || next >= self.lines() || mark.is_empty() {
+        if next < self.first() || next >= self.lines() || mark.is_empty() {
             return;
         }
         self.mark(next..self.lines(), mark, &mut first);
@@ -715,7 +745,7 @@ impl Record {
         let Some(mut hanging) = self.hanging.take() else {
             return;
         };
-        if hanging.next < self.gone {
+        if hanging.next < self.first() {
             return;
         }
         let through = through.min(self.lines());
@@ -843,13 +873,15 @@ impl Record {
 
 /// What native mode hands over to the terminal's own scrollback.
 ///
-/// There the record holds only what has not gone out yet: a line written into
-/// the reader's buffer is the terminal's to keep, and holding it here as well
-/// would be a second copy of the session that nothing draws again.
+/// A line written into the reader's buffer is shown by the terminal from then
+/// on, and the live region no longer draws it. It is kept here all the same,
+/// under the one ceiling, because the terminal cannot be trusted to put what it
+/// holds at a new width, and a resize is answered by giving it all again.
 impl Record {
-    /// The first line still held, numbered as [`Self::lines`] numbers them.
+    /// The first line held that has not gone out, numbered as
+    /// [`Self::lines`] numbers them.
     pub(crate) fn first(&self) -> usize {
-        self.gone
+        self.sent.max(self.gone)
     }
 
     /// One past the last line that can no longer change: every line held but
@@ -876,22 +908,59 @@ impl Record {
             .unwrap_or_default()
     }
 
-    /// Lets go of every line before `through`, keeping the numbering.
+    /// Marks every line before `through` as written out, keeping it.
     ///
-    /// The same as a spill, which is what it is: a line that has gone keeps its
-    /// number, so a caller holding one names nothing rather than another line,
-    /// and an opening that has partly gone is no longer laid out again.
+    /// The live region draws nothing before it from then on, and the lines
+    /// stay for [`Self::kept`] until the ceiling drops them.
     pub(crate) fn lets_go(&mut self, through: usize) {
-        while self.gone < through && !self.lines.is_empty() {
-            self.drop_oldest();
-        }
-        self.forget_landmarks();
-        if self.top.line < self.gone {
+        self.sent = self.sent.max(through.min(self.lines()));
+        let first = self.first();
+        if self.top.line < first {
             self.top = Spot {
-                line: self.gone,
+                line: first,
                 into: 0,
             };
         }
+    }
+
+    /// Hands `each` every line that has gone out and is still kept, as the
+    /// display rows it comes to at the current width, with an opening among
+    /// them laid afresh in `glyphs`.
+    ///
+    /// What a resize writes again once the screen and its scrollback have been
+    /// cleared. The card is laid here rather than in the record, so that the
+    /// lines under it keep the numbers they were handed out with. A card only
+    /// partly gone out is given as the lines it already holds, because the live
+    /// region draws the rest of it as they stand. Row by row rather than as
+    /// one list, so giving the session back makes no second copy of it.
+    pub(crate) fn kept(&self, glyphs: Glyphs, mut each: impl FnMut(Row)) {
+        let first = self.gone;
+        let sent = self.first();
+        let opening = self
+            .opening
+            .as_ref()
+            .filter(|opening| opening.from >= first && opening.from + opening.lines <= sent);
+        let mut line = first;
+        while line < sent {
+            if let Some(opening) = opening.filter(|opening| opening.from == line) {
+                let columns = self.columns;
+                for row in (opening.lay)(columns, glyphs) {
+                    each(row.clipped(columns));
+                }
+                line += opening.lines.max(1);
+                continue;
+            }
+            for row in self.folded(line) {
+                each(row);
+            }
+            line += 1;
+        }
+    }
+
+    /// Whether the ceiling has dropped lines that [`Self::kept`] would
+    /// otherwise have given back, since the record was last emptied.
+    pub(crate) fn spilled(&self) -> bool {
+        self.gone > self.began
     }
 }
 
@@ -1274,9 +1343,16 @@ impl Record {
     /// The spot that puts the last display row at the foot of a band `rows`
     /// tall — walking back from the end, so the cost is the band's rather than
     /// the record's.
+    ///
+    /// Nothing written out to a native terminal's scrollback is counted: the
+    /// band there is the live region, and the terminal shows those lines.
     fn foot(&self, rows: usize) -> Spot {
+        let first = self.first();
         let mut left = rows;
         for (back, &tall) in self.tall.iter().enumerate().rev() {
+            if self.gone + back < first {
+                break;
+            }
             let tall = usize::from(tall);
             if tall >= left {
                 return Spot {
@@ -1287,7 +1363,7 @@ impl Record {
             left -= tall;
         }
         Spot {
-            line: self.gone,
+            line: first,
             into: 0,
         }
     }

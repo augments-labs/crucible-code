@@ -4,19 +4,19 @@
 //! nothing is owned but a live region at the foot of whatever the reader's
 //! shell left on screen, so a frame is relative: back to the top of the region
 //! the last frame drew, erase to the end of the screen, write anything the
-//! record has let go of as rows the terminal scrolls into its own scrollback,
+//! record has sent out as rows the terminal scrolls into its own scrollback,
 //! then the region again — the transcript still being written, what a turn is
 //! showing, and the box. No row is ever addressed by number, because a number
 //! here lands on whatever the shell had put there.
 //!
-//! A line goes out once. It leaves the live region when it is sealed — at the
-//! moment the session next waits for a key, before anyone could read it
-//! half-finished — or sooner, when the region could no longer show it, and the
-//! record lets go of it as it is written: the terminal is what keeps it now,
-//! and keeping it here too would be a second copy of the session that nothing
-//! draws again. So an edit to a line that has gone out ([`Renderer::amend`],
-//! [`Renderer::subordinate`]) does nothing, as it does to any line the record
-//! has dropped.
+//! A line goes out once while the window keeps its size. It leaves the live
+//! region when it is sealed — at the moment the session next waits for a key,
+//! before anyone could read it half-finished — or sooner, when the region could
+//! no longer show it. The terminal shows it from then on, and the record keeps
+//! it under the same ceiling as the full screen's, for a resize to give back.
+//! An edit to a line that has gone out ([`Renderer::amend`]) changes only the
+//! copy kept, which the next resize shows; [`Renderer::subordinate`] leaves it
+//! alone, as it was marked when it went out.
 //!
 //! Which is why a reply that can wait for a key, or outgrow the region, is
 //! hung under its mark before it is written ([`Renderer::hangs`]): either
@@ -28,10 +28,11 @@
 //! that empties the transcript is let go of unmarked, as the full screen marks
 //! none of it.
 //!
-//! Emptying the transcript takes nothing back either: the session a resume or a
-//! clear leaves stays in the scrollback, under the card the launch drew. What
-//! replaces it goes under one divider row ([`Renderer::divides`]) rather than
-//! under a second card, which would read as a second launch.
+//! Emptying the transcript takes nothing back from the screen: the session a
+//! resume or a clear leaves stays in the scrollback, under the card the launch
+//! drew, until a resize gives the window what is kept, which is only what came
+//! after. What replaces it goes under one divider row ([`Renderer::divides`])
+//! rather than under a second card, which would read as a second launch.
 //!
 //! What stands over or in place of the box is held to half the window here
 //! ([`Renderer::room`]), because a transcript row it takes is let go of into
@@ -50,31 +51,80 @@
 //! clear, or leaving — writes no region and keeps no height, so the next one,
 //! where there is one, starts again from only what it has to show.
 //!
-//! A resize redraws the region and nothing else, and every frame asks the
-//! window's size before it is drawn, so that one drawn while an answer is
-//! arriving goes out at the width the window already has rather than the one
-//! the press reporting the change will name. How far back the region's top now
-//! is cannot be asked of the terminal, so it is worked out from how wide each row
-//! of the region was against the new width, counted as a terminal that rewraps
-//! would count it. On one that does not, narrowing counts high, and the erase
-//! that opens the next frame takes finished rows just above the region off the
-//! visible screen. They went out once and were let go of, so nothing draws
-//! them again; the session file still has them. Counting low instead would
-//! leave a stale copy of the region in the scrollback on every terminal that
-//! does rewrap, which is most of them.
+//! A resize is answered twice. At once, the region is drawn again and nothing
+//! else. Once the window has kept its new size for [`SETTLE`], the screen and
+//! the terminal's scrollback are cleared and everything kept is written again
+//! at the new width, opening with one quiet row where the ceiling has dropped
+//! the start of the session, and the region under it. What the terminal had
+//! kept was cut at the old width, and no two terminals put it at a new one the
+//! same way: some fold it again, some leave it as it was cut, and some count
+//! a symbol's width differently. Writing it again is the one answer that reads
+//! the same on all of them. A terminal that ignores the request to clear its
+//! scrollback keeps the old rows above the new ones.
+//!
+//! A frame asks the window's size before it is drawn, so that one drawn while
+//! an answer is arriving goes out at the width the window already has rather
+//! than the one the press reporting the change will name. Given a
+//! [`ResizeFlag`], only the first frame after the flag is raised asks; without
+//! one, every frame does. How far back the region's top now is cannot be asked
+//! of the terminal, so it is worked out from how wide each row of the region
+//! was against the new width, counted as a terminal that rewraps would count
+//! it. On one that does not, narrowing counts high, and the erase that opens
+//! the next frame takes finished rows just above the region off the visible
+//! screen until the window settles and they are written again. Counting low
+//! instead would leave a stale copy of the region in the scrollback on every
+//! terminal that does rewrap, which is most of them.
+//!
+//! The rewind also trusts that a row crucible counted as fitting the window
+//! takes one row of it. A terminal that draws a symbol wider than crucible
+//! counts it, as some draw one that has a picture form, would carry the end
+//! of such a row onto the next, and every rewind after it would fall a row
+//! short and leave a copy of the region behind. So autowrap is off from the
+//! first frame until the region is closed for good: a row the terminal draws
+//! too wide loses its last cells instead. Closing the region is what turns
+//! it on again, and that happens from `Drop` too, as the rest of closing it
+//! does, and not at all where output is redirected, since nothing is drawn
+//! there to begin with.
 
 use std::fmt::Write as _;
+use std::time::{Duration, Instant};
 
 use super::Renderer;
 use super::frame::{BEGIN_SYNC, END_SYNC, HIDE, SHOW};
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
+use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
 use crate::width;
 
 /// Erases from the cursor to the end of the screen.
 const ERASE_BELOW: &str = "\x1b[J";
+
+/// Turns autowrap off, from the first frame on.
+const WRAP_OFF: &str = "\x1b[?7l";
+
+/// Turns it back on, once the region is closed for good.
+const WRAP_ON: &str = "\x1b[?7h";
+
+/// Clears the screen and the terminal's scrollback, leaving the cursor at the
+/// top: what a resize clears before what was kept is written again.
+///
+/// Colour goes back to the default first, so the cleared rows are not filled
+/// in whatever the last row written was drawn in.
+const CLEARS: &str = "\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H";
+
+/// How long the window has to keep one size before what was kept is written
+/// again at it.
+///
+/// A window dragged to a new size reports every size it passes through, and
+/// writing the whole session again for each would be most of what the
+/// terminal did while the drag lasted.
+pub(super) const SETTLE: Duration = Duration::from_millis(75);
+
+/// The quiet row a replay opens with when the ceiling has dropped the start
+/// of the session.
+const EARLIER: &str = "Earlier output is in the session log.";
 
 /// What a native frame keeps between one frame and the next.
 #[derive(Debug, Default)]
@@ -101,6 +151,12 @@ pub(super) struct Native {
     drawn: bool,
     /// Whether the region has been closed for good.
     left: bool,
+    /// When the window will have kept its size long enough to be given what
+    /// was kept, after it changed.
+    settles: Option<Instant>,
+    /// Whether the next frame clears the screen and its scrollback and writes
+    /// what was kept before the region.
+    replays: bool,
 }
 
 impl Native {
@@ -155,11 +211,39 @@ impl<T: Terminal> Renderer<T> {
         self.framed(Writes::Live)
     }
 
-    /// Notes that the window changed size, before it is laid out again.
+    /// Notes that the window changed size, before it is laid out again, and
+    /// puts off giving it what was kept until it has settled.
     pub(super) fn native_resize(&mut self, size: Size) {
         if let Some(native) = &mut self.native {
             native.rewound(size);
+            if native.drawn && !native.left {
+                native.settles = Some(Instant::now() + SETTLE);
+            }
         }
+    }
+
+    /// How long until a window that changed size has settled, where one has.
+    pub(super) fn settles_in(&self, now: Instant) -> Option<Duration> {
+        let due = self.native.as_ref()?.settles?;
+        Some(due.saturating_duration_since(now))
+    }
+
+    /// Gives a window that has settled at a new size everything kept, written
+    /// again at that size, where it is due by `now`.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub(super) fn settled(&mut self, now: Instant) -> Result<(), TerminalError> {
+        let Some(native) = &mut self.native else {
+            return Ok(());
+        };
+        if native.settles.is_none_or(|due| now < due) {
+            return Ok(());
+        }
+        native.settles = None;
+        native.replays = true;
+        self.draw()
     }
 
     /// Writes out everything the record holds, leaving no region behind.
@@ -210,8 +294,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// Closes the region for good: everything held is written out, nothing
-    /// that stood is left, and the cursor is shown at the start of a row of
-    /// its own, where the shell will write next.
+    /// that stood is left, the cursor is shown at the start of a row of its
+    /// own, where the shell will write next, and autowrap is on again.
     ///
     /// Nothing where output is redirected, in the full screen, where nothing
     /// was drawn, and the second time.
@@ -232,7 +316,13 @@ impl<T: Terminal> Renderer<T> {
         if let Some(native) = &mut self.native {
             native.left = true;
         }
-        written
+        // Put back even when the frame before it failed: the shell's lines
+        // would otherwise stop at the edge of the window.
+        let restored = self
+            .terminal
+            .write(WRAP_ON)
+            .and_then(|()| self.terminal.flush());
+        written.and(restored)
     }
 
     /// Closes the region for good, before the renderer itself goes.
@@ -253,20 +343,29 @@ impl<T: Terminal> Renderer<T> {
     /// Writes one frame, taking the state it keeps out of `self` while it
     /// does.
     ///
-    /// The window's size is asked for first. The press that reports a resize
-    /// is read between frames, and an answer still arriving draws frames
-    /// until it is: a frame drawn at the old width is wrapped by the
-    /// terminal, the next rewinds over the rows it counted rather than the
-    /// rows the terminal made of them, and what it did not reach stays above
-    /// the region as a second copy. So a size the press has not yet reported
-    /// is taken here, and the frame is drawn for the window as it is now; the
-    /// press, when it comes, finds nothing left to do.
+    /// The window's size is asked for first, where it may have changed. The
+    /// press that reports a resize is read between frames, and an answer
+    /// still arriving draws frames until it is: a frame drawn at the old
+    /// width is wrapped by the terminal, the next rewinds over the rows it
+    /// counted rather than the rows the terminal made of them, and what it
+    /// did not reach stays above the region as a second copy. So a size the
+    /// press has not yet reported is taken here, and the frame is drawn for
+    /// the window as it is now; the press, when it comes, finds nothing left
+    /// to do.
+    ///
+    /// Given a [`ResizeFlag`], a frame asks only when the flag says the
+    /// window changed since a frame last asked, so a streaming answer costs
+    /// no query per frame. Without one, as where the operating system sends
+    /// no word of a resize, every frame asks.
     ///
     /// A query that fails says nothing about the window. It is not a resize,
     /// and the frame is drawn for the size already known, as it would have
     /// been before the query was asked here.
     fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {
-        if self.native.is_some() && self.terminal.size().is_ok_and(|size| size != self.size) {
+        if self.native.is_some()
+            && self.resizes.as_ref().is_none_or(ResizeFlag::taken)
+            && self.terminal.size().is_ok_and(|size| size != self.size)
+        {
             // `resized` asks the size again and takes what it reads, as it
             // does for the press: it lays the region out and draws it,
             // through this function again, when that differs from the size
@@ -317,8 +416,35 @@ impl<T: Terminal> Renderer<T> {
         out.clear();
         out.push_str(BEGIN_SYNC);
         out.push_str(HIDE);
+        if !native.drawn {
+            out.push_str(WRAP_OFF);
+        }
+        let replays = std::mem::take(&mut native.replays) && writes == Writes::Live;
         let rewound = native.rewind.take();
-        let up = rewound.unwrap_or(native.parked);
+        if replays {
+            // The screen and the scrollback are cleared, so nothing of the last
+            // region is left to rewind over or to keep the height of.
+            out.push_str(CLEARS);
+            if self.record.spilled() {
+                Row::new()
+                    .then(Slot::Quiet, EARLIER)
+                    .clipped(columns)
+                    .paint_into(&self.palette, &mut out);
+                out.push_str("\r\n");
+            }
+            self.record.kept(self.glyphs, |row| {
+                row.clipped(columns).paint_into(&self.palette, &mut out);
+                out.push_str("\r\n");
+            });
+            native.widths.clear();
+            native.parked = 0;
+            native.column = 0;
+        }
+        let up = if replays {
+            0
+        } else {
+            rewound.unwrap_or(native.parked)
+        };
         out.push('\r');
         if up > 0 {
             let _ = write!(out, "\x1b[{up}A");
@@ -419,6 +545,7 @@ impl<T: Terminal> Renderer<T> {
         let unchanged = writes == Writes::Live
             && emitted == 0
             && rewound.is_none()
+            && !replays
             && out.get(region..live) == Some(native.shown.as_str());
         if unchanged {
             native.frame = out;
@@ -439,7 +566,9 @@ impl<T: Terminal> Renderer<T> {
         native.parked = parked;
         native.column = column;
         native.drawn = true;
-        native.frame = out;
+        // A replay's bytes are the whole session, and a buffer kept that size
+        // for the frames after it would be a second copy of it.
+        native.frame = if replays { String::new() } else { out };
         written
     }
 }

@@ -31,9 +31,7 @@ A window too short for the whole panel says so and sends nothing:
 
 A run with no terminal to ask on ends before sending, with what the vendor's
 terms say and `Nothing was sent; answer it once in a terminal.` on standard
-error, and exit status 1. A client of the application with no terminal is put
-the same question as a pending `warning`, answered with an `accepted` or a
-`declined` decision naming it.
+error, and exit status 1.
 
 Behind the question, every request crucible sends to a host of such a route is
 held until the route has its yes, however the route was reached: `/login`,

@@ -1748,11 +1748,23 @@ fn a_log_that_stopped_recording_says_so_where_it_says_where_the_file_is() {
 }
 
 #[test]
+fn a_native_session_says_only_the_command_that_comes_back() {
+    // Its transcript is still in the reader's scrollback, and so is anything
+    // said about the log while it ran, so the way back is all there is to add.
+    let written = parted(&Parting::Stayed(FILE.into()));
+
+    assert!(written.contains("Resume this session with:"), "{written}");
+    assert!(written.contains("crucible --resume one"), "{written}");
+    assert!(!written.contains(".jsonl"), "{written}");
+    assert!(!written.contains("stopped recording"), "{written}");
+}
+
+#[test]
 fn a_session_that_hid_nothing_writes_nothing_on_its_way_out() {
     // The row a shell is about to draw its prompt on belongs to the shell. A
-    // session that took no screen has nothing to hand back and nothing to
-    // report, and spending that row saying so is the one cost this line exists
-    // to avoid.
+    // session with no reader to tell, or nothing kept to come back to, has
+    // nothing to report, and spending that row saying so is the one cost this
+    // line exists to avoid.
     assert_eq!(parted(&Parting::Nothing), "");
 }
 

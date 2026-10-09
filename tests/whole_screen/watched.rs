@@ -42,7 +42,7 @@ use rustix::fs::{Mode, OFlags};
 use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
 
-use crate::screen::Screen;
+use crate::screen::{Profile, Screen};
 use crate::vendor::Vendor;
 
 /// How long the terminal must go without a byte before the screen is settled.
@@ -231,9 +231,11 @@ struct TerminalFixture<'a> {
     columns: u16,
     rows: u16,
     reply: Option<&'a [u8]>,
-    /// Whether the launch asked for native mode, and so draws in this
-    /// terminal's own buffer rather than on a screen of its own.
+    /// Whether the launch draws in the terminal's own buffer rather than on
+    /// a screen of its own.
     native: bool,
+    /// How the terminal reflows and counts columns.
+    profile: Profile,
     /// Whether the far side starts in the mode a new terminal opens in,
     /// echoing and reading whole lines, rather than raw.
     cooked: bool,
@@ -282,6 +284,7 @@ impl Watched {
                 rows,
                 reply: Some(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?1;2c"),
                 native: false,
+                profile: Profile::default(),
                 cooked: false,
             },
             None,
@@ -310,6 +313,31 @@ impl Watched {
         Self::started(case, columns, rows, Some(vendor), true)
     }
 
+    /// The same, on a terminal that counts columns as `profile` says rather
+    /// than as most terminals now do.
+    pub(crate) fn answering_on(
+        case: &str,
+        columns: u16,
+        rows: u16,
+        vendor: &Vendor,
+        profile: Profile,
+    ) -> Self {
+        Self::configured_with_terminal(
+            case,
+            &document(Some(vendor), None),
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: false,
+                profile,
+                cooked: false,
+            },
+            None,
+        )
+    }
+
     /// The same again, in native mode: crucible drawing at the foot of the
     /// terminal's own buffer rather than on a screen of its own.
     ///
@@ -320,6 +348,18 @@ impl Watched {
     /// [`Self::assert_never_alternate`] and not with its rows, which look the
     /// same on either screen until something scrolls.
     pub(crate) fn native(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
+        Self::native_on(case, columns, rows, vendor, Profile::default())
+    }
+
+    /// The same, on a terminal that reflows and counts columns as `profile`
+    /// says rather than as most terminals now do.
+    pub(crate) fn native_on(
+        case: &str,
+        columns: u16,
+        rows: u16,
+        vendor: &Vendor,
+        profile: Profile,
+    ) -> Self {
         let document = format!(
             "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
              \"output\": {{\"screen\": \"native\"}},\n  \
@@ -337,6 +377,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: true,
+                profile,
                 cooked: false,
             },
             None,
@@ -353,9 +394,9 @@ impl Watched {
     /// the terminal they are actually in — was the one thing no case here
     /// could see. This asks for colour outright, which outranks `NO_COLOR`.
     ///
-    /// `ansi` because the screen keeps text and drops every colour it is told,
-    /// so what a snapshot is worth is the rows, and the sixteen a terminal
-    /// already has are the fewest escapes to get to them.
+    /// `ansi` because these cases are read through [`Self::picture`], which
+    /// shows the rows and not what they were drawn in, and the sixteen a
+    /// terminal already has are the fewest escapes to get to them.
     pub(crate) fn in_colour(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
         let document = format!(
             "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
@@ -366,6 +407,30 @@ impl Watched {
         );
 
         Self::configured(case, columns, rows, &document, true)
+    }
+
+    /// The same again, in the colours crucible draws with when nothing chooses
+    /// a theme, for a case read with [`Self::picture_in_colour`].
+    ///
+    /// Colour is asked for outright, which outranks the `NO_COLOR` the harness
+    /// sets, and the theme is left to its default. Nothing else differs from
+    /// the launch the case copies: `vendor` and `rule` are what it was given,
+    /// and a case with a vendor has the variable a key is read from, as every
+    /// case that reaches one does.
+    pub(crate) fn in_default_colours(
+        case: &str,
+        size: (u16, u16),
+        vendor: Option<&Vendor>,
+        rule: Option<&str>,
+    ) -> Self {
+        let plain = document(vendor, rule);
+        let rest = plain
+            .strip_prefix("{\n")
+            .expect("a whole-screen configuration object");
+        let document = format!("{{\n  \"output\": {{\"color\": \"always\"}},\n{rest}");
+        let (columns, rows) = size;
+
+        Self::configured(case, columns, rows, &document, vendor.is_some())
     }
 
     /// A provider to reach and nothing to sign a request with.
@@ -429,6 +494,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: screen == "native",
+                profile: Profile::default(),
                 cooked: false,
             },
             None,
@@ -528,6 +594,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: false,
+                profile: Profile::default(),
                 cooked: true,
             },
             None,
@@ -556,6 +623,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: false,
+                profile: Profile::default(),
                 cooked: false,
             },
             None,
@@ -573,6 +641,7 @@ impl Watched {
                 rows,
                 reply: None,
                 native: false,
+                profile: Profile::default(),
                 cooked: false,
             },
             Some(launch),
@@ -629,9 +698,9 @@ impl Watched {
 
         let (columns, rows) = (terminal.columns as usize, terminal.rows as usize);
         let screen = if terminal.native {
-            Screen::native(columns, rows)
+            Screen::native_on(columns, rows, terminal.profile)
         } else {
-            Screen::new(columns, rows)
+            Screen::fullscreen_on(columns, rows, terminal.profile)
         };
         let mut window = Self {
             terminal: near,
@@ -1067,7 +1136,22 @@ impl Watched {
             .status()
             .expect("kill is on the path");
         assert!(sent.success(), "{signal} never reached crucible");
+        self.lets_go(signal)
+    }
 
+    /// Types `keys` that end the session, `/exit` or a second Ctrl+C, and
+    /// reads the terminal until crucible has let go of it, as [`Self::ends_on`]
+    /// does for a signal.
+    pub(crate) fn ends_after(&mut self, keys: &str) -> (ExitStatus, String) {
+        self.terminal
+            .write_all(keys.as_bytes())
+            .expect("keys go to the terminal");
+        self.lets_go(&format!("{keys:?}"))
+    }
+
+    /// Reads until the process has ended, and says how it ended and what it
+    /// wrote on the way; `cause` names what ended it in a failure.
+    fn lets_go(&mut self, cause: &str) -> (ExitStatus, String) {
         let deadline = Instant::now() + CEILING;
         let mut wrote = Vec::new();
         loop {
@@ -1081,13 +1165,19 @@ impl Watched {
             }
             assert!(
                 Instant::now() < deadline,
-                "crucible outlived {signal} by {CEILING:?}\n{}",
+                "crucible outlived {cause} by {CEILING:?}\n{}",
                 self.picture()
             );
         }
 
         let ended = self.child.wait().expect("crucible ended");
         (ended, String::from_utf8_lossy(&wrote).into_owned())
+    }
+
+    /// Whether the terminal carries a character written past the last column
+    /// on to the next row, as the last sequence that set it left it.
+    pub(crate) fn wraps(&self) -> bool {
+        self.screen.wraps()
     }
 
     /// Whether the terminal echoes what is typed, and whether it hands over
@@ -1129,6 +1219,11 @@ impl Watched {
     /// The screen, ready to be compared against the one checked in beside it.
     pub(crate) fn picture(&self) -> String {
         self.screen.picture()
+    }
+
+    /// The same, with what each span was drawn in under its row.
+    pub(crate) fn picture_in_colour(&self) -> String {
+        self.screen.picture_in_colour()
     }
 
     /// The rows that scrolled off the top of a native window, oldest first,

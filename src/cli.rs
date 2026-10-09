@@ -36,6 +36,7 @@ mod sample;
 mod seen;
 mod standing;
 mod style;
+mod update;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
@@ -185,6 +186,15 @@ completion SHELL writes a completion script for bash, zsh, fish, powershell \
 or elvish, made from this command line as it is, and stops. It reads no \
 configuration and opens no terminal.
 
+update says whether a release later than this one is out and, where \
+install.sh installed crucible, downloads it, checks it against the release's \
+SHA256SUMS, makes it the active release and stops; a release that does not \
+then run as itself is rolled back. update --check only says, and exits 3 when \
+a later release is out; update --dry-run says what would be installed. Asking \
+is what updates: updates.check does not stop it, and a build cargo made, a \
+copy put in place by hand and a Windows install are refused with the way \
+each is updated instead.
+
 Flags, session files and config are unstable for the whole 0.x line.",
     args_conflicts_with_subcommands = true
 )]
@@ -278,6 +288,16 @@ enum Command {
     Sessions {
         #[command(subcommand)]
         action: SessionsAction,
+    },
+    /// Say whether a later release is out, or install it in place of this
+    /// one where install.sh installed it, and stop.
+    Update {
+        /// Only say whether a later release is out; exit 3 if one is.
+        #[arg(long, conflicts_with = "dry_run")]
+        check: bool,
+        /// Say what an update would install, and change nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Write a completion script for a shell to standard output, and stop.
     Completion {
@@ -522,6 +542,9 @@ pub(crate) fn start() -> ExitCode {
             };
         }
         (Some(Command::Completion { shell }), _, _) => return completion::completed(*shell),
+        (Some(Command::Update { check, dry_run }), _, _) => {
+            return update::updated(*check, *dry_run);
+        }
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {
@@ -1036,6 +1059,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // screen of its own and the terminal's buffer without leaving half of
     // itself in a scrollback the other does not keep.
     let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
+    watch_size(&mut renderer);
 
     // The mode the files named, or the one that asks. `None` is "no layer
     // said", which is a different thing from a layer that said `ask` — but the
@@ -1361,6 +1385,26 @@ fn wanted(choice: &Choice, settings: &Settings, serving: Option<Served>) -> Opti
 fn thinking(asked: Option<Effort>, settings: &Settings, serving: Option<Served>) -> Option<Effort> {
     asked.or_else(|| settings.effort(serving?.name))
 }
+
+/// Has the renderer ask the window its size only after the operating system
+/// says it changed.
+///
+/// On Unix that word is `SIGWINCH`, whose handler raises a flag and does
+/// nothing else, and a frame lowers the flag when it asks. A platform that
+/// sends no such signal, or a handler that could not be installed, leaves the
+/// renderer as it was: the native region asks on every frame, and the full
+/// screen learns of a resize from the press that reports it.
+#[cfg(unix)]
+fn watch_size<T: crucible_tui::Terminal>(renderer: &mut Renderer<T>) {
+    let resizes = crucible_tui::ResizeFlag::default();
+    if signal_hook::flag::register(signal_hook::consts::SIGWINCH, resizes.raised_by()).is_ok() {
+        renderer.watches_size(resizes);
+    }
+}
+
+/// Nothing to watch where no signal says a window changed size.
+#[cfg(not(unix))]
+fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
 
 /// Where the renderer draws, for the screen the configuration names.
 ///

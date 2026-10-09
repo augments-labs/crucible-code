@@ -37,6 +37,7 @@ pub(super) fn replace_with(
     permissions: Option<Permissions>,
     expected: Option<&File>,
     write: impl FnOnce(&mut File) -> io::Result<()>,
+    unchanged: impl FnOnce(&mut File) -> bool,
 ) -> Result<(), PathError> {
     let expected_parent = path
         .as_path()
@@ -68,8 +69,9 @@ pub(super) fn replace_with(
         // compare-and-rename operation. A later leaf swap can still win this
         // narrow interval, but the rename remains relative to the held parent
         // handle and replaces that leaf rather than following a reparse point.
-        let current = path.open_regular().map_err(|_| changed(path))?;
-        if !same(&current, expected).unwrap_or(false) {
+        // The content is asked about only once the identity matched.
+        let mut current = path.open_regular().map_err(|_| changed(path))?;
+        if !same(&current, expected).unwrap_or(false) || !unchanged(&mut current) {
             return Err(changed(path));
         }
     }

@@ -485,16 +485,42 @@ pub fn reopening(
 /// most recent one is the whole plan — the tool replaces the list every time —
 /// so the search stops at the first it finds from the end.
 ///
+/// Only a call whose result succeeded is read. One that was refused, declined,
+/// cancelled or never run, or that has no result because the log stops before
+/// one, asked for a plan that never took effect, and the plan in force is still
+/// the one before it; so such a call is passed over. The record is what decides
+/// this, so a call that wrote its plan and was then answered as failed — its
+/// answer could not be kept — is passed over too, and the plan stood up is the
+/// last one the model was told it had written. A call whose answer did not fit
+/// the turn keeps the outcome it reported, so its plan is the one in force.
+///
 /// Nothing is said where there is none, and nothing is said where the call
 /// cannot be read: this is a picture of the work, drawn again from the record,
 /// and a session that is picked up without one opens the way a new session does.
 pub fn planned(plan: &Plan, transcript: &Transcript) {
-    let called = transcript.messages().iter().rev().find_map(|message| {
+    let messages = transcript.messages();
+    let called = messages.iter().enumerate().rev().find_map(|(at, message)| {
         let Message::Agent { calls, .. } = message else {
             return None;
         };
 
-        calls.iter().rev().find(|call| &*call.name == PLANNING)
+        // The results answering this message's calls come after it and before
+        // whatever the model or the user says next.
+        let results = messages
+            .iter()
+            .skip(at.saturating_add(1))
+            .take_while(|next| !matches!(next, Message::Agent { .. } | Message::User { .. }))
+            .find_map(|next| match next {
+                Message::ToolResults(results) => Some(results),
+                _ => None,
+            })?;
+
+        calls.iter().rev().find(|call| {
+            &*call.name == PLANNING
+                && results
+                    .iter()
+                    .any(|result| result.id == call.id && !result.output.is_failed())
+        })
     });
 
     if let Some(call) = called {
@@ -1462,15 +1488,15 @@ fn tools(
     let mut tools = Tools::looking_up(startup.revealed.clone());
     let mut held: Vec<Held> = Vec::new();
 
-    // Which files have been read is learned by one tool and asked by another,
+    // Which files have been read is learned by one tool and asked by others,
     // and this is the only place that may know they share it. The record itself
     // comes from the caller: `/clear` and `/resume` empty it when they leave
-    // the session those files were read in, and neither tool can reach the
-    // other to be told.
+    // the session those files were read in, and no tool can reach the others
+    // to be told.
     tools.add_builtin(Read::new(workspace.clone(), seen.clone()))?;
     tools.add_builtin(Grep::new(workspace.clone()))?;
     tools.add_builtin(Glob::new(workspace.clone()))?;
-    tools.add_builtin(Edit::new(workspace.clone()))?;
+    tools.add_builtin(Edit::new(workspace.clone(), seen.clone()))?;
     tools.add_builtin(Write::new(workspace.clone(), seen.clone()))?;
 
     // The whole `env` block goes to the commands crucible runs. crucible does

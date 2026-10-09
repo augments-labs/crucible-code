@@ -53,6 +53,7 @@ cd "$(dirname "$0")/../.."
 # mode | probe under src/bin/ | the budget it owns
 readonly BUDGETS=(
     "startup|bench-first-frame|first frame <= 20 ms p95"
+    "startup|bench-native-frame|first frame in native mode <= 20 ms p95"
     "startup|bench-first-input|first input <= 60 ms p95"
     "startup|bench-cli-exit|help and version process exit <= 12 ms p95"
     "startup|bench-resume-preview|resume picker, deepest session previewed <= 20 ms p95"

@@ -7,18 +7,48 @@ use std::os::unix::fs::PermissionsExt as _;
 use crucible_types::Change;
 
 use super::{Cancel, Edit, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
+use crate::Ledger;
 use crate::sample::{Sample, allowed, asked_once, lent, occupied, waited};
 
 fn edit(sample: &Sample, args: &str) -> ToolOutput {
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
     crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context())).unwrap()
 }
 
 /// A call the tool cannot read, which ends the turn rather than answering.
 fn refuse(sample: &Sample, args: &str) -> ToolError {
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
     crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
         .unwrap_err()
+}
+
+/// A call against a record somebody else has already told about files.
+fn editing(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
+    let tool = Edit::new(sample.workspace(), seen.clone());
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context())).unwrap()
+}
+
+/// Reads `at` through the real `read` tool, so the record holds what that
+/// tool keeps about a file it showed rather than what a test fills in.
+fn shown(sample: &Sample, at: &str) -> Ledger {
+    let seen = Ledger::new();
+    let reader = crate::Read::new(sample.workspace(), seen.clone());
+    let args = format!(r#"{{"path":"{at}"}}"#);
+    let output =
+        crucible_runtime::answered!(reader.run(allowed(&reader, &args), &crate::sample::context()))
+            .unwrap();
+    assert!(!output.is_failed(), "{}", output.text());
+    seen
+}
+
+/// Has another writer put `text` into `at`, in place, once an edit of it has
+/// read its source and prepared the replacement, and before it is committed.
+fn changed_before_commit(sample: &Sample, at: &str, text: &'static str) {
+    let path = sample.workspace().existing(at).unwrap();
+    let target = sample.root().join(at);
+    crate::atomic::interruption::before_commit(path.as_path(), move || {
+        fs::write(target, text).unwrap();
+    });
 }
 
 fn read(sample: &Sample, at: &str) -> String {
@@ -294,7 +324,7 @@ fn a_link_retargeted_after_the_verdict_to_another_file_inside_changes_neither() 
         sample.root().join("door.txt"),
     );
 
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
     let approved = allowed(
         &tool,
         r#"{"path":"door.txt","find":"token = 1","replace":"token = 2"}"#,
@@ -330,7 +360,7 @@ fn a_link_retargeted_after_the_verdict_between_files_whose_names_are_not_text_ch
     }
     crate::sample::symlink(&named, sample.root().join("door.txt"));
 
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
     let approved = allowed(
         &tool,
         r#"{"path":"door.txt","find":"token = 1","replace":"token = 2"}"#,
@@ -419,7 +449,7 @@ fn a_stopped_turn_does_not_scan_or_change_the_file() {
     sample.write("one.txt", &"a".repeat(super::FILE_LIMIT));
     let cancel = Cancel::new();
     cancel.request();
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
 
     let problem = crucible_runtime::answered!(tool.run(
         allowed(
@@ -496,7 +526,7 @@ fn an_edit_preserves_the_existing_file_mode() {
 fn a_call_with_no_find_says_what_is_missing() {
     let sample = Sample::new("edit-nofind");
 
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
     let problem = crucible_runtime::answered!(tool.run(
         allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#),
         &crate::sample::context(),
@@ -510,7 +540,7 @@ fn a_call_with_no_find_says_what_is_missing() {
 fn editing_names_the_file_it_would_change() {
     let sample = Sample::new("edit-sensitivity");
     sample.write("one.rs", "a\n");
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
 
     let sensitivity = tool.sensitivity(&ToolArgs::new(r#"{"path":"one.rs"}"#));
 
@@ -571,7 +601,7 @@ fn an_edit_lent_a_busy_worker_waits_for_room_and_touches_nothing_meanwhile() {
     // place is taken the call waits, and the file is what it was.
     let sample = Sample::new("edit-waits");
     sample.write("one.txt", "alpha\n");
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
     let worker = crate::sample::worker();
     let busy = occupied(&worker);
     let context = lent(&worker, &Cancel::new());
@@ -600,7 +630,7 @@ fn an_edit_lent_a_busy_worker_waits_for_room_and_touches_nothing_meanwhile() {
 fn an_edit_cancelled_while_it_waits_for_the_worker_changes_nothing() {
     let sample = Sample::new("edit-cancelled-waiting");
     sample.write("one.txt", "alpha\n");
-    let tool = Edit::new(sample.workspace());
+    let tool = Edit::new(sample.workspace(), Ledger::new());
     let worker = crate::sample::worker();
     let busy = occupied(&worker);
     let cancel = Cancel::new();
@@ -626,4 +656,104 @@ fn an_edit_cancelled_while_it_waits_for_the_worker_changes_nothing() {
         "{answered:?}"
     );
     assert_eq!(read(&sample, "one.txt"), "alpha\n");
+}
+
+#[test]
+fn an_edit_of_a_file_changed_since_it_was_read_is_refused_as_stale() {
+    // The text the model asked to find may still be there, but it chose the
+    // change from what it read, and what is around it now is somebody else's.
+    let sample = Sample::new("edit-stale-since-read");
+    sample.write("one.rs", "let a = 1;\n");
+    let seen = shown(&sample, "one.rs");
+
+    sample.write("one.rs", "let a = 1;\nlet b = 2;\n");
+    let output = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 1;","replace":"let a = 3;"}"#,
+        &seen,
+    );
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.rs"), "let a = 1;\nlet b = 2;\n");
+    assert_eq!(
+        output.text(),
+        "one.rs changed since it was read, so the edit was not made: read it again"
+    );
+}
+
+#[test]
+fn an_edit_whose_source_changes_in_place_before_its_commit_is_refused_as_stale() {
+    // The file keeps its name and its identity, so only what is in it shows
+    // that the replacement was made from text that is no longer there.
+    let sample = Sample::new("edit-stale-before-commit");
+    sample.write("one.rs", "let a = 1;\n");
+    let seen = shown(&sample, "one.rs");
+
+    changed_before_commit(&sample, "one.rs", "let a = 9;\n");
+    let output = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 1;","replace":"let a = 2;"}"#,
+        &seen,
+    );
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.rs"), "let a = 9;\n");
+    assert_eq!(
+        output.text(),
+        "one.rs changed while its replacement was prepared, so it was not replaced"
+    );
+}
+
+#[test]
+fn an_edit_of_a_file_never_read_whose_source_changes_before_its_commit_is_refused_as_stale_unread()
+{
+    // An unread file may be edited, since the edit reads what it changes; the
+    // content it holds the commit to is the source it read.
+    let sample = Sample::new("edit-stale-unread");
+    sample.write("one.rs", "let a = 1;\n");
+
+    changed_before_commit(&sample, "one.rs", "let a = 9;\n");
+    let output = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 1;","replace":"let a = 2;"}"#,
+        &Ledger::new(),
+    );
+
+    assert!(output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "one.rs"), "let a = 9;\n");
+    assert_eq!(
+        output.text(),
+        "one.rs changed while its replacement was prepared, so it was not replaced"
+    );
+}
+
+#[test]
+fn what_an_edit_made_needs_no_read_before_the_next_change() {
+    // The record follows the file through the session's own changes, so
+    // neither a second edit nor a write after it is sent back to read.
+    let sample = Sample::new("edit-then-change");
+    sample.write("one.rs", "let a = 1;\n");
+    let seen = shown(&sample, "one.rs");
+
+    let first = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 1;","replace":"let a = 2;"}"#,
+        &seen,
+    );
+    let second = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 2;","replace":"let a = 3;"}"#,
+        &seen,
+    );
+    let tool = crate::Write::new(sample.workspace(), seen.clone());
+    let written = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"path":"one.rs","content":"let a = 4;\n"}"#),
+        &crate::sample::context(),
+    ))
+    .unwrap();
+
+    for output in [&first, &second, &written] {
+        assert!(!output.is_failed(), "{}", output.text());
+    }
+    assert_eq!(read(&sample, "one.rs"), "let a = 4;\n");
 }

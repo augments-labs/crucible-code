@@ -441,7 +441,7 @@ fn a_turn_output_refusal_reclaims_the_unaccepted_background_scope() {
     let tools = deferred_tools(&accepted, Arc::new(LongOutput));
     let snapshot = tools.snapshot().unwrap();
     let journal = ResultJournal::default();
-    let (events, _seen) = channel();
+    let (events, seen) = channel();
     let keeping = Keeping(events);
     let ancestry = Ancestry::new();
     let cancel = Cancel::new();
@@ -460,11 +460,18 @@ fn a_turn_output_refusal_reclaims_the_unaccepted_background_scope() {
         worker: None,
         concurrency: 1,
     }
-    .pass(&[call("deferred-call", "deferred")], 0, 40)
+    .pass(&[call("deferred-call", "deferred")], 0, LEFT_OUT.len())
     .awaited();
 
+    // What it left running is stopped with its acceptance, so it is not said
+    // to have succeeded.
     assert!(matches!(went, Went::OutputLimit));
-    assert!(results.first().expect("one result").output.is_failed());
+    assert_eq!(
+        texts(&results),
+        ["ran and was stopped: the turn output limit was reached"]
+    );
+    assert!(results.iter().all(|result| result.output.is_failed()));
+    assert_eq!(finished(&seen), [ToolOutcome::Failed]);
     assert!(journal.results.lock().unwrap().is_empty());
     assert_eq!(
         *accepted.lock().unwrap(),
@@ -1351,9 +1358,11 @@ fn texts(results: &[ToolResult]) -> Vec<&str> {
 }
 
 fn outcomes(proof: &Proof) -> Vec<ToolOutcome> {
-    proof
-        .seen
-        .try_iter()
+    finished(&proof.seen)
+}
+
+fn finished(seen: &Receiver<Event>) -> Vec<ToolOutcome> {
+    seen.try_iter()
         .filter_map(|event| match event {
             Event::ToolFinished {
                 receipt: Some(receipt),
@@ -1567,15 +1576,119 @@ fn every_call_reports_that_it_finished() {
 
 #[test]
 fn an_output_limit_still_answers_every_recorded_call() {
-    let oversized = "x".repeat(OUTPUT_LIMIT.len() + 1);
-    let maximum = OUTPUT_LIMIT.len() + NOT_RUN.len();
+    // Room for two calls to say they ran, and the first one's own answer is
+    // longer than that: it says it ran, and the second is never started.
+    let oversized = "x".repeat(LEFT_OUT.len() + 1);
+    let maximum = 2 * LEFT_OUT.len();
     let mut proof = Proof::new(Verdict::Allow).offering(Fixed::new("read").answering(&oversized));
 
     let (results, went, produced) =
         proof.within(&[call("a", "read"), call("b", "read")], 0, maximum);
 
     assert_eq!(results.len(), 2);
-    assert_eq!(texts(&results), [OUTPUT_LIMIT, ""]);
+    assert_eq!(texts(&results), [LEFT_OUT, OUTPUT_LIMIT]);
     assert!(matches!(went, Went::OutputLimit));
     assert!(produced <= maximum);
+}
+
+/// What an executed call's text is replaced by when it does not fit the turn.
+const LEFT_OUT: &str = "ran; its output was left out: the turn output limit was reached";
+
+/// A tool that rewrites a file, says so at more length than the turn has room
+/// for, and counts how often it was run.
+struct Rewrote(Arc<AtomicUsize>);
+
+impl crucible_tools::DescribeTool for Rewrote {
+    fn name(&self) -> &'static str {
+        "edit"
+    }
+
+    fn schema(&self) -> &'static str {
+        r#"{"type":"object","properties":{}}"#
+    }
+}
+
+impl Tool for Rewrote {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+        Ok(())
+    }
+
+    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+        changing()
+    }
+
+    fn summary(&self, _args: &ToolArgs) -> Summary {
+        Summary::new("edit")
+    }
+
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            let diff = crucible_types::Diff::new([
+                crucible_types::Line::new(1, crucible_types::Change::Added, "one"),
+                crucible_types::Line::new(2, crucible_types::Change::Removed, "two"),
+                crucible_types::Line::new(3, crucible_types::Change::Added, "three"),
+            ]);
+            Ok(ToolOutput::ok("x".repeat(LEFT_OUT.len() + 17)).showing(diff))
+        })
+    }
+}
+
+fn rewriting() -> (Proof, Arc<AtomicUsize>) {
+    let ran = Arc::new(AtomicUsize::new(0));
+    let mut proof = Proof::new(Verdict::Allow);
+    proof.tools.add_builtin(Rewrote(Arc::clone(&ran))).unwrap();
+    (proof, ran)
+}
+
+#[test]
+fn ran_and_left_out_keeps_what_the_call_did() {
+    // The file is already rewritten by the time its answer is measured, so
+    // saying the call did not run would send the model to make the change a
+    // second time. Only the words that do not fit are left out.
+    let (mut proof, ran) = rewriting();
+
+    let (results, went, produced) = proof.within(&[call("a", "edit")], 0, LEFT_OUT.len());
+
+    assert_eq!(ran.load(Ordering::SeqCst), 1);
+    assert_eq!(texts(&results), [LEFT_OUT]);
+    let [result] = results.as_slice() else {
+        panic!("one call, one result");
+    };
+    assert!(
+        !result.output.is_failed(),
+        "a call that succeeded reads as failed"
+    );
+    assert_eq!(
+        result
+            .output
+            .changed()
+            .map(|changed| (changed.added(), changed.removed())),
+        Some((2, 1))
+    );
+    assert_eq!(outcomes(&proof), [ToolOutcome::Succeeded]);
+    assert!(matches!(went, Went::OutputLimit));
+    assert!(produced <= LEFT_OUT.len());
+}
+
+#[test]
+fn ran_and_left_out_refused_under_63() {
+    // One byte short of what saying the call ran would take, so the call is
+    // not started at all, and is the one thing that may be said not to have
+    // run.
+    let (mut proof, ran) = rewriting();
+
+    let (results, went, _) = proof.within(&[call("a", "edit")], 0, LEFT_OUT.len() - 1);
+
+    assert_eq!(ran.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        texts(&results),
+        ["not run: the turn output limit was reached"]
+    );
+    assert_eq!(outcomes(&proof), [ToolOutcome::OutputLimit]);
+    assert!(matches!(went, Went::OutputLimit));
 }
