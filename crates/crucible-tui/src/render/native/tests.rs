@@ -376,6 +376,8 @@ struct Seen {
     is_terminal: bool,
     /// How many of the next size queries fail.
     unsizable: usize,
+    /// How many of the next writes are refused.
+    unwritable: usize,
     /// The size the terminal reports, where that is not the size it draws at.
     reports: Option<Size>,
     /// How many times the terminal was asked its size.
@@ -393,6 +395,7 @@ impl Window {
             emulator: Emulator::new(columns, rows),
             is_terminal: true,
             unsizable: 0,
+            unwritable: 0,
             reports: None,
             asked: 0,
         })))
@@ -402,6 +405,12 @@ impl Window {
     /// not say does.
     fn loses_size(&self, times: usize) {
         self.0.borrow_mut().unsizable = times;
+    }
+
+    /// Makes the next `times` writes fail, writing nothing, as a terminal
+    /// that cannot be written to for a while does.
+    fn refuses_writes(&self, times: usize) {
+        self.0.borrow_mut().unwritable = times;
     }
 
     /// Makes every size query answer `size`, whatever the window draws at: a
@@ -475,6 +484,10 @@ impl Terminal for Window {
 
     fn write(&mut self, text: &str) -> Result<(), TerminalError> {
         let mut seen = self.0.borrow_mut();
+        if seen.unwritable > 0 {
+            seen.unwritable = seen.unwritable.saturating_sub(1);
+            return Err(TerminalError::Io(std::io::ErrorKind::BrokenPipe.into()));
+        }
         seen.written.push_str(text);
         if seen.is_terminal {
             seen.emulator.feed(text);
@@ -883,6 +896,48 @@ fn a_native_replay_after_a_clear_gives_back_nothing_from_before_it() {
         "{:#?}",
         window.all()
     );
+}
+
+#[test]
+fn a_native_replay_whose_write_fails_is_written_again_at_the_next_frame() {
+    // The frame that clears the screen and gives back what was kept could not
+    // be written. Nothing of it reached the terminal, so it is still owed: the
+    // next frame clears and writes everything kept, rather than drawing the
+    // region alone over whatever the failed write left.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    let said: Vec<String> = (0..8)
+        .map(|at| format!("said {at:02} in words that fold at twenty"))
+        .collect();
+    finished(&mut render, &said);
+
+    window.resize(20, 6);
+    render.resized().unwrap();
+    window.take();
+    window.refuses_writes(1);
+    assert!(
+        render.settled(Instant::now() + SETTLE).is_err(),
+        "the replay was written: {:?}",
+        window.take()
+    );
+
+    render
+        .under(&[row("* thinking")], None, Palette::plain())
+        .unwrap();
+    let after = window.take();
+    assert!(
+        after.contains("\x1b[2J\x1b[3J"),
+        "the replay was not written again: {after:?}"
+    );
+    for at in 0..8 {
+        assert_eq!(
+            window.rows_saying(&format!("said {at:02} in")),
+            1,
+            "said {at:02}: {:#?}",
+            window.all()
+        );
+    }
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
 
 #[test]
