@@ -1375,7 +1375,7 @@ fn a_native_session_that_is_left_says_how_to_come_back_to_it() {
 }
 
 /// What `command` printed in a window too short for its panel, read back once
-/// the window is made each of `WIDTHS` wide and tall enough to hold it all,
+/// the window is made each of `widths` wide and tall enough to hold it all,
 /// beside what the same command prints when it is run at that width from the
 /// start. In native mode when `native`, in the full screen otherwise; read
 /// through the row that says `last`.
@@ -1384,8 +1384,8 @@ fn printed_then_resized(
     command: &str,
     last: &str,
     native: bool,
+    widths: [u16; 2],
 ) -> Vec<(u16, Vec<String>, Vec<String>)> {
-    const WIDTHS: [u16; 2] = [40, 80];
     const TALL: u16 = 100;
     let vendor = Vendor::answering("Hello.");
     let open = |name: &str, columns: u16| {
@@ -1409,7 +1409,7 @@ fn printed_then_resized(
     };
 
     let mut window = open(case, 80);
-    WIDTHS
+    widths
         .into_iter()
         .map(|columns| {
             window.resize(columns, TALL);
@@ -1421,12 +1421,14 @@ fn printed_then_resized(
 }
 
 /// Fails where a printed block kept the width it was printed at once the
-/// window narrowed or widened again, in either screen mode.
-fn assert_laid_again(case: &str, command: &str, last: &str) {
+/// window narrowed to the first of `widths` or widened again to the second, in
+/// either screen mode. The narrower has to be one some row of the block does
+/// not fit, or the block laid once reads the same as the block laid again.
+fn assert_laid_again(case: &str, command: &str, last: &str, widths: [u16; 2]) {
     for native in [false, true] {
         let mode = if native { "native" } else { "fullscreen" };
         for (columns, resized, fresh) in
-            printed_then_resized(&format!("{case}-{mode}"), command, last, native)
+            printed_then_resized(&format!("{case}-{mode}"), command, last, native, widths)
         {
             assert_eq!(resized, fresh, "{command} at {columns} columns, {mode}");
         }
@@ -1435,23 +1437,23 @@ fn assert_laid_again(case: &str, command: &str, last: &str) {
 
 #[test]
 fn usage_printed_is_laid_again_at_each_width_it_is_read_at() {
-    assert_laid_again("usage-relaid", "/usage", "limits not reported");
+    assert_laid_again("usage-relaid", "/usage", "limits not reported", [40, 80]);
 }
 
 #[test]
 fn context_printed_is_laid_again_at_each_width_it_is_read_at() {
-    assert_laid_again("context-relaid", "/context", "free");
+    assert_laid_again("context-relaid", "/context", "free", [40, 80]);
 }
 
 #[test]
 fn settings_printed_is_laid_again_at_each_width_it_is_read_at() {
-    // Not reproduced: every row the listing writes fits forty columns, so a
-    // narrower window cut none of them before the others were laid again.
-    // Kept so that a longer row is caught.
-    assert_laid_again("settings-relaid", "/settings", "Persistent cache");
+    // Every row the listing writes fits forty columns, so it is read at
+    // thirty, which `Cache retention` and its value do not fit: a listing laid
+    // once is cut there, where one laid again folds the value under its name.
+    assert_laid_again("settings-relaid", "/settings", "Persistent cache", [30, 80]);
 }
 
 #[test]
 fn model_listing_printed_is_laid_again_at_each_width_it_is_read_at() {
-    assert_laid_again("model-relaid", "/model", "zai/glm-5.2");
+    assert_laid_again("model-relaid", "/model", "zai/glm-5.2", [40, 80]);
 }
