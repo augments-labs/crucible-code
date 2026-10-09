@@ -8,6 +8,49 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-09
+
+**Crucible 0.47.0 updates itself, keeps what other programs change, and holds
+the screen together when the window is resized.**
+`crucible update` installs the newest release over one `install.sh` made, after
+the same checks the installer runs, and `--check` only says whether one is out.
+A write or edit over a file changed since it was read is now refused rather
+than discarding the other change. Resizing redraws native mode's whole
+conversation at the new width, and fullscreen no longer blanks the prompt box.
+
+### Added
+
+- **`crucible update` brings an install up to date.** It asks which release is newest and installs it in place with the same checks and rollback `install.sh` uses, or with `--check` only says whether one is out. Installs that `install.sh` did not make are refused with the way to update them instead.
+
+### Changed
+
+- **A write or edit over a file changed since it was read is refused.** If another program changes a file after crucible read it, `write` and `edit` now refuse to replace it and ask for it to be read again, instead of discarding the other change. This holds for a partial read too, and for a file replaced by a new one at the same name.
+
+### Fixed
+
+- **A row drawn wider than crucible counted it no longer leaves copies behind.** On a terminal that draws symbols like ☀ two columns wide, native mode repeated rows in the scrollback and fullscreen left a stray row under the box. crucible now turns autowrap off while it draws, so such a row loses its last cell instead, and turns it back on when it exits.
+- **Cancelling now stops a response the provider keeps alive with comments.** A turn or compaction stops within a second of being cancelled even while the provider sends keep-alive comments, or lines of an event it never finishes.
+- **A manifest that is not a file no longer stalls extension discovery.** An extension whose `manifest.json` is a named pipe or a device is now refused as unreadable, and the other extensions are still found and listed.
+- **A character two columns wide no longer runs past the edge of a one column row.** An ideograph or an emoji in a notice, a panel or the release notes was put on a row of its own and drawn across the edge, which pushed every row under it one lower. It is now left out of that row, as it already was where a row is cut rather than folded.
+- **Resizing the window no longer blanks the prompt box or the running turn.** What stands at the foot of the window stays on screen through a resize, cut at the new width until it is laid out again, and a terminal that cannot report its size no longer refolds the session as if it were 80 columns wide.
+- **A native session says how to come back to it when you leave.** Leaving a session with `output.screen` set to `native`, by `/exit` or by pressing Ctrl+C twice, now prints the `crucible --resume` command for it, as the full screen always has.
+- **Resizing a native session redraws the whole conversation at the new width.** With `output.screen` set to `native`, crucible now waits for the window to stop changing size, then clears the screen and the terminal's scrollback and writes the conversation again, so no row is lost or doubled on any terminal. Shell output from before crucible started, and transcript from before a `/clear` or `/resume`, are not written again.
+- **A resumed session shows the plan that was in force.** `/resume` now stands up the plan from the last `todo_write` that succeeded, so a plan the user declined, that never ran, or that was refused no longer appears above the prompt.
+- **A call whose output overflows the turn is no longer reported as not run.** When a call's answer is too long for what is left of the turn's output allowance, it now keeps its outcome and change counts and says it ran with its output left out, so the model does not redo a change that was already made. A background command whose answer did not fit is reported as stopped, since it is.
+- **A window resized while an answer streams is drawn at its new size from the next frame.** Crucible now listens for the operating system's resize signal on Unix instead of waiting for the terminal's resize event to be read, and native mode no longer asks the terminal its size on every frame.
+- **`/usage`, `/context` and `/model` follow the window when it is resized.** What these commands print into the conversation is now laid out again at the new width, instead of being cut off when the window narrows and staying narrow when it widens. `/usage` and `/context` keep the figures they were read with.
+
+### Documentation
+
+- **The docs and manifest comments say what 0.47.0 ships.** The network page lists what `crucible update` connects to, the planning page says a resume restores the last plan that took effect, and the README install section names `crucible update`. A content-use sentence that described a client no user can run is gone, and the repository checks now refuse a crate-layering line that no manifest takes any more.
+
+### Internal
+
+- **Whole-screen tests now see colour.** Four cases capture what each span of the welcome, a tool call, the queue and `/usage` is drawn in, so a slot moving to another colour fails a test.
+- **Five more screens are captured in native mode.** `/context`, `/usage`, `/settings` and `/release-notes` now have whole-screen cases with `output.screen: native`, and a case for the queue panel stands ignored until a short native window gives the panel room.
+- **The benchmarks now time the first frame in native mode.** `bench-native-frame` holds a start with `output.screen: native` to the same 20 ms budget as a fullscreen start.
+- **The native screen tests now run on terminals that disagree with crucible.** A sweep checks that every finished row is kept exactly once on a terminal that does not rewrap its lines and on one that counts an emoji sequence as a single glyph.
+
 ## [0.46.0] - 2026-10-08
 
 **Crucible 0.46.0 adds commands that work outside a session, installs each
@@ -5264,7 +5307,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/augments-labs/crucible-code/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/augments-labs/crucible-code/compare/v0.45.3...v0.46.0
 [0.45.3]: https://github.com/augments-labs/crucible-code/compare/v0.45.2...v0.45.3
 [0.45.2]: https://github.com/augments-labs/crucible-code/compare/v0.45.1...v0.45.2
