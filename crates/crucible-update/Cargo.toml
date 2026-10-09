@@ -41,9 +41,10 @@ tokio = { workspace = true, features = ["rt", "time"] }
 # An install may be made only of root's files and those of the user running
 # crucible, and `std` cannot say who that is, nor whether the process an
 # install's lock names still runs, nor this host's name the lock carries as
-# `uname -n` prints it. `process` is turned on for `getuid` and for signal 0,
-# which stops nothing; only the tests kill, and only their own process.
-# `system` is turned on for `uname`.
+# `uname -n` prints it, nor make the pipe a new release's `--version` is read
+# from non-blocking, which `std` does only for sockets. `process` is turned on
+# for `getuid` and for signal 0, which stops nothing; only the tests kill, and
+# only their own process. `system` is turned on for `uname`.
 rustix = { workspace = true, features = ["process", "system"] }
 # A release unit is staged from the gzip-compressed tar the release ships;
 # `flate2` decompresses it and `tar` reads its members, and only on the

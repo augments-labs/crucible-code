@@ -230,6 +230,7 @@ fn a_build_that_is_not_a_release_is_refused() {
 mod installed {
     use std::fs;
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
 
     use super::*;
     use crate::install::fixture::{
@@ -243,6 +244,10 @@ mod installed {
 
     /// The release each test source offers.
     const NEXT: &str = "0.47.1";
+
+    /// Well inside the ten seconds a new release is given to say its version,
+    /// and well past what an update whose release answers at once takes.
+    const WELL_WITHIN: Duration = Duration::from_secs(5);
 
     /// An install laid out as `install.sh` lays one out, in a directory of
     /// its own that is deleted with the value.
@@ -336,6 +341,12 @@ mod installed {
                 archive,
             ),
         ]
+    }
+
+    /// The routes a source publishing `NEXT` as a release whose executable is
+    /// `script` answers.
+    fn releasing(script: &str) -> Vec<(String, &'static str, Vec<u8>)> {
+        publishing(NEXT, packed(NEXT, script.as_bytes(), Some(&broker(NEXT))))
     }
 
     #[test]
@@ -512,6 +523,110 @@ mod installed {
             "{refused:?}"
         );
         assert_eq!(install.active(), ACTIVE);
+    }
+
+    #[test]
+    fn a_release_that_says_far_more_than_its_version_is_stopped_and_rolled_back() {
+        let install = Install::new("talkative");
+        let finished = install.dir.join("said-everything");
+        let talkative = format!(
+            "#!/bin/sh\nhead -c 8388608 /dev/zero\necho 'crucible {NEXT}'\n: > '{}'\n",
+            finished.display()
+        );
+        let served = Served::new(publishing(
+            NEXT,
+            packed(NEXT, talkative.as_bytes(), Some(&broker(NEXT))),
+        ));
+
+        let began = Instant::now();
+        let refused = install
+            .update(Asked::Apply, &served)
+            .expect_err("a refusal");
+        let took = began.elapsed();
+
+        assert!(
+            matches!(&refused, Refused::RolledBack { version: rolled } if *rolled == version(NEXT)),
+            "{refused:?}"
+        );
+        assert_eq!(install.active(), ACTIVE);
+        assert!(
+            !finished.exists(),
+            "all 8 MiB the new release wrote were taken in while it ran"
+        );
+        assert!(
+            took < WELL_WITHIN,
+            "stopped by the clock rather than by what it said: {took:?}"
+        );
+    }
+
+    #[test]
+    fn a_release_that_says_its_version_and_fails_is_rolled_back() {
+        let install = Install::new("failing");
+        let served = Served::new(releasing(&format!(
+            "#!/bin/sh\necho 'crucible {NEXT}'\nexit 1\n"
+        )));
+
+        let refused = install
+            .update(Asked::Apply, &served)
+            .expect_err("a refusal");
+
+        assert!(
+            matches!(&refused, Refused::RolledBack { version: rolled } if *rolled == version(NEXT)),
+            "{refused:?}"
+        );
+        assert_eq!(install.active(), ACTIVE);
+    }
+
+    #[test]
+    fn a_release_whose_stdout_outlives_it_is_heard_once_it_exits() {
+        let install = Install::new("lingering");
+        let served = Served::new(releasing(&format!(
+            "#!/bin/sh\n(sleep 30 &)\necho 'crucible {NEXT}'\n"
+        )));
+
+        let began = Instant::now();
+        let answer = install.update(Asked::Apply, &served).expect("an answer");
+        let took = began.elapsed();
+
+        assert_eq!(
+            answer,
+            Answer::Updated {
+                from: version(ACTIVE),
+                to: version(NEXT),
+            }
+        );
+        assert_eq!(install.active(), NEXT);
+        assert!(
+            took < WELL_WITHIN,
+            "waited on what the release left running: {took:?}"
+        );
+    }
+
+    #[test]
+    fn a_release_is_heard_out_to_256_bytes_and_no_further() {
+        let said = format!("crucible {NEXT}");
+        for (kept, length) in [(true, 256), (false, 257)] {
+            let install = Install::new(&format!("said-{length}"));
+            let served = Served::new(releasing(&format!(
+                "#!/bin/sh\nprintf '%s' '{said:<length$}'\n"
+            )));
+
+            let answered = install.update(Asked::Apply, &served);
+
+            if kept {
+                assert!(
+                    matches!(answered, Ok(Answer::Updated { .. })),
+                    "{answered:?}"
+                );
+                assert_eq!(install.active(), NEXT);
+            } else {
+                assert!(
+                    matches!(&answered, Err(Refused::RolledBack { version: rolled }) if *rolled == version(NEXT)),
+                    "{answered:?}"
+                );
+                assert_eq!(install.active(), ACTIVE);
+            }
+        }
     }
 
     #[test]
