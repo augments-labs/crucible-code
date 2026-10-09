@@ -55,12 +55,14 @@
 //! else. Once the window has kept its new size for [`SETTLE`], the screen and
 //! the terminal's scrollback are cleared and everything kept is written again
 //! at the new width, opening with one quiet row where the ceiling has dropped
-//! the start of the session, and the region under it. What the terminal had
-//! kept was cut at the old width, and no two terminals put it at a new one the
-//! same way: some fold it again, some leave it as it was cut, and some count
-//! a symbol's width differently. Writing it again is the one answer that reads
-//! the same on all of them. A terminal that ignores the request to clear its
-//! scrollback keeps the old rows above the new ones.
+//! the start of the session, and the region under it. An opening card only
+//! partly written out by then is written out whole, laid at the new width,
+//! rather than leaving its rest to the region as it was laid for the old one.
+//! What the terminal had kept was cut at the old width, and no two terminals
+//! put it at a new one the same way: some fold it again, some leave it as it
+//! was cut, and some count a symbol's width differently. Writing it again is
+//! the one answer that reads the same on all of them. A terminal that ignores
+//! the request to clear its scrollback keeps the old rows above the new ones.
 //!
 //! A frame asks the window's size before it is drawn, so that one drawn while
 //! an answer is arriving goes out at the width the window already has rather
@@ -395,6 +397,12 @@ impl<T: Terminal> Renderer<T> {
         let columns = self.size.columns.max(1);
         let bands = self.bands();
         let room = bands.transcript.len();
+        if native.replays && writes == Writes::Live {
+            // Before what has gone out is worked out, so that a card only
+            // partly gone out is given back whole, laid at this width, rather
+            // than as its old top over its old rest.
+            self.record.lets_opening_go();
+        }
         let first = self.record.first();
         let finished = self.record.finished();
 
