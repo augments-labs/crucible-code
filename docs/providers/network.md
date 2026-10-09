@@ -22,7 +22,7 @@ crucible makes requests of its own for four things, and nothing else:
   fails keeps the last answer and still counts as that day's check.
   `{ "updates": { "check": "never" } }` turns it off
   ([`updates`](../configuration/configuration.md#updates)).
-- **`github.com` and `githubusercontent.com`**, when you run
+- **`api.github.com`, `github.com` and `githubusercontent.com`**, when you run
   [`crucible update`](../reference/cli.md#update---check----dry-run). It asks
   `api.github.com` which release is the newest whatever `updates.check` says,
   since running it is how you ask. An update then downloads that release's
