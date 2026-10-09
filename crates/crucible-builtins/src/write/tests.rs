@@ -981,7 +981,7 @@ fn a_file_rewritten_with_what_was_read_is_not_stale() {
 }
 
 #[test]
-fn a_write_after_reading_one_page_is_refused_when_a_line_past_it_changed() {
+fn a_write_after_reading_one_page_is_refused_when_a_line_is_added_past_it() {
     // The agent was shown one line, but what it holds is the whole file as it
     // was then, so a change in the part it was never shown is still a change
     // since it looked. The file is many times one buffer of it long, so the
@@ -1018,6 +1018,30 @@ fn a_write_after_reading_one_page_is_refused_when_a_line_past_it_changed() {
         output.text(),
         "long.txt changed since it was read, so replacing it would discard what changed: read it again"
     );
+}
+
+#[test]
+fn a_write_after_reading_one_page_of_a_file_nobody_changed_is_not_stale() {
+    // The other half of the case above: what the record holds has to be the
+    // whole file and not only the part the page pulled in, or every write
+    // after one page of a long file would be refused though nothing changed.
+    let sample = Sample::new("write-not-stale-past-the-page");
+    let lines = (1..=4_096)
+        .map(|number| format!("line {number}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    sample.write("long.txt", &lines);
+    let (seen, page) = reading(&sample, r#"{"path":"long.txt","limit":1}"#);
+    assert!(
+        page.text().contains("more follows"),
+        "the read was meant to stop after one line: {}",
+        page.text()
+    );
+
+    let output = writing(&sample, r#"{"path":"long.txt","content":"new\n"}"#, &seen);
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert_eq!(read(&sample, "long.txt"), "new\n");
 }
 
 /// The eight bytes that make a file a PNG, which is all `read` asks of one
