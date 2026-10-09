@@ -1409,6 +1409,30 @@ impl<T: Terminal> Renderer<T> {
         self.draw()
     }
 
+    /// Writes a responsive block whose source comes to about the rows it lays.
+    ///
+    /// As [`Self::responsive`] for an answer drawn from a few figures, where
+    /// the text of its rows is as near as anything to what the closure holds:
+    /// the rows laid for the width there is now are what is charged, so they
+    /// are laid out once, and not a second time to be measured. A source much
+    /// larger than what it lays, such as one clipped at a narrow width, goes
+    /// through [`Self::responsive`] with its own size instead.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn responsive_as_laid(
+        &mut self,
+        lay: Box<dyn Fn(usize) -> Vec<Row>>,
+    ) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return self.present(&lay(self.transcript_columns()));
+        }
+
+        self.record.responsive_as_laid(lay);
+        self.draw()
+    }
+
     /// Writes the opening into the transcript, keeping what draws it.
     ///
     /// Everything else handed to [`Self::present`] arrives as rows and stays as

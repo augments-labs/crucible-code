@@ -616,3 +616,34 @@ fn release_notes_typed_while_a_turn_runs_is_refused_on_the_panel_with_its_reason
         "{rows:#?}"
     );
 }
+
+#[test]
+fn an_answer_laid_out_again_at_each_width_is_laid_out_once_to_be_written() {
+    // `/model` writes one of these a line at a time, so a second layout made
+    // only to measure what the first one keeps is paid once per line. The rows
+    // laid for the window there is now are the rows kept and charged for, on a
+    // screen and down a pipe alike.
+    let mut counts = Vec::new();
+    for (on, terminal) in [
+        ("a screen", crucible_tui::Recording::new(80, 24)),
+        ("a pipe", crucible_tui::Recording::redirected(80, 24)),
+    ] {
+        let mut renderer = Renderer::new(terminal);
+        let lays = std::rc::Rc::new(std::cell::Cell::new(0_usize));
+        let counted = std::rc::Rc::clone(&lays);
+
+        relaid(&mut renderer, Laid::Hung, move |columns| {
+            counted.set(counted.get() + 1);
+            vec![Row::plain(format!("laid at {columns}"))]
+        })
+        .expect("the terminal to be written");
+
+        counts.push((on, lays.get()));
+    }
+
+    assert_eq!(
+        counts,
+        [("a screen", 1), ("a pipe", 1)],
+        "times the answer was laid out, on each terminal"
+    );
+}
