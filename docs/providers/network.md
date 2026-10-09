@@ -5,7 +5,7 @@ environment, the certificates it trusts and how long it waits.
 
 ## What crucible connects to
 
-crucible makes requests of its own for three things, and nothing else:
+crucible makes requests of its own for four things, and nothing else:
 
 - **The provider's endpoint**, for every request a turn makes and for
   [`web_search` and `web_fetch`](../tools/web.md), which are asked of the same
@@ -22,6 +22,14 @@ crucible makes requests of its own for three things, and nothing else:
   fails keeps the last answer and still counts as that day's check.
   `{ "updates": { "check": "never" } }` turns it off
   ([`updates`](../configuration/configuration.md#updates)).
+- **`github.com` and `githubusercontent.com`**, when you run
+  [`crucible update`](../reference/cli.md#update---check----dry-run). It asks
+  `api.github.com` which release is the newest whatever `updates.check` says,
+  since running it is how you ask. An update then downloads that release's
+  `SHA256SUMS` and archive from `github.com`, and follows a redirect only over
+  `https` to `github.com` or a host under `githubusercontent.com`.
+  [`CRUCIBLE_CODE_UPDATE_SOURCE`](../reference/environment.md) points it at a
+  release server on this machine instead.
 
 MCP servers and extensions are programs crucible starts and talks to over their
 standard input and output. crucible opens no connection for them, and any they

@@ -154,15 +154,15 @@ insta = "=1.48.0"
 # The terminal itself. One thing genuinely needs it: the ioctl that reports the
 # window size, which is an `unsafe` libc call this workspace denies writing by
 # hand. The escape sequences the renderer emits are plain ANSI, so `crossterm`
-# stays confined to one file behind the `Terminal` trait and swapping it out is
-# a day, not a rewrite. A full-screen renderer would also want its raw mode,
-# which is the other reason it is this crate rather than a bare `ioctl` binding.
-# Bracketed paste is enabled so a paste arrives as one event rather than as a
-# run of keystrokes: that is what keeps its newlines, which key events spell as
-# submissions. Crossterm buffers the block until its terminator with no bound of
-# its own, so the bound is applied where the text lands — `Editor::paste` caps
-# what is retained, and a paste that never terminates is one a terminal does not
-# send. `derive-more` is not used.
+# stays confined to `crucible-tui`'s terminal module behind the `Terminal` trait
+# and swapping it out is a day, not a rewrite. A full-screen renderer would also
+# want its raw mode, which is the other reason it is this crate rather than a
+# bare `ioctl` binding. Bracketed paste is enabled so a paste arrives as one
+# event rather than as a run of keystrokes: that is what keeps its newlines,
+# which key events spell as submissions. Crossterm buffers the block until its
+# terminator with no bound of its own, so the bound is applied where the text
+# lands — `Editor::paste` caps what is retained, and a paste that never
+# terminates is one a terminal does not send. `derive-more` is not used.
 crossterm = { version = "=0.29.0", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 
 # The sandbox's host proxy parses bounded HTTP/1 headers and chunk framing with
@@ -205,8 +205,8 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 webpki-roots = "=1.0.9"
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
-# selected ChatGPT account id from that bounded claim set; this decoder is
-# already present through rustls and avoids growing a second, partial codec at
+# selected ChatGPT account id from that bounded claim set; one decoder serves
+# every crate that needs one, which avoids growing a second, partial codec at
 # the credential boundary. The three wire protocols need the same codec the
 # other way, because every one of them carries an attached file as base64 text,
 # and this encoder appends into the body being built rather than returning a
@@ -227,11 +227,13 @@ getrandom = "=0.4.3"
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
 uuid = { version = "=1.26.1", features = ["v7"] }
 
-# Browser OAuth uses RFC 7636 S256. Prompt-cache scope identity also needs a
-# one-way digest of credential-owned material so an API key can keep the same
-# fail-closed identity after restart without ever persisting the key. Keeping
-# SHA-256 at those two credential boundaries avoids partial handwritten digest
-# implementations, and the crate has no runtime or platform dependencies.
+# SHA-256, wherever a one-way digest is needed. Browser OAuth uses RFC 7636
+# S256. Prompt-cache scope identity needs a digest of credential-owned material
+# so an API key can keep the same fail-closed identity after restart without
+# ever persisting the key. Attachments, file writes, extension manifests,
+# session records and release units are held to the content fingerprint it
+# takes. One audited implementation avoids partial handwritten digests, and the
+# crate has no runtime or platform dependencies.
 sha2 = { version = "=0.11.0", default-features = false }
 
 # A release archive is a gzip-compressed tar, and `std` reads neither format. A
@@ -310,24 +312,26 @@ seccompiler = { version = "=0.5.0", default-features = false }
 
 # Names the platform constants a `std` call takes as a raw integer and never
 # spells: the `O_NONBLOCK` open flag `std` carries but does not name, for
-# crucible-config, and the kernel syscall numbers seccompiler does not name on
-# every supported Linux architecture, for crucible-sandbox-broker. Neither
-# makes a call through it. The binary makes one: `mallopt`, fixing glibc's
-# threshold for handing a freed block back to the system, which `std` has no
-# way to reach. The same libc is already compiled for tokio, mio and the other
-# crates that reach the platform through it, so these uses add no build.
+# crucible-config and crucible-extension, and the kernel syscall numbers
+# seccompiler does not name on every supported Linux architecture, for
+# crucible-sandbox-broker. Neither makes a call through it. The binary makes
+# one: `mallopt`, fixing glibc's threshold for handing a freed block back to the
+# system, which `std` has no way to reach. The same libc is already compiled for
+# tokio, mio and the other crates that reach the platform through it, so these
+# uses add no build.
 libc = "=0.2.189"
 
-# Being told to stop from outside. A closed window or a `kill` arrives as a
+# Being told something from outside. A closed window or a `kill` arrives as a
 # signal, and `std` has no way to hear one: without a handler the process ends
 # where it stands, with the log writer unjoined and the answer on screen never
-# written down. Installing a handler is `sigaction` through `libc`, which is
-# `unsafe` and which this workspace denies; this is the safe wrapper, and all
-# it is asked for is its flag module — a handler that stores one atomic and
-# returns, which is the whole of what may be done in a signal context — and the
-# call that afterwards ends the process the way the signal would have. Unix
-# only. Already in the tree under `crossterm` at this version with more turned
-# on than this, so nothing new is compiled.
+# written down. A resized window is a signal too, and hearing it is what lets
+# the next frame be drawn at the new size. Installing a handler is `sigaction`
+# through `libc`, which is `unsafe` and which this workspace denies; this is the
+# safe wrapper, and all it is asked for is its flag module — a handler that
+# stores one atomic and returns, which is the whole of what may be done in a
+# signal context — and the call that afterwards ends the process the way the
+# signal would have. Unix only. `crossterm` carries its own copy from the older
+# 0.3 line, so this is a second, small one.
 signal-hook = { version = "=0.4.4", default-features = false }
 
 # Windows has no file mode, so the 0600 a session log is held at has to be
@@ -475,10 +479,11 @@ default-run = "crucible"
 name = "crucible"
 path = "src/main.rs"
 
-# Every crate the binary composes, and only here. It uses the lower-level
-# privacy boundary for its user configuration; that crate knows nothing about
-# settings. The arrows that make a provider and a tool meet a runner are still
-# drawn here or nowhere.
+# Every crate the command line names. What a run is built from is composed in
+# `crucible-app`; what is named here are the contract values the terminal draws
+# and asks about, and the few concrete owners it reaches itself. It uses the
+# lower-level privacy boundary for its user configuration; that crate knows
+# nothing about settings.
 [dependencies]
 arboard.workspace = true
 # Two unrelated features, one entry: `rt-multi-thread` and `time` are the
@@ -515,6 +520,8 @@ crucible-sandbox.workspace = true
 crucible-types.workspace = true
 crucible-workspace.workspace = true
 crucible-privacy.workspace = true
+# The provider fixtures the command line's unit tests build a conversation
+# with; nothing the command line runs names it.
 crucible-provider.workspace = true
 # Release discovery and the cached release check, composed by the application
 # and read by the command line's opening path.
@@ -528,8 +535,9 @@ crucible-runtime.workspace = true
 # already-selected Crucible image directly avoids elevating a mutable sibling
 # helper or a command assembled through a shell.
 crucible-sandbox-broker.workspace = true
-# The composition root is where a machine is named: it hands the native
-# confinement to every tool that runs a command, so no tool has to name an
+# Holds the broker directory for the life of the process, and answers
+# `/sandbox` with the native confinement a command would run under here. Tools
+# are handed that confinement by `crucible-app`, so no tool has to name an
 # operating system.
 crucible-sandbox-local.workspace = true
 # What a tool call is, what may run one and how it is answered, which the
@@ -549,10 +557,11 @@ image.workspace = true
 # already in the graph twice over — the session log and the credential store —
 # so this is the same version compiled once.
 sha2.workspace = true
-# One answer to read: GitHub names the newest release in a JSON body, and the
-# release check here is the only thing in this package that reads a wire format
-# at all. Already in the workspace for the session log and the configuration
-# documents, so this is the same version compiled once.
+# The configuration schema the tests compare a default against, and the model
+# database the `generate-models` tool reads, are JSON. Nothing the shipped
+# command reads is: the release check is `crucible-update`'s. Already in the
+# workspace for the session log and the configuration documents, so this is the
+# same version compiled once.
 serde_json.workspace = true
 thiserror.workspace = true
 # The local hour `/usage` says a plan window starts again at. Read only when the
@@ -605,9 +614,10 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
 
 # What hears a hang-up or a termination while a turn is running, so the turn is
-# stopped and written down instead of lost. Signals are the Unix spelling of
-# that; a closing console on Windows is a different mechanism this does not
-# reach.
+# stopped and written down instead of lost, and a resize, so the next frame is
+# drawn at the new size without waiting for the terminal to report it. Signals
+# are the Unix spelling of that; a closing console on Windows is a different
+# mechanism this does not reach.
 [target.'cfg(unix)'.dependencies]
 signal-hook.workspace = true
 

@@ -114,6 +114,9 @@ Windows executables and manual archives for all supported targets are on the
 [releases page](https://github.com/augments-labs/crucible-code/releases). Every
 release includes `SHA256SUMS`.
 
+An installation made by `install.sh` updates itself with `crucible update`, and
+`crucible update --check` only says whether a later release is out.
+
 For platform details, manual verification, uninstalling and source builds, see
 [Getting started](docs/getting-started/index.md).
 
