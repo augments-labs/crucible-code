@@ -1044,6 +1044,52 @@ fn a_native_frame_after_a_resize_is_told_of_asks_once_and_takes_the_new_width() 
 }
 
 #[test]
+fn a_native_frame_told_of_a_resize_whose_size_query_fails_leaves_the_next_frame_to_ask() {
+    // The flag is lowered by the frame that takes it, and the query that frame
+    // makes fails. The resize is still owed: the next frame asks once more and
+    // takes the new width, rather than drawing at the old one until another
+    // signal or a press. One that fails again is not asked about frame after
+    // frame.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    let resizes = ResizeFlag::default();
+    render.watches_size(resizes.clone());
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render.stream("alfa ").unwrap();
+
+    window.resize(20, 10);
+    resizes.raise();
+    window.loses_size(1);
+    render.stream("bravo ").unwrap();
+    assert_eq!(render.columns(), 40, "the failed query was taken as a size");
+    render.stream("charlie ").unwrap();
+    assert_eq!(
+        render.columns(),
+        20,
+        "the frame after the failed query kept the old width"
+    );
+
+    window.resize(30, 10);
+    resizes.raise();
+    window.loses_size(2);
+    let asked = window.asked();
+    render.stream("delta ").unwrap();
+    render.stream("echo ").unwrap();
+    assert_eq!(window.asked(), asked + 2, "{:#?}", window.all());
+    render.stream("foxtrot ").unwrap();
+    render.stream("golf ").unwrap();
+    assert_eq!(
+        window.asked(),
+        asked + 2,
+        "a query that failed twice was asked again unprompted"
+    );
+    assert_eq!(render.columns(), 20);
+}
+
+#[test]
 fn a_native_window_narrowed_twice_and_widened_keeps_every_finished_row_once() {
     // Three resizes in one answer, each taken while it is still arriving: the
     // window narrowed, narrowed again, and widened back to where it began.
