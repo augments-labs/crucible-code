@@ -7,9 +7,9 @@
 //! creates something new.
 //!
 //! Deciding that needs tools to agree, and none owns the answer: `read` learns
-//! it, and `write` and `edit` act on it. So the answer lives here, in one value
-//! each is handed when it is built, and the binary is the only place that knows
-//! they share it.
+//! it, and `write` and `edit` act on it and record what they leave behind. So
+//! the answer lives here, in one value each is handed when it is built, and the
+//! binary is the only place that knows they share it.
 //!
 //! Knowing a file was looked at is not knowing what is in it now: another
 //! program can change it in place or put a new file at its name after the
@@ -21,13 +21,23 @@
 //! file, so that what changed in the part the agent was not shown is caught
 //! too.
 //!
+//! A file can also be known without having been read. What a successful
+//! `edit` leaves in a file is content the session produced, so the file is
+//! held to that content whether or not it was read first. That is an
+//! allowance, not a claim that the agent saw the file: an edit of one it never
+//! read showed it only the text it quoted, and a `write` after it may discard
+//! the rest unseen. What stays refused is replacing content the session
+//! neither saw nor made: an edit that was not made records nothing, and a
+//! change by anyone else after the edit is refused as it would be after a
+//! read.
+//!
 //! It is a session's memory, so it starts again when the session does. Nothing
 //! bounds how long one runs, though, so it is bounded like every other thing
 //! this program holds. Forgetting costs a read: a file
 //! remembered long enough ago to have been evicted is refused and read again,
-//! which is a wasted call rather than a wrong answer. Forgetting in the other
-//! direction — claiming a file was seen when it was not — is the failure this
-//! module exists to prevent, and no bound can cause it.
+//! which is a wasted call rather than a wrong answer. Erring in the other
+//! direction, holding a file to content the session neither saw nor made, is
+//! the failure this module exists to prevent, and no bound can cause it.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -102,8 +112,8 @@ impl Ledger {
         }
     }
 
-    /// What `path` held when this session last saw it, or `None` when it has
-    /// not seen it.
+    /// What `path` held when this session last read, wrote or edited it, or
+    /// `None` when it has done none of those.
     pub(crate) fn fingerprint(&self, path: &Path) -> Option<Fingerprint> {
         let seen = self.seen.lock().ok()?;
         seen.iter()
@@ -117,12 +127,12 @@ impl Ledger {
         self.fingerprint(path).is_some()
     }
 
-    /// The answer a call came to, remembering the file it showed the agent.
+    /// The answer a call came to, remembering the file it read or changed.
     ///
     /// Asked by the call once its work has answered, and never by the work.
     /// Work handed to a worker runs on after its call is dropped, and what it
-    /// comes to then reaches nobody: remembering the file it read would let
-    /// `write` replace a file the agent was never shown.
+    /// comes to then reaches nobody: remembering the file it read or changed
+    /// would let `write` replace a file the agent was never told about.
     pub(crate) fn shown(&self, shown: Shown) -> ToolOutput {
         if let Some((file, fingerprint)) = &shown.file {
             self.record(file, *fingerprint);
@@ -138,8 +148,8 @@ impl Ledger {
     }
 }
 
-/// What a call's work came to: the answer, and the file it showed the agent
-/// where it showed one, with the digest of what the agent was shown.
+/// What a call's work came to: the answer, and the file it read or changed
+/// where it did, with the digest of what that file then held.
 ///
 /// The file travels beside the answer rather than into the record, for the
 /// reason [`Ledger::shown`] gives.
@@ -147,7 +157,8 @@ impl Ledger {
 pub(crate) struct Shown {
     /// What the model is answered with.
     pub(crate) output: ToolOutput,
-    /// The resolved path of the file the answer showed, and what was in it.
+    /// The resolved path of the file the call read or changed, and what was in
+    /// it once the call was done.
     pub(crate) file: Option<(PathBuf, Fingerprint)>,
 }
 

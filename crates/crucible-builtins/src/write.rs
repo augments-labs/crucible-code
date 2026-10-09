@@ -2,11 +2,13 @@
 //!
 //! Whatever was at the name is gone afterwards, which makes this the one call
 //! here that can destroy work. So it refuses a file nobody has looked at: the
-//! agent may replace what it has read and what it wrote itself, and has to go
-//! and read anything else first. It refuses too a file whose content is no
-//! longer what the agent last saw, changed in place or replaced since, because
-//! what changed is what would be lost. Each refusal is a result rather than an
-//! error, so the turn continues and the model can read the file and try again.
+//! agent may replace what it has read, what it wrote itself and what its own
+//! `edit` made, and has to go and read anything else first. An edit of a file
+//! it never read counts too, though the agent saw only the text it quoted; the
+//! ledger says why. It refuses too a file whose content is no longer what the
+//! agent last saw, changed in place or replaced since, because what changed is
+//! what would be lost. Each refusal is a result rather than an error, so the
+//! turn continues and the model can read the file and try again.
 
 use std::fs;
 use std::io::{Read as _, Seek as _};
