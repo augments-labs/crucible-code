@@ -34,6 +34,11 @@
 //! rows being read down the screen as each one arrived; they are there the next
 //! time it is opened, which is one press away.
 //!
+//! A window that changes width keeps the reader's place. Every result folds
+//! again at the new width, so those above the one being read can come to more
+//! rows or fewer; the view stays on that result, about as far into it as it
+//! was, rather than on the row it was open at, which now falls somewhere else.
+//!
 //! A result the store let go of is still stood over, where the session has a
 //! log to read it back from, and it is read back when the window reaches it
 //! rather than when the view opens. What the view holds of those is what its
@@ -78,6 +83,8 @@ enum Over {
 /// window may go depends on how many rows the results came to at this width,
 /// which is not known until they are laid out. So the frame that discovers it
 /// writes it here, and the next key acts on a number the picture agrees with.
+/// Every row in it is counted at the width of that frame, which is kept with
+/// them, so a frame at another width can find the same place again.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct View {
     /// How far down the whole of it the window is open.
@@ -100,6 +107,11 @@ pub(super) struct View {
     /// one above, as of the last frame drawn: where a step to the next or
     /// the last result puts the top of the window.
     starts: Vec<usize>,
+    /// How wide the last frame was, which is the width `from`, `was` and
+    /// `starts` were counted at. A frame at another width finds the result at
+    /// the top of the window where it begins now before anything else is
+    /// worked out from them.
+    columns: usize,
     /// What it is a window over.
     over: Over,
     /// What the window reaches of the results the store let go of, read back
@@ -123,6 +135,7 @@ impl View {
             was: 0,
             page: 0,
             starts: Vec::new(),
+            columns: 0,
             over,
             back: Vec::new(),
             refused: None,
@@ -373,6 +386,7 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     if entries.is_empty() {
         return Vec::new();
     }
+    refolded(view, &entries, columns);
     let heights = reaching(kept, view, &entries, columns, rows)
         .unwrap_or_else(|| heights(&entries, &view.back, columns));
 
@@ -409,6 +423,58 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     begun.pop();
 
     expanded.within_measured(&heights, columns, rows, glyphs)
+}
+
+/// Keeps the window on the result at its top when the window changed width
+/// since the last frame, and says which width the next one is counted at.
+///
+/// Where each result begins depends on the width, so a row counted at the old
+/// one is somewhere else in the results at the new one: left alone, the window
+/// would open part way into whatever now falls there, and the footer and the
+/// next step would count from that. So the result at the top is found where it
+/// begins at this width, and the window opens as far into it as it was, scaled
+/// by how much taller or shorter it came to. A window on the blank above a
+/// result or on its call's line stays on that row exactly, so a step that put
+/// a heading at the top still has it there.
+fn refolded(view: &mut View, entries: &[Entry<'_>], columns: usize) {
+    let was = std::mem::replace(&mut view.columns, columns);
+    if was == columns || view.starts.is_empty() {
+        return;
+    }
+
+    let top = topmost(view);
+    let Some(start) = view.starts.get(top).copied() else {
+        return;
+    };
+    let into = drawn(view).saturating_sub(start);
+    let Some(entry) = entries.get(top) else {
+        return;
+    };
+
+    // How tall it was: up to where the next begins, or for the last, counted
+    // again at the width it was laid at.
+    let old = match view.starts.get(top.saturating_add(1)) {
+        Some(next) => next.saturating_sub(start),
+        None => measured(*entry, top, &view.back, was),
+    };
+    let now: usize = entries
+        .iter()
+        .take(top)
+        .enumerate()
+        .map(|(at, entry)| measured(*entry, at, &view.back, columns))
+        .fold(0, usize::saturating_add);
+    let tall = measured(*entry, top, &view.back, columns);
+
+    let into = if into <= 1 {
+        into
+    } else {
+        into.saturating_mul(tall)
+            .checked_div(old)
+            .unwrap_or(into)
+            .min(tall.saturating_sub(1))
+    };
+    view.from = now.saturating_add(into);
+    view.was = view.from;
 }
 
 /// One result the view stands over: held by the store, or let go of and read
