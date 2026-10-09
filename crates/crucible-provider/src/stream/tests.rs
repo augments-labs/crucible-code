@@ -1,9 +1,10 @@
 //! A cancel ends a response that keeps talking without saying anything.
 //!
 //! Each test is a loopback source that answers once and then, every 100 ms for
-//! as long as it is allowed to, sends lines that never make an event. Every
-//! one of those lines is something arriving, so the quiet wait below
-//! the stream never runs out; what ends the read is the cancel, or nothing.
+//! as long as it is allowed to, sends lines that never make an event, or more
+//! of one line that never ends. Every one of those sends is something
+//! arriving, so the quiet wait below the stream never runs out; what ends the
+//! read is the cancel, or nothing.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -201,6 +202,19 @@ async fn a_cancel_ends_a_recap_under_comments_within_a_second() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancel_ends_an_event_that_never_finishes_as_it_does_comments() {
     let url = beating("event: ping\ndata: {}\n");
+    let transport = shared();
+    let cancel = Cancel::new();
+    let mut stream = opened(&transport, &url, &cancel).await;
+    let raised = raised_later(&cancel);
+
+    cancelled_promptly(stream.as_mut(), &raised).await;
+}
+
+/// One line sent a few bytes at a time and never ended: no line is ever read
+/// whole, so nothing goes into an event, the same as a comment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancel_ends_a_line_that_never_ends_as_it_does_comments() {
+    let url = beating("data: x");
     let transport = shared();
     let cancel = Cancel::new();
     let mut stream = opened(&transport, &url, &cancel).await;
