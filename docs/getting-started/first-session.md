@@ -1418,9 +1418,10 @@ one takes, what bounds its answer, and what it says when it hits that bound.
 not read, edited or written itself, and says so rather than ending the turn.
 The model reads the file and writes it again. That covers the case a permission
 prompt cannot: a `write` you approve is one you agreed to, and neither of you
-can see that the file holds work nobody looked at. After an `edit` the file
-counts as looked at even if it was never read, though the model then saw only
-the text it quoted, so a `write` after it can replace the rest unseen.
+can see that the file holds work nobody looked at. After an `edit` that changed
+it, the file counts as looked at even if it was never read, though the model
+then saw only the text it quoted, so a `write` after it can replace the rest
+unseen.
 
 `bash` runs its command through a POSIX shell in the workspace root, and starts
 it with a short list of variables (`PATH`, `HOME`, the locale) rather than the
