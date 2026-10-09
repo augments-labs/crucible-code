@@ -430,6 +430,8 @@ stops at each such result rather than passing it.
 Between
 turns the view takes the place of the box; while a turn runs it stands under
 the tail. Results cut after it opened are there the next time it is opened.
+A resize keeps the view on the result at its top, about as far into it as it
+was, however the results above it fold at the new width.
 In native mode the key is the way to a cut result, and an offer above a
 `session resumed` or `new session` divider belongs to a session no longer
 open. The footer reads `esc to close`; where there is more it reads
