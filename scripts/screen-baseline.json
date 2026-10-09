@@ -879,6 +879,14 @@
       "sha256": "b5c5629ee43bf1b4246c0de407dd41a0c9432e3b3e73d1a5fcfc4123afb67349"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__five_waiting_prompts_stand_in_one_panel_over_the_box_in_native_mode.snap",
+      "case": "five_waiting_prompts_stand_in_one_panel_over_the_box_in_native_mode",
+      "opened": [
+        "Watched::allowing_drawn( \"native-queue-panel-over-the-box\", (80, 24), &vendor, \"bash(*)\", (\"unicode\", \"native\"), )"
+      ],
+      "sha256": "99a2618e5928001b00d4a56eb1912619cb5dcd1238939a2eb0f0414d5791c787"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__model_takes_at_most_half_the_window_in_native_mode.snap",
       "case": "model_takes_at_most_half_the_window_in_native_mode",
       "opened": [

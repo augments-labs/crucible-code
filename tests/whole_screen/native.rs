@@ -1021,7 +1021,6 @@ fn a_refused_take_back_says_so_beside_the_title_in_native_mode() {
 // alternate screen before it records anything.
 
 #[test]
-#[ignore = "at 80x24 native mode leaves the queue panel no room, so a prompt queued during a turn shows no sign of it"]
 fn five_waiting_prompts_stand_in_one_panel_over_the_box_in_native_mode() {
     let vendor = crate::a_turn_still_running_long();
     let mut window = Watched::allowing_drawn(
@@ -1034,9 +1033,29 @@ fn five_waiting_prompts_stand_in_one_panel_over_the_box_in_native_mode() {
     crate::waiting_behind_a_turn(&mut window, 5);
 
     window.assert_never_alternate();
-    crate::draws(&window, crate::WAITING_80);
+    crate::draws(&window, WAITING_80_STOOD_TALLER);
     insta::assert_snapshot!(crate::steadied_picture(&window.picture()));
 }
+
+/// Five prompts waiting at 80x24 in native mode. Half the window has no room
+/// to name one of them, so the panel stands taller, at the least it can be
+/// drawn in: the count, the highlighted line alone and the keys.
+const WAITING_80_STOOD_TALLER: &[&str] = &[
+    "✳ writing (0s · ↓ 4 · esc to interrupt)",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "",
+    "5 queued · ctrl+enter to send all now",
+    "",
+    "› and add a test for the windows path",
+    "",
+    "↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now",
+    "",
+    "                                                                 99% window left",
+    "╭──────────────────────────────────────────────────────────────────────────────╮",
+    "│ ›                                                                            │",
+    "╰──────────────────────────────────────────────────────────────────────────────╯",
+    "ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1",
+];
 
 #[test]
 fn context_stands_over_a_fresh_session_and_closes_on_escape_in_native_mode() {

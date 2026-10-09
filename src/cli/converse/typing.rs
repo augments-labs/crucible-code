@@ -949,16 +949,37 @@ fn working<T: Terminal>(
         columns: renderer.transcript_columns(),
         window: columns,
     };
-    let (turn, mut over) = footing.turning.rows(
-        footing.planning,
-        footing.counting,
-        footing.queued,
-        widths,
-        style,
-        room,
-    );
+    let laid = |room| {
+        footing.turning.rows(
+            footing.planning,
+            footing.counting,
+            footing.queued,
+            widths,
+            style,
+            room,
+        )
+    };
+    let (mut turn, mut over) = laid(room);
     let left = room.saturating_sub(turn.len() + over.len());
-    over.extend(footing.opened_list.rows(columns, left, style.glyphs()));
+    let listed = footing.opened_list.rows(columns, left, style.glyphs());
+
+    // A queue the share had no room to name stands taller, at the least the
+    // panel can be drawn in, as any panel the share cannot hold does: it is the
+    // only sign a line typed under the turn was kept. The rows over the box
+    // stand across the window only where the panel does, so the first room
+    // that has any is the least. An open list is what the reader is looking at
+    // and keeps the share, drawn or not, since the arrows walk it; and the
+    // full screen has no taller to stand at.
+    if over.is_empty() && !footing.opened_list.is_open() && footing.queued.waiting_count() > 0 {
+        let most = renderer.rows().saturating_sub(boxed.rows.len());
+        if let Some(stood) = (room + 1..=most)
+            .map(laid)
+            .find(|(_, over)| !over.is_empty())
+        {
+            (turn, over) = stood;
+        }
+    }
+    over.extend(listed);
 
     Footed {
         turn,
