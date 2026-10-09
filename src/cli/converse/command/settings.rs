@@ -51,7 +51,7 @@ use crate::cli::{Fatal, sends};
 
 use super::region::{self, Ended, Moved};
 use super::usage::{self, Clock};
-use super::{Counted, HUNG, Terms, about, resume, theme};
+use super::{Counted, HUNG, Laid, Terms, about, relaid, resume, theme};
 
 #[cfg(test)]
 mod tests;
@@ -332,22 +332,22 @@ fn left<T: Terminal>(renderer: &mut Renderer<T>, changed: &[String]) -> Result<(
     Ok(renderer.present(&rows)?)
 }
 
-/// Every setting and its value, written where no panel can stand.
+/// Every setting and its value, written where no panel can stand, and laid
+/// out again at each width the window takes: the values are read once, as
+/// they stood when the listing was asked for.
 fn listed<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<(), Fatal> {
     let glyphs = terms.style().glyphs();
-    let columns = renderer.transcript_columns().saturating_sub(HUNG);
-    let rows: Vec<Row> = crucible_config::rows()
+    let said: Vec<String> = crucible_config::rows()
         .iter()
         .map(|row| Line::read(terms, row))
-        .flat_map(|line| {
-            let said = about(line.row.label(), &line.worded(glyphs), glyphs);
-            fold(&said, columns)
-                .into_iter()
-                .map(Row::plain)
-                .collect::<Vec<_>>()
-        })
+        .map(|line| about(line.row.label(), &line.worded(glyphs), glyphs))
         .collect();
-    Ok(renderer.present(&rows)?)
+    relaid(renderer, Laid::Hung, move |columns| {
+        said.iter()
+            .flat_map(|said| fold(said, columns))
+            .map(Row::plain)
+            .collect()
+    })
 }
 
 /// Writes what the panel asked for, through the client contract, and puts it
