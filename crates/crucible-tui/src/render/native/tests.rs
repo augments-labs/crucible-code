@@ -987,6 +987,108 @@ fn a_native_frame_whose_size_query_fails_is_drawn_at_the_size_already_known() {
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
 
+#[test]
+fn a_native_resize_inside_a_frame_keeps_the_box_and_the_turn_on_screen() {
+    // A frame finds the window narrowed while an answer streams. What stands
+    // at the foot was laid out for the old width, and the caller lays it out
+    // again only when the press reporting the resize is read; until then the
+    // frame draws it cut at the new edge rather than drawing without it.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render
+        .under(&[row("* thinking")], None, Palette::plain())
+        .unwrap();
+    render.stream("alfa bravo ").unwrap();
+
+    window.resize(30, 10);
+    render.stream("charlie ").unwrap();
+
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("| > typed"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("charlie"), 1, "{:#?}", window.all());
+}
+
+#[test]
+fn a_standing_row_handed_in_before_a_resize_is_written_no_wider_than_the_window() {
+    // Laid out at forty columns and still standing when the window narrows to
+    // twenty: the frame writes it cut at twenty, so the terminal has nothing
+    // to wrap onto a row the region did not count.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+
+    render
+        .live(
+            &[row("a box row that is thirty-four wide")],
+            Caret::default(),
+            Palette::plain(),
+        )
+        .unwrap();
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+
+    window.resize(20, 10);
+    render.stream("alfa ").unwrap();
+
+    assert_eq!(
+        window.rows_saying("a box row that is th"),
+        1,
+        "{:#?}",
+        window.all()
+    );
+    assert!(
+        window.all().iter().all(|row| row.chars().count() <= 20),
+        "a row was written wider than the window: {:#?}",
+        window.all()
+    );
+}
+
+#[test]
+fn a_resize_press_whose_size_query_fails_keeps_the_size_already_known() {
+    // The press says the window changed and the query that should say how
+    // fails. That is no news of a size, as it is no news on the frame's path:
+    // the session is not folded again for a window of eighty, and the region
+    // is not rewound as though it were eighty wide.
+    let window = Window::new(100, 10);
+    let mut render = native(&window);
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render
+        .stream(
+            "alfa bravo charlie delta echo foxtrot golf hotel india juliett kilo lima mike oscar",
+        )
+        .unwrap();
+
+    window.loses_size(1);
+    render.resized().unwrap();
+    stands(&mut render);
+
+    assert_eq!(render.columns(), 100);
+    let said: Vec<String> = window
+        .all()
+        .into_iter()
+        .filter(|row| row.contains("alfa") || row.contains("oscar"))
+        .collect();
+    assert_eq!(
+        said.len(),
+        1,
+        "the row was folded for a window of eighty: {:#?}",
+        window.all()
+    );
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+
+    let mut full = Renderer::drawing(window.clone(), ScreenMode::Fullscreen);
+    window.loses_size(1);
+    full.resized().unwrap();
+    assert_eq!(full.columns(), 100);
+}
+
 /// A palette that writes every hue it has, so a row's colours are on the
 /// record as well as its words.
 fn colourful() -> Palette {

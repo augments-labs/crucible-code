@@ -65,25 +65,19 @@ pub(super) fn answered<T: Terminal>(
         let said = match heard(arrived) {
             Heard::Said(said) => said,
 
-            // The renderer is holding a size the screen no longer has, and
-            // every band it shares the window out into is measured against it.
-            // Taking the new one is the whole of the answer: the question is
-            // committed, so its rows are folded again at the width the window
-            // has now, and the frame that follows puts them back.
-            Heard::Resized => {
-                renderer.resized()?;
-                continue;
-            }
-
-            // The question is committed too, which is what makes the wheel
-            // worth answering here: a reader deciding whether to allow a call
-            // is reading what was said above it to decide.
+            // The question is committed, which is what makes the wheel worth
+            // answering here: a reader deciding whether to allow a call is
+            // reading what was said above it to decide.
             Heard::Scrolled { back } => {
                 renderer.notched(back)?;
                 continue;
             }
 
-            Heard::Ignored => continue,
+            // A resize asks nothing more here. The renderer took the new size
+            // as it read the press, so the committed question is already
+            // folded again at the width the window has now, and the frame
+            // that follows puts it back.
+            Heard::Resized | Heard::Ignored => continue,
         };
 
         draw::answered(renderer, &said)?;
@@ -262,13 +256,12 @@ pub(super) fn took<T: Terminal>(
             Numbered::Chose(answer) => return Ok(Some(answer)),
             Numbered::Left => return Ok(None),
 
-            // The renderer is holding a size the screen no longer has, and the
-            // question after this one would be drawn against it — a row folded
-            // for a window that has gone. Taking the new size is the whole of
-            // the answer, the same as it is one question above: the rows already
-            // committed are folded again at the width the window has now, and
+            // The renderer took the new size as it read the press, so the
+            // question after this one is drawn against the window there is
+            // now. Nothing else is owed, the same as one question above: the
+            // rows already committed are folded again at the new width, and
             // the next frame puts them back.
-            Numbered::Resized => renderer.resized()?,
+            Numbered::Resized => {}
         }
     }
 }

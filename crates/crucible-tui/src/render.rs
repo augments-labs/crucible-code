@@ -163,54 +163,123 @@ pub enum Aimed {
     Boxed(usize),
 }
 
-/// The rows standing at the foot of the window, painted.
+/// The rows standing at the foot of the window, as they were handed in and
+/// painted.
 ///
 /// Painted when they are set rather than once per frame: what they say changes
-/// when the session changes, and a turn is a great many frames.
+/// when the session changes, and a turn is a great many frames. Painted again
+/// when the window changes size, from the rows they were handed in as, so
+/// that what stands is never written wider than the window it is written
+/// into and never goes missing while the caller has not yet laid out the
+/// next one. A row laid out for a wider window is cut at the new edge until
+/// then.
 ///
 /// Two slots, in the order they are drawn down the screen, and either may be
 /// full without the other: a turn stands in the first while it runs, a list a
 /// line opened stands there between turns, and the box holds the second
 /// whenever there is one to type into.
 ///
-/// The rows a running turn leads the first slot with are also kept unpainted,
-/// beside their painted copy: they read as the transcript's last rows, so the
-/// scroll rail stands beside them too, and its cell there changes from one
-/// frame to the next as the transcript's does.
+/// The rows a running turn leads the first slot with read as the transcript's
+/// last rows, so the scroll rail stands beside them too, and its cell there
+/// changes from one frame to the next as the transcript's does.
 ///
 /// Of every row of the first slot, the cells it drew are kept as well, which
-/// is all a press needs of it: the painted copy cannot say where its text ends,
-/// and a second unpainted copy of a list would be kept only to be measured.
+/// is all a press needs of it: the painted copy cannot say where its text ends.
 #[derive(Debug, Default)]
 struct Standing {
-    /// What a running turn is showing, and anything else standing over the box.
+    /// What a running turn is showing, and anything else standing over the
+    /// box, painted.
     turn: Vec<String>,
     /// The cells each row of `turn` drew, as [`Renderer::cells`] answers for it.
     drew: Vec<Range<usize>>,
-    /// The first rows of `turn`, unpainted, where a running turn put them
-    /// there: the turn's own rows, laid out at the transcript's width. Empty
-    /// between turns and under anything else standing there.
+    /// The first rows of `turn` as they were handed in, where a running turn
+    /// put them there: the turn's own rows, laid out at the transcript's
+    /// width. Empty between turns and under anything else standing there.
     running: Vec<Row>,
-    /// The palette `running` was handed in, for painting it beside the rail.
+    /// The rest of `turn` as it was handed in: whatever stands under the
+    /// turn's own rows and over the box.
+    over: Vec<Row>,
+    /// The palette `running` and `over` were handed in with.
     ran: Option<Palette>,
     /// Where the cursor belongs in it, where anything is typing into it.
     turned: Option<Caret>,
-    /// The box.
+    /// The box, painted.
     prompt: Vec<String>,
+    /// The box as it was handed in.
+    boxed: Vec<Row>,
+    /// The palette `boxed` was handed in with.
+    boxed_in: Option<Palette>,
     /// Where the cursor belongs in the box.
     prompted: Option<Caret>,
 }
 
 impl Standing {
-    /// Forget both, for a window whose size has changed underneath them.
+    /// Forget both, for a transcript that has been emptied under them.
     fn clear(&mut self) {
         self.turn.clear();
         self.drew.clear();
         self.running.clear();
+        self.over.clear();
         self.ran = None;
         self.turned = None;
         self.prompt.clear();
+        self.boxed.clear();
+        self.boxed_in = None;
         self.prompted = None;
+    }
+
+    /// Holds `turn` and `over` as the first slot, to be painted by
+    /// [`Standing::paint_turn`].
+    fn stands(&mut self, turn: &[Row], over: &[Row], palette: Palette) {
+        self.running.clear();
+        self.running.extend_from_slice(turn);
+        self.over.clear();
+        self.over.extend_from_slice(over);
+        self.ran = Some(palette);
+    }
+
+    /// Holds `rows` as the box and paints them `columns` wide.
+    fn boxes(&mut self, rows: &[Row], palette: Palette, columns: usize) {
+        self.boxed.clear();
+        self.boxed.extend_from_slice(rows);
+        self.boxed_in = Some(palette);
+        self.paint_box(columns);
+    }
+
+    /// Paints both slots again from what they were handed in as, for a window
+    /// `columns` wide whose transcript is `folds` wide.
+    fn repaint(&mut self, folds: usize, columns: usize) {
+        self.paint_turn(folds, columns);
+        self.paint_box(columns);
+    }
+
+    /// Paints the first slot, the turn's own rows `folds` wide and the rest
+    /// `columns` wide, and measures the cells each of its rows draws.
+    fn paint_turn(&mut self, folds: usize, columns: usize) {
+        let rows = || {
+            self.running
+                .iter()
+                .map(move |row| (row, folds))
+                .chain(self.over.iter().map(move |row| (row, columns)))
+        };
+        match self.ran {
+            Some(palette) => paint(rows(), &palette, &mut self.turn),
+            None => self.turn.clear(),
+        }
+        self.drew.clear();
+        self.drew.extend(rows().map(|(row, room)| drawn(row, room)));
+    }
+
+    /// Paints the box.
+    fn paint_box(&mut self, columns: usize) {
+        match self.boxed_in {
+            Some(palette) => paint(
+                self.boxed.iter().map(|row| (row, columns)),
+                &palette,
+                &mut self.prompt,
+            ),
+            None => self.prompt.clear(),
+        }
     }
 }
 
@@ -403,6 +472,9 @@ impl<T: Terminal> Renderer<T> {
     /// would leave half of it in a scrollback the other mode does not keep.
     #[must_use]
     pub fn drawing(terminal: T, mode: ScreenMode) -> Self {
+        // The one place a size is guessed: with none known yet there is
+        // nothing to keep, and every later query that fails keeps the size
+        // already known rather than guessing again.
         let size = terminal.size().unwrap_or(Size::FALLBACK);
 
         Self {
@@ -546,11 +618,24 @@ impl<T: Terminal> Renderer<T> {
     /// is anywhere to move it, and nothing else, so it goes no further, and
     /// neither does the drag it starts.
     ///
+    /// A resize is taken here too, by [`Renderer::resized`], and handed back
+    /// for the loop to lay out again what it stands, so no loop has to ask
+    /// for it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn took(&mut self, arrived: Pressed) -> Result<Option<Pressed>, TerminalError> {
         if !self.terminal.is_terminal() {
+            return Ok(Some(arrived));
+        }
+
+        // The window's size is the renderer's to keep, so a press saying it
+        // changed is taken here, whichever loop read it: the record is folded
+        // again and what stands is painted at the new width. The press goes
+        // on so the loop can lay out again what it stands.
+        if arrived == Pressed::Resized {
+            self.resized()?;
             return Ok(Some(arrived));
         }
 
@@ -1366,7 +1451,7 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        paint(rows, &palette, self.size.columns, &mut self.standing.prompt);
+        self.standing.boxes(rows, palette, self.size.columns);
         self.standing.prompted = Some(caret);
         self.prompt_target = None;
         self.pointed_changed = false;
@@ -1416,35 +1501,14 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        paint(
-            prompt.rows,
-            &palette,
-            self.size.columns,
-            &mut self.standing.prompt,
-        );
-        paint(
-            turn.iter().chain(over),
-            &palette,
-            self.size.columns,
-            &mut self.standing.turn,
-        );
-        let folds = self.folds();
+        let columns = self.size.columns;
+        self.standing.boxes(prompt.rows, palette, columns);
         // The turn's own rows at the width the rail leaves them, as the frame
         // draws them; what stands under them at the window's.
-        self.standing.drew.clear();
-        self.standing.drew.extend(
-            turn.iter()
-                .map(|row| drawn(row, folds))
-                .chain(over.iter().map(|row| drawn(row, self.size.columns))),
-        );
-        self.standing.running.clear();
-        self.standing
-            .running
-            .extend(turn.iter().map(|row| row.clipped(folds)));
-        self.standing.ran = (!turn.is_empty()).then_some(palette);
+        self.standing.stands(turn, over, palette);
+        self.standing.paint_turn(self.folds(), columns);
         self.standing.prompted = Some(prompt.caret);
         self.standing.turned = None;
-        let columns = self.size.columns;
         self.prompt_target = prompt.pointed.map(|(at, row)| (at, door(row, columns)));
 
         if self.prompt_pointed()
@@ -1508,24 +1572,8 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        paint(
-            turn.iter().chain(rows),
-            &palette,
-            self.size.columns,
-            &mut self.standing.turn,
-        );
-        let folds = self.folds();
-        self.standing.drew.clear();
-        self.standing.drew.extend(
-            turn.iter()
-                .map(|row| drawn(row, folds))
-                .chain(rows.iter().map(|row| drawn(row, self.size.columns))),
-        );
-        self.standing.running.clear();
-        self.standing
-            .running
-            .extend(turn.iter().map(|row| row.clipped(folds)));
-        self.standing.ran = (!turn.is_empty()).then_some(palette);
+        self.standing.stands(turn, rows, palette);
+        self.standing.paint_turn(self.folds(), self.size.columns);
         self.standing.turned = caret;
         self.draw()
     }
@@ -1561,7 +1609,7 @@ impl<T: Terminal> Renderer<T> {
         }
 
         // As an empty slice given to `live` takes it off, without its frame.
-        paint(&[], &palette, self.size.columns, &mut self.standing.prompt);
+        self.standing.boxes(&[], palette, self.size.columns);
         self.standing.prompted = Some(Caret::default());
         self.prompt_target = None;
         self.pointed_changed = false;
@@ -1690,15 +1738,21 @@ impl<T: Terminal> Renderer<T> {
     /// The record is folded again at the new width, which is what keeps the
     /// reader on the line they were reading rather than on a row number that
     /// meant something else, and the opening is drawn again rather than folded.
-    /// What was standing is dropped rather than redrawn wrongly: it was laid
-    /// out against a window that has gone, and the caller lays out the next
-    /// one.
+    /// What was standing stays, painted again at the new width from the rows
+    /// it was handed in as: it was laid out against a window that has gone, so
+    /// a row wider than the new one is cut at its edge until the caller lays
+    /// out the next one.
+    ///
+    /// A size the terminal could not report is no news of a size, and the one
+    /// already known is kept.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn resized(&mut self) -> Result<(), TerminalError> {
-        let size = self.terminal.size().unwrap_or(Size::FALLBACK);
+        let Ok(size) = self.terminal.size() else {
+            return Ok(());
+        };
         if size == self.size {
             return Ok(());
         }
@@ -1706,7 +1760,7 @@ impl<T: Terminal> Renderer<T> {
         self.native_resize(size);
         self.size = size;
         self.record.resized(self.folds(), self.glyphs);
-        self.standing.clear();
+        self.standing.repaint(self.folds(), size.columns);
         self.prompt_target = None;
         self.pointed_changed = false;
         self.unselects();
@@ -2377,17 +2431,17 @@ fn door(row: &Row, room: usize) -> Range<usize> {
 /// on every keystroke, and a `String` per row per key is an allocation the
 /// render path does not have to make.
 ///
-/// Clipped here rather than at the frame, because this is where the width is
-/// known and the row still is: a row wider than the window would otherwise be
-/// wrapped by the terminal onto a row belonging to another band.
+/// Each row comes with the columns it may take, and is clipped to them here
+/// rather than at the frame, because this is where the width is known and the
+/// row still is: a row wider than the window would otherwise be wrapped by the
+/// terminal onto a row belonging to another band.
 fn paint<'a>(
-    rows: impl IntoIterator<Item = &'a Row>,
+    rows: impl IntoIterator<Item = (&'a Row, usize)>,
     palette: &Palette,
-    columns: usize,
     into: &mut Vec<String>,
 ) {
     let mut count = 0;
-    for row in rows {
+    for (row, columns) in rows {
         if count == into.len() {
             into.push(String::new());
         }

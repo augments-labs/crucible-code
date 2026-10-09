@@ -316,11 +316,8 @@ fn keyed_within<T: Terminal>(
         return Ok(false);
     }
     Ok(match renderer.took(crucible_tui::pressed()?)? {
-        None | Some(Pressed::Ignored) => false,
-        Some(Pressed::Resized) => {
-            renderer.resized()?;
-            false
-        }
+        // The renderer took a resize as it read it.
+        None | Some(Pressed::Ignored | Pressed::Resized) => false,
         Some(_) => true,
     })
 }

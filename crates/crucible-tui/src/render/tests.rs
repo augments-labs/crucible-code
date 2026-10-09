@@ -534,17 +534,37 @@ fn a_resize_that_changed_nothing_writes_nothing() {
 }
 
 #[test]
-fn a_resize_drops_what_was_standing_rather_than_drawing_it_at_the_wrong_size() {
-    // A box laid out against a window that has gone. The caller lays out the
-    // next one; drawing this one again would put a row past the edge.
+fn a_resize_keeps_what_was_standing_cut_at_the_new_width() {
+    // A box laid out against a window that has gone stays on screen until the
+    // caller lays out the next one, cut at the new edge rather than drawn
+    // past it.
     let mut drawn = Drawn::new(40, 10);
-    let (rows, caret) = boxed();
-    drawn.live(&rows, caret, Palette::plain()).unwrap();
+    drawn
+        .live(
+            &[Row::plain("a box row that is thirty-four wide")],
+            Caret::default(),
+            Palette::plain(),
+        )
+        .unwrap();
 
     drawn.render.terminal.resize(20, 10);
     drawn.resized().unwrap();
 
-    assert!(drawn.screen().said().is_empty());
+    assert_eq!(drawn.screen().said(), ["a box row that is th"]);
+}
+
+#[test]
+fn a_resize_press_taken_by_the_renderer_folds_the_record_again() {
+    // The seam every input loop reads through takes the new size itself, so
+    // the loop is handed the press only to lay out again what it stands.
+    let mut drawn = Drawn::new(20, 8);
+    drawn.commit("the quick brown fox jumps").unwrap();
+
+    drawn.render.terminal.resize(40, 8);
+    let left = drawn.render.took(Pressed::Resized).unwrap();
+
+    assert_eq!(left, Some(Pressed::Resized));
+    assert_eq!(drawn.screen().row(0), "the quick brown fox jumps");
 }
 
 #[test]
@@ -580,7 +600,9 @@ fn a_resize_drops_a_stale_prompt_hover_target_until_replacement_reflows_it() {
 
     assert!(drawn.prompt_target.is_none());
     assert!(!drawn.pointed_changed());
-    assert!(drawn.standing.prompt.is_empty());
+    // The box stays, painted again as it was handed in, without the pointed
+    // row the hover put in it.
+    assert_eq!(drawn.screen().said(), ["prompt", "2 commands"]);
 
     drawn
         .replace(
