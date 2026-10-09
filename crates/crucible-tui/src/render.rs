@@ -45,6 +45,7 @@ use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
 use crate::terminal::keys::{Pressed, pressed, waiting};
+use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
 use crate::width;
 
@@ -272,7 +273,9 @@ pub struct Renderer<T: Terminal> {
     /// The size the record is folded for and the bands are shared out over.
     ///
     /// Held rather than asked for per frame: a read costs a syscall, and
-    /// [`Renderer::resized`] is what keeps it true.
+    /// [`Renderer::resized`] is what keeps it true, called for the press that
+    /// reports a resize or by the first frame after a [`ResizeFlag`] says one
+    /// happened.
     size: Size,
     /// What each row of the window is currently showing, and the frame that
     /// changes it.
@@ -375,6 +378,8 @@ pub struct Renderer<T: Terminal> {
     pointing: Option<(usize, usize)>,
     /// What may call off a wait on the keyboard, where anything may.
     recall: Option<Arc<dyn Recall>>,
+    /// What says the window changed size, where anything does.
+    resizes: Option<ResizeFlag>,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -428,6 +433,7 @@ impl<T: Terminal> Renderer<T> {
             creeps: None,
             pointing: None,
             recall: None,
+            resizes: None,
         }
     }
 
@@ -435,6 +441,11 @@ impl<T: Terminal> Renderer<T> {
     /// says in [`Recall`].
     pub fn recalled_by(&mut self, recall: Arc<dyn Recall>) {
         self.recall = Some(recall);
+    }
+
+    /// Asks the window its size only after `resizes` says it changed.
+    pub fn watches_size(&mut self, resizes: ResizeFlag) {
+        self.resizes = Some(resizes);
     }
 
     /// Waits for one press, carrying a drag resting at an edge of the
@@ -2160,6 +2171,17 @@ impl<T: Terminal> Renderer<T> {
 
         if self.native.is_some() {
             return self.draw_native();
+        }
+
+        // A resize the operating system reported but no wait on the keyboard
+        // has read, as while an answer streams: `resized` lays everything out
+        // again for the window as it is now and draws it, through here again
+        // with the flag lowered, so the frame it draws is this one. A query
+        // that fails says nothing, and the frame is drawn for the size known.
+        if self.resizes.as_ref().is_some_and(ResizeFlag::taken)
+            && self.terminal.size().is_ok_and(|size| size != self.size)
+        {
+            return self.resized();
         }
 
         let bands = self.bands();

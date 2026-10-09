@@ -50,10 +50,11 @@
 //! clear, or leaving — writes no region and keeps no height, so the next one,
 //! where there is one, starts again from only what it has to show.
 //!
-//! A resize redraws the region and nothing else, and every frame asks the
-//! window's size before it is drawn, so that one drawn while an answer is
-//! arriving goes out at the width the window already has rather than the one
-//! the press reporting the change will name. How far back the region's top now
+//! A resize redraws the region and nothing else, and a frame asks the window's
+//! size before it is drawn, so that one drawn while an answer is arriving goes
+//! out at the width the window already has rather than the one the press
+//! reporting the change will name. Given a [`ResizeFlag`], only the first frame
+//! after the flag is raised asks; without one, every frame does. How far back the region's top now
 //! is cannot be asked of the terminal, so it is worked out from how wide each row
 //! of the region was against the new width, counted as a terminal that rewraps
 //! would count it. On one that does not, narrowing counts high, and the erase
@@ -81,6 +82,7 @@ use super::frame::{BEGIN_SYNC, END_SYNC, HIDE, SHOW};
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
+use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
 use crate::width;
 
@@ -276,20 +278,29 @@ impl<T: Terminal> Renderer<T> {
     /// Writes one frame, taking the state it keeps out of `self` while it
     /// does.
     ///
-    /// The window's size is asked for first. The press that reports a resize
-    /// is read between frames, and an answer still arriving draws frames
-    /// until it is: a frame drawn at the old width is wrapped by the
-    /// terminal, the next rewinds over the rows it counted rather than the
-    /// rows the terminal made of them, and what it did not reach stays above
-    /// the region as a second copy. So a size the press has not yet reported
-    /// is taken here, and the frame is drawn for the window as it is now; the
-    /// press, when it comes, finds nothing left to do.
+    /// The window's size is asked for first, where it may have changed. The
+    /// press that reports a resize is read between frames, and an answer
+    /// still arriving draws frames until it is: a frame drawn at the old
+    /// width is wrapped by the terminal, the next rewinds over the rows it
+    /// counted rather than the rows the terminal made of them, and what it
+    /// did not reach stays above the region as a second copy. So a size the
+    /// press has not yet reported is taken here, and the frame is drawn for
+    /// the window as it is now; the press, when it comes, finds nothing left
+    /// to do.
+    ///
+    /// Given a [`ResizeFlag`], a frame asks only when the flag says the
+    /// window changed since a frame last asked, so a streaming answer costs
+    /// no query per frame. Without one, as where the operating system sends
+    /// no word of a resize, every frame asks.
     ///
     /// A query that fails says nothing about the window. It is not a resize,
     /// and the frame is drawn for the size already known, as it would have
     /// been before the query was asked here.
     fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {
-        if self.native.is_some() && self.terminal.size().is_ok_and(|size| size != self.size) {
+        if self.native.is_some()
+            && self.resizes.as_ref().is_none_or(ResizeFlag::taken)
+            && self.terminal.size().is_ok_and(|size| size != self.size)
+        {
             // `resized` asks the size again and takes what it reads, as it
             // does for the press: it lays the region out and draws it,
             // through this function again, when that differs from the size

@@ -105,7 +105,7 @@ pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};
 pub use terminal::mouse::Reporting;
 pub use terminal::raw::{Raw, RawError};
 pub use terminal::screen::{Screen, ScreenError};
-pub use terminal::system::SystemTerminal;
+pub use terminal::system::{ResizeFlag, SystemTerminal};
 pub use terminal::{Picture, Recording, Size, Terminal, TerminalError};
 pub use timeline::{Brief, Timeline, Told};
 pub use title::{TITLE, Title, TitleError};
