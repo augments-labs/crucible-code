@@ -18,7 +18,10 @@
 //! edited, since the text it quotes has to be found in it. Either way the
 //! file is held to the content the edit read until the replacement is
 //! committed, so another writer's change in between is kept and the edit
-//! refused rather than the change overwritten.
+//! refused rather than the change overwritten. Once it is committed, the
+//! file is held to what the edit made, read first or not, so the next `edit`
+//! or `write` of it needs no read; the ledger says why that counts for a
+//! file the session never read.
 
 use std::io::{self, Read as _};
 
@@ -356,16 +359,15 @@ fn edited(
     let output = ToolOutput::ok(format!("changed {requested}, {replaced} replacements"))
         .showing(changed::between(&before, &after));
 
-    // A file the session was holding to what it saw is now held to what this
-    // edit made, so the next change needs no read first. One it never read
-    // stays unread: an edit quotes part of a file, and a `write` that relied
-    // on it would discard the rest unseen.
-    let file = held.map(|_| {
-        (
-            path.as_path().to_path_buf(),
-            Fingerprint::of(after.as_bytes()),
-        )
-    });
+    // The file is now held to what this edit made, so the next change needs
+    // no read first. That holds for a file the session never read too: what
+    // is there now is content the session produced, though the agent was
+    // shown only the text it quoted, and a later `write` may discard the
+    // rest unseen. A change made to it after this is still refused.
+    let file = Some((
+        path.as_path().to_path_buf(),
+        Fingerprint::of(after.as_bytes()),
+    ));
     Ok(Shown { output, file })
 }
 

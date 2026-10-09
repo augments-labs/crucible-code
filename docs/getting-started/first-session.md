@@ -1415,10 +1415,10 @@ you configure rules or a mode that answer for you; see
 one takes, what bounds its answer, and what it says when it hits that bound.
 
 `write` puts down a whole file, so it refuses to overwrite one this session has
-not read or written itself, and says so rather than ending the turn. The model
-reads the file and writes it again. That covers the case a permission prompt
-cannot: a `write` you approve is one you agreed to, and neither of you can see
-that the file holds work nobody looked at.
+not read, edited or written itself, and says so rather than ending the turn.
+The model reads the file and writes it again. That covers the case a permission
+prompt cannot: a `write` you approve is one you agreed to, and neither of you
+can see that the file holds work nobody looked at.
 
 `bash` runs its command through a POSIX shell in the workspace root, and starts
 it with a short list of variables (`PATH`, `HOME`, the locale) rather than the

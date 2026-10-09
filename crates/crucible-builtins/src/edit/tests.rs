@@ -757,3 +757,89 @@ fn what_an_edit_made_needs_no_read_before_the_next_change() {
     }
     assert_eq!(read(&sample, "one.rs"), "let a = 4;\n");
 }
+
+/// A `write` of `content` to `at` against `seen`.
+fn writing(sample: &Sample, at: &str, content: &str, seen: &Ledger) -> ToolOutput {
+    let tool = crate::Write::new(sample.workspace(), seen.clone());
+    let args = format!(r#"{{"path":"{at}","content":"{content}"}}"#);
+    crucible_runtime::answered!(tool.run(allowed(&tool, &args), &crate::sample::context())).unwrap()
+}
+
+#[test]
+fn what_an_edit_made_of_a_file_never_read_needs_no_read_before_a_write() {
+    // What is in the file now is what the session's own edit made, so the
+    // record holds it to that whether or not it was read first.
+    let sample = Sample::new("edit-unread-then-write");
+    sample.write("one.rs", "let a = 1;\nlet b = 2;\n");
+    let seen = Ledger::new();
+
+    let edited = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 1;","replace":"let a = 2;"}"#,
+        &seen,
+    );
+    let written = writing(&sample, "one.rs", "let a = 4;\\n", &seen);
+
+    for output in [&edited, &written] {
+        assert!(!output.is_failed(), "{}", output.text());
+    }
+    assert_eq!(read(&sample, "one.rs"), "let a = 4;\n");
+}
+
+#[test]
+fn a_file_never_read_that_changed_since_an_edit_made_it_is_refused_as_stale() {
+    // Counting what an edit made holds the file to that content, not to its
+    // name: another writer's change after the edit is refused as surely as
+    // one after a read.
+    let sample = Sample::new("edit-unread-then-stale-write");
+    sample.write("one.rs", "let a = 1;\n");
+    let seen = Ledger::new();
+
+    let edited = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 1;","replace":"let a = 2;"}"#,
+        &seen,
+    );
+    assert!(!edited.is_failed(), "{}", edited.text());
+    sample.write("one.rs", "let a = 9;\n");
+    let written = writing(&sample, "one.rs", "let a = 4;\\n", &seen);
+
+    assert!(written.is_failed(), "{}", written.text());
+    assert_eq!(read(&sample, "one.rs"), "let a = 9;\n");
+    assert_eq!(
+        written.text(),
+        "one.rs changed since it was read, so replacing it would discard what changed: read it again"
+    );
+}
+
+#[test]
+fn an_edit_of_a_file_never_read_that_was_not_made_leaves_it_unread() {
+    // Only a change the edit made is something the session produced. One it
+    // refused, whether for text it could not find or for a change under it
+    // before its commit, put nothing down, so a `write` still asks for a read.
+    let sample = Sample::new("edit-unread-refused-then-write");
+    sample.write("one.rs", "let a = 1;\n");
+    let seen = Ledger::new();
+
+    let missing = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let z = 0;","replace":"let z = 1;"}"#,
+        &seen,
+    );
+    changed_before_commit(&sample, "one.rs", "let a = 9;\n");
+    let raced = editing(
+        &sample,
+        r#"{"path":"one.rs","find":"let a = 1;","replace":"let a = 2;"}"#,
+        &seen,
+    );
+    let written = writing(&sample, "one.rs", "let a = 4;\\n", &seen);
+
+    for output in [&missing, &raced, &written] {
+        assert!(output.is_failed(), "{}", output.text());
+    }
+    assert_eq!(read(&sample, "one.rs"), "let a = 9;\n");
+    assert_eq!(
+        written.text(),
+        "one.rs has not been read, so replacing it would discard what is in it: read it first"
+    );
+}

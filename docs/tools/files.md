@@ -250,8 +250,8 @@ its destination and renamed over it, so it is either the old file or the new one
 ### It refuses to replace a file nobody has looked at
 
 `write` names a file and discards whatever is in it, which makes it the one tool
-here that can destroy work. So it will only replace a file this run has read or
-written itself. Anything else comes back as
+here that can destroy work. So it will only replace a file this run has read,
+edited or written itself. Anything else comes back as
 
 ```
 notes.md has not been read, so replacing it would discard what is in it: read it first
@@ -274,6 +274,12 @@ What counts as having looked:
 - A `write` call that created or replaced it. What the agent just put down it
   has by definition seen, so correcting it does not cost a round trip spent
   learning what the same turn wrote.
+- An `edit` call that changed it, whether or not the file was read first. What
+  the edit left there is what this session made, so a second change needs no
+  read in between. For a file never read this is an allowance rather than a
+  look: the agent was shown only the text it quoted, so a `write` after the
+  edit can discard the rest of the file unseen. An `edit` that was not made
+  counts for nothing.
 
 Having looked is held to what was there when it looked. If the file has
 changed since, whether another program edited it in place or put a new file at
@@ -284,12 +290,12 @@ notes.md changed since it was read, so replacing it would discard what changed: 
 ```
 
 A read of part of a file counts for the whole of it, so a change in the lines
-it was not shown is caught too. `edit` refuses a file this run has read and
-that has changed since in the same way, ending `so the edit was not made: read
-it again`. Both look once more just before the change lands, and leave the file
-alone if it no longer holds what the change was made from. A change made in
-the instant between that last look and the file being swapped in is not seen,
-because no platform offers a way to look and swap in one step.
+it was not shown is caught too. `edit` refuses a file this run has looked at
+and that has changed since in the same way, ending `so the edit was not made:
+read it again`. Both look once more just before the change lands, and leave the
+file alone if it no longer holds what the change was made from. A change made
+in the instant between that last look and the file being swapped in is not
+seen, because no platform offers a way to look and swap in one step.
 
 Files are remembered by their resolved path, so `./notes.md` and `notes.md` are
 one file rather than two. The last 1024 of them are kept and reading one again
