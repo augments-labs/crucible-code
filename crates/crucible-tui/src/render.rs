@@ -341,10 +341,11 @@ pub struct Renderer<T: Terminal> {
     pointed_changed: bool,
     /// The size the record is folded for and the bands are shared out over.
     ///
-    /// Held rather than asked for per frame: a read costs a syscall, and
-    /// [`Renderer::resized`] is what keeps it true, called for the press that
-    /// reports a resize or by the first frame after a [`ResizeFlag`] says one
-    /// happened.
+    /// Held rather than asked for per frame where it can be: a read costs a
+    /// syscall, and [`Renderer::resized`] is what keeps it true, called for
+    /// the press that reports a resize or by the first frame after a
+    /// [`ResizeFlag`] says one happened. In native mode given no flag, every
+    /// frame asks, and one that finds the size changed calls it too.
     size: Size,
     /// What each row of the window is currently showing, and the frame that
     /// changes it.
