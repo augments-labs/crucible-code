@@ -64,7 +64,7 @@ use crate::cli::draw::when;
 
 use super::super::region::{self, Ended, Moved};
 use super::super::{Held, finding, replaying};
-use super::Terms;
+use super::{Laid, Terms, relaid};
 
 /// How many sessions the picker is handed.
 ///
@@ -314,7 +314,7 @@ fn offered<T: Terminal>(
     }
 
     if !held.answers.keys {
-        renderer.present(&listing(&chosen(&listed, &first), now, columns))?;
+        printed(renderer, &chosen(&listed, &first), now)?;
         return Ok(None);
     }
 
@@ -933,12 +933,7 @@ fn stood<T: Terminal>(
         // looking at when the window closed in.
         Ended::Cramped => {
             let places = scoped(&stood.listed, stood.scope, here);
-            let rows = listing(
-                &chosen(&stood.listed, &places),
-                now,
-                renderer.transcript_columns(),
-            );
-            renderer.present(&rows)?;
+            printed(renderer, &chosen(&stood.listed, &places), now)?;
             Ok(None)
         }
     }
@@ -1045,6 +1040,25 @@ fn shown<'a, 'b>(listed: &'b [&'a Recorded]) -> &'b [&'a Recorded] {
     listed.get(..SHOWN).unwrap_or(listed)
 }
 
+/// Prints the listing of the first [`SHOWN`] of `listed`, hung under the
+/// command, and lays it out again at each width the window takes: the
+/// sessions and their ages are read once, as they stood when it was asked
+/// for.
+fn printed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    listed: &[&Recorded],
+    now: SystemTime,
+) -> Result<(), Fatal> {
+    let kept: Vec<Recorded> = shown(listed)
+        .iter()
+        .map(|session| (*session).clone())
+        .collect();
+    relaid(renderer, Laid::Hung, move |columns| {
+        let kept: Vec<&Recorded> = kept.iter().collect();
+        listing(&kept, now, columns)
+    })
+}
+
 /// The listing, one row a session: the id, the age, and the title.
 ///
 /// The id leads because it is the row's handle — the exact word `/resume` and
@@ -1073,7 +1087,9 @@ fn listing(listed: &[&Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
 
             let room = columns.saturating_sub(row.columns());
             row.push(Slot::Plain, clip(session.title(), room));
-            row
+            // A window narrower than the id and the age together cuts the
+            // row at its edge, where the title had no room left anyway.
+            row.clipped(columns)
         })
         .collect()
 }
