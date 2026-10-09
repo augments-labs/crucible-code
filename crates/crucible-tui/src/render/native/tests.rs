@@ -1049,7 +1049,7 @@ fn a_native_frame_told_of_a_resize_whose_size_query_fails_leaves_the_next_frame_
     // makes fails. The resize is still owed: the next frame asks once more and
     // takes the new width, rather than drawing at the old one until another
     // signal or a press. One that fails again is not asked about frame after
-    // frame.
+    // frame, and a signal that arrives while one is owed is owed its own.
     let window = Window::new(40, 10);
     let mut render = native(&window);
     let resizes = ResizeFlag::default();
@@ -1087,6 +1087,24 @@ fn a_native_frame_told_of_a_resize_whose_size_query_fails_leaves_the_next_frame_
         "a query that failed twice was asked again unprompted"
     );
     assert_eq!(render.columns(), 20);
+
+    // A signal that arrives while a resize is still owed is owed a query of
+    // its own: when the frame that asks for both fails, the next one asks.
+    window.resize(25, 10);
+    resizes.raise();
+    window.loses_size(1);
+    render.stream("hotel ").unwrap();
+    window.resize(35, 10);
+    resizes.raise();
+    window.loses_size(1);
+    render.stream("india ").unwrap();
+    assert_eq!(render.columns(), 20, "a failed query was taken as a size");
+    render.stream("juliett ").unwrap();
+    assert_eq!(
+        render.columns(),
+        35,
+        "a resize told of while another was owed was dropped when its query failed"
+    );
 }
 
 #[test]

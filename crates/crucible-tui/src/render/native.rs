@@ -377,18 +377,17 @@ impl<T: Terminal> Renderer<T> {
     /// and the frame is drawn for the size already known, as it would have
     /// been before the query was asked here. Where the flag sent it to ask,
     /// the resize it told of is still owed, so the next frame asks once more
-    /// though the flag is down; a second failure waits for the next signal or
-    /// press rather than asking at every frame while the window will not say.
+    /// though the flag is down. Each signal is owed that one query: when one
+    /// asked only for what was owed fails as well, the next signal or press is
+    /// waited for rather than asking at every frame while the window will not
+    /// say.
     fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {
-        let (asks, owed) = match &mut self.native {
-            None => (false, false),
+        let (asks, owed, told) = match &mut self.native {
+            None => (false, false, false),
             Some(native) => {
                 let owed = std::mem::take(&mut native.asks) == Asks::Again;
-                let asks = self
-                    .resizes
-                    .as_ref()
-                    .is_none_or(|resizes| ResizeFlag::taken(resizes) || owed);
-                (asks, owed)
+                let told = self.resizes.as_ref().is_some_and(ResizeFlag::taken);
+                (self.resizes.is_none() || told || owed, owed, told)
             }
         };
         let size = asks.then(|| self.terminal.size().ok()).flatten();
@@ -397,7 +396,11 @@ impl<T: Terminal> Renderer<T> {
             && self.resizes.is_some()
             && let Some(native) = &mut self.native
         {
-            native.asks = if owed { Asks::WhenTold } else { Asks::Again };
+            native.asks = if owed && !told {
+                Asks::WhenTold
+            } else {
+                Asks::Again
+            };
         }
         if size.is_some_and(|size| size != self.size) {
             // `resized` asks the size again and takes what it reads, as it
