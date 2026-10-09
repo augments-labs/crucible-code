@@ -1492,3 +1492,118 @@ fn settings_printed_is_laid_again_at_each_width_it_is_read_at() {
 fn model_listing_printed_is_laid_again_at_each_width_it_is_read_at() {
     assert_laid_again("model-relaid", "/model", "zai/glm-5.2", [40, 80]);
 }
+
+/// What `/resume` printed of the one session it found, in a window `printed`
+/// columns wide and too short for the picker, read back once the window is
+/// made each of `widths` wide and tall enough to hold it all, beside the
+/// listing printed when the window had that width from the start. Each window
+/// records a session of its own, so the id is read as `#`s.
+fn resume_listed_then_resized(
+    case: &str,
+    native: bool,
+    printed: u16,
+    widths: [u16; 2],
+) -> Vec<(u16, Vec<String>, Vec<String>)> {
+    const TALL: u16 = 100;
+    let vendor = Vendor::answering("Hello.");
+    let open = |name: &str, columns: u16| {
+        let mut window = if native {
+            Watched::native(name, columns, 24, &vendor)
+        } else {
+            fullscreen(name, columns, 24, &vendor)
+        };
+        window.types_until(
+            "summarise the release notes for the payments service\r",
+            "Hello.",
+        );
+        // Five rows leave the picker no room to stand, so the listing prints,
+        // the id leading each row of it.
+        let id = recorded_id(&window);
+        window.resize(columns, 5);
+        window.types_until("/resume\r", &id);
+        window
+    };
+    let read = |window: &Watched| {
+        let id = recorded_id(window);
+        let seen = if native {
+            everything(window)
+        } else {
+            window.picture()
+        };
+        reply(&seen, "/resume", &id)
+            .into_iter()
+            .map(|row| row.replace(&id, &"#".repeat(id.len())))
+            .collect()
+    };
+
+    let mut window = open(case, printed);
+    widths
+        .into_iter()
+        .map(|columns| {
+            window.resize(columns, TALL);
+            let mut fresh = open(&format!("{case}-fresh-{columns}"), columns);
+            fresh.resize(columns, TALL);
+            (columns, read(&window), read(&fresh))
+        })
+        .collect()
+}
+
+#[test]
+fn resume_listing_printed_is_laid_again_at_each_width_it_is_read_at() {
+    // Printed at sixty columns, where the title has a few columns left, so a
+    // listing laid once keeps that cut title when the window widens.
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        for (columns, resized, fresh) in
+            resume_listed_then_resized(&format!("resume-relaid-{mode}"), native, 60, [80, 40])
+        {
+            assert_eq!(resized, fresh, "/resume at {columns} columns, {mode}");
+        }
+    }
+}
+
+/// The rows of the command list standing over the box: from the one marked
+/// `/help` to the blank row that parts the list from what is under it.
+fn command_list(window: &Watched) -> Vec<String> {
+    let picture = window.picture();
+    drawn(&picture)
+        .into_iter()
+        .map(|row| row.trim_matches('|').trim_end().to_owned())
+        .skip_while(|row| !row.starts_with("› /help"))
+        .take_while(|row| !row.is_empty())
+        .collect()
+}
+
+#[test]
+fn the_command_list_is_laid_again_at_each_width_it_is_read_at() {
+    // Standing rather than printed, so the list is laid out by every frame
+    // at the width the window has: widened and narrowed again, it reads as
+    // the list opened at that width does. Opened narrow, since a list laid
+    // wide and cut at a narrower window reads as one laid narrow, and a list
+    // laid narrow reads short once the window widens.
+    let vendor = Vendor::answering("Hello.");
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let open = |name: &str, columns: u16| {
+            let mut window = if native {
+                Watched::native(name, columns, 24, &vendor)
+            } else {
+                fullscreen(name, columns, 24, &vendor)
+            };
+            window.types("/");
+            window
+        };
+        let mut window = open(&format!("commands-relaid-{mode}"), 40);
+        for columns in [80, 40] {
+            window.resize(columns, 24);
+            let fresh = open(&format!("commands-relaid-{mode}-fresh-{columns}"), columns);
+            let resized = command_list(&window);
+            assert!(!resized.is_empty(), "{}", window.picture());
+            assert_eq!(
+                resized,
+                command_list(&fresh),
+                "/ at {columns} columns, {mode}"
+            );
+        }
+    }
+}
