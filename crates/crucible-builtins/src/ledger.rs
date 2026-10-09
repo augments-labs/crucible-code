@@ -160,8 +160,8 @@ impl From<ToolOutput> for Shown {
 
 /// The SHA-256 of a file's whole content.
 ///
-/// Compared, never shown: it says whether a file is still what it was, and
-/// nothing about what that was.
+/// Compared, never shown: it says whether a file is still what it was, and it
+/// confirms what that was to anyone who already has a copy.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Fingerprint([u8; 32]);
 
@@ -251,8 +251,10 @@ mod tests {
 
     #[test]
     fn a_fingerprint_is_compared_and_never_shown() {
-        // The digest says nothing about the content, but it is the same value
-        // an attachment keeps out of its `Debug`, so it is kept out here too.
+        // A digest is not reversible, but it confirms what a file held to
+        // anyone who already has a copy. That is why an attachment keeps the
+        // same value out of its `Debug`, and it is kept out here for the same
+        // reason.
         assert_eq!(
             format!("{:?}", Fingerprint::of(b"content")),
             "Fingerprint(\"[redacted]\")"
