@@ -208,3 +208,16 @@ async fn a_cancel_ends_an_event_that_never_finishes_as_it_does_comments() {
 
     cancelled_promptly(stream.as_mut(), &raised).await;
 }
+
+/// One line sent a few bytes at a time and never ended: no line is ever read
+/// whole, so nothing goes into an event, the same as a comment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancel_ends_a_line_that_never_ends_as_it_does_comments() {
+    let url = beating("data: x");
+    let transport = shared();
+    let cancel = Cancel::new();
+    let mut stream = opened(&transport, &url, &cancel).await;
+    let raised = raised_later(&cancel);
+
+    cancelled_promptly(stream.as_mut(), &raised).await;
+}
