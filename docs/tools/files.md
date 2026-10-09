@@ -291,6 +291,13 @@ alone if it no longer holds what the change was made from. A change made in
 the instant between that last look and the file being swapped in is not seen,
 because no platform offers a way to look and swap in one step.
 
+Counting a part for the whole has a cost. To take the file's digest, a `read`
+of one page goes on through the rest of the file, keeping none of it, so a page
+of a large log takes as long as reading the whole log; <kbd>Esc</kbd> still
+stops it between pieces. The last look before a change lands reads the file to
+its end again, and once begun it runs to the end, so <kbd>Esc</kbd> during a
+`write` or an `edit` of a large file waits for that read to finish.
+
 Files are remembered by their resolved path, so `./notes.md` and `notes.md` are
 one file rather than two. The last 1024 of them are kept and reading one again
 moves it back to the front, which is enough for any real session; past that the
