@@ -380,8 +380,8 @@ pub(crate) enum Parting {
     /// Say nothing.
     ///
     /// Either the session's input or output was not a terminal, so it ran
-    /// with nobody at the keys to tell, or nothing was recorded, which is a run that asked not to be kept and
-    /// has no session to come back to.
+    /// with nobody at the keys to tell, or nothing was recorded, which is a
+    /// run that asked not to be kept and has no session to come back to.
     Nothing,
 
     /// The transcript is still in the reader's scrollback, and this file is
