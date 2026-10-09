@@ -8,6 +8,40 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-10-09
+
+**Crucible 0.47.1 keeps native mode whole through resizes, and fixes
+cancelling and `crucible update` edge cases.**
+In a short native window, the opening card, a queued prompt and the listings
+`/resume` and `/settings` print are laid out again at the new width, and a size
+the terminal could not report just after a resize is asked for again.
+Cancelling now stops a response that trickles one line, and `crucible update`
+says a release it switched to is active even when the switch is not durable.
+After an `edit`, a `write` to the same file no longer asks for a read first.
+
+### Changed
+
+- **A file the agent edited can be rewritten without reading it first.** After a successful `edit`, a `write` to the same file goes ahead even when the session never read it, since the file holds what the edit made. A change anyone else makes after the edit is still refused, and an edit that did not go through still counts for nothing.
+
+### Fixed
+
+- **The Ctrl+O results view keeps its place when the window is resized.** Narrowing or widening the window while the view is open now keeps it on the result it was showing, rather than opening part way into whichever result the old row now falls in. The footer count and the next ← or → step go from that result.
+- **A narrow window no longer starts a row with a stray accent.** When a window is too narrow for a wide character, the character is left out, and now an accent or emoji selector written on it goes with it instead of landing on the next row.
+- **The listing `/resume` prints follows the window when it is resized.** In a window too short for the picker, the sessions it lists are now laid out again at the new width, instead of keeping titles cut at the width they were first printed at.
+- **A prompt queued under a turn shows in a short native window.** In a short native window, an 80x24 terminal among them, the queue panel was not drawn at all, so a line typed during a turn looked lost; the panel now stands taller, at the least it can be drawn in, as other panels over the box do.
+- **A native session no longer keeps drawing at the old width after a resize it could not measure.** When asking the window its size fails just after a resize, the next frame asks again instead of waiting for the next resize or key press; if that fails too, the next resize or key press is waited for as before.
+- **The opening card survives a resize in a short window.** In native mode, a welcome card too tall to fit above the input box is now written back whole at the new width once a resize settles, instead of keeping rows laid for the old width with their right edge cut off.
+- **The results view footer honours `output.glyphs` set to `ascii`.** The row under the view ctrl+o opens drew `·` and arrows even with ascii glyphs; it now reads `esc to close - ^v pgup pgdn to see more - <> result 2 of 7`, like every other mark in an ascii session.
+- **The `/settings` listing printed in a short window now refolds when the window is resized.** In a window too short for the panel, the listing `/settings` prints is laid out again at the new width, instead of having long values cut off when the window narrows.
+- **Cancelling now stops a response that sends one line a few bytes at a time.** A turn or compaction stops within a second of being cancelled even while the provider trickles a line it never ends, where before it waited until the line ended or reached 1 MiB.
+- **`crucible update` no longer says a release is inactive when it is active.** When the switch to a new release is made but the file system cannot make it durable, the release is now checked and rolled back as usual, and when it stays the update says it is active but may not survive a crash, and exits 1.
+
+### Documentation
+
+- **Troubleshooting says how to turn line carrying back on after crucible is killed.** A crucible ended by `kill -9` cannot put back what it turned off, so the shell is left cutting long lines at the window's edge; `reset` or `printf '\e[?7h'` turns carrying back on.
+- **The native-mode limits say a change of height replays the transcript too.** Zooming a tmux pane or opening one above or below crucible replaces the scrollback just as widening the window does, and the page now says why.
+- **The network page names every host `crucible update` reaches in its summary.** `api.github.com`, which answers which release is newest, is now in the bullet's lead beside `github.com` and `githubusercontent.com`.
+
 ## [0.47.0] - 2026-10-09
 
 **Crucible 0.47.0 updates itself, keeps what other programs change, and holds
@@ -5307,7 +5341,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.47.1...HEAD
+[0.47.1]: https://github.com/augments-labs/crucible-code/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/augments-labs/crucible-code/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/augments-labs/crucible-code/compare/v0.45.3...v0.46.0
 [0.45.3]: https://github.com/augments-labs/crucible-code/compare/v0.45.2...v0.45.3
