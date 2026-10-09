@@ -601,13 +601,9 @@ pub(crate) fn ask<T: Terminal>(
         // call leave through their own `return` without drawing at all.
         let moved = match arrived {
             Pressed::Background => stood(renderer, style, &mut listing, left, &terms.ending)?,
-            // Redrawn rather than re-wrapped: the box was laid out for a width
-            // the window no longer has, and the rows it left on screen are the
-            // renderer's to take back before the new ones go down.
-            Pressed::Resized => {
-                renderer.resized()?;
-                true
-            }
+            // Redrawn rather than re-wrapped: the renderer took the new size
+            // as it read the press, and the box is laid out again for it.
+            Pressed::Resized => true,
 
             // Handed back to the caller rather than answered here. What was
             // cut is the transcript's, this module is the box's, and the two
@@ -1118,13 +1114,12 @@ pub(super) fn during<T: Terminal>(
         }
 
         // News about the window rather than a key aimed at whatever is
-        // standing, so it is acted on before the view below is offered it —
-        // which is the order every other loop in this session reads a resize
-        // in. A view handed it first would redraw itself against the size the
-        // renderer is still holding, and go on being rewound over at that size
-        // for the rest of the turn.
+        // standing, which the renderer took as it read the press: the turn's
+        // rows are laid out again for the new size before the view below is
+        // offered it, which is the order every other loop in this session
+        // reads a resize in.
         if arrived == Pressed::Resized {
-            rewrap(renderer, turning)?;
+            turning.redraw();
         }
 
         // While the view stands it has the keyboard, the way whatever is
@@ -1935,18 +1930,6 @@ pub(super) struct During<'a> {
     /// is answered on a later one, and a clock that started again each time
     /// would be an offer nothing could ever take.
     pub(super) leaving: &'a mut Option<Instant>,
-}
-
-/// Re-wraps the live rows for the window's new size and lays the turn's out
-/// again.
-///
-/// Both halves of what a resize costs the box: the renderer takes back rows
-/// wrapped for a width the window no longer has, and the rows above the box
-/// are laid out again for the one it does.
-fn rewrap<T: Terminal>(renderer: &mut Renderer<T>, turning: &mut Turning) -> Result<(), Fatal> {
-    renderer.resized()?;
-    turning.redraw();
-    Ok(())
 }
 
 /// Puts the box under the turn, with the cursor in it.

@@ -251,14 +251,10 @@ fn standing<T: Terminal, S>(
             continue;
         };
 
-        // The rows on screen were laid out for a window that is no longer this
-        // one. Taking them back is the renderer's; saying the picture no longer
-        // matches is `keys` below — and the rows are laid out again against the
-        // new height as well as the new width, since height is what a component
-        // gives rows up for.
-        if arrived == Pressed::Resized {
-            renderer.resized()?;
-        }
+        // A resize was taken by the renderer as it read the press. Saying the
+        // picture no longer matches is `keys` below, and the rows are laid
+        // out again against the new height as well as the new width, since
+        // height is what a component gives rows up for.
 
         // A click is reported against the whole window, and a component thinks
         // in the rows it drew. The renderer is what knows both, so the click is
