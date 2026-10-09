@@ -1413,6 +1413,22 @@ fn printed_then_resized(
         .into_iter()
         .map(|columns| {
             window.resize(columns, TALL);
+            if native {
+                // The rows are read from the first echo of the command, so a
+                // copy written at an earlier width and left in the scrollback
+                // by the replay would be the one compared. Said on its own,
+                // since that is the replay failing and not the block.
+                let all = everything(&window);
+                let echo = format!("› {command}");
+                let echoes = drawn(&all)
+                    .into_iter()
+                    .filter(|row| row.trim_matches('|').trim_end() == echo)
+                    .count();
+                assert_eq!(
+                    echoes, 1,
+                    "{command} at {columns} columns: a copy outlived the replay\n{all}"
+                );
+            }
             let mut fresh = open(&format!("{case}-fresh-{columns}"), columns);
             fresh.resize(columns, TALL);
             (columns, read(&window), read(&fresh))
