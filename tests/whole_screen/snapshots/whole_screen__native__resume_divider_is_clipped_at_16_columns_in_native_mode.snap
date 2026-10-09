@@ -2,7 +2,10 @@
 source: tests/whole_screen/native.rs
 expression: "without_id(&window, &id)"
 ---
-16x24 cursor 13,2 scrollback 73
+16x24 cursor 16,2 scrollback 0
+|CRUCIBLE        |
+|/…/workspace    |
+|                |
 |› /resume       |
 |  ##############|
 |  ##############|
@@ -18,9 +21,6 @@ expression: "without_id(&window, &id)"
 |                |
 |›               |
 | 99% window left|
-|                |
-|                |
-|                |
 |                |
 |                |
 |                |

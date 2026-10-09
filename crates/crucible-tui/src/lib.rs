@@ -20,8 +20,9 @@
 //!
 //! A native session owns no screen. It draws the same bands as a live region
 //! at the foot of the reader's own buffer, and what the transcript has finished
-//! with is written once into that buffer's scrollback and let go of here; the
-//! renderer's native module says how.
+//! with is written into that buffer's scrollback and kept here, under the same
+//! ceiling, to be written again at a new width; the renderer's native module
+//! says how.
 //!
 //! Depends on no other crate in this workspace. What reaches it is already
 //! text, so it never names a domain type, calls a tool or asks a provider for

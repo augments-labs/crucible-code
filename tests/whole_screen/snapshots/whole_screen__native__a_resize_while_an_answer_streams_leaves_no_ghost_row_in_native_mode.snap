@@ -1,15 +1,14 @@
 ---
 source: tests/whole_screen/native.rs
-assertion_line: 835
 expression: window.picture()
 ---
-80x24 cursor 21,4 scrollback 20
-|is the third, worded so that no word of it stands in any                        |
-|other row. Row delta is the fourth, and the window may well                     |
-|be narrow by the time it lands. Row foxtrot is the fifth,                       |
-|long enough that the resize has somewhere to fall. Row golf                     |
-|closes the first answer, and the box is drawn again under it                    |
-|at sixty.                                                                       |
+80x24 cursor 21,4 scrollback 18
+|arriving. Row bravo follows it, as wide as the row above it, so that both fold  |
+|again at sixty. Row charlie is the third, worded so that no word of it stands in|
+|any other row. Row delta is the fourth, and the window may well be narrow by the|
+|time it lands. Row foxtrot is the fifth, long enough that the resize has        |
+|somewhere to fall. Row golf closes the first answer, and the box is drawn again |
+|under it at sixty.                                                              |
 |                                                                                |
 |› say the second                                                                |
 |                                                                                |

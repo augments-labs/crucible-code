@@ -29,7 +29,8 @@
 //! sequences that mode is made of — erase below, cursor up, cursor to column —
 //! the way a terminal does, keeps the rows pushed off the top as a scrollback
 //! the case can read, and puts everything it holds at the new width when the
-//! window changes. How it does that is the terminal's [`Profile`]: by default
+//! window changes. It also clears the screen and that scrollback when asked,
+//! which is how a native session gives a resized window everything again. How it does that is the terminal's [`Profile`]: by default
 //! it rewraps, which is what the renderer's own count of how far back its
 //! region is assumes of the terminal, and a case can open one that keeps its
 //! rows as they were cut instead. Each is still refused on a fullscreen launch, where
@@ -1134,6 +1135,22 @@ impl Screen {
         }
     }
 
+    /// Erases every row of the window, leaving the cursor where it is.
+    fn erase_screen(&mut self) {
+        for row in &mut self.grid {
+            row.clear();
+        }
+        for ran_on in &mut self.ran_on {
+            *ran_on = false;
+        }
+    }
+
+    /// Forgets every row pushed off the top of the window.
+    fn erase_scrollback(&mut self) {
+        self.scrollback.clear();
+        self.ran_on_back.clear();
+    }
+
     /// Moves the cursor up `params` rows, one when none is given, and stops at
     /// the top of the window as a terminal does.
     fn up(&mut self, params: &str) {
@@ -1187,8 +1204,9 @@ impl Screen {
     /// rest of a row, colour, the two that hold a frame until all of it has
     /// arrived, the modes crucible borrows from the terminal — the screen it
     /// draws on among them — and the one question it asks. A native launch
-    /// adds the three its frames are made of: erase to the end of the screen,
-    /// cursor up and cursor to a column.
+    /// adds the three its frames are made of, erase to the end of the screen,
+    /// cursor up and cursor to a column, and the two that clear the screen and
+    /// the scrollback before what was kept is written again.
     fn act(&mut self, params: &str, ends: char) {
         if params == "?1049" && ends == 'h' {
             self.alternate = true;
@@ -1197,6 +1215,8 @@ impl Screen {
         if self.mode == Mode::Native {
             match (params, ends) {
                 ("" | "0", 'J') => return self.erase_below(),
+                ("2", 'J') => return self.erase_screen(),
+                ("3", 'J') => return self.erase_scrollback(),
                 (_, 'A') => return self.up(params),
                 (_, 'G') => return self.across(params),
                 _ => {}
@@ -1848,6 +1868,19 @@ mod tests {
             screen.refusals(),
             ["wrote ESC[J", "wrote ESC[1A", "wrote ESC[1G"]
         );
+    }
+
+    #[test]
+    fn clearing_a_native_screen_and_its_scrollback_leaves_neither() {
+        // What a native session writes before giving a resized window
+        // everything again: once both are cleared, the rows that follow are
+        // the only copy a reader can find.
+        let mut screen = Screen::native(8, 2);
+        screen.feed(b"one\r\ntwo\r\nthree\x1b[H\x1b[2J\x1b[3J\x1b[Hfour");
+
+        assert_eq!(screen.scrollback(), "");
+        assert_eq!(rows(&screen.picture()), ["four    ", "        "]);
+        assert!(screen.refusals().is_empty(), "{:?}", screen.refusals());
     }
 
     #[test]
