@@ -24,7 +24,9 @@
 //! it, downloads `SHA256SUMS` and the archive into a directory of its own,
 //! stages and activates the release through [`crate::RecoverableActivation`],
 //! and then runs the new `crucible --version`; a release that does not say it
-//! is the version it was installed as is rolled back.
+//! is the version it was installed as is rolled back. A release whose switch
+//! could not be made durable is active, so it is run and rolled back the
+//! same, and one that stays is reported as active but not durable.
 
 #[cfg(unix)]
 mod apply;
@@ -135,7 +137,8 @@ impl std::fmt::Display for Answer {
     }
 }
 
-/// Why `crucible update` changed nothing, or what it put back.
+/// Why `crucible update` changed nothing, what it put back, or what it could
+/// not make durable.
 ///
 /// Each says what to do about it in its own words. A refusal that has a typed
 /// cause keeps it as its source, for a caller to inspect; that cause can hold
@@ -196,10 +199,24 @@ pub enum Refused {
          installed"
     )]
     Broker,
-    /// The release did not become active, or did without being synced.
+    /// The release did not become active.
     #[cfg(unix)]
     #[error("the release was not made active: {0}")]
     Activation(#[source] crate::ActivationError),
+    /// The new release is active and runs as itself, but the switch to it
+    /// could not be synced, so a crash of the system may still undo it.
+    #[cfg(unix)]
+    #[error(
+        "crucible {version} is installed and active, but the switch to it could not be made \
+         durable; a crash of the system may make the release before it active again"
+    )]
+    Unsynced {
+        /// The release now active.
+        version: Version,
+        /// Why the switch could not be synced.
+        #[source]
+        source: crate::ActivationError,
+    },
     /// The new release did not say it was `version`, and was rolled back.
     #[error(
         "crucible {version} did not run as the release it was installed as, so the release before \

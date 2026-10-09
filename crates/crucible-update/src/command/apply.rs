@@ -94,12 +94,21 @@ pub(super) fn replace(
     if held.layout().receipt().broker().is_some() && staged.receipt().broker().is_none() {
         return Err(Refused::Broker);
     }
-    let activated = held.activate(staged).map_err(Refused::Activation)?;
+    let mut activated = held.activate(staged).map_err(Refused::Activation)?;
+    // A switch that could not be synced still made the release active, so it
+    // is run and rolled back as one that was.
+    let unsynced = activated.unsynced();
     if says(&activated.executable(), &newest, &scratch.0) {
-        return Ok(Answer::Updated {
-            from: active,
-            to: newest,
-        });
+        return match unsynced {
+            None => Ok(Answer::Updated {
+                from: active,
+                to: newest,
+            }),
+            Some(source) => Err(Refused::Unsynced {
+                version: newest,
+                source,
+            }),
+        };
     }
     match activated.roll_back() {
         Ok(()) => Err(Refused::RolledBack { version: newest }),

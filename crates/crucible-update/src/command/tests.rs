@@ -235,6 +235,7 @@ mod installed {
     use crate::install::fixture::{
         archive_name, broker, executable, hex, installed, packed, release_archive,
     };
+    use crate::install::refusing_sync_after;
     use crate::{ActivationError, ReceiptLayout, RecoverableActivation};
 
     /// The release each test install has active.
@@ -262,6 +263,10 @@ mod installed {
 
         fn executable(&self) -> PathBuf {
             self.dir.join("crucible")
+        }
+
+        fn prefix(&self) -> PathBuf {
+            self.dir.join(".crucible-install")
         }
 
         fn update(&self, asked: Asked, served: &Served) -> Result<Answer, Refused> {
@@ -498,6 +503,46 @@ mod installed {
             packed(NEXT, &executable("9.9.9"), Some(&broker(NEXT))),
         ));
 
+        let refused = install
+            .update(Asked::Apply, &served)
+            .expect_err("a refusal");
+
+        assert!(
+            matches!(&refused, Refused::RolledBack { version: rolled } if *rolled == version(NEXT)),
+            "{refused:?}"
+        );
+        assert_eq!(install.active(), ACTIVE);
+    }
+
+    #[test]
+    fn a_release_whose_switch_cannot_be_synced_is_said_to_be_active() {
+        let install = Install::new("unsynced");
+        let served = Served::new(publishing(NEXT, release_archive(NEXT)));
+
+        refusing_sync_after("made the activation link", install.prefix());
+        let refused = install
+            .update(Asked::Apply, &served)
+            .expect_err("a refusal");
+
+        assert_eq!(
+            refused.to_string(),
+            format!(
+                "crucible {NEXT} is installed and active, but the switch to it could not be \
+                 made durable; a crash of the system may make the release before it active again"
+            )
+        );
+        assert_eq!(install.active(), NEXT);
+    }
+
+    #[test]
+    fn a_release_whose_switch_cannot_be_synced_is_still_run_and_rolled_back() {
+        let install = Install::new("unsynced-rolled");
+        let served = Served::new(publishing(
+            NEXT,
+            packed(NEXT, &executable("9.9.9"), Some(&broker(NEXT))),
+        ));
+
+        refusing_sync_after("made the activation link", install.prefix());
         let refused = install
             .update(Asked::Apply, &served)
             .expect_err("a refusal");
