@@ -510,6 +510,34 @@ mod installed {
     }
 
     #[test]
+    fn a_release_that_says_far_more_than_its_version_is_stopped_and_rolled_back() {
+        let install = Install::new("talkative");
+        let finished = install.dir.join("said-everything");
+        let talkative = format!(
+            "#!/bin/sh\nhead -c 8388608 /dev/zero\necho 'crucible {NEXT}'\n: > '{}'\n",
+            finished.display()
+        );
+        let served = Served::new(publishing(
+            NEXT,
+            packed(NEXT, talkative.as_bytes(), Some(&broker(NEXT))),
+        ));
+
+        let refused = install
+            .update(Asked::Apply, &served)
+            .expect_err("a refusal");
+
+        assert!(
+            matches!(&refused, Refused::RolledBack { version: rolled } if *rolled == version(NEXT)),
+            "{refused:?}"
+        );
+        assert_eq!(install.active(), ACTIVE);
+        assert!(
+            !finished.exists(),
+            "all 8 MiB the new release wrote were taken in while it ran"
+        );
+    }
+
+    #[test]
     fn an_install_not_made_by_install_sh_says_how_it_is_updated() {
         let install = Install::new("unmanaged");
         let plain = install.dir.join("plain");
