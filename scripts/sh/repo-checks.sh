@@ -922,17 +922,19 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-# The list is the graph as well as the rule, so a line no manifest takes any
+# Each list is the graph as well as the rule, so a line no manifest takes any
 # more is taken out with the dependency it stood for: a reader learns the crate
 # model from it, and a line naming an edge that is gone, or a crate that is,
 # teaches one that is not there.
-while IFS= read -r edge; do
-    [[ -z "$edge" ]] && continue
-    if ! grep -Fxq "$edge" <<<"$edges"; then
-        printf '    FAIL the allowed list names %s, which no manifest takes; take the line out with the dependency\n' "$edge"
-        failed=1
-    fi
-done <<<"$allowed"
+for list in allowed test_support; do
+    while IFS= read -r edge; do
+        [[ -z "$edge" ]] && continue
+        if ! grep -Fxq "$edge" <<<"$edges"; then
+            printf '    FAIL the %s list names %s, which no manifest takes; take the line out with the dependency\n' "${list/_/-}" "$edge"
+            failed=1
+        fi
+    done <<<"${!list}"
+done
 # The list is a layering only while no crate can reach itself through it.
 # Cargo refuses a cycle among the edges declared today, not one the list would
 # let a later manifest complete.
