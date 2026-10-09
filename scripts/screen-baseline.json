@@ -412,7 +412,7 @@
         "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
         "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
       ],
-      "sha256": "6fbc1e62e5988060ea0a4fcbc1f5853e161c29dda7be29bcb6f9286922dabd3d"
+      "sha256": "44b9ecfe6ddd719f49034091001896a8ffe1ec7da3573467395c4a4c500d308b"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_fullscreen_ascii_at_80.snap",
@@ -421,7 +421,7 @@
         "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
         "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
       ],
-      "sha256": "6f77409f6a52486954a1f88df6580036afc501913d5a748a2e32edd56a6e08de"
+      "sha256": "f26d32edbaa84c075beb87094f5175a1c2ec89a79b8724395f868d69de4b9133"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_fullscreen_unicode_at_40.snap",
@@ -448,7 +448,7 @@
         "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
         "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
       ],
-      "sha256": "3d329c6d1eb3e936ae1c57f860ad22c8fa23799869fc9ebc20cbbb1c013d179b"
+      "sha256": "4fe0c5c4e24e125402dc87720925a76ad1de7c064538dcc1e12571809a3aaec9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_native_ascii_at_80.snap",
@@ -457,7 +457,7 @@
         "Vendor::calling_batches_then_holding( &[reading_three().concat()], \"All three are read.\", )",
         "Watched::allowing_drawn( &format!(\"results-under-a-turn-{screen}-{glyphs}-{columns}\"), (columns, 24), &vendor, \"read(*)\", (glyphs, screen), )"
       ],
-      "sha256": "b0a453233f54afa92bc5a09c89a43c35db3300dd1c9dd465dd2ad35ddcc3867b"
+      "sha256": "08611ae2c008ddca0697854141ee4d58a114ac60b2ee03a1726c70e6d29c055d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_o_under_a_turn_native_unicode_at_40.snap",
