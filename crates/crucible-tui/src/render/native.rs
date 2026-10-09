@@ -145,7 +145,8 @@ pub(super) struct Native {
     /// What the region said last time, park included, so a frame that would
     /// say the same is not written.
     shown: String,
-    /// Reused for each frame's bytes.
+    /// Reused for each frame's bytes, except a replay's, which are let go of
+    /// once the write has been tried, whether or not the terminal took them.
     frame: String,
     /// Whether a frame has been written, so there is a region to close.
     drawn: bool,
@@ -424,6 +425,11 @@ impl<T: Terminal> Renderer<T> {
         if replays {
             // The screen and the scrollback are cleared, so nothing of the last
             // region is left to rewind over or to keep the height of.
+            //
+            // Every row kept is painted into this one string before any of it
+            // is written, so for as long as this frame lasts the session is
+            // held twice: in the record, and here as the bytes that write it,
+            // both bounded by the record's ceiling.
             out.push_str(CLEARS);
             if self.record.spilled() {
                 Row::new()
@@ -566,8 +572,9 @@ impl<T: Terminal> Renderer<T> {
         native.parked = parked;
         native.column = column;
         native.drawn = true;
-        // A replay's bytes are the whole session, and a buffer kept that size
-        // for the frames after it would be a second copy of it.
+        // A replay's string holds every row kept, painted, and it goes here
+        // rather than being kept for reuse: kept, it would hold the session
+        // twice for as long as the session lasts instead of for one write.
         native.frame = if replays { String::new() } else { out };
         written
     }
