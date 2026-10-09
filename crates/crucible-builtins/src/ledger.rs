@@ -40,11 +40,11 @@ use sha2::{Digest as _, Sha256};
 
 /// How many files are remembered at once.
 ///
-/// A path is a hundred-odd bytes and its digest thirty-two, so this is a tenth of a megabyte against the
-/// thirty-five this program is allowed — and, unlike the count of files a
-/// session reads, it does not move with how long the session runs. Generous
-/// against a real session: a turn that touches a thousand distinct files has
-/// spent its context long before it spends this.
+/// A path is a hundred-odd bytes and its digest thirty-two, so this is a tenth
+/// of a megabyte against the thirty-five this program is allowed, and unlike
+/// the count of files a session reads, it does not move with how long the
+/// session runs. Generous against a real session: a turn that touches a
+/// thousand distinct files has spent its context long before it spends this.
 const REMEMBERED: usize = 1_024;
 
 /// The files this session has looked at, each with what was in it.
