@@ -13,7 +13,7 @@ use std::fs::{DirBuilder, File};
 use std::io::{ErrorKind, Read as _, Write as _};
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
 use crucible_http::{Chunk, Chunks, Http};
@@ -42,8 +42,8 @@ const SAYS_WITHIN: Duration = Duration::from_secs(10);
 /// How often a `crucible --version` still running is looked at.
 const LOOKING: Duration = Duration::from_millis(50);
 
-/// The most of what `crucible --version` says that is read.
-const SAID: u64 = 256;
+/// The most of what `crucible --version` says that is kept.
+const SAID: usize = 256;
 
 /// How many names the download directory tries before it gives up.
 const ATTEMPTS: u32 = 16;
@@ -94,12 +94,21 @@ pub(super) fn replace(
     if held.layout().receipt().broker().is_some() && staged.receipt().broker().is_none() {
         return Err(Refused::Broker);
     }
-    let activated = held.activate(staged).map_err(Refused::Activation)?;
-    if says(&activated.executable(), &newest, &scratch.0) {
-        return Ok(Answer::Updated {
-            from: active,
-            to: newest,
-        });
+    let mut activated = held.activate(staged).map_err(Refused::Activation)?;
+    // A switch that could not be synced still made the release active, so it
+    // is run and rolled back as one that was.
+    let unsynced = activated.unsynced();
+    if says(&activated.executable(), &newest) {
+        return match unsynced {
+            None => Ok(Answer::Updated {
+                from: active,
+                to: newest,
+            }),
+            Some(source) => Err(Refused::Unsynced {
+                version: newest,
+                source,
+            }),
+        };
     }
     match activated.roll_back() {
         Ok(()) => Err(Refused::RolledBack { version: newest }),
@@ -266,38 +275,67 @@ pub(super) fn followed(source: &Source, location: &str) -> Option<String> {
 
 /// Whether `executable --version` says it is `version`, within its bound.
 ///
-/// What it says goes to a file in `scratch` rather than a pipe, so a release
-/// that writes without end fills nothing this process holds.
-fn says(executable: &Path, version: &Version, scratch: &Path) -> bool {
-    let said_at = scratch.join("version");
-    let Ok(out) = crucible_privacy::create_write(&said_at) else {
-        return false;
-    };
+/// What it says is read from a pipe as it comes, and no more than [`SAID`]
+/// bytes of it are kept: a release that says more is not saying its version,
+/// and is stopped there rather than read to its end or written anywhere.
+fn says(executable: &Path, version: &Version) -> bool {
     let Ok(mut child) = Command::new(executable)
         .arg("--version")
         .stdin(Stdio::null())
-        .stdout(out)
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
     else {
         return false;
     };
+    let said = child
+        .stdout
+        .take()
+        .and_then(|out| listened(&mut child, out));
+    // Kills nothing that has exited, and reaps what was killed.
+    let _ = child.kill();
+    let _ = child.wait();
+    said.is_some_and(|said| said.trim_ascii_end() == format!("crucible {version}").as_bytes())
+}
+
+/// What `child` wrote to `out` once it exited with success within
+/// [`SAYS_WITHIN`]; `None` where it failed, ran past that bound or said more
+/// than [`SAID`] bytes.
+fn listened(child: &mut Child, mut out: ChildStdout) -> Option<Vec<u8>> {
+    rustix::io::ioctl_fionbio(&out, true).ok()?;
+    let mut said = Vec::with_capacity(SAID + 1);
     let began = Instant::now();
-    let succeeded = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status.success(),
-            Ok(None) if began.elapsed() < SAYS_WITHIN => std::thread::sleep(LOOKING),
-            Ok(None) | Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
+    loop {
+        // Looked at before the pipe is read, so all an exited child wrote is
+        // in it.
+        let exited = child.try_wait().ok()?;
+        heard(&mut out, &mut said)?;
+        match exited {
+            Some(status) => return status.success().then_some(said),
+            None if began.elapsed() < SAYS_WITHIN => std::thread::sleep(LOOKING),
+            None => return None,
         }
-    };
-    let mut said = Vec::new();
-    succeeded
-        && File::open(&said_at)
-            .and_then(|file| file.take(SAID).read_to_end(&mut said))
-            .is_ok()
-        && said.trim_ascii_end() == format!("crucible {version}").as_bytes()
+    }
+}
+
+/// Adds what `out` holds now to `said`, reading no more than one byte past
+/// [`SAID`]; `None` once `said` holds more than [`SAID`] bytes or the pipe
+/// cannot be read.
+fn heard(out: &mut ChildStdout, said: &mut Vec<u8>) -> Option<()> {
+    let mut chunk = [0_u8; SAID + 1];
+    loop {
+        let room = SAID.saturating_add(1).saturating_sub(said.len());
+        match out.read(chunk.get_mut(..room)?) {
+            Ok(0) => return Some(()),
+            Ok(read) => {
+                said.extend_from_slice(chunk.get(..read)?);
+                if said.len() > SAID {
+                    return None;
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return Some(()),
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
 }

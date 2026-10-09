@@ -554,6 +554,47 @@ fn a_resize_keeps_what_was_standing_cut_at_the_new_width() {
 }
 
 #[test]
+fn a_standing_row_wider_than_it_was_laid_for_is_kept_no_wider() {
+    // What stands is kept to be painted again at the next width, and what a
+    // window that widens later can show of it is what it was laid out for.
+    // A row a hundred thousand columns wide handed to a window forty wide
+    // was kept whole beside its painted copy of forty.
+    let mut drawn = Drawn::new(40, 10);
+    let wide = "w".repeat(100_000);
+    running(&mut drawn, &[Row::plain(&wide)], &[Row::plain(&wide)]);
+
+    let kept: Vec<usize> = drawn
+        .standing
+        .running
+        .iter()
+        .chain(&drawn.standing.over)
+        .map(Row::columns)
+        .collect();
+    assert_eq!(kept, [drawn.transcript_columns(), drawn.columns()]);
+}
+
+#[test]
+fn a_standing_row_laid_for_the_window_comes_back_whole_when_it_widens_again() {
+    // Kept no wider than it was laid for is still kept whole: a window that
+    // narrows and widens back before the caller lays out the next one shows
+    // the row as it was handed in.
+    let mut drawn = Drawn::new(40, 10);
+    let row = "a turn row laid out to forty columns wide";
+    let row = &row[..40];
+    running(&mut drawn, &[Row::plain(row)], &[Row::plain(row)]);
+
+    drawn.render.terminal.resize(20, 10);
+    drawn.resized().unwrap();
+    drawn.render.terminal.resize(40, 10);
+    drawn.resized().unwrap();
+
+    let screen = drawn.screen();
+    let bands = drawn.bands();
+    assert_eq!(screen.row(bands.turn.start), row);
+    assert_eq!(screen.row(bands.turn.start + 1), row);
+}
+
+#[test]
 fn a_resize_press_taken_by_the_renderer_folds_the_record_again() {
     // The seam every input loop reads through takes the new size itself, so
     // the loop is handed the press only to lay out again what it stands.

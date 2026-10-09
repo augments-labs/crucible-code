@@ -2298,3 +2298,47 @@ fn the_queue_held_over_the_idle_box_fits_every_width_and_every_room() {
         }
     }
 }
+
+/// What stands over the box under a running turn in a native window `rows`
+/// tall, with one line waiting and `list` open over the box.
+fn queued_under_a_turn(rows: usize, list: &Opened) -> Footed {
+    let renderer = Renderer::drawing(Recording::new(80, rows), crucible_tui::ScreenMode::Native);
+    let mut queued = Prompts::default();
+    let mut held = typed("and add a test for the windows path");
+    assert_eq!(queued.accept(&mut held), Retained::Accepted);
+    let turning = Turning::started(Breakdown::default());
+    let planning = nothing();
+    working(
+        &renderer,
+        &typed("/"),
+        Footing {
+            turning: &turning,
+            planning: &planning,
+            counting: "",
+            opened_list: list,
+            history: Recalled::default(),
+            queued: &queued,
+        },
+        &settled(Mode::Ask),
+        Style::plain(),
+    )
+}
+
+#[test]
+fn an_open_list_with_no_room_keeps_a_queue_from_standing_taller() {
+    // At twenty rows the queue's panel stands taller than the share to be
+    // seen at all. With a list open the share is the list's, even where it
+    // has too little room to draw: the arrows walk that list, and a panel
+    // standing in its place would say they walk the queue.
+    let named = |footed: &Footed| {
+        footed
+            .over
+            .iter()
+            .any(|row| row.text().contains("1 queued"))
+    };
+    let shut = queued_under_a_turn(20, &Opened::default());
+    assert!(named(&shut), "{:?}", shut.over);
+
+    let open = queued_under_a_turn(20, &listing("/"));
+    assert!(open.over.is_empty(), "{:?}", open.over);
+}

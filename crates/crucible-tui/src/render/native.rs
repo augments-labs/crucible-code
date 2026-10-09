@@ -55,25 +55,28 @@
 //! else. Once the window has kept its new size for [`SETTLE`], the screen and
 //! the terminal's scrollback are cleared and everything kept is written again
 //! at the new width, opening with one quiet row where the ceiling has dropped
-//! the start of the session, and the region under it. What the terminal had
-//! kept was cut at the old width, and no two terminals put it at a new one the
-//! same way: some fold it again, some leave it as it was cut, and some count
-//! a symbol's width differently. Writing it again is the one answer that reads
-//! the same on all of them. A terminal that ignores the request to clear its
-//! scrollback keeps the old rows above the new ones.
+//! the start of the session, and the region under it. An opening card only
+//! partly written out by then is written out whole, laid at the new width,
+//! rather than leaving its rest to the region as it was laid for the old one.
+//! What the terminal had kept was cut at the old width, and no two terminals
+//! put it at a new one the same way: some fold it again, some leave it as it
+//! was cut, and some count a symbol's width differently. Writing it again is
+//! the one answer that reads the same on all of them. A terminal that ignores
+//! the request to clear its scrollback keeps the old rows above the new ones.
 //!
 //! A frame asks the window's size before it is drawn, so that one drawn while
 //! an answer is arriving goes out at the width the window already has rather
 //! than the one the press reporting the change will name. Given a
-//! [`ResizeFlag`], only the first frame after the flag is raised asks; without
-//! one, every frame does. How far back the region's top now is cannot be asked
-//! of the terminal, so it is worked out from how wide each row of the region
-//! was against the new width, counted as a terminal that rewraps would count
-//! it. On one that does not, narrowing counts high, and the erase that opens
-//! the next frame takes finished rows just above the region off the visible
-//! screen until the window settles and they are written again. Counting low
-//! instead would leave a stale copy of the region in the scrollback on every
-//! terminal that does rewrap, which is most of them.
+//! [`ResizeFlag`], only the first frame after the flag is raised asks, and the
+//! one after it where that query failed; without one, every frame does. How
+//! far back the region's top now is cannot be asked of the terminal, so it is
+//! worked out from how wide each row of the region was against the new width,
+//! counted as a terminal that rewraps would count it. On one that does not,
+//! narrowing counts high, and the erase that opens the next frame takes
+//! finished rows just above the region off the visible screen until the window
+//! settles and they are written again. Counting low instead would leave a
+//! stale copy of the region in the scrollback on every terminal that does
+//! rewrap, which is most of them.
 //!
 //! The rewind also trusts that a row crucible counted as fitting the window
 //! takes one row of it. A terminal that draws a symbol wider than crucible
@@ -145,7 +148,8 @@ pub(super) struct Native {
     /// What the region said last time, park included, so a frame that would
     /// say the same is not written.
     shown: String,
-    /// Reused for each frame's bytes.
+    /// Reused for each frame's bytes, except a replay's, which are let go of
+    /// once the write has been tried, whether or not the terminal took them.
     frame: String,
     /// Whether a frame has been written, so there is a region to close.
     drawn: bool,
@@ -157,6 +161,20 @@ pub(super) struct Native {
     /// Whether the next frame clears the screen and its scrollback and writes
     /// what was kept before the region.
     replays: bool,
+    /// Whether the next frame asks the window its size although the flag was
+    /// not raised again.
+    asks: Asks,
+}
+
+/// When a frame given a [`ResizeFlag`] asks the window its size.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Asks {
+    /// Only when the flag has been raised since a frame last took it.
+    #[default]
+    WhenTold,
+    /// At the next frame as well: the frame that took the flag could not read
+    /// the size, so the resize it told of is still owed.
+    Again,
 }
 
 impl Native {
@@ -360,12 +378,34 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// A query that fails says nothing about the window. It is not a resize,
     /// and the frame is drawn for the size already known, as it would have
-    /// been before the query was asked here.
+    /// been before the query was asked here. Where the flag sent it to ask,
+    /// the resize it told of is still owed, so the next frame asks once more
+    /// though the flag is down. Each signal is owed that one query: when one
+    /// asked only for what was owed fails as well, the next signal or press is
+    /// waited for rather than asking at every frame while the window will not
+    /// say.
     fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {
-        if self.native.is_some()
-            && self.resizes.as_ref().is_none_or(ResizeFlag::taken)
-            && self.terminal.size().is_ok_and(|size| size != self.size)
+        let (asks, owed, told) = match &mut self.native {
+            None => (false, false, false),
+            Some(native) => {
+                let owed = std::mem::take(&mut native.asks) == Asks::Again;
+                let told = self.resizes.as_ref().is_some_and(ResizeFlag::taken);
+                (self.resizes.is_none() || told || owed, owed, told)
+            }
+        };
+        let size = asks.then(|| self.terminal.size().ok()).flatten();
+        if asks
+            && size.is_none()
+            && self.resizes.is_some()
+            && let Some(native) = &mut self.native
         {
+            native.asks = if owed && !told {
+                Asks::WhenTold
+            } else {
+                Asks::Again
+            };
+        }
+        if size.is_some_and(|size| size != self.size) {
             // `resized` asks the size again and takes what it reads, as it
             // does for the press: it lays the region out and draws it,
             // through this function again, when that differs from the size
@@ -395,6 +435,12 @@ impl<T: Terminal> Renderer<T> {
         let columns = self.size.columns.max(1);
         let bands = self.bands();
         let room = bands.transcript.len();
+        if native.replays && writes == Writes::Live {
+            // Before what has gone out is worked out, so that a card only
+            // partly gone out is given back whole, laid at this width, rather
+            // than as its old top over its old rest.
+            self.record.lets_opening_go();
+        }
         let first = self.record.first();
         let finished = self.record.finished();
 
@@ -424,6 +470,11 @@ impl<T: Terminal> Renderer<T> {
         if replays {
             // The screen and the scrollback are cleared, so nothing of the last
             // region is left to rewind over or to keep the height of.
+            //
+            // Every row kept is painted into this one string before any of it
+            // is written, so for as long as this frame lasts the session is
+            // held twice: in the record, and here as the bytes that write it,
+            // both bounded by the record's ceiling.
             out.push_str(CLEARS);
             if self.record.spilled() {
                 Row::new()
@@ -559,6 +610,9 @@ impl<T: Terminal> Renderer<T> {
             .write(&out)
             .and_then(|()| self.terminal.flush());
 
+        // A replay the terminal refused is still owed: nothing says how much
+        // of it arrived, so the next frame clears and gives it all again.
+        native.replays = replays && written.is_err();
         native.shown.clear();
         native
             .shown
@@ -566,8 +620,9 @@ impl<T: Terminal> Renderer<T> {
         native.parked = parked;
         native.column = column;
         native.drawn = true;
-        // A replay's bytes are the whole session, and a buffer kept that size
-        // for the frames after it would be a second copy of it.
+        // A replay's string holds every row kept, painted, and it goes here
+        // rather than being kept for reuse: kept, it would hold the session
+        // twice for as long as the session lasts instead of for one write.
         native.frame = if replays { String::new() } else { out };
         written
     }

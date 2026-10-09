@@ -217,10 +217,16 @@ pub(crate) fn folds(text: &str, columns: usize) -> Vec<Range<usize>> {
 
         // A character wider than the whole row cannot be drawn in it at all,
         // so it is left out, as `clip` leaves it out, rather than put on a row
-        // it reaches past the edge of.
+        // it reaches past the edge of. What costs no column after it, a
+        // combining mark or a selector, is drawn on it and goes with it:
+        // left behind, it would open the next row and be drawn on whatever
+        // that row began with.
         if over == 0 {
             let first = step(rest);
             if walk(&rest[..first], columns, row::drawn).1.is_some() {
+                let first = walk(&rest[first..], 0, row::drawn)
+                    .1
+                    .map_or(rest.len(), |marks| first + marks);
                 let after = first + leading(&rest[first..]);
                 base += after;
                 rest = &rest[after..];
@@ -546,6 +552,15 @@ mod tests {
         // it is drawn across the edge, where the terminal wraps it and puts
         // every band under it a row lower than it was laid out.
         assert_eq!(fold("a\u{691c}b \u{7d22}", 1), ["a", "b"]);
+    }
+
+    #[test]
+    fn a_mark_on_a_character_left_out_of_the_fold_goes_with_it() {
+        // A combining mark is drawn on the character before it. Left behind
+        // when that character is left out, it opened the next row on its own
+        // and was drawn on whatever that row began with instead.
+        assert_eq!(fold("a\u{691c}\u{301}b", 1), ["a", "b"]);
+        assert_eq!(fold("a\u{691c}\u{301}\u{302} b", 1), ["a", "b"]);
     }
 
     #[test]

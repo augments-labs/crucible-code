@@ -375,6 +375,23 @@ impl Record {
     pub(crate) fn responsive(&mut self, retained: usize, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
         self.end();
         let rows = responsive_rows(lay(self.columns));
+        self.hold(rows, retained, lay);
+    }
+
+    /// Lay down one block whose source is about the size of what it lays.
+    ///
+    /// As [`Self::responsive`], charged for the text of the rows laid for the
+    /// width there is now, and laid out once: the rows that are measured are
+    /// the rows that are kept.
+    pub(crate) fn responsive_as_laid(&mut self, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
+        self.end();
+        let rows = responsive_rows(lay(self.columns));
+        let retained = rows.iter().map(Row::bytes).sum();
+        self.hold(rows, retained, lay);
+    }
+
+    /// Keeps a responsive block as `rows`, with `retained` bytes of source.
+    fn hold(&mut self, rows: Vec<Row>, retained: usize, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
         if !rows.is_empty() {
             let weight = rows.len().max(retained.div_ceil(RETAINED_ROW_BYTES)).max(1);
             self.put(Line::Responsive {
@@ -419,7 +436,8 @@ impl Record {
         // Some or all of it has gone out to the terminal's scrollback. Laying
         // it again here would change how many lines there are under every
         // number the session has handed out since, so it is kept as it was
-        // laid, and [`Self::kept`] lays it afresh once all of it has gone.
+        // laid, and [`Self::kept`] lays it afresh once all of it has gone,
+        // which a replay sees to through [`Self::lets_opening_go`].
         if opening.from < self.sent {
             self.opening = Some(opening);
             return;
@@ -923,6 +941,26 @@ impl Record {
         }
     }
 
+    /// Lets the rest of an opening that has partly gone out go too.
+    ///
+    /// For a replay, before it asks what has gone out: its lines are held as
+    /// they were laid for a width that has gone, and with only its top gone
+    /// out, [`Self::kept`] would give that top back as it was laid and the
+    /// region would draw the rest under it the same way, a border cut at the
+    /// new width. Gone out whole, it is laid whole at the width there is now.
+    /// A card none of which has gone out was laid again on the resize, and
+    /// one that has partly fallen off the top is no longer a card.
+    pub(crate) fn lets_opening_go(&mut self) {
+        let end = self
+            .opening
+            .as_ref()
+            .filter(|opening| opening.from >= self.gone && opening.from < self.sent)
+            .map(|opening| opening.from + opening.lines);
+        if let Some(end) = end {
+            self.lets_go(end);
+        }
+    }
+
     /// Hands `each` every line that has gone out and is still kept, as the
     /// display rows it comes to at the current width, with an opening among
     /// them laid afresh in `glyphs`.
@@ -930,9 +968,10 @@ impl Record {
     /// What a resize writes again once the screen and its scrollback have been
     /// cleared. The card is laid here rather than in the record, so that the
     /// lines under it keep the numbers they were handed out with. A card only
-    /// partly gone out is given as the lines it already holds, because the live
-    /// region draws the rest of it as they stand. Row by row rather than as
-    /// one list, so giving the session back makes no second copy of it.
+    /// partly gone out is given as the lines it already holds; a replay lets
+    /// the rest of it go first, through [`Self::lets_opening_go`], so the card
+    /// it is given is laid whole. Row by row rather than as one list, so
+    /// giving the session back makes no second copy of it.
     pub(crate) fn kept(&self, glyphs: Glyphs, mut each: impl FnMut(Row)) {
         let first = self.gone;
         let sent = self.first();
@@ -1555,6 +1594,18 @@ mod tests {
         assert_eq!(record.weight, 2);
         assert_eq!(record.lines.len(), 2);
         assert_eq!(said(&record, 2), ["newest", "one more"]);
+    }
+
+    #[test]
+    fn a_block_charged_as_laid_pays_for_the_text_of_the_rows_it_keeps() {
+        // One row, so a charge by rows alone would be one. The text laid at
+        // this width is 241 bytes: three charged units and part of a fourth.
+        let mut record = Record::new(40);
+        record.responsive_as_laid(Box::new(|columns| {
+            vec![Row::plain("x".repeat(columns * 6 + 1))]
+        }));
+
+        assert_eq!(record.weight, 4);
     }
 
     #[test]

@@ -505,9 +505,11 @@ picture two columns wide, where crucible counts it as one. A row crucible fitted
 to the window then reaches past its right edge. While crucible draws, your
 terminal is told not to carry what crosses the edge on to the next row, so the
 row keeps its place and loses what does not fit instead of pushing the rows
-under it down. Carrying it on is put back when crucible exits. Only the
-screen is cut: the session file keeps the whole row. A terminal or font that
-draws these symbols one column wide shows all of it.
+under it down. Carrying it on is put back when crucible exits. A process killed
+outright, as by `kill -9`, runs nothing on its way out, so your shell is left
+not carrying long lines on; `reset`, or `printf '\e[?7h'`, turns it back on.
+Only the screen is cut: the session file keeps the whole row. A terminal or font
+that draws these symbols one column wide shows all of it.
 
 ### `crucible: what you typed is longer than 1 MiB; no prompt was accepted`
 
