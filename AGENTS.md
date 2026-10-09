@@ -104,7 +104,7 @@ needs no protocol, parser or platform branching; otherwise add the crate:
   exactly (`=1.2.3`), with a comment beside it saying what it supplies that
   `std` does not. The member that uses it writes `some-crate.workspace = true`.
 - Put it in the narrowest crate that needs it; one in `crucible-types` reaches
-  every crate.
+  every crate built on it, which is nearly all of them.
 - Take it from crates.io. A git dependency is not a way around the pin.
 - It must not panic or print on a shipped path: `unwrap_used`, `expect_used`,
   `panic`, `indexing_slicing`, `print_stdout` and `print_stderr` are denied.

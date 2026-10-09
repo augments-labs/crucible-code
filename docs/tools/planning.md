@@ -117,11 +117,13 @@ typed against.
 
 ## What it survives
 
-A session resumed by [`/resume`](../sessions/index.md) opens with the plan it
-stopped at. Nothing about a session file has to hold one: the call that wrote it
-is already in the transcript being replayed, and the plan is read back out of
-that call the same way the tool read it, so a call the tool refused is refused
-again rather than seeding a plan that was never written.
+A session resumed by [`/resume`](../sessions/index.md) opens with the plan that
+was in force when it stopped. Nothing about a session file has to hold one: the
+calls that wrote plans are already in the transcript being replayed, and the
+plan is read back out of the last one whose result succeeded. A call the tool
+refused, one you declined, and one that was cancelled or never ran each left
+the plan as it was, so each is passed over rather than seeding a plan that was
+never written.
 
 `/clear` puts it away with the session it belonged to. A plan that outlived one
 would be a panel above the prompt describing work the agent has no memory of.
