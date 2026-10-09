@@ -486,6 +486,25 @@ fn a_resize_folds_the_record_again_rather_than_redrawing_it_wrongly() {
 }
 
 #[test]
+fn a_resize_no_poller_reported_is_drawn_at_the_new_size_on_the_next_frame() {
+    // A window resized while nothing waits on the keyboard, as while an
+    // answer streams: the operating system says so, and the next frame is
+    // drawn at the size the window has now rather than the one it had.
+    let mut drawn = Drawn::new(20, 8);
+    let resizes = ResizeFlag::default();
+    drawn.watches_size(resizes.clone());
+    drawn.commit("the quick brown fox jumps").unwrap();
+    assert_eq!(drawn.screen().row(0), "the quick brown fox");
+
+    drawn.render.terminal.resize(40, 8);
+    resizes.raise();
+    drawn.commit("over the lazy dog").unwrap();
+
+    assert_eq!(drawn.screen().row(0), "the quick brown fox jumps");
+    assert_eq!(drawn.columns(), 40);
+}
+
+#[test]
 fn a_committed_prompt_is_laid_out_again_when_the_window_widens() {
     let mut drawn = Drawn::new(20, 8);
     let said = "the quick brown fox jumps";

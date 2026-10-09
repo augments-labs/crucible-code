@@ -1059,6 +1059,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // screen of its own and the terminal's buffer without leaving half of
     // itself in a scrollback the other does not keep.
     let mut renderer = Renderer::drawing(SystemTerminal::stdout(), drawn_on(settings.screen()));
+    watch_size(&mut renderer);
 
     // The mode the files named, or the one that asks. `None` is "no layer
     // said", which is a different thing from a layer that said `ask` — but the
@@ -1384,6 +1385,26 @@ fn wanted(choice: &Choice, settings: &Settings, serving: Option<Served>) -> Opti
 fn thinking(asked: Option<Effort>, settings: &Settings, serving: Option<Served>) -> Option<Effort> {
     asked.or_else(|| settings.effort(serving?.name))
 }
+
+/// Has the renderer ask the window its size only after the operating system
+/// says it changed.
+///
+/// On Unix that word is `SIGWINCH`, whose handler raises a flag and does
+/// nothing else, and a frame lowers the flag when it asks. A platform that
+/// sends no such signal, or a handler that could not be installed, leaves the
+/// renderer as it was: the native region asks on every frame, and the full
+/// screen learns of a resize from the press that reports it.
+#[cfg(unix)]
+fn watch_size<T: crucible_tui::Terminal>(renderer: &mut Renderer<T>) {
+    let resizes = crucible_tui::ResizeFlag::default();
+    if signal_hook::flag::register(signal_hook::consts::SIGWINCH, resizes.raised_by()).is_ok() {
+        renderer.watches_size(resizes);
+    }
+}
+
+/// Nothing to watch where no signal says a window changed size.
+#[cfg(not(unix))]
+fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
 
 /// Where the renderer draws, for the screen the configuration names.
 ///

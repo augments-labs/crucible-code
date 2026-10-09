@@ -364,6 +364,8 @@ struct Seen {
     unsizable: usize,
     /// The size the terminal reports, where that is not the size it draws at.
     reports: Option<Size>,
+    /// How many times the terminal was asked its size.
+    asked: usize,
 }
 
 /// A terminal with a scrollback, for a renderer to own and a test to read.
@@ -378,6 +380,7 @@ impl Window {
             is_terminal: true,
             unsizable: 0,
             reports: None,
+            asked: 0,
         })))
     }
 
@@ -392,6 +395,11 @@ impl Window {
     /// rows all the same.
     fn reports(&self, size: Size) {
         self.0.borrow_mut().reports = Some(size);
+    }
+
+    /// How many times the terminal was asked its size.
+    fn asked(&self) -> usize {
+        self.0.borrow().asked
     }
 
     fn redirected(columns: usize, rows: usize) -> Self {
@@ -438,6 +446,7 @@ impl Window {
 impl Terminal for Window {
     fn size(&self) -> Result<Size, TerminalError> {
         let mut seen = self.0.borrow_mut();
+        seen.asked += 1;
         if seen.unsizable > 0 {
             seen.unsizable = seen.unsizable.saturating_sub(1);
             return Err(TerminalError::Io(std::io::Error::other(
@@ -797,6 +806,70 @@ fn a_native_frame_drawn_before_the_resize_is_reported_takes_the_new_width() {
         assert_eq!(window.rows_saying(word), 1, "{word}: {:#?}", window.all());
     }
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
+    assert!(
+        window.all().iter().all(|row| row.chars().count() <= 20),
+        "a row was written wider than the window: {:#?}",
+        window.all()
+    );
+}
+
+#[test]
+fn a_native_frame_with_no_resize_since_the_last_asks_the_window_nothing() {
+    // Told of a resize by the operating system, a frame has no reason to ask
+    // the window its size, and an answer streaming at speed draws many.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render.watches_size(ResizeFlag::default());
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    let before = window.asked();
+    for word in ["alfa ", "bravo ", "charlie ", "delta "] {
+        render.stream(word).unwrap();
+    }
+
+    assert_eq!(window.asked(), before, "a frame asked the size unprompted");
+}
+
+#[test]
+fn a_native_frame_after_a_resize_is_told_of_asks_once_and_takes_the_new_width() {
+    // The same narrowing as the frame drawn before the resize is reported,
+    // told by the flag rather than found by asking: the first frame after it
+    // takes the new width, and the frames after that ask nothing again.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    let resizes = ResizeFlag::default();
+    render.watches_size(resizes.clone());
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render
+        .stream("alfa bravo charlie delta echo foxtrot golf ")
+        .unwrap();
+    window.take();
+
+    window.resize(20, 10);
+    resizes.raise();
+    render.stream("hotel ").unwrap();
+    let asked = window.asked();
+    render.stream("india ").unwrap();
+    stands(&mut render);
+
+    assert_eq!(
+        window.asked(),
+        asked,
+        "a frame asked again after the resize"
+    );
+    let after = window.take();
+    assert!(
+        !after.contains("> asked"),
+        "a frame wrote a finished row again: {after:?}"
+    );
+    for word in ["alfa", "delta", "golf", "hotel", "india"] {
+        assert_eq!(window.rows_saying(word), 1, "{word}: {:#?}", window.all());
+    }
     assert!(
         window.all().iter().all(|row| row.chars().count() <= 20),
         "a row was written wider than the window: {:#?}",
