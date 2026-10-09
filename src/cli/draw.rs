@@ -671,19 +671,21 @@ pub(crate) fn panicked<T: Terminal>(
     Ok(())
 }
 
-/// Says how to come back, on the screen the session did not run on.
+/// Says how to come back, once the session has let go of the terminal.
 ///
 /// The last thing crucible writes. A quit that was asked for gets exactly two
 /// lines — the command that resumes this session — because that command names
 /// an id nothing on the screen has said, and everything else about the session
-/// is already in the scrollback the shell just got back. A log that stopped
-/// recording earns one more line first: that failure was said while the session
+/// is already in the scrollback: the shell's, once a full screen is handed
+/// back, or the native session's own. A log that stopped recording on a full
+/// screen earns one more line first: that failure was said while the session
 /// ran, on a screen that no longer exists, so it is said once more or a reader
 /// later opens a truncated transcript believing it whole.
 ///
 /// Through [`Renderer::parting`] rather than [`Renderer::commit`], because
 /// there is no picture left to commit under — the frame this renderer is
-/// holding describes a screen that no longer exists.
+/// holding describes a screen that no longer exists, or a native region that
+/// has been closed.
 pub(crate) fn parting<T: Terminal>(
     renderer: &mut Renderer<T>,
     parting: &Parting,
@@ -691,7 +693,7 @@ pub(crate) fn parting<T: Terminal>(
 ) -> Result<(), TerminalError> {
     let (path, lost) = match parting {
         Parting::Nothing => return Ok(()),
-        Parting::Kept(path) => (path, false),
+        Parting::Kept(path) | Parting::Stayed(path) => (path, false),
         Parting::Lost(path) => (path, true),
     };
 

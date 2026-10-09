@@ -1136,7 +1136,22 @@ impl Watched {
             .status()
             .expect("kill is on the path");
         assert!(sent.success(), "{signal} never reached crucible");
+        self.lets_go(signal)
+    }
 
+    /// Types `keys` that end the session, `/exit` or a second Ctrl+C, and
+    /// reads the terminal until crucible has let go of it, as [`Self::ends_on`]
+    /// does for a signal.
+    pub(crate) fn ends_after(&mut self, keys: &str) -> (ExitStatus, String) {
+        self.terminal
+            .write_all(keys.as_bytes())
+            .expect("keys go to the terminal");
+        self.lets_go(&format!("{keys:?}"))
+    }
+
+    /// Reads until the process has ended, and says how it ended and what it
+    /// wrote on the way; `cause` names what ended it in a failure.
+    fn lets_go(&mut self, cause: &str) -> (ExitStatus, String) {
         let deadline = Instant::now() + CEILING;
         let mut wrote = Vec::new();
         loop {
@@ -1150,7 +1165,7 @@ impl Watched {
             }
             assert!(
                 Instant::now() < deadline,
-                "crucible outlived {signal} by {CEILING:?}\n{}",
+                "crucible outlived {cause} by {CEILING:?}\n{}",
                 self.picture()
             );
         }

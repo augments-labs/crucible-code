@@ -33,10 +33,12 @@
 //! The session log is append-only and written as the turn goes, so `--continue`
 //! picks the session up from wherever it stopped.
 //!
-//! Which is also the last thing a session does. The screen it drew on is
-//! borrowed and handed back, so the transcript goes with it — and this loop
-//! returns a [`Parting`] saying where the log is and whether it kept up, for
-//! the caller to report once the screen is the reader's again.
+//! Which is also the last thing a session does. A full screen is borrowed and
+//! handed back, so the transcript goes with it; a native session leaves it in
+//! the reader's scrollback. Either way this loop returns a [`Parting`] saying
+//! how to come back to the session, and on a borrowed screen where the log is
+//! and whether it kept up, for the caller to report once the terminal is the
+//! reader's again.
 
 use std::cell::{Cell, RefCell};
 use std::io::BufRead;
@@ -364,10 +366,11 @@ impl Terms {
 
 /// What a session leaves on the reader's own screen once it has gone.
 ///
-/// Everything a session draws is drawn on a screen this process borrows and
-/// hands back, so what a reader scrolls up to afterwards is the shell they
-/// started from. This is the one thing written after the handing back: where
-/// the rest of it went.
+/// A full-screen session draws on a screen this process borrows and hands
+/// back, so what a reader scrolls up to afterwards is the shell they started
+/// from, and this says where the rest of it went. A native session drew in the
+/// reader's own buffer, so its transcript is still there to scroll to, and
+/// this says only how to come back to it.
 ///
 /// Decided in [`converse`], because that is the last place the session still
 /// exists, and written by the caller, because the screen is the last guard to
@@ -376,10 +379,15 @@ impl Terms {
 pub(crate) enum Parting {
     /// Say nothing.
     ///
-    /// Either no screen was taken — so the session drew into the reader's own
-    /// scrollback and is still sitting there — or nothing was recorded, which
-    /// is a run that asked not to be kept and has no session to come back to.
+    /// Either the session's input or output was not a terminal, so it ran
+    /// with nobody at the keys to tell, or nothing was recorded, which is a run that asked not to be kept and
+    /// has no session to come back to.
     Nothing,
+
+    /// The transcript is still in the reader's scrollback, and this file is
+    /// the session it came from. Whatever was said about the log while the
+    /// session ran is in that scrollback too, so only the way back is said.
+    Stayed(PathBuf),
 
     /// The transcript went with the screen, and this file holds all of it.
     Kept(PathBuf),
@@ -392,20 +400,36 @@ pub(crate) enum Parting {
 impl Parting {
     /// What a session that has just ended leaves behind.
     ///
-    /// `borrowed` is whether a screen was taken, `written` is the file the
-    /// session was recorded to and is absent in a run that asked not to be
-    /// kept, and `problem` is the first write to that file that failed.
+    /// `drew` is where the session drew, `written` is the file the session
+    /// was recorded to and is absent in a run that asked not to be kept, and
+    /// `problem` is the first write to that file that failed.
     ///
     /// A function of three values rather than three reads at the end of the
     /// loop, because two of them are only ever true on a real terminal: this is
     /// the whole of the decision, and it can be asked without one.
-    fn of(borrowed: bool, written: Option<PathBuf>, problem: Option<&str>) -> Self {
-        match written {
-            Some(path) if borrowed && problem.is_none() => Self::Kept(path),
-            Some(path) if borrowed => Self::Lost(path),
-            _ => Self::Nothing,
+    fn of(drew: Drew, written: Option<PathBuf>, problem: Option<&str>) -> Self {
+        let Some(path) = written else {
+            return Self::Nothing;
+        };
+        match drew {
+            Drew::Borrowed if problem.is_none() => Self::Kept(path),
+            Drew::Borrowed => Self::Lost(path),
+            Drew::Scrollback => Self::Stayed(path),
+            Drew::Nowhere => Self::Nothing,
         }
     }
+}
+
+/// Where a session drew, which is what decides what leaving it has to say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drew {
+    /// On the alternate screen, which is handed back with the transcript on it.
+    Borrowed,
+    /// In the reader's own buffer, where the transcript stays.
+    Scrollback,
+    /// With no terminal at one end or the other: input or output is a file or
+    /// a pipe.
+    Nowhere,
 }
 
 /// Which of the terminal's modes a session takes, given where it draws.
@@ -520,9 +544,10 @@ fn conversing<T: Terminal>(
     let screen = if holds.screen { Screen::take()? } else { None };
 
     // Whether the transcript is about to be taken away with the screen it was
-    // drawn on, which is the whole of what decides if there is anything to say
-    // on the way out. Read here rather than at the end, because it is a fact
-    // about the start of the session and the binding above outlives the answer.
+    // drawn on, which with the keys below is the whole of what decides what
+    // there is to say on the way out. Read here rather than at the end, because
+    // it is a fact about the start of the session and the binding above
+    // outlives the answer.
     let borrowed = screen.is_some();
 
     // Held for the whole session and dropped on the way out however this
@@ -531,6 +556,17 @@ fn conversing<T: Terminal>(
     // at one end or the other, which reads whole lines instead.
     let raw = Raw::enter()?;
     let keys = raw.is_some();
+
+    // Raw mode is held only where both ends are a terminal, as the screen is
+    // taken: a native session holding it drew in the reader's own buffer, and
+    // a run without it was not watched by anyone to tell on the way out.
+    let drew = if borrowed {
+        Drew::Borrowed
+    } else if keys {
+        Drew::Scrollback
+    } else {
+        Drew::Nowhere
+    };
     if keys {
         panics = Some(Panics::kept());
         // A signal between turns is obeyed where it lands, and that would be
@@ -853,7 +889,7 @@ fn conversing<T: Terminal>(
     // it, which is why the failure reaches here at all: pointing a reader at a
     // file and calling it the transcript would be the last thing crucible said
     // and false.
-    Ok(Parting::of(borrowed, written, problem.as_deref()))
+    Ok(Parting::of(drew, written, problem.as_deref()))
 }
 
 /// Where `session` keeps the copies of what is attached to it: beside its log,
