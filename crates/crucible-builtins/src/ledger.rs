@@ -239,7 +239,9 @@ impl<R: Read> Read for Fingerprinting<R> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fingerprint, Fingerprinting, Ledger, REMEMBERED};
+    use super::{Fingerprint, Fingerprinting, Ledger, REMEMBERED, Shown};
+    use crucible_tools::ToolOutput;
+    use sha2::{Digest as _, Sha256};
 
     fn at(name: usize) -> std::path::PathBuf {
         std::path::PathBuf::from(format!("/w/file-{name:05}.txt"))
@@ -257,6 +259,35 @@ mod tests {
             format!("{:?}", Fingerprint::of(b"content")),
             "Fingerprint(\"[redacted]\")"
         );
+    }
+
+    /// Whether `rendering` carries `digest` in any form a `Debug` would print
+    /// it: the bytes as a derive lists them, or as hex either way up.
+    fn shows(rendering: &str, digest: [u8; 32]) -> bool {
+        let hex = digest.map(|byte| format!("{byte:02x}")).concat();
+        rendering.contains(&format!("{digest:?}"))
+            || rendering.contains(&hex)
+            || rendering.contains(&hex.to_uppercase())
+    }
+
+    #[test]
+    fn what_holds_a_fingerprint_never_shows_it_either() {
+        // The redaction is on `Fingerprint`, and the types holding one show it
+        // through their own `Debug`. Today that is derived and asks the field,
+        // but one written by hand could print what the field keeps back.
+        let digest: [u8; 32] = Sha256::digest(b"content").into();
+        let ledger = Ledger::new();
+        ledger.record(&at(1), Fingerprint::from(digest));
+        let shown = Shown {
+            output: ToolOutput::ok("content"),
+            file: Some((at(1), Fingerprint::from(digest))),
+        };
+
+        let ledger = format!("{ledger:?}");
+        let shown = format!("{shown:?}");
+
+        assert!(!shows(&ledger, digest), "{ledger}");
+        assert!(!shows(&shown, digest), "{shown}");
     }
 
     #[test]
