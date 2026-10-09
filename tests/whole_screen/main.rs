@@ -3840,11 +3840,25 @@ fn ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view() {
             "{picture}"
         );
         // The last row drawn: a native window with less in it than it is tall
-        // leaves the rows under its live region empty.
-        assert!(
+        // leaves the rows under its live region empty. The footer is drawn in
+        // the glyph set the window asked for, and at 40 columns it loses the
+        // count from the right.
+        let (dot, walk, step) = if glyphs == "ascii" {
+            ("-", "^v", "<>")
+        } else {
+            ("\u{b7}", "\u{2191}\u{2193}", "\u{2190}\u{2192}")
+        };
+        let count = if columns == 80 {
+            format!(" {dot} {step} result 1 of 3")
+        } else {
+            String::new()
+        };
+        let footer = format!("esc to close {dot} {walk} pgup pgdn to see more{count}");
+        assert_eq!(
             rows.iter()
                 .rfind(|row| !row.trim().is_empty())
-                .is_some_and(|row| row.starts_with("esc to close")),
+                .map(|row| row.trim_end()),
+            Some(footer.as_str()),
             "{picture}"
         );
         insta::assert_snapshot!(
