@@ -551,7 +551,11 @@ that has no `crucible-sandbox-broker`, when the active one has one, is not
 installed. Finally crucible runs the new `crucible --version`. If that does
 not answer with the version just installed within 10 seconds, the update is
 rolled back and the release you had before is active again. Either way, the
-release that was replaced stays under `releases/`.
+release that was replaced stays under `releases/`. If the switch to the new
+release is made but the file system cannot make it durable, the new release
+is still checked and rolled back the same way; when it stays, crucible says it
+is installed and active but that a crash of the system may make the release
+before it active again, and exits 1.
 
 Any other kind of install is refused, and the message says how to update it
 instead. A build made by cargo is updated with `cargo install` or by building

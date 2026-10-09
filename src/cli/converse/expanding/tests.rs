@@ -15,6 +15,7 @@ fn standing(from: usize, end: usize) -> View {
         was: 0,
         page: 0,
         starts: Vec::new(),
+        columns: 0,
         over: Over::Everything(0),
         back: Vec::new(),
         refused: None,
@@ -469,7 +470,9 @@ fn return_scrolls_nothing_and_sends_nothing() {
 #[test]
 fn a_resize_owes_the_next_frame() {
     // How many rows the results came to is a fact about the width, so the whole
-    // picture is laid out again and `end` is answered again with it.
+    // picture is laid out again and `end` is answered again with it. The key
+    // moves nothing itself: the frame laid at the new width is what finds the
+    // result the window was on where it begins now.
     let mut open = standing(3, 20);
 
     assert_eq!(moving(Pressed::Resized, &mut open), Moved::Redraw);
@@ -646,6 +649,145 @@ fn left_at_the_newest_result_moves_nothing() {
     frame(&kept, &mut standing, 10);
     assert!(!standing.against(Pressed::Key(Key::Left), 3));
     assert_eq!(opened(&mut standing).from, 2);
+}
+
+/// Three results as [`three`] has them, but the newest says four lines of a
+/// hundred columns: ten rows at 80 columns and fourteen at 40, so everything
+/// under it begins four rows further down the narrower window.
+fn taller_when_narrower() -> Kept {
+    let mut kept = Kept::default();
+    let wide = "word ".repeat(20);
+
+    for (at, one) in ["Bash(one)", "Bash(two)", "Bash(three)"].iter().enumerate() {
+        let call = crucible_types::ToolId::new(format!("call-{at}"));
+        kept.calling(call.clone(), (*one).to_owned());
+        let text = if at == 2 {
+            format!("{wide}\n").repeat(4)
+        } else {
+            format!("{one} answered this\nand then this\n")
+        };
+        kept.finished(&call, text.into(), at);
+    }
+
+    kept
+}
+
+/// The rows of the view over `kept` at `columns` and `rows`, as text.
+fn frame_at(kept: &Kept, standing: &mut Standing, columns: usize, rows: usize) -> Vec<String> {
+    laying(kept, opened(standing), Glyphs::Unicode, columns, rows)
+        .iter()
+        .map(Row::text)
+        .collect()
+}
+
+#[test]
+fn a_resize_keeps_the_window_on_the_result_it_was_open_on() {
+    // Where each result begins is a fact about the width. Stepped onto the
+    // second result at 80 columns, then narrowed so the newest above it folds
+    // taller: the window is still on the second result's call, and the next
+    // step goes from there rather than from wherever its old row now falls.
+    let kept = taller_when_narrower();
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    frame_at(&kept, &mut standing, 80, 10);
+
+    assert!(standing.against(Pressed::Key(Key::Right), 3));
+    let rows = frame_at(&kept, &mut standing, 80, 10);
+    assert_eq!(heading(&rows), Some("Bash(two)"), "{rows:?}");
+
+    let rows = frame_at(&kept, &mut standing, 40, 10);
+    assert_eq!(heading(&rows), Some("Bash(two)"), "{rows:?}");
+
+    // Widened again, it is still there.
+    let rows = frame_at(&kept, &mut standing, 80, 10);
+    assert_eq!(heading(&rows), Some("Bash(two)"), "{rows:?}");
+
+    // And narrowed once more, a step goes on towards the oldest, as far as
+    // the window may go, rather than back onto the second.
+    frame_at(&kept, &mut standing, 40, 10);
+    assert!(standing.against(Pressed::Key(Key::Right), 3));
+    let view = opened(&mut standing);
+    assert_eq!(view.from, view.end);
+    let rows = frame_at(&kept, &mut standing, 40, 10);
+    assert!(
+        rows.iter().any(|row| row == "Bash(one) answered this"),
+        "{rows:?}"
+    );
+}
+
+/// Three results as [`three`] has them, but the one at `wide` in the order
+/// they were kept says `lines` lines of sixteen words: one row each at 80
+/// columns and two at 40. So 2 is the newest, at the top of the view, and 0
+/// the oldest, at its foot.
+///
+/// Each word says its line by letter and its place in the line, so `c.08`
+/// opens the second row the third line folds onto at 40 columns.
+fn lettered(wide: usize, lines: u8) -> Kept {
+    let mut kept = Kept::default();
+
+    for (at, one) in ["Bash(one)", "Bash(two)", "Bash(three)"].iter().enumerate() {
+        let call = crucible_types::ToolId::new(format!("call-{at}"));
+        kept.calling(call.clone(), (*one).to_owned());
+        let text = if at == wide {
+            let lines: Vec<String> = (0..lines)
+                .map(|line| {
+                    let line = char::from(b'a'.saturating_add(line));
+                    let words: Vec<String> =
+                        (0..16).map(|word| format!("{line}.{word:02}")).collect();
+                    words.join(" ")
+                })
+                .collect();
+            format!("{}\n", lines.join("\n"))
+        } else {
+            format!("{one} answered this\nand then this\n")
+        };
+        kept.finished(&call, text.into(), at);
+    }
+
+    kept
+}
+
+/// The first word on the row at the top of the window, under the rule and the
+/// blank beneath it.
+fn top(rows: &[String]) -> Option<&str> {
+    rows.get(2)?.split(' ').next()
+}
+
+#[test]
+fn a_resize_keeps_the_window_as_far_into_a_result_that_folds_taller() {
+    // Four rows into the newest result at 80 columns, past its call and the
+    // blank under that, the window opens on its third line. At 40 every line
+    // of it folds onto two rows, so the same four rows would open on its
+    // second line: the window goes as far into it as it was, scaled by how
+    // much taller it came to, and opens on the third line still.
+    let kept = lettered(2, 4);
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    opened(&mut standing).from = 4;
+    let rows = frame_at(&kept, &mut standing, 80, 10);
+    assert_eq!(top(&rows), Some("c.00"), "{rows:?}");
+
+    let rows = frame_at(&kept, &mut standing, 40, 10);
+    assert_eq!(top(&rows), Some("c.00"), "{rows:?}");
+}
+
+#[test]
+fn a_resize_keeps_the_window_as_far_into_the_last_result_as_it_was() {
+    // Nothing begins under the oldest result to say where it ended, so how
+    // tall it was is counted again at the width it was laid at. Eleven rows
+    // into it at 80 columns, past its blank, its call and the blank under
+    // that, the window opens on its ninth line, and at 40 on the ninth line
+    // still rather than eleven rows into one nearly twice as tall.
+    let kept = lettered(0, 13);
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    opened(&mut standing).from = 20;
+    let rows = frame_at(&kept, &mut standing, 80, 8);
+    assert_eq!(top(&rows), Some("i.00"), "{rows:?}");
+    assert_eq!(opened(&mut standing).starts, [0, 4, 9]);
+
+    let rows = frame_at(&kept, &mut standing, 40, 8);
+    assert_eq!(top(&rows), Some("i.00"), "{rows:?}");
 }
 
 #[test]

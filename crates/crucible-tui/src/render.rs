@@ -174,6 +174,13 @@ pub enum Aimed {
 /// next one. A row laid out for a wider window is cut at the new edge until
 /// then.
 ///
+/// Each is kept no wider than the width it was handed in for, which is the
+/// width its caller was given to lay it out at. A window that widens again
+/// can show no more of it than that, and a row handed in wider would be held
+/// at full length, however long, beside a painted copy cut to the window.
+/// What is cut from it is what that window cut from the screen too, as
+/// [`Renderer::replace_running`] tells its caller.
+///
 /// Two slots, in the order they are drawn down the screen, and either may be
 /// full without the other: a turn stands in the first while it runs, a list a
 /// line opened stands there between turns, and the box holds the second
@@ -194,10 +201,11 @@ struct Standing {
     drew: Vec<Range<usize>>,
     /// The first rows of `turn` as they were handed in, where a running turn
     /// put them there: the turn's own rows, laid out at the transcript's
-    /// width. Empty between turns and under anything else standing there.
+    /// width and kept no wider. Empty between turns and under anything else
+    /// standing there.
     running: Vec<Row>,
     /// The rest of `turn` as it was handed in: whatever stands under the
-    /// turn's own rows and over the box.
+    /// turn's own rows and over the box, kept no wider than the window.
     over: Vec<Row>,
     /// The palette `running` and `over` were handed in with.
     ran: Option<Palette>,
@@ -228,14 +236,28 @@ impl Standing {
         self.prompted = None;
     }
 
-    /// Holds `turn` and `over` as the first slot, to be painted by
-    /// [`Standing::paint_turn`].
-    fn stands(&mut self, turn: &[Row], over: &[Row], palette: Palette) {
+    /// Holds `turn` and `over` as the first slot, `turn` no wider than the
+    /// transcript's `folds` and `over` than the window's `columns`, and
+    /// paints them.
+    // The rows, their palette and the two widths they are held to, each named
+    // at both call sites; a struct for the widths would only rename them.
+    #[allow(clippy::too_many_arguments)]
+    fn stands(
+        &mut self,
+        turn: &[Row],
+        over: &[Row],
+        palette: Palette,
+        folds: usize,
+        columns: usize,
+    ) {
         self.running.clear();
-        self.running.extend_from_slice(turn);
+        self.running
+            .extend(turn.iter().map(|row| row.clipped(folds)));
         self.over.clear();
-        self.over.extend_from_slice(over);
+        self.over
+            .extend(over.iter().map(|row| row.clipped(columns)));
         self.ran = Some(palette);
+        self.paint_turn(folds, columns);
     }
 
     /// Holds `rows` as the box and paints them `columns` wide.
@@ -341,10 +363,11 @@ pub struct Renderer<T: Terminal> {
     pointed_changed: bool,
     /// The size the record is folded for and the bands are shared out over.
     ///
-    /// Held rather than asked for per frame: a read costs a syscall, and
-    /// [`Renderer::resized`] is what keeps it true, called for the press that
-    /// reports a resize or by the first frame after a [`ResizeFlag`] says one
-    /// happened.
+    /// Held rather than asked for per frame where it can be: a read costs a
+    /// syscall, and [`Renderer::resized`] is what keeps it true, called for
+    /// the press that reports a resize or by the first frame after a
+    /// [`ResizeFlag`] says one happened. In native mode given no flag, every
+    /// frame asks, and one that finds the size changed calls it too.
     size: Size,
     /// What each row of the window is currently showing, and the frame that
     /// changes it.
@@ -1326,10 +1349,11 @@ impl<T: Terminal> Renderer<T> {
     /// width and returns rows that fit it. That width is
     /// [`Self::transcript_columns`], not the window's: with the rail on, a row
     /// laid at the window's width loses its last column to it. A window that
-    /// narrows clips them
-    /// rather than folding them, because rows a component laid out against each
-    /// other are not prose and re-flowing one of them would break the column
-    /// the others are aligned in.
+    /// narrows clips them rather than folding them, because rows a component
+    /// laid out against each other are not prose and re-flowing one of them
+    /// would break the column the others are aligned in. Rows whose source is
+    /// still held go to [`Self::responsive`] instead, which lays them out
+    /// again at the new width.
     ///
     /// # Errors
     ///
@@ -1382,6 +1406,30 @@ impl<T: Terminal> Renderer<T> {
         }
 
         self.record.responsive(retained, lay);
+        self.draw()
+    }
+
+    /// Writes a responsive block whose source comes to about the rows it lays.
+    ///
+    /// As [`Self::responsive`] for an answer drawn from a few figures, where
+    /// the text of its rows is as near as anything to what the closure holds:
+    /// the rows laid for the width there is now are what is charged, so they
+    /// are laid out once, and not a second time to be measured. A source much
+    /// larger than what it lays, such as one clipped at a narrow width, goes
+    /// through [`Self::responsive`] with its own size instead.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn responsive_as_laid(
+        &mut self,
+        lay: Box<dyn Fn(usize) -> Vec<Row>>,
+    ) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            return self.present(&lay(self.transcript_columns()));
+        }
+
+        self.record.responsive_as_laid(lay);
         self.draw()
     }
 
@@ -1514,8 +1562,8 @@ impl<T: Terminal> Renderer<T> {
         self.standing.boxes(prompt.rows, palette, columns);
         // The turn's own rows at the width the rail leaves them, as the frame
         // draws them; what stands under them at the window's.
-        self.standing.stands(turn, over, palette);
-        self.standing.paint_turn(self.folds(), columns);
+        self.standing
+            .stands(turn, over, palette, self.folds(), columns);
         self.standing.prompted = Some(prompt.caret);
         self.standing.turned = None;
         self.prompt_target = prompt.pointed.map(|(at, row)| (at, door(row, columns)));
@@ -1581,8 +1629,8 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
-        self.standing.stands(turn, rows, palette);
-        self.standing.paint_turn(self.folds(), self.size.columns);
+        self.standing
+            .stands(turn, rows, palette, self.folds(), self.size.columns);
         self.standing.turned = caret;
         self.draw()
     }

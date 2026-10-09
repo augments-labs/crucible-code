@@ -584,8 +584,9 @@ fn what_a_file_weighs_is_not_what_the_transcript_weighs() {
     );
 }
 
-/// The charge follows what the request carried, which is what `T-RESOLVE`'s
-/// ageing decides — not what the transcript still refers to.
+/// The charge follows what the request carried, which is what the request's
+/// ageing of attachments (`Resolved::aged`) decides, not what the transcript
+/// still refers to.
 #[test]
 fn an_attachment_aged_out_of_the_request_stops_being_charged() {
     let mut load = Load::default();

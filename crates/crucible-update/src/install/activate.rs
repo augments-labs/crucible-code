@@ -34,7 +34,9 @@
 //! BSDs, and on macOS through the full flush `std` asks for. Whether a file
 //! system keeps that promise across a loss of power is its own; the tests kill
 //! the process, not the machine. A switch made but not synced is reported
-//! apart from one not made, so the caller knows which release is active.
+//! apart from one not made, so the caller knows which release is active: an
+//! activation whose switch was not synced still hands back the release it
+//! made active, to be checked and rolled back as any other, and says so.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -76,6 +78,9 @@ pub struct Activated {
     previous: Receipt,
     /// The receipt of the release now active.
     active: Receipt,
+    /// Why the switch to the release now active could not be synced, where
+    /// it could not.
+    unsynced: Option<io::Error>,
     /// The lock, released with the value.
     lock: Lock,
 }
@@ -229,10 +234,10 @@ impl RecoverableActivation {
     ///
     /// [`ActivationError`] when the unit is not whole, was staged for another
     /// install, or another build of its release is already in place, or when
-    /// a step cannot be taken. The active release is then the one that was,
-    /// except after [`ActivationError::Unsynced`]: the staged release is then
-    /// active, but a crash of the system may still make the one before active
-    /// again.
+    /// a step cannot be taken. The active release is then the one that was.
+    /// A switch made but not synced is not one of these: the staged release
+    /// is active, and [`Activated::unsynced`] says that a crash of the system
+    /// may still make the one before active again.
     pub fn activate(self, staged: StagedUnit) -> Result<Activated, ActivationError> {
         let prefix = self.layout.prefix();
         let releases = prefix.join(RELEASES);
@@ -282,11 +287,16 @@ impl RecoverableActivation {
                 existing
             }
         };
-        switch(prefix, &version)?;
+        let unsynced = match switch(prefix, &version) {
+            Ok(()) => None,
+            Err(ActivationError::Unsynced(source)) => Some(source),
+            Err(error) => return Err(error),
+        };
         Ok(Activated {
             prefix: prefix.to_path_buf(),
             previous: self.layout.receipt().clone(),
             active,
+            unsynced,
             lock: self.lock,
         })
     }
@@ -301,6 +311,14 @@ impl Activated {
     /// The receipt of the release now active.
     pub fn active(&self) -> &Receipt {
         &self.active
+    }
+
+    /// The [`ActivationError::Unsynced`] the switch to the release now active
+    /// ended with, where it was made but could not be synced, taken so it is
+    /// reported once. The release is active all the same, and is checked and
+    /// rolled back as one whose switch was synced.
+    pub fn unsynced(&mut self) -> Option<ActivationError> {
+        self.unsynced.take().map(ActivationError::Unsynced)
     }
 
     /// The `crucible` of the release now active, which an update starts to

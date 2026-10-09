@@ -960,7 +960,9 @@ impl Turning {
         // is being made its one where that is under way. Its own last blank
         // stands for the footing's where no plan is under it, which gives that
         // row back. What it cannot fit it does not draw — a queue is still in
-        // the queue, and its own turn will say it.
+        // the queue, and its own turn will say it. Where `room` is a share of
+        // a taller window and no list is open, the caller asks again with more
+        // until it does.
         let spare = room
             .saturating_sub(ROWS + 1 + usize::from(self.making.is_some()))
             .saturating_add(usize::from(panel.is_empty()));

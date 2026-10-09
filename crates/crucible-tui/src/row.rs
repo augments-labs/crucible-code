@@ -497,7 +497,7 @@ impl Row {
     }
 
     /// How many bytes the text of this row is.
-    fn bytes(&self) -> usize {
+    pub(crate) fn bytes(&self) -> usize {
         self.0.iter().map(|span| span.text.len()).sum()
     }
 }

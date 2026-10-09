@@ -6,11 +6,11 @@
 //! payload still text. Parsing that text is the provider's job, because only it
 //! knows what its vendor puts in there.
 //!
-//! A read that gave up waiting, or that read a line which finishes no event,
-//! leaves as [`Framed::Quiet`] rather than as either an event or an ending,
-//! which is what lets a caller holding a cancel act on it while a response is
-//! open. Both providers stream through here, so that is one behaviour rather
-//! than two that have to be kept the same.
+//! A read that gave up waiting, that brought only part of a line, or that read
+//! a line which finishes no event, leaves as [`Framed::Quiet`] rather than as
+//! either an event or an ending, which is what lets a caller holding a cancel
+//! act on it while a response is open. Both providers stream through here, so
+//! that is one behaviour rather than two that have to be kept the same.
 //!
 //! Lines are read as bytes and converted to text whole. One read from the
 //! socket can split a character in half, so converting what each read brings
@@ -67,16 +67,17 @@ pub(crate) enum Framed {
     Event(SseEvent),
 
     /// No event yet. The read waited as long as it waits and the peer said
-    /// nothing, or the peer sent a line that finishes no event: a comment, a
-    /// field, or a blank line with nothing to dispatch.
-    /// Neither is a failure or an ending: the response is still open and the
-    /// model is still thinking.
+    /// nothing, the peer sent only part of a line, or it sent a line that
+    /// finishes no event: a comment, a field, or a blank line with nothing to
+    /// dispatch. None is a failure or an ending: the response is still open
+    /// and the model is still thinking.
     ///
     /// It exists so that waiting is the caller's to do. A provider that goes
     /// silent would otherwise hold the caller inside this call for as long as
-    /// it stayed silent, and one that sends a line every few hundred
-    /// milliseconds for as long as it kept sending them, and a user who asked
-    /// to stop would be waiting on the same socket. Handed back the turn, the
+    /// it stayed silent, one that sends a line every few hundred milliseconds
+    /// for as long as it kept sending them, and one that sends a line a few
+    /// bytes at a time until it reached [`MAX_EVENT`], and a user who asked to
+    /// stop would be waiting on the same socket. Handed back the turn, the
     /// caller looks at its cancel and asks again.
     Quiet,
 }
@@ -85,8 +86,9 @@ pub(crate) enum Framed {
 enum Line {
     /// A line, in `self.line`, without its ending.
     Read,
-    /// Nothing yet. What had arrived of the line stays where it is, so the read
-    /// that follows carries on from the middle of it.
+    /// No whole line yet: the wait expired, or part of the line arrived and
+    /// the rest has not. What had arrived of the line stays where it is, so
+    /// the read that follows carries on from the middle of it.
     Quiet,
     /// The stream is finished.
     Ended,
@@ -112,8 +114,8 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
         }
     }
 
-    /// The next event, [`Framed::Quiet`] if none has arrived yet or the line
-    /// read finishes none, or `None` when the stream is finished.
+    /// The next event, [`Framed::Quiet`] if no whole line has arrived yet or
+    /// the line read finishes none, or `None` when the stream is finished.
     ///
     /// A stream that ends part-way through an event delivers nothing for it.
     /// That is not silent: every protocol here ends with an event of its own,
@@ -148,50 +150,54 @@ impl<R: AsyncBufRead + Unpin> Events<R> {
         Some(Ok(Framed::Event(self.dispatch())))
     }
 
-    /// Reads one line into `self.line`, without its ending.
+    /// Reads what one read brings of a line into `self.line`, without its
+    /// ending, and says whether the line is whole.
     ///
     /// Reads through the buffer rather than with `read_line`, which would take
     /// an unbounded line from a peer that never sent an ending.
     async fn read_line(&mut self) -> Result<Line, SseError> {
-        loop {
-            let available = match self.reader.fill_buf().await {
-                Ok(available) => available,
-                // A wait that expired, not a stream that broke. The transport
-                // spells it this way on purpose; see [`Framed::Quiet`].
-                Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {
-                    return Ok(Line::Quiet);
-                }
-                Err(problem) => return Err(problem.into()),
-            };
-
-            if available.is_empty() {
-                // A last line with no ending is still a line.
-                return Ok(if self.line.is_empty() {
-                    Line::Ended
-                } else {
-                    Line::Read
-                });
+        let available = match self.reader.fill_buf().await {
+            Ok(available) => available,
+            // A wait that expired, not a stream that broke. The transport
+            // spells it this way on purpose; see [`Framed::Quiet`].
+            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {
+                return Ok(Line::Quiet);
             }
+            Err(problem) => return Err(problem.into()),
+        };
 
-            let ending = available.iter().position(|byte| *byte == b'\n');
-            let keep = ending.unwrap_or(available.len());
-            let consume = ending.map_or(available.len(), |at| at + 1);
-
-            if self.line.len() + keep > MAX_EVENT {
-                return Err(SseError::TooLarge);
-            }
-
-            self.line.extend(available.iter().take(keep).copied());
-            self.reader.consume(consume);
-
-            if ending.is_some() {
-                // A CRLF peer leaves the carriage return on the line.
-                if self.line.last() == Some(&b'\r') {
-                    self.line.pop();
-                }
-                return Ok(Line::Read);
-            }
+        if available.is_empty() {
+            // A last line with no ending is still a line.
+            return Ok(if self.line.is_empty() {
+                Line::Ended
+            } else {
+                Line::Read
+            });
         }
+
+        let ending = available.iter().position(|byte| *byte == b'\n');
+        let keep = ending.unwrap_or(available.len());
+        let consume = ending.map_or(available.len(), |at| at + 1);
+
+        if self.line.len() + keep > MAX_EVENT {
+            return Err(SseError::TooLarge);
+        }
+
+        self.line.extend(available.iter().take(keep).copied());
+        self.reader.consume(consume);
+
+        if ending.is_none() {
+            // Handed back rather than read on: a peer can send one line a few
+            // bytes at a time for as long as [`MAX_EVENT`] lets it, and the
+            // caller cannot look at its cancel in here.
+            return Ok(Line::Quiet);
+        }
+
+        // A CRLF peer leaves the carriage return on the line.
+        if self.line.last() == Some(&b'\r') {
+            self.line.pop();
+        }
+        Ok(Line::Read)
     }
 
     /// Folds one line into the event being built.
@@ -257,7 +263,7 @@ mod tests {
 
     /// Frames a whole stream, so a test reads as one call.
     async fn events(stream: &str) -> Vec<SseEvent> {
-        framed(Events::new(stream.as_bytes())).await.0
+        framed(Events::new(stream.as_bytes())).await
     }
 
     /// The same, delivered the way a socket delivers one.
@@ -268,22 +274,20 @@ mod tests {
     async fn dripped(stream: &str, at_a_time: usize) -> Vec<SseEvent> {
         let reader =
             tokio::io::BufReader::with_capacity(at_a_time, io::Cursor::new(stream.as_bytes()));
-        framed(Events::new(reader)).await.0
+        framed(Events::new(reader)).await
     }
 
-    /// Everything a reader framed, and how many times it went quiet doing it.
-    async fn framed<R: AsyncBufRead + Unpin>(mut events: Events<R>) -> (Vec<SseEvent>, usize) {
+    /// Everything a reader framed.
+    async fn framed<R: AsyncBufRead + Unpin>(mut events: Events<R>) -> Vec<SseEvent> {
         let mut out = Vec::new();
-        let mut quiet = 0;
 
         while let Some(next) = events.next().await {
-            match next.unwrap() {
-                Framed::Event(event) => out.push(event),
-                Framed::Quiet => quiet += 1,
+            if let Framed::Event(event) = next.unwrap() {
+                out.push(event);
             }
         }
 
-        (out, quiet)
+        out
     }
 
     #[tokio::test]
@@ -411,16 +415,41 @@ mod tests {
     async fn a_pause_anywhere_in_a_stream_frames_the_same_as_one_that_arrives_whole() {
         // What a model thinking mid-sentence does to the socket, and it can
         // fall anywhere: the half of a line that had arrived has to survive the
-        // pause. The pause reaching the caller is the other half of this — it
-        // is waited out there, where the cancel is, and not in here.
+        // pause. The pause reaching the caller is the other half of this: it is
+        // waited out there, where the cancel is, and not in here. Other lines
+        // come back quiet too, so what is counted is the pauses themselves,
+        // and each has to come back before anything after it is read.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
         let stream = "event: one\r\ndata: {\"a\":1}\r\n\r\n:keep-alive\n\nevent: two\ndata: line\ndata: and another\n\n";
-        let paused = tokio::io::BufReader::new(crate::transport::SyncReader::new(
-            crate::transport::Paused::dawdling(stream, 3),
+        let pauses = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&pauses);
+        let source = tokio::io::BufReader::new(crate::transport::SyncReader::new(
+            crate::transport::Paused::dawdling(stream, 3).meanwhile(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+            }),
         ));
+        let mut framing = Events::new(source);
+        let mut out = Vec::new();
+        let mut paused_in_all = 0;
 
-        let (out, quiet) = framed(Events::new(paused)).await;
+        while let Some(next) = framing.next().await {
+            let paused_in_this = pauses.swap(0, Ordering::Relaxed);
+            paused_in_all += paused_in_this;
+            match next.unwrap() {
+                Framed::Event(event) => {
+                    assert_eq!(paused_in_this, 0, "the framing waited a pause out itself");
+                    out.push(event);
+                }
+                Framed::Quiet => assert!(
+                    paused_in_this <= 1,
+                    "the framing waited {paused_in_this} pauses out itself"
+                ),
+            }
+        }
 
-        assert!(quiet > 0, "the framing waited the pauses out itself");
+        assert!(paused_in_all > 0, "the stream never paused");
         assert_eq!(out, events(stream).await);
     }
 
@@ -428,10 +457,21 @@ mod tests {
     async fn a_peer_that_never_sends_a_line_ending_cannot_exhaust_memory() {
         // The reason lines are read through the buffer instead of by
         // `read_line`: this reader is infinite and never sends one.
+        // Each read hands back what it brought of the line as a quiet, so the
+        // refusal comes after many of them; every read brings at least a byte,
+        // which bounds how many.
         let endless = tokio::io::BufReader::new(tokio::io::repeat(b'x'));
         let mut framed = Events::new(endless);
 
-        let problem = framed.next().await.unwrap().unwrap_err();
+        let mut reads = 0;
+        let problem = loop {
+            match framed.next().await.unwrap() {
+                Ok(Framed::Quiet) if reads < MAX_EVENT => reads += 1,
+                Ok(other) => panic!("expected the line to be refused, got {other:?}"),
+                Err(problem) => break problem,
+            }
+            assert!(framed.line.len() <= MAX_EVENT, "the line outgrew the bound");
+        };
 
         assert!(
             matches!(problem, SseError::TooLarge),

@@ -3093,6 +3093,51 @@ fn a_resize_after_the_glyphs_change_lays_the_opening_out_in_the_new_set() {
 }
 
 #[test]
+fn ctrl_o_stays_on_the_result_it_was_stepped_to_when_the_window_narrows() {
+    // Stepped onto the second result at 80 columns, then narrowed to 40, where
+    // every line of the newest result above it folds onto two rows: the view
+    // is still on the second result's call, and a step goes on from there to
+    // the third rather than back onto the second.
+    let vendor = Vendor::calling_batches(&reading_three(), "All three are read.");
+    let config = serde_json::to_string_pretty(&serde_json::json!({
+        "updates": {"check":"never"},
+        "permissions": {"allow":["read(*)"]},
+        "providers": {"anthropic": {"model":"claude-sonnet-4-6", "baseUrl": vendor.address()}}
+    }))
+    .unwrap();
+    let mut window = Watched::configured("results-resized", 80, 24, &config, true);
+    for name in ["alpha", "beta", "gamma"] {
+        let mut text = String::new();
+        for at in 1..=30 {
+            let wide = if name == "gamma" { " and so on" } else { "" };
+            writeln!(text, "{name} line {at:02}{}", wide.repeat(4)).unwrap();
+        }
+        std::fs::write(window.workspace().join(format!("{name}.txt")), text).unwrap();
+    }
+    window.types_until("read all three\r", "All three are read.");
+
+    window.types_until("\x0f", "result 1 of 3");
+    window.types_until("\x1b[C", "result 2 of 3");
+    let stepped = window.picture();
+    assert!(stepped.contains("|Read(beta.txt)"), "{stepped}");
+
+    window.resize(40, 24);
+    let narrowed = window.picture();
+    let rows: Vec<&str> = narrowed.lines().collect();
+    assert_eq!(
+        rows.get(3).map(|row| row.trim_end_matches([' ', '|'])),
+        Some("|Read(beta.txt)"),
+        "{narrowed}"
+    );
+    assert!(narrowed.contains("beta line 01"), "{narrowed}");
+    assert!(!narrowed.contains("gamma line"), "{narrowed}");
+
+    window.types("\x1b[C");
+    let older = window.picture();
+    assert!(older.contains("|Read(alpha.txt)"), "{older}");
+}
+
+#[test]
 fn the_session_picker_stands_over_the_whole_window() {
     // The picker in the binary rather than in a component test: the words a
     // reader is actually handed, the two panes, and the row of keys under
@@ -3840,11 +3885,25 @@ fn ctrl_o_under_a_running_turn_keeps_the_working_row_over_the_view() {
             "{picture}"
         );
         // The last row drawn: a native window with less in it than it is tall
-        // leaves the rows under its live region empty.
-        assert!(
+        // leaves the rows under its live region empty. The footer is drawn in
+        // the glyph set the window asked for, and at 40 columns it loses the
+        // count from the right.
+        let (dot, walk, step) = if glyphs == "ascii" {
+            ("-", "^v", "<>")
+        } else {
+            ("\u{b7}", "\u{2191}\u{2193}", "\u{2190}\u{2192}")
+        };
+        let count = if columns == 80 {
+            format!(" {dot} {step} result 1 of 3")
+        } else {
+            String::new()
+        };
+        let footer = format!("esc to close {dot} {walk} pgup pgdn to see more{count}");
+        assert_eq!(
             rows.iter()
                 .rfind(|row| !row.trim().is_empty())
-                .is_some_and(|row| row.starts_with("esc to close")),
+                .map(|row| row.trim_end()),
+            Some(footer.as_str()),
             "{picture}"
         );
         insta::assert_snapshot!(

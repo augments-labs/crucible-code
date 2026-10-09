@@ -222,8 +222,13 @@ if ((counted == 0)); then
 fi
 
 section "no process memory in shipped files"
+# A work item is named by capitals, a hyphen and a number (`AB-12`), by one
+# capital and a word (`A-NAME`), or by capitals and one or two capitals with a
+# number (`AB-C3`, `AB-CD3`). Capitals on both sides, as `JSON-RPC` or a device
+# code a test makes up, cannot be told from a work item by shape, so they are
+# not read.
 scan=0
-memory=$(grep -rIonE '\b[A-Z]{1,6}-[0-9]{1,4}\b|sdlc-skills|\bADR\b|\.claude/|\.agents/|\.codex/' \
+memory=$(grep -rIonE '\b[A-Z]{1,6}-[0-9]{1,4}\b|\b[A-Z]-[A-Z][A-Z0-9]+\b|\b[A-Z]{1,6}-[A-Z]{1,2}[0-9]{1,3}\b|sdlc-skills|\bADR\b|\.claude/|\.agents/|\.codex/' \
     --include='*.rs' --include='*.md' --include='*.json' --include='*.toml' \
     crates src docs schema README.md Cargo.toml) || scan=$?
 case $scan in
@@ -917,17 +922,19 @@ while IFS= read -r edge; do
         failed=1
     fi
 done <<<"$edges"
-# The list is the graph as well as the rule, so a line no manifest takes any
+# Each list is the graph as well as the rule, so a line no manifest takes any
 # more is taken out with the dependency it stood for: a reader learns the crate
 # model from it, and a line naming an edge that is gone, or a crate that is,
 # teaches one that is not there.
-while IFS= read -r edge; do
-    [[ -z "$edge" ]] && continue
-    if ! grep -Fxq "$edge" <<<"$edges"; then
-        printf '    FAIL the allowed list names %s, which no manifest takes; take the line out with the dependency\n' "$edge"
-        failed=1
-    fi
-done <<<"$allowed"
+for list in allowed test_support; do
+    while IFS= read -r edge; do
+        [[ -z "$edge" ]] && continue
+        if ! grep -Fxq "$edge" <<<"$edges"; then
+            printf '    FAIL the %s list names %s, which no manifest takes; take the line out with the dependency\n' "${list/_/-}" "$edge"
+            failed=1
+        fi
+    done <<<"${!list}"
+done
 # The list is a layering only while no crate can reach itself through it.
 # Cargo refuses a cycle among the edges declared today, not one the list would
 # let a later manifest complete.

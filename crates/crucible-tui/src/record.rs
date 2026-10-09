@@ -375,6 +375,23 @@ impl Record {
     pub(crate) fn responsive(&mut self, retained: usize, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
         self.end();
         let rows = responsive_rows(lay(self.columns));
+        self.hold(rows, retained, lay);
+    }
+
+    /// Lay down one block whose source is about the size of what it lays.
+    ///
+    /// As [`Self::responsive`], charged for the text of the rows laid for the
+    /// width there is now, and laid out once: the rows that are measured are
+    /// the rows that are kept.
+    pub(crate) fn responsive_as_laid(&mut self, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
+        self.end();
+        let rows = responsive_rows(lay(self.columns));
+        let retained = rows.iter().map(Row::bytes).sum();
+        self.hold(rows, retained, lay);
+    }
+
+    /// Keeps a responsive block as `rows`, with `retained` bytes of source.
+    fn hold(&mut self, rows: Vec<Row>, retained: usize, lay: Box<dyn Fn(usize) -> Vec<Row>>) {
         if !rows.is_empty() {
             let weight = rows.len().max(retained.div_ceil(RETAINED_ROW_BYTES)).max(1);
             self.put(Line::Responsive {
@@ -1577,6 +1594,18 @@ mod tests {
         assert_eq!(record.weight, 2);
         assert_eq!(record.lines.len(), 2);
         assert_eq!(said(&record, 2), ["newest", "one more"]);
+    }
+
+    #[test]
+    fn a_block_charged_as_laid_pays_for_the_text_of_the_rows_it_keeps() {
+        // One row, so a charge by rows alone would be one. The text laid at
+        // this width is 241 bytes: three charged units and part of a fourth.
+        let mut record = Record::new(40);
+        record.responsive_as_laid(Box::new(|columns| {
+            vec![Row::plain("x".repeat(columns * 6 + 1))]
+        }));
+
+        assert_eq!(record.weight, 4);
     }
 
     #[test]

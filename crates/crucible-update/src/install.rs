@@ -49,6 +49,8 @@ mod stage;
 
 use crate::version::Version;
 pub use activate::{Activated, ActivationError, ActivationStep, RecoverableActivation, UnitRole};
+#[cfg(test)]
+pub(crate) use boundary::refusing_sync_after;
 pub use layout::{EntryKind, LayoutEntry, LayoutError, ReceiptClaim, ReceiptLayout};
 pub use receipt::{Digest, Installation, Receipt, ReceiptError, Target};
 pub(crate) use stage::{Limits, archive_name};

@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: "crate::steadied_picture(&window.picture())"
+---
+80x24 cursor 21,4 scrollback 12
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› start it                                                                      |
+|                                                                                |
+|● Bash(sleep 30)                                                                |
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                               |
+|                                                                                |
+|It is started. That is all.                                                     |
+|                                                                                |
+|✳ writing (0s · ↓ 4 · esc to interrupt)                                         |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|5 queued · ctrl+enter to send all now                                           |
+|                                                                                |
+|› and add a test for the windows path                                           |
+|                                                                                |
+|↑↓ to walk · ctrl+e to edit · ctrl+x to delete · ctrl+s to send now             |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1|

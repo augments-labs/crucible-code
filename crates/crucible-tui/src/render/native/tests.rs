@@ -376,6 +376,8 @@ struct Seen {
     is_terminal: bool,
     /// How many of the next size queries fail.
     unsizable: usize,
+    /// How many of the next writes are refused.
+    unwritable: usize,
     /// The size the terminal reports, where that is not the size it draws at.
     reports: Option<Size>,
     /// How many times the terminal was asked its size.
@@ -393,6 +395,7 @@ impl Window {
             emulator: Emulator::new(columns, rows),
             is_terminal: true,
             unsizable: 0,
+            unwritable: 0,
             reports: None,
             asked: 0,
         })))
@@ -402,6 +405,12 @@ impl Window {
     /// not say does.
     fn loses_size(&self, times: usize) {
         self.0.borrow_mut().unsizable = times;
+    }
+
+    /// Makes the next `times` writes fail, writing nothing, as a terminal
+    /// that cannot be written to for a while does.
+    fn refuses_writes(&self, times: usize) {
+        self.0.borrow_mut().unwritable = times;
     }
 
     /// Makes every size query answer `size`, whatever the window draws at: a
@@ -475,6 +484,10 @@ impl Terminal for Window {
 
     fn write(&mut self, text: &str) -> Result<(), TerminalError> {
         let mut seen = self.0.borrow_mut();
+        if seen.unwritable > 0 {
+            seen.unwritable = seen.unwritable.saturating_sub(1);
+            return Err(TerminalError::Io(std::io::ErrorKind::BrokenPipe.into()));
+        }
         seen.written.push_str(text);
         if seen.is_terminal {
             seen.emulator.feed(text);
@@ -796,9 +809,43 @@ fn a_settled_native_resize_writes_every_kept_row_once_at_the_new_width() {
     assert_eq!(window.rows_saying("* thinking"), 1, "{:#?}", window.all());
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 
-    // Given once: the next wait writes nothing of it again.
+    // Given once: the next wait clears nothing and writes nothing of it again.
     render.settled(Instant::now() + SETTLE).unwrap();
-    assert!(!window.take().contains("said"));
+    let again = window.take();
+    assert!(
+        !again.contains("\x1b[3J"),
+        "the scrollback was cleared a second time: {again:?}"
+    );
+    assert!(!again.contains("said"), "{again:?}");
+}
+
+#[test]
+fn a_native_resize_before_the_first_frame_draws_at_the_new_size_and_clears_nothing() {
+    // The window changes size between the renderer being made and its first
+    // frame. Nothing it wrote was cut at the old width, so there is nothing
+    // to give back: the first frame is drawn at the new width, and settling
+    // leaves the reader's scrollback, and the shell's lines in it, alone.
+    let window = Window::new(40, 10);
+    window.clone().write("$ crucible\r\n").unwrap();
+    let mut render = native(&window);
+
+    window.resize(30, 10);
+    stands(&mut render);
+    assert_eq!(render.columns(), 30);
+    assert_eq!(
+        render.settles_in(Instant::now()),
+        None,
+        "a window not yet drawn in waits to be given everything again"
+    );
+    render.settled(Instant::now() + SETTLE).unwrap();
+
+    let written = window.take();
+    assert!(
+        !written.contains("\x1b[3J"),
+        "the scrollback was cleared: {written:?}"
+    );
+    assert_eq!(window.rows_saying("$ crucible"), 1, "{:#?}", window.all());
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
 
 #[test]
@@ -899,6 +946,51 @@ fn a_native_replay_of_an_opening_partly_sent_lays_all_of_it_at_the_new_width() {
 }
 
 #[test]
+fn a_native_replay_lays_an_opening_wholly_sent_afresh_at_the_new_width() {
+    // The card went out whole at forty columns and the terminal holds it as
+    // it was laid then. Given back once the window settles at thirty, it is
+    // laid again for thirty, as the full screen would draw it, rather than
+    // written as the rows it was cut into at forty.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    render
+        .opens(Box::new(|columns, _| {
+            vec![row(&format!("card laid at {columns}")), row("card foot")]
+        }))
+        .unwrap();
+    stands(&mut render);
+    render.commit("said under the card").unwrap();
+    render.seal().unwrap();
+    assert!(
+        render.record.first() > 2,
+        "the card was not wholly sent: {:#?}",
+        window.all()
+    );
+
+    settles_at(&window, &mut render, 30, 10);
+
+    assert_eq!(
+        window.rows_saying("card laid at 30"),
+        1,
+        "{:#?}",
+        window.all()
+    );
+    assert_eq!(
+        window.rows_saying("card laid at 40"),
+        0,
+        "{:#?}",
+        window.all()
+    );
+    assert_eq!(window.rows_saying("card foot"), 1, "{:#?}", window.all());
+    assert_eq!(
+        window.rows_saying("said under the card"),
+        1,
+        "{:#?}",
+        window.all()
+    );
+}
+
+#[test]
 fn a_native_replay_after_a_clear_gives_back_nothing_from_before_it() {
     let window = Window::new(40, 6);
     let mut render = native(&window);
@@ -920,6 +1012,48 @@ fn a_native_replay_after_a_clear_gives_back_nothing_from_before_it() {
         "{:#?}",
         window.all()
     );
+}
+
+#[test]
+fn a_native_replay_whose_write_fails_is_written_again_at_the_next_frame() {
+    // The frame that clears the screen and gives back what was kept could not
+    // be written. Nothing of it reached the terminal, so it is still owed: the
+    // next frame clears and writes everything kept, rather than drawing the
+    // region alone over whatever the failed write left.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    let said: Vec<String> = (0..8)
+        .map(|at| format!("said {at:02} in words that fold at twenty"))
+        .collect();
+    finished(&mut render, &said);
+
+    window.resize(20, 6);
+    render.resized().unwrap();
+    window.take();
+    window.refuses_writes(1);
+    assert!(
+        render.settled(Instant::now() + SETTLE).is_err(),
+        "the replay was written: {:?}",
+        window.take()
+    );
+
+    render
+        .under(&[row("* thinking")], None, Palette::plain())
+        .unwrap();
+    let after = window.take();
+    assert!(
+        after.contains("\x1b[2J\x1b[3J"),
+        "the replay was not written again: {after:?}"
+    );
+    for at in 0..8 {
+        assert_eq!(
+            window.rows_saying(&format!("said {at:02} in")),
+            1,
+            "said {at:02}: {:#?}",
+            window.all()
+        );
+    }
+    assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 }
 
 #[test]
@@ -1077,6 +1211,70 @@ fn a_native_frame_after_a_resize_is_told_of_asks_once_and_takes_the_new_width() 
         window.all().iter().all(|row| row.chars().count() <= 20),
         "a row was written wider than the window: {:#?}",
         window.all()
+    );
+}
+
+#[test]
+fn a_native_frame_told_of_a_resize_whose_size_query_fails_leaves_the_next_frame_to_ask() {
+    // The flag is lowered by the frame that takes it, and the query that frame
+    // makes fails. The resize is still owed: the next frame asks once more and
+    // takes the new width, rather than drawing at the old one until another
+    // signal or a press. One that fails again is not asked about frame after
+    // frame, and a signal that arrives while one is owed is owed its own.
+    let window = Window::new(40, 10);
+    let mut render = native(&window);
+    let resizes = ResizeFlag::default();
+    render.watches_size(resizes.clone());
+
+    stands(&mut render);
+    render.commit("> asked").unwrap();
+    render.seal().unwrap();
+    render.stream("alfa ").unwrap();
+
+    window.resize(20, 10);
+    resizes.raise();
+    window.loses_size(1);
+    render.stream("bravo ").unwrap();
+    assert_eq!(render.columns(), 40, "the failed query was taken as a size");
+    render.stream("charlie ").unwrap();
+    assert_eq!(
+        render.columns(),
+        20,
+        "the frame after the failed query kept the old width"
+    );
+
+    window.resize(30, 10);
+    resizes.raise();
+    window.loses_size(2);
+    let asked = window.asked();
+    render.stream("delta ").unwrap();
+    render.stream("echo ").unwrap();
+    assert_eq!(window.asked(), asked + 2, "{:#?}", window.all());
+    render.stream("foxtrot ").unwrap();
+    render.stream("golf ").unwrap();
+    assert_eq!(
+        window.asked(),
+        asked + 2,
+        "a query that failed twice was asked again unprompted"
+    );
+    assert_eq!(render.columns(), 20);
+
+    // A signal that arrives while a resize is still owed is owed a query of
+    // its own: when the frame that asks for both fails, the next one asks.
+    window.resize(25, 10);
+    resizes.raise();
+    window.loses_size(1);
+    render.stream("hotel ").unwrap();
+    window.resize(35, 10);
+    resizes.raise();
+    window.loses_size(1);
+    render.stream("india ").unwrap();
+    assert_eq!(render.columns(), 20, "a failed query was taken as a size");
+    render.stream("juliett ").unwrap();
+    assert_eq!(
+        render.columns(),
+        35,
+        "a resize told of while another was owed was dropped when its query failed"
     );
 }
 
@@ -1255,7 +1453,8 @@ fn a_resize_press_whose_size_query_fails_keeps_the_size_already_known() {
     // The press says the window changed and the query that should say how
     // fails. That is no news of a size, as it is no news on the frame's path:
     // the session is not folded again for a window of eighty, and the region
-    // is not rewound as though it were eighty wide.
+    // is not rewound as though it were eighty wide. Every query fails while
+    // it is asked, so a second one cannot answer for the first.
     let window = Window::new(100, 10);
     let mut render = native(&window);
 
@@ -1268,7 +1467,7 @@ fn a_resize_press_whose_size_query_fails_keeps_the_size_already_known() {
         )
         .unwrap();
 
-    window.loses_size(1);
+    window.loses_size(usize::MAX);
     render.resized().unwrap();
     stands(&mut render);
 
@@ -1286,8 +1485,9 @@ fn a_resize_press_whose_size_query_fails_keeps_the_size_already_known() {
     );
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 
+    window.loses_size(0);
     let mut full = Renderer::drawing(window.clone(), ScreenMode::Fullscreen);
-    window.loses_size(1);
+    window.loses_size(usize::MAX);
     full.resized().unwrap();
     assert_eq!(full.columns(), 100);
 }
