@@ -146,7 +146,7 @@ pub(super) struct Native {
     /// say the same is not written.
     shown: String,
     /// Reused for each frame's bytes, except a replay's, which are let go of
-    /// once written.
+    /// once the write has been tried, whether or not the terminal took them.
     frame: String,
     /// Whether a frame has been written, so there is a region to close.
     drawn: bool,
