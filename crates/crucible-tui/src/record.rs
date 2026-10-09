@@ -436,7 +436,8 @@ impl Record {
         // Some or all of it has gone out to the terminal's scrollback. Laying
         // it again here would change how many lines there are under every
         // number the session has handed out since, so it is kept as it was
-        // laid, and [`Self::kept`] lays it afresh once all of it has gone.
+        // laid, and [`Self::kept`] lays it afresh once all of it has gone,
+        // which a replay sees to through [`Self::lets_opening_go`].
         if opening.from < self.sent {
             self.opening = Some(opening);
             return;
@@ -940,6 +941,26 @@ impl Record {
         }
     }
 
+    /// Lets the rest of an opening that has partly gone out go too.
+    ///
+    /// For a replay, before it asks what has gone out: its lines are held as
+    /// they were laid for a width that has gone, and with only its top gone
+    /// out, [`Self::kept`] would give that top back as it was laid and the
+    /// region would draw the rest under it the same way, a border cut at the
+    /// new width. Gone out whole, it is laid whole at the width there is now.
+    /// A card none of which has gone out was laid again on the resize, and
+    /// one that has partly fallen off the top is no longer a card.
+    pub(crate) fn lets_opening_go(&mut self) {
+        let end = self
+            .opening
+            .as_ref()
+            .filter(|opening| opening.from >= self.gone && opening.from < self.sent)
+            .map(|opening| opening.from + opening.lines);
+        if let Some(end) = end {
+            self.lets_go(end);
+        }
+    }
+
     /// Hands `each` every line that has gone out and is still kept, as the
     /// display rows it comes to at the current width, with an opening among
     /// them laid afresh in `glyphs`.
@@ -947,9 +968,10 @@ impl Record {
     /// What a resize writes again once the screen and its scrollback have been
     /// cleared. The card is laid here rather than in the record, so that the
     /// lines under it keep the numbers they were handed out with. A card only
-    /// partly gone out is given as the lines it already holds, because the live
-    /// region draws the rest of it as they stand. Row by row rather than as
-    /// one list, so giving the session back makes no second copy of it.
+    /// partly gone out is given as the lines it already holds; a replay lets
+    /// the rest of it go first, through [`Self::lets_opening_go`], so the card
+    /// it is given is laid whole. Row by row rather than as one list, so
+    /// giving the session back makes no second copy of it.
     pub(crate) fn kept(&self, glyphs: Glyphs, mut each: impl FnMut(Row)) {
         let first = self.gone;
         let sent = self.first();

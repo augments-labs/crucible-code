@@ -909,6 +909,43 @@ fn a_native_replay_of_an_opening_partly_sent_writes_each_of_its_rows_once() {
 }
 
 #[test]
+fn a_native_replay_of_an_opening_partly_sent_lays_all_of_it_at_the_new_width() {
+    // A card with a border, laid to the width it is handed. A window shorter
+    // than the card sends its top rows out, and a narrower one then has to be
+    // given the whole card again at its own width: rows laid for the old
+    // width, cut at the new one, are a border with its right edge gone.
+    let card = |columns: usize, _| -> Vec<Row> {
+        let inner = columns.saturating_sub(2);
+        (1..=6)
+            .map(|at| row(&format!("<{:-^inner$}>", format!("card row {at}"))))
+            .collect()
+    };
+    let window = Window::new(40, 5);
+    let mut render = native(&window);
+    render.opens(Box::new(card)).unwrap();
+    stands(&mut render);
+    assert!(
+        render.record.first() > 0 && render.record.first() < 6,
+        "the card was not partly sent: {:#?}",
+        window.all()
+    );
+
+    settles_at(&window, &mut render, 30, 5);
+
+    let laid = card(render.transcript_columns(), Glyphs::Unicode);
+    let all = window.all();
+    for (at, laid) in (1..=6).zip(laid.iter().map(Row::text)) {
+        let named = format!("card row {at}");
+        let shown: Vec<&String> = all.iter().filter(|row| row.contains(&named)).collect();
+        assert_eq!(
+            shown,
+            [&laid],
+            "{named} is not the card laid at the new width: {all:#?}"
+        );
+    }
+}
+
+#[test]
 fn a_native_replay_lays_an_opening_wholly_sent_afresh_at_the_new_width() {
     // The card went out whole at forty columns and the terminal holds it as
     // it was laid then. Given back once the window settles at thirty, it is
