@@ -1218,7 +1218,8 @@ fn a_resize_press_whose_size_query_fails_keeps_the_size_already_known() {
     // The press says the window changed and the query that should say how
     // fails. That is no news of a size, as it is no news on the frame's path:
     // the session is not folded again for a window of eighty, and the region
-    // is not rewound as though it were eighty wide.
+    // is not rewound as though it were eighty wide. Every query fails while
+    // it is asked, so a second one cannot answer for the first.
     let window = Window::new(100, 10);
     let mut render = native(&window);
 
@@ -1231,7 +1232,7 @@ fn a_resize_press_whose_size_query_fails_keeps_the_size_already_known() {
         )
         .unwrap();
 
-    window.loses_size(1);
+    window.loses_size(usize::MAX);
     render.resized().unwrap();
     stands(&mut render);
 
@@ -1249,8 +1250,9 @@ fn a_resize_press_whose_size_query_fails_keeps_the_size_already_known() {
     );
     assert_eq!(window.rows_saying("+--box--+"), 1, "{:#?}", window.all());
 
+    window.loses_size(0);
     let mut full = Renderer::drawing(window.clone(), ScreenMode::Fullscreen);
-    window.loses_size(1);
+    window.loses_size(usize::MAX);
     full.resized().unwrap();
     assert_eq!(full.columns(), 100);
 }
