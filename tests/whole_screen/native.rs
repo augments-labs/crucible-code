@@ -1354,3 +1354,36 @@ fn a_held_row_narrowed_on_a_terminal_that_keeps_its_lines_loses_finished_rows_on
         }
     }
 }
+
+#[test]
+fn a_native_session_that_is_left_says_how_to_come_back_to_it() {
+    // In native mode the transcript is still in the reader's scrollback, so
+    // there is nothing to say about where it went. The session's id is the
+    // one thing that has never been on the screen, and it is the only way back
+    // to this exact session, so leaving says it as the full screen does,
+    // whichever of the two ways the session was left.
+    for (case, leaves) in [
+        ("native-left-by-exit", "/exit"),
+        ("native-left-by-ctrl-c", "ctrl+c"),
+    ] {
+        let vendor = Vendor::answering("Said.");
+        let mut window = Watched::native(case, 80, 24, &vendor);
+        window.types_until("say it\r", "Said.");
+
+        let (ended, _) = if leaves == "/exit" {
+            window.ends_after("/exit\r")
+        } else {
+            window.types_until("\x03", "again to leave");
+            window.ends_after("\x03")
+        };
+
+        assert!(ended.success(), "{leaves}: {ended:?}");
+        let all = everything(&window);
+        assert!(
+            all.contains("Resume this session with:") && all.contains("crucible --resume "),
+            "{leaves} left no way back\n{all}"
+        );
+        assert_eq!(all.matches("Said.").count(), 1, "{leaves}\n{all}");
+        window.assert_never_alternate();
+    }
+}
