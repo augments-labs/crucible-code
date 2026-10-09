@@ -1326,10 +1326,11 @@ impl<T: Terminal> Renderer<T> {
     /// width and returns rows that fit it. That width is
     /// [`Self::transcript_columns`], not the window's: with the rail on, a row
     /// laid at the window's width loses its last column to it. A window that
-    /// narrows clips them
-    /// rather than folding them, because rows a component laid out against each
-    /// other are not prose and re-flowing one of them would break the column
-    /// the others are aligned in.
+    /// narrows clips them rather than folding them, because rows a component
+    /// laid out against each other are not prose and re-flowing one of them
+    /// would break the column the others are aligned in. Rows whose source is
+    /// still held go to [`Self::responsive`] instead, which lays them out
+    /// again at the new width.
     ///
     /// # Errors
     ///
