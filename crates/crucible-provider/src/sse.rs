@@ -263,7 +263,7 @@ mod tests {
 
     /// Frames a whole stream, so a test reads as one call.
     async fn events(stream: &str) -> Vec<SseEvent> {
-        framed(Events::new(stream.as_bytes())).await.0
+        framed(Events::new(stream.as_bytes())).await
     }
 
     /// The same, delivered the way a socket delivers one.
@@ -274,22 +274,20 @@ mod tests {
     async fn dripped(stream: &str, at_a_time: usize) -> Vec<SseEvent> {
         let reader =
             tokio::io::BufReader::with_capacity(at_a_time, io::Cursor::new(stream.as_bytes()));
-        framed(Events::new(reader)).await.0
+        framed(Events::new(reader)).await
     }
 
-    /// Everything a reader framed, and how many times it went quiet doing it.
-    async fn framed<R: AsyncBufRead + Unpin>(mut events: Events<R>) -> (Vec<SseEvent>, usize) {
+    /// Everything a reader framed.
+    async fn framed<R: AsyncBufRead + Unpin>(mut events: Events<R>) -> Vec<SseEvent> {
         let mut out = Vec::new();
-        let mut quiet = 0;
 
         while let Some(next) = events.next().await {
-            match next.unwrap() {
-                Framed::Event(event) => out.push(event),
-                Framed::Quiet => quiet += 1,
+            if let Framed::Event(event) = next.unwrap() {
+                out.push(event);
             }
         }
 
-        (out, quiet)
+        out
     }
 
     #[tokio::test]
@@ -417,16 +415,41 @@ mod tests {
     async fn a_pause_anywhere_in_a_stream_frames_the_same_as_one_that_arrives_whole() {
         // What a model thinking mid-sentence does to the socket, and it can
         // fall anywhere: the half of a line that had arrived has to survive the
-        // pause. The pause reaching the caller is the other half of this — it
-        // is waited out there, where the cancel is, and not in here.
+        // pause. The pause reaching the caller is the other half of this: it is
+        // waited out there, where the cancel is, and not in here. Other lines
+        // come back quiet too, so what is counted is the pauses themselves,
+        // and each has to come back before anything after it is read.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
         let stream = "event: one\r\ndata: {\"a\":1}\r\n\r\n:keep-alive\n\nevent: two\ndata: line\ndata: and another\n\n";
-        let paused = tokio::io::BufReader::new(crate::transport::SyncReader::new(
-            crate::transport::Paused::dawdling(stream, 3),
+        let pauses = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&pauses);
+        let source = tokio::io::BufReader::new(crate::transport::SyncReader::new(
+            crate::transport::Paused::dawdling(stream, 3).meanwhile(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+            }),
         ));
+        let mut framing = Events::new(source);
+        let mut out = Vec::new();
+        let mut paused_in_all = 0;
 
-        let (out, quiet) = framed(Events::new(paused)).await;
+        while let Some(next) = framing.next().await {
+            let paused_in_this = pauses.swap(0, Ordering::Relaxed);
+            paused_in_all += paused_in_this;
+            match next.unwrap() {
+                Framed::Event(event) => {
+                    assert_eq!(paused_in_this, 0, "the framing waited a pause out itself");
+                    out.push(event);
+                }
+                Framed::Quiet => assert!(
+                    paused_in_this <= 1,
+                    "the framing waited {paused_in_this} pauses out itself"
+                ),
+            }
+        }
 
-        assert!(quiet > 0, "the framing waited the pauses out itself");
+        assert!(paused_in_all > 0, "the stream never paused");
         assert_eq!(out, events(stream).await);
     }
 
