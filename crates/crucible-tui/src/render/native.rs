@@ -65,15 +65,16 @@
 //! A frame asks the window's size before it is drawn, so that one drawn while
 //! an answer is arriving goes out at the width the window already has rather
 //! than the one the press reporting the change will name. Given a
-//! [`ResizeFlag`], only the first frame after the flag is raised asks; without
-//! one, every frame does. How far back the region's top now is cannot be asked
-//! of the terminal, so it is worked out from how wide each row of the region
-//! was against the new width, counted as a terminal that rewraps would count
-//! it. On one that does not, narrowing counts high, and the erase that opens
-//! the next frame takes finished rows just above the region off the visible
-//! screen until the window settles and they are written again. Counting low
-//! instead would leave a stale copy of the region in the scrollback on every
-//! terminal that does rewrap, which is most of them.
+//! [`ResizeFlag`], only the first frame after the flag is raised asks, and the
+//! one after it where that query failed; without one, every frame does. How
+//! far back the region's top now is cannot be asked of the terminal, so it is
+//! worked out from how wide each row of the region was against the new width,
+//! counted as a terminal that rewraps would count it. On one that does not,
+//! narrowing counts high, and the erase that opens the next frame takes
+//! finished rows just above the region off the visible screen until the window
+//! settles and they are written again. Counting low instead would leave a
+//! stale copy of the region in the scrollback on every terminal that does
+//! rewrap, which is most of them.
 //!
 //! The rewind also trusts that a row crucible counted as fitting the window
 //! takes one row of it. A terminal that draws a symbol wider than crucible
@@ -158,6 +159,20 @@ pub(super) struct Native {
     /// Whether the next frame clears the screen and its scrollback and writes
     /// what was kept before the region.
     replays: bool,
+    /// Whether the next frame asks the window its size although the flag was
+    /// not raised again.
+    asks: Asks,
+}
+
+/// When a frame given a [`ResizeFlag`] asks the window its size.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Asks {
+    /// Only when the flag has been raised since a frame last took it.
+    #[default]
+    WhenTold,
+    /// At the next frame as well: the frame that took the flag could not read
+    /// the size, so the resize it told of is still owed.
+    Again,
 }
 
 impl Native {
@@ -361,12 +376,34 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// A query that fails says nothing about the window. It is not a resize,
     /// and the frame is drawn for the size already known, as it would have
-    /// been before the query was asked here.
+    /// been before the query was asked here. Where the flag sent it to ask,
+    /// the resize it told of is still owed, so the next frame asks once more
+    /// though the flag is down. Each signal is owed that one query: when one
+    /// asked only for what was owed fails as well, the next signal or press is
+    /// waited for rather than asking at every frame while the window will not
+    /// say.
     fn framed(&mut self, writes: Writes) -> Result<(), TerminalError> {
-        if self.native.is_some()
-            && self.resizes.as_ref().is_none_or(ResizeFlag::taken)
-            && self.terminal.size().is_ok_and(|size| size != self.size)
+        let (asks, owed, told) = match &mut self.native {
+            None => (false, false, false),
+            Some(native) => {
+                let owed = std::mem::take(&mut native.asks) == Asks::Again;
+                let told = self.resizes.as_ref().is_some_and(ResizeFlag::taken);
+                (self.resizes.is_none() || told || owed, owed, told)
+            }
+        };
+        let size = asks.then(|| self.terminal.size().ok()).flatten();
+        if asks
+            && size.is_none()
+            && self.resizes.is_some()
+            && let Some(native) = &mut self.native
         {
+            native.asks = if owed && !told {
+                Asks::WhenTold
+            } else {
+                Asks::Again
+            };
+        }
+        if size.is_some_and(|size| size != self.size) {
             // `resized` asks the size again and takes what it reads, as it
             // does for the press: it lays the region out and draws it,
             // through this function again, when that differs from the size
