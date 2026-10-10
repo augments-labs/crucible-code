@@ -131,7 +131,7 @@ jobs:
           mkdir release-metadata
           cp NOTES.md scripts/sh/install.sh scripts/sh/uninstall.sh scripts/ps1/install.ps1 release-metadata/
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: notes
           path: release-metadata/
@@ -247,7 +247,7 @@ jobs:
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" | awk '{ print $1 }' > "digest-${{ matrix.stem }}"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.stem }}
           path: |
@@ -273,7 +273,7 @@ jobs:
                 -p crucible-code -p crucible-sandbox-broker
           done
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: update-${{ matrix.stem }}
           path: update/
@@ -363,7 +363,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.stem }}
           path: |
@@ -399,7 +399,7 @@ jobs:
           if [[ -n $versions ]]; then echo built=true >>"$GITHUB_OUTPUT"; fi
 
       - if: steps.update.outputs.built == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: update-${{ matrix.stem }}
           path: update/
@@ -492,13 +492,13 @@ jobs:
                 cargo build --release --locked --target x86_64-unknown-freebsd || exit 1
             done
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: freebsd-x86_64
           path: crucible-*.tar.gz
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: update-freebsd-x86_64
           path: update/
@@ -619,7 +619,7 @@ jobs:
             lscpu
           } > generated/txt/budget-environment.txt
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-budgets
           path: |
@@ -654,7 +654,7 @@ jobs:
           cd assets
           sha256sum crucible-* install.sh uninstall.sh install.ps1 | tee SHA256SUMS
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: staged-sums
           path: assets/SHA256SUMS
@@ -1523,7 +1523,7 @@ jobs:
           name: staged-sums
           path: staged
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: staged
           path: staged/SHA256SUMS
