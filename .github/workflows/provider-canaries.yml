@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo build --release --locked --bin crucible
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provider-canary-binary
           path: target/release/crucible
@@ -104,7 +104,7 @@ jobs:
             --workspace "$root/work" \
             --report "generated/json/provider-canary-$PROVIDER.json"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ always() && hashFiles(format('generated/json/provider-canary-{0}.json', matrix.provider)) != '' }}
         with:
           name: provider-canary-${{ matrix.provider }}
