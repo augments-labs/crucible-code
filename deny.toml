@@ -129,6 +129,14 @@ skip = [
     # happen to disagree about a release.
     { crate = "hashbrown:0.15.5", reason = "petgraph pins the older line under arboard" },
 
+    # `miniz_oxide` is the pure-Rust deflate under `flate2`. `flate2` 1.1.10,
+    # which decompresses a release archive for the updater, moved to 0.9, while
+    # `png` — the decoder under `image`, at its latest release — still asks for
+    # 0.8 directly, so the 0.8 copy is reachable only through image decoding
+    # and the updater's stream goes through 0.9. The duplicate goes away when
+    # `png` moves, not before, and not by anything this repository can do.
+    { crate = "miniz_oxide:0.8.9", reason = "png pins the older line under image decoding" },
+
     # `signal-hook` registers the handlers a terminal program needs, and
     # `crossterm` 0.29 is built against the 0.3 line, so moving crucible's own
     # pin to 0.4 adds the second copy rather than replacing the first. Both
