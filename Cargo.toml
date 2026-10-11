@@ -319,7 +319,7 @@ seccompiler = { version = "=0.5.0", default-features = false }
 # system, which `std` has no way to reach. The same libc is already compiled for
 # tokio, mio and the other crates that reach the platform through it, so these
 # uses add no build.
-libc = "=0.2.189"
+libc = "=0.2.190"
 
 # Being told something from outside. A closed window or a `kill` arrives as a
 # signal, and `std` has no way to hear one: without a handler the process ends
