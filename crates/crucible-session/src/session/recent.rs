@@ -465,14 +465,21 @@ fn heading(path: &Path, roots: Roots<'_>) -> Heading {
         // Written with the header, in the same write, by a session an agent
         // ran. Any other log has its first message there, which a list has
         // no business reading, so the line is read only where it is a route.
+        // One that opens as a route and does not read whole is a session a
+        // resume refuses, so it is not listed as one a provider's model ran.
         let mut second = String::new();
-        let route = log
+        let route = if log
             .fill_buf()
             .is_ok_and(|ahead| ahead.starts_with(wire::ROUTE_OPENS))
-            .then(|| log.read_line(&mut second).ok())
-            .flatten()
-            .filter(|_| second.ends_with('\n'))
-            .and_then(|_| wire::routed(second.trim_end()));
+        {
+            let read = log.read_line(&mut second).is_ok() && second.ends_with('\n');
+            let Some(route) = read.then(|| wire::routed(second.trim_end())).flatten() else {
+                return Heading::Unreadable;
+            };
+            Some(route)
+        } else {
+            None
+        };
         Heading::Here {
             // As the header wrote it, bounded by the line it was read from:
             // whoever shows it escapes it and says where they cut it, which

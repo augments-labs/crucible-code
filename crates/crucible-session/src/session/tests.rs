@@ -1624,6 +1624,10 @@ mod started;
 /// under one costs.
 mod ordinary;
 
+/// The logs kept under the repository's fixtures, one from each side of the
+/// format that let an installed agent run a session.
+mod formats;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {

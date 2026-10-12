@@ -213,6 +213,12 @@ fn first_line(log: impl io::Read) -> io::Result<Option<String>> {
 /// `None` for a log a provider's model ran, which is every log written before
 /// the route line existed: a route is written in the same write as the header
 /// or not at all, so a second line that is anything else says there is none.
+///
+/// A second line that opens as a route and does not read as one, whole, is
+/// refused as a log that cannot be read. Taken as no route, the session would
+/// be continued by a provider's model, and continuing cuts a line that does
+/// not read at the end of a log as a torn tail, so the agent's session would
+/// become a provider's with nothing left to say it was not.
 pub(super) fn route_of(path: &Path) -> Result<Option<RouteBinding>, SessionError> {
     let trouble = |source| SessionError::Log {
         at: path.display().to_string().into(),
@@ -220,16 +226,25 @@ pub(super) fn route_of(path: &Path) -> Result<Option<RouteBinding>, SessionError
     };
     let mut log = BufReader::new(opened(path).map_err(trouble)?.take(READ));
     let mut line = Vec::new();
-    for _ in 0..2 {
-        line.clear();
-        log.read_until(b'\n', &mut line).map_err(trouble)?;
-        if line.last() != Some(&b'\n') {
-            return Ok(None);
-        }
+    log.read_until(b'\n', &mut line).map_err(trouble)?;
+    if line.last() != Some(&b'\n') {
+        return Ok(None);
     }
-    Ok(str::from_utf8(&line)
-        .ok()
-        .and_then(|second| wire::routed(second.trim_end())))
+    line.clear();
+    log.read_until(b'\n', &mut line).map_err(trouble)?;
+    if !line.starts_with(wire::ROUTE_OPENS) {
+        return Ok(None);
+    }
+    line.strip_suffix(b"\n")
+        .and_then(|whole| str::from_utf8(whole).ok())
+        .and_then(wire::routed)
+        .map(Some)
+        .ok_or_else(|| {
+            trouble(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the installed agent it was opened on is not recorded whole",
+            ))
+        })
 }
 
 /// Everything a log holds, as the transcript it recorded, the offset the next
