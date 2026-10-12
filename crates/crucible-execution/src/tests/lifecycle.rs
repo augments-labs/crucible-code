@@ -109,6 +109,36 @@ fn an_unconfirmed_ending_needs_recovery() {
     assert_eq!(state.authentication(), Authentication::Unknown);
 }
 
+/// Recovery ends only where a check or a verification succeeds: one that was
+/// cancelled or failed established nothing, and nothing else may start
+/// meanwhile.
+#[test]
+fn only_a_successful_check_recovers() {
+    let mut state = Lifecycle::new(Admission::Enabled);
+    state
+        .apply(Step::Observe(Authentication::SignedIn))
+        .unwrap();
+    state.apply(Step::Begin(Operation::Disconnecting)).unwrap();
+    state.apply(Step::End(Ending::Unknown)).unwrap();
+    state
+        .apply(Step::Observe(Authentication::SignedIn))
+        .unwrap();
+    assert_eq!(
+        state.apply(Step::Begin(Operation::SigningOut)),
+        Err(Refused::Recovering)
+    );
+
+    state.apply(Step::Begin(Operation::Checking)).unwrap();
+    state.apply(Step::End(Ending::Cancelled)).unwrap();
+    assert_eq!(state.running(), Running::RecoveryRequired);
+    assert!(!state.ready());
+
+    state.apply(Step::Begin(Operation::Checking)).unwrap();
+    state.apply(Step::End(Ending::Succeeded)).unwrap();
+    assert_eq!(state.running(), Running::Idle);
+    assert!(state.ready());
+}
+
 /// A disabled instance admits management operations and nothing that takes it
 /// out of use again; one operation runs at a time, and only a running one ends.
 #[test]

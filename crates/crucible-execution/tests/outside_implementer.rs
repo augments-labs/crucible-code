@@ -10,9 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use crucible_execution::{
-    Backend, Capabilities, Capability, Claim, Decision, Description, Error, Event, Lasting,
-    Outcome, PendingRef, Scope, SessionRef, Sink, Stale, Text, TurnRequest, Unsupported,
-    conformance,
+    Backend, Capabilities, Capability, Decision, Description, Error, Event, Lasting, Outcome,
+    PendingRef, SessionRef, Sink, Stale, Text, TurnRequest, Unsupported, conformance,
 };
 use crucible_runtime::{BoxFuture, answered};
 
@@ -25,7 +24,7 @@ struct Echo {
 impl Echo {
     /// What it claims: cancelling, learned from the driver. Nothing else.
     fn claims() -> Capabilities {
-        Capabilities::unknown().with(Capability::Cancel, Claim::Supported(Scope::Driver))
+        Capabilities::unknown().declared(Capability::Cancel, true)
     }
 
     /// Refuses `capability` unless it is claimed.

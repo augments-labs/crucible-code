@@ -2,7 +2,7 @@
 
 use crucible_types::TurnId;
 
-use crate::{Decision, Lasting, PENDINGS, Pending, Pendings, SessionRef, Stale, Text};
+use crate::{Decision, Lasting, PENDINGS, Pending, Pendings, SessionRef, Stale, Text, Unraised};
 
 fn session(name: &str) -> SessionRef {
     SessionRef::new(name).expect("a short name")
@@ -12,6 +12,7 @@ fn permission() -> Pending {
     Pending::Permission {
         tool: Text::new("bash"),
         summary: Text::new("ls"),
+        sent: Some(Text::new("ls")),
     }
 }
 
@@ -119,11 +120,11 @@ fn a_decision_from_elsewhere_is_refused() {
 #[test]
 fn the_table_is_bounded_and_needs_a_turn() {
     let mut idle = Pendings::new().expect("a fresh table");
-    assert!(idle.raise(permission()).is_err(), "no turn is running");
+    assert_eq!(idle.raise(permission()), Err(Unraised::Idle));
 
     let mut table = running();
     for _ in 0..PENDINGS {
         table.raise(permission()).expect("room");
     }
-    assert!(table.raise(permission()).is_err(), "the table is full");
+    assert_eq!(table.raise(permission()), Err(Unraised::Full));
 }

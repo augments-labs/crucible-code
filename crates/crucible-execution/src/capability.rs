@@ -7,10 +7,12 @@
 //! [`Capabilities`] claims nothing. Confinement is claimed in the sandbox's
 //! own three words, and its absence is unknown rather than unsupported.
 //!
-//! A claim read from a cache is history, not a fact about the program now
-//! running: [`Capabilities::observed`] turns a cached observation into
-//! [`Claim::Unknown`] whatever it says, so a stale model list or version probe
-//! can never be the evidence an operation is admitted on.
+//! A claim is made one of two ways: [`Capabilities::declared`], for a fact of
+//! the driver itself, or [`Capabilities::observed`], from what was read of a
+//! program. A reading from a cache is history, not a fact about the program
+//! now running, so `observed` turns it into [`Claim::Unknown`] whatever it
+//! says, and a stale model list or version probe can never be the evidence an
+//! operation is admitted on.
 
 use std::fmt;
 
@@ -250,9 +252,21 @@ impl Capabilities {
         }
     }
 
-    /// These claims, with `capability` claimed as `claim`.
+    /// These claims, with `capability` claimed as a fact of the driver
+    /// itself: true of every instance it can make, known without asking any
+    /// program, so nothing read from a cache can be passed off as one.
     #[must_use]
-    pub fn with(mut self, capability: Capability, claim: Claim) -> Self {
+    pub fn declared(self, capability: Capability, supported: bool) -> Self {
+        let claim = if supported {
+            Claim::Supported(Scope::Driver)
+        } else {
+            Claim::Unsupported(Scope::Driver)
+        };
+        self.with(capability, claim)
+    }
+
+    /// These claims, with `capability` claimed as `claim`.
+    fn with(mut self, capability: Capability, claim: Claim) -> Self {
         if let Some(held) = self.claims.get_mut(capability.slot()) {
             *held = claim;
         }

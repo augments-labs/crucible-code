@@ -18,7 +18,6 @@ use super::{
     Asked, Effort, Laid, Selected, answered, applied, in_force, keys, offered, taken, titled,
 };
 
-/// The built-in providers, as one generation the rows are read off.
 /// The runner `conversation` drives, for what no front end reads off it.
 fn native(conversation: &Conversation) -> &crucible_runner::Runner {
     conversation
@@ -26,6 +25,7 @@ fn native(conversation: &Conversation) -> &crucible_runner::Runner {
         .expect("a conversation on this program's own runner")
 }
 
+/// The built-in providers, as one generation the rows are read off.
 fn catalogue() -> Providers {
     crucible_app::providers::providers()
         .expect("the built-in providers register")

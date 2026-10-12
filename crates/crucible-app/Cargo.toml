@@ -98,7 +98,9 @@ crucible-runtime = { workspace = true, features = ["proof"] }
 crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 
 # A test outside this crate reads off the runner what no front end does, which
-# `Conversation::native_runner` hands it, and only when this feature is on.
+# `Conversation::native_runner` hands it, or reads a runner it built as a
+# conversation's settled state through `Settled::from`, and only when this
+# feature is on.
 # Nothing in the workspace turns it on as a dependency; only the binary's
 # `[dev-dependencies]` do, which cargo does not resolve for a release build. It
 # is not in the shipped binary and it is not API anyone can rely on.

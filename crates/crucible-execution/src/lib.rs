@@ -40,8 +40,8 @@ pub use lifecycle::{
     Admission, Authentication, Ending, Lifecycle, Operation, Refused, Running, Step,
 };
 pub use pending::{
-    Decision, Full, Generation, Instance, Lasting, PENDINGS, Pending, PendingRef, Pendings,
-    RequestId, Stale,
+    Decision, Generation, Instance, Lasting, PENDINGS, Pending, PendingRef, Pendings, RequestId,
+    Stale, Unraised,
 };
 
 #[cfg(test)]

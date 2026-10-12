@@ -15,9 +15,11 @@
 //! [`Event::Failed`] last, and before it one [`Event::Usage`] holding what that
 //! turn moved the session's totals by, never the totals themselves.
 //!
-//! A question that could only be put cut short is not put, as a client's is
-//! not: a yes to the start of a line is a yes to a line nobody read, so the
-//! call is refused as it is where nobody answers.
+//! A permission question carries the line or address exactly as the call
+//! sends it, beside the spelling a rule is about. One that could only be put
+//! cut short is not put, as a client's is not: a yes to the start of a line is
+//! a yes to a line nobody read, so the call is refused as it is where nobody
+//! answers.
 //!
 //! Confinement is claimed from the sandbox's own claim and from nothing else,
 //! so [`Confinement::HardEnforced`] is claimed only where the sandbox says it
@@ -26,7 +28,7 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crucible_execution::{
-    Backend, Capabilities, Capability, Claim, Confined, Confinement, Cost, Currency, Decision,
+    Backend, Capabilities, Capability, Confined, Confinement, Cost, Currency, Decision,
     Description, Error, Event, Failure, Lasting, NAME_BYTES, Observation, Outcome, Pending,
     PendingRef, Pendings, Scope, SessionRef, Sink, Stale, Text, TurnRequest, Unsupported, Usage,
 };
@@ -131,17 +133,15 @@ impl<'r> Native<'r> {
 
 /// What the runner claims behind the contract, confined as `sandbox` says.
 fn claims(sandbox: Option<SandboxCapability>) -> Capabilities {
-    let supported = Claim::Supported(Scope::Driver);
-    let unsupported = Claim::Unsupported(Scope::Driver);
     let claimed =
         Capability::ALL
             .into_iter()
             .fold(Capabilities::unknown(), |claims, capability| {
-                let claim = match capability {
+                let supported = match capability {
                     Capability::Cancel
                     | Capability::PermissionOnce
                     | Capability::PermissionSession
-                    | Capability::Usage => supported,
+                    | Capability::Usage => true,
                     // The runner does these, through the conversation that holds
                     // it; none of them is reached through this adapter.
                     Capability::Steer
@@ -154,9 +154,9 @@ fn claims(sandbox: Option<SandboxCapability>) -> Capabilities {
                     | Capability::ContextOccupancy
                     | Capability::AccountStatus
                     | Capability::Logout
-                    | Capability::ProfileIsolation => unsupported,
+                    | Capability::ProfileIsolation => false,
                 };
-                claims.with(capability, claim)
+                claims.declared(capability, supported)
             });
     match sandbox {
         Some(claim) => claimed.confined(Confined::new(confinement(claim), Scope::Instance)),
@@ -224,7 +224,7 @@ impl Backend for Native<'_> {
                 .await;
             self.ended();
             if let Some(usage) = translating.usage(before) {
-                events.post(Event::Usage(Observation::live(usage, Scope::Driver)));
+                events.post(Event::Usage(Observation::live(usage, Scope::Session)));
             }
             match turned {
                 Ok(turned) => {
@@ -270,8 +270,10 @@ impl Backend for Native<'_> {
         gate(&self.capabilities, Capability::Cancel)?;
         self.cancel.request();
         // A question still open would hold the turn short of the boundary it
-        // stops at, so each is answered no.
-        for (_, answer) in self.waiting().drain(..) {
+        // stops at, so each is answered no, and settled in the table as no.
+        let mut pendings = self.pendings();
+        for (reference, answer) in self.waiting().drain(..) {
+            drop(pendings.settle(&reference, &Decision::Deny));
             drop(answer.send(Decision::Deny));
         }
         Ok(())
@@ -352,10 +354,16 @@ impl Ask for Asking<'_, '_> {
         Box::pin(async move {
             let tool = Text::clipped(&call.name, NAME_BYTES);
             let summary = Text::new(&sensitivity.to_string());
-            if tool.incomplete() || summary.incomplete() {
+            let sent = sent(sensitivity);
+            let cut = sent.as_ref().is_some_and(Text::incomplete);
+            if tool.incomplete() || summary.incomplete() || cut {
                 return DENIED;
             }
-            let pending = Pending::Permission { tool, summary };
+            let pending = Pending::Permission {
+                tool,
+                summary,
+                sent,
+            };
             let (answer, decided) = oneshot::channel();
             let Some(reference) = self.native.raise(pending.clone(), answer) else {
                 return DENIED;
@@ -367,6 +375,21 @@ impl Ask for Asking<'_, '_> {
                 Ok(Decision::Deny | Decision::Answer(_)) | Err(_) => DENIED,
             }
         })
+    }
+}
+
+/// The command line or address exactly as the call sends it, where it sends
+/// one. The summary is the spelling a rule is about, which for a line is its
+/// commands without the operators between them and for a search is its host
+/// without the query: a question showing only that would be asking about
+/// something nobody sent.
+fn sent(sensitivity: &Sensitivity) -> Option<Text> {
+    match sensitivity {
+        Sensitivity::SpawnsProcess { command } => Some(Text::new(command.sent())),
+        Sensitivity::ReachesNetwork { host } => Some(Text::new(host.sent())),
+        Sensitivity::ReadOnly { .. }
+        | Sensitivity::ReadsOutside { .. }
+        | Sensitivity::MutatesFile { .. } => None,
     }
 }
 
@@ -403,9 +426,17 @@ impl<'n, 'r> Translating<'n, 'r> {
         let after = (*self.used.lock().unwrap_or_else(PoisonError::into_inner))?;
         let moved = Usage::of(turn)
             .input(after.input().saturating_sub(before.input()))
-            .cache_read(after.cache_read().saturating_sub(before.cache_read()))
-            .cache_write(after.cache_write().saturating_sub(before.cache_write()))
             .output(after.output().saturating_sub(before.output()));
+        // The runner sums a figure no response reported as nothing, so a
+        // cache figure that did not move is one nothing is known of.
+        let moved = match after.cache_read().saturating_sub(before.cache_read()) {
+            0 => moved,
+            read => moved.cache_read(read),
+        };
+        let moved = match after.cache_write().saturating_sub(before.cache_write()) {
+            0 => moved,
+            written => moved.cache_write(written),
+        };
         Some(match spent(before.cost(), after.cost()) {
             Some(cost) => moved.cost(cost),
             None => moved,

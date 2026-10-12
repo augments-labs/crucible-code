@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crucible_runtime::{BoxFuture, answered};
 
 use crate::{
-    Backend, Capabilities, Capability, Claim, Decision, Description, Error, Outcome, PendingRef,
-    Scope, SessionRef, Sink, TurnRequest, Unsupported, conformance,
+    Backend, Capabilities, Capability, Decision, Description, Error, Outcome, PendingRef,
+    SessionRef, Sink, TurnRequest, Unsupported, conformance,
 };
 
 /// A fake that claims `claims` and, where `lies` is set, answers `Ok` to
@@ -93,7 +93,7 @@ fn a_backend_answering_ok_for_an_unclaimed_operation_fails_conformance() {
 /// never runs an operation it claims.
 #[test]
 fn a_backend_refusing_what_it_does_not_claim_conforms() {
-    let claims = Capabilities::unknown().with(Capability::Cancel, Claim::Supported(Scope::Driver));
+    let claims = Capabilities::unknown().declared(Capability::Cancel, true);
     let honest = Fake::new(claims, false);
 
     assert_eq!(answered!(conformance(&honest)), Ok(()));
@@ -122,13 +122,10 @@ fn every_gated_operation_is_checked() {
             Capability::Questions,
         ] {
             if honest != capability {
-                claims = claims.with(honest, Claim::Supported(Scope::Driver));
+                claims = claims.declared(honest, true);
             }
         }
-        let lying = Fake::new(
-            claims.with(capability, Claim::Unsupported(Scope::Driver)),
-            true,
-        );
+        let lying = Fake::new(claims.declared(capability, false), true);
 
         let refused = answered!(conformance(&lying)).expect_err("a lie must be caught");
         assert_eq!(refused.capability(), capability);

@@ -96,6 +96,10 @@ pub enum Pending {
         tool: Text,
         /// What it wants to do with it.
         summary: Text,
+        /// The command line or address exactly as the call sends it, where it
+        /// sends one: the summary names what the rules match, and this is what
+        /// leaves.
+        sent: Option<Text>,
     },
     /// An answer to a question.
     Question {
@@ -147,10 +151,19 @@ pub enum Stale {
     Kind,
 }
 
-/// The table already holds [`PENDINGS`] open actions.
+/// Why a pending action was not opened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
-#[error("too many decisions are already waiting")]
-pub struct Full;
+pub enum Unraised {
+    /// The table already holds [`PENDINGS`] open actions.
+    #[error("too many decisions are already waiting")]
+    Full,
+    /// No turn is running to raise it in.
+    #[error("no turn is running")]
+    Idle,
+    /// This run of the program has numbered every request it can.
+    #[error("no request number is left")]
+    Exhausted,
+}
 
 /// One open action and the reference it was raised under.
 #[derive(Debug)]
@@ -226,17 +239,16 @@ impl Pendings {
     ///
     /// # Errors
     ///
-    /// [`Full`] where [`PENDINGS`] are already open, or no turn is running to
-    /// raise it in.
-    pub fn raise(&mut self, pending: Pending) -> Result<PendingRef, Full> {
+    /// The [`Unraised`] reason it was not opened.
+    pub fn raise(&mut self, pending: Pending) -> Result<PendingRef, Unraised> {
         let Some((session, turn)) = self.turn.clone() else {
-            return Err(Full);
+            return Err(Unraised::Idle);
         };
         if self.open.len() >= PENDINGS {
-            return Err(Full);
+            return Err(Unraised::Full);
         }
         let request = RequestId(self.next);
-        self.next = self.next.checked_add(1).ok_or(Full)?;
+        self.next = self.next.checked_add(1).ok_or(Unraised::Exhausted)?;
         let reference = PendingRef {
             instance: self.instance,
             session,

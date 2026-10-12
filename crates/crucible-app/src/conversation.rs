@@ -399,6 +399,7 @@ impl Conversation {
 #[derive(Debug, Clone, Copy)]
 pub struct Settled<'a>(&'a Runner);
 
+#[cfg(feature = "proof")]
 impl<'a> From<&'a Runner> for Settled<'a> {
     /// What `runner` has settled, for a front end's test that builds a runner
     /// without a conversation around it.

@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use crucible_agents::{AgentBuilder, Model};
 use crucible_app::native::{Native, confinement};
 use crucible_execution::{
-    Backend, Capability, Confinement, Decision, Error, Event, Lasting, Outcome, SessionRef, Sink,
-    Stale, Text, TurnRequest, conformance,
+    Backend, Capability, Confinement, Decision, Error, Event, Lasting, Outcome, Pending,
+    PendingRef, SessionRef, Sink, Stale, TEXT_BYTES, Text, TurnRequest, Unsupported, conformance,
 };
 use crucible_models::Delta;
 use crucible_runner::{Runner, Tools};
@@ -18,8 +18,8 @@ use crucible_runtime::{BoxFuture, answered};
 use crucible_sandbox::SandboxCapability;
 use crucible_session::Session;
 use crucible_tools::{
-    Approved, DescribeTool, Permission, Rules, Sensitivity, Summary, Target, Tool, ToolContext,
-    ToolError, ToolOutput,
+    Approved, DescribeTool, Host, Permission, Rules, Sensitivity, Summary, Target, Tool,
+    ToolContext, ToolError, ToolOutput,
 };
 use crucible_types::{
     AgentId, InputTokenUsage, ProviderUsage, StopReason, ToolArgs, ToolId, TurnId,
@@ -30,9 +30,9 @@ use super::{Failed, Script, Tree, runtime, saying};
 /// The name the counting tool is offered and called by.
 const WRITE: &str = "write";
 
-/// Changes a file it never names, and counts how often it was let.
+/// Does what `sensitivity` says it does, and counts how often it was let.
 #[derive(Debug)]
-struct Counting(Arc<AtomicUsize>);
+struct Counting(Arc<AtomicUsize>, Sensitivity);
 
 impl DescribeTool for Counting {
     fn name(&self) -> &str {
@@ -50,9 +50,7 @@ impl Tool for Counting {
     }
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
-        Sensitivity::MutatesFile {
-            target: Target::unresolved(),
-        }
+        self.1.clone()
     }
 
     fn summary(&self, args: &ToolArgs) -> Summary {
@@ -83,12 +81,34 @@ fn calling() -> Vec<Delta> {
     ]
 }
 
+/// A change to a file the call never names.
+fn writing() -> Sensitivity {
+    Sensitivity::MutatesFile {
+        target: Target::unresolved(),
+    }
+}
+
+/// A search for `query`, bound for a host a rule could name.
+fn searching(query: &str) -> Sensitivity {
+    Sensitivity::ReachesNetwork {
+        host: Host::Named {
+            sent: query.into(),
+            host: "search.example".into(),
+        },
+    }
+}
+
 /// A runner over `script` that asks before anything is changed, with the
-/// counting tool on offer, and the count of times it ran.
-fn runner(tree: &Tree, script: Script) -> Result<(Runner, Arc<AtomicUsize>), Failed> {
+/// counting tool on offer doing what `sensitivity` says, and the count of
+/// times it ran.
+fn runner(
+    tree: &Tree,
+    script: Script,
+    sensitivity: Sensitivity,
+) -> Result<(Runner, Arc<AtomicUsize>), Failed> {
     let ran = Arc::new(AtomicUsize::new(0));
     let mut tools = Tools::new();
-    tools.add_builtin(Counting(Arc::clone(&ran)))?;
+    tools.add_builtin(Counting(Arc::clone(&ran), sensitivity))?;
     let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
     let agent = AgentBuilder::new(
         AgentId::new("test"),
@@ -168,7 +188,7 @@ impl Sink for Deciding<'_, '_> {
 #[test]
 fn the_native_backend_refuses_what_it_does_not_claim() -> Result<(), Failed> {
     let tree = Tree::new("native-conformance")?;
-    let (mut runner, _) = runner(&tree, Script::new(Vec::new()))?;
+    let (mut runner, _) = runner(&tree, Script::new(Vec::new()), writing())?;
     let native = Native::new(&mut runner, named()?, Some(SandboxCapability::Observed))
         .ok_or("no instance number")?;
 
@@ -204,7 +224,7 @@ fn a_native_turn_reports_through_the_contract() -> Result<(), Failed> {
     )?;
     let mut said = saying("hello");
     said.insert(1, Delta::Usage(usage));
-    let (mut runner, _) = runner(&tree, Script::new(vec![said]))?;
+    let (mut runner, _) = runner(&tree, Script::new(vec![said]), writing())?;
     let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
     let sink = Deciding::new(&native, None);
 
@@ -227,6 +247,12 @@ fn a_native_turn_reports_through_the_contract() -> Result<(), Failed> {
     let used = used.ok_or("no usage was reported")?;
     assert_eq!(used.input_tokens(), Some(100));
     assert_eq!(used.output_tokens(), Some(10));
+    assert_eq!(used.cache_read_tokens(), Some(20));
+    assert_eq!(
+        used.cache_write_tokens(),
+        None,
+        "the provider said nothing of writing to its cache"
+    );
     assert_eq!(events.last(), Some(&Event::Finished(Outcome::Answered)));
     let endings = events
         .iter()
@@ -242,7 +268,11 @@ fn a_native_turn_reports_through_the_contract() -> Result<(), Failed> {
 #[test]
 fn a_permission_the_native_turn_asks_is_settled_by_the_decision_naming_it() -> Result<(), Failed> {
     let tree = Tree::new("native-allowed")?;
-    let (mut runner, ran) = runner(&tree, Script::new(vec![calling(), saying("done")]))?;
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling(), saying("done")]),
+        writing(),
+    )?;
     let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
     let sink = Deciding::new(&native, Some(Decision::Allow(Lasting::Once)));
 
@@ -272,7 +302,11 @@ fn a_permission_the_native_turn_asks_is_settled_by_the_decision_naming_it() -> R
 #[test]
 fn a_permission_denied_through_the_contract_runs_nothing() -> Result<(), Failed> {
     let tree = Tree::new("native-denied")?;
-    let (mut runner, ran) = runner(&tree, Script::new(vec![calling(), saying("done")]))?;
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling(), saying("done")]),
+        writing(),
+    )?;
     let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
     let sink = Deciding::new(&native, Some(Decision::Deny));
 
@@ -289,5 +323,197 @@ fn a_permission_denied_through_the_contract_runs_nothing() -> Result<(), Failed>
         matches!(events.last(), Some(Event::Failed(_))),
         "{events:?}"
     );
+    Ok(())
+}
+
+/// Acts on each pending action it is posted, through the backend that raised
+/// it, and keeps every event and what each act came to.
+struct Acting<'n, 'r> {
+    native: &'n Native<'r>,
+    act: fn(&Native<'r>, &PendingRef) -> Vec<Result<(), Error>>,
+    kept: Mutex<Vec<Event>>,
+    acted: Mutex<Vec<Result<(), Error>>>,
+}
+
+impl<'n, 'r> Acting<'n, 'r> {
+    fn new(
+        native: &'n Native<'r>,
+        act: fn(&Native<'r>, &PendingRef) -> Vec<Result<(), Error>>,
+    ) -> Self {
+        Self {
+            native,
+            act,
+            kept: Mutex::default(),
+            acted: Mutex::default(),
+        }
+    }
+
+    fn kept(self) -> (Vec<Event>, Vec<Result<(), Error>>) {
+        (
+            self.kept
+                .into_inner()
+                .unwrap_or_else(PoisonError::into_inner),
+            self.acted
+                .into_inner()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+    }
+}
+
+impl Sink for Acting<'_, '_> {
+    fn post(&self, event: Event) {
+        if let Event::Pending(pending, _) = &event {
+            let acted = (self.act)(self.native, pending);
+            self.acted
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(acted);
+        }
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(event);
+    }
+}
+
+/// Every permission question a turn posted.
+fn asked(events: &[Event]) -> Vec<Pending> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Pending(_, pending) => Some(pending.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A question shows what the call sends, not only the host a rule is about:
+/// a yes to "reach search.example" is not a yes to the query that leaves.
+#[test]
+fn a_native_question_shows_what_the_call_sends() -> Result<(), Failed> {
+    let tree = Tree::new("native-sent")?;
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling(), saying("done")]),
+        searching("what the secret is"),
+    )?;
+    let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
+    let sink = Deciding::new(&native, Some(Decision::Deny));
+
+    drop(runtime()?.block_on(native.prompt(TurnRequest::new(TurnId::FIRST, "search"), &sink)));
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0);
+    let (events, _) = sink.kept();
+    let asked = asked(&events);
+    assert!(
+        matches!(
+            asked.as_slice(),
+            [Pending::Permission { sent: Some(sent), .. }] if sent.as_str() == "what the secret is"
+        ),
+        "{asked:?}"
+    );
+    Ok(())
+}
+
+/// A question whose sent text had to be cut is not put: the call is refused
+/// as it is where nobody answers.
+#[test]
+fn a_native_question_cut_short_is_not_asked() -> Result<(), Failed> {
+    let tree = Tree::new("native-cut")?;
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling(), saying("done")]),
+        searching(&"q".repeat(TEXT_BYTES + 1)),
+    )?;
+    let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
+    let sink = Deciding::new(&native, Some(Decision::Allow(Lasting::Once)));
+
+    drop(runtime()?.block_on(native.prompt(TurnRequest::new(TurnId::FIRST, "search"), &sink)));
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0);
+    let (events, settled) = sink.kept();
+    assert_eq!(asked(&events), Vec::new());
+    assert_eq!(settled, Vec::new());
+    Ok(())
+}
+
+/// A yes for the session is remembered for the session: the same call again
+/// runs without a second question.
+#[test]
+fn a_native_yes_for_the_session_is_not_asked_again() -> Result<(), Failed> {
+    let tree = Tree::new("native-session")?;
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling(), calling(), saying("done")]),
+        searching("the same query"),
+    )?;
+    let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
+    let sink = Deciding::new(&native, Some(Decision::Allow(Lasting::Session)));
+
+    let outcome =
+        runtime()?.block_on(native.prompt(TurnRequest::new(TurnId::FIRST, "search"), &sink));
+
+    assert_eq!(outcome, Ok(Outcome::Answered));
+    assert_eq!(ran.load(Ordering::Relaxed), 2);
+    let (events, settled) = sink.kept();
+    assert_eq!(asked(&events).len(), 1, "{events:?}");
+    assert_eq!(settled, vec![Ok(())]);
+    Ok(())
+}
+
+/// An answer of the wrong kind settles nothing and leaves the question open
+/// for one of the right kind.
+#[test]
+fn a_native_answer_of_the_wrong_kind_leaves_the_question_open() -> Result<(), Failed> {
+    let tree = Tree::new("native-kind")?;
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling(), saying("done")]),
+        writing(),
+    )?;
+    let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
+    let sink = Acting::new(&native, |native, pending| {
+        vec![
+            native.decide(pending, Decision::Answer(Text::new("yes"))),
+            native.decide(pending, Decision::Allow(Lasting::Once)),
+        ]
+    });
+
+    let outcome =
+        runtime()?.block_on(native.prompt(TurnRequest::new(TurnId::FIRST, "write"), &sink));
+
+    assert_eq!(outcome, Ok(Outcome::Answered));
+    assert_eq!(ran.load(Ordering::Relaxed), 1);
+    let (_, acted) = sink.kept();
+    assert_eq!(
+        acted,
+        vec![Err(Unsupported(Capability::Questions).into()), Ok(())]
+    );
+    Ok(())
+}
+
+/// An interrupt answers an open question no: the call does not run, and a
+/// decision for it afterwards settles nothing.
+#[test]
+fn an_interrupt_answers_an_open_native_question_no() -> Result<(), Failed> {
+    let tree = Tree::new("native-interrupt")?;
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling(), saying("done")]),
+        writing(),
+    )?;
+    let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
+    let sink = Acting::new(&native, |native, pending| {
+        vec![
+            native.interrupt(),
+            native.decide(pending, Decision::Allow(Lasting::Once)),
+        ]
+    });
+
+    drop(runtime()?.block_on(native.prompt(TurnRequest::new(TurnId::FIRST, "write"), &sink)));
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0);
+    let (_, acted) = sink.kept();
+    assert_eq!(acted, vec![Ok(()), Err(Error::Stale(Stale::Settled))]);
     Ok(())
 }

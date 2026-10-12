@@ -21,6 +21,15 @@ fn text_past_its_ceiling_is_clipped_and_says_so() {
     assert!(odd.incomplete());
 }
 
+/// No ceiling a caller names lets text past the contract's own.
+#[test]
+fn no_ceiling_reaches_past_the_contracts() {
+    let long = "a".repeat(TEXT_BYTES + 1);
+    let clipped = Text::clipped(&long, usize::MAX);
+    assert!(clipped.incomplete());
+    assert_eq!(clipped.as_str().len(), TEXT_BYTES);
+}
+
 /// A currency code is three upper-case letters and nothing else.
 #[test]
 fn a_currency_is_three_upper_case_letters() {

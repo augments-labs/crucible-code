@@ -118,8 +118,9 @@ call you see is that one model asking, and every result goes back to it.
 ## The loop behind a conversation
 
 The loop on this page is crucible's own, and it is the only one a conversation
-runs on today. Inside, it sits behind a contract any agent that runs a
-conversation would have to keep: it says up front which operations it supports,
-refuses the ones it does not, and a permission it asks for waits on an answer
-that names that one question, so an answer given late, or meant for another,
-settles nothing. Nothing you see or decide in a turn changes because of it.
+runs on. crucible also defines the contract another agent would have to keep
+to run a conversation here: it says up front which operations it supports,
+refuses the ones it does not, and a permission it asks for shows what the call
+sends and waits on an answer that names that one question, so an answer given
+late, or meant for another, settles nothing. No other agent is offered yet, and
+nothing you see or decide in a turn changes.

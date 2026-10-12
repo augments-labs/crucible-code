@@ -37,10 +37,11 @@ impl Text {
         Self::clipped(text, TEXT_BYTES)
     }
 
-    /// `text`, clipped to at most `ceiling` bytes on a character boundary.
+    /// `text`, clipped to at most `ceiling` bytes on a character boundary,
+    /// and never to more than [`TEXT_BYTES`].
     #[must_use]
     pub fn clipped(text: &str, ceiling: usize) -> Self {
-        let end = text.floor_char_boundary(ceiling);
+        let end = text.floor_char_boundary(ceiling.min(TEXT_BYTES));
         let kept = text.get(..end).unwrap_or_default();
         Self {
             text: kept.into(),

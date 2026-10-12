@@ -9,17 +9,18 @@
 //!
 //! Changes arrive as [`Step`]s through [`Lifecycle::apply`], which refuses a
 //! step the current state does not admit and leaves the state as it was. A
-//! disabled instance admits only management operations; an operation whose
-//! end nobody could confirm leaves the instance needing recovery and its
-//! account unknown, because a sign-out that may or may not have happened has
-//! left nothing anyone can say about it.
+//! disabled instance cannot be disconnected again. An operation whose end
+//! nobody could confirm leaves the instance needing recovery and its account
+//! unknown, because a sign-out that may or may not have happened has left
+//! nothing anyone can say about it; only a check or a verification may start
+//! then, and only its success recovers the instance.
 
 /// Whether an instance may be used at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Admission {
     /// It may be.
     Enabled,
-    /// It may not be; only management operations are admitted.
+    /// It may not be; nothing opens a session on it.
     Disabled,
 }
 
@@ -71,8 +72,9 @@ pub enum Running {
     Idle,
     /// This operation.
     Operation(Operation),
-    /// An operation ended and nobody could confirm how; something must
-    /// establish the state again before anything else runs.
+    /// An operation ended and nobody could confirm how. Only an operation
+    /// that reads the state again, [`Operation::Checking`] or
+    /// [`Operation::Verifying`], may start, and only its success ends this.
     RecoveryRequired,
 }
 
@@ -123,9 +125,13 @@ pub enum Refused {
     /// Nothing is under way to end.
     #[error("nothing is under way")]
     Idle,
-    /// The instance is disabled and this is not a management operation.
+    /// The instance is disabled, so it is already out of use.
     #[error("that instance is disabled")]
     Disabled,
+    /// The instance needs recovery, and only an operation that reads its
+    /// state again may start.
+    #[error("that instance needs its state checked first")]
+    Recovering,
 }
 
 /// One backend instance's admission, account and operation.
@@ -137,6 +143,9 @@ pub struct Lifecycle {
     authentication: Authentication,
     /// What is under way.
     running: Running,
+    /// Whether the operation under way began from
+    /// [`Running::RecoveryRequired`], which any ending but success returns to.
+    recovering: bool,
 }
 
 impl Lifecycle {
@@ -148,6 +157,7 @@ impl Lifecycle {
             admission,
             authentication: Authentication::Unknown,
             running: Running::Idle,
+            recovering: false,
         }
     }
 
@@ -210,6 +220,14 @@ impl Lifecycle {
                 {
                     return Err(Refused::Disabled);
                 }
+                if let Running::RecoveryRequired = self.running {
+                    match operation {
+                        Operation::Checking | Operation::Verifying => next.recovering = true,
+                        Operation::AwaitingLogin
+                        | Operation::Disconnecting
+                        | Operation::SigningOut => return Err(Refused::Recovering),
+                    }
+                }
                 next.running = Running::Operation(operation);
             }
             Step::End(ending) => {
@@ -240,6 +258,11 @@ impl Lifecycle {
                         Ending::Succeeded | Ending::Cancelled | Ending::Failed,
                     ) => {}
                 }
+                // A recovery that did not succeed established nothing.
+                if self.recovering && !matches!(ending, Ending::Succeeded) {
+                    next.running = Running::RecoveryRequired;
+                }
+                next.recovering = false;
             }
             Step::Observe(authentication) => next.authentication = authentication,
         }
