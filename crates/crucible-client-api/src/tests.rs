@@ -1287,6 +1287,7 @@ fn sessions_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
                     for (what, there) in [
                         ("sessions.branch", session.branch.is_some()),
                         ("sessions.title", session.title.is_some()),
+                        ("sessions.route", session.route.is_some()),
                     ] {
                         seen.insert((what.to_owned(), usize::from(there), 2));
                     }
@@ -2186,10 +2187,12 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // The digest sees that a field is there and where, and nothing else. A
     // value changing type, a required field becoming optional or the reverse,
     // and whatever sits inside an array that is empty in every specimen all
-    // leave it as it was; those still need the number moved by hand.
+    // leave it as it was; those still need the number moved by hand. A
+    // sessions list is a document with its own number, so a change to it
+    // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (3, 9_249_023_251_157_594_290),
+        (3, 2_869_181_106_436_562_950),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

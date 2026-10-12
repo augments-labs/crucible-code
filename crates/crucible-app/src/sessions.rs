@@ -3,11 +3,12 @@
 //! them.
 //!
 //! What is read is [`crucible_session::discovered`]'s, which reads the session
-//! index and each listed log's first line and nothing after it, takes no lock
+//! index and each listed log's opening — its first line, and the route beside
+//! it where an installed agent ran it — and nothing after it, takes no lock
 //! and writes nothing. So a list says when each session started, how many
-//! messages it has, the branch it was started on and the title somebody saved,
-//! and never a word anybody wrote in it: there is no first prompt in a list,
-//! because finding one would mean reading past the header.
+//! messages it has, the branch it was started on, the title somebody saved and
+//! what ran it, and never a word anybody wrote in it: there is no first prompt
+//! in a list, because finding one would mean reading past the header.
 //!
 //! The sessions are the ones the interactive opening and `--continue` would
 //! consider here: recorded in this directory, newest first, as many as the
@@ -30,8 +31,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crucible_client_api::bounds::ITEMS;
-use crucible_client_api::sessions::{Listing, Report, Session};
-use crucible_client_api::{Refusal, Text};
+use crucible_client_api::sessions::{Listing, NATIVE, Report, Session};
+use crucible_client_api::{Name, Refusal, Text};
 use crucible_config::{Home, Unchecked};
 use crucible_session::{Discovered, Discovery, Roots};
 use crucible_types::shown::escaped;
@@ -69,19 +70,35 @@ pub(crate) fn listing(here: &Path, directory: &Path) -> Result<Listed, AppError>
 /// What the session store found, as the client contract carries it.
 fn translated(found: &Discovery) -> Listing {
     let counted = |count: usize| u64::try_from(count).unwrap_or(u64::MAX);
-    Listing {
-        sessions: found
-            .sessions()
-            .iter()
-            .map(|session: &Discovered| Session {
+    // A binding's names are as bounded as a contract name and hold no control
+    // character, so none is refused here; one that were would be a row that
+    // did not read, and is counted as one rather than listed under a guess.
+    let sessions: Vec<Session> = found
+        .sessions()
+        .iter()
+        .filter_map(|session: &Discovered| {
+            let (backend, route) = match session.route() {
+                None => (Name::new(NATIVE).ok()?, None),
+                Some(route) => (
+                    Name::new(route.driver()).ok()?,
+                    Some(Name::new(route.instance()).ok()?),
+                ),
+            };
+            Some(Session {
                 id: session.id().clone(),
                 branch: session.branch().map(Text::cut),
                 messages: counted(session.messages()),
                 title: session.title().map(Text::cut),
+                backend,
+                route,
             })
-            .collect(),
+        })
+        .collect();
+    let refused = found.sessions().len() - sessions.len();
+    Listing {
+        sessions,
         omitted: counted(found.omitted()),
-        unreadable: counted(found.unreadable()),
+        unreadable: counted(found.unreadable().saturating_add(refused)),
         index_full: found.full(),
         unindexed: found.unindexed(),
     }
@@ -132,6 +149,14 @@ pub(crate) fn human(at: &Path, listing: &Listing, ago: &dyn Fn(SystemTime) -> St
         );
         if let Some(branch) = &session.branch {
             let _ = write!(row, "  on {}", shown(branch));
+        }
+        if let Some(route) = &session.route {
+            let _ = write!(
+                row,
+                "  run by {} ({})",
+                escaped(route.as_str()),
+                escaped(session.backend.as_str())
+            );
         }
         match &session.title {
             Some(title) => {

@@ -5,7 +5,7 @@ use std::str::FromStr as _;
 use serde_json::{Value, json};
 
 use super::*;
-use crate::bounds::{ITEMS, TEXT_BYTES};
+use crate::bounds::{ITEMS, Name, TEXT_BYTES};
 
 fn id(nth: u64) -> SessionId {
     SessionId::from_str(&format!(
@@ -21,6 +21,8 @@ fn session(nth: u64, words: Option<&Text>) -> Session {
         branch: words.cloned(),
         messages: nth * 2,
         title: words.cloned(),
+        backend: Name::new(if words.is_some() { "claude" } else { NATIVE }).unwrap(),
+        route: words.map(|_| Name::new("work").unwrap()),
     }
 }
 
@@ -102,7 +104,7 @@ fn every_report_is_one_line_naming_its_format_kind_and_status() {
         let line = written.strip_suffix(b"\n").unwrap();
         assert!(!line.contains(&b'\n'));
         let document = value(&report);
-        assert_eq!(at(&document, "/format_version"), &json!(1));
+        assert_eq!(at(&document, "/format_version"), &json!(2));
         assert_eq!(at(&document, "/kind"), &json!("sessions"));
         assert_eq!(at(&document, "/status"), &json!(report.status()));
         assert_eq!(at(&document, "/truncated"), &json!(false));
@@ -111,7 +113,7 @@ fn every_report_is_one_line_naming_its_format_kind_and_status() {
 }
 
 #[test]
-fn each_session_crosses_with_its_id_start_count_branch_and_title() {
+fn each_session_crosses_with_its_id_start_count_branch_title_backend_and_route() {
     let document = document(0);
     let first = id(2);
     let started = first
@@ -126,6 +128,10 @@ fn each_session_crosses_with_its_id_start_count_branch_and_title() {
     assert_eq!(at(&document, "/sessions/0/title/text"), &json!("words"));
     assert_eq!(document.pointer("/sessions/1/branch"), None);
     assert_eq!(document.pointer("/sessions/1/title"), None);
+    assert_eq!(at(&document, "/sessions/0/backend"), &json!("claude"));
+    assert_eq!(at(&document, "/sessions/0/route"), &json!("work"));
+    assert_eq!(at(&document, "/sessions/1/backend"), &json!("native"));
+    assert_eq!(document.pointer("/sessions/1/route"), None);
     assert_eq!(at(&document, "/omitted"), &json!(0));
 
     let incomplete = self::document(1);
@@ -180,9 +186,39 @@ fn anything_left_out_makes_a_list_incomplete() {
 
 #[test]
 fn another_format_version_is_refused_by_name() {
-    for version in [0, 2, u64::MAX] {
+    // The first revision, whose rows say nothing of what ran them, among them.
+    for version in [0, 1, 3, u64::MAX] {
         let other = with(document(0), "/format_version", json!(version));
         assert_eq!(refused(&other), ErrorCode::UnsupportedVersion);
+    }
+}
+
+#[test]
+fn a_row_that_does_not_say_what_ran_it_or_names_it_unboundedly_is_refused() {
+    let unsaid = {
+        let mut document = document(0);
+        document
+            .pointer_mut("/sessions/0")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove("backend");
+        document
+    };
+    assert_eq!(refused(&unsaid), ErrorCode::Malformed);
+    let long = "w".repeat(crate::bounds::NAME_BYTES + 1);
+    // Refused as any name in a frame is, by what is wrong with it.
+    for (pointer, to, code) in [
+        ("/sessions/0/backend", json!(""), ErrorCode::InvalidArgument),
+        ("/sessions/0/backend", json!(long), ErrorCode::TooLarge),
+        (
+            "/sessions/0/route",
+            json!("wo\u{1b}rk"),
+            ErrorCode::InvalidArgument,
+        ),
+        ("/sessions/0/route", json!(7), ErrorCode::Malformed),
+    ] {
+        let lying = with(document(0), pointer, to.clone());
+        assert_eq!(refused(&lying), code, "{pointer} {to}");
     }
 }
 

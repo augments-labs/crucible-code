@@ -786,6 +786,7 @@ pub(crate) fn context_patch(line: &str) -> Option<Result<ContextPatch, ContextEr
 /// environment, no command line, and the program as a digest of where it
 /// resolved rather than the path itself.
 pub(crate) fn route(binding: &RouteBinding) -> String {
+    // One key, so the line opens with it: see [`ROUTE_OPENS`].
     let mut route = json!({
         "driver": binding.driver(),
         "instance": binding.instance(),
@@ -810,6 +811,10 @@ pub(crate) fn route(binding: &RouteBinding) -> String {
     }
     json!({ "route": route }).to_string()
 }
+
+/// How every route line opens, so a reader that wants only a route can tell
+/// one from a message without reading the line.
+pub(crate) const ROUTE_OPENS: &[u8] = br#"{"route":"#;
 
 /// What a route line says, or `None` if this is not one or it names a route
 /// longer than a binding keeps.
@@ -1353,6 +1358,39 @@ mod tests {
     };
 
     use super::*;
+    use crucible_storage::Clipped;
+
+    /// What the agent backends may be found by and removed by, which no
+    /// session line or fixture may hold. Put together here rather than
+    /// spelled, so this file holds none of them either; an agent route is
+    /// one of them where a lowercase letter follows it.
+    pub(crate) fn foreign_tokens() -> [String; 6] {
+        let agent = "agent";
+        [
+            ["external", "Agent"].concat(),
+            ["external", "Agents"].concat(),
+            ["crucible", "-external-harnesses"].concat(),
+            ["crucible", "_external_harnesses"].concat(),
+            ["crucible", "-fake-peer"].concat(),
+            format!("{agent}:"),
+        ]
+    }
+
+    /// Whether `text` holds any of [`foreign_tokens`].
+    pub(crate) fn foreign(text: &str) -> Option<String> {
+        let [rest @ .., route] = foreign_tokens();
+        rest.into_iter()
+            .find(|token| text.contains(token.as_str()))
+            .or_else(|| {
+                text.match_indices(route.as_str())
+                    .any(|(at, _)| {
+                        text.get(at + route.len()..)
+                            .and_then(|after| after.chars().next())
+                            .is_some_and(|next| next.is_ascii_lowercase())
+                    })
+                    .then_some(route)
+            })
+    }
 
     #[test]
     fn a_result_whose_provenance_does_not_read_is_not_a_result() {
@@ -1635,6 +1673,72 @@ mod tests {
             "a pruning read back as a restriction"
         );
         assert!(message(&line).is_none(), "read back as a conversation line");
+    }
+
+    #[test]
+    fn each_line_a_session_an_agent_ran_writes_reads_back_as_it_was_written() {
+        let whole = RouteBinding::new("claude", "work", Some("/home/me/.claude-work"))
+            .unwrap()
+            .digested([7; 32])
+            .reporting("2.1.0", true)
+            .generation_of(3);
+        let line = route(&whole);
+        assert!(line.as_bytes().starts_with(ROUTE_OPENS), "{line}");
+        let read = routed(&line).expect("a route line");
+        assert_eq!(read, whole);
+        assert_eq!(read.version().map(Clipped::incomplete), Some(true));
+        let bare = RouteBinding::new("antigravity", "home", None).unwrap();
+        assert_eq!(routed(&route(&bare)), Some(bare));
+
+        let named_as = ExternalRef::new("work", "3f2a-session").unwrap();
+        assert_eq!(named(&external(&named_as)), Some(named_as));
+
+        let stopped = Uncertain::new("editing src/lib.rs", true);
+        let read = uncertainty(&uncertain(&stopped)).expect("an uncertain line");
+        assert_eq!(read, stopped);
+        assert!(read.under_way().incomplete());
+
+        // Each kind is its own and none is a message.
+        for line in [line, external(&ExternalRef::new("w", "r").unwrap())] {
+            assert!(
+                uncertainty(&line).is_none() && message(&line).is_none(),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_line_naming_more_than_a_binding_keeps_is_not_read_as_a_shorter_one() {
+        let long = "w".repeat(crucible_storage::BINDING_NAME_BYTES + 1);
+        let route_line = json!({"route": {"driver": "claude", "instance": long, "generation": 0}});
+        assert!(routed(&route_line.to_string()).is_none());
+        let reference = "r".repeat(crucible_storage::EXTERNAL_REFERENCE_BYTES + 1);
+        let external_line = json!({"external": {"instance": "work", "reference": reference}});
+        assert!(named(&external_line.to_string()).is_none());
+
+        // What an agent reported under way is cut, on a character, and says so.
+        let said = "é".repeat(crucible_storage::UNCERTAIN_BYTES);
+        let read = uncertainty(&uncertain(&Uncertain::new(&said, false))).unwrap();
+        assert!(read.under_way().as_str().len() <= crucible_storage::UNCERTAIN_BYTES);
+        assert!(read.under_way().incomplete());
+    }
+
+    #[test]
+    fn no_line_a_session_an_agent_ran_writes_names_the_agent_crate_or_its_settings() {
+        let lines = [
+            route(
+                &RouteBinding::new("claude", "work", Some("/p"))
+                    .unwrap()
+                    .resolved(Path::new("/usr/local/bin/claude"))
+                    .reporting("2.1.0", false),
+            ),
+            external(&ExternalRef::new("work", "3f2a").unwrap()),
+            uncertain(&Uncertain::new("editing", false)),
+        ];
+        for line in lines {
+            assert_eq!(foreign(&line), None, "{line}");
+        }
+        assert!(foreign(&format!("{{\"route\":\"{}claude\"}}", "agent:")).is_some());
     }
 
     #[test]

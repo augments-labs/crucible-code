@@ -33,10 +33,10 @@ use std::time::SystemTime;
 
 use crucible_types::{Message, SessionId};
 
-use super::SessionError;
 use super::index;
 use super::privacy::opened;
 use super::wire;
+use super::{RouteBinding, SessionError};
 
 /// How many logs the first frame may open before the scan gives up.
 ///
@@ -243,6 +243,8 @@ pub struct Discovered {
     messages: usize,
     /// The title somebody saved for it, where they did.
     titled: Option<Box<str>>,
+    /// The installed agent that ran it, where one did.
+    route: Option<RouteBinding>,
 }
 
 impl Discovered {
@@ -275,6 +277,13 @@ impl Discovered {
     #[must_use]
     pub fn title(&self) -> Option<&str> {
         self.titled.as_deref()
+    }
+
+    /// The installed agent that ran it, where one did; `None` for a session
+    /// a provider's model ran.
+    #[must_use]
+    pub const fn route(&self) -> Option<&RouteBinding> {
+        self.route.as_ref()
     }
 }
 
@@ -367,12 +376,13 @@ pub fn discovered(
         match heading(&path, roots) {
             Heading::Absent | Heading::Elsewhere => {}
             Heading::Unreadable => found.unreadable += 1,
-            Heading::Here { branch } if found.sessions.len() < wanted => {
+            Heading::Here { branch, route } if found.sessions.len() < wanted => {
                 found.sessions.push(Discovered {
                     id: entry.id,
                     branch,
                     messages: entry.messages,
                     titled: entry.title,
+                    route,
                 });
             }
             Heading::Here { .. } => found.omitted += 1,
@@ -381,7 +391,7 @@ pub fn discovered(
     Ok(found)
 }
 
-/// What one log's first line says about where it belongs.
+/// What one log's opening says about where it belongs.
 enum Heading {
     /// There is no log by that name.
     Absent,
@@ -389,8 +399,12 @@ enum Heading {
     Unreadable,
     /// It was recorded somewhere none of the roots names.
     Elsewhere,
-    /// It was recorded in one of the roots, on this branch where it says.
-    Here { branch: Option<Box<str>> },
+    /// It was recorded in one of the roots, on this branch where it says, and
+    /// run by this installed agent where one ran it.
+    Here {
+        branch: Option<Box<str>>,
+        route: Option<RouteBinding>,
+    },
 }
 
 /// How many entries of a directory with no index [`logged`] looks at.
@@ -422,7 +436,8 @@ fn logged(directory: &Path) -> bool {
     false
 }
 
-/// The first line of the log at `path`, read no further than [`READ`] bytes.
+/// The first line of the log at `path`, and the route on its second where
+/// an installed agent ran it, read no further than [`READ`] bytes.
 ///
 /// Opened as [`opened`] opens a log, so the name is looked up once, by the
 /// open, and what is read is what that open settled: nothing asks the name what
@@ -433,8 +448,9 @@ fn heading(path: &Path, roots: Roots<'_>) -> Heading {
         Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Heading::Absent,
         Err(_) => return Heading::Unreadable,
     };
+    let mut log = BufReader::new(opened).take(READ);
     let mut line = String::new();
-    let read = BufReader::new(opened).take(READ).read_line(&mut line);
+    let read = log.read_line(&mut line);
     if read.is_err() || !line.ends_with('\n') {
         return Heading::Unreadable;
     }
@@ -446,6 +462,17 @@ fn heading(path: &Path, roots: Roots<'_>) -> Heading {
     } else if !wire::readable(opening.format) {
         Heading::Unreadable
     } else {
+        // Written with the header, in the same write, by a session an agent
+        // ran. Any other log has its first message there, which a list has
+        // no business reading, so the line is read only where it is a route.
+        let mut second = String::new();
+        let route = log
+            .fill_buf()
+            .is_ok_and(|ahead| ahead.starts_with(wire::ROUTE_OPENS))
+            .then(|| log.read_line(&mut second).ok())
+            .flatten()
+            .filter(|_| second.ends_with('\n'))
+            .and_then(|_| wire::routed(second.trim_end()));
         Heading::Here {
             // As the header wrote it, bounded by the line it was read from:
             // whoever shows it escapes it and says where they cut it, which
@@ -454,6 +481,7 @@ fn heading(path: &Path, roots: Roots<'_>) -> Heading {
                 .branch
                 .filter(|branch| !branch.is_empty())
                 .map(String::into_boxed_str),
+            route,
         }
     }
 }

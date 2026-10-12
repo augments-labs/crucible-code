@@ -43,6 +43,10 @@ pub enum BindingError {
     /// else.
     #[error("a session binding's {0} is longer than it may be")]
     TooLong(&'static str),
+    /// A field held a control character, which a list or a message naming it
+    /// would act on rather than show.
+    #[error("a session binding's {0} holds a control character")]
+    Control(&'static str),
 }
 
 /// Text kept whole up to a ceiling, and saying whether anything was left out.
@@ -100,6 +104,8 @@ fn exact(field: &'static str, text: &str, ceiling: usize) -> Result<Box<str>, Bi
         Err(BindingError::Empty(field))
     } else if text.len() > ceiling {
         Err(BindingError::TooLong(field))
+    } else if text.chars().any(char::is_control) {
+        Err(BindingError::Control(field))
     } else {
         Ok(text.into())
     }
@@ -127,8 +133,8 @@ impl RouteBinding {
     ///
     /// # Errors
     ///
-    /// [`BindingError`] where a name is empty or longer than
-    /// [`BINDING_NAME_BYTES`], or the profile is empty or longer than
+    /// [`BindingError`] where a name is empty, holds a control character or
+    /// is longer than [`BINDING_NAME_BYTES`], or the profile is the same past
     /// [`BINDING_PROFILE_BYTES`]: each is compared on resume, and a prefix of
     /// one would compare equal to a route it is not.
     pub fn new(driver: &str, instance: &str, profile: Option<&str>) -> Result<Self, BindingError> {
@@ -240,7 +246,8 @@ impl ExternalRef {
     ///
     /// # Errors
     ///
-    /// [`BindingError`] where either is empty or the instance is longer than
+    /// [`BindingError`] where either is empty or holds a control character,
+    /// or the instance is longer than
     /// [`BINDING_NAME_BYTES`] or the reference than
     /// [`EXTERNAL_REFERENCE_BYTES`]: a prefix of a session's name is the name
     /// of no session, or of another.
@@ -323,6 +330,10 @@ mod tests {
         assert_eq!(
             ExternalRef::new("work", &reference),
             Err(BindingError::TooLong("reference"))
+        );
+        assert_eq!(
+            RouteBinding::new("claude", "wo\u{1b}[2Jrk", None),
+            Err(BindingError::Control("instance"))
         );
         assert!(RouteBinding::new("claude", &"a".repeat(BINDING_NAME_BYTES), None).is_ok());
     }

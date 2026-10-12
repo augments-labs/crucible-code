@@ -690,6 +690,67 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
 }
 
 #[test]
+fn a_session_an_agent_ran_is_refused_before_anything_to_run_it_on_is_built() {
+    // Answered from the log before a provider is built: here the provider
+    // would fail for want of a key, and the failure a resume of this session
+    // owes is that it cannot be continued on a provider's model at all, with
+    // its history left as it was.
+    let sample = Sample::new("rerouted");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+    let route = crucible_session::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&logs, &workspace, None, &route).expect("a routed session");
+    let (path, id) = (
+        session.path().to_owned(),
+        session.id().expect("an id").clone(),
+    );
+    session.append(&Message::said("rename the module"));
+    drop(session);
+    let before = std::fs::read(&path).expect("the log");
+
+    for resuming in [Resuming::Newest, Resuming::Exact(id)] {
+        let Err(problem) = assemble(&Startup {
+            providers: &catalogue(),
+            provider: Some(serving("openai")),
+            unasked: NO_MODEL_CHOSEN,
+            model: Some("gpt-5.6-terra"),
+            effort: None,
+            resuming,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| None,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        }) else {
+            panic!("a session an agent ran was continued on a provider's model");
+        };
+
+        assert!(
+            matches!(
+                &problem,
+                AppError::Session(crucible_session::SessionError::Rerouted { .. })
+            ),
+            "{problem:?}"
+        );
+        let said = problem.to_string();
+        assert!(
+            said.contains("work") && said.contains("new session"),
+            "{said}"
+        );
+        assert_eq!(std::fs::read(&path).expect("the log"), before);
+    }
+}
+
+#[test]
 fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     // The state the warning under the welcome describes. Everything but the
     // turn works, which is what leaves `/model` somewhere to be typed.

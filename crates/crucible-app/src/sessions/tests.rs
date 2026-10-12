@@ -44,6 +44,11 @@ fn id(nth: u64) -> SessionId {
     .expect("a legacy session id")
 }
 
+#[allow(clippy::expect_used)]
+fn native() -> crucible_client_api::Name {
+    crucible_client_api::Name::new(crucible_client_api::sessions::NATIVE).expect("a name")
+}
+
 fn whole(sessions: Vec<Listed>) -> Listing {
     Listing {
         sessions,
@@ -170,6 +175,8 @@ fn everything_that_kept_a_list_from_being_whole_is_said_under_it() {
             branch: None,
             messages: 3,
             title: None,
+            backend: native(),
+            route: None,
         }],
         omitted: 4,
         unreadable: 2,
@@ -197,6 +204,8 @@ fn what_a_terminal_would_act_on_in_a_title_or_branch_is_shown_as_its_escape() {
         branch: Some(Text::cut("ma\u{1b}[2Jin")),
         messages: 1,
         title: Some(Text::cut("\u{202e}gnirts\u{7}")),
+        backend: native(),
+        route: None,
     }]);
 
     let text = human(&std::env::temp_dir(), &listing, &ago);
@@ -278,4 +287,37 @@ fn a_branch_too_long_to_show_whole_is_cut_where_it_says_so_and_leaves_the_list_i
         "b".repeat(crucible_client_api::bounds::TEXT_BYTES)
     );
     assert!(text.contains(&shown), "{text}");
+}
+
+#[test]
+fn a_session_an_agent_ran_lists_its_driver_and_route_and_any_other_lists_native() {
+    let sample = Sample::new("sessions-routed");
+    let native = recorded(&sample, None, None);
+    let route = crucible_session::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    session.append(&Message::said(PROMPT));
+    let routed = session.id().expect("a recorded session").clone();
+    drop(session);
+
+    let listed = listing(&sample.root(), &sample.logs()).expect("a listing");
+
+    let Report::Listed(said) = listed.contract() else {
+        panic!("a list: {:?}", listed.contract());
+    };
+    let row = |id: &SessionId| {
+        let one = said
+            .sessions
+            .iter()
+            .find(|one| &one.id == id)
+            .expect("listed");
+        (
+            one.backend.as_str().to_owned(),
+            one.route.as_ref().map(|route| route.as_str().to_owned()),
+        )
+    };
+    assert_eq!(row(&routed), ("claude".to_owned(), Some("work".to_owned())));
+    assert_eq!(row(&native), ("native".to_owned(), None));
+    let text = listed.human(&ago);
+    assert!(text.contains("claude") && text.contains("work"), "{text}");
 }
