@@ -598,9 +598,10 @@ async fn every_close_and_turn_after_an_unconfirmed_stop_fails() {
     let second = backend.close().await;
     let prompted = backend.prompt(turn("again"), &sink).await;
 
-    assert!(first.is_err(), "{first:?}");
-    assert!(second.is_err(), "{second:?}");
-    assert!(prompted.is_err(), "{prompted:?}");
+    let said = unstopped(Unstopped).to_string();
+    assert_eq!(first.map_err(|error| error.to_string()), Err(said.clone()));
+    assert_eq!(second.map_err(|error| error.to_string()), Err(said.clone()));
+    assert_eq!(prompted.err().map(|error| error.to_string()), Some(said));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -617,5 +618,5 @@ async fn no_run_starts_beside_one_not_confirmed_stopped() {
     )
     .await;
 
-    assert!(beside.is_err(), "{beside:?}");
+    assert!(matches!(beside, Err(Refusal::Unstopped)), "{beside:?}");
 }

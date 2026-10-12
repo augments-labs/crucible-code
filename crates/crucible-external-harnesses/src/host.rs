@@ -459,7 +459,8 @@ impl Host {
             return Err(Refusal::Busy);
         }
         // Released again on every refusal below; from the moment a host
-        // exists, its drop is what releases it.
+        // exists, its drop releases it, unless the run could not be confirmed
+        // to have stopped.
         control.rest();
         let started = Self::start(service, &runtime, control, launch).await;
         if started.is_err() {
