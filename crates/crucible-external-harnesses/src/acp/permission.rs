@@ -8,17 +8,20 @@
 use crucible_execution::{Decision, Failure, Lasting};
 use serde_json::{Value, json};
 
+/// The options one question offered, each an id and its kind.
+type Offered = Vec<(Box<str>, Box<str>)>;
+
 /// The permissions an agent has asked and not yet been answered.
 #[derive(Debug, Default)]
 pub(crate) struct Permissions {
     /// Each question's native name and the options it offered, each an id and
     /// its kind.
-    open: Vec<(Box<str>, Vec<(Box<str>, Box<str>)>)>,
+    open: Vec<(Box<str>, Offered)>,
 }
 
 impl Permissions {
     /// Keeps that `native` was asked with `options`, each an id and its kind.
-    pub(crate) fn offered(&mut self, native: &str, options: Vec<(Box<str>, Box<str>)>) {
+    pub(crate) fn offered(&mut self, native: &str, options: Offered) {
         self.open.push((native.into(), options));
     }
 

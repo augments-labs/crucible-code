@@ -113,6 +113,9 @@ pub struct Shape<'a> {
     pub profile: Option<&'a Path>,
     /// The directory the conversation works in, where a wire names it.
     pub workspace: Option<&'a Path>,
+    /// Where the program was found, for an agent that is told where the
+    /// programs installed beside it are.
+    pub executable: Option<&'a Path>,
 }
 
 /// What an account step's run came to.

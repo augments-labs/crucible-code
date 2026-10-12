@@ -136,6 +136,10 @@ impl Agent {
             resume,
             profile: self.profile.as_deref(),
             workspace: Some(workspace),
+            executable: match &self.discovery {
+                Discovery::Found(program) => Some(program.path()),
+                Discovery::Missing | Discovery::NotExecutable(_) => None,
+            },
         }
     }
 }
