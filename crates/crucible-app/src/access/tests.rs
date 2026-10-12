@@ -375,6 +375,22 @@ fn an_api_key_access_with_nothing_found_names_its_variable_and_not_the_account()
     );
 }
 
+#[test]
+fn an_account_for_a_provider_with_no_subscription_sign_in_is_never_its_route() {
+    let route = resolved(
+        serving("openai"),
+        &Settings::default(),
+        &lookup(None),
+        Some(&held(Kind::Account, "openai")),
+        Signing {
+            offered: false,
+            usable: true,
+        },
+    );
+
+    assert!(matches!(route, Err(AccessError::Absent(_))), "{route:?}");
+}
+
 // --- externalAgent ----------------------------------------------------------
 
 fn agent_settings(sample: &Sample, beside: &str, enabled: bool) -> Settings {

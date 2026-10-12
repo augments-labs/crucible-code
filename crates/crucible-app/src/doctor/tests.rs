@@ -553,33 +553,57 @@ fn a_provider_this_build_does_not_serve_is_a_failure_that_names_the_ones_it_does
 
 #[test]
 fn a_chosen_provider_with_nothing_found_is_told_only_the_way_its_access_chose() {
+    // The provider, its block, then what the reason and the remedy say, and
+    // what the remedy never says.
     let cases = [
         (
-            r#"{"type": "subscription"}"#,
+            "openai",
+            r#"{"access": {"type": "subscription"}}"#,
+            "no account is signed in for openai",
             "use /login",
             "OPENAI_API_KEY",
         ),
         (
-            r#"{"type": "apiKey"}"#,
+            "openai",
+            r#"{"access": {"type": "subscription"}, "baseUrl": "https://gateway.example/v1"}"#,
+            "remove baseUrl",
+            "remove `providers.openai.baseUrl`",
+            "/login",
+        ),
+        (
+            "anthropic",
+            r#"{"access": {"type": "subscription"}}"#,
+            "no subscription sign-in for anthropic",
+            "change `providers.anthropic.access`",
+            "/login",
+        ),
+        (
+            "openai",
+            r#"{"access": {"type": "apiKey"}}"#,
+            "no key was found",
             "set OPENAI_API_KEY, or store one with /login",
             "subscription",
         ),
         (
-            r#"{"type": "externalAgent", "instance": "mine"}"#,
+            "openai",
+            r#"{"access": {"type": "externalAgent", "instance": "mine"}}"#,
+            "cannot start an installed agent",
             "remove `providers.openai.access`",
             "OPENAI_API_KEY",
         ),
     ];
-    for (at, (access, told, never)) in cases.into_iter().enumerate() {
+    for (at, (named, block, says, told, never)) in cases.into_iter().enumerate() {
         let sample = Sample::new(&format!("doctor-access-{at}"));
         drop(sample.user(&format!(
-            r#"{{"provider": "openai", "providers": {{"openai": {{"access": {access}}}}},
+            r#"{{"provider": "{named}", "providers": {{"{named}": {block}}},
                 "externalAgents": {{"mine": {{"driver": "claude", "executable": "claude"}}}}}}"#
         )));
 
         let report = examined(&sample, &Counting::default(), &bare);
 
         assert_eq!(status(&report, "provider"), Status::Failed, "case {at}");
+        let said = reason(&report, "provider");
+        assert!(said.contains(says), "case {at}: {said}");
         let remedy = report
             .checks
             .iter()

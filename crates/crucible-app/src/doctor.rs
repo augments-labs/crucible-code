@@ -45,6 +45,7 @@ use crucible_types::shown::unshown;
 use crucible_workspace::{PathError, Workspace};
 
 use crate::AppError;
+use crate::access::{self, AccessError, Route};
 use crate::providers::{self, Providers, Rows, Served};
 use crate::sandbox::{self, Observing};
 
@@ -545,24 +546,48 @@ fn provided(
         };
     }
     if let Some(named) = settings.provider() {
-        let variable = providers::offered(registry)
-            .find(|one| one.name == named)
-            .map_or("its API key variable", |one| {
-                crate::access::variable(one, settings)
-            });
-        // Told only the way its access chose, where it chose one.
+        let one = providers::offered(registry).find(|one| one.name == named);
+        let variable = one.map_or("its API key variable", |one| {
+            crate::access::variable(one, settings)
+        });
+        // The resolver's own sentence where its access refuses, and only the
+        // way that access chose in the remedy.
+        let routed = one.map(|one| {
+            let held = inventory.and_then(|inventory| inventory.held(one.name));
+            let subscribed = rows.subscribes(one.name);
+            access::resolved(
+                one,
+                settings,
+                from,
+                held.as_ref(),
+                access::Signing {
+                    offered: subscribed,
+                    usable: subscribed,
+                },
+            )
+        });
+        let reason = match routed {
+            Some(Err(refused)) if !matches!(refused, AccessError::Absent(_)) => refused.to_string(),
+            Some(Ok(Route::External { instance, .. })) => AppError::ExternalAgent {
+                provider: named.into(),
+                instance,
+            }
+            .to_string(),
+            _ => format!("the configuration chooses {named}, and no credential for it was found"),
+        };
         let remedy = match settings.access(named) {
             None => format!("use /login, or set {variable}"),
+            Some(Access::Subscription) if settings.base_url(named).is_some() => {
+                format!("remove `providers.{named}.baseUrl`")
+            }
+            Some(Access::Subscription) if !rows.subscribes(named) => {
+                format!("change `providers.{named}.access`")
+            }
             Some(Access::Subscription) => "use /login".to_owned(),
             Some(Access::ApiKey) => format!("set {variable}, or store one with /login"),
-            Some(Access::ExternalAgent { .. }) => format!(
-                "this build cannot start an installed agent; remove `providers.{named}.access`"
-            ),
+            Some(Access::ExternalAgent { .. }) => format!("remove `providers.{named}.access`"),
         };
-        return Finding::failed(
-            format!("the configuration chooses {named}, and no credential for it was found"),
-            remedy,
-        );
+        return Finding::failed(reason, remedy);
     }
     if providers::offered(registry).any(usable) {
         return Finding::warning(

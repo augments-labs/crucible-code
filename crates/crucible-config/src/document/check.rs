@@ -505,12 +505,7 @@ impl Reader<'_> {
 
             if let Some(found) = record.get("command").and_then(Value::as_str) {
                 let program = Path::new(found);
-                // A bare name is one name, and a name a directory cannot be.
-                let bare = matches!(
-                    program.components().collect::<Vec<_>>().as_slice(),
-                    [Component::Normal(_)]
-                ) && !found.ends_with(std::path::is_separator);
-                if !program.is_absolute() && !bare {
+                if !program.is_absolute() && program.components().count() > 1 {
                     return Err(ConfigError::Unrooted {
                         file: self.file.into(),
                         path: format!("mcp.{SERVERS}.{name}.command").into(),
@@ -608,12 +603,7 @@ impl Reader<'_> {
 
             if let Some(found) = record.get("executable").and_then(Value::as_str) {
                 let program = Path::new(found);
-                // A bare name is one name, and a name a directory cannot be.
-                let bare = matches!(
-                    program.components().collect::<Vec<_>>().as_slice(),
-                    [Component::Normal(_)]
-                ) && !found.ends_with(std::path::is_separator);
-                if !program.is_absolute() && !bare {
+                if !program.is_absolute() && !bare_name(found) {
                     return Err(ConfigError::Unrooted {
                         file: self.file.into(),
                         path: format!("externalAgents.{name}.executable").into(),
@@ -1122,4 +1112,14 @@ fn file_of(problem: &ConfigError, workspace: &Path) -> String {
         }
         _ => workspace.display().to_string(),
     }
+}
+
+/// Whether `found` is one program name for `PATH` to answer: a single name,
+/// with no separator anywhere, that names no directory.
+fn bare_name(found: &str) -> bool {
+    !found.contains(std::path::is_separator)
+        && matches!(
+            Path::new(found).components().collect::<Vec<_>>().as_slice(),
+            [Component::Normal(_)]
+        )
 }
