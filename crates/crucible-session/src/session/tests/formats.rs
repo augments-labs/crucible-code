@@ -25,16 +25,21 @@ fn fixture(name: &str) -> String {
 fn planted(sample: &Sample, log: &str, format: Option<u32>) -> PathBuf {
     let mut lines: Vec<String> = log.lines().map(str::to_owned).collect();
     let header = lines.first_mut().expect("a header");
-    let mut opening: Value = serde_json::from_str(header).expect("a header that reads");
-    let id = opening["session"]
-        .as_str()
+    let mut opening: serde_json::Map<String, Value> =
+        serde_json::from_str(header).expect("a header that reads");
+    let id = opening
+        .get("session")
+        .and_then(Value::as_str)
         .expect("a session id")
         .to_owned();
-    opening["workspace"] = Value::String(sample.workspace().root().display().to_string());
+    opening.insert(
+        "workspace".to_owned(),
+        Value::String(sample.workspace().root().display().to_string()),
+    );
     if let Some(format) = format {
-        opening["format"] = Value::from(format);
+        opening.insert("format".to_owned(), Value::from(format));
     }
-    *header = opening.to_string();
+    *header = Value::Object(opening).to_string();
     sample.plant(&id, &lines)
 }
 
@@ -133,9 +138,12 @@ fn a_route_line_that_does_not_read_is_refused_rather_than_continued_without_it()
     let log = fixture("format-14.jsonl");
     let (opening, rest) = log.split_once('\n').expect("a header");
     let (route, _) = rest.split_once('\n').expect("a route line");
-    let long = format!(r#""instance":"{}""#, "w".repeat(BINDING_NAME_BYTES + 1));
+    let past_the_ceiling = format!(r#""instance":"{}""#, "w".repeat(BINDING_NAME_BYTES + 1));
     for (case, damaged) in [
-        ("too long", log.replacen(r#""instance":"work""#, &long, 1)),
+        (
+            "too long",
+            log.replacen(r#""instance":"work""#, &past_the_ceiling, 1),
+        ),
         ("torn", format!("{opening}\n{}", &route[..route.len() / 2])),
         ("alone", format!("{opening}\n{route}\n")),
     ] {
@@ -176,6 +184,125 @@ fn a_route_line_that_does_not_read_is_refused_rather_than_continued_without_it()
         }
         assert_eq!(fs::read(&path).expect("the log"), before, "{case}");
     }
+}
+
+#[test]
+fn a_log_continued_here_with_a_reasoning_models_state_is_still_one_its_release_reads() {
+    // The release that wrote format 13 reads every line this one guards with
+    // 13; a guard naming the format after it would refuse its own log.
+    let sample = Sample::new("format-13-reasoned");
+    let path = planted(&sample, &fixture("format-13.jsonl"), None);
+    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    session.append(&super::reasoned());
+    drop(session);
+
+    let log = fs::read_to_string(&path).expect("the log");
+    let guards: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("requires_format"))
+        .collect();
+    assert_eq!(guards, [r#"{"requires_format":13}"#], "{log}");
+}
+
+#[test]
+fn a_route_line_anywhere_but_after_the_header_or_spelled_otherwise_is_no_route() {
+    // Resume and the list read the route from the line after the header, as
+    // it is written; a reader that took one from anywhere else would continue
+    // on a provider's model a session that says an agent ran it.
+    let log = fixture("format-14.jsonl");
+    let (opening, after) = log.split_once('\n').expect("a header");
+    let (route, after) = after.split_once('\n').expect("a route line");
+    let (asked, rest) = after.split_once('\n').expect("a first message");
+    let moved = format!("{opening}\n{asked}\n{route}\n{rest}");
+    let spaced = log.replacen(r#"{"route":"#, r#"{ "route":"#, 1);
+    for (case, damaged) in [("moved", moved), ("spaced", spaced)] {
+        let sample = Sample::new("format-14-misplaced");
+        let path = planted(&sample, &damaged, None);
+
+        assert_eq!(route_of(&path).expect("a log that opens"), None, "{case}");
+        assert!(
+            replay(&path).map_or(true, |read| read.ran.route.is_none()),
+            "{case}"
+        );
+        assert!(
+            Session::resume(&sample.logs(), &sample.workspace())
+                .map_or(true, |(session, _)| session.route().is_none()),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn the_agents_name_for_a_session_is_read_only_under_the_route_it_was_opened_on() {
+    let log = fixture("format-14.jsonl").replacen(
+        r#"{"external":{"instance":"work""#,
+        r#"{"external":{"instance":"home""#,
+        1,
+    );
+    assert!(log.contains(r#""instance":"home""#), "{log}");
+    let sample = Sample::new("format-14-other-instance");
+    let path = planted(&sample, &log, None);
+
+    assert!(
+        replay(&path).map_or(true, |read| read.ran.external.is_none()),
+        "a session opened on work kept a name home gave"
+    );
+}
+
+#[test]
+fn a_session_an_agent_ran_is_listed_with_its_route_wherever_its_header_ends() {
+    // The header's length is the branch's, which the checked-out repository
+    // chooses; a list that looked for the route only in what one read of the
+    // header happened to bring in would call some of these native.
+    let log = fixture("format-14.jsonl");
+    let sample = Sample::new("format-14-header-length");
+    let header = fs::read_to_string(planted(&sample, &log, None)).expect("the log");
+    let opening = header.lines().next().expect("a header").len();
+    for ends in 8180..=8200 {
+        let branch = format!("main{}", "b".repeat(ends - 1 - opening));
+        let sample = Sample::new("format-14-header-length");
+        let path = planted(
+            &sample,
+            &log.replacen(r#""branch":"main""#, &format!(r#""branch":"{branch}""#), 1),
+            None,
+        );
+        assert_eq!(
+            fs::read_to_string(&path).expect("the log").find('\n'),
+            Some(ends - 1)
+        );
+        let id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("an id");
+        index::record(&sample.logs(), &SessionId::from_str(id).expect("an id")).expect("an index");
+        let root = sample.workspace().root().to_path_buf();
+        let listed =
+            discovered(&sample.logs(), Roots::These(&[root.as_path()]), 8).expect("a listing");
+        let routes: Vec<Option<&str>> = listed
+            .sessions()
+            .iter()
+            .map(|one| one.route().map(RouteBinding::instance))
+            .collect();
+        assert_eq!(routes, [Some("work")], "a header ending at byte {ends}");
+    }
+}
+
+#[test]
+fn a_log_from_before_an_agent_could_run_a_session_is_listed_as_no_agents() {
+    let sample = Sample::new("format-13-listed");
+    let path = planted(&sample, &fixture("format-13.jsonl"), None);
+    let id = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .expect("an id");
+    index::record(&sample.logs(), &SessionId::from_str(id).expect("an id")).expect("an index");
+    let root = sample.workspace().root().to_path_buf();
+
+    let listed = discovered(&sample.logs(), Roots::These(&[root.as_path()]), 8).expect("a listing");
+
+    assert_eq!(listed.sessions().len(), 1);
+    assert!(listed.sessions().iter().all(|one| one.route().is_none()));
 }
 
 #[test]

@@ -260,7 +260,8 @@ impl Report {
 }
 
 /// The session `value` is, refused where its start is not the one its id
-/// names.
+/// names, or where what ran it and its route disagree: a provider's model has
+/// no route, and an installed agent always has one.
 fn session(value: serde_json::Value) -> Result<Session, Refusal> {
     let mut one = Fields::of(value)?;
     let id = SessionId::from_str(&one.string("id")?).map_err(|_| ErrorCode::Malformed)?;
@@ -277,7 +278,8 @@ fn session(value: serde_json::Value) -> Result<Session, Refusal> {
             .transpose()?,
     };
     one.done()?;
-    if session.started() != started {
+    let native = session.backend.as_str() == NATIVE;
+    if session.started() != started || native == session.route.is_some() {
         return Err(ErrorCode::Malformed.into());
     }
     Ok(session)

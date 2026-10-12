@@ -799,9 +799,20 @@ impl Session {
     ///
     /// Written whenever the agent names it, and read back last-one-wins, so a
     /// resume asks the agent for the session it last said it was running.
-    pub fn external(&self, named: &ExternalRef) {
-        let Some(to) = &self.to else { return };
-        drop(to.send(LogRequest::Line(guarded(&wire::external(named)))));
+    ///
+    /// Whether it was kept: a name from any instance but the one the session
+    /// was opened on is not, as a resume would ask that instance's agent for a
+    /// session it never ran.
+    #[must_use]
+    pub fn external(&self, named: &ExternalRef) -> bool {
+        let ours = self
+            .route
+            .as_ref()
+            .is_some_and(|route| route.instance() == named.instance());
+        if let (true, Some(to)) = (ours, &self.to) {
+            drop(to.send(LogRequest::Line(guarded(&wire::external(named)))));
+        }
+        ours
     }
 
     /// Records that a turn ended without the agent saying whether what it set
@@ -1070,7 +1081,7 @@ fn holding(message: &Message) -> Option<Box<[crucible_types::ToolId]>> {
 fn message_line(message: &Message) -> Box<str> {
     let line = wire::line(message);
     if message.continuation_bytes() > 0 {
-        format!("{{\"requires_format\":{}}}\n{line}", wire::FORMAT).into()
+        format!("{{\"requires_format\":{}}}\n{line}", wire::PROVIDER_LINES).into()
     } else {
         line.into()
     }
@@ -1087,7 +1098,7 @@ fn message_line(message: &Message) -> Box<str> {
 fn restricted_line(freed: usize, results: &[crucible_types::ToolId], notice: &str) -> Box<str> {
     format!(
         "{{\"requires_format\":{}}}\n{}",
-        wire::FORMAT,
+        wire::PROVIDER_LINES,
         wire::restricted(freed, results, notice)
     )
     .into()

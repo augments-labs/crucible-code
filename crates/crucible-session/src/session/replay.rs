@@ -14,7 +14,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, BufRead as _, BufReader, Read as _};
+use std::io::{self, BufRead, BufReader, Read};
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
 
@@ -230,21 +231,43 @@ pub(super) fn route_of(path: &Path) -> Result<Option<RouteBinding>, SessionError
     if line.last() != Some(&b'\n') {
         return Ok(None);
     }
-    line.clear();
-    log.read_until(b'\n', &mut line).map_err(trouble)?;
-    if !line.starts_with(wire::ROUTE_OPENS) {
+    route_at(&mut log).map_err(trouble)
+}
+
+/// The route on the line `log` stands at, the one after a header.
+///
+/// Reads no more of a line that does not open as a route than its opening,
+/// however much of it is already buffered, so a list that asks this of every
+/// log reads no prompt; a line that does is read to its end, which the caller
+/// bounds.
+pub(super) fn route_at(log: &mut impl BufRead) -> io::Result<Option<RouteBinding>> {
+    let mut line = Vec::new();
+    Read::take(&mut *log, wire::ROUTE_OPENS.len() as u64).read_to_end(&mut line)?;
+    if line != wire::ROUTE_OPENS {
         return Ok(None);
     }
-    line.strip_suffix(b"\n")
-        .and_then(|whole| str::from_utf8(whole).ok())
-        .and_then(wire::routed)
-        .map(Some)
-        .ok_or_else(|| {
-            trouble(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "the installed agent it was opened on is not recorded whole",
-            ))
-        })
+    log.read_until(b'\n', &mut line)?;
+    route_in(&line).transpose()
+}
+
+/// What `line`, the one after a header, says about the route: `None` where it
+/// does not open as one, and a refusal where it does and does not read whole.
+///
+/// The one place a route is read from a log. A route is the line after the
+/// header, as it is written, and nowhere else: one taken from further down
+/// would let a line a log gained later decide what continues it.
+fn route_in(line: &[u8]) -> Option<io::Result<RouteBinding>> {
+    line.starts_with(wire::ROUTE_OPENS).then(|| {
+        line.strip_suffix(b"\n")
+            .and_then(|whole| str::from_utf8(whole).ok())
+            .and_then(wire::routed)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "the installed agent it was opened on is not recorded whole",
+                )
+            })
+    })
 }
 
 /// Everything a log holds, as the transcript it recorded, the offset the next
@@ -315,6 +338,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     // ended, in case the pass's result line was never written.
     let mut ended = Ended::default();
     let mut ran = Ran::default();
+    let mut after_header = true;
 
     loop {
         raw.clear();
@@ -322,6 +346,14 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
 
         if read == 0 || !raw.ends_with(b"\n") {
             break;
+        }
+
+        if mem::take(&mut after_header)
+            && let Some(route) = route_in(&raw)
+        {
+            ran.route = Some(route.map_err(trouble)?);
+            through += read as u64;
+            continue;
         }
 
         let whole = str::from_utf8(&raw).ok().map(str::trim_end);
@@ -755,8 +787,9 @@ pub(super) struct Replayed {
 
 /// What an installed agent that ran a session recorded about it: the route it
 /// was opened on, the agent's own name for the session, and a turn that ended
-/// with its effects not known. None is a message, and the last of each kind
-/// is what holds.
+/// with its effects not known. None is a message. The route is the line after
+/// the header or there is none; of the others, the last of each kind is what
+/// holds.
 #[derive(Default)]
 pub(super) struct Ran {
     /// The installed agent the session was opened on, where one was.
@@ -770,10 +803,16 @@ pub(super) struct Ran {
 
 impl Ran {
     /// Whether `line` is one of these, kept where it is.
+    ///
+    /// The agent's name for the session is taken only from the agent the
+    /// session was opened on: a name another instance gave is a session that
+    /// one would be asked to continue, and it is no line of this log's.
     fn took(&mut self, line: &str) -> bool {
-        if let Some(route) = wire::routed(line) {
-            self.route = Some(route);
-        } else if let Some(named) = wire::named(line) {
+        if let Some(named) = wire::named(line).filter(|named| {
+            self.route
+                .as_ref()
+                .is_some_and(|route| route.instance() == named.instance())
+        }) {
             self.external = Some(named);
         } else if let Some(stopped) = wire::uncertainty(line) {
             self.uncertain = Some(stopped);

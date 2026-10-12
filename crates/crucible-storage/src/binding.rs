@@ -89,10 +89,12 @@ impl Clipped {
     }
 }
 
+/// Its length and not its text: what an agent said it was doing can quote what
+/// it was working on, and a `{:?}` reaches further than the log this is kept in.
 impl fmt::Debug for Clipped {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("Clipped")
-            .field("text", &self.text)
+            .field("text", &format_args!("[{} bytes]", self.text.len()))
             .field("incomplete", &self.incomplete)
             .finish()
     }
@@ -112,6 +114,10 @@ fn exact(field: &'static str, text: &str, ceiling: usize) -> Result<Box<str>, Bi
 }
 
 /// The route a session was opened on: which installed agent ran it.
+///
+/// `==` compares every field, the version and generation too, which is what
+/// reading a line back is checked against. Whether a session may continue on
+/// a route is [`RouteBinding::same_route`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteBinding {
     /// The driver, as the agent registry names it.
@@ -347,6 +353,7 @@ mod tests {
         assert!(Uncertain::new("editing", true).under_way().incomplete());
         assert!(!Uncertain::new("editing", false).under_way().incomplete());
         assert!(!format!("{uncertain:?}").contains("aaa"));
+        assert!(!format!("{:?}", uncertain.under_way()).contains("aaa"));
     }
 
     #[test]

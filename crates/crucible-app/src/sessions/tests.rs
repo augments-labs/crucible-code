@@ -319,5 +319,37 @@ fn a_session_an_agent_ran_lists_its_driver_and_route_and_any_other_lists_native(
     assert_eq!(row(&routed), ("claude".to_owned(), Some("work".to_owned())));
     assert_eq!(row(&native), ("native".to_owned(), None));
     let text = listed.human(&ago);
-    assert!(text.contains("claude") && text.contains("work"), "{text}");
+    assert!(text.contains("run by work (claude)"), "{text}");
+}
+
+#[test]
+fn a_route_named_as_long_as_a_session_may_keep_it_is_listed_and_not_refused() {
+    // The session store bounds an instance's name and the contract bounds a
+    // name; a contract that kept less would turn every session run on such a
+    // route into one the list could not read.
+    let sample = Sample::new("sessions-longest-route");
+    let longest = (1..=4096)
+        .map(|length| "w".repeat(length))
+        .take_while(|name| crucible_session::RouteBinding::new("claude", name, None).is_ok())
+        .last()
+        .expect("a route name a session may keep");
+    let route = crucible_session::RouteBinding::new("claude", &longest, None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    session.append(&Message::said(PROMPT));
+    drop(session);
+
+    let listed = listing(&sample.root(), &sample.logs()).expect("a listing");
+
+    let Report::Listed(said) = listed.contract() else {
+        panic!("a list: {:?}", listed.contract());
+    };
+    assert_eq!(said.unreadable, 0);
+    assert_eq!(
+        said.sessions
+            .iter()
+            .map(|one| one.route.as_ref().map(|route| route.as_str().len()))
+            .collect::<Vec<_>>(),
+        [Some(longest.len())]
+    );
 }

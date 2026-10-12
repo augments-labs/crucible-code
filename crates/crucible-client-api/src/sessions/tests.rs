@@ -223,6 +223,23 @@ fn a_row_that_does_not_say_what_ran_it_or_names_it_unboundedly_is_refused() {
 }
 
 #[test]
+fn a_row_whose_backend_and_route_disagree_is_refused() {
+    // A provider's model has no route, and an installed agent always has one.
+    let routed_native = with(document(0), "/sessions/1/route", json!("work"));
+    assert_eq!(refused(&routed_native), ErrorCode::Malformed);
+    let unrouted_agent = {
+        let mut document = document(0);
+        document
+            .pointer_mut("/sessions/0")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove("route");
+        document
+    };
+    assert_eq!(refused(&unrouted_agent), ErrorCode::Malformed);
+}
+
+#[test]
 fn a_status_or_truncation_flag_that_disagrees_with_the_list_is_refused() {
     for (specimen, status) in [(0, "incomplete"), (1, "complete"), (0, "failed")] {
         let lying = with(document(specimen), "/status", json!(status));

@@ -37,6 +37,16 @@ use serde_json::{Value, json};
 /// a different one.
 pub(crate) const FORMAT: u32 = 14;
 
+/// The format a line a provider's model writes is guarded with, where an
+/// older log gains one: the last before [`FORMAT`] added only what an installed
+/// agent writes.
+///
+/// A release that wrote this format reads every line a provider's model
+/// writes here, so a log of its continued here with one stays a log it reads.
+/// Guarded with [`FORMAT`], it would be refused by the release that wrote it,
+/// for a line kind that release has a word for.
+pub(crate) const PROVIDER_LINES: u32 = 13;
+
 /// The formats this build reads, newest first.
 ///
 /// A log is refused rather than half-understood, and that is what this list is
@@ -818,7 +828,14 @@ pub(crate) const ROUTE_OPENS: &[u8] = br#"{"route":"#;
 
 /// What a route line says, or `None` if this is not one or it names a route
 /// longer than a binding keeps.
+///
+/// A route line opens as [`ROUTE_OPENS`], as [`route`] writes it; JSON that
+/// says the same thing spelled otherwise is no route, so whether a log has one
+/// is decided by its opening bytes alone, by every reader.
 pub(crate) fn routed(line: &str) -> Option<RouteBinding> {
+    if !line.as_bytes().starts_with(ROUTE_OPENS) {
+        return None;
+    }
     let value: Value = serde_json::from_str(line).ok()?;
     let route = value.get("route")?;
     let mut binding = RouteBinding::new(

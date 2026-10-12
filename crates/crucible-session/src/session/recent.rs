@@ -15,7 +15,9 @@
 //! is the caller's [`Roots`].
 //!
 //! [`discovered`] is a third read, for `crucible sessions list`: the same index
-//! and the same headers, and nothing after a header, so it carries no prompt.
+//! and the same headers, and of the line after a header only as much as says
+//! whether it names the installed agent that ran the session, so it carries no
+//! prompt.
 //! Where [`recent`] is decoration and drops whatever it cannot read,
 //! [`discovered`] is an answer somebody asked for, so it counts what it left
 //! out and refuses an index that does not read.
@@ -35,6 +37,7 @@ use crucible_types::{Message, SessionId};
 
 use super::index;
 use super::privacy::opened;
+use super::replay::route_at;
 use super::wire;
 use super::{RouteBinding, SessionError};
 
@@ -467,18 +470,8 @@ fn heading(path: &Path, roots: Roots<'_>) -> Heading {
         // no business reading, so the line is read only where it is a route.
         // One that opens as a route and does not read whole is a session a
         // resume refuses, so it is not listed as one a provider's model ran.
-        let mut second = String::new();
-        let route = if log
-            .fill_buf()
-            .is_ok_and(|ahead| ahead.starts_with(wire::ROUTE_OPENS))
-        {
-            let read = log.read_line(&mut second).is_ok() && second.ends_with('\n');
-            let Some(route) = read.then(|| wire::routed(second.trim_end())).flatten() else {
-                return Heading::Unreadable;
-            };
-            Some(route)
-        } else {
-            None
+        let Ok(route) = route_at(&mut log) else {
+            return Heading::Unreadable;
         };
         Heading::Here {
             // As the header wrote it, bounded by the line it was read from:
