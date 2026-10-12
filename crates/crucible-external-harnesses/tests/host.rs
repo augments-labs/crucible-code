@@ -492,15 +492,11 @@ async fn stopping_an_unheeding_turn_ends_what_the_agent_started() {
     );
 }
 
-/// The peer is linked before this test is, which is what Cargo always does;
-/// its stamp, not its age, is what is compared.
+/// Cargo links the peer and this test in either order, so its stamp, not its
+/// age beside the test, is what is compared.
 #[test]
-fn a_peer_built_before_the_test_is_installed() {
+fn a_peer_is_installed_by_its_stamp_whichever_was_linked_first() {
     let at = Owned::new("older");
-    let peer = Path::new(env!("CARGO_BIN_EXE_crucible-fake-peer"));
-    let test = std::env::current_exe().expect("this test");
-    let modified = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
-    assert!(modified(peer) <= modified(&test));
 
     let installed = fake_peer::install(&at.0, "plain", &Script::of([])).expect("installed");
 

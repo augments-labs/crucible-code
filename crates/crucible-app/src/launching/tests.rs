@@ -192,7 +192,11 @@ async fn a_clean_turn_through_a_launch_is_complete_and_speaks_the_dialects_argum
 fn the_childs_policy_opens_its_profile_and_keeps_protected_metadata() {
     let sample = Sample::new("launch-policy");
     fs::create_dir_all(sample.root().join(".git")).expect("a repository");
-    let profile = std::env::temp_dir().join("crucible-launch-policy-profile");
+    // Resolved as the policy names it, so that what is asserted is the rule
+    // and not the temporary directory's links.
+    let profile = fs::canonicalize(std::env::temp_dir())
+        .expect("resolved")
+        .join("crucible-launch-policy-profile");
     let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
 
     let child = policy(&conversation, Some(&profile), &["api.anthropic.com"]).expect("a policy");
@@ -222,6 +226,7 @@ fn the_metadata_inside_a_profile_stays_protected() {
     for name in [".git", ".crucible"] {
         fs::create_dir_all(profile.join(name)).expect("metadata");
     }
+    let profile = fs::canonicalize(profile).expect("resolved");
     let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
 
     let child = policy(&conversation, Some(&profile), &[]).expect("a policy");
