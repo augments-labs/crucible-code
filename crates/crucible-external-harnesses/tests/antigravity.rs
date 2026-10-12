@@ -97,9 +97,11 @@ async fn spoken(
     steps: &[Account],
 ) -> (Vec<Reading>, Vec<String>) {
     let path = fake_peer::install(here, "antigravity", script).expect("the fake peer is built");
-    let Discovery::Found(program) = Discovery::of(Some(&path)) else {
-        panic!("the installed peer is not found");
-    };
+    let program = match Discovery::of(Some(&path)) {
+        Discovery::Found(program) => Some(program),
+        Discovery::Missing | Discovery::NotExecutable(_) => None,
+    }
+    .expect("the installed peer is found");
     let control = Control::new().expect("a control");
     let shown = Mutex::new(Vec::new());
     let mut read = Vec::new();
