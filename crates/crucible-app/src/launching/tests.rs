@@ -90,6 +90,44 @@ fn installed(sample: &Sample, script: &Script) -> PathBuf {
     fake_peer::install(&here, "plain", script).expect("the fake peer is built")
 }
 
+/// A directory beside this test's executable, removed when it is dropped.
+struct Beside(PathBuf);
+
+impl Beside {
+    fn new() -> Self {
+        let executable =
+            fs::canonicalize(std::env::current_exe().expect("an executable")).expect("resolved");
+        let directory = executable
+            .parent()
+            .expect("a directory")
+            .join(format!("launch-relative-{}", std::process::id()));
+        fs::create_dir_all(&directory).expect("created");
+        Self(directory)
+    }
+}
+
+impl Drop for Beside {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The way from `from` to `to`, both resolved, through the deepest directory
+/// they share; none where they share no root, as on two drives.
+fn relative(from: &Path, to: &Path) -> Option<PathBuf> {
+    let shared = from
+        .components()
+        .zip(to.components())
+        .take_while(|(left, right)| left == right)
+        .count();
+    if shared == 0 {
+        return None;
+    }
+    let mut toward: PathBuf = from.components().skip(shared).map(|_| "..").collect();
+    toward.extend(to.components().skip(shared));
+    Some(toward)
+}
+
 /// The agent `registry` makes of an entry whose program is at `executable`.
 fn agent(registry: &Registry, executable: &Path) -> Agent {
     Agent::routed(&route(executable, None), registry, |_| None).expect("a row")
@@ -223,6 +261,34 @@ fn a_profile_inside_protected_metadata_is_not_opened() {
     );
 }
 
+/// A profile named through a link into protected metadata is refused, as the
+/// directory the link leads to would be.
+#[cfg(unix)]
+#[test]
+fn a_profile_reached_through_a_link_into_protected_metadata_is_not_opened() {
+    let sample = Sample::new("launch-protected-link");
+    fs::create_dir_all(sample.root().join(".git")).expect("a repository");
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let beside = Sample::new("launch-protected-link-beside");
+    let link = beside.root().join("checkout");
+    std::os::unix::fs::symlink(sample.root(), &link).expect("a link");
+    let named = link.join(".git").join("profile");
+    let real = fs::canonicalize(sample.root().join(".git"))
+        .expect("resolved")
+        .join("profile");
+
+    let child = policy(&conversation, Some(&named), &[]);
+
+    for path in [&named, &real] {
+        assert!(
+            child.as_ref().map_or(true, |child| !child
+                .permits_path(&path.join("auth.json"), SandboxFilesystemAccess::ReadWrite)),
+            "{} was made writable",
+            path.display()
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_turn_or_a_probe_without_a_yes_starts_nothing() {
     let sample = Sample::new("launch-unheld");
@@ -265,7 +331,7 @@ async fn a_probe_with_a_yes_reads_the_version() {
 
     assert!(
         matches!(&read, crucible_external_harnesses::Reading::Version(version) if version.as_str() == "1.2.3"),
-        "{read:?}"
+        "the version was not read"
     );
     assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 1);
 }
@@ -343,14 +409,15 @@ fn a_bare_name_is_found_on_path_and_an_absolute_one_where_it_is_written() {
     });
     let written = discover(&peer.to_string_lossy(), |_| None);
     // A relative `PATH` element is a workspace's, and is never searched, even
-    // where it names the peer's own directory from here.
-    let here = std::env::current_dir().expect("a working directory");
-    let mut toward = PathBuf::new();
-    for _ in here.components().skip(1) {
-        toward.push("..");
-    }
-    toward.extend(directory.components().skip(1));
-    assert!(toward.is_relative() && toward.join(peer.file_name().expect("a name")).is_file());
+    // where it names a peer's own directory from here. That peer is put beside
+    // this test's executable, which a relative path can reach where a
+    // temporary directory on another drive could not.
+    let beside = Beside::new();
+    let near = fake_peer::install(&beside.0, "plain", &Script::of([])).expect("installed");
+    let here =
+        fs::canonicalize(std::env::current_dir().expect("a working directory")).expect("resolved");
+    let toward = relative(&here, &beside.0).expect("one root");
+    assert!(toward.is_relative() && toward.join(near.file_name().expect("a name")).is_file());
     let relative = discover("plain", |_| Some(OsString::from(&toward)));
 
     assert!(matches!(by_name, Discovery::Found(found) if found.path() == peer));

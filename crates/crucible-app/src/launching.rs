@@ -19,8 +19,8 @@
 //! profile directory, where one is configured, is writable but for the
 //! metadata protected beneath any writable root, and the hosts its row names
 //! are reachable. Every other rule, the protected metadata included, stays as
-//! the conversation has it, so a profile directory inside one is refused
-//! rather than opened.
+//! the conversation has it, so a profile directory inside one, named directly
+//! or through a link, is refused rather than opened.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -143,9 +143,9 @@ pub fn discover(executable: &str, lookup: impl Fn(&str) -> Option<OsString>) -> 
     Discovery::of(found.as_deref())
 }
 
-/// The policy an agent's child runs under: `conversation`'s, with `profile`
-/// writable but for the metadata protected beneath any writable root, and the
-/// hosts in `reaches` reachable.
+/// The policy an agent's child runs under: `conversation`'s, with `profile`,
+/// where its links lead, writable but for the metadata protected beneath any
+/// writable root, and the hosts in `reaches` reachable.
 ///
 /// # Errors
 ///
@@ -159,12 +159,15 @@ pub fn policy(
 ) -> Result<SandboxPolicy, SandboxPolicyError> {
     let mut filesystem = conversation.filesystem().to_vec();
     if let Some(profile) = profile {
+        // Named where it is: a rule says where a sandbox may write, and one
+        // naming a link would open whatever the link leads to.
+        let profile = resolved(profile);
         filesystem.push(SandboxFilesystemRule::new(
-            profile,
+            &profile,
             SandboxFilesystemAccess::ReadWrite,
             SandboxFilesystemProvenance::UserConfiguration,
         )?);
-        for metadata in SandboxFilesystemRule::protected_beneath(profile)? {
+        for metadata in SandboxFilesystemRule::protected_beneath(&profile)? {
             if !filesystem.iter().any(|old| old.path() == metadata.path()) {
                 filesystem.push(metadata);
             }
@@ -203,6 +206,29 @@ pub fn policy(
             .with_command_policy(conversation.commands().clone())
             .with_session_state(conversation.persistent(), conversation.snapshots())
     })
+}
+
+/// `path` with every link in the part of it that exists followed, and the part
+/// that does not yet exist joined on as written; as written where nothing of
+/// it resolves.
+fn resolved(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut existing = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(existing) {
+            return missing
+                .iter()
+                .rev()
+                .fold(real, |resolved, name| resolved.join(name));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name);
+                existing = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 /// What starts an agent's processes for one conversation.
