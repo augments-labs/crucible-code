@@ -13,7 +13,13 @@
 //! and a route with no yes, with what to ask. Only then is the hold taken from
 //! `content_use`, the child's sandbox policy built, and the process started.
 //! A probe and an account step are starts like a turn's and go through the
-//! same gates, each under a hold of its own.
+//! same gates, each under a hold of its own. An account step the dialect
+//! speaks over the program's own wire is bounded: a version or status within
+//! the time a launch has to prepare, a sign-in within five minutes.
+//!
+//! A profile directory is made private to the user, created owner-only where
+//! it is missing and closed to everyone else where it is not, before the
+//! process that keeps its sign-in there is started.
 //!
 //! The child's policy is the conversation's, widened in exactly two ways: its
 //! profile directory, where one is configured, is writable but for the
@@ -25,10 +31,12 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
-use crucible_execution::Failure;
+use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::{
-    Account, Control, Dialect, Discovery, Host, Launch, Reading, Refusal, Request, Shape,
+    Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Reading, Refusal, Request,
+    Shape,
 };
 use crucible_sandbox::{
     SandboxDomainPattern, SandboxDomainPolicy, SandboxFilesystemAccess,
@@ -61,6 +69,9 @@ pub enum Unlaunched {
     /// Its route is not one this build warns about.
     #[error("{0} is not an agent route this build knows, so nothing is started on it.")]
     Unknown(String),
+    /// Its profile directory could not be made private to the user.
+    #[error("the profile directory could not be made private to you: {0}")]
+    Profile(std::io::Error),
     /// The sandbox policy its child would run under is not a valid one.
     #[error("the sandbox policy for this agent could not be built: {0}")]
     Policy(#[from] SandboxPolicyError),
@@ -119,11 +130,12 @@ impl Agent {
         &self.discovery
     }
 
-    /// The shape every start of it is given.
-    fn shape<'a>(&'a self, resume: Option<&'a str>) -> Shape<'a> {
+    /// The shape every start of it in `workspace` is given.
+    fn shape<'a>(&'a self, resume: Option<&'a str>, workspace: &'a Path) -> Shape<'a> {
         Shape {
             resume,
             profile: self.profile.as_deref(),
+            workspace: Some(workspace),
         }
     }
 }
@@ -240,6 +252,34 @@ fn resolved(path: &Path) -> Result<PathBuf, SandboxPolicyError> {
     }
 }
 
+/// How long a spoken account step may take: a sign-in waits on the user and
+/// their browser, every other step on the agent alone.
+const fn within(step: Account) -> Duration {
+    match step {
+        Account::SignIn => SIGNING_IN,
+        Account::Version | Account::Status | Account::SignOut => PREPARING,
+    }
+}
+
+/// How long a sign-in waits for the user to finish it in their browser.
+const SIGNING_IN: Duration = Duration::from_mins(5);
+
+/// Makes `profile` a directory only its owner can enter, creating it, and any
+/// missing parent, that way.
+fn private(profile: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        builder.mode(0o700);
+        builder.create(profile)?;
+        std::fs::set_permissions(profile, std::fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    builder.create(profile)
+}
+
 /// What starts an agent's processes for one conversation.
 pub struct Launcher<'a> {
     /// The sandbox every child is prepared by.
@@ -286,33 +326,44 @@ impl<'a> Launcher<'a> {
         &self,
         agent: &Agent,
         control: &Control,
-        dialect: &dyn Dialect,
+        dialect: &mut dyn Dialect,
         resume: Option<&str>,
     ) -> Result<Host, Unlaunched> {
-        let request = dialect.request(agent.shape(resume));
+        let request = dialect.request(agent.shape(resume, self.conversation.working_directory()));
         self.start(agent, control, request, resume).await
     }
 
     /// Runs the account step `step` of `agent` to its end, and reads what it
-    /// said through `dialect`.
+    /// said through `dialect`: spoken over the program's own wire where the
+    /// dialect speaks it, with each sign-in link handed to `shown` as it
+    /// comes, else run as a command and read once it has ended.
     ///
     /// # Errors
     ///
     /// [`Unlaunched`] for each reason nothing was started, in which case the
     /// account is as unverified as it was before.
+    // Each is an input of its own to the step, and a value gathering them
+    // would be built at each caller and taken apart here.
+    #[allow(clippy::too_many_arguments)]
     pub async fn account(
         &self,
         agent: &Agent,
         control: &Control,
-        dialect: &dyn Dialect,
+        dialect: &mut dyn Dialect,
         step: Account,
+        shown: &dyn Fn(Text),
     ) -> Result<Reading, Unlaunched> {
-        let Some(request) = dialect.account(step, agent.shape(None)) else {
+        let shape = agent.shape(None, self.conversation.working_directory());
+        let Some(request) = dialect.account(step, shape) else {
             return Ok(Reading::Unreadable(Failure::new(
                 "this agent has no such step",
             )));
         };
+        let spoken = dialect.spoken(step);
         let host = self.start(agent, control, request, None).await?;
+        if let Some(frames) = spoken {
+            return Ok(host.speak(dialect, step, &frames, shown, within(step)).await);
+        }
         let ran = host.run().await;
         Ok(dialect.read(step, &ran))
     }
@@ -353,6 +404,15 @@ impl<'a> Launcher<'a> {
             Unheld::Unknown => Unlaunched::Unknown(row.route.to_owned()),
         })?;
         let policy = policy(self.conversation, agent.profile.as_deref(), row.reaches)?;
+        if let Some(profile) = &agent.profile {
+            // Made only where the child may write it, so that a profile the
+            // conversation protects is refused before anything is created.
+            let profile = resolved(profile)?;
+            if !policy.permits_path(&profile, SandboxFilesystemAccess::ReadWrite) {
+                return Err(SandboxPolicyError::InvalidPath.into());
+            }
+            private(&profile).map_err(Unlaunched::Profile)?;
+        }
         let mut launch = Launch::new(program, policy, held).asking(request);
         if let Some(profile) = &agent.profile {
             launch = launch.in_profile(profile.clone());

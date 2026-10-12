@@ -111,6 +111,8 @@ pub struct Shape<'a> {
     pub resume: Option<&'a str>,
     /// The profile directory, where the route has one.
     pub profile: Option<&'a Path>,
+    /// The directory the conversation works in, where a wire names it.
+    pub workspace: Option<&'a Path>,
 }
 
 /// What an account step's run came to.
@@ -135,6 +137,19 @@ pub enum Reading {
     Signed(Authentication),
     /// It said nothing the dialect could read.
     Unreadable(Failure),
+}
+
+/// What a frame heard during a spoken account step means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Told {
+    /// Send the program this frame.
+    Send(String),
+    /// A sign-in link, checked by the dialect, to show the user now.
+    Link(Text),
+    /// Nothing the step waits for.
+    Nothing,
+    /// The step is over, and this is what it found.
+    Done(Reading),
 }
 
 /// What a dialect makes of one frame.
@@ -163,16 +178,22 @@ pub enum Act {
 /// One vendor's wire, read and written.
 ///
 /// A dialect parses what its program says and composes what is said to it,
-/// and does nothing else: it starts nothing, keeps nothing past its turn and
+/// and does nothing else: it starts nothing, keeps nothing past its run and
 /// decides nothing about outcomes. Every step that would start a process
 /// returns a [`Request`] for the caller to start under a hold of its own.
+///
+/// An account step is either a command of its own, whose output is read once
+/// it has ended, or spoken over the program's own wire while it runs, where
+/// [`Dialect::spoken`] says how it begins.
 pub trait Dialect: Send {
     /// The command the program is looked up as, without any suffix the
     /// platform adds.
     fn program(&self) -> &'static str;
 
-    /// What a turn's process is started with.
-    fn request(&self, shape: Shape<'_>) -> Request;
+    /// What a turn's process is started with. A wire that names the session
+    /// to resume or the workspace in its frames keeps them from here for the
+    /// run.
+    fn request(&mut self, shape: Shape<'_>) -> Request;
 
     /// The frames that begin `turn`.
     ///
@@ -201,11 +222,30 @@ pub trait Dialect: Send {
     fn cancel(&mut self) -> Option<String>;
 
     /// What the account step `step` is started with, where the program has
-    /// one.
-    fn account(&self, step: Account, shape: Shape<'_>) -> Option<Request>;
+    /// one. A spoken step keeps what of `shape` its frames name, as
+    /// [`Dialect::request`] does.
+    fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request>;
 
     /// What `step`'s run reported.
     fn read(&self, step: Account, ran: &Ran) -> Reading;
+
+    /// The frames that begin `step` on the program's own wire, or nothing
+    /// where the step is a command of its own.
+    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
+        let _ = step;
+        None
+    }
+
+    /// What `frame`, heard during the spoken step `step`, means.
+    ///
+    /// # Errors
+    ///
+    /// A [`Failure`] where it is not a frame of this wire, which ends the step
+    /// unread.
+    fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
+        let _ = (step, frame);
+        Err(Failure::new("this agent speaks no account step"))
+    }
 }
 
 /// A decision settled in the table and on its way to the program.
@@ -408,6 +448,9 @@ pub struct Host {
     patience: Duration,
     /// How it finished, once it has.
     finished: Option<Finish>,
+    /// Whether finishing it has begun, which a drop before it is done cannot
+    /// take for an end.
+    stopping: bool,
 }
 
 impl fmt::Debug for Host {
@@ -422,8 +465,10 @@ impl fmt::Debug for Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
-        // A process that may still be running still takes the agent's place.
-        if matches!(self.finished, Some(Finish::Unreaped(_))) {
+        // A process that may still be running still takes the agent's place,
+        // and so does one whose stop was abandoned before it was confirmed.
+        let unfinished = self.stopping && self.finished.is_none();
+        if unfinished || matches!(self.finished, Some(Finish::Unreaped(_))) {
             self.control.shared.unstopped.store(true, Ordering::SeqCst);
         } else {
             self.control.shared.running.store(false, Ordering::SeqCst);
@@ -569,6 +614,7 @@ impl Host {
             session: None,
             patience,
             finished: None,
+            stopping: false,
         })
     }
 
@@ -967,6 +1013,7 @@ impl Host {
         // An agent reading its input to its end is told there is no more.
         self.written = None;
         if self.finished.is_none() {
+            self.stopping = true;
             self.finished = Some(Finish::after_async(self.process.as_mut(), grace).await);
         }
         match &self.finished {
@@ -1023,6 +1070,90 @@ impl Host {
             said,
             cut,
             muttered,
+        }
+    }
+
+    /// Speaks the account step `step` over the program's own wire, as
+    /// `dialect` begins and reads it, and reaps it.
+    ///
+    /// Its input stays open: `frames` are written, and each line heard is read
+    /// through [`Dialect::told`], which says what to send back, a sign-in link
+    /// to hand `shown` at once, or that the step is over. A step not over
+    /// within `within` is stopped, and reads unreadable with what it changed
+    /// unknown; so does one whose stream ends, cannot be read or carries a
+    /// carriage return. Its input is then closed and its process given
+    /// [`STOP_GRACE`] to exit, or none where the step did not end as asked,
+    /// and stopped where it does not.
+    // Each is an input of its own to the step, and a value gathering them
+    // would be built at its one caller and taken apart here.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn speak(
+        mut self,
+        dialect: &mut dyn Dialect,
+        step: Account,
+        frames: &[String],
+        shown: &dyn Fn(Text),
+        within: Duration,
+    ) -> Reading {
+        let reading = match self.say(frames).await {
+            Ok(()) => self.listened(dialect, step, shown, within).await,
+            Err(lost) => Reading::Unreadable(Failure::new(&lost)),
+        };
+        let grace = match reading {
+            Reading::Unreadable(_) => Duration::ZERO,
+            Reading::Version(_) | Reading::Signed(_) => STOP_GRACE,
+        };
+        self.finish(grace).await;
+        match reading {
+            Reading::Version(version) => Reading::Version(self.shown(&version)),
+            Reading::Unreadable(failure) => {
+                Reading::Unreadable(Failure::new(self.shown(failure.reason()).as_str()))
+            }
+            signed @ Reading::Signed(_) => signed,
+        }
+    }
+
+    /// Reads a spoken step until it is over or `within` has passed.
+    async fn listened(
+        &mut self,
+        dialect: &mut dyn Dialect,
+        step: Account,
+        shown: &dyn Fn(Text),
+        within: Duration,
+    ) -> Reading {
+        let unread = |why: &str| Reading::Unreadable(Failure::new(why));
+        let Some(deadline) = Instant::now().checked_add(within) else {
+            return unread("the step was given longer than can be waited");
+        };
+        loop {
+            let frame = tokio::select! {
+                frame = self.frames.next_frame_async() => frame,
+                () = tokio::time::sleep_until(deadline) => {
+                    return unread(
+                        "the agent did not finish the step in time, so it was stopped, and \
+                         what it changed is unknown",
+                    );
+                }
+            };
+            let line = match frame {
+                None => return unread("the agent stopped before it finished the step"),
+                Some(Err(problem)) => return unread(&problem.to_string()),
+                Some(Ok(line)) => line,
+            };
+            if line.contains('\r') {
+                return unread("the agent ended a line with a carriage return");
+            }
+            match dialect.told(step, &line) {
+                Ok(Told::Send(frame)) => {
+                    if let Err(lost) = self.say(&[frame]).await {
+                        return unread(&lost);
+                    }
+                }
+                Ok(Told::Link(address)) => shown(self.shown(&address)),
+                Ok(Told::Nothing) => {}
+                Ok(Told::Done(reading)) => return reading,
+                Err(failure) => return Reading::Unreadable(failure),
+            }
         }
     }
 
