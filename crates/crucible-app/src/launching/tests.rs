@@ -261,6 +261,33 @@ fn a_profile_inside_protected_metadata_is_not_opened() {
     );
 }
 
+/// A profile that is a link leading nowhere yet is refused, since what it
+/// leads to can be made later under protected metadata.
+#[cfg(unix)]
+#[test]
+fn a_profile_that_is_a_dangling_link_is_not_opened() {
+    let sample = Sample::new("launch-dangling-link");
+    fs::create_dir_all(sample.root().join(".git")).expect("a repository");
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let beside = Sample::new("launch-dangling-link-beside");
+    let named = beside.root().join("profile");
+    let target = fs::canonicalize(sample.root().join(".git"))
+        .expect("resolved")
+        .join("profile");
+    std::os::unix::fs::symlink(&target, &named).expect("a link");
+
+    let child = policy(&conversation, Some(&named), &[]);
+
+    for path in [&named, &target] {
+        assert!(
+            child.as_ref().map_or(true, |child| !child
+                .permits_path(&path.join("auth.json"), SandboxFilesystemAccess::ReadWrite)),
+            "{} was made writable",
+            path.display()
+        );
+    }
+}
+
 /// A profile named through a link into protected metadata is refused, as the
 /// directory the link leads to would be.
 #[cfg(unix)]

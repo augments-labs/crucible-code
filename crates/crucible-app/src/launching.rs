@@ -149,8 +149,8 @@ pub fn discover(executable: &str, lookup: impl Fn(&str) -> Option<OsString>) -> 
 ///
 /// # Errors
 ///
-/// A [`SandboxPolicyError`] where the profile is not an absolute path, lies
-/// under a path the conversation protects, or a host is not one a policy can
+/// A [`SandboxPolicyError`] where the profile is not an absolute path, cannot
+/// be followed where it exists, lies under a path the conversation protects, or a host is not one a policy can
 /// name.
 pub fn policy(
     conversation: &SandboxPolicy,
@@ -161,7 +161,7 @@ pub fn policy(
     if let Some(profile) = profile {
         // Named where it is: a rule says where a sandbox may write, and one
         // naming a link would open whatever the link leads to.
-        let profile = resolved(profile);
+        let profile = resolved(profile)?;
         filesystem.push(SandboxFilesystemRule::new(
             &profile,
             SandboxFilesystemAccess::ReadWrite,
@@ -211,22 +211,31 @@ pub fn policy(
 /// `path` with every link in the part of it that exists followed, and the part
 /// that does not yet exist joined on as written; as written where nothing of
 /// it resolves.
-fn resolved(path: &Path) -> PathBuf {
+///
+/// # Errors
+///
+/// [`SandboxPolicyError::InvalidPath`] where a part of it exists and cannot be
+/// followed, as a link leading nowhere yet: what it leads to could be made
+/// later, under metadata a rule naming the link would not see.
+fn resolved(path: &Path) -> Result<PathBuf, SandboxPolicyError> {
     let mut missing = Vec::new();
     let mut existing = path;
     loop {
         if let Ok(real) = std::fs::canonicalize(existing) {
-            return missing
+            return Ok(missing
                 .iter()
                 .rev()
-                .fold(real, |resolved, name| resolved.join(name));
+                .fold(real, |resolved, name| resolved.join(name)));
+        }
+        if std::fs::symlink_metadata(existing).is_ok() {
+            return Err(SandboxPolicyError::InvalidPath);
         }
         match (existing.parent(), existing.file_name()) {
             (Some(parent), Some(name)) => {
                 missing.push(name);
                 existing = parent;
             }
-            _ => return path.to_path_buf(),
+            _ => return Ok(path.to_path_buf()),
         }
     }
 }
