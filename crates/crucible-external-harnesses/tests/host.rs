@@ -8,10 +8,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_execution::{Confinement, Event, Outcome, SessionRef, Sink, TurnRequest};
 use crucible_external_harnesses::conformance::{self, CASES, Set};
-use crucible_external_harnesses::fake_peer::{self, EXHAUSTED, Plain, Reply, Script, UNWRITABLE};
+use crucible_external_harnesses::fake_peer::{
+    self, EXHAUSTED, Plain, Reply, Script, Stream, UNWRITABLE,
+};
 use crucible_external_harnesses::{
-    Account, Control, Dialect, Discovery, Held, Host, Launch, Ran, Refusal, Request, STOP_GRACE,
-    Shape,
+    Account, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Ran, Refusal, Request,
+    STOP_GRACE, Shape,
 };
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
@@ -590,4 +592,238 @@ async fn a_session_name_that_reads_as_an_option_is_not_kept() {
         "{:?}",
         sink.events()
     );
+}
+
+/// Standard error is kept to its first bytes, so a value the agent writes
+/// across that bound is cut there; the part before the cut is withheld too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_cut_where_standard_error_is_bounded_shows_none_of_itself() {
+    let at = Owned::new("muttered-cut");
+    // Eight bytes of the value fit beneath the bound the host keeps.
+    let reply = Reply::new()
+        .hear(1)
+        .flood(Stream::Err, 8 * 1024 - 8)
+        .mutter(SENTINEL)
+        .pause(Duration::from_millis(500))
+        .exit(3);
+    let program = found(&at.0, "plain", &Script::of([reply]));
+    let control = Control::new().expect("a control");
+    let request = Request {
+        arguments: Vec::new(),
+        environment: vec![("PLAIN_TOKEN".to_owned(), SENTINEL.to_owned())],
+    };
+    let mut host = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, request),
+    )
+    .await
+    .expect("started");
+    let sink = Kept::default();
+
+    let failure = host
+        .turn(
+            &mut Plain,
+            &SessionRef::new("one").expect("a name"),
+            &TurnRequest::new(TurnId::FIRST, "go"),
+            &sink,
+        )
+        .await
+        .expect_err("it crashed");
+    host.stop(STOP_GRACE).await;
+
+    let kept = sink
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            Event::Process(fault) => Some(fault.seen().as_str()),
+            Event::Failed(failure) => Some(failure.reason().as_str()),
+            _ => None,
+        })
+        .chain([failure.reason().as_str()])
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(kept.contains("further bytes were dropped"), "{kept}");
+    assert!(!kept.contains("sentinel"), "{kept}");
+}
+
+/// A sandbox that rewrites the program while it prepares, the window the
+/// check made at selection cannot see.
+struct Tampering {
+    inner: Arc<dyn SandboxService>,
+    program: PathBuf,
+}
+
+impl SandboxService for Tampering {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.inner.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            #[allow(clippy::expect_used)]
+            {
+                let mut bytes = fs::read(&self.program).expect("readable");
+                bytes.push(0);
+                fs::write(&self.program, bytes).expect("rewritten");
+            }
+            self.inner.prepare(request).await
+        })
+    }
+}
+
+/// The program is run as it was found or not at all, however long the sandbox
+/// took to prepare it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_program_changed_while_its_sandbox_was_prepared_is_not_started() {
+    let at = Owned::new("tampered");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let path = program.path().to_path_buf();
+    let control = Control::new().expect("a control");
+
+    let refused = Host::launch(
+        Arc::new(Tampering {
+            inner: local(),
+            program: path,
+        }),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await
+    .expect_err("changed");
+
+    assert!(matches!(refused, Refusal::Changed(_)), "{refused}");
+    assert_eq!(fake_peer::played(&at.0), 0);
+}
+
+/// A stop asked for before a turn begins is the turn's to heed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_asked_for_as_a_turn_begins_stops_it() {
+    let at = Owned::new("early-stop");
+    let reply = Reply::new().hear(2).say("cancelled");
+    let program = found(&at.0, "plain", &Script::of([reply]));
+    let control = Control::new().expect("a control");
+    let mut host = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await
+    .expect("started");
+    let sink = Kept::default();
+
+    control.interrupt();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(20),
+        host.turn(
+            &mut Plain,
+            &SessionRef::new("one").expect("a name"),
+            &TurnRequest::new(TurnId::FIRST, "go"),
+            &sink,
+        ),
+    )
+    .await;
+    host.stop(STOP_GRACE).await;
+
+    assert!(matches!(outcome, Ok(Ok(Outcome::Cancelled))), "{outcome:?}");
+}
+
+/// A turn whose caller stopped waiting leaves no question open that an
+/// answer could still be given to.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_given_up_on_leaves_no_question_open() {
+    let at = Owned::new("given-up");
+    let reply = Reply::new().hear(1).say("ask q read the notes").hear_out();
+    let program = found(&at.0, "plain", &Script::of([reply]));
+    let control = Control::new().expect("a control");
+    let mut host = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await
+    .expect("started");
+    let sink = Kept::default();
+    let session = SessionRef::new("one").expect("a name");
+    let turn = TurnRequest::new(TurnId::FIRST, "go");
+    let mut dialect = Plain;
+    {
+        let turning = host.turn(&mut dialect, &session, &turn, &sink);
+        tokio::pin!(turning);
+        let asked = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                tokio::select! {
+                    outcome = &mut turning => panic!("the turn ended first: {outcome:?}"),
+                    () = tokio::time::sleep(Duration::from_millis(20)) => {
+                        if !control.open().is_empty() {
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+        .await;
+        assert!(asked.is_ok(), "the question was raised");
+    }
+
+    let open = control.open();
+    host.stop(STOP_GRACE).await;
+
+    assert!(open.is_empty(), "{open:?}");
+}
+
+/// A sandbox that does not prepare the agent and never says what it could
+/// have held it in.
+struct Mute;
+
+impl SandboxService for Mute {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(std::future::pending())
+    }
+
+    fn prepare(
+        &self,
+        _request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async {
+            Err(SandboxError::BackendUnavailable {
+                reason: "not now".into(),
+            })
+        })
+    }
+}
+
+/// Asking a sandbox that failed what it could have done is bounded like
+/// preparing was: a launch refuses rather than waiting on it for ever.
+#[tokio::test(start_paused = true)]
+async fn a_sandbox_that_never_says_what_it_could_hold_refuses_in_time() {
+    let at = Owned::new("mute");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+    let required = Launch::new(program, policy(&at.0, true), Held::granted(ROUTE));
+
+    let refused = tokio::time::timeout(
+        PREPARING.saturating_mul(3),
+        Host::launch(Arc::new(Mute), Handle::current(), &control, required),
+    )
+    .await
+    .expect("refused in time")
+    .expect_err("not prepared");
+
+    assert!(
+        matches!(refused, Refusal::Unconfined(Confinement::Unsupported)),
+        "{refused}"
+    );
+    assert_eq!(fake_peer::played(&at.0), 0);
 }

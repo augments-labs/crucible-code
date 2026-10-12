@@ -14,12 +14,13 @@
 //!
 //! A turn holds the run while it is under way, and gives it back however it
 //! ends. A turn whose caller stopped waiting may have left the program
-//! mid-answer, so its run takes no further turn: the next prompt stops it and
-//! is refused. An interrupt reaches only a turn under way, and one rung as a
-//! turn ends is forgotten when the run is given back. Closing asks a turn
-//! under way to stop and waits, for at most [`CLOSING`], until it gives the
-//! run back, then stops the run: it returns once nothing the run started is
-//! still running, or fails saying so.
+//! mid-answer, and one whose run ended left nothing to answer, so neither run
+//! takes a further turn: the next prompt stops it and is refused. An
+//! interrupt reaches only a turn under way, and one rung as a turn ends is
+//! forgotten when the run is given back. Closing asks a turn under way to stop
+//! and waits, for at most [`CLOSING`], until it gives the run back, then holds
+//! the run while it stops it, so that every close returns once nothing the run
+//! started is still running, or fails saying so.
 //!
 //! Confinement is claimed from what the sandbox reported when the run was
 //! started and from nothing else.
@@ -60,8 +61,9 @@ enum Slot {
         /// Whether closing waits for it.
         closing: bool,
     },
-    /// Given back by a turn that did not finish, or while closing; it takes
-    /// no further turn and is stopped by whatever reaches it next.
+    /// Given back by a turn that did not finish or whose run ended, or while
+    /// closing; it takes no further turn and is stopped by whatever reaches
+    /// it next.
     Spent(Running),
     /// Stopped.
     Closed,
@@ -151,9 +153,9 @@ impl Drop for Away<'_> {
         let closing = matches!(*slot, Slot::Away { closing: true });
         *slot = match self.running.take() {
             None => Slot::Closed,
-            Some(running) if self.finished && !closing => {
+            Some(running) if self.finished && !closing && !running.host.ended() => {
                 // A stop rung as the turn ended has nothing left to stop.
-                self.external.control.rest();
+                running.host.rest();
                 Slot::Idle(running)
             }
             Some(running) => Slot::Spent(running),
@@ -217,7 +219,7 @@ impl Backend for External {
                     running.host.stop(STOP_GRACE).await;
                 }
                 return Err(Failure::new(
-                    "this agent's last turn was left unfinished, so its run was stopped",
+                    "this agent's run cannot take another turn since its last one, so it was stopped",
                 )
                 .into());
             }
@@ -270,11 +272,13 @@ impl Backend for External {
                 returned.as_mut().enable();
                 let found = {
                     let mut slot = self.slot();
-                    match std::mem::replace(&mut *slot, Slot::Closed) {
+                    match std::mem::replace(&mut *slot, Slot::Away { closing: true }) {
                         Slot::Idle(running) | Slot::Spent(running) => Some(running),
-                        Slot::Closed => return Ok(()),
+                        Slot::Closed => {
+                            *slot = Slot::Closed;
+                            return Ok(());
+                        }
                         Slot::Away { closing } => {
-                            *slot = Slot::Away { closing: true };
                             if !closing {
                                 self.control.interrupt();
                             }
@@ -283,7 +287,15 @@ impl Backend for External {
                     }
                 };
                 if let Some(running) = found {
-                    running.host.stop(STOP_GRACE).await;
+                    // Held while it stops, so that another close waits for it.
+                    let mut away = Away {
+                        external: self,
+                        running: Some(running),
+                        finished: false,
+                    };
+                    if let Some(running) = away.running.take() {
+                        running.host.stop(STOP_GRACE).await;
+                    }
                     return Ok(());
                 }
                 if tokio::time::timeout_at(deadline, returned).await.is_err() {

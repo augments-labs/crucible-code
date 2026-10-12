@@ -6,7 +6,7 @@ use crucible_execution::{
     Sink, Stale, TurnRequest,
 };
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
-use crucible_external_harnesses::{Control, Discovery, Held, Host, Launch};
+use crucible_external_harnesses::{CANCEL_GRACE, Control, Discovery, Held, Host, Launch};
 use crucible_sandbox::{
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
     SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
@@ -326,4 +326,89 @@ async fn a_decision_for_a_run_that_has_restarted_is_refused() {
         "{refused:?}"
     );
     second.close().await.expect("closed");
+}
+
+/// A stop asked for while no turn runs has nothing to stop, and the next turn
+/// runs to its end.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_interrupt_between_turns_leaves_the_next_one_alone() {
+    let sample = Sample::new("external-idle-interrupt");
+    // Longer than a stop is given to be heeded, so a turn asked to stop
+    // would end cancelled before it answers.
+    let peer = fake_peer::install(
+        &sample.root(),
+        "plain",
+        &Script::of([Reply::new()
+            .hear(1)
+            .pause(CANCEL_GRACE.saturating_add(std::time::Duration::from_secs(1)))
+            .say("end")]),
+    )
+    .expect("the fake peer is built");
+    let control = Control::new().expect("a control");
+    let backend = started(&peer, &control).await;
+    let kept = Kept::default();
+
+    backend.interrupt().expect("interruptible");
+    let ended = backend.prompt(turn("go"), &kept).await;
+    backend.close().await.expect("closed");
+
+    assert!(matches!(ended, Ok(Outcome::Answered)), "{ended:?}");
+}
+
+/// Two closes return only once the run has stopped, whichever of them
+/// stopped it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_close_waits_for_the_first_to_stop_the_run() {
+    let sample = Sample::new("external-closes");
+    // The program outlives its input, so stopping it takes the stop's grace.
+    let peer = fake_peer::install(
+        &sample.root(),
+        "plain",
+        &Script::of([Reply::new()
+            .hear(1)
+            .say("end")
+            .pause(std::time::Duration::from_mins(1))]),
+    )
+    .expect("the fake peer is built");
+    let control = Control::new().expect("a control");
+    let backend = started(&peer, &control).await;
+    let kept = Kept::default();
+    backend.prompt(turn("go"), &kept).await.expect("answered");
+
+    let first = backend.close();
+    let second = backend.close();
+    tokio::pin!(first, second);
+    let (earlier, closed) = tokio::select! {
+        biased;
+        closed = &mut first => ("first", [closed, second.await]),
+        closed = &mut second => ("second", [closed, first.await]),
+    };
+
+    assert_eq!(earlier, "first", "{closed:?}");
+    assert!(closed.iter().all(Result::is_ok), "{closed:?}");
+}
+
+/// A turn that ended its run, as one whose stream was lost does, leaves
+/// nothing for the next to run on: that one is refused before it starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_after_the_run_ended_is_refused_before_it_starts() {
+    let sample = Sample::new("external-ended");
+    let peer = fake_peer::install(
+        &sample.root(),
+        "plain",
+        &Script::of([Reply::new().hear(1).exit(9)]),
+    )
+    .expect("the fake peer is built");
+    let control = Control::new().expect("a control");
+    let backend = started(&peer, &control).await;
+    let first = Kept::default();
+    let lost = backend.prompt(turn("go"), &first).await;
+
+    let second = Kept::default();
+    let again = backend.prompt(turn("again"), &second).await;
+    backend.close().await.expect("closed");
+
+    assert!(lost.is_err(), "{lost:?}");
+    assert!(again.is_err(), "{again:?}");
+    assert!(second.events().is_empty(), "{:?}", second.events());
 }

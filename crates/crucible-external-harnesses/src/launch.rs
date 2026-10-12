@@ -41,13 +41,15 @@ pub const RESUME_BYTES: usize = 256;
 
 /// Whether `name` can be kept as a program's name for its session and handed
 /// back to it as an argument: not empty, no longer than [`RESUME_BYTES`], not
-/// read as an option, and with nothing a terminal or a line reader would act
-/// on.
+/// read as an option, and made only of ASCII letters, digits and `-_.:`, so
+/// that nothing a shell, a terminal or a line reader acts on is in it.
 pub(crate) fn nameable(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= RESUME_BYTES
         && !name.starts_with('-')
-        && !name.chars().any(char::is_control)
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:".contains(&byte))
 }
 
 /// The content-use hold for one route, answered yes.

@@ -428,9 +428,10 @@ section "every vendor client is built where its hold was decided"
 # said yes to, and launching.rs is the one place an installed agent is started,
 # under that hold; conformance.rs launches the fake peer, which reaches no
 # vendor, and compiles only under the proof feature; renewal.rs builds the
-# client sign-ins and renewals go through, handed the application's hold; release.rs lends the client
-# provider turns and web posts share only under a hold its caller hands in,
-# and builds the release check's own, which reaches GitHub alone; command.rs
+# client sign-ins and renewals go through, handed the application's hold;
+# release.rs lends the client provider turns and web posts share only under a
+# hold its caller hands in, and builds the release check's own, which reaches
+# GitHub alone; command.rs
 # builds the one `crucible update` asks a loopback release source through,
 # which reaches this machine alone and carries nothing from a session;
 # transport/http.rs builds one only inside its test module. One more file is

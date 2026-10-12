@@ -65,3 +65,28 @@ fn a_launch_printed_for_debugging_shows_no_environment_value() {
     assert!(printed.contains("PLAIN_TOKEN"), "{printed}");
     assert!(!printed.contains("sentinel-c0ffee-5ec7e7"), "{printed}");
 }
+
+/// A name the program gave its session is handed back on its command line,
+/// so only the letters a session name is made of are kept: a space, a shell
+/// word or a character that reorders what a terminal shows is refused.
+#[test]
+fn a_session_name_is_kept_only_as_a_plain_word() {
+    for name in [
+        "one two",
+        "a/b",
+        "$(id)",
+        "a;b",
+        "one\u{202e}owt",
+        "one\u{200b}two",
+        "é",
+    ] {
+        assert!(!crate::launch::nameable(name), "{name:?}");
+    }
+    for name in [
+        "a-session-1",
+        "0193a5c2-7e1f-7c3b-9d1e-2f4a5b6c7d8e",
+        "run_2.b:c",
+    ] {
+        assert!(crate::launch::nameable(name), "{name:?}");
+    }
+}

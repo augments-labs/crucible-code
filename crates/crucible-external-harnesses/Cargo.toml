@@ -58,11 +58,12 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
 # `answered!`, the sandbox the tests launch the peer under, and a runtime with
 # workers for them. The sandbox keeps its state per checkout under test, so two
-# checkouts testing at once keep apart.
+# checkouts testing at once keep apart. `test-util` is the paused clock a
+# bound on a wait that never ends is asserted under.
 [dev-dependencies]
 crucible-runtime = { workspace = true, features = ["proof"] }
 crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 
 [lints]
 workspace = true

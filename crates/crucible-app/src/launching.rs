@@ -16,10 +16,11 @@
 //! same gates, each under a hold of its own.
 //!
 //! The child's policy is the conversation's, widened in exactly two ways: its
-//! profile directory, where one is configured, is writable, and the hosts its
-//! row names are reachable. Every other rule, the protected metadata included,
-//! stays as the conversation has it, so a profile directory inside one is
-//! refused rather than opened.
+//! profile directory, where one is configured, is writable but for the
+//! metadata protected beneath any writable root, and the hosts its row names
+//! are reachable. Every other rule, the protected metadata included, stays as
+//! the conversation has it, so a profile directory inside one is refused
+//! rather than opened.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

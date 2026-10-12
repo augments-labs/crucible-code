@@ -311,8 +311,9 @@ impl Control {
 
     /// Forgets a stop asked for after the turn it was meant for had ended, so
     /// that it does not stop the next one. A turn rests as it ends and a run
-    /// as it starts; a holder of runs rests one it is given back.
-    pub fn rest(&self) {
+    /// as it starts; a holder of runs rests one it is given back, through
+    /// [`Host::rest`].
+    pub(crate) fn rest(&self) {
         self.shared.interrupted.store(false, Ordering::SeqCst);
     }
 
@@ -486,13 +487,17 @@ impl Host {
             ) if required => {
                 // A sandbox that could hold the agent in fully and did not
                 // prepare it failed; it is not the most this agent can have.
-                return Err(match service.probe().await {
-                    Ok((_, capabilities)) => match least(&capabilities) {
-                        Confinement::HardEnforced => problem.into(),
-                        claim => Refusal::Unconfined(claim),
+                // Bounded as preparing was: a sandbox that does not say is
+                // taken to hold nothing.
+                return Err(
+                    match tokio::time::timeout(PREPARING, service.probe()).await {
+                        Ok(Ok((_, capabilities))) => match least(&capabilities) {
+                            Confinement::HardEnforced => problem.into(),
+                            claim => Refusal::Unconfined(claim),
+                        },
+                        Ok(Err(_)) | Err(_) => Refusal::Unconfined(Confinement::Unsupported),
                     },
-                    Err(_) => Refusal::Unconfined(Confinement::Unsupported),
-                });
+                );
             }
             Err(problem) => return Err(problem.into()),
         };
@@ -557,6 +562,18 @@ impl Host {
     #[must_use]
     pub const fn control(&self) -> &Control {
         &self.control
+    }
+
+    /// Whether the run has ended, so that it takes no further turn.
+    #[must_use]
+    pub const fn ended(&self) -> bool {
+        self.finished.is_some()
+    }
+
+    /// Forgets a stop asked for after the turn it was meant for had ended,
+    /// for a holder this run was given back to between turns.
+    pub fn rest(&self) {
+        self.control.rest();
     }
 
     /// The program's own name for the session, once it has said one.
@@ -626,7 +643,7 @@ impl Host {
             }
             Ending::Lost(seen) => {
                 let ended = self.finish(STOP_GRACE).await;
-                let tail = self.muttered.text();
+                let tail = self.aside();
                 let mut account = format!("{seen}; {ended}");
                 if !tail.trim().is_empty() {
                     account.push_str("; it said: ");
@@ -898,6 +915,29 @@ impl Host {
         hidden(text, &self.withheld)
     }
 
+    /// What the program wrote to standard error, as it may be kept.
+    ///
+    /// Only its beginning is kept, and a footnote says how much followed; the
+    /// text before that footnote was cut, and can end partway through a
+    /// withheld value. A footnote the program wrote itself only withholds
+    /// more.
+    fn aside(&self) -> String {
+        let said = self.muttered.text();
+        let Some((kept, footnote)) = said
+            .rsplit_once("\n[")
+            .filter(|(_, footnote)| footnote.contains(" further bytes were dropped: "))
+        else {
+            return self.shown(&Text::new(&said)).as_str().to_owned();
+        };
+        // Clipped one byte short of a character past what is kept, which
+        // keeps all of it and says it was cut.
+        let mut over = kept.to_owned();
+        over.push(' ');
+        let shown = self.shown(&Text::clipped(&over, kept.len()));
+        let footnote = self.shown(&Text::new(footnote));
+        format!("{}\n[{}", shown.as_str(), footnote.as_str())
+    }
+
     /// Closes the process's input, waits `grace` for it to end and stops it
     /// where it does not, once; and says how it ended.
     async fn finish(&mut self, grace: Duration) -> String {
@@ -951,10 +991,7 @@ impl Host {
             Some(Finish::Exited(status)) => status.code(),
             _ => None,
         };
-        let muttered = self
-            .shown(&Text::new(&self.muttered.text()))
-            .as_str()
-            .to_owned();
+        let muttered = self.aside();
         Ran {
             code,
             said,

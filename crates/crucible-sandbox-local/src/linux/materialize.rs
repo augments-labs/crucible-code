@@ -9,7 +9,7 @@ use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use crucible_sandbox::{
-    SandboxError, SandboxFilesystemAccess, SandboxManifestEntry, SandboxRequest,
+    PROTECTED_METADATA, SandboxError, SandboxFilesystemAccess, SandboxManifestEntry, SandboxRequest,
 };
 
 use super::super::process::Stage;
@@ -320,10 +320,9 @@ fn validate_mount_tree(
 }
 
 fn protected_name(name: &OsStr) -> bool {
-    matches!(
-        name.to_str(),
-        Some(".git" | ".agents" | ".codex" | ".crucible")
-    )
+    PROTECTED_METADATA
+        .iter()
+        .any(|protected| name == OsStr::new(protected))
 }
 
 fn create_private_tree(path: &Path) -> std::io::Result<()> {
