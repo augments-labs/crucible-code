@@ -408,6 +408,42 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
     assert!(matches!(problem, AppError::SubscriptionAddress { .. }));
 }
 
+#[test]
+fn a_provider_whose_access_names_an_agent_is_refused_and_no_key_answers_for_it() {
+    let sample = Sample::new("agent-construction");
+    let keys = sample.stored("anthropic");
+    let settings = sample.user(
+        r#"{"providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "mine"}}},
+            "externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}}"#,
+    );
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+
+    let http = HttpTurns::unavailable();
+    let problem = provider(
+        Some(serving("anthropic")),
+        NO_MODEL_CHOSEN,
+        ProviderAuth {
+            settings: &settings,
+            from: &|_| Some("an-exported-key".to_owned()),
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
+        &http,
+    )
+    .expect_err("an agent this build cannot start");
+
+    let said = problem.to_string();
+    assert!(
+        matches!(problem, AppError::ExternalAgent { .. }),
+        "{problem:?}"
+    );
+    assert_eq!(
+        said,
+        "providers.anthropic.access names the agent mine, and this build cannot start an \
+         installed agent; remove access to reach anthropic directly"
+    );
+}
+
 /// What `provider` answers for openai on a machine holding `keys`, with
 /// `settings` written and `exported` the only variable set.
 fn openai_with(

@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use crucible_agents::{
     AgentBuilder, AgentContext, Decision, InputGuardrail, Model, OutputGuardrail, Undecided,
 };
+use crucible_app::access::AccessError;
 use crucible_app::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Resolved, Served, Serving,
     Sourcing, providers,
@@ -915,6 +916,35 @@ fn a_logout_with_nothing_to_fall_back_to_leaves_nobody_asked() -> Result<(), Fai
         "a model belongs to a vendor"
     );
     assert_eq!(conversation.settled().serving(), "none");
+    let refused = turn(&mut conversation, "anybody there")
+        .err()
+        .map(|problem| problem.to_string())
+        .unwrap_or_default();
+    assert!(refused.contains(NOTHING_TO_ASK), "{refused}");
+    Ok(())
+}
+
+#[test]
+fn a_logout_leaving_only_providers_their_access_refuses_says_nothing_can_be_asked()
+-> Result<(), Failed> {
+    let tree = Tree::new("logout-access-refused")?;
+    let mut desk = Desk::new(&tree, &[])?;
+    desk.serving = Box::new(|one: Served, _| {
+        Err(AppError::Access(AccessError::NotSignedIn {
+            provider: one.name.into(),
+        }))
+    });
+    desk.logins.keep("anthropic", "a-key-no-vendor-issued")?;
+    let mut conversation = conversing(
+        &tree,
+        Script::named("anthropic"),
+        &Guard::Nothing,
+        Some("anthropic"),
+    )?;
+
+    let left = runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+
+    assert!(matches!(left, LoggedOut::SignedOut { .. }), "{left:?}");
     let refused = turn(&mut conversation, "anybody there")
         .err()
         .map(|problem| problem.to_string())

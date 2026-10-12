@@ -37,7 +37,7 @@ use crucible_auth::{Inventory, Store};
 use crucible_client_api::doctor::{Check, Report, Status};
 use crucible_client_api::inspection::Inspection;
 use crucible_client_api::{Name, Text};
-use crucible_config::{CheckReport, ConfigError, FileState, Home, Settings};
+use crucible_config::{Access, CheckReport, ConfigError, FileState, Home, Settings};
 use crucible_extension::{ExtensionDecision, ExtensionUntrusted, Extensions};
 use crucible_sandbox::SandboxPolicy;
 use crucible_sandbox_local::{LocalSandbox, ObservedVersion};
@@ -550,9 +550,18 @@ fn provided(
             .map_or("its API key variable", |one| {
                 crate::access::variable(one, settings)
             });
+        // Told only the way its access chose, where it chose one.
+        let remedy = match settings.access(named) {
+            None => format!("use /login, or set {variable}"),
+            Some(Access::Subscription) => "use /login".to_owned(),
+            Some(Access::ApiKey) => format!("set {variable}, or store one with /login"),
+            Some(Access::ExternalAgent { .. }) => format!(
+                "this build cannot start an installed agent; remove `providers.{named}.access`"
+            ),
+        };
         return Finding::failed(
             format!("the configuration chooses {named}, and no credential for it was found"),
-            format!("use /login, or set {variable}"),
+            remedy,
         );
     }
     if providers::offered(registry).any(usable) {

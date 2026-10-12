@@ -10,7 +10,7 @@
 mod tests;
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use crucible_types::shown::{Escaping, escaped};
 use serde_core::Serialize as _;
@@ -505,7 +505,12 @@ impl Reader<'_> {
 
             if let Some(found) = record.get("command").and_then(Value::as_str) {
                 let program = Path::new(found);
-                if !program.is_absolute() && program.components().count() > 1 {
+                // A bare name is one name, and a name a directory cannot be.
+                let bare = matches!(
+                    program.components().collect::<Vec<_>>().as_slice(),
+                    [Component::Normal(_)]
+                ) && !found.ends_with(std::path::is_separator);
+                if !program.is_absolute() && !bare {
                     return Err(ConfigError::Unrooted {
                         file: self.file.into(),
                         path: format!("mcp.{SERVERS}.{name}.command").into(),
@@ -603,7 +608,12 @@ impl Reader<'_> {
 
             if let Some(found) = record.get("executable").and_then(Value::as_str) {
                 let program = Path::new(found);
-                if !program.is_absolute() && program.components().count() > 1 {
+                // A bare name is one name, and a name a directory cannot be.
+                let bare = matches!(
+                    program.components().collect::<Vec<_>>().as_slice(),
+                    [Component::Normal(_)]
+                ) && !found.ends_with(std::path::is_separator);
+                if !program.is_absolute() && !bare {
                     return Err(ConfigError::Unrooted {
                         file: self.file.into(),
                         path: format!("externalAgents.{name}.executable").into(),

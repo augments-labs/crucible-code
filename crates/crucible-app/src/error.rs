@@ -138,7 +138,8 @@ pub enum AppError {
     /// The provider is reached through an installed agent, and this build
     /// does not start one in place of a provider.
     #[error(
-        "providers.{provider}.access names the agent {instance}, and this build cannot start an          installed agent; remove access to reach {provider} directly"
+        "providers.{provider}.access names the agent {instance}, and this build cannot start an \
+         installed agent; remove access to reach {provider} directly"
     )]
     ExternalAgent {
         /// The provider.

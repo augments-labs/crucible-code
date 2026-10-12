@@ -14,14 +14,14 @@
 //! this module and none decides the order on its own, so none can say a
 //! provider is reached one way while requests go another. What it hands back is
 //! a [`Route`], which names where a credential is and never holds one.
-//! Construction alone asks for a [`Settled`] route, which carries the
-//! variable's key where the route reads one: the variable is read once, while
-//! the route is decided, so a request is signed with the value the decision
-//! was made on.
+//! Construction alone asks for a settled route, which carries the variable's
+//! key where the route reads one: the variable is read once, while the route
+//! is decided, so a request is signed with the value the decision was made on.
 //!
-//! This is also the one place that reads which variable a provider's key is
+//! This is also the one place that says which variable a provider's key is
 //! taken from, so a setting that renames it is honoured everywhere a key is
-//! looked for, or nowhere.
+//! looked for, or nowhere. `/login` asks the configuration only whether one is
+//! renamed, to say so.
 
 use crucible_auth::{Held, Kind};
 use crucible_config::{Access, Driver, Settings};
@@ -71,13 +71,28 @@ pub enum Route {
 }
 
 /// A route as provider construction applies it.
+///
+/// Built here alone, so the key it carries is always the one the route's
+/// variable held, and only where the route is the variable's.
 #[derive(Debug)]
 pub(crate) struct Settled {
     /// The route.
-    pub(crate) route: Route,
+    route: Route,
     /// The key the variable held, where the route is the variable's: read
     /// while the route was decided, and applied rather than read again.
-    pub(crate) exported: Option<ApiKey>,
+    exported: Option<ApiKey>,
+}
+
+impl Settled {
+    /// The route.
+    pub(crate) fn route(&self) -> &Route {
+        &self.route
+    }
+
+    /// The route, and the key the variable held where the route reads it.
+    pub(crate) fn into_parts(self) -> (Route, Option<ApiKey>) {
+        (self.route, self.exported)
+    }
 }
 
 /// Where an API key is read from.
@@ -261,7 +276,7 @@ fn settled(
 ) -> Result<Settled, AccessError> {
     let provider = one.name;
     let account = held
-        .filter(|held| held.kind == Kind::Account && signing.usable)
+        .filter(|held| held.kind == Kind::Account && signing.offered && signing.usable)
         .map(|held| Route::Subscription {
             provider,
             account: held.name.as_str().into(),

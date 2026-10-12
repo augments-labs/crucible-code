@@ -552,6 +552,22 @@ fn an_agent_executable_is_a_bare_name_or_an_absolute_path() {
 }
 
 #[test]
+fn an_agent_executable_that_names_no_program_is_refused() {
+    // Each would be looked for as a directory, or nothing, wherever crucible
+    // was started.
+    for found in ["", ".", "..", "claude/"] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "claude", "executable": "{found}"}}}}}}"#
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Unrooted { .. }),
+            "{found:?}: got {err:?}"
+        );
+    }
+}
+
+#[test]
 fn an_agent_profile_is_an_absolute_path() {
     let err = mine(r#"{"externalAgents": {"mine": {"driver": "claude", "executable": "claude", "configDir": "profiles/me"}}}"#)
         .unwrap_err();

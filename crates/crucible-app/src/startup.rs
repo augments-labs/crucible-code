@@ -599,7 +599,7 @@ impl fmt::Debug for Wiring<'_> {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("Wiring")
             .field("named", &self.named)
-            .field("route", &self.route.as_ref().map(|settled| &settled.route))
+            .field("route", &self.route.as_ref().map(Settled::route))
             .field("sending", &self.sending)
             .field("auth", &self.auth)
             .finish()
@@ -801,7 +801,7 @@ pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let http = wiring.http;
-    let on_plan = match wiring.route.as_ref().map(|settled| &settled.route) {
+    let on_plan = match wiring.route.as_ref().map(Settled::route) {
         Ok(Route::ApiKey {
             source: KeySource::Stored { name },
             ..
@@ -946,7 +946,7 @@ fn credential(
 ) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
     let rows = crate::providers::Rows::production();
     let address = |row: Option<&crate::providers::Row>| row.and_then(|row| row.address.clone());
-    let Settled { route, exported } = route?;
+    let (route, exported) = route?.into_parts();
     match route {
         Route::Subscription { .. } if sending.is_some() => Err(AppError::SubscriptionAddress {
             provider: audience.provider.into(),
@@ -1435,7 +1435,7 @@ fn key(
     header: Header,
     auth: ProviderAuth<'_>,
 ) -> Result<Box<dyn Credential>, AppError> {
-    let Settled { route, exported } = route?;
+    let (route, exported) = route?.into_parts();
     let key = match route {
         Route::ApiKey {
             source: KeySource::Environment { variable },
