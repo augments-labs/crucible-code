@@ -16,8 +16,7 @@ pub use host::{
     SILENCE, STOP_GRACE, Shape, Undecided, WAITING, WITHHELD_BYTES, stripped,
 };
 pub use journal::{
-    Entries, HISTORY, Hold, JOURNAL_BYTES, Journal, JournalError, REFERENCE_BYTES, Record, Stage,
-    Work,
+    Entries, HISTORY, JOURNAL_BYTES, Journal, JournalError, REFERENCE_BYTES, Record, Stage, Work,
 };
 pub use launch::{DIGESTED, Discovery, Held, Launch, Program, RESUME_BYTES, Refusal, Request};
 pub use lifecycle::{Contended, Coordinator, Slot, needs_recovery};

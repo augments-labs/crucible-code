@@ -94,7 +94,6 @@ async fn started(peer: &Path, control: &Control) -> External {
     External::new(
         host,
         Box::new(Plain),
-        control.clone(),
         SessionRef::new("one").expect("a name"),
         "work",
         claims(),
@@ -174,6 +173,113 @@ async fn a_crash_after_an_effect_is_incomplete() {
             .any(|event| matches!(event, Event::Finished(_))),
         "{events:?}"
     );
+    assert!(
+        matches!(events.last(), Some(Event::Failed(_))),
+        "{events:?}"
+    );
+}
+
+/// Closing waits until the program a turn was running has stopped, and a
+/// closed backend runs no further turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_during_a_turn_returns_once_the_program_has_stopped() {
+    let sample = Sample::new("external-close");
+    let root = sample.root();
+    let peer = fake_peer::install(
+        &root,
+        "plain",
+        &Script::of([Reply::new()
+            .hear(1)
+            .linger()
+            .pause(std::time::Duration::from_mins(1))]),
+    )
+    .expect("the fake peer is built");
+    let control = Control::new().expect("a control");
+    let backend = started(&peer, &control).await;
+    let kept = Kept::default();
+    let prompting = backend.prompt(turn("go"), &kept);
+    tokio::pin!(prompting);
+    let mut ended = None;
+    while fake_peer::lingering(&root).is_none() {
+        tokio::select! {
+            outcome = &mut prompting => panic!("the turn ended first: {outcome:?}"),
+            () = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+        }
+    }
+
+    let closing = backend.close();
+    tokio::pin!(closing);
+    let closed = tokio::time::timeout(std::time::Duration::from_mins(1), async {
+        loop {
+            tokio::select! {
+                closed = &mut closing => break closed,
+                outcome = &mut prompting, if ended.is_none() => ended = Some(outcome),
+            }
+        }
+    })
+    .await
+    .expect("closed in time");
+
+    assert!(closed.is_ok(), "{closed:?}");
+    let first = fake_peer::lingering(&root);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert_eq!(fake_peer::lingering(&root), first, "it still runs");
+    let again = backend.prompt(turn("again"), &kept).await;
+    assert!(again.is_err(), "{again:?}");
+}
+
+/// A turn whose caller stopped waiting may have left the program mid-answer,
+/// so its run takes no further turn: the next one never reads the old
+/// answer as its own.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_given_up_on_leaves_no_answer_to_the_next() {
+    let sample = Sample::new("external-abandoned");
+    let peer = fake_peer::install(
+        &sample.root(),
+        "plain",
+        &Script::of([
+            Reply::new()
+                .hear(1)
+                .say("say partial")
+                .pause(std::time::Duration::from_secs(2))
+                .say("say stale")
+                .say("end"),
+            Reply::new().hear(1).say("say fresh").say("end"),
+        ]),
+    )
+    .expect("the fake peer is built");
+    let control = Control::new().expect("a control");
+    let backend = started(&peer, &control).await;
+    let first = Kept::default();
+    {
+        let prompting = backend.prompt(turn("go"), &first);
+        tokio::pin!(prompting);
+        while !first
+            .events()
+            .iter()
+            .any(|event| matches!(event, Event::Delta(_)))
+        {
+            tokio::select! {
+                outcome = &mut prompting => panic!("the turn ended first: {outcome:?}"),
+                () = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+            }
+        }
+    }
+
+    let second = Kept::default();
+    let again = backend.prompt(turn("again"), &second).await;
+    backend.close().await.expect("closed");
+
+    let said = second
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Delta(text) => Some(text.as_str().to_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(!said.iter().any(|text| text.contains("stale")), "{said:?}");
+    assert!(again.is_err(), "{again:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

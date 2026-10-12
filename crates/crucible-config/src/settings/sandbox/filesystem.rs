@@ -5,9 +5,7 @@
 //! Protected control files survive every additional grant; an unreadable
 //! ancestor can hide them, but can never make them writable.
 
-use super::{
-    Access, ConfigError, PathBuf, PathSetting, Provenance, SandboxFilesystemRule, Workspace,
-};
+use super::{Access, ConfigError, PathBuf, PathSetting, SandboxFilesystemRule, Workspace};
 
 pub(super) fn resolve(
     base: &[SandboxFilesystemRule],
@@ -78,19 +76,11 @@ pub(super) fn resolve(
         rules.retain(|old| old.path() != path);
         rules.push(rule);
         if setting.access == Access::ReadWrite {
-            for name in [".git", ".agents", ".codex", ".crucible"] {
-                let metadata = path.join(name);
-                if std::fs::symlink_metadata(&metadata).is_ok()
-                    && !rules.iter().any(|old| old.path() == metadata)
-                {
-                    rules.push(
-                        SandboxFilesystemRule::new(
-                            metadata,
-                            Access::Protected,
-                            Provenance::ProtectedMetadata,
-                        )
-                        .map_err(|_| setting.source.error("invalid protected metadata path"))?,
-                    );
+            let protected = SandboxFilesystemRule::protected_beneath(&path)
+                .map_err(|_| setting.source.error("invalid protected metadata path"))?;
+            for metadata in protected {
+                if !rules.iter().any(|old| old.path() == metadata.path()) {
+                    rules.push(metadata);
                 }
             }
         }

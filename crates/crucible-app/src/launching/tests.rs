@@ -173,6 +173,35 @@ fn the_childs_policy_opens_its_profile_and_keeps_protected_metadata() {
     assert_eq!(child.enabled(), conversation.enabled());
 }
 
+/// A profile is a directory of the user's own, and what it holds as a
+/// repository or as crucible's own state is protected there as everywhere.
+#[test]
+fn the_metadata_inside_a_profile_stays_protected() {
+    let sample = Sample::new("launch-profile-metadata");
+    let profile = sample.root().join("profile");
+    for name in [".git", ".crucible"] {
+        fs::create_dir_all(profile.join(name)).expect("metadata");
+    }
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+
+    let child = policy(&conversation, Some(&profile), &[]).expect("a policy");
+
+    assert!(child.permits_path(
+        &profile.join("auth.json"),
+        SandboxFilesystemAccess::ReadWrite
+    ));
+    for inside in [
+        profile.join(".git").join("hooks").join("pre-commit"),
+        profile.join(".crucible").join("settings.json"),
+    ] {
+        assert!(
+            !child.permits_path(&inside, SandboxFilesystemAccess::ReadWrite),
+            "{} is writable",
+            inside.display()
+        );
+    }
+}
+
 /// A profile under protected metadata is refused, not opened.
 #[test]
 fn a_profile_inside_protected_metadata_is_not_opened() {
@@ -311,8 +340,16 @@ fn a_bare_name_is_found_on_path_and_an_absolute_one_where_it_is_written() {
         (name == "PATH").then(|| OsString::from(&directory))
     });
     let written = discover(&peer.to_string_lossy(), |_| None);
-    // A relative `PATH` element is a workspace's, and is never searched.
-    let relative = discover("plain", |_| Some(OsString::from("peer")));
+    // A relative `PATH` element is a workspace's, and is never searched, even
+    // where it names the peer's own directory from here.
+    let here = std::env::current_dir().expect("a working directory");
+    let mut toward = PathBuf::new();
+    for _ in here.components().skip(1) {
+        toward.push("..");
+    }
+    toward.extend(directory.components().skip(1));
+    assert!(toward.is_relative() && toward.join(peer.file_name().expect("a name")).is_file());
+    let relative = discover("plain", |_| Some(OsString::from(&toward)));
 
     assert!(matches!(by_name, Discovery::Found(found) if found.path() == peer));
     assert!(matches!(written, Discovery::Found(found) if found.path() == peer));

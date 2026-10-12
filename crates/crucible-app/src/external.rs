@@ -12,17 +12,35 @@
 //! not be read to its end has already posted that it is uncertain and failed;
 //! it answers the failure, and the run it was on is spent.
 //!
+//! A turn holds the run while it is under way, and gives it back however it
+//! ends. A turn whose caller stopped waiting may have left the program
+//! mid-answer, so its run takes no further turn: the next prompt stops it and
+//! is refused. An interrupt reaches only a turn under way, and one rung as a
+//! turn ends is forgotten when the run is given back. Closing asks a turn
+//! under way to stop and waits, for at most [`CLOSING`], until it gives the
+//! run back, then stops the run: it returns once nothing the run started is
+//! still running, or fails saying so.
+//!
 //! Confinement is claimed from what the sandbox reported when the run was
 //! started and from nothing else.
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use crucible_execution::{
     Backend, Capabilities, Capability, Confined, Decision, Description, Error, Failure, Lasting,
     Outcome, PendingRef, Scope, SessionRef, Sink, TurnRequest, Unsupported,
 };
-use crucible_external_harnesses::{Control, Dialect, Host, STOP_GRACE, Undecided};
+use crucible_external_harnesses::{CANCEL_GRACE, Control, Dialect, Host, STOP_GRACE, Undecided};
 use crucible_runtime::BoxFuture;
+use tokio::sync::Notify;
+
+/// The longest closing waits for a turn under way to give its run back: the
+/// grace a turn asked to stop is given, the grace its process is then given,
+/// and room for the turn to return.
+pub const CLOSING: Duration = CANCEL_GRACE
+    .saturating_add(STOP_GRACE)
+    .saturating_add(Duration::from_secs(5));
 
 /// A run and the wire it is read through, while no turn holds them.
 struct Running {
@@ -32,10 +50,29 @@ struct Running {
     dialect: Box<dyn Dialect>,
 }
 
+/// Where the run is.
+enum Slot {
+    /// Waiting for a turn.
+    Idle(Running),
+    /// Held by a turn, or by a prompt stopping a spent run; `closing` once
+    /// closing waits for it.
+    Away {
+        /// Whether closing waits for it.
+        closing: bool,
+    },
+    /// Given back by a turn that did not finish, or while closing; it takes
+    /// no further turn and is stopped by whatever reaches it next.
+    Spent(Running),
+    /// Stopped.
+    Closed,
+}
+
 /// An installed agent's run, answering as a [`Backend`].
 pub struct External {
-    /// The run, while no turn holds it.
-    running: Mutex<Option<Running>>,
+    /// Where the run is.
+    slot: Mutex<Slot>,
+    /// Rung whenever the run comes back from being away.
+    returned: Notify,
     /// What decisions and interrupts reach the run through.
     control: Control,
     /// The session the run records into, as the contract names it.
@@ -60,17 +97,13 @@ impl std::fmt::Debug for External {
 }
 
 impl External {
-    /// `host`, read through `dialect` and reached through the `control` it
-    /// was launched with, recording into `session` as the entry `instance`,
-    /// claiming what `capabilities` declares and confined as the run was.
-    // Each is a different thing the caller already holds, and a struct that
-    // only carried them here would be one more name for the same call.
-    #[allow(clippy::too_many_arguments)]
+    /// `host`, read through `dialect`, recording into `session` as the entry
+    /// `instance`, claiming what `capabilities` declares and confined as the
+    /// run was.
     #[must_use]
     pub fn new(
         host: Host,
         dialect: Box<dyn Dialect>,
-        control: Control,
         session: SessionRef,
         instance: &str,
         capabilities: Capabilities,
@@ -78,20 +111,17 @@ impl External {
         let confined = Confined::new(host.claim(), Scope::Instance);
         Self {
             driver: dialect.program(),
-            running: Mutex::new(Some(Running { host, dialect })),
-            control,
+            control: host.control().clone(),
+            slot: Mutex::new(Slot::Idle(Running { host, dialect })),
+            returned: Notify::new(),
             session,
             instance: instance.into(),
             capabilities: capabilities.confined(confined),
         }
     }
 
-    /// The run, unless a turn holds it or it has been closed.
-    fn take(&self) -> Option<Running> {
-        self.running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
+    fn slot(&self) -> MutexGuard<'_, Slot> {
+        self.slot.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -104,18 +134,32 @@ fn gate(capabilities: &Capabilities, capability: Capability) -> Result<(), Error
     }
 }
 
-/// The run, taken out for one turn and put back however the turn ends.
-struct Turning<'s> {
-    /// Where it goes back to.
-    slot: &'s Mutex<Option<Running>>,
-    /// The run, for as long as the turn holds it.
+/// The run, taken away for one turn or to be stopped, and given back however
+/// that ends.
+struct Away<'s> {
+    /// What it is given back to.
+    external: &'s External,
+    /// The run, for as long as it is held and not stopped.
     running: Option<Running>,
+    /// Whether the turn returned, so that the program is between turns.
+    finished: bool,
 }
 
-impl Drop for Turning<'_> {
+impl Drop for Away<'_> {
     fn drop(&mut self) {
-        let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
-        *slot = self.running.take();
+        let mut slot = self.external.slot();
+        let closing = matches!(*slot, Slot::Away { closing: true });
+        *slot = match self.running.take() {
+            None => Slot::Closed,
+            Some(running) if self.finished && !closing => {
+                // A stop rung as the turn ended has nothing left to stop.
+                self.external.control.rest();
+                Slot::Idle(running)
+            }
+            Some(running) => Slot::Spent(running),
+        };
+        drop(slot);
+        self.external.returned.notify_waiters();
     }
 }
 
@@ -148,17 +192,44 @@ impl Backend for External {
         events: &'a dyn Sink,
     ) -> BoxFuture<'a, Result<Outcome, Error>> {
         Box::pin(async move {
-            let mut turning = Turning {
-                slot: &self.running,
-                running: self.take(),
+            let (running, spent) = {
+                let mut slot = self.slot();
+                match std::mem::replace(&mut *slot, Slot::Away { closing: false }) {
+                    Slot::Idle(running) => (running, false),
+                    Slot::Spent(running) => (running, true),
+                    other @ Slot::Away { .. } => {
+                        *slot = other;
+                        return Err(Failure::new("a turn is already running on this agent").into());
+                    }
+                    Slot::Closed => {
+                        *slot = Slot::Closed;
+                        return Err(Failure::new("this agent's run has ended").into());
+                    }
+                }
             };
-            let Some(running) = turning.running.as_mut() else {
-                return Err(Failure::new("a turn is already running on this agent").into());
+            let mut away = Away {
+                external: self,
+                running: Some(running),
+                finished: false,
             };
-            Ok(running
+            if spent {
+                if let Some(running) = away.running.take() {
+                    running.host.stop(STOP_GRACE).await;
+                }
+                return Err(Failure::new(
+                    "this agent's last turn was left unfinished, so its run was stopped",
+                )
+                .into());
+            }
+            let Some(running) = away.running.as_mut() else {
+                return Err(Failure::new("this agent's run has ended").into());
+            };
+            let ended = running
                 .host
                 .turn(running.dialect.as_mut(), &self.session, &turn, events)
-                .await?)
+                .await;
+            away.finished = true;
+            Ok(ended?)
         })
     }
 
@@ -181,21 +252,47 @@ impl Backend for External {
 
     fn interrupt(&self) -> Result<(), Error> {
         gate(&self.capabilities, Capability::Cancel)?;
-        self.control.interrupt();
+        // Held while ringing, so that a turn cannot give the run back between
+        // the look and the ring and leave the stop for the next turn.
+        let slot = self.slot();
+        if matches!(*slot, Slot::Away { .. }) {
+            self.control.interrupt();
+        }
         Ok(())
     }
 
     fn close(&self) -> BoxFuture<'_, Result<(), Error>> {
         Box::pin(async move {
-            match self.take() {
-                Some(running) => {
+            let deadline = tokio::time::Instant::now() + CLOSING;
+            loop {
+                let returned = self.returned.notified();
+                tokio::pin!(returned);
+                returned.as_mut().enable();
+                let found = {
+                    let mut slot = self.slot();
+                    match std::mem::replace(&mut *slot, Slot::Closed) {
+                        Slot::Idle(running) | Slot::Spent(running) => Some(running),
+                        Slot::Closed => return Ok(()),
+                        Slot::Away { closing } => {
+                            *slot = Slot::Away { closing: true };
+                            if !closing {
+                                self.control.interrupt();
+                            }
+                            None
+                        }
+                    }
+                };
+                if let Some(running) = found {
                     running.host.stop(STOP_GRACE).await;
+                    return Ok(());
                 }
-                // A turn holds the run: it is asked to stop, and the run goes
-                // when the turn gives it back and this is dropped.
-                None => self.control.interrupt(),
+                if tokio::time::timeout_at(deadline, returned).await.is_err() {
+                    return Err(Failure::new(
+                        "this agent's turn did not stop, so its run may still be running",
+                    )
+                    .into());
+                }
             }
-            Ok(())
         })
     }
 }

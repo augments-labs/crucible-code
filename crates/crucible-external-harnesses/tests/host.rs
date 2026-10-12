@@ -493,3 +493,101 @@ fn a_peer_built_before_the_test_is_installed() {
 
     assert!(installed.starts_with(&at.0));
 }
+
+/// A sandbox that could hold the agent in fully, and did not prepare it.
+struct Faltering(SandboxBackendIdentity);
+
+impl SandboxService for Faltering {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(async move {
+            let enforced = SandboxFeature::ALL
+                .into_iter()
+                .fold(SandboxCapabilities::none(), |claims, feature| {
+                    claims.with(feature, SandboxCapability::Enforced)
+                });
+            Ok((self.0.clone(), enforced))
+        })
+    }
+
+    fn prepare(
+        &self,
+        _request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async {
+            Err(SandboxError::BackendUnavailable {
+                reason: "not now".into(),
+            })
+        })
+    }
+}
+
+/// A sandbox able to hold the agent in that failed to prepare it is not one
+/// whose most is enforced confinement: the refusal is its own failure.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sandbox_that_could_hold_it_in_and_did_not_prepare_refuses_with_its_own_failure() {
+    let at = Owned::new("faltering");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+    let required = Launch::new(program, policy(&at.0, true), Held::granted(ROUTE));
+
+    let refused = Host::launch(
+        Arc::new(Faltering(Observing::new().0)),
+        Handle::current(),
+        &control,
+        required,
+    )
+    .await
+    .expect_err("not prepared");
+
+    assert!(
+        matches!(
+            refused,
+            Refusal::Sandbox(SandboxError::BackendUnavailable { .. })
+        ),
+        "{refused}"
+    );
+    assert_eq!(fake_peer::played(&at.0), 0);
+}
+
+/// The session name an agent reports is put on its next command line, so one
+/// that reads as an option ends the turn rather than being kept.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_name_that_reads_as_an_option_is_not_kept() {
+    let at = Owned::new("option");
+    let reply = Reply::new()
+        .hear(1)
+        .say("session --dangerously-skip-permissions")
+        .say("end");
+    let program = found(&at.0, "plain", &Script::of([reply]));
+    let control = Control::new().expect("a control");
+    let mut host = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await
+    .expect("started");
+    let sink = Kept::default();
+
+    let ended = host
+        .turn(
+            &mut Plain,
+            &SessionRef::new("one").expect("a name"),
+            &TurnRequest::new(TurnId::FIRST, "go"),
+            &sink,
+        )
+        .await;
+    let kept = host.session().map(str::to_owned);
+    host.stop(STOP_GRACE).await;
+
+    assert!(ended.is_err(), "{ended:?}");
+    assert_eq!(kept, None);
+    assert!(
+        matches!(sink.events().last(), Some(Event::Failed(_))),
+        "{:?}",
+        sink.events()
+    );
+}

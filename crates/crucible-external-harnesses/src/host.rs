@@ -278,7 +278,9 @@ impl Control {
     ///
     /// The place in the queue is taken before the table is touched, so a
     /// decision that cannot be delivered leaves its question open rather than
-    /// settled and lost.
+    /// settled and lost; and it is sent while the table is still held, so a
+    /// turn that begins after it finds it queued and drops it, and none can
+    /// begin between the two and take it for its own question.
     ///
     /// # Errors
     ///
@@ -292,16 +294,26 @@ impl Control {
             .sender
             .try_reserve()
             .map_err(|_| Undecided::Full)?;
-        let (native, _) = self.asked().settle(reference, &decision)?;
+        let mut asked = self.asked();
+        let (native, _) = asked.settle(reference, &decision)?;
         permit.send(Decided { native, decision });
+        drop(asked);
         Ok(())
     }
 
-    /// Asks the running turn to stop. Asked when no turn is running, it
-    /// stops nothing, then or later.
+    /// Asks the running turn to stop, or the next to run where none is yet
+    /// reading: a stop asked for just as a turn begins is not lost to it.
+    /// [`Control::rest`] forgets one nothing is left to heed.
     pub fn interrupt(&self) {
         self.shared.interrupted.store(true, Ordering::SeqCst);
         self.shared.bell.notify_one();
+    }
+
+    /// Forgets a stop asked for after the turn it was meant for had ended, so
+    /// that it does not stop the next one. A turn rests as it ends and a run
+    /// as it starts; a holder of runs rests one it is given back.
+    pub fn rest(&self) {
+        self.shared.interrupted.store(false, Ordering::SeqCst);
     }
 
     /// What is open, oldest first.
@@ -317,6 +329,21 @@ impl Control {
             .asked
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The questions of a running turn, closed however the turn ends: a turn
+/// whose caller stopped waiting leaves nothing open that could be answered
+/// and never sent.
+struct Asking<'s>(&'s Shared);
+
+impl Drop for Asking<'_> {
+    fn drop(&mut self) {
+        self.0
+            .asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .end();
     }
 }
 
@@ -418,6 +445,7 @@ impl Host {
         }
         // Released again on every refusal below; from the moment a host
         // exists, its drop is what releases it.
+        control.rest();
         let started = Self::start(service, &runtime, control, launch).await;
         if started.is_err() {
             control.shared.running.store(false, Ordering::SeqCst);
@@ -452,14 +480,19 @@ impl Host {
             });
         let mut session = match prepared {
             Ok(session) => session,
-            Err(SandboxError::Unsupported { .. } | SandboxError::BackendUnavailable { .. })
-                if required =>
-            {
-                let claim = match service.probe().await {
-                    Ok((_, capabilities)) => least(&capabilities),
-                    Err(_) => Confinement::Unsupported,
-                };
-                return Err(Refusal::Unconfined(claim));
+            Err(
+                problem @ (SandboxError::Unsupported { .. }
+                | SandboxError::BackendUnavailable { .. }),
+            ) if required => {
+                // A sandbox that could hold the agent in fully and did not
+                // prepare it failed; it is not the most this agent can have.
+                return Err(match service.probe().await {
+                    Ok((_, capabilities)) => match least(&capabilities) {
+                        Confinement::HardEnforced => problem.into(),
+                        claim => Refusal::Unconfined(claim),
+                    },
+                    Err(_) => Refusal::Unconfined(Confinement::Unsupported),
+                });
             }
             Err(problem) => return Err(problem.into()),
         };
@@ -493,6 +526,9 @@ impl Host {
             .map(|value| value.as_str().into())
             .collect();
         let patience = launch.patience();
+        // Preparing can take a while, and the program is run as it was found
+        // or not at all.
+        launch.program().unchanged()?;
         let mut process = session.start(command).await?;
         let pipes = Pipes::taken(process.as_mut(), patience, runtime)
             .await
@@ -515,6 +551,12 @@ impl Host {
     #[must_use]
     pub const fn claim(&self) -> Confinement {
         self.claim
+    }
+
+    /// What this run is decided and interrupted through.
+    #[must_use]
+    pub const fn control(&self) -> &Control {
+        &self.control
     }
 
     /// The program's own name for the session, once it has said one.
@@ -540,11 +582,12 @@ impl Host {
     ) -> Result<Outcome, Failure> {
         let shared = Arc::clone(&self.control.shared);
         let mut queue = shared.receiver.lock().await;
-        // What is still queued was decided in a turn that has ended, whose
-        // questions the table has already closed.
-        while queue.try_recv().is_ok() {}
+        // The table is begun before the queue is emptied: what is queued was
+        // sent under the table's lock for a turn that has ended, and nothing
+        // settled after this can be for any turn but this one.
         self.control.asked().begin(session.clone(), turn.turn());
-        shared.interrupted.store(false, Ordering::SeqCst);
+        let asking = Asking(&shared);
+        while queue.try_recv().is_ok() {}
         sink.post(Event::Started { turn: turn.turn() });
         let mut turning = Turning {
             dialect,
@@ -560,7 +603,8 @@ impl Host {
             Err(failure) => Ending::Failed(failure),
         };
         let under_way = turning.under_way;
-        self.control.asked().end();
+        drop(asking);
+        self.control.rest();
         drop(queue);
         match ending {
             Ending::Ended(outcome) => {
@@ -593,7 +637,9 @@ impl Host {
                     sink.post(Event::Uncertain(Effects::new(effect)));
                 }
                 sink.post(Event::Process(Fault::new(seen.clone())));
-                Err(Failure::new(seen.as_str()))
+                let failure = Failure::new(seen.as_str());
+                sink.post(Event::Failed(failure.clone()));
+                Err(failure)
             }
         }
     }
@@ -682,7 +728,7 @@ impl Host {
                 Err(lost) => Some(Ending::Lost(lost)),
             },
             Act::Session(native) => {
-                if native.is_empty() || native.len() > crate::RESUME_BYTES {
+                if !crate::launch::nameable(&native) {
                     return Some(Ending::Lost(
                         "the agent named its session with a name crucible cannot keep".to_owned(),
                     ));
@@ -847,26 +893,9 @@ impl Host {
         Ok(())
     }
 
-    /// `text` as it may be kept: no terminal control sequence, and no withheld
-    /// value. Still incomplete where it was.
+    /// `text` as it may be kept.
     fn shown(&self, text: &Text) -> Text {
-        let mut kept = stripped(text.as_str());
-        for value in &self.withheld {
-            if kept.contains(&**value) {
-                kept = Cow::Owned(kept.replace(&**value, "[withheld]"));
-            }
-        }
-        match kept {
-            Cow::Borrowed(_) => text.clone(),
-            Cow::Owned(kept) if text.incomplete() => {
-                // Clipped one byte short of a character past what is kept,
-                // which keeps all of it and still says something was left out.
-                let mut over = kept.clone();
-                over.push(' ');
-                Text::clipped(&over, kept.len())
-            }
-            Cow::Owned(kept) => Text::new(&kept),
-        }
+        hidden(text, &self.withheld)
     }
 
     /// Closes the process's input, waits `grace` for it to end and stops it
@@ -961,6 +990,46 @@ fn least(capabilities: &SandboxCapabilities) -> Confinement {
         SandboxCapability::Enforced => Confinement::HardEnforced,
         SandboxCapability::Observed => Confinement::Observed,
         SandboxCapability::Unsupported => Confinement::Unsupported,
+    }
+}
+
+/// `text` as it may be kept: no terminal control sequence, and none of the
+/// `withheld` values. Still incomplete where it was.
+pub(crate) fn hidden(text: &Text, withheld: &[Box<str>]) -> Text {
+    let mut kept = stripped(text.as_str());
+    for value in withheld {
+        if kept.contains(&**value) {
+            kept = Cow::Owned(kept.replace(&**value, "[withheld]"));
+        }
+    }
+    if text.incomplete() {
+        // Clipped text can end partway through a value, which shows the part
+        // before the cut.
+        let cut = withheld
+            .iter()
+            .filter_map(|value| {
+                (1..value.len())
+                    .rev()
+                    .filter_map(|end| value.get(..end))
+                    .find(|part| kept.ends_with(part))
+                    .map(str::len)
+            })
+            .max();
+        if let Some(cut) = cut {
+            let end = kept.len().saturating_sub(cut);
+            kept = Cow::Owned(format!("{}[withheld]", kept.get(..end).unwrap_or_default()));
+        }
+    }
+    match kept {
+        Cow::Borrowed(_) => text.clone(),
+        Cow::Owned(kept) if text.incomplete() => {
+            // Clipped one byte short of a character past what is kept,
+            // which keeps all of it and still says something was left out.
+            let mut over = kept.clone();
+            over.push(' ');
+            Text::clipped(&over, kept.len())
+        }
+        Cow::Owned(kept) => Text::new(&kept),
     }
 }
 

@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "proof")]
 mod fake_peer;
+mod host;
 mod launch;
 mod lifecycle;
 mod pending;

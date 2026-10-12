@@ -427,14 +427,15 @@ section "every vendor client is built where its hold was decided"
 # was decided about: content_use.rs mints a `Held` only for a route the user
 # said yes to, and launching.rs is the one place an installed agent is started,
 # under that hold; conformance.rs launches the fake peer, which reaches no
-# vendor, and compiles only under the proof feature; renewal.rs builds the client sign-ins and renewals go
-# through, handed the application's hold; release.rs lends the client
+# vendor, and compiles only under the proof feature; renewal.rs builds the
+# client sign-ins and renewals go through, handed the application's hold; release.rs lends the client
 # provider turns and web posts share only under a hold its caller hands in,
 # and builds the release check's own, which reaches GitHub alone; command.rs
 # builds the one `crucible update` asks a loopback release source through,
 # which reaches this machine alone and carries nothing from a session;
 # transport/http.rs builds one only inside its test module. One more file is
-# one more decision to take.
+# one more decision to take. A line is a use wherever it names one, called or
+# not, and a `Held` under another name still mints through `::granted`.
 decided="crates/crucible-app/src/content_use.rs
 crates/crucible-app/src/launching.rs
 crates/crucible-auth/src/oauth/renewal.rs
@@ -444,7 +445,7 @@ crates/crucible-update/src/command.rs
 crates/crucible-update/src/release.rs"
 built=$(git ls-files 'crates/*.rs' 'src/*.rs' |
     grep -v -E '(^|/)tests(\.rs|/)' |
-    xargs grep -l -E '^[[:space:]]*[^/[:space:]].*(Http::new|Held::granted|Host::launch)\(' | sort)
+    xargs grep -l -E '^[[:space:]]*([^/[:space:]].*)?(Http::new|::granted|Host::launch)\b' | sort)
 if [[ -z "$built" ]]; then
     printf '    FAIL no file builds a vendor client; this check measured nothing\n'
     failed=1

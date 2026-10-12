@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crucible_execution::{
-    Decision, Event, Failure, Lasting, Outcome, PENDINGS, PendingRef, SessionRef, Sink, TurnRequest,
+    Decision, Event, Failure, Lasting, Outcome, PENDINGS, PendingRef, SessionRef, Sink, Stale,
+    TurnRequest,
 };
 use crucible_sandbox::{
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
@@ -370,8 +371,10 @@ impl Suite<'_> {
             .turn(&program, &control, React::Decide(reference), None)
             .await?;
         expect(&played.result, Outcome::Answered)?;
+        // Refused for its run, which is checked before its turn: a run that
+        // was not numbered again would refuse it only as settled.
         match played.sink.decided() {
-            Some(Err(Undecided::Stale(_))) => Ok(()),
+            Some(Err(Undecided::Stale(Stale::Generation))) => Ok(()),
             went => Err(format!("a decision for the earlier run went {went:?}")),
         }
     }

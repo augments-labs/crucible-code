@@ -143,7 +143,8 @@ pub fn discover(executable: &str, lookup: impl Fn(&str) -> Option<OsString>) -> 
 }
 
 /// The policy an agent's child runs under: `conversation`'s, with `profile`
-/// writable and the hosts in `reaches` reachable.
+/// writable but for the metadata protected beneath any writable root, and the
+/// hosts in `reaches` reachable.
 ///
 /// # Errors
 ///
@@ -162,6 +163,11 @@ pub fn policy(
             SandboxFilesystemAccess::ReadWrite,
             SandboxFilesystemProvenance::UserConfiguration,
         )?);
+        for metadata in SandboxFilesystemRule::protected_beneath(profile)? {
+            if !filesystem.iter().any(|old| old.path() == metadata.path()) {
+                filesystem.push(metadata);
+            }
+        }
     }
     let network = if reaches.is_empty() {
         conversation.network().clone()

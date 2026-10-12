@@ -204,16 +204,29 @@ impl Record {
     }
 }
 
-/// What a journal holds.
+/// What a journal holds. Only an operation of this crate's writes it, under
+/// the scope's lock.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Entries {
     /// The operation not finished, where there is one.
-    pub open: Option<Record>,
+    pub(crate) open: Option<Record>,
     /// Finished operations, oldest first, at most [`HISTORY`].
-    pub history: VecDeque<Record>,
+    pub(crate) history: VecDeque<Record>,
 }
 
 impl Entries {
+    /// The operation not finished, where there is one.
+    #[must_use]
+    pub const fn open(&self) -> Option<&Record> {
+        self.open.as_ref()
+    }
+
+    /// Finished operations, oldest first, at most [`HISTORY`].
+    #[must_use]
+    pub const fn history(&self) -> &VecDeque<Record> {
+        &self.history
+    }
+
     /// The number the next operation takes: one past every number kept.
     fn next(&self) -> u64 {
         self.open
@@ -259,7 +272,7 @@ impl fmt::Debug for Journal {
 
 /// The lock on one scope, released when dropped.
 #[derive(Debug)]
-pub struct Hold(File);
+pub(crate) struct Hold(File);
 
 impl Drop for Hold {
     fn drop(&mut self) {
@@ -296,7 +309,7 @@ impl Journal {
     /// # Errors
     ///
     /// [`JournalError::Io`] when the directory or lock cannot be made.
-    pub fn hold(&self) -> Result<Option<Hold>, JournalError> {
+    pub(crate) fn hold(&self) -> Result<Option<Hold>, JournalError> {
         crucible_privacy::directory(&self.directory)
             .map_err(crucible_privacy::PrivacyError::into_io)?;
         let file =
@@ -346,7 +359,7 @@ impl Journal {
     ///
     /// [`JournalError::Io`] where it cannot be written; the journal is then
     /// as it was.
-    pub fn write(&self, _hold: &Hold, entries: &Entries) -> Result<(), JournalError> {
+    pub(crate) fn write(&self, _hold: &Hold, entries: &Entries) -> Result<(), JournalError> {
         let bytes = encode(entries);
         if bytes.len() > JOURNAL_BYTES {
             return Err(JournalError::Unreadable(self.file.clone()));

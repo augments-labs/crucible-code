@@ -39,6 +39,17 @@ pub const DIGESTED: u64 = 64 * 1024 * 1024;
 /// the execution contract allows.
 pub const RESUME_BYTES: usize = 256;
 
+/// Whether `name` can be kept as a program's name for its session and handed
+/// back to it as an argument: not empty, no longer than [`RESUME_BYTES`], not
+/// read as an option, and with nothing a terminal or a line reader would act
+/// on.
+pub(crate) fn nameable(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= RESUME_BYTES
+        && !name.starts_with('-')
+        && !name.chars().any(char::is_control)
+}
+
 /// The content-use hold for one route, answered yes.
 ///
 /// ```compile_fail
@@ -223,13 +234,29 @@ const fn executable(_metadata: &fs::Metadata) -> bool {
     true
 }
 
-/// What the dialect asks a process to be started with.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// What the dialect asks a process to be started with. Printed for debugging,
+/// it names each environment variable and withholds its value, which can be a
+/// credential.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Request {
     /// The argument vector, without the program.
     pub arguments: Vec<String>,
     /// The environment, which starts from nothing.
     pub environment: Vec<(String, String)>,
+}
+
+impl fmt::Debug for Request {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = self
+            .environment
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        f.debug_struct("Request")
+            .field("arguments", &self.arguments)
+            .field("environment", &names)
+            .finish()
+    }
 }
 
 /// Everything one start of an agent's program needs, settled before it starts.
@@ -284,9 +311,9 @@ impl Launch {
     ///
     /// # Errors
     ///
-    /// [`Refusal::Resume`] when it is empty or longer than [`RESUME_BYTES`].
+    /// [`Refusal::Resume`] when it could not be kept as a session's name.
     pub fn resuming(mut self, reference: &str) -> Result<Self, Refusal> {
-        if reference.is_empty() || reference.len() > RESUME_BYTES {
+        if !nameable(reference) {
             return Err(Refusal::Resume);
         }
         self.resume = Some(reference.into());
