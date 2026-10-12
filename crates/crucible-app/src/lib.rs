@@ -42,6 +42,7 @@ pub mod extensions;
 mod following;
 pub mod mcp;
 mod models;
+pub mod native;
 pub mod providers;
 pub mod remember;
 pub mod runtime;

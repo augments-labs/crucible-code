@@ -766,6 +766,13 @@ fi
 # `sandbox` for the records a resume reads a live backend out of.
 # `code credentials` and `code storage` are test-only edges: the tests build
 # fixtures from those values, and the command line names neither.
+#
+# `execution` is the contract every agent a conversation runs on answers, so it
+# names `runtime` for the future an operation is awaited in and `types` for the
+# turn a pending action belongs to, and nothing that runs a turn: a path from it
+# to `provider`, `runner` or `app` would make one backend's machinery every
+# backend's. `app execution` is the composition root putting the native runner
+# behind that contract.
 allowed='code app
 code attachments
 code auth
@@ -799,6 +806,7 @@ app client-api
 app config
 app context
 app credentials
+app execution
 app extension
 app http
 app mcp
@@ -836,6 +844,8 @@ context tools
 context types
 context workspace
 credentials types
+execution runtime
+execution types
 models credentials
 models runtime
 models types

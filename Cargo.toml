@@ -44,6 +44,7 @@ crucible-client-api = { path = "crates/crucible-client-api" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-context = { path = "crates/crucible-context" }
 crucible-credentials = { path = "crates/crucible-credentials" }
+crucible-execution = { path = "crates/crucible-execution" }
 crucible-extension = { path = "crates/crucible-extension" }
 crucible-http = { path = "crates/crucible-http" }
 crucible-mcp = { path = "crates/crucible-mcp" }

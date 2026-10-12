@@ -47,6 +47,8 @@ use crucible_workspace::Workspace;
 mod client;
 #[path = "headless/crossing.rs"]
 mod crossing;
+#[path = "headless/native.rs"]
+mod native;
 #[path = "headless/searching.rs"]
 mod searching;
 #[path = "headless/speed.rs"]
