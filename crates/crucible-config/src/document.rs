@@ -123,6 +123,11 @@ impl Document {
     /// [`ConfigError::Relative`] when an MCP server record cannot be read back
     /// to one program under one name.
     ///
+    /// [`ConfigError::Variant`], [`ConfigError::Unrooted`] or
+    /// [`ConfigError::Relative`] when a provider's access or an agent instance
+    /// writes a key its variant does not read, or names its program or profile
+    /// by a path that is not rooted.
+    ///
     /// [`ConfigError::Needed`] for a block written without a key it cannot mean
     /// anything without.
     ///
@@ -143,6 +148,7 @@ impl Document {
         reader.variables(&value)?;
         reader.directories(&value)?;
         reader.servers(&value)?;
+        reader.access(&value)?;
         let rules = rules::read(&reader, &value)?;
         let prompt_cache = prompt_cache::read(&value, file, text, origin)?;
         let sandbox = sandbox::read(&value, file, text, origin)?;

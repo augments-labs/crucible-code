@@ -1,0 +1,108 @@
+use crate::document::{Document, Origin};
+use crate::sample::rooted;
+use crate::shape;
+
+use super::*;
+
+fn settings(text: &str) -> Settings {
+    Settings::resolve(vec![Document::sample(text, Origin::User)])
+}
+
+#[test]
+fn each_access_type_is_read_back_as_its_variant() {
+    let read = settings(
+        r#"{"providers": {
+            "openai": {"access": {"type": "subscription"}},
+            "google": {"access": {"type": "apiKey"}},
+            "anthropic": {"access": {"type": "externalAgent", "instance": "personal"}}
+        }}"#,
+    );
+    assert_eq!(read.access("openai"), Some(Access::Subscription));
+    assert_eq!(read.access("google"), Some(Access::ApiKey));
+    assert_eq!(
+        read.access("anthropic"),
+        Some(Access::ExternalAgent {
+            instance: "personal".into()
+        })
+    );
+}
+
+#[test]
+fn a_provider_whose_block_says_nothing_has_no_access() {
+    let read = settings(r#"{"providers": {"openai": {"model": "gpt-5"}}}"#);
+    assert_eq!(read.access("openai"), None);
+    assert_eq!(read.access("anthropic"), None);
+    assert_eq!(settings("{}").access("openai"), None);
+}
+
+#[test]
+fn an_instance_is_read_back_with_its_drivers_profile() {
+    let profile = rooted("home/me/.claude-personal");
+    let other = rooted("home/me/agy");
+    let read = settings(
+        &serde_json::json!({"externalAgents": {
+            "personal": {"driver": "claude", "executable": "claude", "configDir": profile},
+            "work": {"enabled": false, "driver": "antigravity", "executable": "agy", "profileDir": other}
+        }})
+        .to_string(),
+    );
+    let agents = read.external_agents();
+    let [personal, work] = agents.as_slice() else {
+        panic!("two instances were written, got {agents:?}");
+    };
+
+    assert_eq!(personal.name(), "personal");
+    assert!(
+        personal.enabled(),
+        "enabled is true where it is not written"
+    );
+    assert_eq!(personal.driver(), Driver::Claude);
+    assert_eq!(personal.executable(), "claude");
+    assert_eq!(personal.profile(), Some(profile.as_str()));
+
+    assert_eq!(work.name(), "work");
+    assert!(!work.enabled());
+    assert_eq!(work.driver(), Driver::Antigravity);
+    assert_eq!(work.profile(), Some(other.as_str()));
+}
+
+#[test]
+fn a_machine_with_no_instances_reads_none() {
+    assert!(settings("{}").external_agents().is_empty());
+}
+
+#[test]
+fn the_spellings_the_shape_accepts_are_the_ones_the_types_read() {
+    // The shape's lists are built from these types' names, so this pins the
+    // count: a variant added to a type and not to its list is a value the
+    // schema refuses and the reader would have read.
+    assert_eq!(KINDS.len(), Kind::ALL.len());
+    for kind in Kind::ALL {
+        assert!(KINDS.contains(&kind.name()), "{}", kind.name());
+    }
+    assert_eq!(DRIVERS.len(), Driver::ALL.len());
+    for driver in Driver::ALL {
+        assert!(DRIVERS.contains(&driver.name()), "{}", driver.name());
+    }
+}
+
+#[test]
+fn every_drivers_profile_key_is_declared_for_an_instance() {
+    let shape::Shape::Fields(document) = &shape::DOCUMENT else {
+        panic!("the document is a block of fields");
+    };
+    let agents = document
+        .iter()
+        .find(|field| field.name == "externalAgents")
+        .expect("externalAgents is declared");
+    let shape::Shape::Named { others, .. } = &agents.shape else {
+        panic!("externalAgents is keyed by instance");
+    };
+    for driver in Driver::ALL {
+        assert!(
+            others.declared(driver.profile_key()).is_some(),
+            "{} is not declared",
+            driver.profile_key()
+        );
+    }
+}
