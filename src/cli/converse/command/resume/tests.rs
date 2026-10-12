@@ -305,7 +305,7 @@ fn picking_one_up_makes_it_the_session_being_recorded_to() {
 
     assert_eq!(now.path(), path);
     assert_eq!(
-        conversation.runner().transcript().len(),
+        conversation.settled().transcript().len(),
         2,
         "the prompt and the answer came back: {written}"
     );
@@ -614,7 +614,7 @@ fn the_preview_holds_the_work_a_session_did_and_not_only_what_was_said() {
     let held = glimpse(&sample.logs(), &sample.workspace(), &id).expect("a finished log");
     let runner = runner(&Arc::new(recorded(&sample, "another session entirely")));
     let against = replaying::Replay {
-        runner: &runner,
+        settled: crucible_app::Settled::from(&runner),
         pruned: &Pruned::default(),
         style: Style::plain(),
     };
@@ -653,7 +653,7 @@ fn a_preview_is_drawn_for_the_pane_the_window_leaves_it() {
     for columns in [Picker::FOLDS_AT, 100, 160] {
         let room = Picker::previewing(columns).expect("a window this wide keeps the pane");
         let against = replaying::Replay {
-            runner: &runner,
+            settled: crucible_app::Settled::from(&runner),
             pruned: &Pruned::default(),
             style: Style::plain(),
         };

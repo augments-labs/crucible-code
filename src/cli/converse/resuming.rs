@@ -19,7 +19,7 @@
 
 use std::time::SystemTime;
 
-use crucible_runner::Runner;
+use crucible_app::Settled;
 use crucible_session::Session;
 use crucible_tui::{Offered, Panel, Renderer, Terminal};
 use crucible_types::Compacting;
@@ -100,19 +100,19 @@ fn worth_asking(carrying: u64, said: Option<u64>) -> bool {
 /// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
 pub(super) fn asked<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    settled: Settled<'_>,
     session: &Session,
     terms: &Terms,
     keys: bool,
 ) -> Result<Option<Compacting>, Fatal> {
-    let carrying = runner.carrying();
+    let carrying = settled.carrying();
 
     // Nothing is asked down a pipe: there is nobody to answer, and a question
     // with no reader is a session that carries on whole having pretended to
     // offer a choice.
     if !keys
-        || runner.transcript().is_empty()
-        || !worth_asking(carrying, runner.policy().compaction.ask_on_resume)
+        || settled.transcript().is_empty()
+        || !worth_asking(carrying, settled.policy().compaction.ask_on_resume)
     {
         return Ok(None);
     }

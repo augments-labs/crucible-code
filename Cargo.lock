@@ -373,6 +373,7 @@ dependencies = [
  "crucible-config",
  "crucible-context",
  "crucible-credentials",
+ "crucible-execution",
  "crucible-extension",
  "crucible-http",
  "crucible-mcp",
@@ -532,6 +533,15 @@ version = "0.47.1"
 dependencies = [
  "crucible-types",
  "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "crucible-execution"
+version = "0.47.1"
+dependencies = [
+ "crucible-runtime",
+ "crucible-types",
  "thiserror",
 ]
 

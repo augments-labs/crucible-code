@@ -47,6 +47,8 @@ use crucible_workspace::Workspace;
 mod client;
 #[path = "headless/crossing.rs"]
 mod crossing;
+#[path = "headless/native.rs"]
+mod native;
 #[path = "headless/searching.rs"]
 mod searching;
 #[path = "headless/speed.rs"]
@@ -455,9 +457,7 @@ fn turn(conversation: &mut Conversation, prompt: &str) -> Result<(Turned, String
     let (events, reported) = mpsc::channel::<EventEnvelope>();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let turned = {
-        let run = conversation
-            .runner()
-            .starting(&events, &cancel, &steer, &aside);
+        let run = conversation.starting(&events, &cancel, &steer, &aside);
         runtime()?.block_on(conversation.turn(prompt, Box::default(), &mut Nobody, &run))?
     };
     drop(events);
@@ -480,7 +480,7 @@ fn prose(reported: &Receiver<EventEnvelope>) -> String {
 /// under is in the transcript too, and is not what these tests are about.
 fn spoken(conversation: &Conversation) -> usize {
     conversation
-        .runner()
+        .settled()
         .transcript()
         .messages()
         .iter()
@@ -709,7 +709,7 @@ fn a_model_switched_to_within_a_provider_is_asked_for_and_written_down() -> Resu
         ),
         "{switched:?}"
     );
-    assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
+    assert_eq!(conversation.settled().model(), "claude-haiku-4-5");
     assert_eq!(conversation.serving(), Some("anthropic"));
     assert_eq!(
         desk.reached(),
@@ -752,8 +752,8 @@ fn a_provider_switched_to_is_the_one_asked_from_then_on() -> Result<(), Failed> 
     );
     assert_eq!(desk.reached(), ["google"]);
     assert_eq!(conversation.serving(), Some("google"));
-    assert_eq!(conversation.runner().serving(), "google");
-    assert_eq!(conversation.runner().model(), "gemini-3.8-flash");
+    assert_eq!(conversation.settled().serving(), "google");
+    assert_eq!(conversation.settled().model(), "gemini-3.8-flash");
     let written = written(&tree)?;
     assert_eq!(written.provider(), Some("google"));
     assert_eq!(written.model("google"), Some("gemini-3.8-flash"));
@@ -786,8 +786,8 @@ fn a_provider_nothing_can_reach_is_refused_and_the_one_answering_is_kept() -> Re
         "{switched:?}"
     );
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().serving(), "anthropic");
-    assert_eq!(conversation.runner().model(), "script");
+    assert_eq!(conversation.settled().serving(), "anthropic");
+    assert_eq!(conversation.settled().model(), "script");
     assert_eq!(written(&tree)?.provider(), None, "nothing was written");
     Ok(())
 }
@@ -824,8 +824,8 @@ fn a_switch_is_refused_for_a_rung_the_model_does_not_serve() -> Result<(), Faile
     );
     assert_eq!(desk.reached(), Vec::<&str>::new(), "nobody was reached for");
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().model(), "script");
-    assert_eq!(conversation.runner().effort(), Some(Effort::Max));
+    assert_eq!(conversation.settled().model(), "script");
+    assert_eq!(conversation.settled().effort(), Some(Effort::Max));
     let written = written(&tree)?;
     assert_eq!(written.provider(), None);
     assert_eq!(written.effort("anthropic"), Some(Effort::Max));
@@ -853,7 +853,7 @@ fn a_rung_gemini_does_not_serve_is_refused_and_the_one_in_force_is_kept() -> Res
     let thought = conversation.think(Effort::Max, &desk.with());
 
     assert!(matches!(thought, Rung::Unsupported), "{thought:?}");
-    assert_eq!(conversation.runner().effort(), None);
+    assert_eq!(conversation.settled().effort(), None);
     assert_eq!(written(&tree)?.effort("google"), None);
     Ok(())
 }
@@ -880,11 +880,15 @@ fn a_logout_falls_back_to_a_credential_the_store_never_held() -> Result<(), Fail
     assert_eq!(desk.logins.read().providers().count(), 0, "the key is gone");
     assert_eq!(conversation.serving(), Some("anthropic"));
     assert_eq!(
-        conversation.runner().serving(),
+        conversation.settled().serving(),
         "anthropic",
         "set up again from what remains"
     );
-    assert_eq!(conversation.runner().model(), "script", "the model is kept");
+    assert_eq!(
+        conversation.settled().model(),
+        "script",
+        "the model is kept"
+    );
     Ok(())
 }
 
@@ -906,11 +910,11 @@ fn a_logout_with_nothing_to_fall_back_to_leaves_nobody_asked() -> Result<(), Fai
     assert_eq!(desk.logins.read().providers().count(), 0);
     assert_eq!(conversation.serving(), None);
     assert_eq!(
-        conversation.runner().model(),
+        conversation.settled().model(),
         "",
         "a model belongs to a vendor"
     );
-    assert_eq!(conversation.runner().serving(), "none");
+    assert_eq!(conversation.settled().serving(), "none");
     let refused = turn(&mut conversation, "anybody there")
         .err()
         .map(|problem| problem.to_string())
@@ -961,7 +965,7 @@ fn a_logout_of_a_provider_nobody_is_asking_changes_nothing_else() -> Result<(), 
     assert_eq!(desk.logins.read().providers().count(), 0);
     assert_eq!(desk.reached(), Vec::<&str>::new());
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().serving(), "anthropic");
+    assert_eq!(conversation.settled().serving(), "anthropic");
     Ok(())
 }
 
@@ -984,9 +988,9 @@ fn a_credential_given_to_a_session_asking_nobody_is_who_it_asks_next() -> Result
         "{signed:?}"
     );
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().serving(), "anthropic");
+    assert_eq!(conversation.settled().serving(), "anthropic");
     assert_eq!(
-        conversation.runner().model(),
+        conversation.settled().model(),
         "",
         "a name left over from before belongs to no vendor"
     );
@@ -1009,8 +1013,8 @@ fn a_credential_for_another_provider_keeps_the_one_already_answering() -> Result
 
     assert!(matches!(signed, LoggedIn::Elsewhere), "{signed:?}");
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().serving(), "anthropic");
-    assert_eq!(conversation.runner().model(), "script");
+    assert_eq!(conversation.settled().serving(), "anthropic");
+    assert_eq!(conversation.settled().model(), "script");
     assert_eq!(written(&tree)?.provider(), None);
     Ok(())
 }

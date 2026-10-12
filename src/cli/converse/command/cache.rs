@@ -34,8 +34,8 @@ fn inspect<T: Terminal>(
     conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    let runner = conversation.runner();
-    let policy = runner.prompt_cache_policy();
+    let settled = conversation.settled();
+    let policy = settled.prompt_cache_policy();
     reply(
         renderer,
         &format!(
@@ -47,7 +47,7 @@ fn inspect<T: Terminal>(
         ),
     )?;
 
-    let capabilities = runner.prompt_cache_capabilities();
+    let capabilities = settled.prompt_cache_capabilities();
     reply(
         renderer,
         &format!(
@@ -68,7 +68,7 @@ fn inspect<T: Terminal>(
         )?;
     }
 
-    if let Some(attempt) = runner.prompt_cache_attempt() {
+    if let Some(attempt) = settled.prompt_cache_attempt() {
         reply(
             renderer,
             &format!(

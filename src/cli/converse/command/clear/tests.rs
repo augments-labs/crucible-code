@@ -226,7 +226,7 @@ fn clearing_starts_a_new_session_and_leaves_the_old_one_where_it_can_be_found() 
     let now = now.id().cloned().expect("a recorded session");
     assert_ne!(now, left, "the session in hand is the one that was left");
     assert_eq!(
-        conversation.runner().transcript().len(),
+        conversation.settled().transcript().len(),
         0,
         "the transcript came with it"
     );
@@ -358,7 +358,7 @@ fn what_was_said_before_a_clear_comes_back_when_that_session_is_picked_up() {
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("what was said before"), "{written}");
-    assert_eq!(conversation.runner().transcript().len(), 2, "{written}");
+    assert_eq!(conversation.settled().transcript().len(), 2, "{written}");
 }
 
 #[test]

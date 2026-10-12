@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crucible_auth::Store;
 use crucible_models::Delta;
 use crucible_runner::Event;
-use crucible_runner::{Agent, Model, Tools};
+use crucible_runner::{Agent, Model, Runner, Tools};
 use crucible_session::Session;
 use crucible_tools::{Mode, Permission, Revealed, Rules};
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
@@ -377,11 +377,11 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         &opening,
     );
     let mut turning = Turning::started(crucible_runner::Breakdown::default());
-    let mut says = typing::under(&scripted(
+    let mut says = typing::under(crucible_app::Settled::from(&scripted(
         Script::new(Vec::new()),
         Tools::new(),
         Arc::new(Session::nowhere()),
-    ));
+    )));
     let mut seen = Inbox::new(seen);
     let mut drawn = Ok(());
     let mut meanwhile = typing::Meanwhile::Nothing;

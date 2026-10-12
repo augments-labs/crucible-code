@@ -1,0 +1,30 @@
+[package]
+name = "crucible-execution"
+description = "The contract every agent a conversation can run on implements."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# This crate says what any backend must answer and nothing about how one does,
+# so it names no provider, runner, process or vendor: a contract that had to
+# agree with one of them would be a door every other backend walks through it.
+[dependencies]
+# `BoxFuture`, the shape an operation that waits on a backend is awaited in.
+crucible-runtime.workspace = true
+# `TurnId`, the turn a pending action and a usage reading belong to.
+crucible-types.workspace = true
+# Every refusal here is an enum this crate owns, and the derive writes the
+# `Display` and `source` impls rather than shipping a runtime.
+thiserror.workspace = true
+
+# `answered!` drives a fake backend's future by hand in a test, and fails where
+# the fake would have waited. Test-only: nothing of it reaches the binary.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
+
+[lints]
+workspace = true

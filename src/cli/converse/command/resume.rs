@@ -226,7 +226,7 @@ fn picking<T: Terminal>(
     // as the session picked up left it — the same read a `--continue` does, so
     // resuming here or from the command line stands the same plan over the box.
     terms.plan.forget();
-    crucible_app::startup::planned(&terms.plan, conversation.runner().transcript());
+    crucible_app::startup::planned(&terms.plan, conversation.settled().transcript());
 
     // The tools looked up belong to the conversation that looked them up. Left
     // standing they would be advertised to a session that never asked.
@@ -273,12 +273,12 @@ fn picking<T: Terminal>(
         ScreenMode::Native => renderer.divides("session resumed")?,
     }
     let pruned = conversation.session().take_pruned();
-    let against = replaying::Replay::of(conversation.runner(), terms, &pruned);
+    let against = replaying::Replay::of(conversation.settled(), terms, &pruned);
     super::super::replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
     drop(pruned);
     super::super::resuming::asked(
         renderer,
-        conversation.runner(),
+        conversation.settled(),
         conversation.session(),
         terms,
         held.answers.keys,
@@ -727,7 +727,7 @@ fn stood<T: Terminal>(
     // pruning cleared to put back.
     let uncleared = Pruned::default();
     let against = replaying::Replay {
-        runner: conversation.runner(),
+        settled: conversation.settled(),
         pruned: &uncleared,
         style,
     };

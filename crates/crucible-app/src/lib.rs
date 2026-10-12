@@ -42,6 +42,7 @@ pub mod extensions;
 mod following;
 pub mod mcp;
 mod models;
+pub mod native;
 pub mod providers;
 pub mod remember;
 pub mod runtime;
@@ -57,5 +58,5 @@ pub mod subscription;
 pub mod switching;
 pub mod update;
 
-pub use conversation::Conversation;
+pub use conversation::{Conversation, Settled};
 pub use error::AppError;

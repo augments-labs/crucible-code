@@ -49,16 +49,16 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
-    let runner = conversation.runner();
+    let settled = conversation.settled();
     let named = conversation.serving();
-    let Some(provider) = named.filter(|_| !runner.model().is_empty()) else {
+    let Some(provider) = named.filter(|_| !settled.model().is_empty()) else {
         return renderer.commit(terms.unasked(named)).map_err(Fatal::from);
     };
     let asked = Asked {
         provider: Some(provider),
-        model: runner.model(),
-        effort: runner.effort().map(Effort::as_str),
-        pace: super::Pace::of(runner),
+        model: settled.model(),
+        effort: settled.effort().map(Effort::as_str),
+        pace: super::Pace::of(settled),
     };
     let glyphs = terms.style().glyphs();
     let cost = match offered(asked, glyphs) {
@@ -151,11 +151,11 @@ pub(super) fn taken<T: Terminal>(
         other => return say(renderer, &astray(&other)),
     };
     let glyphs = terms.style().glyphs();
-    let runner = conversation.runner();
+    let settled = conversation.settled();
     let named = label(
-        runner.serving(),
-        runner.model(),
-        runner.effort().map(Effort::as_str),
+        settled.serving(),
+        settled.model(),
+        settled.effort().map(Effort::as_str),
         (speed == Speed::Fast).then_some("fast"),
         glyphs,
     );
@@ -166,8 +166,8 @@ pub(super) fn taken<T: Terminal>(
                 .map_err(Fatal::from);
         }
         Hastened::Unsupported | Hastened::Own => {
-            let form = runner.provider().fast(runner.model());
-            let (provider, model) = (runner.serving(), runner.model());
+            let form = settled.fast();
+            let (provider, model) = (settled.serving(), settled.model());
             return say(renderer, &unoffered(provider, model, form, glyphs));
         }
         Hastened::Taken { unwritten: None } => named,

@@ -51,16 +51,16 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::oneshot;
 
-use crucible_app::Conversation;
 use crucible_app::client::Ended;
 use crucible_app::providers::{Lookup, Served, Serving, Sourcing, available};
 use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
+use crucible_app::{Conversation, Settled};
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_client_api::{Command, ErrorCode, Prompt, Refusal};
 use crucible_context::Room;
-use crucible_runner::{Event, Runner, TurnError, Turned};
+use crucible_runner::{Event, TurnError, Turned};
 use crucible_runtime::Cancel;
 use crucible_session::Session;
 use crucible_tui::{
@@ -656,7 +656,7 @@ fn conversing<T: Terminal>(
     // room a pruning gave back, and holding it for the length of the run would
     // be this screen undoing what that pruning was run to do.
     let pruned = conversation.session().take_pruned();
-    let against = replaying::Replay::of(conversation.runner(), terms, &pruned);
+    let against = replaying::Replay::of(conversation.settled(), terms, &pruned);
     replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
     drop(pruned);
 
@@ -666,7 +666,7 @@ fn conversing<T: Terminal>(
     // above the loop and the command inside it reach the same code.
     let mut making = resuming::asked(
         renderer,
-        conversation.runner(),
+        conversation.settled(),
         conversation.session(),
         terms,
         keys,
@@ -785,7 +785,7 @@ fn conversing<T: Terminal>(
             Asked::Expand | Asked::Clicked(_) => continue,
 
             Asked::Untyped => {
-                match unboxed(renderer, conversation.runner(), style, held.answers.input)? {
+                match unboxed(renderer, conversation.settled(), style, held.answers.input)? {
                     Some(said) => (said, true),
                     None => break,
                 }
@@ -831,7 +831,7 @@ fn conversing<T: Terminal>(
         let imported = attaching::imported(&held);
         let attached = attaching::beside(
             renderer,
-            attaching::Asking::of(conversation.runner(), imported.as_deref()),
+            attaching::Asking::of(conversation.settled(), imported.as_deref()),
             &terms.workspace,
             attaching::Sent {
                 prompt: &prompt,
@@ -935,12 +935,12 @@ fn troubled<T: Terminal>(
 /// one in.
 fn unboxed<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    settled: Settled<'_>,
     style: Style,
     input: &mut dyn BufRead,
 ) -> Result<Option<String>, Fatal> {
     let mark = style.glyphs().caret();
-    draw::mark(renderer, &format!("{} {mark} ", runner.mode()))?;
+    draw::mark(renderer, &format!("{} {mark} ", settled.mode()))?;
 
     let Some(said) = read(input)? else {
         // The mark is still the last thing on its row, and nothing but this
@@ -1570,7 +1570,7 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let mut says = typing::under(conversation.runner()).naming(&terms.commands.snapshot());
+    let mut says = typing::under(conversation.settled()).naming(&terms.commands.snapshot());
     let serving = conversation.serving();
 
     // And what ended while nothing was running goes into the aside rather than
@@ -1599,9 +1599,9 @@ fn take<T: Terminal>(
     // Started before the worker rather than on the first thing it reports, so
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
-    let runner = conversation.runner();
-    let mut turning = Turning::started(runner.breakdown())
-        .using(runner.totals(), runner.plan_limits())
+    let settled = conversation.settled();
+    let mut turning = Turning::started(settled.breakdown())
+        .using(settled.totals(), settled.plan_limits())
         .pinning(terms.pinning.get());
 
     attaching::refresh_store(held, importing(conversation.session()));
@@ -1723,9 +1723,7 @@ fn sent(
         // post: a `TurnError` is handed back rather than reported, and a
         // failure stamped with a run of its own would say the turn that
         // failed was somebody else's.
-        let run = conversation
-            .runner()
-            .starting(&relay, &running, &steer, &aside);
+        let run = conversation.starting(&relay, &running, &steer, &aside);
         let reporting = run.reporting();
 
         // What somebody asked for is asked of the application as the

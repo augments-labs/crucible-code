@@ -44,6 +44,7 @@ crucible-client-api = { path = "crates/crucible-client-api" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-context = { path = "crates/crucible-context" }
 crucible-credentials = { path = "crates/crucible-credentials" }
+crucible-execution = { path = "crates/crucible-execution" }
 crucible-extension = { path = "crates/crucible-extension" }
 crucible-http = { path = "crates/crucible-http" }
 crucible-mcp = { path = "crates/crucible-mcp" }
@@ -588,6 +589,10 @@ crucible-session = { workspace = true, features = ["proof"] }
 # The macro a test answers a fake service's future with, for the tests that
 # drive one by hand.
 crucible-runtime = { workspace = true, features = ["proof"] }
+# The application, with the accessor a test reads the runner behind a
+# conversation through for what no front end reads off it. Dev-only for the
+# same reason as the two above.
+crucible-app = { workspace = true, features = ["proof"] }
 # The confinement the command line runs commands under, keeping its sandbox
 # state in a directory of this checkout's while the integration tests run it, so
 # another checkout's tests never lock, recover or change it. Named here as well

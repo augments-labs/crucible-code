@@ -132,7 +132,7 @@ fn an_assembled_conversation_s_search_waits_for_room_on_the_run_s_tool_worker() 
         subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     })
     .expect("a session to assemble");
-    conversation.runner.serve(Box::new(Rounds {
+    conversation.native_mut().serve(Box::new(Rounds {
         scope: CredentialScopeId::new(),
         rounds: Mutex::new(
             vec![
@@ -176,7 +176,7 @@ fn an_assembled_conversation_s_search_waits_for_room_on_the_run_s_tool_worker() 
 
     let (answered, answer) = mpsc::channel();
     let turning = std::thread::spawn(move || {
-        let runner = &mut conversation.runner;
+        let runner = conversation.native_mut();
         let (events, _seen) = mpsc::channel();
         let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
         let run = runner.starting(&events, &cancel, &steer, &aside);

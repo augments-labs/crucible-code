@@ -290,9 +290,7 @@ fn turned(
     let (events, reported) = mpsc::channel::<EventEnvelope>();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let ended: Ended = {
-        let run = conversation
-            .runner()
-            .starting(&events, &cancel, &steer, &aside);
+        let run = conversation.starting(&events, &cancel, &steer, &aside);
         super::runtime()?.block_on(client::turn(
             conversation,
             request,
@@ -904,7 +902,7 @@ fn a_cache_that_cannot_be_retired_holds_the_model_where_it_was() -> Result<(), F
         return Err(format!("{:?}", response.outcome).into());
     };
     assert_eq!(problem.code, ErrorCode::Failed);
-    assert_eq!(conversation.runner().model(), "script");
+    assert_eq!(conversation.settled().model(), "script");
     assert_eq!(
         super::written(&tree)?.model("anthropic"),
         None,
@@ -947,7 +945,7 @@ fn a_choice_that_could_not_be_written_down_is_still_taken_and_says_so() -> Resul
         return Err(format!("{:?}", response.outcome).into());
     };
     assert_eq!(problem.code, ErrorCode::Failed);
-    assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
+    assert_eq!(conversation.settled().model(), "claude-haiku-4-5");
     assert_eq!(
         std::fs::read_to_string(&settings)?,
         "model = [",
@@ -1554,13 +1552,13 @@ fn context_is_the_load_the_runner_counts_and_leaves_what_the_prompt_line_reads()
         return Err("/context was not answered with a context".into());
     };
 
-    let runner = conversation.runner();
+    let settled = conversation.settled();
     assert_eq!(context.model, before.model);
     assert!(context.model.is_some(), "{context:?}");
     assert_eq!(context.window, Some(200_000));
     let held =
         context.system + context.instructions + context.tools + context.mcp + context.messages;
-    assert_eq!(held, runner.carrying(), "{context:?}");
+    assert_eq!(held, settled.carrying(), "{context:?}");
     assert!(context.tools > 0 && context.messages > 0, "{context:?}");
     assert_eq!(
         held + context.reserve + context.free,
@@ -1588,7 +1586,7 @@ fn context_of_a_model_with_no_reported_window_leaves_the_window_and_free_room_ou
     assert_eq!(context.free, 0, "{context:?}");
     let held =
         context.system + context.instructions + context.tools + context.mcp + context.messages;
-    assert_eq!(held, conversation.runner().carrying(), "{context:?}");
+    assert_eq!(held, conversation.settled().carrying(), "{context:?}");
     Ok(())
 }
 

@@ -28,10 +28,10 @@
 //! machine is used, and asking it once a session is asking it for ever.
 
 use crucible_app::Conversation;
+use crucible_app::Settled;
 use crucible_app::client::Performed;
 use crucible_client_api::Command;
 use crucible_models::{Effort, EffortError};
-use crucible_runner::Runner;
 use crucible_tui::{Glyphs, Ladder, Renderer, Row, Slot, Terminal, clip, fold};
 
 use crate::cli::Fatal;
@@ -107,7 +107,7 @@ pub(super) fn run<T: Terminal>(
     // either, and the two want different sentences: one says set a key, the
     // other says the key is fine and pick a model.
     let named = conversation.serving();
-    let Some(provider) = named.filter(|_| !conversation.runner().model().is_empty()) else {
+    let Some(provider) = named.filter(|_| !conversation.settled().model().is_empty()) else {
         return renderer.commit(terms.unasked(named)).map_err(Fatal::from);
     };
 
@@ -119,7 +119,7 @@ pub(super) fn run<T: Terminal>(
     let rungs = rungs(
         &terms.providers.snapshot(),
         provider,
-        conversation.runner().model(),
+        conversation.settled().model(),
     );
 
     if !said.is_empty() {
@@ -129,13 +129,13 @@ pub(super) fn run<T: Terminal>(
         };
     }
 
-    let runner = conversation.runner();
+    let settled = conversation.settled();
     if rungs.is_empty() {
-        return say(renderer, &format!("{} {NO_RUNG}", runner.model()));
+        return say(renderer, &format!("{} {NO_RUNG}", settled.model()));
     }
 
     if keys {
-        match chosen(renderer, runner, terms, &rungs)? {
+        match chosen(renderer, settled, terms, &rungs)? {
             Taken::Took(effort) => return taken(effort, renderer, conversation, terms),
             // Escape asked for the screen that was there before the panel. A
             // listing under it would be the same question put a second time.
@@ -144,7 +144,7 @@ pub(super) fn run<T: Terminal>(
         }
     }
 
-    listed(renderer, runner, &rungs)
+    listed(renderer, settled, &rungs)
 }
 
 /// Stands the ladder where the prompt box was, and says which rung came off it.
@@ -152,7 +152,7 @@ pub(super) fn run<T: Terminal>(
 /// A window with no room to stand one in comes out as the listing below.
 fn chosen<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    settled: Settled<'_>,
     terms: &Terms,
     served: &[Effort],
 ) -> Result<Taken<Effort>, Fatal> {
@@ -162,13 +162,13 @@ fn chosen<T: Terminal>(
     // The model by name, because a rung is asked of one model and what it buys
     // differs between them. It is also the fact that stops this reading as a
     // setting of crucible's — the ladder is what is sent, and this is who to.
-    let title = title(runner.model(), glyphs);
+    let title = title(settled.model(), glyphs);
     let footer = footer(glyphs);
 
     let ladder = Ladder {
         title: &title,
         rungs: &words,
-        chosen: rung(runner.effort().unwrap_or(OPENS_ON), served),
+        chosen: rung(settled.effort().unwrap_or(OPENS_ON), served),
         ends: ENDS,
         footer: &footer,
     };
@@ -203,7 +203,7 @@ fn taken<T: Terminal>(
                 renderer,
                 &format!(
                     "! {} does not support {} effort; use low, medium or high",
-                    conversation.runner().model(),
+                    conversation.settled().model(),
                     effort.as_str()
                 ),
             );
@@ -252,10 +252,10 @@ fn mistyped<T: Terminal>(
 /// What is being asked now, and the lines that would ask for something else.
 fn listed<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    settled: Settled<'_>,
     served: &[Effort],
 ) -> Result<(), Fatal> {
-    let saying = match runner.effort() {
+    let saying = match settled.effort() {
         Some(effort) => effort.as_str(),
         // Not a rung, because none was asked for. Naming one here would be this
         // program guessing at a vendor's default and printing the guess.

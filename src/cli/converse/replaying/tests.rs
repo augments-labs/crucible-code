@@ -13,6 +13,8 @@ use crucible_types::{
 };
 use crucible_workspace::Workspace;
 
+use crucible_runner::Runner;
+
 use crate::cli::fake::Script;
 use crate::cli::kept::Whole;
 
@@ -22,7 +24,7 @@ use super::*;
 /// no theme at all.
 fn against<'a>(runner: &'a Runner, pruned: &'a Pruned) -> Replay<'a> {
     Replay {
-        runner,
+        settled: crucible_app::Settled::from(runner),
         pruned,
         style: Style::plain(),
     }
@@ -225,7 +227,7 @@ fn painted(transcript: Transcript, columns: usize, style: Style) -> String {
     replayed(
         &mut renderer,
         &Replay {
-            runner: &runner,
+            settled: crucible_app::Settled::from(&runner),
             pruned: &Pruned::default(),
             style,
         },

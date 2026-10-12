@@ -462,7 +462,7 @@ pub(super) fn taken<T: Terminal>(
     let imported = attaching::imported(held);
     let attached = attaching::beside(
         renderer,
-        attaching::Asking::of(conversation.runner(), imported.as_deref()),
+        attaching::Asking::of(conversation.settled(), imported.as_deref()),
         &terms.workspace,
         attaching::Sent {
             prompt: &said,

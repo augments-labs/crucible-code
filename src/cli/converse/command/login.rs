@@ -1354,7 +1354,7 @@ fn taken<T: Terminal>(
         say(renderer, &format!("! {problem}"))?;
     }
 
-    let model = conversation.runner().model();
+    let model = conversation.settled().model();
     let said = if model.is_empty() {
         "login successful; choose a model with /model".to_owned()
     } else {

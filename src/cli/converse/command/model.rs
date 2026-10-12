@@ -229,13 +229,13 @@ pub(super) fn run<T: Terminal>(
     }
 
     if keys {
-        let runner = conversation.runner();
-        let track = Track::Offered(runner.effort());
+        let settled = conversation.settled();
+        let track = Track::Offered(settled.effort());
         let current = Asked {
             provider: conversation.serving(),
-            model: runner.model(),
-            effort: runner.effort().map(Effort::as_str),
-            pace: super::Pace::of(runner),
+            model: settled.model(),
+            effort: settled.effort().map(Effort::as_str),
+            pace: super::Pace::of(settled),
         };
         let mut on = None;
         loop {
@@ -785,7 +785,7 @@ fn taken<T: Terminal>(
     renderer.commit(&answered(
         provider,
         name,
-        effort.or(conversation.runner().effort()),
+        effort.or(conversation.settled().effort()),
         terms.style().glyphs(),
     ))?;
 
@@ -837,13 +837,13 @@ fn listed<T: Terminal>(
 ) -> Result<(), Fatal> {
     // Read out of a configuration file or off the command line either way, so
     // it goes out the way arrived text goes out.
-    let runner = conversation.runner();
-    match runner.model() {
+    let settled = conversation.settled();
+    match settled.model() {
         "" => renderer.commit(NO_MODEL_CHOSEN)?,
         name => renderer.commit(&in_force(
             conversation.serving(),
             name,
-            runner.effort(),
+            settled.effort(),
             terms.style().glyphs(),
         ))?,
     }
