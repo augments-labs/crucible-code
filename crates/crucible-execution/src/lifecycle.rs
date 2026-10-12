@@ -251,9 +251,10 @@ impl Lifecycle {
                         Running::RecoveryRequired,
                         Operation::AwaitingLogin | Operation::Disconnecting | Operation::SigningOut,
                     ) => return Err(Refused::Recovering),
-                    (Running::Idle | Running::Operation(_) | Running::Recovering(_), _) => {
-                        Running::Operation(operation)
+                    (Running::Operation(_) | Running::Recovering(_), _) => {
+                        return Err(Refused::Busy);
                     }
+                    (Running::Idle, _) => Running::Operation(operation),
                 };
             }
             Step::End(ending) => {
@@ -287,10 +288,13 @@ impl Lifecycle {
                     ) => {}
                 }
                 // A recovery that did not succeed established nothing.
-                if let (Running::Recovering(_), Ending::Cancelled | Ending::Failed) =
-                    (self.running, ending)
-                {
-                    next.running = Running::RecoveryRequired;
+                match (self.running, ending) {
+                    (
+                        Running::Recovering(_),
+                        Ending::Cancelled | Ending::Failed | Ending::Unknown,
+                    ) => next.running = Running::RecoveryRequired,
+                    (Running::Recovering(_), Ending::Succeeded)
+                    | (Running::Idle | Running::Operation(_) | Running::RecoveryRequired, _) => {}
                 }
             }
             Step::Observe(authentication) => next.authentication = authentication,

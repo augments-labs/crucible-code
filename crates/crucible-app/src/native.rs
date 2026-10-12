@@ -371,8 +371,9 @@ impl Ask for Asking<'_, '_> {
     }
 }
 
-/// The command line or address exactly as the call sends it, where it sends
-/// one, and whether a command would outlive the turn. The summary is the
+/// What kind of thing the call would do, with the command line or address
+/// exactly as the call sends it, where it sends one, and whether a command
+/// would outlive the turn. The summary is the
 /// spelling a rule is about, which for a line is its commands without the
 /// operators between them and for a search is its host without the query: a
 /// question showing only that would be asking about something nobody sent.
@@ -385,9 +386,9 @@ fn detail(call: &ToolCall, sensitivity: &Sensitivity) -> Detail {
         Sensitivity::ReachesNetwork { host } => Detail::Network {
             sent: Text::new(host.sent()),
         },
-        Sensitivity::ReadOnly { .. }
-        | Sensitivity::ReadsOutside { .. }
-        | Sensitivity::MutatesFile { .. } => Detail::Other,
+        Sensitivity::ReadOnly { .. } => Detail::Reads,
+        Sensitivity::ReadsOutside { .. } => Detail::ReadsOutside,
+        Sensitivity::MutatesFile { .. } => Detail::MutatesFile,
     }
 }
 

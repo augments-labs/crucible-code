@@ -421,6 +421,45 @@ fn a_native_question_shows_what_the_call_sends() -> Result<(), Failed> {
     Ok(())
 }
 
+/// A question says what kind of thing the call would do to a file, so a read
+/// outside the workspace is not put as a read and a change is not put as
+/// either.
+#[test]
+fn a_native_question_says_what_the_call_does_to_a_file() -> Result<(), Failed> {
+    for (sensitivity, expected) in [
+        (
+            Sensitivity::ReadsOutside {
+                target: Target::unresolved(),
+            },
+            Detail::ReadsOutside,
+        ),
+        (writing(), Detail::MutatesFile),
+    ] {
+        let tree = Tree::new("native-effect")?;
+        let (mut runner, ran) = runner(
+            &tree,
+            Script::new(vec![calling(), saying("done")]),
+            sensitivity,
+        )?;
+        let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
+        let sink = Deciding::new(&native, Some(Decision::Deny));
+
+        drop(runtime()?.block_on(native.prompt(TurnRequest::new(TurnId::FIRST, "touch"), &sink)));
+
+        assert_eq!(ran.load(Ordering::Relaxed), 0);
+        let (events, _) = sink.kept();
+        let asked = asked(&events);
+        assert!(
+            matches!(
+                asked.as_slice(),
+                [Pending::Permission { detail, .. }] if *detail == expected
+            ),
+            "{expected:?}: {asked:?}"
+        );
+    }
+    Ok(())
+}
+
 /// A line is shown with the operators between its commands, and a command
 /// that will outlive the turn says so: a yes to `make` is not a yes to
 /// `make && ./serve`, nor to a server left running after the answer.

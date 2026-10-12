@@ -98,7 +98,8 @@ pub enum Pending {
         tool: Text,
         /// What it wants to do with it.
         summary: Text,
-        /// What exactly runs or leaves, beyond what the summary says.
+        /// What kind of thing it would do, and for a command or a request
+        /// exactly what runs or leaves.
         detail: Detail,
     },
     /// An answer to a question.
@@ -123,7 +124,7 @@ impl Pending {
                         Detail::Command { sent, .. } | Detail::Network { sent } => {
                             sent.incomplete()
                         }
-                        Detail::Other => false,
+                        Detail::Reads | Detail::ReadsOutside | Detail::MutatesFile => false,
                     }
             }
             Self::Question { prompt } => prompt.incomplete(),
@@ -131,12 +132,13 @@ impl Pending {
     }
 }
 
-/// What exactly a permission is asked for, beyond its summary.
+/// What kind of thing a permission is asked for, and exactly what it is.
 ///
+/// The kind is closed, so a read outside the workspace is never put as a read.
 /// The summary is the spelling a rule is matched against, which drops the
-/// operators between a line's commands and what a request sends; this is the
-/// call as it carries it, which is what runs or leaves, and whether what runs
-/// outlives the turn.
+/// operators between a line's commands and what a request sends; a command or
+/// a request carries the call as it is sent, which is what runs or leaves, and
+/// a command says whether it outlives the turn.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Detail {
     /// A process would be started.
@@ -147,14 +149,18 @@ pub enum Detail {
         /// ended.
         left_running: bool,
     },
+    /// Something inside the workspace would be read.
+    Reads,
+    /// Something outside the workspace would be read.
+    ReadsOutside,
+    /// A file would be changed.
+    MutatesFile,
     /// Something would leave the machine.
     Network {
         /// What is sent, as it is sent: the address for a fetch, the query for
         /// a search.
         sent: Text,
     },
-    /// Nothing the summary does not already say.
-    Other,
 }
 
 /// How long an allowed action stays allowed.

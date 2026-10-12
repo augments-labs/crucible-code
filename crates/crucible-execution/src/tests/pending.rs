@@ -160,12 +160,12 @@ fn a_question_shown_cut_short_is_not_raised() {
         Pending::Permission {
             tool: Text::new("bash"),
             summary: Text::new(&long),
-            detail: Detail::Other,
+            detail: Detail::MutatesFile,
         },
         Pending::Permission {
             tool: Text::new(&long),
             summary: Text::new("run ls"),
-            detail: Detail::Other,
+            detail: Detail::MutatesFile,
         },
         Pending::Question {
             prompt: Text::new(&long),
