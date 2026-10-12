@@ -59,34 +59,3 @@ fn each_claim_is_its_own() {
         }
     }
 }
-
-/// Every capability is listed once, at the place its claim is held: one left
-/// out of the list would be read as unknown whatever was claimed for it.
-#[test]
-fn every_capability_is_listed_where_its_claim_is_held() {
-    for (at, capability) in Capability::ALL.into_iter().enumerate() {
-        // A capability added to the enum must be added here, and so to the list.
-        let listed = match capability {
-            Capability::Cancel
-            | Capability::Steer
-            | Capability::Resume
-            | Capability::Fork
-            | Capability::Rewind
-            | Capability::Compaction
-            | Capability::ModelSwitch
-            | Capability::Questions
-            | Capability::PermissionOnce
-            | Capability::PermissionSession
-            | Capability::Usage
-            | Capability::ContextOccupancy
-            | Capability::AccountStatus
-            | Capability::Logout
-            | Capability::ProfileIsolation => capability as usize,
-        };
-        assert_eq!(listed, at, "{capability:?} is out of place");
-    }
-    assert_eq!(
-        Capability::ALL.len(),
-        Capability::ProfileIsolation as usize + 1
-    );
-}

@@ -37,11 +37,11 @@ pub use capability::{
 };
 pub use event::{Cost, Currency, Effects, Event, Fault, TEXT_BYTES, Text, Usage};
 pub use lifecycle::{
-    Admission, Authentication, Ending, Lifecycle, Operation, Refused, Running, Step,
+    Admission, Authentication, Ending, Lifecycle, Operation, Recheck, Refused, Running, Step,
 };
 pub use pending::{
-    Decision, Generation, Instance, Lasting, PENDINGS, Pending, PendingRef, Pendings, RequestId,
-    Stale, Unraised,
+    Decision, Detail, Generation, Instance, Lasting, PENDINGS, Pending, PendingRef, Pendings,
+    RequestId, Stale, Unraised,
 };
 
 #[cfg(test)]

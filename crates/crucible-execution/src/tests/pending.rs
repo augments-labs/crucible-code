@@ -2,7 +2,10 @@
 
 use crucible_types::TurnId;
 
-use crate::{Decision, Lasting, PENDINGS, Pending, Pendings, SessionRef, Stale, Text, Unraised};
+use crate::{
+    Decision, Detail, Lasting, PENDINGS, Pending, Pendings, SessionRef, Stale, TEXT_BYTES, Text,
+    Unraised,
+};
 
 fn session(name: &str) -> SessionRef {
     SessionRef::new(name).expect("a short name")
@@ -12,7 +15,10 @@ fn permission() -> Pending {
     Pending::Permission {
         tool: Text::new("bash"),
         summary: Text::new("ls"),
-        sent: Some(Text::new("ls")),
+        detail: Detail::Command {
+            sent: Text::new("ls"),
+            left_running: false,
+        },
     }
 }
 
@@ -127,4 +133,50 @@ fn the_table_is_bounded_and_needs_a_turn() {
         table.raise(permission()).expect("room");
     }
     assert_eq!(table.raise(permission()), Err(Unraised::Full));
+}
+
+/// A question that would show something cut short is not raised, whichever
+/// part was cut: a yes to part of a line is not a yes to the line.
+#[test]
+fn a_question_shown_cut_short_is_not_raised() {
+    let long = "x".repeat(TEXT_BYTES + 1);
+    let mut table = running();
+    let cut = [
+        Pending::Permission {
+            tool: Text::new("bash"),
+            summary: Text::new("run curl"),
+            detail: Detail::Command {
+                sent: Text::new(&long),
+                left_running: false,
+            },
+        },
+        Pending::Permission {
+            tool: Text::new("web_search"),
+            summary: Text::new("reach search.example"),
+            detail: Detail::Network {
+                sent: Text::new(&long),
+            },
+        },
+        Pending::Permission {
+            tool: Text::new("bash"),
+            summary: Text::new(&long),
+            detail: Detail::Other,
+        },
+        Pending::Permission {
+            tool: Text::new(&long),
+            summary: Text::new("run ls"),
+            detail: Detail::Other,
+        },
+        Pending::Question {
+            prompt: Text::new(&long),
+        },
+    ];
+    for pending in cut {
+        assert_eq!(
+            table.raise(pending.clone()),
+            Err(Unraised::Cut),
+            "{pending:?}"
+        );
+    }
+    table.raise(permission()).expect("nothing cut was kept");
 }

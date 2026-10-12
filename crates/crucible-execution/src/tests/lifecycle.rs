@@ -3,7 +3,9 @@
 
 use std::collections::HashSet;
 
-use crate::{Admission, Authentication, Ending, Lifecycle, Operation, Refused, Running, Step};
+use crate::{
+    Admission, Authentication, Ending, Lifecycle, Operation, Recheck, Refused, Running, Step,
+};
 
 /// Every step there is.
 fn steps() -> Vec<Step> {
@@ -129,6 +131,12 @@ fn only_a_successful_check_recovers() {
     );
 
     state.apply(Step::Begin(Operation::Checking)).unwrap();
+    assert_eq!(state.running(), Running::Recovering(Recheck::Checking));
+    assert_eq!(state.apply(Step::Disable), Err(Refused::Busy));
+    assert_eq!(
+        state.apply(Step::Begin(Operation::Verifying)),
+        Err(Refused::Busy)
+    );
     state.apply(Step::End(Ending::Cancelled)).unwrap();
     assert_eq!(state.running(), Running::RecoveryRequired);
     assert!(!state.ready());

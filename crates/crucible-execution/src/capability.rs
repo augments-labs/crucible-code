@@ -16,9 +16,26 @@
 
 use std::fmt;
 
-/// One thing a backend may or may not be able to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Capability {
+/// Declares [`Capability`] and [`Capability::ALL`] from one list, so a
+/// capability cannot be declared and left out of the list its claim is held
+/// by: one left out would be read as unknown whatever was claimed for it.
+macro_rules! capabilities {
+    ($($(#[doc = $doc:literal])* $capability:ident,)+) => {
+        /// One thing a backend may or may not be able to do.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Capability {
+            $($(#[doc = $doc])* $capability,)+
+        }
+
+        impl Capability {
+            /// Every capability, in declaration order.
+            pub const ALL: [Self; [$(stringify!($capability)),+].len()] =
+                [$(Self::$capability),+];
+        }
+    };
+}
+
+capabilities! {
     /// Stopping a running turn.
     Cancel,
     /// Adding to a running turn without stopping it.
@@ -52,25 +69,6 @@ pub enum Capability {
 }
 
 impl Capability {
-    /// Every capability, in declaration order.
-    pub const ALL: [Self; 15] = [
-        Self::Cancel,
-        Self::Steer,
-        Self::Resume,
-        Self::Fork,
-        Self::Rewind,
-        Self::Compaction,
-        Self::ModelSwitch,
-        Self::Questions,
-        Self::PermissionOnce,
-        Self::PermissionSession,
-        Self::Usage,
-        Self::ContextOccupancy,
-        Self::AccountStatus,
-        Self::Logout,
-        Self::ProfileIsolation,
-    ];
-
     /// Its name in a sentence.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -254,7 +252,9 @@ impl Capabilities {
 
     /// These claims, with `capability` claimed as a fact of the driver
     /// itself: true of every instance it can make, known without asking any
-    /// program, so nothing read from a cache can be passed off as one.
+    /// program. Whatever was read of a program is claimed through
+    /// [`Capabilities::observed`] instead, which is what keeps a cached
+    /// reading from admitting anything.
     #[must_use]
     pub fn declared(self, capability: Capability, supported: bool) -> Self {
         let claim = if supported {

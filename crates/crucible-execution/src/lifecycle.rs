@@ -65,6 +65,27 @@ impl Operation {
     ];
 }
 
+/// An operation that reads an instance's state again, the only kind that
+/// may start while it needs recovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Recheck {
+    /// [`Operation::Checking`].
+    Checking,
+    /// [`Operation::Verifying`].
+    Verifying,
+}
+
+impl Recheck {
+    /// The operation it is.
+    #[must_use]
+    pub const fn operation(self) -> Operation {
+        match self {
+            Self::Checking => Operation::Checking,
+            Self::Verifying => Operation::Verifying,
+        }
+    }
+}
+
 /// What is under way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Running {
@@ -76,6 +97,9 @@ pub enum Running {
     /// that reads the state again, [`Operation::Checking`] or
     /// [`Operation::Verifying`], may start, and only its success ends this.
     RecoveryRequired,
+    /// That operation, begun while recovery was required: any ending but
+    /// success requires it still.
+    Recovering(Recheck),
 }
 
 /// How an operation ended.
@@ -143,9 +167,6 @@ pub struct Lifecycle {
     authentication: Authentication,
     /// What is under way.
     running: Running,
-    /// Whether the operation under way began from
-    /// [`Running::RecoveryRequired`], which any ending but success returns to.
-    recovering: bool,
 }
 
 impl Lifecycle {
@@ -157,7 +178,6 @@ impl Lifecycle {
             admission,
             authentication: Authentication::Unknown,
             running: Running::Idle,
-            recovering: false,
         }
     }
 
@@ -204,7 +224,7 @@ impl Lifecycle {
         let mut next = self;
         match step {
             Step::Enable | Step::Disable => {
-                if let Running::Operation(_) = self.running {
+                if let Running::Operation(_) | Running::Recovering(_) = self.running {
                     return Err(Refused::Busy);
                 }
                 next.admission = match step {
@@ -213,26 +233,34 @@ impl Lifecycle {
                 };
             }
             Step::Begin(operation) => {
-                if let Running::Operation(_) = self.running {
+                if let Running::Operation(_) | Running::Recovering(_) = self.running {
                     return Err(Refused::Busy);
                 }
                 if let (Admission::Disabled, Operation::Disconnecting) = (self.admission, operation)
                 {
                     return Err(Refused::Disabled);
                 }
-                if let Running::RecoveryRequired = self.running {
-                    match operation {
-                        Operation::Checking | Operation::Verifying => next.recovering = true,
-                        Operation::AwaitingLogin
-                        | Operation::Disconnecting
-                        | Operation::SigningOut => return Err(Refused::Recovering),
+                next.running = match (self.running, operation) {
+                    (Running::RecoveryRequired, Operation::Checking) => {
+                        Running::Recovering(Recheck::Checking)
                     }
-                }
-                next.running = Running::Operation(operation);
+                    (Running::RecoveryRequired, Operation::Verifying) => {
+                        Running::Recovering(Recheck::Verifying)
+                    }
+                    (
+                        Running::RecoveryRequired,
+                        Operation::AwaitingLogin | Operation::Disconnecting | Operation::SigningOut,
+                    ) => return Err(Refused::Recovering),
+                    (Running::Idle | Running::Operation(_) | Running::Recovering(_), _) => {
+                        Running::Operation(operation)
+                    }
+                };
             }
             Step::End(ending) => {
-                let Running::Operation(operation) = self.running else {
-                    return Err(Refused::Idle);
+                let operation = match self.running {
+                    Running::Operation(operation) => operation,
+                    Running::Recovering(recheck) => recheck.operation(),
+                    Running::Idle | Running::RecoveryRequired => return Err(Refused::Idle),
                 };
                 next.running = Running::Idle;
                 match (operation, ending) {
@@ -259,10 +287,11 @@ impl Lifecycle {
                     ) => {}
                 }
                 // A recovery that did not succeed established nothing.
-                if self.recovering && !matches!(ending, Ending::Succeeded) {
+                if let (Running::Recovering(_), Ending::Cancelled | Ending::Failed) =
+                    (self.running, ending)
+                {
                     next.running = Running::RecoveryRequired;
                 }
-                next.recovering = false;
             }
             Step::Observe(authentication) => next.authentication = authentication,
         }

@@ -15,7 +15,9 @@
 //! against it; what a backend does with an allowed one is its own permission
 //! engine's to settle.
 //!
-//! [`Pendings`] is that table, bounded at [`PENDINGS`] open at once.
+//! [`Pendings`] is that table, bounded at [`PENDINGS`] open at once. It raises
+//! nothing that would be shown cut short, since a question cut short asks
+//! about something other than what would happen.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -96,16 +98,63 @@ pub enum Pending {
         tool: Text,
         /// What it wants to do with it.
         summary: Text,
-        /// The command line or address exactly as the call sends it, where it
-        /// sends one: the summary names what the rules match, and this is what
-        /// leaves.
-        sent: Option<Text>,
+        /// What exactly runs or leaves, beyond what the summary says.
+        detail: Detail,
     },
     /// An answer to a question.
     Question {
         /// The question.
         prompt: Text,
     },
+}
+
+impl Pending {
+    /// Whether anything it would show had to be cut.
+    fn cut(&self) -> bool {
+        match self {
+            Self::Permission {
+                tool,
+                summary,
+                detail,
+            } => {
+                tool.incomplete()
+                    || summary.incomplete()
+                    || match detail {
+                        Detail::Command { sent, .. } | Detail::Network { sent } => {
+                            sent.incomplete()
+                        }
+                        Detail::Other => false,
+                    }
+            }
+            Self::Question { prompt } => prompt.incomplete(),
+        }
+    }
+}
+
+/// What exactly a permission is asked for, beyond its summary.
+///
+/// The summary is the spelling a rule is matched against, which drops the
+/// operators between a line's commands and what a request sends; this is the
+/// call as it carries it, which is what runs or leaves, and whether what runs
+/// outlives the turn.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Detail {
+    /// A process would be started.
+    Command {
+        /// The line as the call carries it, operators and all.
+        sent: Text,
+        /// Whether it would be left running after the turn that starts it has
+        /// ended.
+        left_running: bool,
+    },
+    /// Something would leave the machine.
+    Network {
+        /// What is sent, as it is sent: the address for a fetch, the query for
+        /// a search.
+        sent: Text,
+    },
+    /// Nothing the summary does not already say.
+    Other,
 }
 
 /// How long an allowed action stays allowed.
@@ -163,6 +212,10 @@ pub enum Unraised {
     /// This run of the program has numbered every request it can.
     #[error("no request number is left")]
     Exhausted,
+    /// Something it would show had to be cut, and a question shown cut short
+    /// asks about something other than what would happen.
+    #[error("what it would ask is too long to show whole")]
+    Cut,
 }
 
 /// One open action and the reference it was raised under.
@@ -241,6 +294,9 @@ impl Pendings {
     ///
     /// The [`Unraised`] reason it was not opened.
     pub fn raise(&mut self, pending: Pending) -> Result<PendingRef, Unraised> {
+        if pending.cut() {
+            return Err(Unraised::Cut);
+        }
         let Some((session, turn)) = self.turn.clone() else {
             return Err(Unraised::Idle);
         };

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use crucible_agents::{AgentBuilder, Model};
 use crucible_app::native::{Native, confinement};
 use crucible_execution::{
-    Backend, Capability, Confinement, Decision, Error, Event, Lasting, Outcome, Pending,
+    Backend, Capability, Confinement, Decision, Detail, Error, Event, Lasting, Outcome, Pending,
     PendingRef, SessionRef, Sink, Stale, TEXT_BYTES, Text, TurnRequest, Unsupported, conformance,
 };
 use crucible_models::Delta;
@@ -18,7 +18,7 @@ use crucible_runtime::{BoxFuture, answered};
 use crucible_sandbox::SandboxCapability;
 use crucible_session::Session;
 use crucible_tools::{
-    Approved, DescribeTool, Host, Permission, Rules, Sensitivity, Summary, Target, Tool,
+    Approved, Command, DescribeTool, Host, Permission, Rules, Sensitivity, Summary, Target, Tool,
     ToolContext, ToolError, ToolOutput,
 };
 use crucible_types::{
@@ -71,12 +71,17 @@ impl Tool for Counting {
 
 /// One round in which the model reaches for the counting tool.
 fn calling() -> Vec<Delta> {
+    calling_with("{}")
+}
+
+/// One round in which the model reaches for the counting tool with `args`.
+fn calling_with(args: &str) -> Vec<Delta> {
     vec![
         Delta::ToolStarted {
             id: ToolId::new("a"),
             name: WRITE.into(),
         },
-        Delta::ToolArgs("{}".into()),
+        Delta::ToolArgs(args.into()),
         Delta::Stopped(StopReason::WantsTools),
     ]
 }
@@ -408,10 +413,76 @@ fn a_native_question_shows_what_the_call_sends() -> Result<(), Failed> {
     assert!(
         matches!(
             asked.as_slice(),
-            [Pending::Permission { sent: Some(sent), .. }] if sent.as_str() == "what the secret is"
+            [Pending::Permission { detail: Detail::Network { sent }, .. }]
+                if sent.as_str() == "what the secret is"
         ),
         "{asked:?}"
     );
+    Ok(())
+}
+
+/// A line is shown with the operators between its commands, and a command
+/// that will outlive the turn says so: a yes to `make` is not a yes to
+/// `make && ./serve`, nor to a server left running after the answer.
+#[test]
+fn a_native_question_shows_a_line_whole_and_what_it_leaves_running() -> Result<(), Failed> {
+    let tree = Tree::new("native-line")?;
+    let line = "make && ./serve";
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling_with(r#"{"background":true}"#), saying("done")]),
+        Sensitivity::SpawnsProcess {
+            command: Command::Understood {
+                sent: line.into(),
+                parts: Box::from([Box::from("make"), Box::from("./serve")]),
+            },
+        },
+    )?;
+    let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
+    let sink = Deciding::new(&native, Some(Decision::Deny));
+
+    drop(runtime()?.block_on(native.prompt(TurnRequest::new(TurnId::FIRST, "serve"), &sink)));
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0);
+    let (events, _) = sink.kept();
+    let asked = asked(&events);
+    assert!(
+        matches!(
+            asked.as_slice(),
+            [Pending::Permission {
+                detail: Detail::Command { sent, left_running: true },
+                ..
+            }] if sent.as_str() == line
+        ),
+        "{asked:?}"
+    );
+    Ok(())
+}
+
+/// A question whose summary had to be cut is not put either.
+#[test]
+fn a_native_question_with_its_summary_cut_is_not_asked() -> Result<(), Failed> {
+    let tree = Tree::new("native-summary")?;
+    let long = "x".repeat(TEXT_BYTES + 1);
+    let (mut runner, ran) = runner(
+        &tree,
+        Script::new(vec![calling(), saying("done")]),
+        Sensitivity::SpawnsProcess {
+            command: Command::Understood {
+                sent: "x".into(),
+                parts: Box::from([Box::from(long.as_str())]),
+            },
+        },
+    )?;
+    let native = Native::new(&mut runner, named()?, None).ok_or("no instance number")?;
+    let sink = Deciding::new(&native, Some(Decision::Allow(Lasting::Once)));
+
+    drop(runtime()?.block_on(native.prompt(TurnRequest::new(TurnId::FIRST, "run"), &sink)));
+
+    assert_eq!(ran.load(Ordering::Relaxed), 0);
+    let (events, settled) = sink.kept();
+    assert_eq!(asked(&events), Vec::new());
+    assert_eq!(settled, Vec::new());
     Ok(())
 }
 

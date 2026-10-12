@@ -16,10 +16,10 @@
 //! turn moved the session's totals by, never the totals themselves.
 //!
 //! A permission question carries the line or address exactly as the call
-//! sends it, beside the spelling a rule is about. One that could only be put
-//! cut short is not put, as a client's is not: a yes to the start of a line is
-//! a yes to a line nobody read, so the call is refused as it is where nobody
-//! answers.
+//! sends it, beside the spelling a rule is about, and says when a command
+//! would be left running after the turn. One the table refuses as cut short is
+//! not put, as a client's is not: a yes to the start of a line is a yes to a
+//! line nobody read, so the call is refused as it is where nobody answers.
 //!
 //! Confinement is claimed from the sandbox's own claim and from nothing else,
 //! so [`Confinement::HardEnforced`] is claimed only where the sandbox says it
@@ -29,7 +29,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crucible_execution::{
     Backend, Capabilities, Capability, Confined, Confinement, Cost, Currency, Decision,
-    Description, Error, Event, Failure, Lasting, NAME_BYTES, Observation, Outcome, Pending,
+    Description, Detail, Error, Event, Failure, Lasting, NAME_BYTES, Observation, Outcome, Pending,
     PendingRef, Pendings, Scope, SessionRef, Sink, Stale, Text, TurnRequest, Unsupported, Usage,
 };
 use crucible_runner::{Event as Reported, EventEnvelope, Post, Runner, SessionCost, Totals};
@@ -352,17 +352,10 @@ impl Ask for Asking<'_, '_> {
         sensitivity: &'a Sensitivity,
     ) -> BoxFuture<'a, (Verdict, Remember)> {
         Box::pin(async move {
-            let tool = Text::clipped(&call.name, NAME_BYTES);
-            let summary = Text::new(&sensitivity.to_string());
-            let sent = sent(sensitivity);
-            let cut = sent.as_ref().is_some_and(Text::incomplete);
-            if tool.incomplete() || summary.incomplete() || cut {
-                return DENIED;
-            }
             let pending = Pending::Permission {
-                tool,
-                summary,
-                sent,
+                tool: Text::clipped(&call.name, NAME_BYTES),
+                summary: Text::new(&sensitivity.to_string()),
+                detail: detail(call, sensitivity),
             };
             let (answer, decided) = oneshot::channel();
             let Some(reference) = self.native.raise(pending.clone(), answer) else {
@@ -379,17 +372,22 @@ impl Ask for Asking<'_, '_> {
 }
 
 /// The command line or address exactly as the call sends it, where it sends
-/// one. The summary is the spelling a rule is about, which for a line is its
-/// commands without the operators between them and for a search is its host
-/// without the query: a question showing only that would be asking about
-/// something nobody sent.
-fn sent(sensitivity: &Sensitivity) -> Option<Text> {
+/// one, and whether a command would outlive the turn. The summary is the
+/// spelling a rule is about, which for a line is its commands without the
+/// operators between them and for a search is its host without the query: a
+/// question showing only that would be asking about something nobody sent.
+fn detail(call: &ToolCall, sensitivity: &Sensitivity) -> Detail {
     match sensitivity {
-        Sensitivity::SpawnsProcess { command } => Some(Text::new(command.sent())),
-        Sensitivity::ReachesNetwork { host } => Some(Text::new(host.sent())),
+        Sensitivity::SpawnsProcess { command } => Detail::Command {
+            sent: Text::new(command.sent()),
+            left_running: crucible_builtins::backgrounded(&call.args),
+        },
+        Sensitivity::ReachesNetwork { host } => Detail::Network {
+            sent: Text::new(host.sent()),
+        },
         Sensitivity::ReadOnly { .. }
         | Sensitivity::ReadsOutside { .. }
-        | Sensitivity::MutatesFile { .. } => None,
+        | Sensitivity::MutatesFile { .. } => Detail::Other,
     }
 }
 
