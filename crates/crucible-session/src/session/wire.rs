@@ -13,7 +13,10 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crucible_storage::{InvocationState, MAX_RUN_ITEM_BYTES, PendingAction, RunItem, ToolEffect};
+use crucible_storage::{
+    ExternalRef, InvocationState, MAX_RUN_ITEM_BYTES, PendingAction, RouteBinding, RunItem,
+    ToolEffect, Uncertain,
+};
 use crucible_tools::ToolOutcome;
 use crucible_types::ResultProvenance;
 use crucible_types::{
@@ -32,7 +35,7 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
-pub(crate) const FORMAT: u32 = 13;
+pub(crate) const FORMAT: u32 = 14;
 
 /// The formats this build reads, newest first.
 ///
@@ -64,12 +67,17 @@ pub(crate) const FORMAT: u32 = 13;
 /// format 13, and would anyway — a line kind they have no word for is refused
 /// mid-log as a damaged file, which names the wrong problem. The refusal costs
 /// them a session either way; the format number is what makes it honest.
+/// Format 13 is, because format 14 only adds three line kinds a session run by
+/// an installed agent writes: the route it was opened on, the agent's own name
+/// for it, and a turn that ended with its effects not known. A format-13 log
+/// was run by a provider's model and never wrote one. Older readers must refuse
+/// format 14: one would continue an agent's session on a provider's model.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -97,7 +105,7 @@ pub(crate) fn has_continuation(line: &str) -> bool {
 
 /// Whether this format has the typed-context baseline introduced in format 10.
 pub(crate) const fn typed_context(format: Option<u32>) -> bool {
-    matches!(format, Some(10..=13))
+    matches!(format, Some(10..=14))
 }
 
 /// A whole line of framework history rather than a conversation line.
@@ -767,6 +775,108 @@ pub(crate) fn context_patch(line: &str) -> Option<Result<ContextPatch, ContextEr
     let value: Value = serde_json::from_str(line).ok()?;
     Some(ContextPatch::from_value(
         value.get("context_patch")?.clone(),
+    ))
+}
+
+/// The line saying which installed agent a session was opened on.
+///
+/// Written once, straight after the header and in the same write, so a reader
+/// that wants only the route reads the first two lines and no further. It
+/// holds what a resume compares and nothing that runs the agent: no
+/// environment, no command line, and the program as a digest of where it
+/// resolved rather than the path itself.
+pub(crate) fn route(binding: &RouteBinding) -> String {
+    let mut route = json!({
+        "driver": binding.driver(),
+        "instance": binding.instance(),
+        "generation": binding.generation(),
+    });
+    if let Some(object) = route.as_object_mut() {
+        if let Some(profile) = binding.profile() {
+            object.insert("profile".to_owned(), Value::String(profile.to_owned()));
+        }
+        if let Some(executable) = binding.executable() {
+            object.insert("executable".to_owned(), Value::String(hashed(executable)));
+        }
+        if let Some(version) = binding.version() {
+            object.insert(
+                "version".to_owned(),
+                Value::String(version.as_str().to_owned()),
+            );
+            if version.incomplete() {
+                object.insert("version_incomplete".to_owned(), Value::Bool(true));
+            }
+        }
+    }
+    json!({ "route": route }).to_string()
+}
+
+/// What a route line says, or `None` if this is not one or it names a route
+/// longer than a binding keeps.
+pub(crate) fn routed(line: &str) -> Option<RouteBinding> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let route = value.get("route")?;
+    let mut binding = RouteBinding::new(
+        route.get("driver")?.as_str()?,
+        route.get("instance")?.as_str()?,
+        match route.get("profile") {
+            Some(profile) => Some(profile.as_str()?),
+            None => None,
+        },
+    )
+    .ok()?
+    .generation_of(route.get("generation")?.as_u64()?);
+    if let Some(executable) = route.get("executable") {
+        binding = binding.digested(hash(executable)?);
+    }
+    if let Some(version) = route.get("version") {
+        let incomplete = match route.get("version_incomplete") {
+            Some(incomplete) => incomplete.as_bool()?,
+            None => false,
+        };
+        binding = binding.reporting(version.as_str()?, incomplete);
+    }
+    Some(binding)
+}
+
+/// The line saying what an installed agent calls the session it is running.
+pub(crate) fn external(named: &ExternalRef) -> String {
+    json!({
+        "external": { "instance": named.instance(), "reference": named.reference() }
+    })
+    .to_string()
+}
+
+/// What an external line says, or `None` if this is not one.
+pub(crate) fn named(line: &str) -> Option<ExternalRef> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let named = value.get("external")?;
+    ExternalRef::new(
+        named.get("instance")?.as_str()?,
+        named.get("reference")?.as_str()?,
+    )
+    .ok()
+}
+
+/// The line saying a turn ended without the agent saying whether what it set
+/// out to do was done, and what it reported under way.
+pub(crate) fn uncertain(turn: &Uncertain) -> String {
+    json!({
+        "uncertain": {
+            "under_way": turn.under_way().as_str(),
+            "incomplete": turn.under_way().incomplete(),
+        }
+    })
+    .to_string()
+}
+
+/// What an uncertain line says, or `None` if this is not one.
+pub(crate) fn uncertainty(line: &str) -> Option<Uncertain> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let turn = value.get("uncertain")?;
+    Some(Uncertain::new(
+        turn.get("under_way")?.as_str()?,
+        turn.get("incomplete")?.as_bool()?,
     ))
 }
 
@@ -1529,8 +1639,9 @@ mod tests {
 
     #[test]
     fn the_format_moves_with_the_line_shape() {
-        assert_eq!(FORMAT, 13);
+        assert_eq!(FORMAT, 14);
         assert!(readable(FORMAT));
+        assert!(readable(13), "a log from before agents ran sessions");
         assert!(typed_context(Some(10)));
         assert!(typed_context(Some(FORMAT)));
     }

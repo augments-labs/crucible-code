@@ -1775,3 +1775,67 @@ fn two_places_whose_names_are_not_text_are_two_owners() {
     let second = SessionStore::owner(&second).expect("a session on disk is somebody's");
     assert_ne!(first, second, "two directories answered one owner");
 }
+
+#[test]
+fn a_turn_whose_effects_are_not_known_survives_being_continued() {
+    // The turn ended with the agent gone before it said whether its edits
+    // landed. Reading the line as a torn tail cuts it, and the session comes
+    // back saying nothing about a working tree that may hold changes nobody
+    // was told about.
+    let sample = Sample::new("session-uncertain");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let path = session.path().to_owned();
+    session.append(&said("rename the module"));
+    session.uncertain(&crucible_storage::Uncertain::new(
+        "editing src/lib.rs",
+        false,
+    ));
+    drop(session);
+
+    for _ in 0..2 {
+        let (session, transcript) =
+            Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+        assert_eq!(transcript.messages().len(), 1);
+        assert_eq!(
+            session
+                .uncertain_turn()
+                .map(|turn| turn.under_way().as_str()),
+            Some("editing src/lib.rs"),
+        );
+        drop(session);
+        assert!(
+            fs::read_to_string(&path)
+                .expect("the log")
+                .contains(r#""uncertain""#),
+            "continuing cut the uncertain turn out of the log"
+        );
+    }
+}
+
+#[test]
+fn a_session_an_agent_ran_is_not_picked_up_on_another_route_and_is_left_as_it_was() {
+    // Picked up here, its history would be replayed to a provider's model it
+    // never went to, under an identity the agent never had. Refused, the file
+    // is the agent's still: nothing is cut, claimed or appended.
+    let sample = Sample::new("session-rerouted");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    let path = session.path().to_owned();
+    let id = session.id().expect("its id").clone();
+    session.append(&said("rename the module"));
+    drop(session);
+    let before = fs::read(&path).expect("the log");
+
+    let refused = |problem: SessionError| {
+        assert!(
+            matches!(&problem, SessionError::Rerouted { route, .. } if route.instance() == "work"),
+            "{problem:?}"
+        );
+    };
+    refused(Session::resume(&sample.logs(), &sample.workspace()).expect_err("refused"));
+    refused(Session::reopen(&sample.logs(), &sample.workspace(), &id).expect_err("refused"));
+    refused(crate::picked(&sample.logs(), &sample.workspace(), None).expect_err("refused"));
+    refused(crate::picked(&sample.logs(), &sample.workspace(), Some(&id)).expect_err("refused"));
+    assert_eq!(fs::read(&path).expect("the log"), before);
+}

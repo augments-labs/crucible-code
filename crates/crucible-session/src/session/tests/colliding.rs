@@ -34,8 +34,10 @@ fn a_name_another_session_is_recording_under_is_refused_rather_than_written_into
     let path = running.path().to_owned();
     running.append(&said("what the first session said"));
 
-    let problem = Session::naming(&sample.logs(), &sample.workspace(), None, || taken.clone())
-        .expect_err("every name it tried was taken");
+    let problem = Session::naming(&sample.logs(), &sample.workspace(), None, None, || {
+        taken.clone()
+    })
+    .expect_err("every name it tried was taken");
 
     assert!(matches!(problem, SessionError::Taken { .. }), "{problem}");
 
@@ -65,6 +67,7 @@ fn a_name_that_is_taken_is_passed_over_for_the_next_one_minted() {
     let started = Session::naming(
         &sample.logs(),
         &sample.workspace(),
+        None,
         None,
         minting(&[taken, free.clone()]),
     )
@@ -98,6 +101,7 @@ fn a_mark_another_crucible_holds_is_a_name_in_use_even_with_no_log_beside_it() {
     let started = Session::naming(
         &sample.logs(),
         &sample.workspace(),
+        None,
         None,
         minting(&[named("0000000000001-000001"), named("0000000000002-000002")]),
     )
