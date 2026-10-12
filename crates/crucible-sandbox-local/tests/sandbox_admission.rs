@@ -183,3 +183,12 @@ fn omitted_or_larger_policy_limits_cannot_bypass_the_absolute_service_ceiling() 
         }
     }
 }
+
+/// The broker checks protected metadata by names it keeps itself, since it
+/// does not depend on the contract that lists them: the two lists are one.
+#[test]
+fn the_broker_protects_the_metadata_the_contract_lists() {
+    let listed = crucible_sandbox::PROTECTED_METADATA.map(str::as_bytes);
+
+    assert_eq!(crucible_sandbox_broker::PROTECTED_METADATA, listed);
+}

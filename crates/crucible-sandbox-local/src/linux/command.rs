@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crucible_sandbox::{
-    SandboxCommand, SandboxError, SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemRule,
-    SandboxNetworkPolicy, SandboxRequest, SandboxUnreadablePattern,
+    PROTECTED_METADATA, SandboxCommand, SandboxError, SandboxFeature, SandboxFilesystemAccess,
+    SandboxFilesystemRule, SandboxNetworkPolicy, SandboxRequest, SandboxUnreadablePattern,
 };
 
 use super::broker::Broker;
@@ -1029,10 +1029,9 @@ fn expand_unreadable_patterns(
 }
 
 fn protected_name(name: &OsStr) -> bool {
-    matches!(
-        name.to_str(),
-        Some(".git" | ".agents" | ".codex" | ".crucible")
-    )
+    PROTECTED_METADATA
+        .iter()
+        .any(|protected| name == OsStr::new(protected))
 }
 
 fn host_mount_points() -> Result<Vec<PathBuf>, SandboxError> {

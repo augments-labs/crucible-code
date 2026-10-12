@@ -27,6 +27,9 @@ crucible-credentials.workspace = true
 # The contract every agent a conversation can run on implements; `native`
 # puts the runner behind it.
 crucible-execution.workspace = true
+# Another vendor's agent run as a supervised child; `launching` starts it and
+# `external` puts it behind the execution contract.
+crucible-external-harnesses.workspace = true
 # Extension discovery: the programs a run may host, read at startup and listed
 # for `--extensions`.
 crucible-extension.workspace = true
@@ -86,6 +89,10 @@ tokio = { workspace = true, features = ["net", "rt-multi-thread", "sync", "time"
 [dev-dependencies]
 # The guardrail a headless turn is refused by.
 crucible-agents.workspace = true
+# The scripted peer and the line protocol the launch and the external backend
+# are proved over in place of a vendor's agent. Dev-only, so nothing that
+# ships carries either.
+crucible-external-harnesses = { workspace = true, features = ["proof"] }
 # `answered!`, which drives a fake `Ask`/`Front`'s future by hand in a test:
 # every fake here answers the moment it is asked, so a test fails at the line
 # that asked rather than hanging where one would have had to wait.
@@ -103,9 +110,10 @@ crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 # feature is on.
 # Nothing in the workspace turns it on as a dependency; only the binary's
 # `[dev-dependencies]` do, which cargo does not resolve for a release build. It
-# is not in the shipped binary and it is not API anyone can rely on.
+# is not in the shipped binary and it is not API anyone can rely on. It also
+# builds the agents' fake peer, which the headless suite drives.
 [features]
-proof = []
+proof = ["crucible-external-harnesses/proof"]
 
 [lints]
 workspace = true

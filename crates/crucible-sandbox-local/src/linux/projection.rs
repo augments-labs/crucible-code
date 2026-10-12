@@ -20,9 +20,9 @@ use std::sync::{Arc, Mutex};
 
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
-    SandboxAudit, SandboxError, SandboxFactKind, SandboxFilesystemAccess, SandboxInspection,
-    SandboxInvocationMode, SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRequest,
-    SandboxUsage, SandboxViolation,
+    PROTECTED_METADATA, SandboxAudit, SandboxError, SandboxFactKind, SandboxFilesystemAccess,
+    SandboxInspection, SandboxInvocationMode, SandboxLifecycle, SandboxOutput, SandboxProcess,
+    SandboxRequest, SandboxUsage, SandboxViolation,
 };
 use crucible_sandbox_broker::{CANCEL_FRAME, MAX_SCAN_EXTENTS, MAX_SCAN_FILE_BYTES};
 use crucible_storage::{CallResultKey, CallResultReceipt};
@@ -833,10 +833,9 @@ fn safe_mode(metadata: &fs::Metadata) -> u32 {
 }
 
 fn protected_name(name: &OsStr) -> bool {
-    matches!(
-        name.to_str(),
-        Some(".git" | ".agents" | ".codex" | ".crucible")
-    )
+    PROTECTED_METADATA
+        .iter()
+        .any(|protected| name == OsStr::new(protected))
 }
 
 fn validate_publishable_metadata(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {

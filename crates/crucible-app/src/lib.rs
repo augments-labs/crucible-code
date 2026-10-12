@@ -33,6 +33,7 @@
 
 pub mod access;
 pub mod auth;
+pub mod backends;
 pub mod branching;
 pub mod client;
 pub mod content_use;
@@ -40,7 +41,9 @@ mod conversation;
 pub mod doctor;
 mod error;
 pub mod extensions;
+pub mod external;
 mod following;
+pub mod launching;
 pub mod mcp;
 mod models;
 pub mod native;

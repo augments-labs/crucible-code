@@ -184,9 +184,15 @@ mod tests {
         assert!(named(path_of(&["/nonexistent-directory"]), "pandoc").is_none());
     }
 
+    /// Tests run from the package's directory, so `src` resolves to a
+    /// directory holding this very file: only being relative keeps it unread.
     #[test]
     fn a_relative_path_element_is_never_looked_in() {
-        assert!(named(path_of(&[".", "relative/bin"]), "sh").is_none());
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let absolute = source.to_str().expect("a source path that is text");
+        assert!(on_path(path_of(&[absolute]), "program.rs").is_some());
+
+        assert!(on_path(path_of(&["src", "./src"]), "program.rs").is_none());
     }
 
     /// A `$Variable` with nothing after it names no directory at all, and the

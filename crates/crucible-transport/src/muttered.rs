@@ -13,10 +13,12 @@
 //! that went wrong says that; what follows is usually the same thing again
 //! with the process falling over on top of it. How much was dropped is kept
 //! too, because a bound nobody is told about reads as a program that went
-//! quiet.
+//! quiet. A reader after a program's last words, once it has exited, waits
+//! for the drain to settle, since the exit can be seen before they are read.
 
 use std::fmt::{self, Write as _};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crucible_sandbox::{SandboxOutput, SandboxRead};
 use tokio::runtime::Handle;
@@ -41,6 +43,8 @@ struct Kept {
     beginning: Vec<u8>,
     /// How many bytes went past that and were dropped.
     dropped: usize,
+    /// Whether the stream has ended, so that nothing more will be kept.
+    ended: bool,
 }
 
 /// A confined process's standard error, drained and bounded.
@@ -80,9 +84,31 @@ impl Muttered {
     #[must_use]
     pub fn silent() -> Self {
         Self {
-            kept: Arc::new(Mutex::new(Kept::default())),
+            kept: Arc::new(Mutex::new(Kept {
+                ended: true,
+                ..Kept::default()
+            })),
             _draining: None,
         }
+    }
+
+    /// Waits, for at most `within`, until the stream has ended or failed, so
+    /// that what a process wrote just before it exited is read before
+    /// [`text`](Self::text) is asked for.
+    ///
+    /// The drain reads on its own task, and a process's exit can be seen
+    /// before its last words are. A stream that never ends, because a
+    /// descendant still holds it open, is waited for no longer than `within`.
+    pub async fn settled(&self, within: Duration) {
+        let began = Instant::now();
+        while !self.ended() && began.elapsed() < within {
+            tokio::time::sleep(PAUSE).await;
+        }
+    }
+
+    /// Whether the stream has ended or failed, or was never there.
+    fn ended(&self) -> bool {
+        self.kept.lock().map_or(true, |held| held.ended)
     }
 
     /// What the program said, as text, saying so where it was cut short.
@@ -149,7 +175,12 @@ async fn drain<O: SandboxOutput>(mut output: O, kept: Arc<Mutex<Kept>>) {
             }
             // An ending or a broken stream is the same instruction: there is
             // nothing further to read and nobody to tell.
-            Ok(SandboxRead::End) | Err(_) => return,
+            Ok(SandboxRead::End) | Err(_) => {
+                if let Ok(mut held) = kept.lock() {
+                    held.ended = true;
+                }
+                return;
+            }
         }
         // A stream that always has more would otherwise be read for as long
         // as it kept talking without the task ever reaching a wait, and an

@@ -1,0 +1,94 @@
+//! The installed agents this build can run, one row each.
+//!
+//! A [`Row`] is everything the rest of the application needs to know about an
+//! agent besides what its configuration says: which driver it is, how its
+//! wire is spoken, which key names its profile directory, the content-use
+//! route it is held under, the section of `docs/providers/agents.md` that
+//! documents it, the hosts it must reach, and whether this release ships it.
+//! The chooser, the launch and every test read the [`Registry`] they were
+//! built over, and the shipped one is [`REGISTRY`]; a row that does not ship
+//! is listed nowhere and refused at launch with the sentence that names its
+//! section.
+//!
+//! The rows agree with the configuration's driver list and with the
+//! content-use routes by a test, because neither can be derived from the
+//! other: a driver is a word the user writes, and its route is asked about in
+//! the vendor's own terms.
+
+use crucible_config::Driver;
+use crucible_external_harnesses::Dialect;
+
+/// The most rows a registry holds, which is more agents than any release has
+/// offered at once.
+pub const ROWS: usize = 16;
+
+/// One installed agent this build knows how to run.
+#[derive(Clone, Copy)]
+pub struct Row {
+    /// Which agent, as the configuration names it.
+    pub driver: Driver,
+    /// Its wire, fresh for each run.
+    pub dialect: fn() -> Box<dyn Dialect>,
+    /// The key of its `externalAgents` entry that names its profile directory.
+    pub profile_key: &'static str,
+    /// The content-use route a launch of it is held under.
+    pub route: &'static str,
+    /// Its section of `docs/providers/agents.md`, as the anchor after `#`.
+    pub docs_section: &'static str,
+    /// The hosts it must reach, which its sandbox lets it.
+    pub reaches: &'static [&'static str],
+    /// Whether this release lets it run.
+    pub shipping: bool,
+}
+
+impl std::fmt::Debug for Row {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Row")
+            .field("driver", &self.driver)
+            .field("route", &self.route)
+            .field("shipping", &self.shipping)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Row {
+    /// Where its documentation is, as a path a user can open.
+    #[must_use]
+    pub fn documented(&self) -> String {
+        format!("docs/providers/agents.md#{}", self.docs_section)
+    }
+}
+
+/// The agents one build can run.
+#[derive(Debug, Clone, Copy)]
+pub struct Registry(&'static [Row]);
+
+impl Registry {
+    /// `rows`, of which at most [`ROWS`] are read.
+    #[must_use]
+    pub const fn new(rows: &'static [Row]) -> Self {
+        Self(rows)
+    }
+
+    /// Every row, whether or not it ships.
+    pub fn all(&self) -> impl Iterator<Item = &'static Row> {
+        self.0.iter().take(ROWS)
+    }
+
+    /// The rows this release lets run, which are the ones a chooser lists.
+    pub fn shipping(&self) -> impl Iterator<Item = &'static Row> {
+        self.all().filter(|row| row.shipping)
+    }
+
+    /// The row for `driver`, shipping or not.
+    #[must_use]
+    pub fn row(&self, driver: Driver) -> Option<&'static Row> {
+        self.all().find(|row| row.driver == driver)
+    }
+}
+
+/// The registry this build ships.
+pub static REGISTRY: Registry = Registry::new(&[]);
+
+#[cfg(test)]
+mod tests;
