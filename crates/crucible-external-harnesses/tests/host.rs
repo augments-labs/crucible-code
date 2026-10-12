@@ -33,6 +33,19 @@ const SENTINEL: &str = "sentinel-c0ffee-5ec7e7";
 /// The route this file's launches are held under.
 const ROUTE: &str = "agent:plain";
 
+/// Puts a changed copy of the program at `path` in its place.
+///
+/// Replaced rather than written into: an installed peer can be a link to the
+/// one Cargo built, and writing through it would change every other test's.
+#[allow(clippy::expect_used)]
+fn rewritten(path: &Path) {
+    let mut bytes = fs::read(path).expect("readable");
+    bytes.push(0);
+    let beside = path.with_extension("changed");
+    fs::write(&beside, bytes).expect("written");
+    fs::rename(&beside, path).expect("replaced");
+}
+
 /// A directory of the test's own, removed when it is dropped.
 struct Owned(PathBuf);
 
@@ -213,9 +226,7 @@ async fn a_launch_whose_place_cannot_be_kept_fails_with_its_own_status() {
 async fn a_program_changed_since_it_was_selected_is_not_started() {
     let at = Owned::new("changed");
     let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
-    let mut bytes = fs::read(program.path()).expect("readable");
-    bytes.push(0);
-    fs::write(program.path(), bytes).expect("rewritten");
+    rewritten(program.path());
     let control = Control::new().expect("a control");
 
     let refused = Host::launch(
@@ -686,12 +697,7 @@ impl SandboxService for Tampering {
         request: SandboxRequest,
     ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
         Box::pin(async move {
-            #[allow(clippy::expect_used)]
-            {
-                let mut bytes = fs::read(&self.program).expect("readable");
-                bytes.push(0);
-                fs::write(&self.program, bytes).expect("rewritten");
-            }
+            rewritten(&self.program);
             self.inner.prepare(request).await
         })
     }
