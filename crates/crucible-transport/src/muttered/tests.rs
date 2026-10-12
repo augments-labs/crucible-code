@@ -102,6 +102,30 @@ fn what_a_process_writes_to_standard_error_is_kept() {
 }
 
 #[test]
+fn settling_waits_for_what_is_said_last() {
+    let mut steps: Vec<Step> = (0..10).map(|_| Step::Waits).collect();
+    steps.push(Step::Says(b"counter unwritable\n".to_vec()));
+    steps.push(Step::Closes);
+    let (stream, _) = says(steps);
+    let muttered = Muttered::draining(stream, crate::testing::runtime());
+
+    crate::testing::runtime().block_on(muttered.settled(LATEST));
+
+    assert_eq!(muttered.text(), "counter unwritable\n");
+}
+
+#[test]
+fn settling_on_a_stream_that_never_ends_gives_up_in_time() {
+    let (stream, _) = says([]);
+    let muttered = Muttered::draining(stream, crate::testing::runtime());
+
+    let began = Instant::now();
+    crate::testing::runtime().block_on(muttered.settled(PAUSE * 20));
+
+    assert!(began.elapsed() < LATEST, "{:?}", began.elapsed());
+}
+
+#[test]
 fn a_talkative_process_is_bounded_and_told_on() {
     let over = KEPT + 500;
     let (stream, _) = says([Step::Says(vec![b'x'; over]), Step::Closes]);

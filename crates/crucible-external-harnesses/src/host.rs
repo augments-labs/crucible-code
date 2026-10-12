@@ -75,6 +75,11 @@ pub const CANCEL_GRACE: Duration = Duration::from_secs(5);
 /// before it is stopped.
 pub const STOP_GRACE: Duration = Duration::from_secs(2);
 
+/// How long an account step's standard error is read for after its process
+/// has ended: long enough for what it wrote last, and no longer, since a
+/// descendant can hold the stream open.
+const SETTLING: Duration = Duration::from_millis(500);
+
 /// How long the sandbox has to prepare a launch.
 pub const PREPARING: Duration = Duration::from_secs(30);
 
@@ -978,6 +983,8 @@ impl Host {
     ///
     /// Its input is closed first: a step is told what to do by its arguments,
     /// and one that waits to be typed to reads the end of its input instead.
+    /// Its standard error is read to its end too, for at most half a second,
+    /// so that a step failing with a last word is shown saying it.
     /// Standard output is kept a line at a time up to [`RAN_BYTES`]; past
     /// that, and on anything unreadable, the run is marked cut and its process
     /// stopped rather than read further.
@@ -1009,6 +1016,7 @@ impl Host {
             Some(Finish::Exited(status)) => status.code(),
             _ => None,
         };
+        self.muttered.settled(SETTLING).await;
         let muttered = self.aside();
         Ran {
             code,
