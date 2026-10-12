@@ -357,12 +357,14 @@ fn a_provider_this_build_does_not_serve_is_refused_before_anything_is_drawn() {
 
 #[test]
 fn every_variable_a_key_is_read_from_is_named_the_usual_one_included() {
-    // `apiKeyEnv` moves where anthropic's key is read from. The usual name can
+    // Naming another variable moves where anthropic's key is read from. The usual name can
     // still hold one exported before the setting was written, so both are
     // named, and every other provider keeps its own.
     let sample = Sample::new("key-variables");
-    let settings =
-        sample.user(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"anthropic": {{{}}}}}}}"#,
+        crate::access::naming("WORK_ANTHROPIC_KEY")
+    ));
     let providers = catalogue();
 
     let named: Vec<&str> = key_variables(&providers, &settings).collect();
@@ -428,7 +430,10 @@ fn the_variable_a_key_is_looked_for_in_is_the_one_the_configuration_names() {
     // the vendor's usual name would miss it and leave the machine looking as
     // though nothing were set up.
     let sample = Sample::new("keyed-variable");
-    let settings = sample.user(r#"{"providers": {"openai": {"apiKeyEnv": "WORK_OPENAI_KEY"}}}"#);
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"openai": {{{}}}}}}}"#,
+        crate::access::naming("WORK_OPENAI_KEY")
+    ));
 
     let found = lands(&settings, &holding(&["WORK_OPENAI_KEY"])).expect("one key");
 
@@ -519,7 +524,10 @@ fn google_key_discovery_preserves_empty_custom_stored_and_ambiguous_choices() {
             .is_none()
     );
     let sample = Sample::new("google-key-discovery");
-    let custom = sample.user(r#"{"providers":{"google":{"apiKeyEnv":"WORK_GEMINI"}}}"#);
+    let custom = sample.user(&format!(
+        r#"{{"providers":{{"google":{{{}}}}}}}"#,
+        crate::access::naming("WORK_GEMINI")
+    ));
     assert!(
         lands(&custom, &holding(&["GEMINI_API_KEY"]))
             .unwrap()
@@ -1177,8 +1185,10 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
     // provider built by a fixture. Both halves: a variable only the handed
     // lookup holds is found, and one only the process could hold is not.
     let sample = Sample::new("serving-again-lookup");
-    let settings =
-        sample.user(r#"{"providers": {"openai": {"apiKeyEnv": "CRUCIBLE_FIXTURE_ONLY_KEY"}}}"#);
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"openai": {{{}}}}}}}"#,
+        crate::access::naming("CRUCIBLE_FIXTURE_ONLY_KEY")
+    ));
     let stored = StoredCredentials::default();
 
     let handed = re_serving(

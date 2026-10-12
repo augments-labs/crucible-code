@@ -474,7 +474,13 @@ fn source(
     rows: &Rows,
 ) -> Option<providers::CredentialSource> {
     let held = inventory.and_then(|inventory| inventory.held(one.name));
-    providers::sourced(one, settings, from, held, rows.subscribes(one.name))
+    providers::sourced(
+        one,
+        settings,
+        from,
+        held.as_ref(),
+        rows.subscribes(one.name),
+    )
 }
 
 /// Which provider a launch would open, and whether it could ask it anything.
@@ -542,7 +548,7 @@ fn provided(
         let variable = providers::offered(registry)
             .find(|one| one.name == named)
             .map_or("its API key variable", |one| {
-                settings.api_key_env(one.name).unwrap_or(one.key)
+                crate::access::variable(one, settings)
             });
         return Finding::failed(
             format!("the configuration chooses {named}, and no credential for it was found"),

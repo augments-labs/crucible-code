@@ -24,6 +24,7 @@ use crucible_registry::{
 };
 
 use crate::AppError;
+use crate::access::{self, AccessError, KeySource, Route};
 use crate::content_use::{Consent, Reading};
 use crate::models;
 use crate::startup::{self, served};
@@ -894,7 +895,8 @@ pub struct Served {
     /// somebody eventually types the wrong way round, so only [`Served::name`]
     /// is ever matched against.
     pub shown: &'static str,
-    /// The variable its key is read from, unless `apiKeyEnv` names another.
+    /// The variable its key is read from, unless the configuration names
+    /// another; [`access::variable`] says which.
     /// The *name* is what is written here; the value is read once, in
     /// [`startup::provider`], and goes no further than the header it signs.
     pub key: &'static str,
@@ -1311,9 +1313,15 @@ pub fn re_serving(
             stored,
             subscriptions: &subscriptions,
         };
-        let variable = settings.api_key_env(named.name).unwrap_or(named.key);
-        consent.served(named.name, startup::served_on(named.name, variable, auth));
-        let source = credential_source(named, auth).ok_or_else(|| AppError::Authentication {
+        consent.served(named.name, startup::served_on(named, auth));
+        // Nothing held is the refusal it has always been here, whichever of
+        // the two ways the resolver says it.
+        let source = match access::resolve(named, auth) {
+            Ok(route) => source_of(&route),
+            Err(AccessError::Absent(_) | AccessError::SubscriptionAddress { .. }) => None,
+            Err(refused) => return Err(refused.into()),
+        }
+        .ok_or_else(|| AppError::Authentication {
             provider: named.name.into(),
         })?;
 
@@ -1377,14 +1385,10 @@ pub fn resolving(
     from: SharedLookup,
     store: crucible_auth::Store,
 ) -> crate::content_use::Resolver {
-    let variables: std::collections::BTreeMap<String, String> = offered(providers)
-        .map(|one| {
-            let variable = settings.api_key_env(one.name).unwrap_or(one.key);
-            (one.name.to_owned(), variable.to_owned())
-        })
-        .collect();
+    let served: std::collections::BTreeMap<&'static str, Served> =
+        offered(providers).map(|one| (one.name, one)).collect();
     Box::new(move |name| {
-        let Some(variable) = variables.get(name) else {
+        let Some(&one) = served.get(name) else {
             return Reading::Served(None);
         };
         let stored = store.read();
@@ -1394,8 +1398,7 @@ pub fn resolving(
             return Reading::Unread;
         }
         Reading::Served(startup::served_on(
-            name,
-            variable,
+            one,
             startup::ProviderAuth {
                 settings: &settings,
                 from: &*from,
@@ -1471,19 +1474,16 @@ pub(crate) fn choosing(
     Ok(second.is_none().then_some(first))
 }
 
-/// Every variable a key could be read from in this generation: each
-/// provider's own, and the one `apiKeyEnv` names in its place.
+/// Every variable a key could be read from in this generation, as
+/// [`access::variables`] names them for each provider.
 ///
-/// Both, because pointing `apiKeyEnv` elsewhere does not empty the usual
-/// variable, and a key exported before the setting was written is still a key.
 /// A program crucible starts that needs the rest of the environment, the way a
 /// browser does, is started without these.
 pub fn key_variables<'a>(
     providers: &'a Providers,
     settings: &'a Settings,
 ) -> impl Iterator<Item = &'a str> + 'a {
-    offered(providers)
-        .flat_map(move |one| std::iter::once(one.key).chain(settings.api_key_env(one.name)))
+    offered(providers).flat_map(move |one| access::variables(one, settings))
 }
 
 /// Every provider crucible holds a usable credential for, in declaration order.
@@ -1541,19 +1541,14 @@ pub fn in_use(one: Served, auth: startup::ProviderAuth<'_>) -> Option<InUse> {
 
 /// The source provider construction will select, without reading a secret out.
 ///
-/// The order is the one [`startup::provider`] resolves in, and the two must
-/// agree: `/logout` names what remains after a stored credential is removed,
-/// and a source this computes that construction would not select is a sentence
-/// that lies.
+/// Read off the route [`access::resolve`] settles, which is the one
+/// construction applies: `/logout` names what remains after a stored
+/// credential is removed, and a source that construction would not select is a
+/// sentence that lies. `None` where no route resolves, and where the route is
+/// an installed agent, which is signed in by the agent rather than by anything
+/// crucible holds.
 pub fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option<CredentialSource> {
-    let startup::ProviderAuth {
-        settings,
-        from,
-        stored,
-        subscriptions,
-    } = auth;
-    let subscribed = subscriptions.supports(one.name);
-    sourced(one, settings, from, stored.held(one.name), subscribed)
+    source_of(&access::resolve(one, auth).ok()?)
 }
 
 /// [`credential_source`], from what the store holds for `one` rather than
@@ -1564,23 +1559,30 @@ pub(crate) fn sourced(
     one: Served,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
-    held: Option<Held>,
+    held: Option<&Held>,
     subscribed: bool,
 ) -> Option<CredentialSource> {
-    if settings.base_url(one.name).is_none()
-        && subscribed
-        && held.as_ref().is_some_and(|held| held.kind == Kind::Account)
-    {
-        return Some(CredentialSource::Subscription);
+    let signing = access::Signing {
+        offered: subscribed,
+        usable: subscribed,
+    };
+    source_of(&access::resolved(one, settings, from, held, signing).ok()?)
+}
+
+/// What a route's credential is, by kind and without a value.
+fn source_of(route: &Route) -> Option<CredentialSource> {
+    match route {
+        Route::Subscription { .. } => Some(CredentialSource::Subscription),
+        Route::ApiKey {
+            source: KeySource::Environment { variable },
+            ..
+        } => Some(CredentialSource::Environment(variable.clone())),
+        Route::ApiKey {
+            source: KeySource::Stored { .. },
+            ..
+        } => Some(CredentialSource::StoredKey),
+        Route::External { .. } => None,
     }
-    let variable = settings.api_key_env(one.name).unwrap_or(one.key);
-    if from(variable).is_some_and(|value| !value.trim().is_empty()) {
-        return Some(CredentialSource::Environment(variable.into()));
-    }
-    if held.is_some_and(|held| held.kind == Kind::Key) {
-        return Some(CredentialSource::StoredKey);
-    }
-    None
 }
 
 #[cfg(test)]

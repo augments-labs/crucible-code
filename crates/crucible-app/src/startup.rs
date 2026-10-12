@@ -38,6 +38,7 @@ use crucible_tools::{DescribeTool, Fetch, Mode, Put, Revealed, Search, Tool, Too
 use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
 use crucible_workspace::Workspace;
 
+use crate::access::{self, AccessError, KeySource, Route, Settled};
 use crate::content_use::{self, Consent, Serving};
 use crate::following::Following;
 use crate::providers::{self, Providers, Served};
@@ -577,14 +578,15 @@ impl fmt::Debug for ProviderAuth<'_> {
 /// Everything a factory is handed to build one provider or its web sources.
 ///
 /// Resolved once by the caller from the settings and the record, so no factory
-/// reads a setting or pairs a name with a variable on its own: the variable is
-/// the configured one or the record's usual name, and the address is the one a
-/// setting moved requests to, already parsed at that boundary.
+/// reads a setting or chooses a credential on its own: the route is the one
+/// [`access::resolve`] settled, and the address is the one a setting moved
+/// requests to, already parsed at that boundary.
 pub struct Wiring<'a> {
     /// The provider's registered name, and the key `/login` wrote it under.
     pub named: &'static str,
-    /// The environment variable the key is read from.
-    pub variable: &'a str,
+    /// Where its credential is, as the one resolver settled it, or why it has
+    /// none: refused only by the factory that needed one.
+    route: Result<Settled, AccessError>,
     /// Where a setting says requests should go, where one does.
     pub sending: Option<Endpoint>,
     /// The shared HTTP service the provider and web factories use.
@@ -597,7 +599,7 @@ impl fmt::Debug for Wiring<'_> {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("Wiring")
             .field("named", &self.named)
-            .field("variable", &self.variable)
+            .field("route", &self.route.as_ref().map(|settled| &settled.route))
             .field("sending", &self.sending)
             .field("auth", &self.auth)
             .finish()
@@ -631,11 +633,9 @@ pub type Reach = fn(Wiring<'_>, &str) -> Reaching;
 /// worth a test. Setting the real environment from one is `unsafe` in edition
 /// 2024, and this workspace denies `unsafe` code.
 ///
-/// Which variable holds the key is configuration, so a file may name a
-/// different one — somebody with a work key and a personal key has two
-/// variables and one of them is not the vendor's usual name. Failing that it is
-/// the vendor's usual name, written beside the provider in `PROVIDERS`. The
-/// *value* stays where it always was: read once, here, and applied to a header.
+/// Which credential answers, and which variable holds a key, is settled by
+/// [`access::resolve`] alone. The *value* stays where it always was: read
+/// once, here, and applied to a header.
 ///
 /// `stored` is the other place a credential can be, and the one `/login`
 /// writes to: an API key, or the renewable state of an account login. Reachable
@@ -667,10 +667,11 @@ fn wiring<'a>(
     http: &'a HttpTurns,
 ) -> Result<Wiring<'a>, AppError> {
     let named = serving.name;
+    let sending = sending_to(auth.settings, named)?;
     Ok(Wiring {
         named,
-        variable: auth.settings.api_key_env(named).unwrap_or(serving.key),
-        sending: sending_to(auth.settings, named)?,
+        route: access::settle(serving, auth),
+        sending,
         http,
         auth,
     })
@@ -688,12 +689,7 @@ fn wiring<'a>(
 pub fn anthropic(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(Anthropic::at(
         wiring.sending.unwrap_or(Anthropic::VENDOR),
-        key(
-            wiring.variable,
-            Header::bare("x-api-key"),
-            wiring.auth.from,
-            wiring.auth.stored.get(wiring.named),
-        )?,
+        key(wiring.route, Header::bare("x-api-key"), wiring.auth)?,
         Box::new(wiring.http.clone()),
     )))
 }
@@ -715,9 +711,9 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let (endpoint, credential) = credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor: Moonshot::CODING,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     )?;
@@ -805,14 +801,23 @@ pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let http = wiring.http;
-    let auth = wiring.auth;
-    // The store is looked at first, so the variable is read here only where a
-    // plan's key is stored, and a provider with none reads it once.
-    let on_plan = auth.stored.held(wiring.named).is_some_and(|held| {
-        crate::providers::Rows::production()
-            .of(held.kind, &held.name)
-            .is_some_and(|row| row.list == crate::providers::List::Subscription)
-    }) && ApiKey::from_lookup(wiring.variable, auth.from).is_err();
+    let on_plan = match wiring.route.as_ref().map(|settled| &settled.route) {
+        Ok(Route::ApiKey {
+            source: KeySource::Stored { name },
+            ..
+        }) => crate::providers::Rows::production()
+            .of(crucible_auth::Kind::Key, name)
+            .is_some_and(|row| row.list == crate::providers::List::Subscription),
+        Ok(
+            Route::ApiKey {
+                source: KeySource::Environment { .. },
+                ..
+            }
+            | Route::Subscription { .. }
+            | Route::External { .. },
+        )
+        | Err(_) => false,
+    };
     let (endpoint, credential) = keyed(wiring, MiniMax::IO)?;
     let transport = Box::new(http.clone());
     Ok(Box::new(if on_plan {
@@ -865,9 +870,9 @@ fn keyed(
     credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     )
@@ -882,12 +887,7 @@ fn keyed(
 pub fn google(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(Google::at(
         wiring.sending.unwrap_or(Google::VENDOR),
-        key(
-            wiring.variable,
-            Header::bare("x-goog-api-key"),
-            wiring.auth.from,
-            wiring.auth.stored.get(wiring.named),
-        )?,
+        key(wiring.route, Header::bare("x-goog-api-key"), wiring.auth)?,
         Box::new(wiring.http.clone()),
     )))
 }
@@ -902,9 +902,9 @@ pub fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let (endpoint, credential) = credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor: OpenAi::VENDOR,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     )?;
@@ -917,11 +917,10 @@ pub fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 
 /// The vendor audience a credential is issued against.
 ///
-/// The provider's name, the variable its key is read from and the address its
-/// vendor signs at travel together because no call site may pair them by hand.
-struct ApiAudience<'a> {
+/// The provider's name and the address its vendor signs at travel together
+/// because no call site may pair them by hand.
+struct ApiAudience {
     provider: &'static str,
-    variable: &'a str,
     vendor: Endpoint,
 }
 
@@ -932,96 +931,107 @@ struct ApiAudience<'a> {
 /// separately would let a later endpoint choice send it somewhere it was never
 /// meant to go.
 ///
-/// A stored subscription answers first, and only at the vendor's own address:
-/// an account authorized through `/login` is a deliberate choice, made after
-/// any variable the shell happened to inherit, and `baseUrl` is set by somebody
-/// with a reason not to reach the vendor — a plan's token is the vendor's, so
-/// one configured to go elsewhere is no credential at all. Below it the order
-/// is the one [`key`] keeps for every provider: the variable first, then the
-/// key `/login` wrote down.
+/// Which credential answers is the route's, settled by [`access::resolve`]: a
+/// subscription only ever at the vendor's own address, which the resolver
+/// keeps from meeting a configured one and which is refused here again before
+/// a token could follow one. A key is sent to the address of the row
+/// it was given on: the variable's to its provider's environment row, a stored
+/// one to the row its name says. A configured address takes either, as it
+/// always has.
 fn credential(
-    audience: ApiAudience<'_>,
+    audience: ApiAudience,
+    route: Result<Settled, AccessError>,
     sending: Option<Endpoint>,
     auth: ProviderAuth<'_>,
 ) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
-    if sending.is_none()
-        && let Some(subscribed) = auth
-            .subscriptions
-            .credential(audience.provider, auth.stored)
-    {
-        return Ok((subscribed.endpoint, subscribed.credential));
-    }
-    // A key is sent to the address of the row it was given on: the variable's
-    // to its provider's environment row, a stored one to the row its name
-    // says. A configured address takes either, as it always has.
     let rows = crate::providers::Rows::production();
     let address = |row: Option<&crate::providers::Row>| row.and_then(|row| row.address.clone());
-    match ApiKey::from_lookup(audience.variable, auth.from) {
-        Ok(exported) => Ok((
-            sending
-                .or_else(|| address(rows.environment(audience.provider)))
-                .unwrap_or(audience.vendor),
-            Box::new(HeaderKey::new(exported, Header::bearer())),
-        )),
-        Err(absent) => {
-            if let Some(held) = auth
-                .stored
-                .held(audience.provider)
-                .filter(|held| held.kind == crucible_auth::Kind::Key)
-                && let Some(written) = auth.stored.get(&held.name)
-            {
-                return Ok((
-                    sending
-                        .or_else(|| address(rows.of(held.kind, &held.name)))
-                        .unwrap_or(audience.vendor),
-                    Box::new(HeaderKey::new(written, Header::bearer())),
-                ));
-            }
-            if auth
-                .subscriptions
-                .credential(audience.provider, auth.stored)
-                .is_some()
-            {
-                // Reachable only with `sending` set: without an address
-                // configured, the first arm above has already answered.
-                return Err(AppError::SubscriptionAddress {
-                    provider: audience.provider.into(),
-                });
-            }
-            Err(absent.into())
+    let Settled { route, exported } = route?;
+    match route {
+        Route::Subscription { .. } if sending.is_some() => Err(AppError::SubscriptionAddress {
+            provider: audience.provider.into(),
+        }),
+        Route::Subscription { .. } => auth
+            .subscriptions
+            .credential(audience.provider, auth.stored)
+            .map(|subscribed| (subscribed.endpoint, subscribed.credential))
+            .ok_or_else(|| AppError::Authentication {
+                provider: audience.provider.into(),
+            }),
+        Route::ApiKey { source, .. } => {
+            let (applied, row) = match source {
+                KeySource::Environment { variable } => (
+                    exported_key(exported, &variable)?,
+                    rows.environment(audience.provider),
+                ),
+                KeySource::Stored { name } => (
+                    stored_key(audience.provider, &name, auth)?,
+                    rows.of(crucible_auth::Kind::Key, &name),
+                ),
+            };
+            Ok((
+                sending.or_else(|| address(row)).unwrap_or(audience.vendor),
+                Box::new(HeaderKey::new(applied, Header::bearer())),
+            ))
         }
+        Route::External { instance, .. } => Err(AppError::ExternalAgent {
+            provider: audience.provider.into(),
+            instance,
+        }),
     }
 }
 
-/// What `named`'s requests are sent on, resolved in the order `credential`
-/// and `key` choose a credential: a stored sign-in where no address is
-/// configured, then the variable's key, then a stored key. `None` where no
-/// credential would be found, so nothing would be sent.
+/// The key the variable held when the route was settled.
+///
+/// The resolver settles the variable's route only with the key it read, so
+/// this answers with it; the refusal is the one a variable with nothing in it
+/// has always had.
+fn exported_key(exported: Option<ApiKey>, variable: &str) -> Result<ApiKey, AppError> {
+    exported.ok_or_else(|| {
+        crucible_credentials::CredentialError::NotInEnvironment(variable.into()).into()
+    })
+}
+
+/// The key the store holds under `name`, for `provider`.
+///
+/// The resolver found it held a moment ago; a store that no longer gives it
+/// back is one another crucible changed since, and the provider is not signed.
+fn stored_key(provider: &str, name: &str, auth: ProviderAuth<'_>) -> Result<ApiKey, AppError> {
+    auth.stored
+        .get(name)
+        .ok_or_else(|| AppError::Authentication {
+            provider: provider.into(),
+        })
+}
+
+/// What `one`'s requests are sent on, by the route [`access::resolve`]
+/// settles. `None` where no route resolves, or where crucible sends nothing
+/// itself, so nothing would be sent.
 ///
 /// A configured address takes a key wherever the key came from, and answers
 /// for the route [`content_use::recognised`] says, or for none.
 #[must_use]
-pub fn served_on(named: &str, variable: &str, auth: ProviderAuth<'_>) -> Option<Serving> {
+pub fn served_on(one: Served, auth: ProviderAuth<'_>) -> Option<Serving> {
     let rows = crate::providers::Rows::production();
-    let base = auth.settings.base_url(named);
-    if base.is_none() && auth.subscriptions.credential(named, auth.stored).is_some() {
-        let row = rows.held(named, auth.stored)?;
-        return Some(Serving {
-            route: Some(content_use::row_route(row)),
-            at: None,
-        });
-    }
-    let row = if ApiKey::from_lookup(variable, auth.from).is_ok() {
-        rows.environment(named)
-    } else {
-        let held = auth
-            .stored
-            .held(named)
-            .filter(|held| held.kind == crucible_auth::Kind::Key)?;
-        auth.stored.get(&held.name)?;
-        rows.of(held.kind, &held.name)
+    let row = match access::resolve(one, auth).ok()? {
+        Route::Subscription { .. } => {
+            let row = rows.held(one.name, auth.stored)?;
+            return Some(Serving {
+                route: Some(content_use::row_route(row)),
+                at: None,
+            });
+        }
+        Route::ApiKey {
+            source: KeySource::Environment { .. },
+            ..
+        } => rows.environment(one.name),
+        Route::ApiKey {
+            source: KeySource::Stored { name },
+            ..
+        } => rows.of(crucible_auth::Kind::Key, &name),
+        Route::External { .. } => return None,
     };
-    Some(match base {
+    Some(match auth.settings.base_url(one.name) {
         Some(base) => Serving {
             route: content_use::recognised(base).map(str::to_owned),
             at: Some(crucible_http::Origin::of(base)?),
@@ -1041,10 +1051,7 @@ pub fn served_on(named: &str, variable: &str, auth: ProviderAuth<'_>) -> Option<
 /// up again, since replacing the whole map mid-run would forget the others.
 pub fn serve(consent: &Consent, providers: &Providers, auth: ProviderAuth<'_>) {
     let serving = providers::offered(providers)
-        .filter_map(|one| {
-            let variable = auth.settings.api_key_env(one.name).unwrap_or(one.key);
-            served_on(one.name, variable, auth).map(|serving| (one.name.to_owned(), serving))
-        })
+        .filter_map(|one| served_on(one, auth).map(|serving| (one.name.to_owned(), serving)))
         .collect();
     consent.serving(serving);
 }
@@ -1242,12 +1249,7 @@ pub(crate) fn reached(
 
 /// Anthropic's own search and fetch, on the session's model.
 pub fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
-    let Ok(credential) = key(
-        wiring.variable,
-        Header::bare("x-api-key"),
-        wiring.auth.from,
-        wiring.auth.stored.get(wiring.named),
-    ) else {
+    let Ok(credential) = key(wiring.route, Header::bare("x-api-key"), wiring.auth) else {
         return Reaching::nothing();
     };
 
@@ -1261,12 +1263,7 @@ pub fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
 
 /// Gemini search and URL context use the same checked key and recipient as turns.
 pub fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
-    let Ok(credential) = key(
-        wiring.variable,
-        Header::bare("x-goog-api-key"),
-        wiring.auth.from,
-        wiring.auth.stored.get(wiring.named),
-    ) else {
+    let Ok(credential) = key(wiring.route, Header::bare("x-goog-api-key"), wiring.auth) else {
         return Reaching::nothing();
     };
     let web = Arc::new(GoogleWeb::new(
@@ -1301,9 +1298,9 @@ pub fn openai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     let Ok((endpoint, credential)) = credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor: OpenAi::VENDOR,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     ) else {
@@ -1331,9 +1328,9 @@ pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
     let Ok((endpoint, credential)) = credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor: Moonshot::CODING,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     ) else {
@@ -1426,30 +1423,41 @@ fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, AppE
         .transpose()
 }
 
-/// A key, ready to sign a request with.
+/// A key, ready to sign a request with, for a provider whose every
+/// credential is a key.
 ///
-/// The variable's name is what is configured; the value is read once, here, and
-/// goes no further than the header it is applied to.
-///
-/// The variable first and what `/login` wrote down second. A key exported into
-/// this run is the one whoever started it chose for this run — it is how a
-/// second account, a work key, or a key that has just been rotated is used
-/// without touching what is on the disk, and it lasts exactly as long as the
-/// shell it was exported in. `written` is the standing answer underneath it.
+/// The route says where it is; the value is read once, here, and goes no
+/// further than the header it is applied to. A route that is not a key is
+/// one the resolver never settles for such a provider, and is refused as one
+/// with nothing to sign with.
 fn key(
-    variable: &str,
+    route: Result<Settled, AccessError>,
     header: Header,
-    from: &dyn Fn(&str) -> Option<String>,
-    written: Option<ApiKey>,
+    auth: ProviderAuth<'_>,
 ) -> Result<Box<dyn Credential>, AppError> {
-    let key = match ApiKey::from_lookup(variable, from) {
-        Ok(exported) => exported,
-
-        // Unset, or set to blank — which is how a shell turns a provider off.
-        // Off for the variable rather than for crucible: somebody who ran
-        // `/login` said so once and for every run after it, and a blank export
-        // is what the machine has to say about the variable it is blanking.
-        Err(absent) => written.ok_or(absent)?,
+    let Settled { route, exported } = route?;
+    let key = match route {
+        Route::ApiKey {
+            source: KeySource::Environment { variable },
+            ..
+        } => exported_key(exported, &variable)?,
+        Route::ApiKey {
+            provider,
+            source: KeySource::Stored { name },
+        } => stored_key(provider, &name, auth)?,
+        Route::Subscription { provider, .. } => {
+            return Err(AppError::Authentication {
+                provider: provider.into(),
+            });
+        }
+        Route::External {
+            provider, instance, ..
+        } => {
+            return Err(AppError::ExternalAgent {
+                provider: provider.into(),
+                instance,
+            });
+        }
     };
 
     Ok(Box::new(HeaderKey::new(key, header)))

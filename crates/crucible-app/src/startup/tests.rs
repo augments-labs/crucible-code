@@ -108,6 +108,37 @@ fn wiring_keeps_the_services_http_reference() {
     assert!(std::ptr::eq(web.http, &raw const http));
 }
 
+/// What [`credential`] answers for `audience`, by the route the resolver
+/// settles from `auth`: the two are only ever called together.
+fn routed(
+    audience: ApiAudience,
+    sending: Option<Endpoint>,
+    auth: ProviderAuth<'_>,
+) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
+    let route = access::settle(serving(audience.provider), auth);
+    credential(audience, route, sending, auth)
+}
+
+/// The key openai's requests are signed with on a machine holding `keys`,
+/// with `from` its environment.
+fn keyed_with(
+    keys: &StoredCredentials,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> Result<Box<dyn Credential>, AppError> {
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let auth = ProviderAuth {
+        settings: &Settings::default(),
+        from,
+        stored: keys,
+        subscriptions: &subscriptions,
+    };
+    key(
+        access::settle(serving("openai"), auth),
+        Header::bearer(),
+        auth,
+    )
+}
+
 /// Polls `authorizing` once and panics if it was not ready: every credential
 /// built by this crate's own wiring answers at its first poll.
 fn authorized<T>(authorizing: impl Future<Output = T>) -> T {
@@ -146,13 +177,7 @@ fn a_key_written_down_signs_the_request_where_no_variable_holds_one() {
     let sample = Sample::new("key-stored");
     let keys = sample.stored("openai");
 
-    let signed = key(
-        "OPENAI_API_KEY",
-        Header::bearer(),
-        &|_| None,
-        keys.get("openai"),
-    )
-    .expect("a key written down");
+    let signed = keyed_with(&keys, &|_| None).expect("a key written down");
 
     assert_eq!(signing(&*signed), format!("Bearer {WRITTEN}"));
 }
@@ -165,13 +190,8 @@ fn a_variable_signs_the_request_over_the_key_written_down_for_it() {
     let sample = Sample::new("key-exported-over-stored");
     let keys = sample.stored("openai");
 
-    let signed = key(
-        "OPENAI_API_KEY",
-        Header::bearer(),
-        &|_| Some("an-exported-key".to_owned()),
-        keys.get("openai"),
-    )
-    .expect("a key exported");
+    let signed =
+        keyed_with(&keys, &|_| Some("an-exported-key".to_owned())).expect("a key exported");
 
     assert_eq!(signing(&*signed), "Bearer an-exported-key");
 }
@@ -184,13 +204,7 @@ fn a_variable_exported_blank_leaves_the_key_written_down_standing() {
     let sample = Sample::new("key-blanked");
     let keys = sample.stored("openai");
 
-    let signed = key(
-        "OPENAI_API_KEY",
-        Header::bearer(),
-        &|_| Some(String::new()),
-        keys.get("openai"),
-    )
-    .expect("a key written down");
+    let signed = keyed_with(&keys, &|_| Some(String::new())).expect("a key written down");
 
     assert_eq!(signing(&*signed), format!("Bearer {WRITTEN}"));
 }
@@ -224,8 +238,10 @@ fn a_provider_reads_the_variable_its_configuration_names() {
     // Somebody with a work key and a personal key has two variables, and only
     // one of them can be the vendor's usual name.
     let sample = Sample::new("key-variable");
-    let settings =
-        sample.user(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"anthropic": {{{}}}}}}}"#,
+        crate::access::naming("WORK_ANTHROPIC_KEY")
+    ));
 
     let read = RefCell::new(Vec::new());
     built(Some(serving("anthropic")), &settings, &|name: &str| {
@@ -266,10 +282,9 @@ fn an_openai_subscription_uses_its_fixed_audience() {
     let keys = sample.subscribed("openai");
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
-    let (endpoint, _) = credential(
+    let (endpoint, _) = routed(
         ApiAudience {
             provider: "openai",
-            variable: "OPENAI_API_KEY",
             vendor: OpenAi::VENDOR,
         },
         None,
@@ -294,10 +309,9 @@ fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
     let keys = sample.subscribed("openai");
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
-    let (endpoint, _) = credential(
+    let (endpoint, _) = routed(
         ApiAudience {
             provider: "openai",
-            variable: "OPENAI_API_KEY",
             vendor: OpenAi::VENDOR,
         },
         None,
@@ -319,10 +333,9 @@ fn a_kimi_subscription_uses_the_managed_coding_audience() {
     let keys = sample.subscribed("moonshot");
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
-    let (endpoint, _) = credential(
+    let (endpoint, _) = routed(
         ApiAudience {
             provider: "moonshot",
-            variable: "MOONSHOT_API_KEY",
             vendor: Moonshot::CODING,
         },
         None,
@@ -348,10 +361,9 @@ fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() 
         sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
-    let (endpoint, _) = credential(
+    let (endpoint, _) = routed(
         ApiAudience {
             provider: "openai",
-            variable: "OPENAI_API_KEY",
             vendor: OpenAi::VENDOR,
         },
         sending_to(&settings, "openai").expect("an address the check accepted"),
@@ -394,6 +406,103 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
     .expect_err("a subscription sent to an API-key gateway");
 
     assert!(matches!(problem, AppError::SubscriptionAddress { .. }));
+}
+
+/// What `provider` answers for openai on a machine holding `keys`, with
+/// `settings` written and `exported` the only variable set.
+fn openai_with(
+    keys: &StoredCredentials,
+    settings: &Settings,
+    exported: Option<&str>,
+) -> Result<Box<dyn Provider>, AppError> {
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let http = HttpTurns::unavailable();
+    let exported = exported.map(str::to_owned);
+    provider(
+        Some(serving("openai")),
+        NO_MODEL_CHOSEN,
+        ProviderAuth {
+            settings,
+            from: &|_| exported.clone(),
+            stored: keys,
+            subscriptions: &subscriptions,
+        },
+        &http,
+    )
+}
+
+#[test]
+fn a_subscription_access_with_a_configured_address_is_refused_without_offering_a_key() {
+    // Old precedence would have signed in with the exported key and gone to
+    // the gateway. Somebody who wrote `subscription` chose the account, so the
+    // run is told the address cannot stand with it, and is not told to use
+    // the method they did not choose.
+    let sample = Sample::new("access-subscription-address");
+    let keys = sample.subscribed("openai");
+    let settings = sample.user(
+        r#"{"providers": {"openai": {"access": {"type": "subscription"}, "baseUrl": "https://gateway.example/v1"}}}"#,
+    );
+
+    let problem = openai_with(&keys, &settings, Some("an-exported-key"))
+        .expect_err("a subscription access sent to a gateway");
+
+    let said = problem.to_string();
+    assert!(said.contains("providers.openai.baseUrl"), "{said}");
+    assert!(!said.contains("API key"), "{said}");
+    assert!(!said.contains("OPENAI_API_KEY"), "{said}");
+}
+
+#[test]
+fn a_subscription_access_with_no_account_is_refused_naming_login_and_not_the_key() {
+    let sample = Sample::new("access-subscription-missing");
+    let settings =
+        sample.user(r#"{"providers": {"openai": {"access": {"type": "subscription"}}}}"#);
+
+    let problem = openai_with(
+        &StoredCredentials::default(),
+        &settings,
+        Some("an-exported-key"),
+    )
+    .expect_err("no account is signed in");
+
+    let said = problem.to_string();
+    assert!(said.contains("/login"), "{said}");
+    assert!(!said.contains("API key"), "{said}");
+    assert!(!said.contains("OPENAI_API_KEY"), "{said}");
+}
+
+#[test]
+fn an_api_key_access_never_falls_back_to_a_held_subscription() {
+    let sample = Sample::new("access-key-missing");
+    let keys = sample.subscribed("openai");
+    let settings = sample.user(r#"{"providers": {"openai": {"access": {"type": "apiKey"}}}}"#);
+
+    let problem = openai_with(&keys, &settings, None).expect_err("no key is set or stored");
+
+    let said = problem.to_string();
+    assert!(said.contains("/login"), "{said}");
+    assert!(said.contains("OPENAI_API_KEY"), "{said}");
+    assert!(!said.contains("subscription"), "{said}");
+    assert!(!said.contains("account"), "{said}");
+}
+
+#[test]
+fn an_agent_access_beside_a_configured_address_is_refused_naming_the_key() {
+    let sample = Sample::new("access-agent-address");
+    let settings = sample.user(
+        r#"{"providers": {"openai": {"access": {"type": "externalAgent", "instance": "mine"}, "baseUrl": "https://gateway.example/v1"}},
+            "externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}}"#,
+    );
+
+    let problem = openai_with(
+        &StoredCredentials::default(),
+        &settings,
+        Some("an-exported-key"),
+    )
+    .expect_err("an agent cannot be sent to an address");
+
+    let said = problem.to_string();
+    assert!(said.contains("providers.openai.baseUrl"), "{said}");
 }
 
 #[test]
@@ -773,7 +882,7 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
     assert!(reaching.searching.is_none());
     assert!(reaching.fetching.is_none());
 
-    let settings = sample.user(r#"{"providers":{"google":{"baseUrl":"https://gateway.example/interactions?alt=sse","apiKeyEnv":"WORK_GEMINI"}}}"#);
+    let settings = sample.user(&format!(r#"{{"providers":{{"google":{{"baseUrl":"https://gateway.example/interactions?alt=sse",{}}}}}}}"#, crate::access::naming("WORK_GEMINI")));
     let from = |name: &str| (name == "WORK_GEMINI").then(|| "synthetic-key".into());
     let auth = ProviderAuth {
         settings: &settings,
@@ -1405,10 +1514,9 @@ fn moonshot_address(
             .then(|| exported.map(str::to_owned))
             .flatten()
     };
-    credential(
+    routed(
         ApiAudience {
             provider: "moonshot",
-            variable: "MOONSHOT_API_KEY",
             vendor: Moonshot::CODING,
         },
         sending,
@@ -1715,7 +1823,7 @@ fn a_provider_is_served_on_the_route_its_credential_goes_to() {
             subscriptions: &subscriptions,
         };
 
-        let serving = served_on(named, "VARIABLE", auth);
+        let serving = served_on(serving(named), auth);
         let case = format!("case {at}: {named} {held} {exported} {base:?}");
         if route.is_none() && origin.is_none() {
             assert_eq!(serving, None, "{case}");
@@ -1735,10 +1843,9 @@ fn a_provider_is_served_on_the_route_its_credential_goes_to() {
             _ => continue,
         };
         let sending = base.map(|base| Endpoint::parse(base).unwrap());
-        let (endpoint, _) = credential(
+        let (endpoint, _) = routed(
             ApiAudience {
                 provider: named,
-                variable: "VARIABLE",
                 vendor,
             },
             sending,

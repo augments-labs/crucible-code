@@ -103,6 +103,7 @@ Keyed by provider name: `anthropic`, `deepseek`, `google`, `meta`, `mimo`,
 | `fast` | `true` asks the `model` beside it for its vendor's fast form, at its price. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
+| `access` | Which one way that provider is reached; see [`access`](#access). |
 | `contextWindow` | The session's context-window size in tokens, keyed by model name. |
 | `defaultContextWindow` | The same, for any model of this provider not named above. |
 
@@ -124,6 +125,33 @@ Pointing crucible at another variable also points it away from the usual one:
 with `"apiKeyEnv": "WORK_ANTHROPIC_KEY"`, `ANTHROPIC_API_KEY` is not read at
 all. Choosing an arbitrary inherited secret is authority, so `apiKeyEnv` is
 read only from the configuration file in your home directory.
+
+#### `access`
+
+Left out, a provider is reached the way it always has been: a subscription
+`/login` signed in, unless a `baseUrl` is set, then the key in its variable,
+then a key `/login` stored. Written, `access` names one way, and nothing falls
+back from it:
+
+```json
+{ "providers": { "openai": { "access": { "type": "subscription" } } } }
+```
+
+| `type` | Reached by |
+| --- | --- |
+| `subscription` | The account `/login` signed in. A key exported in the shell is not read. |
+| `apiKey` | The key in the provider's variable, then the one `/login` stored. A signed-in account is not used. |
+| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents). |
+
+What the chosen way is missing stops the start with a sentence naming the
+setting, and never suggests the other way: `subscription` with no account says
+to sign in with `/login`, `subscription` beside a `baseUrl` says to remove
+`baseUrl`, since an account's token is sent only to its vendor, and `apiKey`
+with nothing found names the variable and `/login`. `instance` is written with
+`externalAgent` and with no other type, and `externalAgent` refuses a `baseUrl`
+or `apiKeyEnv` beside it by name, since the agent signs in and sends for itself.
+`access` chooses which credential is read, so it is read only from the
+configuration file in your home directory.
 
 `baseUrl` is for a gateway or a proxy speaking the same protocol. It must be
 `https`, or `http` on `localhost`, `127.0.0.1` or `[::1]`. The key travels in a
@@ -170,6 +198,35 @@ Neither is sent anywhere. The configured/default value is the window; the existi
 compaction reserve is applied separately, so automatic compaction starts when
 `carried + reserve >= window`. Setting a window too large may let a request reach
 the provider's real limit and be refused; setting one too small compacts earlier.
+
+### `externalAgents`
+
+Installed agents a provider may be reached through, keyed by a name of your
+choosing that `providers.<name>.access.instance` uses. At most 32.
+
+```json
+{
+  "providers": { "anthropic": { "access": { "type": "externalAgent", "instance": "work" } } },
+  "externalAgents": {
+    "work": { "driver": "claude", "executable": "/usr/local/bin/claude", "configDir": "/home/me/.claude-work" }
+  }
+}
+```
+
+| Key | Means |
+| --- | --- |
+| `driver` | Which agent it is: `claude` or `antigravity`. Required. |
+| `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
+| `enabled` | `false` keeps the entry and sends it no new work. Defaults to `true`. |
+| `authentication` | How it signs in: `account`, its own login, the only value. |
+| `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
+| `profileDir` | For `antigravity`: the same. |
+
+A profile key belongs to its driver, and the other driver's is refused by name.
+An entry names a program crucible would start, so the block is read only from
+the configuration file in your home directory, and `/settings` shows none of
+it. This build reads the block and refuses to start a provider whose access
+names an agent, with a sentence saying so.
 
 ### `systemPrompt`
 
@@ -808,7 +865,7 @@ is still not a way to ship somebody's key.
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
 `systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
-`providers.<name>.fast`, `provider`, `promptCaching.namespace`,
+`providers.<name>.access`, `providers.<name>.fast`, `provider`, `externalAgents`, `promptCaching.namespace`,
 `contentUse.accepted`, and `sandbox.enabled` set to `false`. Everything after
 the three `permissions` keys is not a permission, and is here for the same
 reason: these replace the instructions that say to ask, choose which credential

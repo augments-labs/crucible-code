@@ -483,7 +483,7 @@ impl Desk {
             one,
             settings,
             &*self.from,
-            inventory.held(one.name),
+            inventory.held(one.name).as_ref(),
             self.rows.subscribes(one.name),
         );
         if let Some(CredentialSource::Environment(variable)) = source {
@@ -542,7 +542,7 @@ impl Desk {
             one,
             settings,
             &*self.from,
-            inventory.held(one.name),
+            inventory.held(one.name).as_ref(),
             self.rows.subscribes(one.name),
         )
         .map(|source| match source {
@@ -714,7 +714,7 @@ impl Desk {
     fn entry(&self, one: Served, inventory: &Inventory, trouble: Option<&str>, now: u64) -> Entry {
         let settings = self.settings.as_ref().ok();
         let configured = settings.and_then(|settings| settings.api_key_env(one.name));
-        let looked = configured.unwrap_or(one.key);
+        let looked = settings.map_or(one.key, |settings| crate::access::variable(one, settings));
         let variable = Variable {
             set: (self.from)(looked).is_some_and(|value| !value.trim().is_empty()),
             configured: configured.is_some(),
@@ -780,7 +780,7 @@ impl Desk {
             one,
             settings,
             &*self.from,
-            held.clone(),
+            held.as_ref(),
             self.rows.subscribes(one.name),
         );
         let kind = source.as_ref().map(Source::of);
@@ -877,7 +877,7 @@ struct Variable {
     name: String,
     /// Whether it is set to something other than whitespace.
     set: bool,
-    /// Whether `apiKeyEnv` named it, rather than the provider's own.
+    /// Whether the configuration named it, rather than the provider's own.
     configured: bool,
     /// Whether its name was cut at [`MAX_NAME`].
     cut: bool,

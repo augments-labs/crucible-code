@@ -370,7 +370,10 @@ fn a_key_is_kept_under_its_row_and_said_by_name_alone() {
 fn a_logout_takes_one_provider_out_and_says_what_a_launch_still_finds() {
     let sample = Sample::new("auth-logout");
     sample.holding(HELD);
-    sample.user(r#"{"providers":{"moonshot":{"apiKeyEnv":"MY_MOONSHOT_KEY"}}}"#);
+    sample.user(&format!(
+        r#"{{"providers":{{"moonshot":{{{}}}}}}}"#,
+        crate::access::naming("MY_MOONSHOT_KEY")
+    ));
     let desk = desk(&sample, &[("MY_MOONSHOT_KEY", SENTINEL)]);
 
     let gone = desk.forget("moonshot").expect("a writable home");
@@ -415,7 +418,10 @@ fn a_logout_takes_one_provider_out_and_says_what_a_launch_still_finds() {
 fn a_name_the_configuration_gave_reads_back_from_the_document_as_itself() {
     let sample = Sample::new("auth-escaped");
     sample.holding(HELD);
-    sample.user("{\"providers\":{\"anthropic\":{\"apiKeyEnv\":\"MY\\u001b[31mRED\\u202eKEY\"}}}");
+    sample.user(&format!(
+        r#"{{"providers":{{"anthropic":{{{}}}}}}}"#,
+        crate::access::naming(r"MY\u001b[31mRED\u202eKEY")
+    ));
     let name = "MY\u{1b}[31mRED\u{202e}KEY";
     let desk = desk(&sample, &[("MY\u{1b}[31mRED\u{202e}KEY", SENTINEL)]);
 
