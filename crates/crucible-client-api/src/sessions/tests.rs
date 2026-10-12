@@ -240,6 +240,29 @@ fn a_row_whose_backend_and_route_disagree_is_refused() {
 }
 
 #[test]
+fn a_row_whose_backend_and_route_disagree_is_never_written() {
+    // What one side would not read, the other does not write: written, it
+    // would be a document every client refuses whole.
+    let mut routed_native = session(1, None);
+    routed_native.route = Some(Name::new("work").unwrap());
+    let mut unrouted_agent = session(2, Some(&Text::cut("main")));
+    unrouted_agent.route = None;
+    for row in [routed_native, unrouted_agent] {
+        let report = Report::Listed(Listing {
+            sessions: vec![row],
+            omitted: 0,
+            unreadable: 0,
+            index_full: false,
+            unindexed: false,
+        });
+        assert_eq!(
+            report.encode().map_err(Refusal::code),
+            Err(ErrorCode::Malformed)
+        );
+    }
+}
+
+#[test]
 fn a_status_or_truncation_flag_that_disagrees_with_the_list_is_refused() {
     for (specimen, status) in [(0, "incomplete"), (1, "complete"), (0, "failed")] {
         let lying = with(document(specimen), "/status", json!(status));

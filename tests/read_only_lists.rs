@@ -422,7 +422,10 @@ fn sessions_list_says_what_was_recorded_here_and_changes_nothing() {
     assert_eq!(field(&document, "/sessions/1/title/text"), "fix the parser");
     assert_eq!(field(&document, "/sessions/1/branch/text"), "main");
     for one in 0..2 {
-        assert_eq!(field(&document, &format!("/sessions/{one}/backend")), "native");
+        assert_eq!(
+            field(&document, &format!("/sessions/{one}/backend")),
+            "native"
+        );
         assert_eq!(document.pointer(&format!("/sessions/{one}/route")), None);
     }
 }

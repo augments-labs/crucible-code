@@ -1730,6 +1730,7 @@ mod tests {
     #[test]
     fn the_format_moves_with_the_line_shape() {
         assert_eq!(FORMAT, 14);
+        assert_eq!(PROVIDER_LINES, 13, "the format before agents ran sessions");
         assert!(readable(FORMAT));
         assert!(readable(13), "a log from before agents ran sessions");
         assert!(typed_context(Some(10)));

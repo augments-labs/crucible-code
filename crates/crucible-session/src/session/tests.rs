@@ -1788,39 +1788,55 @@ fn two_places_whose_names_are_not_text_are_two_owners() {
 }
 
 #[test]
-fn a_turn_whose_effects_are_not_known_survives_being_continued() {
+fn a_turn_whose_effects_are_not_known_is_read_back_as_it_was_left() {
     // The turn ended with the agent gone before it said whether its edits
-    // landed. Reading the line as a torn tail cuts it, and the session comes
+    // landed. Read as a torn tail, the line is cut, and the session comes
     // back saying nothing about a working tree that may hold changes nobody
     // was told about.
     let sample = Sample::new("session-uncertain");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
     let path = session.path().to_owned();
     session.append(&said("rename the module"));
-    session.uncertain(&crucible_storage::Uncertain::new(
+    assert!(session.uncertain(&crucible_storage::Uncertain::new(
         "editing src/lib.rs",
         false,
-    ));
+    )));
     drop(session);
+    let before = fs::read(&path).expect("the log");
 
     for _ in 0..2 {
-        let (session, transcript) =
-            Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
-        assert_eq!(transcript.messages().len(), 1);
+        let read = super::replay::replay(&path).expect("a log that reads");
+        assert_eq!(read.transcript.messages().len(), 1);
         assert_eq!(
-            session
-                .uncertain_turn()
+            read.ran
+                .uncertain
+                .as_ref()
                 .map(|turn| turn.under_way().as_str()),
             Some("editing src/lib.rs"),
         );
-        drop(session);
-        assert!(
-            fs::read_to_string(&path)
-                .expect("the log")
-                .contains(r#""uncertain""#),
-            "continuing cut the uncertain turn out of the log"
-        );
+        assert!(Session::resume(&sample.logs(), &sample.workspace()).is_err());
+        assert_eq!(fs::read(&path).expect("the log"), before);
     }
+}
+
+#[test]
+fn a_session_a_providers_model_runs_records_no_turn_whose_effects_are_not_known() {
+    // Only an installed agent leaves a turn that way, and the line would
+    // make a log continued here one the release that wrote it refuses.
+    let sample = Sample::new("session-uncertain-native");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let path = session.path().to_owned();
+    session.append(&said("rename the module"));
+    assert!(!session.uncertain(&crucible_storage::Uncertain::new("editing", false)));
+    drop(session);
+
+    let log = fs::read_to_string(&path).expect("the log");
+    assert!(
+        !log.contains(r#"{"uncertain""#) && !log.contains("requires_format"),
+        "{log}"
+    );
 }
 
 #[test]
@@ -1864,7 +1880,7 @@ fn what_an_agent_calls_a_session_is_kept_only_from_the_agent_it_was_opened_on() 
     session.append(&said("rename the module"));
     assert!(!session.external(&ExternalRef::new("home", "other-session").expect("a name")));
     assert!(session.external(&ExternalRef::new("work", "its-session").expect("a name")));
-    session.uncertain(&crucible_storage::Uncertain::new("editing", false));
+    assert!(session.uncertain(&crucible_storage::Uncertain::new("editing", false)));
     drop(session);
 
     let log = fs::read_to_string(&path).expect("the log");
@@ -1896,13 +1912,16 @@ fn what_an_agent_calls_a_session_is_kept_only_from_the_agent_it_was_opened_on() 
 #[test]
 fn a_message_after_a_turn_whose_effects_were_not_known_settles_it() {
     let sample = Sample::new("session-uncertain-settled");
-    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    let path = session.path().to_owned();
     session.append(&said("rename the module"));
-    session.uncertain(&crucible_storage::Uncertain::new("editing", false));
+    assert!(session.uncertain(&crucible_storage::Uncertain::new("editing", false)));
     session.append(&said("carry on"));
     drop(session);
 
-    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    let read = super::replay::replay(&path).expect("a log that reads");
 
-    assert!(session.uncertain_turn().is_none());
+    assert!(read.ran.uncertain.is_none());
 }

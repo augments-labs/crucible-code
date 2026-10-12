@@ -820,9 +820,17 @@ impl Session {
     ///
     /// Kept until a message follows it, so a session continued after a crash
     /// still says that the files may hold changes nobody was told about.
-    pub fn uncertain(&self, turn: &Uncertain) {
-        let Some(to) = &self.to else { return };
-        drop(to.send(LogRequest::Line(guarded(&wire::uncertain(turn)))));
+    ///
+    /// Whether it was kept: only an installed agent leaves a turn this way,
+    /// and on a session a provider's model runs the line would make a log
+    /// from before agents ran sessions one its release refuses.
+    #[must_use]
+    pub fn uncertain(&self, turn: &Uncertain) -> bool {
+        let routed = self.route.is_some();
+        if let (true, Some(to)) = (routed, &self.to) {
+            drop(to.send(LogRequest::Line(guarded(&wire::uncertain(turn)))));
+        }
+        routed
     }
 
     /// The installed agent this session was opened on. `None` for a session

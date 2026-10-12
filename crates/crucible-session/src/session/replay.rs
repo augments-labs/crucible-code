@@ -805,15 +805,18 @@ impl Ran {
     /// Whether `line` is one of these, kept where it is.
     ///
     /// The agent's name for the session is taken only from the agent the
-    /// session was opened on: a name another instance gave is a session that
-    /// one would be asked to continue, and it is no line of this log's.
+    /// session was opened on. A name another instance gave is read past and
+    /// not kept: a resume would ask that instance's agent for a session it
+    /// never ran, and the rest of the log is still the session's.
     fn took(&mut self, line: &str) -> bool {
-        if let Some(named) = wire::named(line).filter(|named| {
-            self.route
+        if let Some(named) = wire::named(line) {
+            if self
+                .route
                 .as_ref()
                 .is_some_and(|route| route.instance() == named.instance())
-        }) {
-            self.external = Some(named);
+            {
+                self.external = Some(named);
+            }
         } else if let Some(stopped) = wire::uncertainty(line) {
             self.uncertain = Some(stopped);
         } else {

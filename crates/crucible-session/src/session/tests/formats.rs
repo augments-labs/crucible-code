@@ -244,10 +244,14 @@ fn the_agents_name_for_a_session_is_read_only_under_the_route_it_was_opened_on()
     let sample = Sample::new("format-14-other-instance");
     let path = planted(&sample, &log, None);
 
-    assert!(
-        replay(&path).map_or(true, |read| read.ran.external.is_none()),
+    // Read past rather than refused: the rest of the log is the session's.
+    let read = replay(&path).expect("a log that reads");
+    assert_eq!(
+        read.ran.external, None,
         "a session opened on work kept a name home gave"
     );
+    assert_eq!(read.transcript.messages().len(), 3);
+    assert!(read.ran.uncertain.is_some());
 }
 
 #[test]
@@ -256,12 +260,12 @@ fn a_session_an_agent_ran_is_listed_with_its_route_wherever_its_header_ends() {
     // chooses; a list that looked for the route only in what one read of the
     // header happened to bring in would call some of these native.
     let log = fixture("format-14.jsonl");
-    let sample = Sample::new("format-14-header-length");
-    let header = fs::read_to_string(planted(&sample, &log, None)).expect("the log");
-    let opening = header.lines().next().expect("a header").len();
     for ends in 8180..=8200 {
-        let branch = format!("main{}", "b".repeat(ends - 1 - opening));
+        // Each sample's workspace is its own, and the header holds its path.
         let sample = Sample::new("format-14-header-length");
+        let header = fs::read_to_string(planted(&sample, &log, None)).expect("the log");
+        let opening = header.lines().next().expect("a header").len();
+        let branch = format!("main{}", "b".repeat(ends - 1 - opening));
         let path = planted(
             &sample,
             &log.replacen(r#""branch":"main""#, &format!(r#""branch":"{branch}""#), 1),

@@ -353,3 +353,24 @@ fn a_route_named_as_long_as_a_session_may_keep_it_is_listed_and_not_refused() {
         [Some(longest.len())]
     );
 }
+
+#[test]
+fn a_route_whose_driver_is_spelled_as_a_providers_model_is_counted_and_not_listed() {
+    // A row naming the native backend and a route is one every client
+    // refuses, and it would take the whole list down with it.
+    let sample = Sample::new("sessions-native-driver");
+    let route = crucible_session::RouteBinding::new(super::NATIVE, "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    session.append(&Message::said(PROMPT));
+    drop(session);
+    recorded(&sample, None, None);
+
+    let listed = listing(&sample.root(), &sample.logs()).expect("a listing");
+
+    let Report::Listed(said) = listed.contract() else {
+        panic!("a list: {:?}", listed.contract());
+    };
+    assert_eq!((said.sessions.len(), said.unreadable), (1, 1));
+    assert!(listed.contract().encode().is_ok());
+}

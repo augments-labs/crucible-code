@@ -64,6 +64,12 @@ pub struct Session {
 pub const NATIVE: &str = "native";
 
 impl Session {
+    /// Whether its backend and route agree: a provider's model runs a session
+    /// on no route, and an installed agent always on one.
+    fn consistent(&self) -> bool {
+        (self.backend.as_str() == NATIVE) == self.route.is_none()
+    }
+
     /// When the session started, in milliseconds since the epoch: what its id
     /// names, and the epoch for an id that names nothing this machine holds.
     fn started(&self) -> u64 {
@@ -165,7 +171,7 @@ impl Report {
     ///
     /// [`ErrorCode::TooLarge`] for more than [`ITEMS`] sessions or a document
     /// over the frame ceiling, and [`ErrorCode::Malformed`] for a session said
-    /// twice.
+    /// twice or one whose backend and route disagree.
     pub fn encode(&self) -> Result<Vec<u8>, Refusal> {
         let written = match self {
             Self::Failed(problem) => Writing::new().with("problem", written(problem)),
@@ -173,7 +179,7 @@ impl Report {
                 if listing.sessions.len() > ITEMS {
                     return Err(ErrorCode::TooLarge.into());
                 }
-                if !listing.distinct() {
+                if !listing.distinct() || !listing.sessions.iter().all(Session::consistent) {
                     return Err(ErrorCode::Malformed.into());
                 }
                 let sessions: Vec<serde_json::Value> = listing
@@ -278,8 +284,7 @@ fn session(value: serde_json::Value) -> Result<Session, Refusal> {
             .transpose()?,
     };
     one.done()?;
-    let native = session.backend.as_str() == NATIVE;
-    if session.started() != started || native == session.route.is_some() {
+    if session.started() != started || !session.consistent() {
         return Err(ErrorCode::Malformed.into());
     }
     Ok(session)
