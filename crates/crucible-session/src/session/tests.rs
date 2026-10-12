@@ -1925,3 +1925,27 @@ fn a_message_after_a_turn_whose_effects_were_not_known_settles_it() {
 
     assert!(read.ran.uncertain.is_none());
 }
+
+#[test]
+fn a_turn_left_unsettled_in_a_log_no_agent_ran_is_read_past() {
+    // Nothing here writes one, and a resume that took it would tell the
+    // reader the files may hold changes no agent was there to make.
+    let sample = Sample::new("session-uncertain-unrouted");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let path = session.path().to_owned();
+    session.append(&said("rename the module"));
+    drop(session);
+    let mut log = fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("the log");
+    let turn = crucible_storage::Uncertain::new("editing", false);
+    writeln!(log, "{}", super::guarded(&wire::uncertain(&turn))).expect("a line");
+    drop(log);
+
+    let (session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages().len(), 1);
+    assert!(session.uncertain_turn().is_none());
+}

@@ -219,17 +219,21 @@ fn a_route_line_anywhere_but_after_the_header_or_spelled_otherwise_is_no_route()
     for (case, damaged) in [("moved", moved), ("spaced", spaced)] {
         let sample = Sample::new("format-14-misplaced");
         let path = planted(&sample, &damaged, None);
+        let before = fs::read(&path).expect("the log");
 
         assert_eq!(route_of(&path).expect("a log that opens"), None, "{case}");
-        assert!(
-            replay(&path).map_or(true, |read| read.ran.route.is_none()),
-            "{case}"
-        );
+        // Neither is a route, nor a line of any other kind: the log does not
+        // read, and is left as it was.
+        let unread = |refused: &SessionError| matches!(refused, SessionError::Log { .. });
+        assert!(replay(&path).err().as_ref().is_some_and(unread), "{case}");
         assert!(
             Session::resume(&sample.logs(), &sample.workspace())
-                .map_or(true, |(session, _)| session.route().is_none()),
+                .err()
+                .as_ref()
+                .is_some_and(unread),
             "{case}"
         );
+        assert_eq!(fs::read(&path).expect("the log"), before, "{case}");
     }
 }
 

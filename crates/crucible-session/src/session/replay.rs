@@ -788,8 +788,8 @@ pub(super) struct Replayed {
 /// What an installed agent that ran a session recorded about it: the route it
 /// was opened on, the agent's own name for the session, and a turn that ended
 /// with its effects not known. None is a message. The route is the line after
-/// the header or there is none; of the others, the last of each kind is what
-/// holds.
+/// the header or there is none; the others are kept only under a route, and
+/// of them the last of each kind is what holds.
 #[derive(Default)]
 pub(super) struct Ran {
     /// The installed agent the session was opened on, where one was.
@@ -805,9 +805,11 @@ impl Ran {
     /// Whether `line` is one of these, kept where it is.
     ///
     /// The agent's name for the session is taken only from the agent the
-    /// session was opened on. A name another instance gave is read past and
-    /// not kept: a resume would ask that instance's agent for a session it
-    /// never ran, and the rest of the log is still the session's.
+    /// session was opened on, and a turn left unsettled only from a session an
+    /// agent ran. Either line otherwise is read past and not kept: a resume
+    /// would ask another instance's agent for a session it never ran, or say
+    /// the files may hold changes no agent was there to make, and the rest of
+    /// the log is still the session's.
     fn took(&mut self, line: &str) -> bool {
         if let Some(named) = wire::named(line) {
             if self
@@ -818,7 +820,9 @@ impl Ran {
                 self.external = Some(named);
             }
         } else if let Some(stopped) = wire::uncertainty(line) {
-            self.uncertain = Some(stopped);
+            if self.route.is_some() {
+                self.uncertain = Some(stopped);
+            }
         } else {
             return false;
         }

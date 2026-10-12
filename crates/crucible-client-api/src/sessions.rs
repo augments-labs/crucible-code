@@ -94,8 +94,9 @@ pub struct Listing {
     pub sessions: Vec<Session>,
     /// How many more there were past those.
     pub omitted: u64,
-    /// How many logs the index names whose first line did not read, said
-    /// nothing of.
+    /// How many logs the index names that could not be listed, said nothing
+    /// of: a first line or a route that did not read, or a route naming the
+    /// backend of a session no agent ran.
     pub unreadable: u64,
     /// Whether the host's index holds all the sessions it keeps, so older ones
     /// may have fallen out of it.
