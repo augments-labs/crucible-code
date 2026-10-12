@@ -7,9 +7,10 @@
 //! named, so the agent signs in, keeps its files and unpacks itself inside the
 //! profile alone: its home for sign-in is the profile's directory, and its
 //! token is a file there rather than an entry in the shared keyring, so a
-//! sign-in another Google product keeps is never read as its own. Without a
-//! profile it keeps its files in its usual home, and its token still in a
-//! file.
+//! sign-in another Google product keeps is never read as its own. The
+//! configuration refuses an instance without a profile, since its usual home
+//! is the one the Antigravity IDE signs in under; a launch given none keeps its
+//! files there, its token still in a file.
 
 use std::ffi::OsString;
 use std::path::Path;

@@ -55,10 +55,14 @@ pub(crate) struct Refused {
 /// A [`Failure`] where it is not one JSON-RPC 2.0 object.
 pub(crate) fn parse(line: &str) -> Result<Frame, Failure> {
     let Ok(Value::Object(mut object)) = serde_json::from_str::<Value>(line) else {
-        return Err(Failure::new("The agent sent a line that is not a JSON object."));
+        return Err(Failure::new(
+            "The agent sent a line that is not a JSON object.",
+        ));
     };
     if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-        return Err(Failure::new("The agent sent a frame that is not JSON-RPC 2.0."));
+        return Err(Failure::new(
+            "The agent sent a frame that is not JSON-RPC 2.0.",
+        ));
     }
     let id = object.remove("id");
     let method = object.remove("method");
@@ -70,7 +74,9 @@ pub(crate) fn parse(line: &str) -> Result<Frame, Failure> {
             id,
             outcome: outcome(&mut object)?,
         }),
-        _ => Err(Failure::new("The agent sent a frame that is neither a request nor a response.")),
+        _ => Err(Failure::new(
+            "The agent sent a frame that is neither a request nor a response.",
+        )),
     }
 }
 
@@ -80,10 +86,18 @@ fn outcome(object: &mut Map<String, Value>) -> Result<Result<Value, Refused>, Fa
         return Ok(Ok(result));
     }
     let Some(Value::Object(error)) = object.remove("error") else {
-        return Err(Failure::new("The agent sent a response with neither a result nor an error."));
+        return Err(Failure::new(
+            "The agent sent a response with neither a result nor an error.",
+        ));
     };
-    let code = error.get("code").and_then(Value::as_i64).unwrap_or_default();
-    let message = error.get("message").and_then(Value::as_str).unwrap_or_default();
+    let code = error
+        .get("code")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     Ok(Err(Refused {
         code,
         message: Text::clipped(message, MESSAGE_BYTES),
@@ -99,4 +113,3 @@ pub(crate) fn request(id: u64, method: &str, params: &Value) -> String {
 pub(crate) fn notification(method: &str, params: &Value) -> String {
     json!({"jsonrpc": "2.0", "method": method, "params": params}).to_string()
 }
-

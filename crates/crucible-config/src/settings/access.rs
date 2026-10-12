@@ -111,6 +111,17 @@ impl Driver {
         }
     }
 
+    /// Whether an instance must name its profile directory: one whose usual
+    /// home another program of the same vendor keeps its own sign-in in would
+    /// otherwise share it.
+    #[must_use]
+    pub const fn profile_needed(self) -> bool {
+        match self {
+            Self::Claude => false,
+            Self::Antigravity => true,
+        }
+    }
+
     fn of(written: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|one| one.name() == written)
     }

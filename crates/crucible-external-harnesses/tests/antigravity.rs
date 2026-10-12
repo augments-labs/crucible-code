@@ -61,7 +61,11 @@ fn local() -> Arc<dyn SandboxService> {
 fn reviewed() -> String {
     acp::initialized(
         Manifest::REVIEWED.name,
-        Manifest::REVIEWED.versions.first().copied().unwrap_or_default(),
+        Manifest::REVIEWED
+            .versions
+            .first()
+            .copied()
+            .unwrap_or_default(),
         Manifest::REVIEWED.sign_in,
     )
 }
@@ -114,7 +118,8 @@ async fn spoken(
         };
         let request = dialect.account(*step, shape).expect("an account step");
         let frames = dialect.spoken(*step).expect("spoken");
-        let launch = Launch::new(program.clone(), policy(here), Held::granted(ROUTE)).asking(request);
+        let launch =
+            Launch::new(program.clone(), policy(here), Held::granted(ROUTE)).asking(request);
         let host = Host::launch(local(), Handle::current(), &control, launch)
             .await
             .expect("started");
@@ -124,7 +129,10 @@ async fn spoken(
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(link.as_str().to_owned());
         };
-        read.push(host.speak(&mut dialect, *step, &frames, &show, PREPARING).await);
+        read.push(
+            host.speak(&mut dialect, *step, &frames, &show, PREPARING)
+                .await,
+        );
     }
     let shown = shown.into_inner().unwrap_or_else(PoisonError::into_inner);
     (read, shown)
@@ -165,10 +173,18 @@ async fn a_sign_in_a_status_confirms_shows_its_link_and_says_signed_in() {
         .say(acp::response(1, &serde_json::json!({})));
     let script = Script::of([sign_in, answering(acp::opened(1))]);
 
-    let (read, shown) = spoken(&at.0, &profile, &script, &[Account::SignIn, Account::Status]).await;
+    let (read, shown) = spoken(
+        &at.0,
+        &profile,
+        &script,
+        &[Account::SignIn, Account::Status],
+    )
+    .await;
 
     assert_eq!(shown, vec![SIGN_IN.to_owned()]);
-    let [signed, status] = read.as_slice() else { panic!("{read:?}") };
+    let [signed, status] = read.as_slice() else {
+        panic!("{read:?}")
+    };
     assert_eq!(signed, &Reading::Signed(Authentication::SignedIn));
     assert_eq!(Ended::signed_in(status).says(), "Signed in");
 }
@@ -182,9 +198,17 @@ async fn a_sign_in_the_status_after_it_refuses_says_could_not_verify_sign_in() {
         answering(acp::sign_in_required(1)),
     ]);
 
-    let (read, _) = spoken(&at.0, &profile, &script, &[Account::SignIn, Account::Status]).await;
+    let (read, _) = spoken(
+        &at.0,
+        &profile,
+        &script,
+        &[Account::SignIn, Account::Status],
+    )
+    .await;
 
-    let [_, status] = read.as_slice() else { panic!("{read:?}") };
+    let [_, status] = read.as_slice() else {
+        panic!("{read:?}")
+    };
     assert_eq!(Ended::signed_in(status).says(), "Could not verify sign-in");
 }
 
@@ -212,31 +236,65 @@ async fn a_sign_in_kept_outside_the_profile_does_not_read_as_signed_in() {
     assert_eq!(read, vec![Reading::Signed(Authentication::SignedOut)]);
 }
 
+/// A logout is told as done only once a status step after it reads signed
+/// out.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_logout_the_agent_confirms_says_signed_out_of_this_agent_profile() {
+async fn a_logout_a_status_confirms_says_signed_out_of_this_agent_profile() {
     let at = Owned::new("signed-out");
     let profile = at.0.join("profile");
-    let script = Script::of([answering(acp::response(1, &serde_json::json!({})))]);
+    let script = Script::of([
+        answering(acp::response(1, &serde_json::json!({}))),
+        answering(acp::sign_in_required(1)),
+    ]);
 
-    let (read, _) = spoken(&at.0, &profile, &script, &[Account::SignOut]).await;
+    let (read, _) = spoken(
+        &at.0,
+        &profile,
+        &script,
+        &[Account::SignOut, Account::Status],
+    )
+    .await;
 
-    let [logout] = read.as_slice() else { panic!("{read:?}") };
-    assert_eq!(Ended::signed_out(logout).says(), "Signed out of this agent profile");
+    let [logout, status] = read.as_slice() else {
+        panic!("{read:?}")
+    };
+    assert_eq!(
+        Ended::signed_out(logout, status).says(),
+        "Signed out of this agent profile"
+    );
 }
 
+/// A logout the agent confirms, but which the status after it still reads as
+/// signed in, is unverified, as is one the agent refuses.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_logout_the_agent_refuses_says_external_sign_out_unverified() {
-    let at = Owned::new("sign-out-unverified");
-    let profile = at.0.join("profile");
-    let script = Script::of([answering(acp::refused(1, -32603, "Internal error"))]);
+async fn a_logout_nothing_confirms_says_external_sign_out_unverified() {
+    for (logout, status) in [
+        (
+            acp::refused(1, -32603, "Internal error"),
+            acp::sign_in_required(1),
+        ),
+        (acp::response(1, &serde_json::json!({})), acp::opened(1)),
+    ] {
+        let at = Owned::new("sign-out-unverified");
+        let profile = at.0.join("profile");
+        let script = Script::of([answering(logout), answering(status)]);
 
-    let (read, _) = spoken(&at.0, &profile, &script, &[Account::SignOut]).await;
+        let (read, _) = spoken(
+            &at.0,
+            &profile,
+            &script,
+            &[Account::SignOut, Account::Status],
+        )
+        .await;
 
-    let [logout] = read.as_slice() else { panic!("{read:?}") };
-    assert_eq!(
-        Ended::signed_out(logout).says(),
-        "Disconnected; external sign-out unverified"
-    );
+        let [logout, status] = read.as_slice() else {
+            panic!("{read:?}")
+        };
+        assert_eq!(
+            Ended::signed_out(logout, status).says(),
+            "Disconnected; external sign-out unverified"
+        );
+    }
 }
 
 /// A release other than the reviewed one is sent nothing past initializing.
@@ -249,7 +307,9 @@ async fn a_release_outside_the_manifest_is_sent_nothing_more() {
 
     let (read, _) = spoken(&at.0, &profile, &script, &[Account::Status]).await;
 
-    let [Reading::Unreadable(refused)] = read.as_slice() else { panic!("{read:?}") };
+    let [Reading::Unreadable(refused)] = read.as_slice() else {
+        panic!("{read:?}")
+    };
     assert!(refused.reason().as_str().contains("9.9.9"), "{refused:?}");
     let heard = fake_peer::heard(&at.0);
     assert_eq!(heard.len(), 1, "{heard:?}");

@@ -3,7 +3,7 @@
 //! Every kind of `session/update` the protocol defines is a [`Kind`], and
 //! [`Updates::heard`] matches each one with an arm of its own, so a kind added
 //! here makes the reader decide what it means. An update of a kind not named
-//! is dropped: it reports, and asks nothing.
+//! is dropped and counted: it reports, and asks nothing.
 //!
 //! Usage arrives as the session's running cost. A turn reports the difference
 //! between what the session had cost when it began and what it costs at its
@@ -119,6 +119,8 @@ pub(crate) struct Updates {
     before: Spent,
     /// The running cost the running turn last reported.
     latest: Option<Cost>,
+    /// How many updates of no kind defined were dropped.
+    unknown: u32,
 }
 
 impl Updates {
@@ -127,6 +129,7 @@ impl Updates {
         Self {
             before: Spent::Known(None),
             latest: None,
+            unknown: 0,
         }
     }
 
@@ -135,6 +138,7 @@ impl Updates {
         Self {
             before: Spent::Unknown,
             latest: None,
+            unknown: 0,
         }
     }
 
@@ -145,6 +149,7 @@ impl Updates {
             .and_then(Value::as_str)
             .and_then(Kind::named);
         let Some(kind) = named else {
+            self.unknown = self.unknown.saturating_add(1);
             return Vec::new();
         };
         match kind {
@@ -180,6 +185,15 @@ impl Updates {
         }
     }
 
+    /// How many updates of no kind defined were dropped.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no event a turn reports carries the count yet")
+    )]
+    pub(crate) const fn unknown(&self) -> u32 {
+        self.unknown
+    }
+
     /// The usage of the turn `turn`, which has ended, where its cost is known.
     pub(crate) fn settled(&mut self, turn: TurnId) -> Option<Act> {
         let now = self.latest.take()?;
@@ -193,7 +207,10 @@ impl Updates {
         };
         self.before = Spent::Known(Some(now));
         let usage = Usage::of(turn).cost(spent?);
-        Some(Act::Say(Event::Usage(Observation::live(usage, Scope::Session))))
+        Some(Act::Say(Event::Usage(Observation::live(
+            usage,
+            Scope::Session,
+        ))))
     }
 }
 
@@ -216,7 +233,10 @@ fn tool(update: &Value) -> Text {
 
 /// What a tool call that began means.
 fn tool_call(update: &Value) -> Vec<Act> {
-    let summary = update.get("title").and_then(Value::as_str).unwrap_or_default();
+    let summary = update
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let mut acts = vec![Act::Say(Event::ToolActivity {
         tool: tool(update),
         summary: Text::new(summary),

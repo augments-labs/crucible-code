@@ -10,12 +10,18 @@
 //! out once the agent has named it. Later turns of the run send the prompt
 //! alone.
 //!
+//! A turn stopped before its prompt is out sends the agent nothing more and
+//! ends cancelled once the request it is waiting on is answered.
+//!
 //! This client offers the agent no file system and no terminal, so the one
-//! request it answers is a permission. Any other request asks for authority
-//! the agent was never given, and the turn ends incomplete rather than leave
-//! it unanswered. A permission is answered with one of the options the agent
-//! offered for it, and every question still open when the turn is stopped is
-//! answered cancelled, as the protocol asks.
+//! request it answers is a permission, and only one asked of the session it
+//! opened. Any other request asks for authority the agent was never given,
+//! and the turn ends incomplete rather than leave it unanswered. A permission
+//! is shown as the input the agent would run or fetch with, never as the
+//! title it gave the call, and is answered with one of the options the agent
+//! offered for it. Once the turn is stopped, a question answered is answered
+//! cancelled, as the protocol asks; one still open when it was stopped is
+//! left to the agent's own end of the turn.
 //!
 //! Account steps are spoken over the same wire: each initializes the agent,
 //! then asks whether a session can be opened, signs in, or signs out, and a
@@ -31,8 +37,8 @@ use std::path::PathBuf;
 use crucible_execution::{
     Authentication, Decision, Detail, Failure, Outcome, Pending, Text, TurnRequest,
 };
-use crucible_types::TurnId;
 use crucible_transport::FRAME_BYTES;
+use crucible_types::TurnId;
 use serde_json::{Value, json};
 
 use crate::acp::permission::Permissions;
@@ -299,7 +305,9 @@ impl Acp {
         let params = json!({"sessionId": session, "prompt": [{"type": "text", "text": prompt}]});
         let frame = self.send("session/prompt", &params, Awaited::Prompt);
         if frame.len() >= FRAME_BYTES {
-            return Err(Failure::new("The prompt is too long for this agent's wire."));
+            return Err(Failure::new(
+                "The prompt is too long for this agent's wire.",
+            ));
         }
         Ok(frame)
     }
@@ -328,6 +336,10 @@ impl Acp {
             Err(refused) => return Ok(self.ended(Act::Fail(refusal(&refused)))),
         };
         match awaited {
+            Awaited::Initialize if self.stopping => {
+                self.held = None;
+                Ok(self.ended(Act::End(Outcome::Cancelled)))
+            }
             Awaited::Initialize => {
                 let opened = self
                     .admitted(&result)
@@ -350,8 +362,17 @@ impl Acp {
                     ))]);
                 };
                 self.session = Some(named.clone());
-                self.updates = if kept { Updates::resumed() } else { Updates::fresh() };
+                self.updates = if kept {
+                    Updates::resumed()
+                } else {
+                    Updates::fresh()
+                };
                 let held = self.held.take().unwrap_or_default();
+                if self.stopping {
+                    let mut acts = vec![Act::Session(named)];
+                    acts.extend(self.ended(Act::End(Outcome::Cancelled)));
+                    return Ok(acts);
+                }
                 Ok(vec![
                     Act::Session(named),
                     self.prompt(&held).map_or_else(Act::Fail, Act::Send),
@@ -362,7 +383,11 @@ impl Acp {
                     Some("end_turn") => Outcome::Answered,
                     Some("cancelled") => Outcome::Cancelled,
                     Some("max_tokens" | "max_turn_requests" | "refusal") => Outcome::CutShort,
-                    _ => return Err(Failure::new("The agent ended its turn for no reason it named.")),
+                    _ => {
+                        return Err(Failure::new(
+                            "The agent ended its turn for no reason it named.",
+                        ));
+                    }
                 };
                 Ok(self.ended(Act::End(outcome)))
             }
@@ -379,6 +404,12 @@ impl Acp {
             .into_iter()
             .chain([end])
             .collect()
+    }
+
+    /// Whether `params` name the session this client opened.
+    fn ours(&self, params: &Value) -> bool {
+        self.session.is_some()
+            && params.get("sessionId").and_then(Value::as_str) == self.session.as_deref()
     }
 
     /// The question the permission request `id` asks.
@@ -399,23 +430,32 @@ impl Acp {
         self.permissions.offered(&native, options);
         let call = params.get("toolCall").unwrap_or(&Value::Null);
         let kind = call.get("kind").and_then(Value::as_str).unwrap_or("other");
-        let title = call.get("title").and_then(Value::as_str).unwrap_or_default();
+        let title = call
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        // What the call would run or fetch is read from its input: the field
+        // the protocol names where the agent used it, and else the whole
+        // input as the agent sent it. The title is the agent's own account
+        // of the call, which nothing holds it to.
+        let input = call.get("rawInput").filter(|input| !input.is_null());
         let raw = |key: &str| {
-            call.get("rawInput")
+            let named = input
                 .and_then(|input| input.get(key))
-                .and_then(Value::as_str)
-                .unwrap_or(title)
+                .and_then(Value::as_str);
+            named.map_or_else(
+                || Text::new(&input.map(Value::to_string).unwrap_or_default()),
+                Text::new,
+            )
         };
         let detail = match kind {
             "read" | "search" => Detail::Reads,
             "edit" | "delete" | "move" => Detail::MutatesFile,
-            "fetch" => Detail::Network {
-                sent: Text::new(raw("url")),
-            },
+            "fetch" => Detail::Network { sent: raw("url") },
             // A command, and whatever the agent did not name, is asked as
             // what it says it would run, the widest thing it could be.
             _ => Detail::Command {
-                sent: Text::new(raw("command")),
+                sent: raw("command"),
                 left_running: false,
             },
         };
@@ -543,14 +583,18 @@ impl Dialect for Acp {
                 self.responded(awaited, outcome)
             }
             Frame::Request { id, method, params } if method == "session/request_permission" => {
+                if !self.ours(&params) {
+                    return Err(Failure::new(
+                        "The agent asked a permission for a session this client did not open.",
+                    ));
+                }
                 Ok(vec![self.asked(&id, &params)])
             }
             Frame::Request { .. } => Err(Failure::new(
                 "The agent asked for something this client does not offer it.",
             )),
             Frame::Notification { method, params } if method == "session/update" => {
-                let ours = self.session.is_some()
-                    && params.get("sessionId").and_then(Value::as_str) == self.session.as_deref();
+                let ours = self.ours(&params);
                 let replaying = matches!(self.awaited, Some((_, Awaited::Open { .. })));
                 Ok(match params.get("update") {
                     Some(update) if ours && !replaying => self.updates.heard(update),
@@ -571,7 +615,10 @@ impl Dialect for Acp {
     fn cancel(&mut self) -> Option<String> {
         self.stopping = true;
         let session = self.session.as_deref()?;
-        Some(wire::notification("session/cancel", &json!({"sessionId": session})))
+        Some(wire::notification(
+            "session/cancel",
+            &json!({"sessionId": session}),
+        ))
     }
 
     fn account(&mut self, _step: Account, shape: Shape<'_>) -> Option<Request> {

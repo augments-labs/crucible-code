@@ -37,7 +37,9 @@ fn the_agent_is_started_with_its_home_in_the_profile() {
 fn a_sign_in_link_during_a_turn_fails_it() {
     let mut agent = Antigravity::default();
     let _ = agent.request(Shape::default());
-    let _ = agent.open(&TurnRequest::new(TurnId::FIRST, "hello")).unwrap();
+    let _ = agent
+        .open(&TurnRequest::new(TurnId::FIRST, "hello"))
+        .unwrap();
 
     let acts = agent.heard(&format!("{LINK_PREFIX}{SIGN_IN}")).unwrap();
 
@@ -54,7 +56,10 @@ fn a_sign_in_link_is_shown_only_while_signing_in() {
     let printed = format!("{LINK_PREFIX}{SIGN_IN}");
     let mut agent = Antigravity::default();
     let _ = agent.spoken(Account::SignIn).unwrap();
-    assert!(matches!(agent.told(Account::SignIn, &printed), Ok(Told::Link(_))));
+    assert!(matches!(
+        agent.told(Account::SignIn, &printed),
+        Ok(Told::Link(_))
+    ));
 
     let mut agent = Antigravity::default();
     let _ = agent.spoken(Account::Status).unwrap();
@@ -67,4 +72,20 @@ fn a_sign_in_link_is_shown_only_while_signing_in() {
         agent.told(Account::Status, &refused.to_string()),
         Ok(Told::Done(Reading::Unreadable(_)))
     ));
+}
+
+/// A sign-in link during a sign-out or a version check says nothing either
+/// step asked, so neither is read from it.
+#[test]
+fn a_sign_in_link_during_a_sign_out_or_a_version_check_is_unreadable() {
+    let printed = format!("{LINK_PREFIX}{SIGN_IN}");
+    for step in [Account::SignOut, Account::Version] {
+        let mut agent = Antigravity::default();
+        let _ = agent.spoken(step).unwrap();
+        let told = agent.told(step, &printed);
+        assert!(
+            matches!(told, Ok(Told::Done(Reading::Unreadable(_)))),
+            "{step:?}: {told:?}"
+        );
+    }
 }

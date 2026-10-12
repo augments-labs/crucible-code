@@ -8,7 +8,8 @@
 //!
 //! Each operation ends in a sentence that claims no more than its steps
 //! established: a sign-in is verified by a status step after it, a sign-out
-//! by the agent's own logout, and a disconnect calls the agent for nothing,
+//! by the agent's own logout and a status step after it reading signed out,
+//! and a disconnect calls the agent for nothing,
 //! so it says what it knew of the account beforehand and never more.
 
 use crucible_execution::{Authentication, Failure, Text};
@@ -29,13 +30,13 @@ const LINK_BYTES: usize = 16 * 1024;
 /// # Errors
 ///
 /// A [`Failure`] where the line announces a link that is not the sign-in
-/// page, is longer than a link, or holds a space or a control character.
+/// page, is longer than a link, or holds anything but printable ASCII.
 pub(crate) fn link(line: &str) -> Option<Result<Text, Failure>> {
     let printed = line.strip_prefix(LINK_PREFIX)?.trim_end();
     let sound = printed.len() <= LINK_BYTES
         && printed.starts_with(SIGN_IN_PAGE)
         && !printed.contains('#')
-        && !printed.chars().any(|letter| letter.is_whitespace() || letter.is_control());
+        && printed.chars().all(|letter| letter.is_ascii_graphic());
     Some(if sound {
         Ok(Text::new(printed))
     } else {
@@ -52,11 +53,12 @@ pub enum Ended {
     SignedIn,
     /// A sign-in no status step could confirm.
     Unverified(Failure),
-    /// The agent's own logout signed the profile out.
+    /// The agent's own logout signed the profile out, and a status step after
+    /// it read signed out.
     SignedOut,
     /// The instance was taken out of use and the agent's sign-out could not
-    /// be confirmed.
-    SignOutUnverified,
+    /// be confirmed, for this reason.
+    SignOutUnverified(Failure),
     /// The instance was taken out of use, the account untouched, with what was
     /// known of it beforehand.
     Disconnected(Authentication),
@@ -75,14 +77,22 @@ impl Ended {
         }
     }
 
-    /// A sign-out whose logout step read `logout`.
+    /// A sign-out whose logout step read `logout`, and the status step after
+    /// it `status`.
     #[must_use]
-    pub const fn signed_out(logout: &Reading) -> Self {
-        match logout {
-            Reading::Signed(Authentication::SignedOut) => Self::SignedOut,
-            Reading::Signed(_) | Reading::Version(_) | Reading::Unreadable(_) => {
-                Self::SignOutUnverified
+    pub fn signed_out(logout: &Reading, status: &Reading) -> Self {
+        match (logout, status) {
+            (
+                Reading::Signed(Authentication::SignedOut),
+                Reading::Signed(Authentication::SignedOut),
+            ) => Self::SignedOut,
+            (Reading::Unreadable(failure), _)
+            | (Reading::Signed(Authentication::SignedOut), Reading::Unreadable(failure)) => {
+                Self::SignOutUnverified(failure.clone())
             }
+            (Reading::Signed(_) | Reading::Version(_), _) => Self::SignOutUnverified(Failure::new(
+                "The agent did not report being signed out afterwards.",
+            )),
         }
     }
 
@@ -99,7 +109,7 @@ impl Ended {
             Self::SignedIn => "Signed in",
             Self::Unverified(_) => "Could not verify sign-in",
             Self::SignedOut => "Signed out of this agent profile",
-            Self::SignOutUnverified => "Disconnected; external sign-out unverified",
+            Self::SignOutUnverified(_) => "Disconnected; external sign-out unverified",
             Self::Disconnected(Authentication::SignedIn) => {
                 "Disconnected from Crucible. The external account remains signed in."
             }

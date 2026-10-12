@@ -213,10 +213,9 @@ impl Sink for Recorder {
     fn post(&self, event: Event) {
         match (&self.react, &event) {
             (React::Interrupt, Event::Started { .. })
-            | (
-                React::InterruptOnEffect,
-                Event::ToolActivity { .. } | Event::FileChanged { .. },
-            ) => self.control.interrupt(),
+            | (React::InterruptOnEffect, Event::ToolActivity { .. } | Event::FileChanged { .. }) => {
+                self.control.interrupt()
+            }
             (React::Allow, Event::Pending(reference, _)) => {
                 // A refusal here leaves the question open, which the case's
                 // own check then sees as a turn that never ended answered.
@@ -448,8 +447,8 @@ impl Suite<'_> {
             workspace: Some(here),
             ..Shape::default()
         };
-        let mut launch = Launch::new(found, policy(here)?, Held::granted(ROUTE))
-            .asking(dialect.request(shape));
+        let mut launch =
+            Launch::new(found, policy(here)?, Held::granted(ROUTE)).asking(dialect.request(shape));
         if let Some(patience) = patience {
             launch = launch.waiting(patience);
         }

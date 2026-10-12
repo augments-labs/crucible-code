@@ -361,7 +361,13 @@ async fn a_probe_with_a_yes_reads_the_version() {
     let control = Control::new().expect("a control");
 
     let read = launcher
-        .account(&agent(&registry, &peer), &control, &mut Plain, Account::Version, &|_| {})
+        .account(
+            &agent(&registry, &peer),
+            &control,
+            &mut Plain,
+            Account::Version,
+            &|_| {},
+        )
         .await
         .expect("started");
 
@@ -556,7 +562,8 @@ async fn a_profile_is_made_private_to_the_user_before_the_agent_starts() {
     fs::set_permissions(&open, fs::Permissions::from_mode(0o755)).expect("opened");
 
     for profile in [&missing, &open] {
-        let agent = Agent::routed(&route(&peer, Some(profile)), &registry, |_| None).expect("a row");
+        let agent =
+            Agent::routed(&route(&peer, Some(profile)), &registry, |_| None).expect("a row");
         launcher
             .account(&agent, &control, &mut Plain, Account::Version, &|_| {})
             .await

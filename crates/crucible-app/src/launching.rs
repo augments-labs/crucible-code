@@ -35,8 +35,7 @@ use std::time::Duration;
 
 use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::{
-    Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Reading, Refusal, Request,
-    Shape,
+    Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Reading, Refusal, Request, Shape,
 };
 use crucible_sandbox::{
     SandboxDomainPattern, SandboxDomainPolicy, SandboxFilesystemAccess,
@@ -362,7 +361,9 @@ impl<'a> Launcher<'a> {
         let spoken = dialect.spoken(step);
         let host = self.start(agent, control, request, None).await?;
         if let Some(frames) = spoken {
-            return Ok(host.speak(dialect, step, &frames, shown, within(step)).await);
+            return Ok(host
+                .speak(dialect, step, &frames, shown, within(step))
+                .await);
         }
         let ran = host.run().await;
         Ok(dialect.read(step, &ran))

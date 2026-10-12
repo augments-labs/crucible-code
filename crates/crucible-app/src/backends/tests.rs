@@ -33,6 +33,17 @@ fn every_row_agrees_with_its_driver_its_route_and_its_page() {
     }
 }
 
+/// Each host a row's agent may reach is named whole, so its sandbox opens no
+/// host the agent was not reviewed reaching.
+#[test]
+fn every_host_a_row_reaches_is_named_whole() {
+    for row in REGISTRY.all() {
+        for host in row.reaches {
+            assert!(!host.contains('*'), "{row:?}: {host}");
+        }
+    }
+}
+
 /// Every agent route the panel warns about is a driver's, so no route is
 /// asked about that nothing could launch.
 #[test]

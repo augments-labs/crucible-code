@@ -41,7 +41,10 @@ fn a_version_outside_the_manifest_is_refused() {
 
     let refused = admitted(&newer).unwrap_err();
 
-    assert!(refused.contains("1.4.0") && refused.contains("1.3.0"), "{refused}");
+    assert!(
+        refused.contains("1.4.0") && refused.contains("1.3.0"),
+        "{refused}"
+    );
 }
 
 /// A release that stopped offering what a client relies on is refused, as is
@@ -51,6 +54,7 @@ fn a_version_outside_the_manifest_is_refused() {
 fn a_release_that_differs_from_the_reviewed_one_is_refused() {
     for (pointer, value) in [
         ("/agentInfo/name", json!("another-agent")),
+        ("/protocolVersion", json!(2)),
         ("/protocolVersion", json!(3)),
         ("/agentCapabilities/loadSession", json!(false)),
         ("/agentCapabilities/sessionCapabilities", json!({})),

@@ -54,7 +54,11 @@ fn every_update_kind_the_protocol_defines_has_an_arm() {
         let _ = updates.heard(&json!({"sessionUpdate": name}));
     }
     assert_eq!(Kind::named("not_a_kind"), None);
-    assert!(Updates::fresh().heard(&json!({"sessionUpdate": "not_a_kind"})).is_empty());
+    assert!(
+        Updates::fresh()
+            .heard(&json!({"sessionUpdate": "not_a_kind"}))
+            .is_empty()
+    );
 }
 
 /// A fresh session's first turn reports what it cost, and the second only
@@ -103,7 +107,22 @@ fn a_cost_that_cannot_be_differenced_gives_no_figure() {
     let mut changed = Updates::fresh();
     let _ = changed.heard(&usage(2.0));
     let _ = changed.settled(TurnId::FIRST);
-    let _ = changed.heard(&json!({"sessionUpdate": "usage_update", "cost": {"amount": 3.0, "currency": "EUR"}}));
+    let _ = changed.heard(
+        &json!({"sessionUpdate": "usage_update", "cost": {"amount": 3.0, "currency": "EUR"}}),
+    );
     assert_eq!(spent(changed.settled(TurnId::FIRST.next())), None);
     assert!(Currency::new("EUR").is_some());
+}
+
+/// An update of a kind the protocol does not define, or of no kind, is
+/// dropped and counted.
+#[test]
+fn an_update_of_a_kind_not_defined_is_dropped_and_counted() {
+    let mut updates = Updates::fresh();
+    let unknown = updates.heard(&json!({"sessionUpdate": "not_a_kind"}));
+    let unnamed = updates.heard(&json!({"content": "text"}));
+    let _ = updates.heard(&usage(0.25));
+
+    assert!(unknown.is_empty() && unnamed.is_empty());
+    assert_eq!(updates.unknown(), 2);
 }

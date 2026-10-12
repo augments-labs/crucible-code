@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use crucible_execution::{Decision, Failure, Lasting, Outcome, TurnRequest};
+use crucible_execution::{
+    Cost, Decision, Detail, Event, Failure, Lasting, Outcome, Pending, TurnRequest,
+};
 use crucible_types::TurnId;
 use serde_json::{Value, json};
 
@@ -68,12 +70,16 @@ fn the_first_turn_opens_a_session_then_sends_the_prompt() {
     let opening = acp.heard(&initialized(1)).unwrap();
     let prompted = acp.heard(&response(1, &json!({"sessionId": "s"}))).unwrap();
 
-    let [first] = frames.as_slice() else { panic!("{frames:?}") };
+    let [first] = frames.as_slice() else {
+        panic!("{frames:?}")
+    };
     let initialize: Value = serde_json::from_str(first).unwrap();
     assert_eq!(initialize.pointer("/method"), Some(&json!("initialize")));
     let terminal = initialize.pointer("/params/clientCapabilities/terminal");
     assert_eq!(terminal, Some(&json!(false)));
-    let [Act::Send(new)] = opening.as_slice() else { panic!("{opening:?}") };
+    let [Act::Send(new)] = opening.as_slice() else {
+        panic!("{opening:?}")
+    };
     let new: Value = serde_json::from_str(new).unwrap();
     assert_eq!(new.pointer("/method"), Some(&json!("session/new")));
     assert_eq!(new.pointer("/params/cwd"), Some(&json!("/work")));
@@ -83,7 +89,10 @@ fn the_first_turn_opens_a_session_then_sends_the_prompt() {
     assert_eq!(session, "s");
     let prompt: Value = serde_json::from_str(prompt).unwrap();
     assert_eq!(prompt.pointer("/params/sessionId"), Some(&json!("s")));
-    assert_eq!(prompt.pointer("/params/prompt/0/text"), Some(&json!("hello")));
+    assert_eq!(
+        prompt.pointer("/params/prompt/0/text"),
+        Some(&json!("hello"))
+    );
 }
 
 /// An agent answering in a protocol version its profile does not list is
@@ -127,7 +136,9 @@ fn a_question_open_when_the_turn_stops_is_answered_cancelled() {
         )
         .unwrap();
     let stop = acp.cancel();
-    let answer = acp.answer("\"q\"", &Decision::Allow(Lasting::Once)).unwrap();
+    let answer = acp
+        .answer("\"q\"", &Decision::Allow(Lasting::Once))
+        .unwrap();
 
     assert!(matches!(asked.as_slice(), [Act::Ask { .. }]), "{asked:?}");
     assert!(stop.is_some_and(|stop| stop.contains("session/cancel")));
@@ -149,11 +160,16 @@ fn each_stop_reason_ends_the_turn_as_it_means() {
         ("refusal", Outcome::CutShort),
     ] {
         let mut acp = prompting();
-        let acts = acp.heard(&response(2, &json!({"stopReason": reason}))).unwrap();
+        let acts = acp
+            .heard(&response(2, &json!({"stopReason": reason})))
+            .unwrap();
         assert_eq!(acts, vec![Act::End(outcome)], "{reason}");
     }
     let mut acp = prompting();
-    assert!(acp.heard(&response(2, &json!({"stopReason": "bored"}))).is_err());
+    assert!(
+        acp.heard(&response(2, &json!({"stopReason": "bored"})))
+            .is_err()
+    );
 }
 
 /// A status check reads a refusal to open a session for want of sign-in as
@@ -188,5 +204,127 @@ fn a_sign_out_the_agent_does_not_offer_is_unverified() {
 
     let told = acp.told(Account::SignOut, &without).unwrap();
 
-    assert!(matches!(told, Told::Done(Reading::Unreadable(_))), "{told:?}");
+    assert!(
+        matches!(told, Told::Done(Reading::Unreadable(_))),
+        "{told:?}"
+    );
+}
+
+/// A turn stopped while the agent is still being initialized, or while its
+/// session is being opened, sends nothing more and ends cancelled.
+#[test]
+fn a_turn_stopped_before_its_prompt_is_out_sends_nothing_more() {
+    let (mut acp, _) = opened();
+    let _ = acp.cancel();
+    let answered = acp.heard(&initialized(1)).unwrap();
+    assert_eq!(answered, vec![Act::End(Outcome::Cancelled)]);
+
+    let (mut acp, _) = opened();
+    let _ = acp.heard(&initialized(1)).unwrap();
+    let _ = acp.cancel();
+    let named = acp.heard(&response(1, &json!({"sessionId": "s"}))).unwrap();
+    assert_eq!(
+        named,
+        vec![Act::Session("s".to_owned()), Act::End(Outcome::Cancelled)]
+    );
+}
+
+/// A permission asked of no open session, or of another one, is refused
+/// rather than asked of the user.
+#[test]
+fn a_permission_asked_outside_the_open_session_is_refused() {
+    let ask = |session: &str| {
+        json!({"jsonrpc": "2.0", "id": "q", "method": "session/request_permission", "params": {
+            "sessionId": session,
+            "toolCall": {"toolCallId": "t", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
+            "options": [{"optionId": "yes", "name": "Yes", "kind": "allow_once"}],
+        }})
+        .to_string()
+    };
+    let mut acp = prompting();
+    let elsewhere = acp.heard(&ask("other"));
+    let (mut early, _) = opened();
+    let unopened = early.heard(&ask("s"));
+
+    assert!(elsewhere.is_err(), "{elsewhere:?}");
+    assert!(unopened.is_err(), "{unopened:?}");
+}
+
+/// A permission is asked as what the agent would run or fetch, as its input
+/// says, and never as the title it gave the call.
+#[test]
+fn a_permission_is_asked_as_its_input_never_its_title() {
+    for (kind, input, said) in [
+        ("execute", Some(json!({"cmd": "rm -rf /"})), "rm -rf /"),
+        (
+            "fetch",
+            Some(json!({"address": "https://elsewhere.example"})),
+            "https://elsewhere.example",
+        ),
+        ("execute", None, ""),
+    ] {
+        let mut call = json!({"toolCallId": "t", "title": "list the files", "kind": kind});
+        if let (Some(input), Some(fields)) = (input, call.as_object_mut()) {
+            fields.insert("rawInput".to_owned(), input);
+        }
+        let mut acp = prompting();
+        let asked = acp
+            .heard(
+                &json!({"jsonrpc": "2.0", "id": "q", "method": "session/request_permission", "params": {
+                    "sessionId": "s",
+                    "toolCall": call,
+                    "options": [{"optionId": "yes", "name": "Yes", "kind": "allow_once"}],
+                }})
+                .to_string(),
+            )
+            .unwrap();
+
+        let [
+            Act::Ask {
+                pending: Pending::Permission { detail, .. },
+                ..
+            },
+        ] = asked.as_slice()
+        else {
+            panic!("{asked:?}")
+        };
+        let sent = match detail {
+            Detail::Command { sent, .. } | Detail::Network { sent } => sent.as_str(),
+            other => panic!("{other:?}"),
+        };
+        assert!(sent.contains(said), "{kind}: {sent}");
+        assert!(!sent.contains("list the files"), "{kind}: {sent}");
+    }
+}
+
+/// Each turn of one run reports what it added to the session's cost.
+#[test]
+fn each_turn_of_a_run_reports_what_it_added_to_the_cost() {
+    let usage = |amount: f64| {
+        json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "s", "update":
+            {"sessionUpdate": "usage_update", "used": 1, "size": 2, "cost": {"amount": amount, "currency": "USD"}}}})
+        .to_string()
+    };
+    let spent = |acts: &[Act]| {
+        acts.iter().find_map(|act| match act {
+            Act::Say(Event::Usage(observed)) => observed.value().spent().map(Cost::millionths),
+            _ => None,
+        })
+    };
+    let mut acp = prompting();
+    let _ = acp.heard(&usage(0.25)).unwrap();
+    let first = acp
+        .heard(&response(2, &json!({"stopReason": "end_turn"})))
+        .unwrap();
+    let again = acp
+        .open(&TurnRequest::new(TurnId::FIRST.next(), "again"))
+        .unwrap();
+    let _ = acp.heard(&usage(0.75)).unwrap();
+    let second = acp
+        .heard(&response(3, &json!({"stopReason": "end_turn"})))
+        .unwrap();
+
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert_eq!(spent(&first), Some(250_000));
+    assert_eq!(spent(&second), Some(500_000));
 }

@@ -31,7 +31,7 @@ impl Manifest {
     pub const REVIEWED: Self = Self {
         name: "antigravity-acp",
         versions: &["1.3.0"],
-        protocols: &[1, 2],
+        protocols: &[1],
         sign_in: "oauth-personal",
         platforms: &[
             ("macos", "aarch64", "agy_acp_server.par"),

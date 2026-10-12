@@ -9,8 +9,9 @@
 //! profile; a sign-in another Google product keeps is no evidence of its own.
 //!
 //! The agent asks to be signed in by printing a link rather than answering.
-//! During a sign-in the link is shown to the user; during a turn it means the
-//! profile is signed out, and the turn fails saying so.
+//! During a sign-in the link is shown to the user; during a turn or a status
+//! check it means the profile is signed out, and the turn fails saying so;
+//! during a sign-out or a version check it answers nothing asked.
 
 mod account;
 mod manifest;
@@ -19,7 +20,7 @@ mod profile;
 pub use account::Ended;
 pub use manifest::Manifest;
 
-use crucible_execution::{Decision, Failure, TurnRequest};
+use crucible_execution::{Authentication, Decision, Failure, TurnRequest};
 
 use crate::acp::{Acp, Initialized, Profile};
 use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
@@ -114,10 +115,15 @@ impl Dialect for Antigravity {
 
     fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
         match account::link(frame) {
-            Some(Ok(link)) if step == Account::SignIn => Ok(Told::Link(link)),
-            Some(Ok(_)) => Ok(Told::Done(Reading::Signed(
-                crucible_execution::Authentication::SignedOut,
-            ))),
+            Some(Ok(link)) => Ok(match step {
+                Account::SignIn => Told::Link(link),
+                Account::Status => Told::Done(Reading::Signed(Authentication::SignedOut)),
+                // Asking to be signed in says nothing of whether a sign-out
+                // took or what version is running.
+                Account::SignOut | Account::Version => Told::Done(Reading::Unreadable(
+                    Failure::new("The agent asked to be signed in instead of answering."),
+                )),
+            }),
             Some(Err(failure)) => Err(failure),
             None => self.acp.told(step, frame),
         }

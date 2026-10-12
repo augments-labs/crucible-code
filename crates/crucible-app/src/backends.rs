@@ -95,8 +95,14 @@ pub static REGISTRY: Registry = Registry::new(&[Row {
     profile_key: "profileDir",
     route: "agent:antigravity",
     docs_section: "antigravity",
-    // Its sign-in page, and the Google APIs it signs in to and asks.
-    reaches: &["accounts.google.com", "*.googleapis.com"],
+    // Its sign-in page, the token exchange behind it, and the service it
+    // asks, in its released and its daily build.
+    reaches: &[
+        "accounts.google.com",
+        "oauth2.googleapis.com",
+        "cloudcode-pa.googleapis.com",
+        "daily-cloudcode-pa.googleapis.com",
+    ],
     shipping: true,
 }]);
 

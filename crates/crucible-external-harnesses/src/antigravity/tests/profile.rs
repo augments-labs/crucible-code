@@ -41,12 +41,20 @@ const SET: [&str; 4] = [
 fn no_ambient_google_credential_reaches_the_agent() {
     let ambient = STRIPPED
         .iter()
-        .map(|name| (OsString::from(name), OsString::from("ambient-sentinel-value")))
+        .map(|name| {
+            (
+                OsString::from(name),
+                OsString::from("ambient-sentinel-value"),
+            )
+        })
         .chain([
             (OsString::from("PATH"), OsString::from("/usr/bin")),
             // Lower case is the same variable on Windows, and refused here
             // everywhere.
-            (OsString::from("gemini_api_key"), OsString::from("ambient-sentinel-value")),
+            (
+                OsString::from("gemini_api_key"),
+                OsString::from("ambient-sentinel-value"),
+            ),
         ]);
     let profile = Path::new("/profiles/work");
 

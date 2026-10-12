@@ -44,3 +44,21 @@ fn a_reply_with_an_option_the_agent_did_not_offer_is_refused() {
     assert!(unasked.is_err(), "{unasked:?}");
     assert!(worded.is_err(), "{worded:?}");
 }
+
+/// A deny is sent as the refusal the agent offered where it offered no
+/// refusal of this one question alone.
+#[test]
+fn a_deny_is_sent_as_the_refusal_the_agent_offered() {
+    let mut permissions = Permissions::default();
+    permissions.offered(
+        "7",
+        vec![
+            ("go-1".into(), "allow_once".into()),
+            ("never-1".into(), "reject_always".into()),
+        ],
+    );
+
+    let frame = permissions.answer("7", &Decision::Deny).unwrap();
+
+    assert!(frame.contains(r#""optionId":"never-1""#), "{frame}");
+}

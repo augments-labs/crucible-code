@@ -3,7 +3,9 @@
 //!
 //! An answer is sent under the id the agent gave the option it matches, and
 //! only under one it gave: a decision no offered option carries is refused
-//! rather than sent as a guess, and a question is answered once.
+//! rather than sent as a guess, and a question is answered once. A deny the
+//! agent offered no one-time refusal for is sent as its lasting one, which
+//! grants nothing more.
 
 use crucible_execution::{Decision, Failure, Lasting};
 use serde_json::{Value, json};
@@ -32,10 +34,10 @@ impl Permissions {
     /// A [`Failure`] where `native` is not open, or none of its options is the
     /// kind `decision` means.
     pub(crate) fn answer(&mut self, native: &str, decision: &Decision) -> Result<String, Failure> {
-        let kind = match decision {
-            Decision::Allow(Lasting::Once) => "allow_once",
-            Decision::Allow(Lasting::Session) => "allow_always",
-            Decision::Deny => "reject_once",
+        let kinds: &[&str] = match decision {
+            Decision::Allow(Lasting::Once) => &["allow_once"],
+            Decision::Allow(Lasting::Session) => &["allow_always"],
+            Decision::Deny => &["reject_once", "reject_always"],
             Decision::Answer(_) => {
                 return Err(Failure::new(
                     "The agent asked for a permission, which a written answer cannot give.",
@@ -46,11 +48,20 @@ impl Permissions {
         let option = self
             .open
             .get(place)
-            .and_then(|(_, options)| options.iter().find(|(_, offered)| &**offered == kind))
+            .and_then(|(_, options)| {
+                kinds
+                    .iter()
+                    .find_map(|kind| options.iter().find(|(_, offered)| &**offered == *kind))
+            })
             .map(|(id, _)| id.clone())
-            .ok_or_else(|| Failure::new("The agent offered no option that carries that decision."))?;
+            .ok_or_else(|| {
+                Failure::new("The agent offered no option that carries that decision.")
+            })?;
         self.open.remove(place);
-        reply(native, &json!({"outcome": {"outcome": "selected", "optionId": &*option}}))
+        reply(
+            native,
+            &json!({"outcome": {"outcome": "selected", "optionId": &*option}}),
+        )
     }
 
     /// The frame that tells `native` its turn was stopped, which settles it.
@@ -69,7 +80,9 @@ impl Permissions {
         self.open
             .iter()
             .position(|(asked, _)| &**asked == native)
-            .ok_or_else(|| Failure::new("The agent has no permission question open under that name."))
+            .ok_or_else(|| {
+                Failure::new("The agent has no permission question open under that name.")
+            })
     }
 }
 

@@ -31,6 +31,8 @@ fn a_link_that_is_not_the_sign_in_page_is_refused() {
         &format!("{SIGN_IN}#more"),
         &format!("{SIGN_IN} and more"),
         &format!("{SIGN_IN}\u{1b}[2J"),
+        &format!("{SIGN_IN}\u{202e}gro.elgoog"),
+        &format!("{SIGN_IN}&hint=\u{e9}"),
         &long,
     ] {
         let refused = link(&format!("{LINK_PREFIX}{printed}"));
@@ -55,20 +57,31 @@ fn a_sign_in_no_status_confirms_says_could_not_verify_sign_in() {
     }
 }
 
+/// A logout is told as done only once a status step after it reads signed
+/// out.
 #[test]
-fn a_logout_the_agent_confirms_says_signed_out_of_this_agent_profile() {
-    let ended = Ended::signed_out(&Reading::Signed(Authentication::SignedOut));
+fn a_logout_a_status_confirms_says_signed_out_of_this_agent_profile() {
+    let out = Reading::Signed(Authentication::SignedOut);
+    let ended = Ended::signed_out(&out, &out);
 
     assert_eq!(ended.says(), "Signed out of this agent profile");
 }
 
+/// A logout the agent refused, or one the status after it does not read as
+/// signed out, is unverified, and keeps why.
 #[test]
-fn a_sign_out_the_agent_cannot_confirm_says_external_sign_out_unverified() {
-    let ended = Ended::signed_out(&Reading::Unreadable(Failure::new(
-        "The agent offers no sign-out, so signing out is unverified.",
-    )));
-
-    assert_eq!(ended.says(), "Disconnected; external sign-out unverified");
+fn a_sign_out_nothing_confirms_says_external_sign_out_unverified() {
+    let out = Reading::Signed(Authentication::SignedOut);
+    let refused = Reading::Unreadable(Failure::new("The agent offers no sign-out."));
+    for (logout, status) in [
+        (&refused, &out),
+        (&out, &Reading::Signed(Authentication::SignedIn)),
+        (&out, &refused),
+    ] {
+        let ended = Ended::signed_out(logout, status);
+        assert_eq!(ended.says(), "Disconnected; external sign-out unverified");
+        assert!(matches!(ended, Ended::SignOutUnverified(_)), "{ended:?}");
+    }
 }
 
 #[test]
@@ -77,7 +90,11 @@ fn a_disconnect_says_the_account_remains_signed_in_only_when_that_was_known() {
         Ended::disconnected(Authentication::SignedIn).says(),
         "Disconnected from Crucible. The external account remains signed in."
     );
-    for known in [Authentication::Unknown, Authentication::SignedOut, Authentication::Unverifiable] {
+    for known in [
+        Authentication::Unknown,
+        Authentication::SignedOut,
+        Authentication::Unverifiable,
+    ] {
         assert_eq!(
             Ended::disconnected(known).says(),
             "Disconnected from Crucible. External credentials were not changed."

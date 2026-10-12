@@ -524,6 +524,22 @@ fn an_instance_needs_a_driver_and_an_executable() {
     }
 }
 
+/// An antigravity agent left to its usual home would share the sign-in the
+/// Antigravity IDE keeps there, so it is refused without a profile of its own.
+#[test]
+fn an_antigravity_instance_needs_a_profile_of_its_own() {
+    let err =
+        mine(r#"{"externalAgents": {"mine": {"driver": "antigravity", "executable": "agy"}}}"#)
+            .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
+    assert!(said.contains("profileDir"), "got {said}");
+    assert!(
+        mine(r#"{"externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}}"#)
+            .is_ok()
+    );
+}
+
 #[test]
 fn a_driver_crucible_does_not_know_is_refused() {
     let err = mine(r#"{"externalAgents": {"mine": {"driver": "codex", "executable": "codex"}}}"#)
