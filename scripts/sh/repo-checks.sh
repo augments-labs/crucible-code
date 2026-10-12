@@ -789,8 +789,7 @@ fi
 # `transport` for the confinement it starts under and the bounded frames over
 # its pipes, `privacy` for its owner-only journal, and `runtime` and `types` for
 # what it waits in and is identified by. `app external-harnesses` is the
-# composition root launching one; `code external-harnesses` is the screen
-# captures' fake peer.
+# composition root launching one.
 allowed='code app
 code attachments
 code auth
@@ -799,7 +798,6 @@ code config
 code context
 code credentials
 code extension
-code external-harnesses
 code mcp
 code models
 code privacy

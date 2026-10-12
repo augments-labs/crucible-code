@@ -473,7 +473,6 @@ dependencies = [
  "crucible-context",
  "crucible-credentials",
  "crucible-extension",
- "crucible-external-harnesses",
  "crucible-mcp",
  "crucible-models",
  "crucible-privacy",
