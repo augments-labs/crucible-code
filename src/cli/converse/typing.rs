@@ -36,10 +36,10 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use crucible_app::Conversation;
+use crucible_app::Settled;
 use crucible_builtins::{Background, Ended};
 use crucible_client_api::Command;
 use crucible_models::Effort;
-use crucible_runner::Runner;
 use crucible_runtime::{Aside, Cancel};
 use crucible_tools::Mode;
 use crucible_tui::{
@@ -513,7 +513,7 @@ pub(crate) fn ask<T: Terminal>(
     // inside one.
     planning.moved();
 
-    let mut says = saying(conversation.runner()).naming(commands);
+    let mut says = saying(conversation.settled()).naming(commands);
     says.running = left.count();
 
     // A local, because where the mark was in it is not worth keeping: a list of
@@ -739,7 +739,7 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Cycle => {
                 terms.perform(conversation, Command::CycleMode);
 
-                says = saying(conversation.runner()).naming(commands);
+                says = saying(conversation.settled()).naming(commands);
                 true
             }
 
@@ -1046,8 +1046,8 @@ pub(super) struct Footing<'a> {
 /// runs: its mode is held for the next turn until the runner comes back. Esc is
 /// already named on the working row above the box, and Return needs no second
 /// explanation here.
-pub(super) fn under(runner: &Runner) -> Says {
-    saying(runner)
+pub(super) fn under(settled: Settled<'_>) -> Says {
+    saying(settled)
 }
 
 /// Reads whatever the keyboard already has, and redraws the box if it moved.
@@ -1973,19 +1973,19 @@ pub(super) fn stand<T: Terminal>(
 }
 
 /// The row for the mode the box is showing.
-pub(super) fn saying(runner: &Runner) -> Says {
-    let mode = runner.mode();
+pub(super) fn saying(settled: Settled<'_>) -> Says {
+    let mode = settled.mode();
 
     Says {
         mode: Cow::Borrowed(mode.sentence()),
         keys: Cow::Borrowed(CYCLE),
-        model: runner.model().to_owned(),
-        provider: runner.serving(),
-        effort: runner.effort().map(Effort::as_str),
-        pace: super::command::Pace::of(runner),
+        model: settled.model().to_owned(),
+        provider: settled.serving(),
+        effort: settled.effort().map(Effort::as_str),
+        pace: super::command::Pace::of(settled),
         tone: tone(mode),
         asking: None,
-        left: runner.left(),
+        left: settled.left(),
         running_mode: mode,
         // Filled in by the frame rather than by the session, because it changes
         // while nothing else on this row does.

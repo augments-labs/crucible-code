@@ -114,3 +114,12 @@ replaced is what the model is sent; the session log keeps every message.
 A session is one conversation, and each turn is taken by one model. There are
 no subagents: nothing a turn does starts another turn beside it, so every tool
 call you see is that one model asking, and every result goes back to it.
+
+## The loop behind a conversation
+
+The loop on this page is crucible's own, and it is the only one a conversation
+runs on today. Inside, it sits behind a contract any agent that runs a
+conversation would have to keep: it says up front which operations it supports,
+refuses the ones it does not, and a permission it asks for waits on an answer
+that names that one question, so an answer given late, or meant for another,
+settles nothing. Nothing you see or decide in a turn changes because of it.

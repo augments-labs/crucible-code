@@ -267,7 +267,7 @@ fn idle(conversation: &Conversation, held: &Held<'_>) -> Vec<String> {
         typing::around(
             &held.planning,
             &Opened::default(),
-            &typing::saying(conversation.runner()),
+            &typing::saying(conversation.settled()),
             Recalled::default(),
             &held.queued,
         ),

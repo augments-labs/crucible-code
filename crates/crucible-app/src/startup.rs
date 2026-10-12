@@ -373,7 +373,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
 /// stay out of what this run sends either way, and the next pick-up of the
 /// session clears them from what it reads again and owes the same lines.
 fn recorded(conversation: &mut Conversation, runtime: &tokio::runtime::Handle) {
-    if !conversation.runner().owes_clearings() {
+    if !conversation.settled().owes_clearings() {
         return;
     }
     std::thread::scope(|scope| {

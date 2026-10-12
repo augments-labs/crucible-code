@@ -203,7 +203,7 @@ pub(super) fn started(conversation: &mut Conversation, now: Instant) -> Option<A
     {
         return None;
     }
-    let question = conversation.runner.provider().ask_limits()?;
+    let question = conversation.native().provider().ask_limits()?;
     conversation.asks.sending(credential, now);
     Some(Asking {
         credential,
@@ -217,7 +217,7 @@ pub(super) fn started(conversation: &mut Conversation, now: Instant) -> Option<A
 pub fn asked(conversation: &mut Conversation, answered: Answered) -> Performed {
     match answered.asked {
         Asked::Answered(windows) if credential(conversation) == Some(answered.credential) => {
-            conversation.runner.answered_limits(windows);
+            conversation.native_mut().answered_limits(windows);
         }
         Asked::Closed => conversation.asks.close(answered.credential),
         // The client that would have sent it held it back: nothing left, so
@@ -233,12 +233,12 @@ pub fn asked(conversation: &mut Conversation, answered: Answered) -> Performed {
 /// What the session has used and the plan's limits as `conversation` knows
 /// them, asking nobody.
 pub(super) fn usage(conversation: &Conversation) -> Performed {
-    let runner = conversation.runner();
+    let settled = conversation.settled();
     Performed::Usage(Box::new(reading::usage(
-        runner.model(),
-        &runner.breakdown(),
-        &runner.totals(),
-        runner.plan_limits().as_ref(),
+        settled.model(),
+        &settled.breakdown(),
+        &settled.totals(),
+        settled.plan_limits().as_ref(),
         conversation.serving(),
     )))
 }
@@ -247,7 +247,7 @@ pub(super) fn usage(conversation: &Conversation) -> Performed {
 fn credential(conversation: &Conversation) -> Option<Credential> {
     let serving = conversation.serving()?;
     let scope = conversation
-        .runner()
+        .native()
         .provider()
         .prompt_cache_route()
         .credential_scope;

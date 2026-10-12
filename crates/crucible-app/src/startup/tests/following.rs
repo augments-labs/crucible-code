@@ -179,24 +179,26 @@ impl Run {
     /// session registered: what the call answered, and how many times the
     /// user was asked about it.
     fn search(&mut self) -> (String, usize) {
-        self.conversation.runner.serve(Box::new(Rounds::new(vec![
-            vec![
-                Delta::ToolStarted {
-                    id: ToolId::new("look"),
-                    name: "web_search".into(),
-                },
-                Delta::ToolArgs(r#"{"query":"what the user is working on"}"#.into()),
-                Delta::Stopped(StopReason::WantsTools),
-            ],
-            vec![
-                Delta::Text("looked".into()),
-                Delta::Stopped(StopReason::Yielded),
-            ],
-        ])));
+        self.conversation
+            .native_mut()
+            .serve(Box::new(Rounds::new(vec![
+                vec![
+                    Delta::ToolStarted {
+                        id: ToolId::new("look"),
+                        name: "web_search".into(),
+                    },
+                    Delta::ToolArgs(r#"{"query":"what the user is working on"}"#.into()),
+                    Delta::Stopped(StopReason::WantsTools),
+                ],
+                vec![
+                    Delta::Text("looked".into()),
+                    Delta::Stopped(StopReason::Yielded),
+                ],
+            ])));
 
         let runtime = self.services.runtime().handle().unwrap();
         let mut asked = Counting::default();
-        let runner = &mut self.conversation.runner;
+        let runner = self.conversation.native_mut();
         let (events, _seen) = std::sync::mpsc::channel();
         let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
         let run = runner.starting(&events, &cancel, &steer, &aside);

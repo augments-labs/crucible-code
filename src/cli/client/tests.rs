@@ -362,9 +362,7 @@ impl<'a> Driving<'a> {
                     rulings: rulings.into_iter(),
                 };
                 self.cancel.reset();
-                let run = conversation
-                    .runner()
-                    .starting(&events, &self.cancel, &steer, &aside);
+                let run = conversation.starting(&events, &self.cancel, &steer, &aside);
                 let ended = self.terms.runtime.block_on(client::turn(
                     conversation,
                     &request,

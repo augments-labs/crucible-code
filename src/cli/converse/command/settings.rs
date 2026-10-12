@@ -234,7 +234,7 @@ pub(super) fn run<T: Terminal>(
     let counted = Counted {
         usage,
         serving: conversation.serving(),
-        mode: conversation.runner().mode(),
+        mode: conversation.settled().mode(),
         session: conversation.session().id().cloned(),
     };
     let mut watch = |panel: &mut Panel| panel.watched(terms, conversation);

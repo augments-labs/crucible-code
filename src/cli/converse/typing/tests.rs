@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crucible_runner::{Agent, Breakdown, Model, Tools};
+use crucible_runner::{Agent, Breakdown, Model, Runner, Tools};
 use crucible_runtime::Aside;
 use crucible_session::Session;
 use crucible_tools::{Mode, Permission, Rules};
@@ -69,7 +69,7 @@ fn engine(mode: Mode) -> Runner {
 
 /// The row a session in this mode is drawn with.
 fn settled(mode: Mode) -> Says {
-    saying(&engine(mode))
+    saying(crucible_app::Settled::from(&engine(mode)))
 }
 
 /// A walk over nothing, with nowhere to write what is said back to.
@@ -283,7 +283,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     assert_eq!(renderer.terminal().written(), "");
 
     // And nothing was stepped on the way out of a call that read no key.
-    assert_eq!(conversation.runner().mode(), Mode::Ask);
+    assert_eq!(conversation.settled().mode(), Mode::Ask);
 }
 
 #[test]
@@ -567,10 +567,16 @@ fn the_row_is_read_off_the_engine_rather_than_from_a_copy_of_the_mode() {
     // meant to say what is in force would be the one thing that could be wrong
     // about it.
     let mut runner = engine(Mode::Ask);
-    assert_eq!(saying(&runner).mode, "ask mode on");
+    assert_eq!(
+        saying(crucible_app::Settled::from(&runner)).mode,
+        "ask mode on"
+    );
 
     runner.cycle();
-    assert_eq!(saying(&runner).mode, "allow edits on");
+    assert_eq!(
+        saying(crucible_app::Settled::from(&runner)).mode,
+        "allow edits on"
+    );
 }
 
 #[test]
@@ -582,8 +588,14 @@ fn stepping_into_full_access_takes_effect_on_the_press() {
     runner.cycle();
 
     assert_eq!(runner.mode(), Mode::FullAccess);
-    assert_eq!(saying(&runner).mode, "full access mode on");
-    assert_eq!(saying(&runner).tone, tone(Mode::FullAccess));
+    assert_eq!(
+        saying(crucible_app::Settled::from(&runner)).mode,
+        "full access mode on"
+    );
+    assert_eq!(
+        saying(crucible_app::Settled::from(&runner)).tone,
+        tone(Mode::FullAccess)
+    );
 }
 
 #[test]
@@ -608,7 +620,7 @@ fn the_row_under_the_box_is_drawn_from_characters_every_terminal_has() {
         assert!(says.mode.is_ascii(), "{:?}", says.mode);
         assert!(says.keys.is_ascii(), "{:?}", says.keys);
 
-        let running = under(&engine(mode));
+        let running = under(crucible_app::Settled::from(&engine(mode)));
         assert!(running.keys.is_ascii(), "{:?}", running.keys);
     }
 }
@@ -1209,7 +1221,7 @@ fn the_row_under_a_running_turn_keeps_the_mode_cycle_hint() {
     // already named on the working row above. The status row therefore stays
     // the same across a turn rather than replacing the mode's control.
     for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
-        let says = under(&engine(mode));
+        let says = under(crucible_app::Settled::from(&engine(mode)));
         assert_eq!(says.mode, mode.sentence(), "{mode:?}");
         assert_eq!(says.keys, CYCLE, "{mode:?}");
     }

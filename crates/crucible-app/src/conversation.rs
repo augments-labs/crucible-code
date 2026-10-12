@@ -11,9 +11,11 @@
 //! [`crate::switching`], with no terminal in the signature: a prompt goes in as
 //! text and attachments, a switch goes in as the provider and model wanted, and
 //! what came of either comes back as a value the front end decides how to
-//! show. The runner itself is handed out to be read and never to be changed,
-//! so the session it records into and the provider it is said to be asking
-//! cannot be moved from outside without the other half moving with them.
+//! show. The runner itself is never handed out: what a front end reads of it
+//! comes through [`Settled`], a read of its state between turns, so the
+//! session it records into and the provider it is said to be asking cannot be
+//! moved from outside without the other half moving with them, and what is
+//! read names what any backend a conversation runs on would have to answer.
 //!
 //! **A turn is awaited by whoever asks for it.** The runner's turn and
 //! compaction are asynchronous, and so are [`Conversation::turn`] and
@@ -34,20 +36,35 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crucible_context::Room;
-use crucible_runner::{PromptCacheCleanup, RunContext, Runner, TurnError, Turned};
-use crucible_runtime::Cancel;
+use crucible_models::{
+    Effort, FastForm, PromptCacheAttempt, PromptCacheCapabilities, Served, Speed,
+};
+use crucible_runner::{
+    Breakdown, Post, PromptCacheCleanup, RunContext, RunPolicy, Runner, Totals, TurnError, Turned,
+};
+use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_session::{FilePromptCacheResourceStore, Session, SessionError};
-use crucible_tools::{Ask, Mode};
+use crucible_tools::{Ask, Looking, Mode, Summary};
 use crucible_types::{
-    Attachment, Compacting, PromptCacheResourceError, PromptCacheResourceRecord, SessionId, Spend,
-    Transcript,
+    Attachment, Compacting, Modalities, PlanWindows, PromptCachePolicy, PromptCacheResourceError,
+    PromptCacheResourceRecord, SessionId, Spend, ToolCall, Transcript,
 };
 use crucible_workspace::Workspace;
+
+/// What a conversation runs on.
+///
+/// Closed, and matched where it is read, so a backend added here makes every
+/// read of the conversation decide what that backend answers.
+#[derive(Debug)]
+enum Backed {
+    /// This program's own runner.
+    Native(Runner),
+}
 
 /// A runner, the session it records into, and the provider it is asking.
 #[derive(Debug)]
 pub struct Conversation {
-    pub(crate) runner: Runner,
+    backed: Backed,
     session: Arc<Session>,
     /// The registry name of the provider being asked, or `None` where nobody
     /// is. Not the runner's own word for it: a provider names itself for the
@@ -91,7 +108,7 @@ impl Conversation {
         build: impl FnOnce(Arc<Session>) -> Runner,
     ) -> Self {
         Self {
-            runner: build(Arc::clone(&session)),
+            backed: Backed::Native(build(Arc::clone(&session))),
             session,
             serving,
             reachable: false,
@@ -132,19 +149,54 @@ impl Conversation {
     /// and a model's capabilities together select a persistent mechanism.
     #[must_use]
     pub fn remembering_caches_in(self, home: &Path) -> Self {
+        let Backed::Native(runner) = self.backed;
         Self {
-            runner: self
-                .runner
-                .with_prompt_cache_store(FilePromptCacheResourceStore::in_home(home)),
+            backed: Backed::Native(
+                runner.with_prompt_cache_store(FilePromptCacheResourceStore::in_home(home)),
+            ),
             ..self
         }
     }
 
-    /// The runner, for what is read off it: its model, its mode, its
-    /// transcript. What changes it is a method of this type.
+    /// What is settled between turns: the model, the mode, the transcript.
+    /// What changes any of it is a method of this type.
     #[must_use]
-    pub const fn runner(&self) -> &Runner {
-        &self.runner
+    pub const fn settled(&self) -> Settled<'_> {
+        Settled(self.native())
+    }
+
+    /// The runner itself, for a test outside this crate that reads what no
+    /// front end does. Compiled only with the `proof` feature, which nothing
+    /// that ships turns on.
+    #[cfg(feature = "proof")]
+    #[must_use]
+    pub const fn native_runner(&self) -> Option<&Runner> {
+        Some(self.native())
+    }
+
+    /// The runner this conversation drives.
+    pub(crate) const fn native(&self) -> &Runner {
+        let Backed::Native(runner) = &self.backed;
+        runner
+    }
+
+    /// The runner this conversation drives, to change.
+    pub(crate) fn native_mut(&mut self) -> &mut Runner {
+        let Backed::Native(runner) = &mut self.backed;
+        runner
+    }
+
+    /// The handle a turn or a compaction runs under: what it reports goes to
+    /// `events`, and it stops, steers and takes asides through the rest.
+    #[must_use]
+    pub fn starting<'a>(
+        &self,
+        events: &'a dyn Post,
+        cancel: &'a Cancel,
+        steer: &'a Steer,
+        aside: &'a Aside,
+    ) -> RunContext<'a> {
+        self.native().starting(events, cancel, steer, aside)
     }
 
     /// The session being recorded into.
@@ -169,19 +221,19 @@ impl Conversation {
     /// prompt was written down as said to a model nobody asked.
     #[must_use]
     pub fn missing(&self) -> Option<crate::providers::Missing> {
-        let answerable =
-            !self.runner.model().is_empty() && self.runner.provider().reaches_a_model();
+        let runner = self.native();
+        let answerable = !runner.model().is_empty() && runner.provider().reaches_a_model();
         (!answerable).then(|| crate::providers::missing(self.serving, self.reachable))
     }
 
     /// Steps to the next permission mode, and says which it is.
     pub fn cycle(&mut self) -> Mode {
-        self.runner.cycle()
+        self.native_mut().cycle()
     }
 
     /// Asks under `mode` from the next tool call on.
     pub fn switch(&mut self, mode: Mode) {
-        self.runner.switch(mode);
+        self.native_mut().switch(mode);
     }
 
     /// Makes room in the transcript by asking for a recap of it.
@@ -202,8 +254,8 @@ impl Conversation {
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        let asked = self.runner.speed();
-        let made = self.runner.compact(why, run, spent).await;
+        let asked = self.native().speed();
+        let made = self.native_mut().compact(why, run, spent).await;
         self.refusal_written(asked);
         made
     }
@@ -217,10 +269,10 @@ impl Conversation {
     pub async fn prompt_cache_resources(
         &mut self,
     ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        if !self.runner.prompt_cache_resources_configured() {
+        if !self.native().prompt_cache_resources_configured() {
             return Ok(Vec::new());
         }
-        self.runner.prompt_cache_resources().await
+        self.native_mut().prompt_cache_resources().await
     }
 
     /// Deletes the persistent prompt-cache resources held with the provider
@@ -242,10 +294,10 @@ impl Conversation {
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
-        if !self.runner.prompt_cache_resources_configured() {
+        if !self.native().prompt_cache_resources_configured() {
             return Ok(PromptCacheCleanup::default());
         }
-        self.runner.clean_prompt_cache(cancel).await
+        self.native_mut().clean_prompt_cache(cancel).await
     }
 
     /// Retires the persistent prompt-cache resources this conversation owns
@@ -254,10 +306,10 @@ impl Conversation {
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
-        if !self.runner.prompt_cache_retirement_pending() {
+        if !self.native().prompt_cache_retirement_pending() {
             return Ok(PromptCacheCleanup::default());
         }
-        self.runner.retire_prompt_cache(cancel).await
+        self.native_mut().retire_prompt_cache(cancel).await
     }
 
     /// Takes one turn: `prompt` and what is attached to it, answered by the
@@ -281,8 +333,8 @@ impl Conversation {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        let asked = self.runner.speed();
-        let turned = self.runner.turn(prompt, attached, ask, run).await;
+        let asked = self.native().speed();
+        let turned = self.native_mut().turn(prompt, attached, ask, run).await;
         self.refusal_written(asked);
         turned
     }
@@ -331,7 +383,7 @@ impl Conversation {
     /// been left.
     async fn pick_up(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
         let left = std::mem::replace(&mut self.session, Arc::clone(&session));
-        self.runner.pick_up(session, transcript);
+        self.native_mut().pick_up(session, transcript);
         self.clearings_recorded().await;
         left
     }
@@ -339,6 +391,154 @@ impl Conversation {
     /// Awaits the sessions owed lines by picking a session up or changing
     /// vendor taking them, as the module says.
     pub(crate) async fn clearings_recorded(&mut self) {
-        self.runner.record_clearings().await;
+        self.native_mut().record_clearings().await;
+    }
+}
+
+/// A conversation's state between turns, to be read and never changed.
+#[derive(Debug, Clone, Copy)]
+pub struct Settled<'a>(&'a Runner);
+
+impl<'a> From<&'a Runner> for Settled<'a> {
+    /// What `runner` has settled, for a front end's test that builds a runner
+    /// without a conversation around it.
+    fn from(runner: &'a Runner) -> Self {
+        Self(runner)
+    }
+}
+
+impl<'a> Settled<'a> {
+    /// The model asked, as its provider spells it, or nothing where none is
+    /// named.
+    #[must_use]
+    pub fn model(self) -> &'a str {
+        self.0.model()
+    }
+
+    /// How hard the model is asked to think, where a rung is set.
+    #[must_use]
+    pub fn effort(self) -> Option<Effort> {
+        self.0.effort()
+    }
+
+    /// The pace the next request asks for.
+    #[must_use]
+    pub fn speed(self) -> Speed {
+        self.0.speed()
+    }
+
+    /// The pace the last answer says it was served at.
+    #[must_use]
+    pub const fn served(self) -> Served {
+        self.0.served()
+    }
+
+    /// What asking for the fast pace looks like for the model asked.
+    #[must_use]
+    pub fn fast(self) -> FastForm {
+        self.0.provider().fast(self.0.model())
+    }
+
+    /// The permission mode a tool call is asked under.
+    #[must_use]
+    pub fn mode(self) -> Mode {
+        self.0.mode()
+    }
+
+    /// The vendor the next turn reaches, in the provider's own word for it.
+    #[must_use]
+    pub fn serving(self) -> &'static str {
+        self.0.serving()
+    }
+
+    /// What the provider's requests have a shape for.
+    #[must_use]
+    pub fn spells(self) -> Modalities {
+        self.0.provider().spells()
+    }
+
+    /// What the model reads, where the session was told.
+    #[must_use]
+    pub fn reads(self) -> Option<Modalities> {
+        self.0.reads()
+    }
+
+    /// Everything said so far.
+    #[must_use]
+    pub fn transcript(self) -> &'a Transcript {
+        self.0.transcript()
+    }
+
+    /// The tokens the next request would carry.
+    #[must_use]
+    pub fn carrying(self) -> u64 {
+        self.0.carrying()
+    }
+
+    /// The share of the window left, in percent, where the window is known.
+    #[must_use]
+    pub fn left(self) -> Option<u8> {
+        self.0.left()
+    }
+
+    /// What the next request carries, by category.
+    #[must_use]
+    pub fn breakdown(self) -> Breakdown {
+        self.0.breakdown()
+    }
+
+    /// What the session has used so far.
+    #[must_use]
+    pub const fn totals(self) -> Totals {
+        self.0.totals()
+    }
+
+    /// The plan's limits, as the provider last reported them.
+    #[must_use]
+    pub fn plan_limits(self) -> Option<PlanWindows> {
+        self.0.plan_limits()
+    }
+
+    /// The bounds a run is held to.
+    #[must_use]
+    pub const fn policy(self) -> RunPolicy {
+        self.0.policy()
+    }
+
+    /// The line a recorded call is drawn as.
+    #[must_use]
+    pub fn about(self, call: &ToolCall) -> Summary {
+        self.0.about(call)
+    }
+
+    /// How a recorded call folds when drawn, where it does.
+    #[must_use]
+    pub fn folds(self, call: &ToolCall) -> Option<Looking> {
+        self.0.folds(call)
+    }
+
+    /// Whether the session is owed lines saying what was cleared from what
+    /// the vendor is sent.
+    #[must_use]
+    pub fn owes_clearings(self) -> bool {
+        self.0.owes_clearings()
+    }
+
+    /// When the prompt cache is asked for.
+    #[must_use]
+    pub const fn prompt_cache_policy(self) -> PromptCachePolicy {
+        self.0.prompt_cache_policy()
+    }
+
+    /// What the provider and model can cache.
+    #[must_use]
+    pub fn prompt_cache_capabilities(self) -> PromptCacheCapabilities {
+        self.0.prompt_cache_capabilities()
+    }
+
+    /// What the last request asked of the cache, where one did.
+    #[must_use]
+    pub const fn prompt_cache_attempt(self) -> Option<&'a PromptCacheAttempt> {
+        self.0.prompt_cache_attempt()
     }
 }

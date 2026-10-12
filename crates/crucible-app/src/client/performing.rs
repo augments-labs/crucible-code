@@ -243,8 +243,8 @@ pub async fn perform(
             }
         }
         Command::Context => Performed::Context {
-            model: conversation.runner().model().into(),
-            breakdown: conversation.runner().breakdown(),
+            model: conversation.settled().model().into(),
+            breakdown: conversation.settled().breakdown(),
         },
         Command::Usage => asking::usage(conversation),
         // Asked and awaited in a row: a client that would rather keep going
@@ -349,7 +349,7 @@ async fn clear(conversation: &mut Conversation, desk: &Desk<'_>) -> Cleared {
     // A session that has said nothing is already the empty one this would go
     // and open, and a second log would leave two files for a session that
     // never happened.
-    if conversation.runner().transcript().is_empty() {
+    if conversation.settled().transcript().is_empty() {
         return Cleared::Nothing;
     }
 

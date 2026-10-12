@@ -139,7 +139,7 @@ pub async fn turn(
 pub(super) fn unanswered(conversation: &Conversation) -> Option<Warned> {
     conversation
         .consent()?
-        .unanswered(conversation.serving()?, conversation.runner().model())
+        .unanswered(conversation.serving()?, conversation.settled().model())
 }
 
 /// Asks the turn `cancel` belongs to to stop.

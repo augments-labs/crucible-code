@@ -192,7 +192,7 @@ pub(super) fn held<T: Terminal>(
     let said = loop {
         let Some(warned) = terms
             .consent
-            .unanswered(provider, conversation.runner().model())
+            .unanswered(provider, conversation.settled().model())
         else {
             return Ok(false);
         };

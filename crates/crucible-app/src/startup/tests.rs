@@ -577,7 +577,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     .expect("a session with nothing set up still starts");
 
     assert_eq!(
-        conversation.runner().model(),
+        conversation.settled().model(),
         "",
         "an unnamed model is the empty name"
     );
@@ -1153,7 +1153,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     })
     .expect("a session to assemble");
-    let runner = &mut conversation.runner;
+    let runner = conversation.native_mut();
 
     let asked = runner
         .instructions()
@@ -1344,15 +1344,15 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
 
     let hosted = starting(&["docs".to_owned()]);
     assert!(
-        hosted.runner().offering().is_empty(),
+        hosted.native().offering().is_empty(),
         "a live toolset has no generation until the turn that prepares it"
     );
 
     let alone = starting(&[]);
     assert!(
-        alone.runner().offering().contains(&"bash".to_owned()),
+        alone.native().offering().contains(&"bash".to_owned()),
         "a run that named no server is the built-in roster itself: {:?}",
-        alone.runner().offering()
+        alone.native().offering()
     );
 }
 
@@ -1858,7 +1858,7 @@ fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
         })
         .expect("a session over a key starts");
 
-        assert_eq!(conversation.runner().speed(), asked, "kept {kept:?}");
+        assert_eq!(conversation.settled().speed(), asked, "kept {kept:?}");
     }
 }
 

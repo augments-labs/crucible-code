@@ -107,7 +107,7 @@ fn a_credential_stored_while_a_provider_is_in_force_leaves_the_session_as_it_is(
         .expect("a provider this build has an arm for");
     taken(named, &mut renderer, &mut conversation, &terms).expect("the terminal to be written");
 
-    assert_eq!(conversation.runner().model(), "claude-test-1");
+    assert_eq!(conversation.settled().model(), "claude-test-1");
     assert_eq!(conversation.serving(), Some("anthropic"));
 
     let written = renderer.terminal().written().to_string();
@@ -311,7 +311,7 @@ fn a_credential_stored_for_the_provider_in_force_keeps_its_model() {
         .expect("a provider this build has an arm for");
     taken(named, &mut renderer, &mut conversation, &terms).expect("the terminal to be written");
 
-    assert_eq!(conversation.runner().model(), "claude-test-1");
+    assert_eq!(conversation.settled().model(), "claude-test-1");
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("asking claude-test-1"), "{written}");
 }

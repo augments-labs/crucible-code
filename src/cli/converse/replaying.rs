@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crucible_runner::Runner;
+use crucible_app::Settled;
 use crucible_session::{DisplayHistory, DisplayItem, Place, Pruned, Session, SessionError};
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 use crucible_types::{Diff, Message, RECAP, ToolId};
@@ -52,7 +52,7 @@ pub(super) fn replayed<T: Terminal>(
     if let Some(history) = session.display_history()? {
         let pruned = Pruned::default();
         let original = Replay {
-            runner: against.runner,
+            settled: against.settled,
             style: against.style,
             pruned: &pruned,
         };
@@ -60,7 +60,7 @@ pub(super) fn replayed<T: Terminal>(
     }
     walked(
         renderer,
-        against.runner.transcript().messages(),
+        against.settled.transcript().messages(),
         &Previews::new(),
         against,
         kept,
@@ -264,7 +264,7 @@ fn walked<T: Terminal>(
     // Counted before a row goes down, because the first row of a run is the
     // one that says how long the run is.
     let mut batch = Batch {
-        folded: Folded::of(messages, against.runner),
+        folded: Folded::of(messages, against.settled),
         previews,
     };
 
@@ -295,7 +295,7 @@ fn walked<T: Terminal>(
 /// being named.
 pub(super) struct Replay<'a> {
     /// The session in hand, for what each tool's call line reads as.
-    pub(super) runner: &'a Runner,
+    pub(super) settled: Settled<'a>,
     /// What the results a pruning cleared said, so a row a reader watched come
     /// back says it again. Empty where nothing was ever cleared, which is every
     /// session short enough not to have needed the room.
@@ -311,9 +311,9 @@ impl<'a> Replay<'a> {
     /// it back on the screen, and this is what keeps them putting it back
     /// against the same three things. A preview builds its own, because the
     /// session it draws is not the one this run is in.
-    pub(super) fn of(runner: &'a Runner, terms: &'a Terms, pruned: &'a Pruned) -> Self {
+    pub(super) fn of(settled: Settled<'a>, terms: &'a Terms, pruned: &'a Pruned) -> Self {
         Self {
-            runner,
+            settled,
             pruned,
             style: terms.style(),
         }
@@ -388,7 +388,7 @@ fn said<T: Terminal>(
             // answered. What the call was about is asked of the tool that owns
             // the arguments, the same way it was asked the first time.
             for call in calls {
-                let line = draw::called(call, &against.runner.about(call));
+                let line = draw::called(call, &against.settled.about(call));
 
                 // Named before the row that answers it goes down, the same way
                 // the turn named it: the expansion carries the call's line, and
@@ -524,7 +524,7 @@ impl Folded {
     /// end of a round trip. So a run is one batch of calls at most, which is
     /// what the reader watched: the line went down when the batch was answered
     /// rather than when the turn was.
-    fn of(messages: &[Message], runner: &Runner) -> Self {
+    fn of(messages: &[Message], settled: Settled<'_>) -> Self {
         let mut folded = Self::default();
         let mut run = Gathering::default();
 
@@ -559,7 +559,7 @@ impl Folded {
                                 .any(|result| result.id == call.id && !result.output.is_failed()),
                             _ => false,
                         };
-                        match runner.folds(call).filter(|_| answered) {
+                        match settled.folds(call).filter(|_| answered) {
                             Some(looking) => run.counted(call.id.clone(), looking),
                             None => folded.close(&mut run),
                         }

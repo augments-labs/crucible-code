@@ -34,25 +34,25 @@ use crate::{Conversation, providers};
 /// directly and does not ask for one.
 #[must_use]
 pub fn snapshot(conversation: &Conversation) -> Snapshot {
-    let runner = conversation.runner();
-    let transcript = runner.transcript();
+    let settled = conversation.settled();
+    let transcript = settled.transcript();
 
     Snapshot {
         session: conversation.session().id().cloned(),
         provider: conversation.serving().and_then(|name| Name::new(name).ok()),
-        model: Model::new(runner.model()),
-        effort: runner.effort().map(rung),
-        speed: pace(runner.speed()),
-        served: match runner.served() {
+        model: Model::new(settled.model()),
+        effort: settled.effort().map(rung),
+        speed: pace(settled.speed()),
+        served: match settled.served() {
             Served::Fast => Some(api::Pace::Fast),
             Served::Standard => Some(api::Pace::Standard),
             Served::Unsaid => None,
         },
-        mode: mode_out(runner.mode()),
+        mode: mode_out(settled.mode()),
         messages: count(transcript.len()),
         turns: count(transcript.turns()),
-        carrying: runner.carrying(),
-        left: runner.left().and_then(Percent::new),
+        carrying: settled.carrying(),
+        left: settled.left().and_then(Percent::new),
         pending: None,
     }
 }

@@ -566,12 +566,12 @@ pub(super) struct Pace {
 }
 
 impl Pace {
-    /// The pace of the model `runner` asks.
-    pub(super) fn of(runner: &crucible_runner::Runner) -> Self {
+    /// The pace of the model `settled` names.
+    pub(super) fn of(settled: crucible_app::Settled<'_>) -> Self {
         Self {
-            form: runner.provider().fast(runner.model()),
-            speed: runner.speed(),
-            served: runner.served().fast(),
+            form: settled.fast(),
+            speed: settled.speed(),
+            served: settled.served().fast(),
         }
     }
 }
@@ -998,7 +998,7 @@ fn moded<T: Terminal>(
     let ring = Row::new().then(Slot::Quiet, clip(mode::ring(style.glyphs()), columns));
 
     if said.is_empty() {
-        let rows = [sentence(conversation.runner().mode(), columns), ring];
+        let rows = [sentence(conversation.settled().mode(), columns), ring];
         renderer.present(&rows)?;
         return Ok(());
     }

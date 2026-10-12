@@ -58,5 +58,5 @@ pub mod subscription;
 pub mod switching;
 pub mod update;
 
-pub use conversation::Conversation;
+pub use conversation::{Conversation, Settled};
 pub use error::AppError;

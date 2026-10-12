@@ -1854,9 +1854,7 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
             crucible_runtime::Aside::new(),
         );
         let turned = {
-            let run = conversation
-                .runner()
-                .starting(&events, &cancel, &steer, &aside);
+            let run = conversation.starting(&events, &cancel, &steer, &aside);
             runtime.block_on(conversation.turn(
                 "probe the tree",
                 Box::default(),

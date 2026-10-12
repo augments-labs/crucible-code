@@ -10,9 +10,8 @@ use std::fs;
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
 
+use crucible_app::Settled;
 use crucible_attachments::{AttachmentError, CEILING, Opened, kind};
-use crucible_models::Provider;
-use crucible_runner::Runner;
 use crucible_tui::{Renderer, Row, Terminal, TerminalError, fold};
 use crucible_types::{Attachment, Modalities, SessionId};
 use crucible_workspace::{Workspace, written};
@@ -89,8 +88,10 @@ pub(super) struct Sent<'a> {
 /// it, and `None` there is a run with nowhere durable to put one.
 #[derive(Clone, Copy)]
 pub(super) struct Asking<'a> {
-    /// The protocol a request is written to.
-    pub(super) provider: &'a dyn Provider,
+    /// What the protocol a request is written to has a shape for.
+    pub(super) spells: Modalities,
+    /// The vendor that protocol reaches, in its own word for it.
+    pub(super) vendor: &'a str,
     /// The model it names, as that provider spells it.
     pub(super) model: &'a str,
     /// What the model reads, where the session was told.
@@ -100,17 +101,18 @@ pub(super) struct Asking<'a> {
 }
 
 impl<'a> Asking<'a> {
-    /// What the session in hand is asking, read off the runner driving it.
+    /// What the session in hand is asking, as the conversation has settled it.
     ///
     /// `imported` comes from the caller rather than the runner: the runner
     /// records through a storage contract and never learns what is behind it,
     /// so where this session keeps its imported copies is the application's to
     /// say.
-    pub(super) fn of(runner: &'a Runner, imported: Option<&'a Path>) -> Self {
+    pub(super) fn of(settled: Settled<'a>, imported: Option<&'a Path>) -> Self {
         Self {
-            provider: runner.provider(),
-            model: runner.model(),
-            reads: runner.reads(),
+            spells: settled.spells(),
+            vendor: settled.serving(),
+            model: settled.model(),
+            reads: settled.reads(),
             imported,
         }
     }
@@ -286,7 +288,8 @@ enum Named {
 /// cannot change into something else between being described and being read.
 fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str) -> Named {
     let Asking {
-        provider,
+        spells,
+        vendor,
         model,
         reads,
         imported,
@@ -315,11 +318,11 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str) -> Named {
     // The two halves, asked in order. Asking the provider first is the only
     // thing that lets a refusal say which side of it said no — which is the
     // difference between a sentence somebody can act on and one they cannot.
-    if !provider.spells().contains(kind.modality) {
+    if !spells.contains(kind.modality) {
         return Named::Refused(format!(
             "{word} is not attached: crucible's {} requests have no shape for {}. Nothing you \
              type changes that — a later release adds the shape.",
-            provider.name(),
+            vendor,
             kind.spoken(),
         ));
     }

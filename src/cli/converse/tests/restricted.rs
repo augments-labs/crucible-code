@@ -62,7 +62,7 @@ fn opened_first(conversation: &crucible_app::Conversation, session: &Arc<Session
     let mut renderer = Renderer::new(Recording::new(80, 400));
     let pruned = crucible_session::Pruned::default();
     let replay = replaying::Replay {
-        runner: conversation.runner(),
+        settled: conversation.settled(),
         pruned: &pruned,
         style: Style::plain(),
     };
