@@ -41,6 +41,7 @@ use crucible_storage::{
     CallResultKey, CallResultReceipt, CallResultStoreError, JournalStore, RunItem, SessionOwner,
     SessionStore,
 };
+pub use crucible_storage::{ExternalRef, RouteBinding, Uncertain};
 use crucible_types::{
     Attachment, Calibration, ContextError, ContextPatch, ContextSnapshot, Message,
     RecordedToolOutput, SessionId, ToolResult, Transcript,
@@ -77,7 +78,7 @@ pub use places::Place;
 pub use prompts::{PROMPTS, prompts, remember};
 pub use recent::{Discovered, Discovery, Reach, Recorded, Roots, discovered, recent};
 pub use replay::Pruned;
-use replay::{Replayed, belongs, newest, replay};
+use replay::{Replayed, belongs, newest, replay, route_of};
 
 /// How many lines may be waiting to be written.
 ///
@@ -166,6 +167,22 @@ pub enum SessionError {
     Foreign {
         /// Which file.
         at: Box<str>,
+    },
+
+    /// The session asked for was run by an installed agent this run is not
+    /// on, so picking it up here would send its history somewhere it never
+    /// went. Nothing in the log is read past its route or changed.
+    #[error(
+        "session {id} was run by the installed agent {}, which this run is not using; \
+         its history is kept as it was, so start a new session to carry on",
+        route.instance()
+    )]
+    Rerouted {
+        /// Which session.
+        id: Box<str>,
+        /// The route it was opened on, for a caller that says why this run
+        /// is not on it.
+        route: Box<RouteBinding>,
     },
 
     /// The session asked for is still being written by another crucible.
@@ -268,6 +285,15 @@ pub struct Session {
     placed: Placed,
     /// Whether its writer still places what it writes.
     placing: Placing,
+    /// The installed agent this session was opened on, as its log said when
+    /// it was opened. `None` for a session a provider's model runs.
+    route: Option<RouteBinding>,
+    /// What that agent last called the session, as the log said when it was
+    /// opened.
+    external: Option<ExternalRef>,
+    /// The turn the log ended on without the agent saying whether what it set
+    /// out to do was done. `None` where any message came after it.
+    uncertain: Option<Uncertain>,
 }
 
 impl Session {
@@ -297,7 +323,36 @@ impl Session {
         // welcome itself reads only the fixed index this makes.
         index::ensure(directory)?;
 
-        Self::naming(directory, workspace, branch, SessionId::new)
+        Self::naming(directory, workspace, branch, None, SessionId::new)
+    }
+
+    /// Begins recording a new session in `directory` that the installed agent
+    /// `route` names will run.
+    ///
+    /// The route goes into the line after the header, in the same write, so
+    /// there is no moment at which the file exists and does not say which
+    /// agent it belongs to; a resume compares it against the route the run
+    /// would use now. [`Session::start`] is this with no route, which is a
+    /// session a provider's model runs.
+    ///
+    /// # Errors
+    ///
+    /// As [`Session::start`].
+    pub fn start_routed(
+        directory: &Path,
+        workspace: &Workspace,
+        branch: Option<&str>,
+        route: &RouteBinding,
+    ) -> Result<Self, SessionError> {
+        privacy::directory(directory).map_err(|source| SessionError::Directory {
+            at: directory.display().to_string().into(),
+            source,
+        })?;
+        index::ensure(directory)?;
+
+        let mut session = Self::naming(directory, workspace, branch, Some(route), SessionId::new)?;
+        session.route = Some(route.clone());
+        Ok(session)
     }
 
     /// Starts a session under the first name `name` mints that nothing holds.
@@ -310,6 +365,7 @@ impl Session {
         directory: &Path,
         workspace: &Workspace,
         branch: Option<&str>,
+        route: Option<&RouteBinding>,
         mut name: impl FnMut() -> SessionId,
     ) -> Result<Self, SessionError> {
         for _ in 0..NAMES {
@@ -330,7 +386,7 @@ impl Session {
                 return Err(problem);
             }
 
-            let header = wire::header(&id, workspace.root(), branch);
+            let header = wire::header(&id, workspace.root(), branch, route);
             writeln!(file, "{header}").map_err(|source| SessionError::Log {
                 at: path.display().to_string().into(),
                 source,
@@ -421,6 +477,10 @@ impl Session {
     /// same either way, and it is the order of it that matters — claim, read,
     /// cut, and only then open the handle that appends.
     fn continuing(path: &Path) -> Result<(Self, Transcript), SessionError> {
+        // Before the claim, so a session this run may not pick up is left
+        // exactly as the agent that ran it left it.
+        unrouted(path)?;
+
         // Before the log is read, and long before it is cut. A session another
         // crucible still has open is a file that is still being appended to:
         // continuing it cuts it back to what was read here, which deletes lines
@@ -448,6 +508,7 @@ impl Session {
             pruned,
             recovered,
             settled_results,
+            ran,
         } = replay(path)?;
 
         // Before a single byte is appended, and before the handle that will
@@ -478,6 +539,9 @@ impl Session {
         session.calibration = calibration;
         session.context = Mutex::new(context);
         session.pruned = Mutex::new(pruned);
+        session.route = ran.route;
+        session.external = ran.external;
+        session.uncertain = ran.uncertain;
         // What a continue replays is what the session now holds, except typed
         // context records are harness state rather than messages somebody
         // said: a stale or legacy index count is repaired from here when the
@@ -511,6 +575,9 @@ impl Session {
             trouble: Trouble::default(),
             placed: Placed::default(),
             placing: Placing::default(),
+            route: None,
+            external: None,
+            uncertain: None,
         }
     }
 
@@ -724,6 +791,65 @@ impl Session {
         self.calibration
     }
 
+    /// Records what the installed agent running this session calls it.
+    ///
+    /// Written whenever the agent names it, and read back last-one-wins, so a
+    /// resume asks the agent for the session it last said it was running.
+    ///
+    /// Whether it was kept: a name from any instance but the one the session
+    /// was opened on is not, as a resume would ask that instance's agent for a
+    /// session it never ran.
+    #[must_use]
+    pub fn external(&self, named: &ExternalRef) -> bool {
+        let ours = self
+            .route
+            .as_ref()
+            .is_some_and(|route| route.instance() == named.instance());
+        if let (true, Some(to)) = (ours, &self.to) {
+            drop(to.send(LogRequest::Line(guarded(&wire::external(named)))));
+        }
+        ours
+    }
+
+    /// Records that a turn ended without the agent saying whether what it set
+    /// out to do was done.
+    ///
+    /// Kept until a message follows it, so a session continued after a crash
+    /// still says that the files may hold changes nobody was told about.
+    ///
+    /// Whether it was kept: only an installed agent leaves a turn this way,
+    /// and on a session a provider's model runs the line would make a log
+    /// from before agents ran sessions one its release refuses.
+    #[must_use]
+    pub fn uncertain(&self, turn: &Uncertain) -> bool {
+        let routed = self.route.is_some();
+        if let (true, Some(to)) = (routed, &self.to) {
+            drop(to.send(LogRequest::Line(guarded(&wire::uncertain(turn)))));
+        }
+        routed
+    }
+
+    /// The installed agent this session was opened on. `None` for a session
+    /// a provider's model runs, which is every log older than format 14.
+    #[must_use]
+    pub const fn route(&self) -> Option<&RouteBinding> {
+        self.route.as_ref()
+    }
+
+    /// What the agent running this session last called it, as the log said
+    /// when it was opened.
+    #[must_use]
+    pub const fn external_ref(&self) -> Option<&ExternalRef> {
+        self.external.as_ref()
+    }
+
+    /// The turn the log ended on with its effects not known, as the log said
+    /// when it was opened.
+    #[must_use]
+    pub const fn uncertain_turn(&self) -> Option<&Uncertain> {
+        self.uncertain.as_ref()
+    }
+
     /// The first write that failed, if one has.
     ///
     /// A log that has quietly stopped recording is worse than no log, because
@@ -934,6 +1060,9 @@ impl Session {
             trouble,
             placed,
             placing: still,
+            route: None,
+            external: None,
+            uncertain: None,
         }
     }
 }
@@ -956,7 +1085,7 @@ fn holding(message: &Message) -> Option<Box<[crucible_types::ToolId]>> {
 fn message_line(message: &Message) -> Box<str> {
     let line = wire::line(message);
     if message.continuation_bytes() > 0 {
-        format!("{{\"requires_format\":{}}}\n{line}", wire::FORMAT).into()
+        format!("{{\"requires_format\":{}}}\n{line}", wire::PROVIDER_LINES).into()
     } else {
         line.into()
     }
@@ -973,15 +1102,93 @@ fn message_line(message: &Message) -> Box<str> {
 fn restricted_line(freed: usize, results: &[crucible_types::ToolId], notice: &str) -> Box<str> {
     format!(
         "{{\"requires_format\":{}}}\n{}",
-        wire::FORMAT,
+        wire::PROVIDER_LINES,
         wire::restricted(freed, results, notice)
     )
     .into()
 }
 
+/// `line`, behind the guard that makes a reader that has no word for it
+/// refuse the log by number.
+///
+/// Resuming never rewrites a header, so an older log can gain one of these
+/// lines partway down; one request so no other append can split the pair.
+fn guarded(line: &str) -> Box<str> {
+    format!("{{\"requires_format\":{}}}\n{line}", wire::FORMAT).into()
+}
+
 /// Whether one persisted transcript entry belongs in the picker-facing count.
 fn is_conversation_message(message: &Message) -> bool {
     !matches!(message, Message::Context(_))
+}
+
+/// The session `id` names, or the newest recorded for `workspace` where it
+/// names none, read without claiming, replaying or cutting it.
+///
+/// What a resume asks before it builds anything to run the session on: a
+/// session another route opened is answered before a byte of it is sent
+/// anywhere, and before the log is touched. The log is then picked up by the
+/// id this hands back, so a session started meanwhile cannot take its place.
+///
+/// # Errors
+///
+/// As [`Session::resume`] where `id` is `None`, and as [`Session::reopen`]
+/// where it names one.
+pub fn picked(
+    directory: &Path,
+    workspace: &Workspace,
+    id: Option<&SessionId>,
+) -> Result<SessionId, SessionError> {
+    privacy::directory(directory).map_err(|source| SessionError::Directory {
+        at: directory.display().to_string().into(),
+        source,
+    })?;
+
+    let path = if let Some(id) = id {
+        let path = directory.join(format!("{}.{SUFFIX}", id.as_str()));
+        if !path.is_file() || !belongs(&path, workspace)? {
+            return Err(SessionError::Unknown {
+                id: id.as_str().into(),
+                at: workspace.root().display().to_string().into(),
+            });
+        }
+        path
+    } else {
+        index::ensure(directory)?;
+        newest(directory, workspace)?
+    };
+
+    let Some(id) = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| SessionId::from_str(stem).ok())
+    else {
+        return Err(SessionError::Nothing {
+            at: workspace.root().display().to_string().into(),
+        });
+    };
+
+    unrouted(&path)?;
+    Ok(id)
+}
+
+/// Refuses the log at `path` where an installed agent ran it.
+///
+/// Every way into a session this build has picks it up on a provider's
+/// model, and one an agent ran picked up there would send its history where
+/// it never went. Only its first two lines are read, so a refusal touches
+/// nothing.
+fn unrouted(path: &Path) -> Result<(), SessionError> {
+    match route_of(path)? {
+        None => Ok(()),
+        Some(route) => Err(SessionError::Rerouted {
+            id: path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into())
+                .unwrap_or_default(),
+            route: Box::new(route),
+        }),
+    }
 }
 
 /// Saves `title` as what every later listing calls the session `id` names.

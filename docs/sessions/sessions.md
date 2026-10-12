@@ -113,6 +113,15 @@ a permission question into one. See
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.
 
+A session an installed agent ran is not continued by a provider's model:
+`--continue`, `--resume` and `/resume` refuse it, naming the agent's configured
+name, before any provider or credential is looked for. Its history is kept as
+it was, and nothing is cut from or appended to its log. Start a new session to
+carry on. A log whose line naming the agent is damaged or cut short is refused
+as a log that cannot be read, and `crucible sessions list` counts it among the
+logs it could not read, rather than taking it for a session a provider's
+model ran.
+
 A log name in the sessions directory that is a symbolic link or a pipe rather
 than a file is refused as a log that cannot be read is: `--continue` stops with
 `could not read the session log …` and the reason, having read nothing through
@@ -178,7 +187,8 @@ before it and the file is cut to match.
 
 ## Conversation, journal and checkpoints
 
-New logs use format 13 and remain readable alongside formats 3–12. Format 12
+A session a provider's model runs is written as format 13, and one an installed
+agent runs as format 14; both remain readable alongside formats 3–12. Format 12
 adds bounded provider continuation beside completed agent messages: signed
 thinking, encrypted reasoning and native ordering needed for subsequent tool
 passes. This private state is not rendered or given to the recap model, and a
@@ -190,6 +200,12 @@ cannot resume format 12 or 13 logs. A search result may also record which vendor
 search answered it and, where that vendor restricts where it may be sent, the sentence
 to leave in its place. The field is optional within format 13, so builds that read
 format 13 without knowing it, such as 0.41.0, ignore it and still resume these logs.
+Format 14 adds the lines a session an installed agent ran records about it,
+described under [What is in a file](#what-is-in-a-file). Builds before it cannot
+resume a format 14 log and say it was written by a different version of
+crucible. A format 13 log, new or continued by a newer build, keeps its number
+and stays readable by a build that reads format 13, so going back to 0.47
+loses no session a provider's model ran.
 
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible
@@ -679,6 +695,26 @@ the file is and where it belongs:
 ```json
 {"branch":"main","format":13,"session":"…","workspace":"/home/you/code/my-project"}
 ```
+
+A session an installed agent ran is numbered 14 and has a second line, written
+with the first, saying which one: its driver, its configured name, the profile it was given,
+a digest of where its program was found rather than the path, the version it
+reported and which run of the agent opened the session. No environment,
+command line or credential is written there.
+
+```json
+{"route":{"driver":"claude","executable":"8766…","generation":0,"instance":"work","profile":"/home/you/.claude-work","version":"2.1.0"}}
+```
+
+Further on, such a log can hold the agent's own name for the session, as an
+`external` line, and an `uncertain` line where a turn ended before the agent
+said whether what it set out to do was done, with what it reported under way.
+Each of these is preceded by a `{"requires_format":14}` line, so a build that
+does not know it refuses the log rather than skipping it. A name longer than
+256 bytes, or a profile longer than 4 KiB, is refused rather than shortened,
+since a shortened one could match a different agent. The reported version is
+cut at 256 bytes and the work under way at 64 KiB, on a character boundary,
+and each says it was cut.
 
 Then one line per message: what you typed, what the model said and asked to
 run, and what the tools returned. Supplemental journal records retain bounded

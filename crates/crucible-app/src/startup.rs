@@ -211,6 +211,18 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
         ..
     } = *startup;
 
+    // Before anything a session could be run on is built, and read without
+    // touching the log: a session an installed agent ran cannot be continued
+    // on a provider's model, and saying so is owed whatever else is wrong
+    // with this run. The one picked here is the one reopened below.
+    let picked = match &startup.resuming {
+        Resuming::No => None,
+        Resuming::Newest => Some(crucible_session::picked(sessions, workspace, None)?),
+        Resuming::Exact(id) => {
+            Some(crucible_session::picked(sessions, workspace, Some(id)).map_err(unknown)?)
+        }
+    };
+
     // Before the session, and the last thing on the way in that can fail: the
     // caller has already prepared the terminal for the same reason. Starting a
     // session writes a file, and one written for a run that never happened is
@@ -267,22 +279,15 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // bound.
     let worker = startup.services.tool_worker()?.clone();
 
-    let (session, earlier) = match &startup.resuming {
-        Resuming::Newest => {
-            let (session, transcript) = Session::resume(sessions, workspace)?;
-            (session, Some(transcript))
-        }
-        Resuming::Exact(id) => {
-            let (session, transcript) = reopening(sessions, workspace, id)?;
-            (session, Some(transcript))
-        }
-        Resuming::No => {
-            let branch = crate::branching::current(workspace.root());
-            (
-                Session::start(sessions, workspace, branch.as_deref())?,
-                None,
-            )
-        }
+    let (session, earlier) = if let Some(id) = picked {
+        let (session, transcript) = reopening(sessions, workspace, &id)?;
+        (session, Some(transcript))
+    } else {
+        let branch = crate::branching::current(workspace.root());
+        (
+            Session::start(sessions, workspace, branch.as_deref())?,
+            None,
+        )
     };
 
     // Build the registry before the runner, because its exact immutable
@@ -471,12 +476,18 @@ pub fn reopening(
     workspace: &Workspace,
     id: &SessionId,
 ) -> Result<(Session, Transcript), AppError> {
+    Session::reopen(sessions, workspace, id).map_err(unknown)
+}
+
+/// `problem`, with a session id that answers to nothing said as the user's
+/// mistake rather than the log's.
+fn unknown(problem: crucible_session::SessionError) -> AppError {
     use crucible_session::SessionError;
 
-    Session::reopen(sessions, workspace, id).map_err(|problem| match problem {
+    match problem {
         SessionError::Unknown { id, .. } => AppError::NoSession(id),
         other => AppError::Session(other),
-    })
+    }
 }
 
 /// Fills the plan from the last time the session wrote one.

@@ -85,3 +85,35 @@ impl Drop for Sample {
         let _ = fs::remove_dir_all(&self.base);
     }
 }
+
+/// What the agent backends may be found by and removed by, which no
+/// session line or fixture may hold. Put together here rather than
+/// spelled, so this file holds none of them either; an agent route is
+/// one of them where a lowercase letter follows it.
+fn foreign_tokens() -> [String; 6] {
+    let agent = "agent";
+    [
+        ["external", "Agent"].concat(),
+        ["external", "Agents"].concat(),
+        ["crucible", "-external-harnesses"].concat(),
+        ["crucible", "_external_harnesses"].concat(),
+        ["crucible", "-fake-peer"].concat(),
+        format!("{agent}:"),
+    ]
+}
+
+/// Whether `text` holds any of [`foreign_tokens`].
+pub(crate) fn foreign(text: &str) -> Option<String> {
+    let [rest @ .., route] = foreign_tokens();
+    rest.into_iter()
+        .find(|token| text.contains(token.as_str()))
+        .or_else(|| {
+            text.match_indices(route.as_str())
+                .any(|(at, _)| {
+                    text.get(at + route.len()..)
+                        .and_then(|after| after.chars().next())
+                        .is_some_and(|next| next.is_ascii_lowercase())
+                })
+                .then_some(route)
+        })
+}

@@ -269,12 +269,12 @@ error.
 ### `sessions list [--json]`
 
 Lists the sessions recorded for the directory crucible was started in, newest
-first, and stops. It reads the session index and the first line of each
-session's log, which says when the session started, how many messages it held
-when it was last indexed, the branch it was started on and the title it was
-given; nothing anybody wrote in a session is read, and no session is opened,
-resumed, locked or written to, so a list can be taken while another crucible
-has one open.
+first, and stops. It reads the session index and the opening lines of each
+session's log, which say when the session started, how many messages it held
+when it was last indexed, the branch it was started on, the title it was
+given and, for a session an installed agent ran, which one; nothing anybody
+wrote in a session is read, and no session is opened, resumed, locked or
+written to, so a list can be taken while another crucible has one open.
 
 ```bash
 crucible sessions list
@@ -284,8 +284,9 @@ crucible sessions list --json
 The first line counts the sessions, as `no sessions recorded for`, `1 session
 recorded for` or `<n> sessions recorded for` followed by the directory. Each
 session is one line: its id, when it started, how many messages it holds, the
-branch where there was one, and its title or `untitled`. Pass the id to
-[`--resume`](#-r---resume-session_id) to pick that one up.
+branch where there was one, the installed agent that ran it as `run by` its
+configured name and driver where one did, and its title or `untitled`. Pass
+the id to [`--resume`](#-r---resume-session_id) to pick that one up.
 
 ```
 2 sessions recorded for /home/you/api
@@ -304,12 +305,15 @@ is written with what a terminal would act on as its escape, and one longer
 than 16 KiB is cut there, ends `… (cut)` and leaves the list incomplete.
 
 `--json` prints one JSON document on one line to standard output instead,
-with `format_version` 1, `kind` `sessions`, `status` and a `truncated` flag.
+with `format_version` 2, `kind` `sessions`, `status` and a `truncated` flag.
 `status` is `complete` when the list is the whole of what was recorded,
 `incomplete` when it is not, and `failed` when no list could be made. Beside
 it are `sessions`, each with its `id`, `started` (milliseconds since the
 epoch), `messages`, and `branch` and `title` where there are ones, each as
-`text` with its own `truncated` flag; `omitted`, the older sessions left out;
+`text` with its own `truncated` flag, and `backend`, the driver of the
+installed agent that ran it or `native` for a provider's model, with `route`,
+that agent's configured name, where one ran it; `omitted`, the older
+sessions left out;
 `unreadable`, the logs that could not be read; `index_full`; and
 `unindexed`. When the list cannot be made, for example because the index is
 not one crucible wrote, the reason is one line beginning `crucible: ` on

@@ -140,12 +140,17 @@
 use std::future::Future;
 use std::pin::Pin;
 
+pub mod binding;
 pub mod cache;
 pub mod interruption;
 pub mod journal;
 pub mod sandbox;
 pub mod session;
 
+pub use binding::{
+    BINDING_NAME_BYTES, BINDING_PROFILE_BYTES, BindingError, Clipped, EXTERNAL_REFERENCE_BYTES,
+    ExternalRef, RouteBinding, UNCERTAIN_BYTES, Uncertain,
+};
 pub use cache::PromptCacheResourceStore;
 pub use interruption::{
     ActionId, ActionResolution, ApprovalDecision, CheckpointId, CheckpointStore,

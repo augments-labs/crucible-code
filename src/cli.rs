@@ -154,10 +154,10 @@ recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
 /resume inside a session lists the rest. sessions list says which sessions \
 were recorded for this directory, newest first, with when each started, how \
-many messages it holds, its branch and its saved title, and stops; --json \
-writes it as one JSON document instead. It reads the session index and the \
-first line of each log, so nothing anybody wrote in a session is shown, and \
-no session is opened, resumed or written to.
+many messages it holds, its branch, its saved title and what ran it, and \
+stops; --json writes it as one JSON document instead. It reads the session \
+index and the opening lines of each log, so nothing anybody wrote in a \
+session is shown, and no session is opened, resumed or written to.
 
 extensions list says what is installed in ~/.crucible/extensions (or the \
 extensions directory under CRUCIBLE_CODE_HOME), with what each \

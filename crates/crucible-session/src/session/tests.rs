@@ -7,7 +7,7 @@ use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
 use crucible_storage::{
-    CallResultKey, CallResultStoreError, CustomEntry, InvocationId, InvocationRecord,
+    CallResultKey, CallResultStoreError, CustomEntry, ExternalRef, InvocationId, InvocationRecord,
     JournalEntryId, JournalStore, RunItem, ToolEffect,
 };
 use crucible_tools::ToolOutcome;
@@ -70,17 +70,11 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
     path
 }
 
-#[test]
-fn appending_continuation_to_an_old_log_requires_a_new_reader() {
+/// An agent message carrying the state only a reasoning model's next turn
+/// reads back.
+fn reasoned() -> Message {
     use crucible_types::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
-    let sample = Sample::new("continuation-old-format");
-    let id = "0198abcd-0000-7000-8000-000000000001";
-    let path = sample.plant(
-        id,
-        &[sample.header(11, id), wire::line(&said("old prompt"))],
-    );
-    let before = fs::read_to_string(&path).unwrap();
-    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+
     let mut pending = Continuation::new(
         "fixture-v1",
         "fixture",
@@ -92,12 +86,25 @@ fn appending_continuation_to_an_old_log_requires_a_new_reader() {
             ContinuationData::new("signature-canary").unwrap(),
         ))
         .unwrap();
-    let message = Message::Agent {
+    Message::Agent {
         text: "".into(),
         calls: vec![],
         stop: Some(StopReason::Yielded),
         continuation: Some(pending.finish("", 0, Some(StopReason::Yielded)).unwrap()),
-    };
+    }
+}
+
+#[test]
+fn appending_continuation_to_an_old_log_requires_a_new_reader() {
+    let sample = Sample::new("continuation-old-format");
+    let id = "0198abcd-0000-7000-8000-000000000001";
+    let path = sample.plant(
+        id,
+        &[sample.header(11, id), wire::line(&said("old prompt"))],
+    );
+    let before = fs::read_to_string(&path).unwrap();
+    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    let message = reasoned();
     session.append(&message);
     drop(session);
     let written = fs::read_to_string(&path).unwrap();
@@ -113,7 +120,7 @@ fn appending_continuation_to_an_old_log_requires_a_new_reader() {
     );
     assert_eq!(
         new_lines.first().unwrap(),
-        &format!(r#"{{"requires_format":{}}}"#, wire::FORMAT).as_str()
+        &format!(r#"{{"requires_format":{}}}"#, wire::PROVIDER_LINES).as_str()
     );
     assert!(
         wire::message(new_lines.first().unwrap()).is_none(),
@@ -674,7 +681,7 @@ fn a_log_says_what_it_is_and_which_workspace_it_belongs_to() {
 
     assert_eq!(
         header.get("format").and_then(Value::as_u64),
-        Some(u64::from(wire::FORMAT)),
+        Some(u64::from(wire::PROVIDER_LINES)),
         "{header}"
     );
     assert_eq!(
@@ -720,12 +727,17 @@ fn a_log_from_the_format_before_this_one_is_still_a_session_to_continue() {
     session.append(&said("what an older build recorded"));
     drop(session);
 
-    // The same log, headed the way the build before this one headed it.
+    // The same log, headed the way the build before the one whose number it
+    // carries headed it.
     let text = fs::read_to_string(&path).expect("the log");
     let older = text.replacen(
-        &format!("\"format\":{}", wire::FORMAT),
-        &format!("\"format\":{}", wire::FORMAT - 1),
+        &format!("\"format\":{}", wire::PROVIDER_LINES),
+        &format!("\"format\":{}", wire::PROVIDER_LINES - 1),
         1,
+    );
+    assert_ne!(
+        older, text,
+        "the header carries the number it is moved from"
     );
     fs::write(&path, older).expect("a writable log");
 
@@ -1078,7 +1090,7 @@ fn clearing_a_restricted_result_in_an_old_log_requires_a_new_reader() {
         .expect("a line before the restriction");
     assert_eq!(
         guard,
-        format!(r#"{{"requires_format":{}}}"#, wire::FORMAT),
+        format!(r#"{{"requires_format":{}}}"#, wire::PROVIDER_LINES),
         "the restriction was written into an old log with nothing to stop an old reader"
     );
     assert_eq!(wire::required_format(guard), Some(true));
@@ -1624,6 +1636,10 @@ mod started;
 /// under one costs.
 mod ordinary;
 
+/// The logs kept under the repository's fixtures, one from each side of the
+/// format that let an installed agent run a session.
+mod formats;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {
@@ -1774,4 +1790,167 @@ fn two_places_whose_names_are_not_text_are_two_owners() {
     let first = SessionStore::owner(&first).expect("a session on disk is somebody's");
     let second = SessionStore::owner(&second).expect("a session on disk is somebody's");
     assert_ne!(first, second, "two directories answered one owner");
+}
+
+#[test]
+fn a_turn_whose_effects_are_not_known_is_read_back_as_it_was_left() {
+    // The turn ended with the agent gone before it said whether its edits
+    // landed. Read as a torn tail, the line is cut, and the session comes
+    // back saying nothing about a working tree that may hold changes nobody
+    // was told about.
+    let sample = Sample::new("session-uncertain");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    let path = session.path().to_owned();
+    session.append(&said("rename the module"));
+    assert!(session.uncertain(&crucible_storage::Uncertain::new(
+        "editing src/lib.rs",
+        false,
+    )));
+    drop(session);
+    let before = fs::read(&path).expect("the log");
+
+    for _ in 0..2 {
+        let read = super::replay::replay(&path).expect("a log that reads");
+        assert_eq!(read.transcript.messages().len(), 1);
+        assert_eq!(
+            read.ran
+                .uncertain
+                .as_ref()
+                .map(|turn| turn.under_way().as_str()),
+            Some("editing src/lib.rs"),
+        );
+        assert!(Session::resume(&sample.logs(), &sample.workspace()).is_err());
+        assert_eq!(fs::read(&path).expect("the log"), before);
+    }
+}
+
+#[test]
+fn a_session_a_providers_model_runs_records_no_turn_whose_effects_are_not_known() {
+    // Only an installed agent leaves a turn that way, and the line would
+    // make a log continued here one the release that wrote it refuses.
+    let sample = Sample::new("session-uncertain-native");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let path = session.path().to_owned();
+    session.append(&said("rename the module"));
+    assert!(!session.uncertain(&crucible_storage::Uncertain::new("editing", false)));
+    drop(session);
+
+    let log = fs::read_to_string(&path).expect("the log");
+    assert!(
+        !log.contains(r#"{"uncertain""#) && !log.contains("requires_format"),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_session_an_agent_ran_is_not_picked_up_on_another_route_and_is_left_as_it_was() {
+    // Picked up here, its history would be replayed to a provider's model it
+    // never went to, under an identity the agent never had. Refused, the file
+    // is the agent's still: nothing is cut, claimed or appended.
+    let sample = Sample::new("session-rerouted");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    let path = session.path().to_owned();
+    let id = session.id().expect("its id").clone();
+    session.append(&said("rename the module"));
+    drop(session);
+    let before = fs::read(&path).expect("the log");
+
+    let refused = |problem: SessionError| {
+        assert!(
+            matches!(&problem, SessionError::Rerouted { route, .. } if route.instance() == "work"),
+            "{problem:?}"
+        );
+    };
+    refused(Session::resume(&sample.logs(), &sample.workspace()).expect_err("refused"));
+    refused(Session::reopen(&sample.logs(), &sample.workspace(), &id).expect_err("refused"));
+    refused(crate::picked(&sample.logs(), &sample.workspace(), None).expect_err("refused"));
+    refused(crate::picked(&sample.logs(), &sample.workspace(), Some(&id)).expect_err("refused"));
+    assert_eq!(fs::read(&path).expect("the log"), before);
+}
+
+#[test]
+fn what_an_agent_calls_a_session_is_kept_only_from_the_agent_it_was_opened_on() {
+    // A name another instance gave would have a resume ask that instance's
+    // agent for a session it never ran. Each line an agent writes goes behind
+    // the guard that makes a release with no word for it refuse the log.
+    let sample = Sample::new("session-external");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    let path = session.path().to_owned();
+    session.append(&said("rename the module"));
+    assert!(!session.external(&ExternalRef::new("home", "other-session").expect("a name")));
+    assert!(session.external(&ExternalRef::new("work", "its-session").expect("a name")));
+    assert!(session.uncertain(&crucible_storage::Uncertain::new("editing", false)));
+    drop(session);
+
+    let log = fs::read_to_string(&path).expect("the log");
+    let lines: Vec<&str> = log.lines().collect();
+    let guard = format!(r#"{{"requires_format":{}}}"#, wire::FORMAT);
+    let kept: Vec<&[&str]> = lines
+        .windows(2)
+        .filter(|pair| {
+            pair.last().is_some_and(|line| {
+                line.starts_with(r#"{"external""#) || line.starts_with(r#"{"uncertain""#)
+            })
+        })
+        .collect();
+    assert_eq!(kept.len(), 2, "{log}");
+    assert!(
+        kept.iter()
+            .all(|pair| pair.first() == Some(&guard.as_str())),
+        "{log}"
+    );
+    assert!(!log.contains("other-session"), "{log}");
+
+    let read = super::replay::replay(&path).expect("a log that reads");
+    assert_eq!(
+        read.ran.external,
+        Some(ExternalRef::new("work", "its-session").expect("a name"))
+    );
+}
+
+#[test]
+fn a_message_after_a_turn_whose_effects_were_not_known_settles_it() {
+    let sample = Sample::new("session-uncertain-settled");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    let path = session.path().to_owned();
+    session.append(&said("rename the module"));
+    assert!(session.uncertain(&crucible_storage::Uncertain::new("editing", false)));
+    session.append(&said("carry on"));
+    drop(session);
+
+    let read = super::replay::replay(&path).expect("a log that reads");
+
+    assert!(read.ran.uncertain.is_none());
+}
+
+#[test]
+fn a_turn_left_unsettled_in_a_log_no_agent_ran_is_read_past() {
+    // Nothing here writes one, and a resume that took it would tell the
+    // reader the files may hold changes no agent was there to make.
+    let sample = Sample::new("session-uncertain-unrouted");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let path = session.path().to_owned();
+    session.append(&said("rename the module"));
+    drop(session);
+    let mut log = fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("the log");
+    let turn = crucible_storage::Uncertain::new("editing", false);
+    writeln!(log, "{}", super::guarded(&wire::uncertain(&turn))).expect("a line");
+    drop(log);
+
+    let (session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages().len(), 1);
+    assert!(session.uncertain_turn().is_none());
 }

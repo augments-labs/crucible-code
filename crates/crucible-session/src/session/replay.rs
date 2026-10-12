@@ -14,10 +14,12 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, BufRead as _, BufReader};
+use std::io::{self, BufRead, BufReader, Read};
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
 
+use crucible_storage::{ExternalRef, RouteBinding, Uncertain};
 use crucible_types::{
     Calibration, ContextSnapshot, Message, RecordedToolOutput, SessionId, ToolId, ToolResult,
     Transcript,
@@ -206,6 +208,68 @@ fn first_line(log: impl io::Read) -> io::Result<Option<String>> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "session header is not UTF-8"))
 }
 
+/// The installed agent the log at `path` was opened on, read from the line
+/// after its header and no further than [`READ`] bytes in all.
+///
+/// `None` for a log a provider's model ran, which is every log written before
+/// the route line existed: a route is written in the same write as the header
+/// or not at all, so a second line that is anything else says there is none.
+///
+/// A second line that opens as a route and does not read as one, whole, is
+/// refused as a log that cannot be read. Taken as no route, the session would
+/// be continued by a provider's model, and continuing cuts a line that does
+/// not read at the end of a log as a torn tail, so the agent's session would
+/// become a provider's with nothing left to say it was not.
+pub(super) fn route_of(path: &Path) -> Result<Option<RouteBinding>, SessionError> {
+    let trouble = |source| SessionError::Log {
+        at: path.display().to_string().into(),
+        source,
+    };
+    let mut log = BufReader::new(opened(path).map_err(trouble)?.take(READ));
+    let mut line = Vec::new();
+    log.read_until(b'\n', &mut line).map_err(trouble)?;
+    if line.last() != Some(&b'\n') {
+        return Ok(None);
+    }
+    route_at(&mut log).map_err(trouble)
+}
+
+/// The route on the line `log` stands at, the one after a header.
+///
+/// Reads no more of a line that does not open as a route than its opening,
+/// however much of it is already buffered, so a list that asks this of every
+/// log reads no prompt; a line that does is read to its end, which the caller
+/// bounds.
+pub(super) fn route_at(log: &mut impl BufRead) -> io::Result<Option<RouteBinding>> {
+    let mut line = Vec::new();
+    Read::take(&mut *log, wire::ROUTE_OPENS.len() as u64).read_to_end(&mut line)?;
+    if line != wire::ROUTE_OPENS {
+        return Ok(None);
+    }
+    log.read_until(b'\n', &mut line)?;
+    route_in(&line).transpose()
+}
+
+/// What `line`, the one after a header, says about the route: `None` where it
+/// does not open as one, and a refusal where it does and does not read whole.
+///
+/// The one place a route is read from a log. A route is the line after the
+/// header, as it is written, and nowhere else: one taken from further down
+/// would let a line a log gained later decide what continues it.
+fn route_in(line: &[u8]) -> Option<io::Result<RouteBinding>> {
+    line.starts_with(wire::ROUTE_OPENS).then(|| {
+        line.strip_suffix(b"\n")
+            .and_then(|whole| str::from_utf8(whole).ok())
+            .and_then(wire::routed)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "the installed agent it was opened on is not recorded whole",
+                )
+            })
+    })
+}
+
 /// Everything a log holds, as the transcript it recorded, the offset the next
 /// write has to start at, and what its last request carried.
 ///
@@ -273,6 +337,8 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     // What the calls the last message asked for recorded as they started and
     // ended, in case the pass's result line was never written.
     let mut ended = Ended::default();
+    let mut ran = Ran::default();
+    let mut after_header = true;
 
     loop {
         raw.clear();
@@ -280,6 +346,14 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
 
         if read == 0 || !raw.ends_with(b"\n") {
             break;
+        }
+
+        if mem::take(&mut after_header)
+            && let Some(route) = route_in(&raw)
+        {
+            ran.route = Some(route.map_err(trouble)?);
+            through += read as u64;
+            continue;
         }
 
         let whole = str::from_utf8(&raw).ok().map(str::trim_end);
@@ -310,6 +384,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         if whole.is_some_and(wire::forgets) {
             transcript.forget();
             ended.clear();
+            ran.forgot();
             context = wire::typed_context(format).then(ContextSnapshot::new);
             calibration = None;
             before = through;
@@ -339,15 +414,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             // small for a placeholder to be worth it — is held here too, and
             // that is harmless: it is still what the reader was shown, so
             // putting it back on the screen puts back what is already there.
-            for message in transcript.messages() {
-                if let Message::ToolResults(answers) = message {
-                    for answer in answers {
-                        if results.contains(&answer.id) {
-                            pruned.keep(answer.id.clone(), answer.output.text().to_owned());
-                        }
-                    }
-                }
-            }
+            pruned.keep_from(&transcript, &results);
 
             transcript.prune(&results);
             calibration = None;
@@ -362,15 +429,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // sentence put in its place is the one the run wrote rather than one
         // about making room.
         if let Some((results, notice)) = whole.and_then(wire::restriction) {
-            for message in transcript.messages() {
-                if let Message::ToolResults(answers) = message {
-                    for answer in answers {
-                        if results.contains(&answer.id) {
-                            pruned.keep(answer.id.clone(), answer.output.text().to_owned());
-                        }
-                    }
-                }
-            }
+            pruned.keep_from(&transcript, &results);
 
             transcript.clear_tool_outputs(&results, &notice);
             calibration = None;
@@ -403,6 +462,11 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
                         })?,
                 );
             calibration = None;
+            through += read as u64;
+            continue;
+        }
+
+        if whole.is_some_and(|line| ran.took(line)) {
             through += read as u64;
             continue;
         }
@@ -462,6 +526,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             .push(message)
             .map_err(|error| trouble(io::Error::new(io::ErrorKind::InvalidData, error)))?;
         ended.clear();
+        ran.uncertain = None;
         calibration = None;
         before = through;
         through += read as u64;
@@ -483,6 +548,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
                 context,
                 recovered: Some(recovered),
                 settled_results,
+                ran,
             });
         }
         // No call of the pass recorded a start, so nothing was done that the
@@ -497,6 +563,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
             context,
             recovered: None,
             settled_results,
+            ran,
         });
     }
 
@@ -515,6 +582,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         context,
         recovered: None,
         settled_results,
+        ran,
     })
 }
 
@@ -713,6 +781,60 @@ pub(super) struct Replayed {
     pub(super) recovered: Option<Message>,
     /// Sidecars represented by a durable ordinary transcript line.
     pub(super) settled_results: Vec<results::StoredResult>,
+    /// What an installed agent that ran the session recorded about it.
+    pub(super) ran: Ran,
+}
+
+/// What an installed agent that ran a session recorded about it: the route it
+/// was opened on, the agent's own name for the session, and a turn that ended
+/// with its effects not known. None is a message. The route is the line after
+/// the header or there is none; the others are kept only under a route, and
+/// of them the last of each kind is what holds.
+#[derive(Default)]
+pub(super) struct Ran {
+    /// The installed agent the session was opened on, where one was.
+    pub(super) route: Option<RouteBinding>,
+    /// The agent's own name for the session, unless a forgetting came after.
+    pub(super) external: Option<ExternalRef>,
+    /// A turn that ended with its effects not known, unless a message or a
+    /// forgetting came after it.
+    pub(super) uncertain: Option<Uncertain>,
+}
+
+impl Ran {
+    /// Whether `line` is one of these, kept where it is.
+    ///
+    /// The agent's name for the session is taken only from the agent the
+    /// session was opened on, and a turn left unsettled only from a session an
+    /// agent ran. Either line otherwise is read past and not kept: a resume
+    /// would ask another instance's agent for a session it never ran, or say
+    /// the files may hold changes no agent was there to make, and the rest of
+    /// the log is still the session's.
+    fn took(&mut self, line: &str) -> bool {
+        if let Some(named) = wire::named(line) {
+            if self
+                .route
+                .as_ref()
+                .is_some_and(|route| route.instance() == named.instance())
+            {
+                self.external = Some(named);
+            }
+        } else if let Some(stopped) = wire::uncertainty(line) {
+            if self.route.is_some() {
+                self.uncertain = Some(stopped);
+            }
+        } else {
+            return false;
+        }
+        true
+    }
+
+    /// A session that forgot what it said: the agent's session went with it,
+    /// and so did any turn left unsettled in it.
+    fn forgot(&mut self) {
+        self.external = None;
+        self.uncertain = None;
+    }
 }
 
 /// What results said before a clearing took them away.
@@ -753,6 +875,20 @@ impl fmt::Debug for Pruned {
 }
 
 impl Pruned {
+    /// Keeps what each of `results` said in `transcript`, before a clearing
+    /// takes it away.
+    fn keep_from(&mut self, transcript: &Transcript, results: &[ToolId]) {
+        for message in transcript.messages() {
+            if let Message::ToolResults(answers) = message {
+                for answer in answers {
+                    if results.contains(&answer.id) {
+                        self.keep(answer.id.clone(), answer.output.text().to_owned());
+                    }
+                }
+            }
+        }
+    }
+
     /// Keeps what the result `call` answered with said, unless something
     /// already is.
     ///
