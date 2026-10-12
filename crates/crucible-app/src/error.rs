@@ -9,6 +9,7 @@ use crucible_session::SessionError;
 use crucible_tools::ToolsetError;
 use crucible_workspace::PathError;
 
+use crate::access::AccessError;
 use crate::providers::ArmError;
 
 /// Why a run could not be assembled, or could not carry on.
@@ -130,6 +131,23 @@ pub enum AppError {
         provider: Box<str>,
     },
 
+    /// The provider's access, as configured, cannot be resolved to a route.
+    #[error(transparent)]
+    Access(AccessError),
+
+    /// The provider is reached through an installed agent, and this build
+    /// does not start one in place of a provider.
+    #[error(
+        "providers.{provider}.access names the agent {instance}, and this build cannot start an \
+         installed agent; remove access to reach {provider} directly"
+    )]
+    ExternalAgent {
+        /// The provider.
+        provider: Box<str>,
+        /// The `externalAgents` entry it names.
+        instance: Box<str>,
+    },
+
     /// Provider construction and source resolution disagreed.
     #[error("no credential is available for {provider}; use /login or set its API key variable")]
     Authentication {
@@ -147,4 +165,21 @@ pub enum AppError {
     /// started, so no conversation was assembled.
     #[error(transparent)]
     Unstarted(#[from] crate::runtime::Unstarted),
+}
+
+impl From<AccessError> for AppError {
+    /// Written out so the two refusals a provider whose access was left off
+    /// has always given keep the variants every caller already matches.
+    fn from(refused: AccessError) -> Self {
+        match refused {
+            AccessError::Absent(absent) => Self::Credential(absent),
+            AccessError::SubscriptionAddress { provider } => Self::SubscriptionAddress { provider },
+            other @ (AccessError::SubscriptionElsewhere { .. }
+            | AccessError::NoSubscription { .. }
+            | AccessError::NotSignedIn { .. }
+            | AccessError::NoKey { .. }
+            | AccessError::AgentConflict { .. }
+            | AccessError::UnknownInstance { .. }) => Self::Access(other),
+        }
+    }
 }

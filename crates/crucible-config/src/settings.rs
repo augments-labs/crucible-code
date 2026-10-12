@@ -20,6 +20,7 @@ use crate::document::Document;
 use crate::env;
 use crate::shape::{DOCUMENT, Shape};
 
+pub(crate) mod access;
 mod compaction;
 mod input;
 pub(crate) mod layers;
@@ -33,6 +34,7 @@ pub(crate) mod sandbox;
 mod updates;
 mod variables;
 
+pub use access::{Access, Driver, ExternalAgent};
 pub use compaction::{Compaction, When};
 pub use input::Sending;
 pub use layers::{local, user};

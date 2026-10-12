@@ -31,6 +31,7 @@
 //! workspace. That is what lets a startup be failed every way it can fail
 //! without a key or a home directory anywhere near the test.
 
+pub mod access;
 pub mod auth;
 pub mod branching;
 pub mod client;

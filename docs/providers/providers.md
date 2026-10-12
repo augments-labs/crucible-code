@@ -608,6 +608,12 @@ therefore uses the configured environment or stored key rather than an account
 token; with nothing else to sign with, the run is refused rather than sending
 a plan's token to a gateway.
 
+That order is what a provider with no `access` gets. `providers.<name>.access`
+chooses one way, `subscription` or `apiKey`, and then nothing falls back from
+it: an exported key does not answer for a provider set to `subscription`, and a
+signed-in account does not answer for one set to `apiKey`. See
+[`access`](../configuration/configuration.md#access).
+
 `/logout` reaches the protected store only. A child process cannot unset a
 variable in its parent shell, so after removing a stored credential crucible
 resolves the provider again and names any environment variable that remains

@@ -413,15 +413,16 @@ impl Conversation {
 
 /// Whether any provider offered has a credential in `stored` or beside it.
 ///
-/// A provider refused for anything but a missing credential, such as an
-/// address a setting names that cannot be sent to, still counts: it is one
-/// [`crate::providers::available`] lists, and the terminal's sentence and a
-/// client's answer are read from that list.
+/// A provider refused for anything but a missing credential or the access its
+/// configuration chose, such as an address a setting names that cannot be sent
+/// to, still counts: it is one [`crate::providers::available`] lists, and the
+/// terminal's sentence and a client's answer are read from that list. One its
+/// access refuses is one that list leaves out.
 fn reachable(with: &Switching<'_>, stored: &StoredCredentials) -> bool {
     offered(with.providers).any(|other| {
         !matches!(
             (with.serving)(other, stored),
-            Err(AppError::Authentication { .. })
+            Err(AppError::Authentication { .. } | AppError::Access(_))
         )
     })
 }

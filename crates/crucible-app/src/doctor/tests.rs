@@ -552,6 +552,71 @@ fn a_provider_this_build_does_not_serve_is_a_failure_that_names_the_ones_it_does
 }
 
 #[test]
+fn a_chosen_provider_with_nothing_found_is_told_only_the_way_its_access_chose() {
+    // The provider, its block, then what the reason and the remedy say, and
+    // what the remedy never says.
+    let cases = [
+        (
+            "openai",
+            r#"{"access": {"type": "subscription"}}"#,
+            "no account is signed in for openai",
+            "use /login",
+            "OPENAI_API_KEY",
+        ),
+        (
+            "openai",
+            r#"{"access": {"type": "subscription"}, "baseUrl": "https://gateway.example/v1"}"#,
+            "remove baseUrl",
+            "remove `providers.openai.baseUrl`",
+            "/login",
+        ),
+        (
+            "anthropic",
+            r#"{"access": {"type": "subscription"}}"#,
+            "no subscription sign-in for anthropic",
+            "change `providers.anthropic.access`",
+            "/login",
+        ),
+        (
+            "openai",
+            r#"{"access": {"type": "apiKey"}}"#,
+            "no key was found",
+            "set OPENAI_API_KEY, or store one with /login",
+            "subscription",
+        ),
+        (
+            "openai",
+            r#"{"access": {"type": "externalAgent", "instance": "mine"}}"#,
+            "cannot start an installed agent",
+            "remove `providers.openai.access`",
+            "OPENAI_API_KEY",
+        ),
+    ];
+    for (at, (named, block, says, told, never)) in cases.into_iter().enumerate() {
+        let sample = Sample::new(&format!("doctor-access-{at}"));
+        drop(sample.user(&format!(
+            r#"{{"provider": "{named}", "providers": {{"{named}": {block}}},
+                "externalAgents": {{"mine": {{"driver": "claude", "executable": "claude"}}}}}}"#
+        )));
+
+        let report = examined(&sample, &Counting::default(), &bare);
+
+        assert_eq!(status(&report, "provider"), Status::Failed, "case {at}");
+        let said = reason(&report, "provider");
+        assert!(said.contains(says), "case {at}: {said}");
+        let remedy = report
+            .checks
+            .iter()
+            .find(|check| check.id.as_str() == "provider")
+            .and_then(|check| check.remedy.as_ref())
+            .map(crucible_client_api::Text::as_str)
+            .unwrap_or_default();
+        assert!(remedy.contains(told), "case {at}: {remedy}");
+        assert!(!remedy.contains(never), "case {at}: {remedy}");
+    }
+}
+
+#[test]
 fn an_extension_turned_on_without_a_digest_is_a_warning_that_names_nobody() {
     let sample = Sample::new("doctor-extension-unpinned");
     sample.installed(
