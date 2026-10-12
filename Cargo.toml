@@ -46,6 +46,7 @@ crucible-context = { path = "crates/crucible-context" }
 crucible-credentials = { path = "crates/crucible-credentials" }
 crucible-execution = { path = "crates/crucible-execution" }
 crucible-extension = { path = "crates/crucible-extension" }
+crucible-external-harnesses = { path = "crates/crucible-external-harnesses" }
 crucible-http = { path = "crates/crucible-http" }
 crucible-mcp = { path = "crates/crucible-mcp" }
 crucible-models = { path = "crates/crucible-models" }
@@ -576,6 +577,10 @@ jiff.workspace = true
 # neither, which the repository gate holds it to.
 crucible-extension.workspace = true
 crucible-mcp.workspace = true
+# The scripted peer the whole-screen captures run in place of another vendor's
+# agent. Its feature builds the peer and its script sets; nothing that ships
+# names this crate from here.
+crucible-external-harnesses = { workspace = true, features = ["proof"] }
 # The credential values and stored records the tests build their fixtures
 # from, named from the crates that own them. Nothing that ships names
 # either.

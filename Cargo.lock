@@ -472,6 +472,7 @@ dependencies = [
  "crucible-context",
  "crucible-credentials",
  "crucible-extension",
+ "crucible-external-harnesses",
  "crucible-mcp",
  "crucible-models",
  "crucible-privacy",
@@ -555,6 +556,23 @@ dependencies = [
  "crucible-transport",
  "crucible-types",
  "libc",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "crucible-external-harnesses"
+version = "0.47.1"
+dependencies = [
+ "crucible-execution",
+ "crucible-privacy",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-sandbox-local",
+ "crucible-transport",
+ "crucible-types",
  "serde_json",
  "sha2",
  "thiserror",
