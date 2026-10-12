@@ -32,7 +32,9 @@ use crucible_execution::{
     Backend, Capabilities, Capability, Confined, Decision, Description, Error, Failure, Lasting,
     Outcome, PendingRef, Scope, SessionRef, Sink, TurnRequest, Unsupported,
 };
-use crucible_external_harnesses::{CANCEL_GRACE, Control, Dialect, Host, STOP_GRACE, Undecided};
+use crucible_external_harnesses::{
+    CANCEL_GRACE, Control, Dialect, Host, STOP_GRACE, Undecided, Unstopped,
+};
 use crucible_runtime::BoxFuture;
 use tokio::sync::Notify;
 
@@ -136,6 +138,11 @@ fn gate(capabilities: &Capabilities, capability: Capability) -> Result<(), Error
     }
 }
 
+/// A stop that could not be confirmed, as the contract's failure.
+fn unstopped(unstopped: Unstopped) -> Error {
+    Failure::new(&unstopped.to_string()).into()
+}
+
 /// The run, taken away for one turn or to be stopped, and given back however
 /// that ends.
 struct Away<'s> {
@@ -216,7 +223,7 @@ impl Backend for External {
             };
             if spent {
                 if let Some(running) = away.running.take() {
-                    running.host.stop(STOP_GRACE).await;
+                    running.host.stop(STOP_GRACE).await.map_err(unstopped)?;
                 }
                 return Err(Failure::new(
                     "this agent's run cannot take another turn since its last one, so it was stopped",
@@ -294,7 +301,7 @@ impl Backend for External {
                         finished: false,
                     };
                     if let Some(running) = away.running.take() {
-                        running.host.stop(STOP_GRACE).await;
+                        running.host.stop(STOP_GRACE).await.map_err(unstopped)?;
                     }
                     return Ok(());
                 }

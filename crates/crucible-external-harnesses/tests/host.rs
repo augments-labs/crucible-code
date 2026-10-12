@@ -259,7 +259,7 @@ async fn a_second_run_of_one_agent_is_refused_while_the_first_lives() {
     .expect_err("one at a time");
 
     assert!(matches!(second, Refusal::Busy), "{second}");
-    first.stop(STOP_GRACE).await;
+    first.stop(STOP_GRACE).await.expect("stopped");
     assert_eq!(fake_peer::played(&at.0), 1);
 }
 
@@ -404,7 +404,7 @@ async fn a_secret_the_agent_echoes_reaches_no_event_and_no_failure() {
         )
         .await
         .expect_err("it crashed");
-    host.stop(STOP_GRACE).await;
+    host.stop(STOP_GRACE).await.expect("stopped");
 
     let kept = sink
         .events()
@@ -461,7 +461,7 @@ async fn stopping_an_unheeding_turn_ends_what_the_agent_started() {
                 &sink,
             )
             .await;
-        host.stop(STOP_GRACE).await;
+        host.stop(STOP_GRACE).await.expect("stopped");
         outcome
     });
     while fake_peer::lingering(&at.0).is_none() {
@@ -583,7 +583,7 @@ async fn a_session_name_that_reads_as_an_option_is_not_kept() {
         )
         .await;
     let kept = host.session().map(str::to_owned);
-    host.stop(STOP_GRACE).await;
+    host.stop(STOP_GRACE).await.expect("stopped");
 
     assert!(ended.is_err(), "{ended:?}");
     assert_eq!(kept, None);
@@ -594,23 +594,23 @@ async fn a_session_name_that_reads_as_an_option_is_not_kept() {
     );
 }
 
-/// Standard error is kept to its first bytes, so a value the agent writes
-/// across that bound is cut there; the part before the cut is withheld too.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_secret_cut_where_standard_error_is_bounded_shows_none_of_itself() {
-    let at = Owned::new("muttered-cut");
-    // Eight bytes of the value fit beneath the bound the host keeps.
+/// What a turn whose program wrote `value` to standard error after `flood`
+/// bytes, then crashed, left in its events and its failure.
+// Each step is one the tests it serves would fail on.
+#[allow(clippy::expect_used)]
+async fn crashed_muttering(name: &str, flood: u64, value: &str) -> String {
+    let at = Owned::new(name);
     let reply = Reply::new()
         .hear(1)
-        .flood(Stream::Err, 8 * 1024 - 8)
-        .mutter(SENTINEL)
+        .flood(Stream::Err, flood)
+        .mutter(value)
         .pause(Duration::from_millis(500))
         .exit(3);
     let program = found(&at.0, "plain", &Script::of([reply]));
     let control = Control::new().expect("a control");
     let request = Request {
         arguments: Vec::new(),
-        environment: vec![("PLAIN_TOKEN".to_owned(), SENTINEL.to_owned())],
+        environment: vec![("PLAIN_TOKEN".to_owned(), value.to_owned())],
     };
     let mut host = Host::launch(
         local(),
@@ -631,10 +631,9 @@ async fn a_secret_cut_where_standard_error_is_bounded_shows_none_of_itself() {
         )
         .await
         .expect_err("it crashed");
-    host.stop(STOP_GRACE).await;
+    host.stop(STOP_GRACE).await.expect("stopped");
 
-    let kept = sink
-        .events()
+    sink.events()
         .iter()
         .filter_map(|event| match event {
             Event::Process(fault) => Some(fault.seen().as_str()),
@@ -643,7 +642,27 @@ async fn a_secret_cut_where_standard_error_is_bounded_shows_none_of_itself() {
         })
         .chain([failure.reason().as_str()])
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+}
+
+/// Standard error is kept to its first bytes, so a value the agent writes
+/// across that bound is cut there; the part before the cut is withheld too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_cut_where_standard_error_is_bounded_shows_none_of_itself() {
+    // Eight bytes of the value fit beneath the bound the host keeps.
+    let kept = crashed_muttering("muttered-cut", 8 * 1024 - 8, SENTINEL).await;
+
+    assert!(kept.contains("further bytes were dropped"), "{kept}");
+    assert!(!kept.contains("sentinel"), "{kept}");
+}
+
+/// A cut inside one of a value's characters leaves half a character, which
+/// is shown as a replacement and hides nothing of what came before it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_cut_inside_a_character_shows_none_of_itself() {
+    // Ten bytes fit: `sentinel-` and the first of the two bytes of `é`.
+    let kept = crashed_muttering("muttered-split", 8 * 1024 - 10, "sentinel-é-5ec7e7").await;
+
     assert!(kept.contains("further bytes were dropped"), "{kept}");
     assert!(!kept.contains("sentinel"), "{kept}");
 }
@@ -731,7 +750,7 @@ async fn a_stop_asked_for_as_a_turn_begins_stops_it() {
         ),
     )
     .await;
-    host.stop(STOP_GRACE).await;
+    host.stop(STOP_GRACE).await.expect("stopped");
 
     assert!(matches!(outcome, Ok(Ok(Outcome::Cancelled))), "{outcome:?}");
 }
@@ -776,7 +795,7 @@ async fn a_turn_given_up_on_leaves_no_question_open() {
     }
 
     let open = control.open();
-    host.stop(STOP_GRACE).await;
+    host.stop(STOP_GRACE).await.expect("stopped");
 
     assert!(open.is_empty(), "{open:?}");
 }

@@ -432,7 +432,9 @@ impl Suite<'_> {
                 &sink,
             )
             .await;
-        host.stop(STOP_GRACE).await;
+        host.stop(STOP_GRACE)
+            .await
+            .map_err(|unstopped| unstopped.to_string())?;
         Ok(Played { result, sink })
     }
 }

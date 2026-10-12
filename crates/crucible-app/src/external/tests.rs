@@ -7,9 +7,13 @@ use crucible_execution::{
 };
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
 use crucible_external_harnesses::{CANCEL_GRACE, Control, Discovery, Held, Host, Launch};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxError,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInput,
+    SandboxInspection, SandboxLaunch, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
+    SandboxProcess, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxSession,
+    SandboxUsage, SandboxViolation,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_types::TurnId;
@@ -75,6 +79,17 @@ fn unconfined(here: &Path) -> SandboxPolicy {
 
 /// One run of the peer at `peer` on `control`, behind the backend.
 async fn started(peer: &Path, control: &Control) -> External {
+    started_in(
+        Arc::new(LocalSandbox::new().watching_on(Handle::current())),
+        peer,
+        control,
+    )
+    .await
+}
+
+/// One run of the peer at `peer` on `control` under `sandbox`, behind the
+/// backend.
+async fn started_in(sandbox: Arc<dyn SandboxService>, peer: &Path, control: &Control) -> External {
     let Discovery::Found(program) = Discovery::of(Some(peer)) else {
         panic!("the installed peer is found");
     };
@@ -83,14 +98,9 @@ async fn started(peer: &Path, control: &Control) -> External {
     // behind the contract.
     let launch = Launch::new(program, unconfined(here), Held::granted("agent:claude"))
         .asking(Plain.request(crucible_external_harnesses::Shape::default()));
-    let host = Host::launch(
-        Arc::new(LocalSandbox::new().watching_on(Handle::current())),
-        Handle::current(),
-        control,
-        launch,
-    )
-    .await
-    .expect("started");
+    let host = Host::launch(sandbox, Handle::current(), control, launch)
+        .await
+        .expect("started");
     External::new(
         host,
         Box::new(Plain),
@@ -411,4 +421,141 @@ async fn a_turn_after_the_run_ended_is_refused_before_it_starts() {
     assert!(lost.is_err(), "{lost:?}");
     assert!(again.is_err(), "{again:?}");
     assert!(second.events().is_empty(), "{:?}", second.events());
+}
+
+/// A sandbox whose processes run as the local one's do, but which can never
+/// confirm that one of them stopped.
+struct Stubborn(Arc<dyn SandboxService>);
+
+impl SandboxService for Stubborn {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.0.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session: Box<dyn SandboxSession> =
+                Box::new(StubbornSession(self.0.prepare(request).await?));
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct StubbornSession(Box<dyn SandboxSession>);
+
+impl SandboxSession for StubbornSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> =
+                Box::new(StubbornLaunch(self.0.stage(command).await?));
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct StubbornLaunch(Box<dyn SandboxLaunch>);
+
+impl SandboxLaunch for StubbornLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let process: Box<dyn SandboxProcess> =
+                Box::new(StubbornProcess(self.0.release().await?));
+            Ok(process)
+        })
+    }
+}
+
+/// Its process, which never reads as ended and whose stop always fails.
+struct StubbornProcess(Box<dyn SandboxProcess>);
+
+impl SandboxProcess for StubbornProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.0.take_async_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        Ok(None)
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async { Err(std::io::Error::other("the scope did not answer")) })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+/// A close whose stop could not be confirmed fails saying so, rather than
+/// answering that nothing the run started is still running.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_close_that_cannot_confirm_the_stop_fails() {
+    let sample = Sample::new("external-stubborn");
+    let peer = fake_peer::install(
+        &sample.root(),
+        "plain",
+        &Script::of([Reply::new().hear_out()]),
+    )
+    .expect("the fake peer is built");
+    let control = Control::new().expect("a control");
+    let backend = started_in(
+        Arc::new(Stubborn(Arc::new(
+            LocalSandbox::new().watching_on(Handle::current()),
+        ))),
+        &peer,
+        &control,
+    )
+    .await;
+
+    let closed = backend.close().await;
+
+    assert!(closed.is_err(), "{closed:?}");
 }

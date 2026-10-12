@@ -13,7 +13,7 @@ mod pending;
 
 pub use host::{
     Account, Act, CANCEL_GRACE, Control, Dialect, Host, PREPARING, RAN_BYTES, Ran, Reading,
-    SILENCE, STOP_GRACE, Shape, Undecided, WAITING, WITHHELD_BYTES, stripped,
+    SILENCE, STOP_GRACE, Shape, Undecided, Unstopped, WAITING, WITHHELD_BYTES, stripped,
 };
 pub use journal::{
     Entries, HISTORY, JOURNAL_BYTES, Journal, JournalError, REFERENCE_BYTES, Record, Stage, Work,

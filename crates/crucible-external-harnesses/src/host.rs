@@ -303,7 +303,7 @@ impl Control {
 
     /// Asks the running turn to stop, or the next to run where none is yet
     /// reading: a stop asked for just as a turn begins is not lost to it.
-    /// [`Control::rest`] forgets one nothing is left to heed.
+    /// [`Host::rest`] forgets one nothing is left to heed.
     pub fn interrupt(&self) {
         self.shared.interrupted.store(true, Ordering::SeqCst);
         self.shared.bell.notify_one();
@@ -929,6 +929,9 @@ impl Host {
         else {
             return self.shown(&Text::new(&said)).as_str().to_owned();
         };
+        // A cut inside a character left half of it, read as a replacement
+        // that would hide the part of a value before it.
+        let kept = kept.trim_end_matches(char::REPLACEMENT_CHARACTER);
         // Clipped one byte short of a character past what is kept, which
         // keeps all of it and says it was cut.
         let mut over = kept.to_owned();
@@ -1001,13 +1004,25 @@ impl Host {
     }
 
     /// Ends the run: its input closes, it has `grace` to exit, and it is
-    /// stopped where it does not. Says how it ended.
-    pub async fn stop(mut self, grace: Duration) -> String {
-        let finished = self.finish(grace).await;
+    /// stopped where it does not.
+    ///
+    /// # Errors
+    ///
+    /// [`Unstopped`] where it could not be confirmed to have stopped, so that
+    /// its process may still be running.
+    pub async fn stop(mut self, grace: Duration) -> Result<(), Unstopped> {
+        self.finish(grace).await;
+        let unconfirmed = matches!(self.finished, Some(Finish::Unreaped(_)) | None);
         drop(self);
-        finished
+        if unconfirmed { Err(Unstopped) } else { Ok(()) }
     }
 }
+
+/// A run that could not be confirmed to have stopped: its process may still
+/// be running.
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("this agent's run could not be confirmed to have stopped, so it may still be running")]
+pub struct Unstopped;
 
 /// The weakest claim among what confines a process at all: its filesystem,
 /// its descriptors, its descendants, the kernel's surface and its privileges.

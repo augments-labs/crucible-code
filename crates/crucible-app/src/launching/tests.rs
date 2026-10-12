@@ -128,7 +128,9 @@ async fn a_clean_turn_through_a_launch_is_complete_and_speaks_the_dialects_argum
             &kept,
         )
         .await;
-    host.stop(crucible_external_harnesses::STOP_GRACE).await;
+    host.stop(crucible_external_harnesses::STOP_GRACE)
+        .await
+        .expect("stopped");
 
     assert_eq!(ended, Ok(Outcome::Answered));
     let events = kept.events();
