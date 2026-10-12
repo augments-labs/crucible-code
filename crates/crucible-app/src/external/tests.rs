@@ -6,7 +6,7 @@ use crucible_execution::{
     Sink, Stale, TurnRequest,
 };
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
-use crucible_external_harnesses::{CANCEL_GRACE, Control, Discovery, Held, Host, Launch};
+use crucible_external_harnesses::{CANCEL_GRACE, Control, Discovery, Held, Host, Launch, Refusal};
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxError,
@@ -90,6 +90,22 @@ async fn started(peer: &Path, control: &Control) -> External {
 /// One run of the peer at `peer` on `control` under `sandbox`, behind the
 /// backend.
 async fn started_in(sandbox: Arc<dyn SandboxService>, peer: &Path, control: &Control) -> External {
+    let host = launched(sandbox, peer, control).await.expect("started");
+    External::new(
+        host,
+        Box::new(Plain),
+        SessionRef::new("one").expect("a name"),
+        "work",
+        claims(),
+    )
+}
+
+/// A launch of the peer at `peer` on `control` under `sandbox`.
+async fn launched(
+    sandbox: Arc<dyn SandboxService>,
+    peer: &Path,
+    control: &Control,
+) -> Result<Host, Refusal> {
     let Discovery::Found(program) = Discovery::of(Some(peer)) else {
         panic!("the installed peer is found");
     };
@@ -98,16 +114,7 @@ async fn started_in(sandbox: Arc<dyn SandboxService>, peer: &Path, control: &Con
     // behind the contract.
     let launch = Launch::new(program, unconfined(here), Held::granted("agent:claude"))
         .asking(Plain.request(crucible_external_harnesses::Shape::default()));
-    let host = Host::launch(sandbox, Handle::current(), control, launch)
-        .await
-        .expect("started");
-    External::new(
-        host,
-        Box::new(Plain),
-        SessionRef::new("one").expect("a name"),
-        "work",
-        claims(),
-    )
+    Host::launch(sandbox, Handle::current(), control, launch).await
 }
 
 fn turn(prompt: &str) -> TurnRequest {
@@ -558,4 +565,57 @@ async fn a_close_that_cannot_confirm_the_stop_fails() {
     let closed = backend.close().await;
 
     assert!(closed.is_err(), "{closed:?}");
+}
+
+/// A run of a peer that hears out, under a sandbox that cannot confirm it
+/// stopped.
+async fn stubborn(sample: &Sample, control: &Control) -> (External, std::path::PathBuf) {
+    let peer = fake_peer::install(
+        &sample.root(),
+        "plain",
+        &Script::of([Reply::new().hear_out()]),
+    )
+    .expect("the fake peer is built");
+    let backend = started_in(
+        Arc::new(Stubborn(Arc::new(
+            LocalSandbox::new().watching_on(Handle::current()),
+        ))),
+        &peer,
+        control,
+    )
+    .await;
+    (backend, peer)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_close_and_turn_after_an_unconfirmed_stop_fails() {
+    let sample = Sample::new("external-stubborn-again");
+    let control = Control::new().expect("a control");
+    let (backend, _) = stubborn(&sample, &control).await;
+    let sink = Kept::default();
+
+    let first = backend.close().await;
+    let second = backend.close().await;
+    let prompted = backend.prompt(turn("again"), &sink).await;
+
+    assert!(first.is_err(), "{first:?}");
+    assert!(second.is_err(), "{second:?}");
+    assert!(prompted.is_err(), "{prompted:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_run_starts_beside_one_not_confirmed_stopped() {
+    let sample = Sample::new("external-stubborn-beside");
+    let control = Control::new().expect("a control");
+    let (backend, peer) = stubborn(&sample, &control).await;
+    assert!(backend.close().await.is_err());
+
+    let beside = launched(
+        Arc::new(LocalSandbox::new().watching_on(Handle::current())),
+        &peer,
+        &control,
+    )
+    .await;
+
+    assert!(beside.is_err(), "{beside:?}");
 }

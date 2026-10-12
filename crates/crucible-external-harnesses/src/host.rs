@@ -30,7 +30,9 @@
 //!
 //! Stopping a turn asks first, in the dialect's own words, waits out a grace,
 //! and only then stops the sandbox's process, which ends the scope it started
-//! and nothing else: a host never stops a process it did not start.
+//! and nothing else: a host never stops a process it did not start. A run
+//! that could not be confirmed to have stopped keeps its agent's one place, so
+//! no other run of that agent is started beside it.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -225,6 +227,9 @@ struct Shared {
     bell: Notify,
     /// Whether a run is live, which is the bound of one process at a time.
     running: AtomicBool,
+    /// Whether a run could not be confirmed to have stopped, which keeps
+    /// `running` held for good.
+    unstopped: AtomicBool,
 }
 
 /// The handle a backend decides and interrupts through, shared by every run
@@ -269,6 +274,7 @@ impl Control {
                 interrupted: AtomicBool::new(false),
                 bell: Notify::new(),
                 running: AtomicBool::new(false),
+                unstopped: AtomicBool::new(false),
             }),
         })
     }
@@ -411,7 +417,12 @@ impl fmt::Debug for Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
-        self.control.shared.running.store(false, Ordering::SeqCst);
+        // A process that may still be running still takes the agent's place.
+        if matches!(self.finished, Some(Finish::Unreaped(_))) {
+            self.control.shared.unstopped.store(true, Ordering::SeqCst);
+        } else {
+            self.control.shared.running.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -436,6 +447,9 @@ impl Host {
         launch: Launch,
     ) -> Result<Self, Refusal> {
         launch.program().unchanged()?;
+        if control.shared.unstopped.load(Ordering::SeqCst) {
+            return Err(Refusal::Unstopped);
+        }
         if control
             .shared
             .running

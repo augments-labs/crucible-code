@@ -405,6 +405,11 @@ pub enum Refusal {
     /// A process is already running for this host.
     #[error("this agent is already running")]
     Busy,
+    /// An earlier run could not be confirmed to have stopped.
+    #[error(
+        "an earlier run of this agent could not be confirmed to have stopped, so no other is started beside it; restart crucible"
+    )]
+    Unstopped,
     /// This process has started the agent as many times as it can number.
     #[error("crucible has started this agent as many times as it can; restart crucible")]
     Spent,

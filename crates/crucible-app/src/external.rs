@@ -20,7 +20,8 @@
 //! forgotten when the run is given back. Closing asks a turn under way to stop
 //! and waits, for at most [`CLOSING`], until it gives the run back, then holds
 //! the run while it stops it, so that every close returns once nothing the run
-//! started is still running, or fails saying so.
+//! started is still running, or fails saying so; once a stop could not be
+//! confirmed, every later close and prompt fails saying so too.
 //!
 //! Confinement is claimed from what the sandbox reported when the run was
 //! started and from nothing else.
@@ -69,6 +70,9 @@ enum Slot {
     Spent(Running),
     /// Stopped.
     Closed,
+    /// Stopped as far as it could be, without its end confirmed, or left
+    /// while it was being stopped.
+    Unstopped,
 }
 
 /// An installed agent's run, answering as a [`Backend`].
@@ -152,6 +156,8 @@ struct Away<'s> {
     running: Option<Running>,
     /// Whether the turn returned, so that the program is between turns.
     finished: bool,
+    /// Whether the run it took was confirmed to have stopped.
+    stopped: bool,
 }
 
 impl Drop for Away<'_> {
@@ -159,7 +165,8 @@ impl Drop for Away<'_> {
         let mut slot = self.external.slot();
         let closing = matches!(*slot, Slot::Away { closing: true });
         *slot = match self.running.take() {
-            None => Slot::Closed,
+            None if self.stopped => Slot::Closed,
+            None => Slot::Unstopped,
             Some(running) if self.finished && !closing && !running.host.ended() => {
                 // A stop rung as the turn ended has nothing left to stop.
                 running.host.rest();
@@ -214,17 +221,23 @@ impl Backend for External {
                         *slot = Slot::Closed;
                         return Err(Failure::new("this agent's run has ended").into());
                     }
+                    Slot::Unstopped => {
+                        *slot = Slot::Unstopped;
+                        return Err(unstopped(Unstopped));
+                    }
                 }
             };
             let mut away = Away {
                 external: self,
                 running: Some(running),
                 finished: false,
+                stopped: false,
             };
             if spent {
                 if let Some(running) = away.running.take() {
                     running.host.stop(STOP_GRACE).await.map_err(unstopped)?;
                 }
+                away.stopped = true;
                 return Err(Failure::new(
                     "this agent's run cannot take another turn since its last one, so it was stopped",
                 )
@@ -285,6 +298,10 @@ impl Backend for External {
                             *slot = Slot::Closed;
                             return Ok(());
                         }
+                        Slot::Unstopped => {
+                            *slot = Slot::Unstopped;
+                            return Err(unstopped(Unstopped));
+                        }
                         Slot::Away { closing } => {
                             if !closing {
                                 self.control.interrupt();
@@ -299,10 +316,12 @@ impl Backend for External {
                         external: self,
                         running: Some(running),
                         finished: false,
+                        stopped: false,
                     };
                     if let Some(running) = away.running.take() {
                         running.host.stop(STOP_GRACE).await.map_err(unstopped)?;
                     }
+                    away.stopped = true;
                     return Ok(());
                 }
                 if tokio::time::timeout_at(deadline, returned).await.is_err() {
