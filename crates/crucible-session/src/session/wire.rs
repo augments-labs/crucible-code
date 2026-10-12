@@ -35,15 +35,19 @@ use serde_json::{Value, json};
 /// is refused rather than half-understood, which is the difference between
 /// telling the user their session cannot be continued and silently continuing
 /// a different one.
+///
+/// Only a session an installed agent runs is headed with it; see
+/// [`PROVIDER_LINES`].
 pub(crate) const FORMAT: u32 = 14;
 
-/// The format a line a provider's model writes is guarded with, where an
-/// older log gains one: the last before [`FORMAT`] added only what an installed
-/// agent writes.
+/// The format a session a provider's model runs is headed with, and the guard
+/// on a line a provider's model writes where an older log gains one: the last
+/// before [`FORMAT`] added only what an installed agent writes.
 ///
 /// A release that wrote this format reads every line a provider's model
-/// writes here, so a log of its continued here with one stays a log it reads.
-/// Guarded with [`FORMAT`], it would be refused by the release that wrote it,
+/// writes here, so such a session, new or continued here, stays a log it
+/// reads, and rolling back to it loses no session it could have run. Headed or
+/// guarded with [`FORMAT`], it would be refused by the release that wrote it,
 /// for a line kind that release has a word for.
 pub(crate) const PROVIDER_LINES: u32 = 13;
 
@@ -902,22 +906,37 @@ pub(crate) fn uncertainty(line: &str) -> Option<Uncertain> {
     ))
 }
 
-/// The first line, which says what the file is and what it belongs to.
+/// The first line, which says what the file is and what it belongs to, and
+/// for a session an installed agent runs, the route after it.
 ///
 /// The branch is whatever the caller says the workspace's version control had
 /// checked out when the session began — this crate does not run git, so the
 /// caller that can look supplies it and a caller that cannot passes `None`,
 /// and the key is left off the line rather than written null.
-pub(crate) fn header(session: &SessionId, workspace: &Path, branch: Option<&str>) -> String {
+///
+/// Only a session with a route is numbered [`FORMAT`]. One a provider's model
+/// runs writes nothing [`PROVIDER_LINES`] lacks, so it carries that number and
+/// the release that wrote it still continues it after a rollback.
+pub(crate) fn header(
+    session: &SessionId,
+    workspace: &Path,
+    branch: Option<&str>,
+    route: Option<&RouteBinding>,
+) -> String {
     let mut value = json!({
-        "format": FORMAT,
+        "format": if route.is_some() { FORMAT } else { PROVIDER_LINES },
         "session": session.as_str(),
         "workspace": workspace.display().to_string(),
     });
     if let (Some(branch), Some(object)) = (branch, value.as_object_mut()) {
         object.insert("branch".to_owned(), Value::String(branch.to_owned()));
     }
-    value.to_string()
+    let mut header = value.to_string();
+    if let Some(route) = route {
+        header.push('\n');
+        header.push_str(&self::route(route));
+    }
+    header
 }
 
 /// What a header says, or `None` if this is not one.
@@ -2160,12 +2179,12 @@ mod tests {
             .parse()
             .expect("a uuid session id parses");
 
-        let written = header(&id, Path::new("/somewhere"), Some("feature/picker"));
+        let written = header(&id, Path::new("/somewhere"), Some("feature/picker"), None);
         let read = opening(&written).expect("the header this build writes opens");
 
         assert_eq!(read.branch.as_deref(), Some("feature/picker"));
         assert_eq!(read.workspace, "/somewhere");
-        assert_eq!(read.format, FORMAT);
+        assert_eq!(read.format, PROVIDER_LINES);
     }
 
     #[test]

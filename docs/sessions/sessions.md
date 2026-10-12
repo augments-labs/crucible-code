@@ -187,7 +187,8 @@ before it and the file is cut to match.
 
 ## Conversation, journal and checkpoints
 
-New logs use format 14 and remain readable alongside formats 3–13. Format 12
+A session a provider's model runs is written as format 13, and one an installed
+agent runs as format 14; both remain readable alongside formats 3–12. Format 12
 adds bounded provider continuation beside completed agent messages: signed
 thinking, encrypted reasoning and native ordering needed for subsequent tool
 passes. This private state is not rendered or given to the recap model, and a
@@ -202,8 +203,9 @@ format 13 without knowing it, such as 0.41.0, ignore it and still resume these l
 Format 14 adds the lines a session an installed agent ran records about it,
 described under [What is in a file](#what-is-in-a-file). Builds before it cannot
 resume a format 14 log and say it was written by a different version of
-crucible. A format 13 log continued by a newer build keeps its number and stays
-readable by the build that wrote it.
+crucible. A format 13 log, new or continued by a newer build, keeps its number
+and stays readable by a build that reads format 13, so going back to 0.47
+loses no session a provider's model ran.
 
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible
@@ -691,11 +693,11 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"branch":"main","format":14,"session":"…","workspace":"/home/you/code/my-project"}
+{"branch":"main","format":13,"session":"…","workspace":"/home/you/code/my-project"}
 ```
 
-A session an installed agent ran has a second line, written with the first,
-saying which one: its driver, its configured name, the profile it was given,
+A session an installed agent ran is numbered 14 and has a second line, written
+with the first, saying which one: its driver, its configured name, the profile it was given,
 a digest of where its program was found rather than the path, the version it
 reported and which run of the agent opened the session. No environment,
 command line or credential is written there.

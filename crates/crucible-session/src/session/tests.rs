@@ -681,7 +681,7 @@ fn a_log_says_what_it_is_and_which_workspace_it_belongs_to() {
 
     assert_eq!(
         header.get("format").and_then(Value::as_u64),
-        Some(u64::from(wire::FORMAT)),
+        Some(u64::from(wire::PROVIDER_LINES)),
         "{header}"
     );
     assert_eq!(
@@ -727,12 +727,17 @@ fn a_log_from_the_format_before_this_one_is_still_a_session_to_continue() {
     session.append(&said("what an older build recorded"));
     drop(session);
 
-    // The same log, headed the way the build before this one headed it.
+    // The same log, headed the way the build before the one whose number it
+    // carries headed it.
     let text = fs::read_to_string(&path).expect("the log");
     let older = text.replacen(
-        &format!("\"format\":{}", wire::FORMAT),
-        &format!("\"format\":{}", wire::FORMAT - 1),
+        &format!("\"format\":{}", wire::PROVIDER_LINES),
+        &format!("\"format\":{}", wire::PROVIDER_LINES - 1),
         1,
+    );
+    assert_ne!(
+        older, text,
+        "the header carries the number it is moved from"
     );
     fs::write(&path, older).expect("a writable log");
 

@@ -71,6 +71,26 @@ fn a_log_from_before_an_agent_could_run_a_session_reads_and_continues_as_it_did(
 }
 
 #[test]
+fn only_a_session_an_agent_runs_is_headed_with_a_number_the_release_before_it_refuses() {
+    // A session a provider's model runs writes nothing the format before this
+    // one lacks, so it carries that number and the release before this one
+    // continues it; one an agent runs carries this number and is refused there.
+    let sample = Sample::new("format-by-route");
+    let heading = |session: &Session| {
+        let log = fs::read_to_string(session.path()).expect("the log");
+        let header = log.lines().next().expect("a header").to_owned();
+        wire::opening(&header).map(|opening| opening.format)
+    };
+
+    let native = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    let routed = Session::start_routed(&sample.logs(), &sample.workspace(), None, &work())
+        .expect("a session");
+
+    assert_eq!(heading(&native), Some(wire::PROVIDER_LINES));
+    assert_eq!(heading(&routed), Some(wire::FORMAT));
+}
+
+#[test]
 fn a_log_an_agent_ran_reads_back_its_route_the_agents_name_for_it_and_its_open_turn() {
     let sample = Sample::new("format-14");
     let log = fixture("format-14.jsonl");

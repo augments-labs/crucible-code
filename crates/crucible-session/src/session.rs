@@ -386,11 +386,7 @@ impl Session {
                 return Err(problem);
             }
 
-            let mut header = wire::header(&id, workspace.root(), branch);
-            if let Some(route) = route {
-                header.push('\n');
-                header.push_str(&wire::route(route));
-            }
+            let header = wire::header(&id, workspace.root(), branch, route);
             writeln!(file, "{header}").map_err(|source| SessionError::Log {
                 at: path.display().to_string().into(),
                 source,
