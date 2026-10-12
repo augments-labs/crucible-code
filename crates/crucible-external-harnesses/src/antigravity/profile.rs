@@ -7,7 +7,9 @@
 //! named, so the agent signs in, keeps its files and unpacks itself inside the
 //! profile alone: its home for sign-in is the profile's directory, and its
 //! token is a file there rather than an entry in the shared keyring, so a
-//! sign-in another Google product keeps is never read as its own.
+//! sign-in another Google product keeps is never read as its own. Without a
+//! profile it keeps its files in its usual home, and its token still in a
+//! file.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -45,13 +47,7 @@ const NO_BROWSER: &str = "cmd.exe /c rem";
 #[cfg(not(windows))]
 const NO_BROWSER: &str = "true";
 
-/// The program beside the agent's executable that runs its tools.
-#[cfg(windows)]
-const HARNESS: &str = "localharness_external.exe";
-#[cfg(not(windows))]
-const HARNESS: &str = "localharness_external";
-
-/// The environment for a launch of `executable` in `profile`, from the
+/// The environment for a launch in `profile`, where there is one, from the
 /// `ambient` one.
 ///
 /// On Windows a variable is matched whatever its case, as Windows matches it;
@@ -59,8 +55,7 @@ const HARNESS: &str = "localharness_external";
 /// is.
 pub(crate) fn environment(
     ambient: impl IntoIterator<Item = (OsString, OsString)>,
-    profile: &Path,
-    executable: Option<&Path>,
+    profile: Option<&Path>,
 ) -> Vec<(String, String)> {
     let mut environment: Vec<(String, String)> = ambient
         .into_iter()
@@ -70,27 +65,23 @@ pub(crate) fn environment(
             Some(((*passed).to_owned(), value))
         })
         .collect();
-    let home = profile.display().to_string();
     environment.extend(
         [
-            ("GEMINI_HOME", home.as_str()),
             ("AGY_ACP_FORCE_FILE_STORAGE", "1"),
             ("AGY_CLI_DISABLE_AUTO_UPDATE", "1"),
             ("BROWSER", NO_BROWSER),
             ("PYTHONUNBUFFERED", "1"),
         ]
-        .into_iter()
-        .chain(TEMPORARY.map(|name| (name, home.as_str())))
         .map(|(name, value)| (name.to_owned(), value.to_owned())),
     );
-    if let Some(harness) = executable
-        .and_then(Path::parent)
-        .map(|directory| directory.join(HARNESS))
-    {
-        environment.push((
-            "ANTIGRAVITY_HARNESS_PATH".to_owned(),
-            harness.display().to_string(),
-        ));
+    if let Some(profile) = profile {
+        let home = profile.display().to_string();
+        environment.extend(
+            ["GEMINI_HOME"]
+                .into_iter()
+                .chain(TEMPORARY)
+                .map(|name| (name.to_owned(), home.clone())),
+        );
     }
     environment
 }

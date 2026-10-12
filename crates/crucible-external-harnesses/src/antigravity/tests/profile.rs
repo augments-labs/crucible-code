@@ -28,10 +28,9 @@ const STRIPPED: [&str; 17] = [
 ];
 
 /// The variables the profile sets itself, each to its own value.
-const SET: [&str; 5] = [
+const SET: [&str; 4] = [
     "GEMINI_HOME",
     "AGY_ACP_FORCE_FILE_STORAGE",
-    "ANTIGRAVITY_HARNESS_PATH",
     "BROWSER",
     "PYTHONUNBUFFERED",
 ];
@@ -51,7 +50,7 @@ fn no_ambient_google_credential_reaches_the_agent() {
         ]);
     let profile = Path::new("/profiles/work");
 
-    let environment = environment(ambient, profile, Some(Path::new("/opt/agy/agy_acp_server.par")));
+    let environment = environment(ambient, Some(profile));
 
     for (name, value) in &environment {
         assert!(

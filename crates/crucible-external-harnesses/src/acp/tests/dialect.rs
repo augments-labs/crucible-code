@@ -68,18 +68,22 @@ fn the_first_turn_opens_a_session_then_sends_the_prompt() {
     let opening = acp.heard(&initialized(1)).unwrap();
     let prompted = acp.heard(&response(1, &json!({"sessionId": "s"}))).unwrap();
 
-    let initialize: Value = serde_json::from_str(&frames[0]).unwrap();
-    assert_eq!(initialize["method"], "initialize");
-    assert_eq!(initialize["params"]["clientCapabilities"]["terminal"], false);
-    let Act::Send(new) = &opening[0] else { panic!("{opening:?}") };
+    let [first] = frames.as_slice() else { panic!("{frames:?}") };
+    let initialize: Value = serde_json::from_str(first).unwrap();
+    assert_eq!(initialize.pointer("/method"), Some(&json!("initialize")));
+    let terminal = initialize.pointer("/params/clientCapabilities/terminal");
+    assert_eq!(terminal, Some(&json!(false)));
+    let [Act::Send(new)] = opening.as_slice() else { panic!("{opening:?}") };
     let new: Value = serde_json::from_str(new).unwrap();
-    assert_eq!(new["method"], "session/new");
-    assert_eq!(new["params"]["cwd"], "/work");
-    assert_eq!(prompted[0], Act::Session("s".to_owned()));
-    let Act::Send(prompt) = &prompted[1] else { panic!("{prompted:?}") };
+    assert_eq!(new.pointer("/method"), Some(&json!("session/new")));
+    assert_eq!(new.pointer("/params/cwd"), Some(&json!("/work")));
+    let [Act::Session(session), Act::Send(prompt)] = prompted.as_slice() else {
+        panic!("{prompted:?}")
+    };
+    assert_eq!(session, "s");
     let prompt: Value = serde_json::from_str(prompt).unwrap();
-    assert_eq!(prompt["params"]["sessionId"], "s");
-    assert_eq!(prompt["params"]["prompt"][0]["text"], "hello");
+    assert_eq!(prompt.pointer("/params/sessionId"), Some(&json!("s")));
+    assert_eq!(prompt.pointer("/params/prompt/0/text"), Some(&json!("hello")));
 }
 
 /// An agent answering in a protocol version its profile does not list is

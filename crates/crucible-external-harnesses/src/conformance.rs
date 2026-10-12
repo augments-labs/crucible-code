@@ -446,7 +446,6 @@ impl Suite<'_> {
         let here = program.parent().unwrap_or(program);
         let shape = Shape {
             workspace: Some(here),
-            executable: Some(program),
             ..Shape::default()
         };
         let mut launch = Launch::new(found, policy(here)?, Held::granted(ROUTE))

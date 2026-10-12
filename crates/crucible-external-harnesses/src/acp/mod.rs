@@ -90,7 +90,7 @@ pub struct Initialized {
 
 impl Initialized {
     /// What the result of initializing says.
-    fn read(result: &Value) -> Self {
+    pub(crate) fn read(result: &Value) -> Self {
         let named = |value: Option<&Value>| {
             value
                 .and_then(Value::as_str)
@@ -451,7 +451,7 @@ impl Acp {
                 };
                 self.after_initializing(step, &initialized)
             }
-            (Awaited::Status, Ok(_)) | (Awaited::SignIn, Ok(_)) => {
+            (Awaited::Status | Awaited::SignIn, Ok(_)) => {
                 done(Reading::Signed(Authentication::SignedIn))
             }
             (Awaited::Status, Err(refused)) if refused.code == SIGN_IN_REQUIRED => {
