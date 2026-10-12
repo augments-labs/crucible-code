@@ -54,6 +54,6 @@ saying to sign in. Signing out runs the agent's own logout, then asks again
 whether a session can be opened, and says the sign-out is unverified unless
 the agent then answers that it is signed out.
 
-**Network.** Its sandbox lets the agent reach `accounts.google.com`,
-`oauth2.googleapis.com`, `cloudcode-pa.googleapis.com` and
-`daily-cloudcode-pa.googleapis.com`, and no other Google host.
+**Network.** Its sandbox adds to what the conversation lets it reach
+`accounts.google.com`, `oauth2.googleapis.com`, `cloudcode-pa.googleapis.com`
+and `daily-cloudcode-pa.googleapis.com`, by name, and no other Google host.

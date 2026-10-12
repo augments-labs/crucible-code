@@ -214,7 +214,7 @@ impl Sink for Recorder {
         match (&self.react, &event) {
             (React::Interrupt, Event::Started { .. })
             | (React::InterruptOnEffect, Event::ToolActivity { .. } | Event::FileChanged { .. }) => {
-                self.control.interrupt()
+                self.control.interrupt();
             }
             (React::Allow, Event::Pending(reference, _)) => {
                 // A refusal here leaves the question open, which the case's

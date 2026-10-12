@@ -229,6 +229,25 @@ fn a_turn_stopped_before_its_prompt_is_out_sends_nothing_more() {
     );
 }
 
+/// A turn stopped while the agent is being initialized leaves it initialized,
+/// so the next turn on the same connection opens its session without
+/// initializing it again.
+#[test]
+fn a_turn_stopped_while_initializing_leaves_the_next_to_open_its_session() {
+    let (mut acp, _) = opened();
+    let _ = acp.cancel();
+    let _ = acp.heard(&initialized(1)).unwrap();
+
+    let frames = acp
+        .open(&TurnRequest::new(TurnId::FIRST.next(), "again"))
+        .unwrap();
+
+    let [frame] = frames.as_slice() else {
+        panic!("{frames:?}")
+    };
+    assert!(frame.contains("\"session/new\""), "{frame}");
+}
+
 /// A permission asked of no open session, or of another one, is refused
 /// rather than asked of the user.
 #[test]
@@ -261,7 +280,13 @@ fn a_permission_is_asked_as_its_input_never_its_title() {
             Some(json!({"address": "https://elsewhere.example"})),
             "https://elsewhere.example",
         ),
-        ("execute", None, ""),
+        ("execute", None, "The agent did not say what it would run."),
+        (
+            "execute",
+            Some(json!(null)),
+            "The agent did not say what it would run.",
+        ),
+        ("fetch", None, "The agent did not say what it would fetch."),
     ] {
         let mut call = json!({"toolCallId": "t", "title": "list the files", "kind": kind});
         if let (Some(input), Some(fields)) = (input, call.as_object_mut()) {

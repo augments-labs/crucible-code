@@ -124,5 +124,5 @@ fn an_update_of_a_kind_not_defined_is_dropped_and_counted() {
     let _ = updates.heard(&usage(0.25));
 
     assert!(unknown.is_empty() && unnamed.is_empty());
-    assert_eq!(updates.unknown(), 2);
+    assert_eq!(updates.unknown, 2);
 }

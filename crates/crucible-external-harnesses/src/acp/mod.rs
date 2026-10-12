@@ -11,14 +11,15 @@
 //! alone.
 //!
 //! A turn stopped before its prompt is out sends the agent nothing more and
-//! ends cancelled once the request it is waiting on is answered.
+//! ends cancelled once the request it is waiting on is answered; an agent it
+//! initialized is not initialized again by the next turn.
 //!
 //! This client offers the agent no file system and no terminal, so the one
 //! request it answers is a permission, and only one asked of the session it
 //! opened. Any other request asks for authority the agent was never given,
 //! and the turn ends incomplete rather than leave it unanswered. A permission
-//! is shown as the input the agent would run or fetch with, never as the
-//! title it gave the call, and is answered with one of the options the agent
+//! is shown as the input the agent would run or fetch with, or as saying it
+//! gave none, never as the title it gave the call, and is answered with one of the options the agent
 //! offered for it. Once the turn is stopped, a question answered is answered
 //! cancelled, as the protocol asks; one still open when it was stopped is
 //! left to the agent's own end of the turn.
@@ -205,6 +206,8 @@ pub struct Acp {
     next: u64,
     /// The request sent and not yet answered, with its id.
     awaited: Option<(u64, Awaited)>,
+    /// What the agent said of itself once it was initialized and admitted.
+    initialized: Option<Initialized>,
     /// The open session.
     session: Option<String>,
     /// The running turn.
@@ -229,6 +232,7 @@ impl Acp {
             resume: None,
             next: 0,
             awaited: None,
+            initialized: None,
             session: None,
             turn: TurnId::FIRST,
             held: None,
@@ -336,14 +340,14 @@ impl Acp {
             Err(refused) => return Ok(self.ended(Act::Fail(refusal(&refused)))),
         };
         match awaited {
-            Awaited::Initialize if self.stopping => {
-                self.held = None;
-                Ok(self.ended(Act::End(Outcome::Cancelled)))
-            }
             Awaited::Initialize => {
-                let opened = self
-                    .admitted(&result)
-                    .and_then(|initialized| self.open_session(&initialized));
+                let admitted = self.admitted(&result);
+                self.initialized = admitted.as_ref().ok().cloned();
+                if self.stopping {
+                    self.held = None;
+                    return Ok(self.ended(Act::End(Outcome::Cancelled)));
+                }
+                let opened = admitted.and_then(|initialized| self.open_session(&initialized));
                 Ok(vec![opened.map_or_else(Act::Fail, Act::Send)])
             }
             Awaited::Open { kept } => {
@@ -439,23 +443,25 @@ impl Acp {
         // input as the agent sent it. The title is the agent's own account
         // of the call, which nothing holds it to.
         let input = call.get("rawInput").filter(|input| !input.is_null());
-        let raw = |key: &str| {
-            let named = input
-                .and_then(|input| input.get(key))
-                .and_then(Value::as_str);
-            named.map_or_else(
-                || Text::new(&input.map(Value::to_string).unwrap_or_default()),
-                Text::new,
-            )
+        let raw = |key: &str, unsaid: &str| {
+            let Some(input) = input else {
+                return Text::new(unsaid);
+            };
+            input
+                .get(key)
+                .and_then(Value::as_str)
+                .map_or_else(|| Text::new(&input.to_string()), Text::new)
         };
         let detail = match kind {
             "read" | "search" => Detail::Reads,
             "edit" | "delete" | "move" => Detail::MutatesFile,
-            "fetch" => Detail::Network { sent: raw("url") },
+            "fetch" => Detail::Network {
+                sent: raw("url", "The agent did not say what it would fetch."),
+            },
             // A command, and whatever the agent did not name, is asked as
             // what it says it would run, the widest thing it could be.
             _ => Detail::Command {
-                sent: raw("command"),
+                sent: raw("command", "The agent did not say what it would run."),
                 left_running: false,
             },
         };
@@ -573,6 +579,11 @@ impl Dialect for Acp {
             return Err(Failure::new("The agent's session is still being opened."));
         }
         self.held = Some(turn.prompt().to_owned());
+        // An agent initialized by a turn stopped before its session opened is
+        // not initialized again on the same connection.
+        if let Some(initialized) = self.initialized.clone() {
+            return Ok(vec![self.open_session(&initialized)?]);
+        }
         Ok(vec![self.initialize()])
     }
 

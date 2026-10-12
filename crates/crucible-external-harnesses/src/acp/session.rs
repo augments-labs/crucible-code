@@ -119,8 +119,9 @@ pub(crate) struct Updates {
     before: Spent,
     /// The running cost the running turn last reported.
     latest: Option<Cost>,
-    /// How many updates of no kind defined were dropped.
-    unknown: u32,
+    /// How many updates of no kind defined were dropped, which no event a
+    /// turn reports carries yet.
+    pub(crate) unknown: u32,
 }
 
 impl Updates {
@@ -183,15 +184,6 @@ impl Updates {
             | Kind::CompactionUpdate
             | Kind::CompactionSummaryChunk => Vec::new(),
         }
-    }
-
-    /// How many updates of no kind defined were dropped.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no event a turn reports carries the count yet")
-    )]
-    pub(crate) const fn unknown(&self) -> u32 {
-        self.unknown
     }
 
     /// The usage of the turn `turn`, which has ended, where its cost is known.

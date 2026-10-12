@@ -17,9 +17,10 @@
 //! speaks over the program's own wire is bounded: a version or status within
 //! the time a launch has to prepare, a sign-in within five minutes.
 //!
-//! A profile directory is made private to the user, created owner-only where
-//! it is missing and closed to everyone else where it is not, before the
-//! process that keeps its sign-in there is started.
+//! On macOS and Linux a profile directory is made private to the user,
+//! created owner-only where it is missing and closed to everyone else where
+//! it is not, before the process that keeps its sign-in there is started.
+//! Elsewhere it is created where it is missing and its access left as it is.
 //!
 //! The child's policy is the conversation's, widened in exactly two ways: its
 //! profile directory, where one is configured, is writable but for the
