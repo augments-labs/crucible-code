@@ -419,10 +419,15 @@ else
     fi
 fi
 
-section "every HTTP client is built where its hold was decided"
+section "every vendor client is built where its hold was decided"
 # A request leaves through a client, and a hold is handed to a client when it
-# is built. Each file below builds one outside a tests file, and each was
-# decided about: renewal.rs builds the client sign-ins and renewals go
+# is built; an installed agent's process is a client of its vendor, and its
+# hold is the `Held` its launch is given. Each file below builds an HTTP
+# client, mints a `Held` or launches an agent outside a tests file, and each
+# was decided about: content_use.rs mints a `Held` only for a route the user
+# said yes to, and launching.rs is the one place an installed agent is started,
+# under that hold; conformance.rs launches the fake peer, which reaches no
+# vendor, and compiles only under the proof feature; renewal.rs builds the client sign-ins and renewals go
 # through, handed the application's hold; release.rs lends the client
 # provider turns and web posts share only under a hold its caller hands in,
 # and builds the release check's own, which reaches GitHub alone; command.rs
@@ -430,19 +435,22 @@ section "every HTTP client is built where its hold was decided"
 # which reaches this machine alone and carries nothing from a session;
 # transport/http.rs builds one only inside its test module. One more file is
 # one more decision to take.
-decided="crates/crucible-auth/src/oauth/renewal.rs
+decided="crates/crucible-app/src/content_use.rs
+crates/crucible-app/src/launching.rs
+crates/crucible-auth/src/oauth/renewal.rs
+crates/crucible-external-harnesses/src/conformance.rs
 crates/crucible-provider/src/transport/http.rs
 crates/crucible-update/src/command.rs
 crates/crucible-update/src/release.rs"
 built=$(git ls-files 'crates/*.rs' 'src/*.rs' |
     grep -v -E '(^|/)tests(\.rs|/)' |
-    xargs grep -l -E '^[[:space:]]*[^/[:space:]].*Http::new\(' | sort)
+    xargs grep -l -E '^[[:space:]]*[^/[:space:]].*(Http::new|Held::granted|Host::launch)\(' | sort)
 if [[ -z "$built" ]]; then
-    printf '    FAIL no file builds an HTTP client; this check measured nothing\n'
+    printf '    FAIL no file builds a vendor client; this check measured nothing\n'
     failed=1
 elif [[ "$built" != "$decided" ]]; then
     diff <(printf '%s\n' "$decided") <(printf '%s\n' "$built") | sed 's/^/    /'
-    printf '    FAIL the files building an HTTP client changed; decide whether each is held\n'
+    printf '    FAIL the files building a vendor client changed; decide whether each is held\n'
     failed=1
 fi
 
@@ -773,6 +781,14 @@ fi
 # to `provider`, `runner` or `app` would make one backend's machinery every
 # backend's. `app execution` is the composition root putting the native runner
 # behind that contract.
+#
+# `external-harnesses` supervises another vendor's agent as a child process: it
+# names `execution` for the contract the child answers as, `sandbox` and
+# `transport` for the confinement it starts under and the bounded frames over
+# its pipes, `privacy` for its owner-only journal, and `runtime` and `types` for
+# what it waits in and is identified by. `app external-harnesses` is the
+# composition root launching one; `code external-harnesses` is the screen
+# captures' fake peer.
 allowed='code app
 code attachments
 code auth
@@ -781,6 +797,7 @@ code config
 code context
 code credentials
 code extension
+code external-harnesses
 code mcp
 code models
 code privacy
@@ -808,6 +825,7 @@ app context
 app credentials
 app execution
 app extension
+app external-harnesses
 app http
 app mcp
 app models
@@ -854,6 +872,12 @@ extension runtime
 extension sandbox
 extension transport
 extension types
+external-harnesses execution
+external-harnesses privacy
+external-harnesses runtime
+external-harnesses sandbox
+external-harnesses transport
+external-harnesses types
 http credentials
 http runtime
 mcp runtime
@@ -921,10 +945,12 @@ builtins workspace'
 # that list are ones the layering would let shipped code take as well; an edge
 # here is one it would not, because a test's need is never permission for code
 # that ships. `builtins sandbox-local` is how the tools' tests get one machine's
-# confinement to run a command under; the check at the end of this section
-# holds each of these out of every table a build that ships resolves, reading
-# the manifest under `crates/`, so each names a member crate, not the root.
-test_support='builtins sandbox-local'
+# confinement to run a command under, and `external-harnesses sandbox-local`
+# is how its tests launch the fake peer under the same; the check at the end
+# of this section holds each of these out of every table a build that ships
+# resolves, reading the manifest under `crates/`, so each names a member crate, not the root.
+test_support='builtins sandbox-local
+external-harnesses sandbox-local'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
     if ! grep -Fxq "$edge" <<<"$allowed" && ! grep -Fxq "$edge" <<<"$test_support"; then
@@ -1132,8 +1158,8 @@ while IFS= read -r line; do
 done <<<"$sandbox_state"
 
 section "no spawned thread in the hosted crates"
-# No shipped source in the transport, MCP, or extension crates starts its own
-# thread: a `thread::spawn` in any of the three fails, which is also what keeps
+# No shipped source in the transport, MCP, extension or external-harnesses
+# crates starts its own thread: a `thread::spawn` in any of the four fails, which is also what keeps
 # a detached pipe thread from coming back. Sync calls remain —
 # `Frames::next_frame`/`Written::send` and `Hosted::greet`/`catalogue`/`call` —
 # so this checks threads, not all blocking. Files that
@@ -1145,6 +1171,7 @@ while IFS= read -r file; do
     shipped+=("$file")
 done < <(
     find crates/crucible-transport/src crates/crucible-mcp/src crates/crucible-extension/src \
+        crates/crucible-external-harnesses/src \
         -name '*.rs' -type f \
         -not -name 'tests.rs' -not -name 'testing.rs' -not -path '*/tests/*' |
         LC_ALL=C sort

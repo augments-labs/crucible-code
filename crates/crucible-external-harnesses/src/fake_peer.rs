@@ -37,7 +37,10 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+mod plain;
 pub mod scripts;
+
+pub use plain::Plain;
 
 /// The status of a start past the script's last reply.
 pub const EXHAUSTED: u8 = 86;
@@ -97,7 +100,8 @@ macro_rules! scripts {
 
 scripts!("mod.rs", "acp.rs", "claude.rs");
 
-/// The digest of [`SOURCES`]: 64-bit FNV-1a, over each file in turn.
+/// The digest of the sources the peer is built from: 64-bit FNV-1a, over
+/// each file in turn.
 pub const STAMP: u64 = digest(SOURCES);
 
 /// FNV-1a over every byte of `sources`.

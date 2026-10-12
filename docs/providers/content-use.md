@@ -86,6 +86,8 @@ Each quote is the vendor's own, in the language it was written in.
 | Meta `muse-spark-1.2-contributor` | `model:meta/muse-spark-1.2-contributor` | | Meta may use what you send to train, develop, evaluate and improve its AI models, products and services, and gives no way to keep it out of training. Its terms say not to send code or anything else you must keep confidential. | may train on what is sent | As `muse-spark-1.3-contributor`: Meta's terms name both as Discounted Models. | None; Meta does not train on the standard models | [Meta Model API terms of service](https://dev.meta.ai/legal/terms-of-service) | 1 Oct 2026 |
 | Kimi open platform, `api.moonshot.ai` | `api.moonshot.ai` | | Moonshot may use what you send to develop and improve its services, and to train its models, unless you agree otherwise with it in writing. | may train on what is sent | "We may use Content to provide, maintain, develop, support, and improve the Services [...] Customer who requires restrictions on the use of Customer Content for training or improving Moonshot AI models may contact Moonshot AI to discuss available enterprise arrangements or separate written agreements. Unless otherwise expressly agreed in writing, Customer Content may be used for the foregoing purposes." | A written agreement with Moonshot | [Kimi open platform terms](https://platform.kimi.ai/docs/agreement/modeluse) | 30 Sep 2026 |
 | Kimi open platform, `api.moonshot.cn` | `api.moonshot.cn` | | Moonshot may use what you send, and what it answers, to improve its models. | may use what is sent | "为了提升您使用本服务的体验，您授予我们一项免费的使用权，以在法律允许的范围内将您输入输出之内容及反馈用于模型服务优化。" | None given | [Kimi open platform terms, platform.kimi.com](https://platform.kimi.com/docs/agreement/modeluse) | 30 Sep 2026 |
+| Claude Code, an installed agent | `agent:claude` | On Free, Pro and Max | On Free, Pro and Max, Anthropic trains new models on what you send through Claude Code while the setting that allows it is on. To stop it, turn that setting off in your Claude data privacy controls. | may train on what is sent | "We will train new models using data from Free, Pro, and Max accounts when this setting is on (including when you use Claude Code from these accounts)." | The model-training setting in Claude's data privacy controls | [Claude Code data usage](https://code.claude.com/docs/en/data-usage) | 12 Oct 2026 |
+| Antigravity, an installed agent | `agent:antigravity` | | Google uses what you do in Antigravity to evaluate, develop and improve its products and machine learning technologies. To stop it, turn off Enable Telemetry in Antigravity's settings. | uses what is sent | "We use Interactions to evaluate, develop, and improve Google and Alphabet research, products, services and machine learning technologies. [...] If you don't want your Interactions used in this way, navigate to settings to change your preference" | Enable Telemetry, in Antigravity's settings | [Antigravity terms](https://antigravity.google/terms) | 12 Oct 2026 |
 
 The OpenAI help pages refuse automated readers, so that row rests on the
 Internet Archive's copies of 28 and 14 September 2026, the date shown being the
@@ -129,6 +131,22 @@ whether they reach the API.
 A key from a provider's variable belongs to one row of it: for MoonshotAI, the
 kimi.com key row; for MiniMax, the minimax.io key row, which is asked about; for
 Qwen, the alibabacloud.com key row; for Z.ai, the z.ai key row.
+
+## An installed agent
+
+An installed agent, Claude Code or Antigravity, is another vendor's program that
+crucible starts and talks to. Its route is asked about before its first launch,
+whatever its vendor's terms say, because a launch runs that program and not
+only a request. The panel shows the vendor's words and adds:
+
+```text
+Starting it runs its profile's hooks, MCP servers and plugins, which may send content on their own.
+```
+
+Nothing is started before the yes: not a turn, not a sign-in, not the check of
+which version is installed. What the agent then sends goes from its own
+process, under its own account and terms, so the yes is kept for the route and
+not for any address.
 
 ## A `baseUrl` crucible recognises
 

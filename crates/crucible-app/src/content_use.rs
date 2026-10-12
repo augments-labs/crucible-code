@@ -13,7 +13,11 @@
 //! may be used to train or improve its models ([`WARNED`]). Each carries the
 //! vendor's words in English, saying no more than its page, the way to opt
 //! out where the page gives one, and the page and the day it was read. A
-//! route whose vendor does not say gets no warning and is never asked about.
+//! route whose vendor does not say gets no warning and is never asked about,
+//! with one exception: an installed agent's route, spelled `agent:` and its
+//! driver, is always asked about once before its first launch, with
+//! [`LAUNCHING`] beside whatever its vendor says, because a launch is
+//! execution and not only a request.
 //!
 //! **The hold.** Every HTTP client built outside tests that can reach a vendor
 //! is handed a [`Consent`], asked before each request leaves; the release
@@ -24,7 +28,9 @@
 //! nothing walks around. A model's own route names no origin, since its
 //! vendor's address serves models nobody warned about too: a turn on it is
 //! asked about where it is sent, and a web source built for it before each
-//! request it makes.
+//! request it makes. An agent's route names no origin either: what it sends
+//! goes from its own process, so it is held at the launch instead, and
+//! [`held`] is the one place the token a launch is started under is made.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -32,6 +38,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use crucible_auth::{Dropped, LettingGo};
 use crucible_config::Settings;
+use crucible_external_harnesses::Held;
 use crucible_http::{Hold, Origin};
 
 use crate::providers::{List, Row, Rows};
@@ -208,8 +215,35 @@ const META_CONTRIBUTOR: Warning = Warning {
     caution: "may train on what is sent",
 };
 
+const CLAUDE_CODE: Warning = Warning {
+    sentence: "On Free, Pro and Max, Anthropic trains new models on what you send through \
+               Claude Code while the setting that allows it is on. To stop it, turn that \
+               setting off in your Claude data privacy controls.",
+    condition: Some("On Free, Pro and Max"),
+    source: "Claude Code data usage",
+    link: "https://code.claude.com/docs/en/data-usage",
+    read: "12 Oct 2026",
+    caution: "may train on what is sent",
+};
+
+const ANTIGRAVITY: Warning = Warning {
+    sentence: "Google uses what you do in Antigravity to evaluate, develop and improve its \
+               products and machine learning technologies. To stop it, turn off Enable \
+               Telemetry in Antigravity's settings.",
+    condition: None,
+    source: "Antigravity terms",
+    link: "https://antigravity.google/terms",
+    read: "12 Oct 2026",
+    caution: "uses what is sent",
+};
+
+/// What starting an installed agent does besides what it is asked, said
+/// with every agent route's warning, whatever its vendor says.
+pub const LAUNCHING: &str = "Starting it runs its profile's hooks, MCP servers and plugins, \
+                             which may send content on their own.";
+
 /// Every warned route this build has.
-pub const WARNED: [Warned; 17] = [
+pub const WARNED: [Warned; 19] = [
     Warned {
         route: "subscription:openai",
         shown: "OpenAI",
@@ -311,6 +345,18 @@ pub const WARNED: [Warned; 17] = [
         shown: "Kimi open platform · api.moonshot.cn",
         warning: PLATFORM_CN,
         origins: &["https://api.moonshot.cn"],
+    },
+    Warned {
+        route: "agent:claude",
+        shown: "Claude Code",
+        warning: CLAUDE_CODE,
+        origins: &[],
+    },
+    Warned {
+        route: "agent:antigravity",
+        shown: "Antigravity",
+        warning: ANTIGRAVITY,
+        origins: &[],
     },
 ];
 
@@ -433,6 +479,49 @@ pub fn row_route(row: &Row) -> String {
 #[must_use]
 pub fn model_route(provider: &str, model: &str) -> String {
     format!("model:{provider}/{model}")
+}
+
+/// The route an installed agent of `driver` is launched on.
+#[must_use]
+pub fn agent_route(driver: &str) -> String {
+    format!("agent:{driver}")
+}
+
+/// Whether `route` is an installed agent's, asked about before its first
+/// launch whatever its vendor says.
+#[must_use]
+pub fn launches(route: &str) -> bool {
+    route.starts_with("agent:")
+}
+
+/// Why no launch may be started on a route.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unheld {
+    /// It has no yes, and this is what to ask.
+    Asks(Box<Warned>),
+    /// It is not an agent route this build warns about, and nothing is
+    /// launched on it.
+    Unknown,
+}
+
+/// The token a launch on `route` is started under, once the route has a yes.
+///
+/// The one place a [`Held`] is made outside tests. An agent route is always
+/// warned, so a route this build does not warn about is never launched,
+/// rather than taken as one nobody needs to be asked about.
+///
+/// # Errors
+///
+/// [`Unheld::Asks`] with what to ask where the route has no yes, and
+/// [`Unheld::Unknown`] for a route that is not a warned agent route.
+pub fn held(consent: &Consent, route: &str) -> Result<Held, Unheld> {
+    if !launches(route) || consent.routes().warned(route).is_none() {
+        return Err(Unheld::Unknown);
+    }
+    match consent.asks(route) {
+        Some(warned) => Err(Unheld::Asks(Box::new(*warned))),
+        None => Ok(Held::granted(route)),
+    }
 }
 
 /// The route a configured `baseUrl` answers for, where it is an address

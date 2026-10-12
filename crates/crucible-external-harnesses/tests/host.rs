@@ -6,15 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crucible_execution::{
-    Authentication, Confinement, Decision, Detail, Event, Failure, Outcome, Pending, SessionRef,
-    Sink, Text, TurnRequest,
-};
+use crucible_execution::{Confinement, Event, Outcome, SessionRef, Sink, TurnRequest};
 use crucible_external_harnesses::conformance::{self, CASES, Set};
-use crucible_external_harnesses::fake_peer::{self, EXHAUSTED, Reply, Script, UNWRITABLE};
+use crucible_external_harnesses::fake_peer::{self, EXHAUSTED, Plain, Reply, Script, UNWRITABLE};
 use crucible_external_harnesses::{
-    Account, Act, Control, Dialect, Discovery, Held, Host, Launch, Ran, Reading, Refusal, Request,
-    STOP_GRACE, Shape,
+    Account, Control, Dialect, Discovery, Held, Host, Launch, Ran, Refusal, Request, STOP_GRACE,
+    Shape,
 };
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
@@ -33,87 +30,6 @@ const SENTINEL: &str = "sentinel-c0ffee-5ec7e7";
 
 /// The route this file's launches are held under.
 const ROUTE: &str = "agent:plain";
-
-/// A line protocol: one word, a space, and the rest.
-#[derive(Debug, Default)]
-struct Plain;
-
-impl Dialect for Plain {
-    fn program(&self) -> &'static str {
-        "plain"
-    }
-
-    fn request(&self, _shape: Shape<'_>) -> Request {
-        Request {
-            arguments: vec!["--print".to_owned()],
-            environment: Vec::new(),
-        }
-    }
-
-    fn open(&mut self, turn: &TurnRequest) -> Result<Vec<String>, Failure> {
-        Ok(vec![format!("turn {}", turn.prompt())])
-    }
-
-    fn heard(&mut self, frame: &str) -> Result<Vec<Act>, Failure> {
-        let (word, rest) = frame.split_once(' ').unwrap_or((frame, ""));
-        Ok(vec![match word {
-            "say" => Act::Say(Event::Delta(Text::new(rest))),
-            "file" => Act::Say(Event::FileChanged {
-                path: Text::new(rest),
-            }),
-            "session" => Act::Session(rest.to_owned()),
-            "ask" => {
-                let (native, summary) = rest.split_once(' ').unwrap_or((rest, ""));
-                Act::Ask {
-                    native: native.to_owned(),
-                    pending: Pending::Permission {
-                        tool: Text::new("read"),
-                        summary: Text::new(summary),
-                        detail: Detail::Reads,
-                    },
-                }
-            }
-            "fail" => Act::Fail(Failure::new(rest)),
-            "end" => Act::End(Outcome::Answered),
-            "cancelled" => Act::End(Outcome::Cancelled),
-            _ => return Err(Failure::new("not a frame of this protocol")),
-        }])
-    }
-
-    fn answer(&mut self, native: &str, decision: &Decision) -> Result<String, Failure> {
-        Ok(match decision {
-            Decision::Allow(_) => format!("allow {native}"),
-            Decision::Deny => format!("deny {native}"),
-            Decision::Answer(text) => format!("answer {native} {}", text.as_str()),
-        })
-    }
-
-    fn cancel(&mut self) -> Option<String> {
-        Some("cancel".to_owned())
-    }
-
-    fn account(&self, step: Account, _shape: Shape<'_>) -> Option<Request> {
-        let argument = match step {
-            Account::Version => "--version",
-            Account::Status => "status",
-            Account::SignIn => "login",
-            Account::SignOut => "logout",
-        };
-        Some(Request {
-            arguments: vec![argument.to_owned()],
-            environment: Vec::new(),
-        })
-    }
-
-    fn read(&self, step: Account, ran: &Ran) -> Reading {
-        match (step, ran.said.first().map(String::as_str)) {
-            (Account::Version, Some(version)) => Reading::Version(Text::new(version)),
-            (_, Some("in")) => Reading::Signed(Authentication::SignedIn),
-            (_, Some("out")) => Reading::Signed(Authentication::SignedOut),
-            _ => Reading::Unreadable(Failure::new("it said nothing this protocol reads")),
-        }
-    }
-}
 
 /// A directory of the test's own, removed when it is dropped.
 struct Owned(PathBuf);

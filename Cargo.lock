@@ -375,6 +375,7 @@ dependencies = [
  "crucible-credentials",
  "crucible-execution",
  "crucible-extension",
+ "crucible-external-harnesses",
  "crucible-http",
  "crucible-mcp",
  "crucible-models",

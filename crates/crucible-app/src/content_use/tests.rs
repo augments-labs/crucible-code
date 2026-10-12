@@ -139,7 +139,7 @@ fn every_key_row_is_recognised_at_the_address_it_sends_to() {
 }
 
 /// The routes and the rows agree: each warned row route names a row, each
-/// sends only to its route's origins, a Kimi row's sign-in, model and web tool
+/// sends only to its route's origins, an agent's route claims none, a Kimi row's sign-in, model and web tool
 /// hosts are its site's, and route spellings are distinct. A warned model is
 /// one its provider offers, and claims no origin: the host it is sent to
 /// serves that provider's other models too, so it is asked about at the send.
@@ -155,6 +155,10 @@ fn every_warned_route_names_its_row_and_every_origin_it_is_sent_to() {
         assert!(spelled.insert(warned.route), "{} twice", warned.route);
         if warned.route.starts_with("api.moonshot.") {
             assert_eq!(warned.origins, [format!("https://{}", warned.route)]);
+            continue;
+        }
+        if launches(warned.route) {
+            assert!(warned.origins.is_empty(), "{}", warned.route);
             continue;
         }
         if let Some(named) = warned.route.strip_prefix("model:") {
@@ -216,8 +220,9 @@ fn every_warned_route_names_its_row_and_every_origin_it_is_sent_to() {
 }
 
 /// The routes warned are exactly those whose vendor's own terms say what is
-/// sent there may be used to train or improve its models; every other row of
-/// the same vendors, and the standard Meta models, are not asked about.
+/// sent there may be used to train or improve its models, and every installed
+/// agent's; every other row of the same vendors, and the standard Meta models,
+/// are not asked about.
 #[test]
 fn the_routes_warned_are_those_whose_vendor_says_so() {
     let warned: BTreeSet<&str> = WARNED.iter().map(|warned| warned.route).collect();
@@ -238,6 +243,8 @@ fn the_routes_warned_are_those_whose_vendor_says_so() {
         "model:meta/muse-spark-1.3-contributor",
         "model:meta/muse-spark-1.2-contributor",
         "api.moonshot.ai",
+        "agent:claude",
+        "agent:antigravity",
         "api.moonshot.cn",
     ]);
     assert_eq!(warned, expected);
@@ -1037,4 +1044,37 @@ fn a_documented_path_spelled_another_way_is_recognised() {
     ] {
         assert_eq!(recognised(missed), None, "{missed}");
     }
+}
+
+/// A launch is held until its agent's route has a yes, and only an agent
+/// route this build warns about is ever held at all.
+#[test]
+fn a_launch_is_held_until_its_agent_route_has_a_yes() {
+    let consent = Consent::new(Routes::production());
+    assert!(matches!(
+        held(&consent, &agent_route("claude")),
+        Err(Unheld::Asks(asked)) if asked.route == "agent:claude"
+    ));
+    consent.give("agent:claude");
+    let granted = held(&consent, "agent:claude").expect("a yes holds the launch");
+    assert_eq!(granted.route(), "agent:claude");
+    assert!(matches!(
+        held(&consent, "agent:antigravity"),
+        Err(Unheld::Asks(_))
+    ));
+    for unknown in ["agent:codex", "key:google", "subscription:openai", ""] {
+        consent.give(unknown);
+        assert_eq!(
+            held(&consent, unknown).map(|_| ()),
+            Err(Unheld::Unknown),
+            "{unknown}"
+        );
+    }
+}
+
+/// What a launch does besides what it is asked is on the page, in the words
+/// the panel shows.
+#[test]
+fn the_launch_sentence_is_documented() {
+    assert!(DOCUMENTED.contains(LAUNCHING), "{LAUNCHING}");
 }
