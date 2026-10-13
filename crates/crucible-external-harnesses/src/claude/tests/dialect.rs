@@ -587,9 +587,9 @@ fn a_session_allow_keeps_only_the_rules_for_the_tool_asked_about() {
     );
 }
 
-/// A session allow keeps a proposed rule only where it allows what was asked:
-/// a command, or the commands that begin with its words; the file asked about;
-/// or, for another tool, a name with no wildcard.
+/// A session allow keeps a proposed rule only for a command, and only where it
+/// allows the command asked about or the commands that begin with its words;
+/// any other tool's rule is dropped.
 #[test]
 fn a_session_allow_keeps_only_the_rules_that_allow_what_was_asked() {
     let mut agent = turning(None);
@@ -650,10 +650,36 @@ fn a_session_allow_keeps_only_the_rules_that_allow_what_was_asked() {
                 "\u{200b}*",
                 "*:*",
                 "( )",
+                "git\u{a0}push:*",
+                "git :*",
+                " git:*",
             ],
         ),
         ["git push origin", "git push:*", "git:*"]
     );
+    assert_eq!(
+        kept(
+            "Bash",
+            json!({"command": "git\u{a0}push origin"}),
+            &["git\u{a0}push:*", "git\u{a0}push origin"],
+        ),
+        Vec::<String>::new()
+    );
+    for (tool, input, content) in [
+        (
+            "PowerShell",
+            json!({"command": "Get-ChildItem"}),
+            "Remove-Item",
+        ),
+        ("WebSearch", json!({"query": "rust"}), "anything"),
+        ("mcp__files__read", json!({"path": "a"}), "a"),
+    ] {
+        assert_eq!(
+            kept(tool, input, &[content]),
+            Vec::<String>::new(),
+            "{tool}"
+        );
+    }
     assert_eq!(
         kept(
             "Edit",
@@ -662,7 +688,7 @@ fn a_session_allow_keeps_only_the_rules_that_allow_what_was_asked() {
                 "//**", "/**", "**/*", "~/**", "./**", "//work", "//work/*", "//work/a"
             ],
         ),
-        ["//work/a"]
+        Vec::<String>::new()
     );
     assert_eq!(
         kept(
@@ -670,7 +696,7 @@ fn a_session_allow_keeps_only_the_rules_that_allow_what_was_asked() {
             json!({"url": "https://example.com/a"}),
             &["domain:*", "domain:*.com", "\u{feff}", "domain:example.com"],
         ),
-        ["domain:example.com"]
+        Vec::<String>::new()
     );
 }
 
