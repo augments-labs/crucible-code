@@ -2,7 +2,8 @@
 //!
 //! A [`Row`] is everything the rest of the application needs to know about an
 //! agent besides what its configuration says: which driver it is, how its
-//! wire is spoken, which key names its profile directory, the content-use
+//! wire is spoken in each mode a conversation runs in, or why it is not run
+//! in one, which key names its profile directory, the content-use
 //! route it is held under, the section of `docs/providers/agents.md` that
 //! documents it, the hosts it must reach, and whether this release ships it.
 //! The chooser, the launch and every test read the [`Registry`] they were
@@ -16,9 +17,11 @@
 //! the vendor's own terms.
 
 use crucible_config::Driver;
+use crucible_execution::Failure;
 use crucible_external_harnesses::Dialect;
 use crucible_external_harnesses::antigravity::Antigravity;
 use crucible_external_harnesses::claude::Claude;
+use crucible_tools::Mode;
 
 /// The most rows a registry holds, which is more agents than any release has
 /// offered at once.
@@ -29,8 +32,9 @@ pub const ROWS: usize = 16;
 pub struct Row {
     /// Which agent, as the configuration names it.
     pub driver: Driver,
-    /// Its wire, fresh for each run.
-    pub dialect: fn() -> Box<dyn Dialect>,
+    /// Its wire, fresh for each run, as it is spoken in the conversation's
+    /// mode, or why the agent does not run in that mode.
+    pub dialect: fn(Mode) -> Result<Box<dyn Dialect>, Failure>,
     /// The key of its `externalAgents` entry that names its profile directory.
     pub profile_key: &'static str,
     /// The content-use route a launch of it is held under.
@@ -93,7 +97,11 @@ impl Registry {
 pub static REGISTRY: Registry = Registry::new(&[
     Row {
         driver: Driver::Claude,
-        dialect: || Box::new(Claude::default()),
+        // Started in the permission mode the reviewed table gives the
+        // conversation's mode, and refused in one it gives none.
+        dialect: |mode| {
+            Claude::in_mode(claude_mode(mode)).map(|claude| Box::new(claude) as Box<dyn Dialect>)
+        },
         profile_key: "configDir",
         route: "agent:claude",
         docs_section: "claude-code",
@@ -109,7 +117,9 @@ pub static REGISTRY: Registry = Registry::new(&[
     },
     Row {
         driver: Driver::Antigravity,
-        dialect: || Box::new(Antigravity::default()),
+        // The agent asks about every action itself, whatever the
+        // conversation's mode says.
+        dialect: |_| Ok(Box::new(Antigravity::default())),
         profile_key: "profileDir",
         route: "agent:antigravity",
         docs_section: "antigravity",
@@ -124,6 +134,16 @@ pub static REGISTRY: Registry = Registry::new(&[
         shipping: true,
     },
 ]);
+
+/// The mode Claude Code's table has for the conversation's `mode`.
+const fn claude_mode(mode: Mode) -> crucible_external_harnesses::claude::Mode {
+    use crucible_external_harnesses::claude::Mode as Agents;
+    match mode {
+        Mode::Ask => Agents::Ask,
+        Mode::AllowEdits => Agents::AllowEdits,
+        Mode::FullAccess => Agents::FullAccess,
+    }
+}
 
 #[cfg(test)]
 mod tests;

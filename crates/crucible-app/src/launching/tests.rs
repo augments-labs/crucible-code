@@ -27,7 +27,7 @@ use crate::sample::Sample;
 /// The plain protocol, held under Claude Code's route and shipped.
 static SHIPPED: [Row; 1] = [Row {
     driver: Driver::Claude,
-    dialect: || Box::new(Plain),
+    dialect: |_| Ok(Box::new(Plain)),
     profile_key: "configDir",
     route: "agent:claude",
     docs_section: "claude-code",
