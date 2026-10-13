@@ -4,14 +4,15 @@
 //! pending permission described by what the tool would do. An allow sends the
 //! call's own input back unchanged, so what runs is what was shown; a deny
 //! sends a refusal the model reads. An allow for the rest of the session
-//! carries only the rules the agent proposed that allow more of the same
-//! tool and name what, each kept for this session alone: a rule for the
-//! whole tool, whether it names nothing or only a wildcard, or for another
-//! tool, or a
-//! proposal to change the mode, reach another directory or keep a rule in a
-//! settings file is dropped, so the answer grants no more than the user chose
-//! and writes nothing to the project. Where the agent marks its rule as
-//! allowing more than the ask, the allow lasts for the call alone.
+//! carries only the rules the agent proposed for the same tool that allow
+//! what was asked, each kept for this session alone: for a command, the
+//! command or the commands that begin with its words; for a file tool, the
+//! file asked about; for another tool, a name with no wildcard. Any other
+//! rule, a proposal to change the mode, reach another directory or keep a
+//! rule in a settings file is dropped, so the answer grants no more than the
+//! user chose and writes nothing to the project. Where none is left, or the
+//! agent marks its rule as allowing more than the ask, the allow lasts for
+//! the call alone.
 //!
 //! Every other request the agent makes of its host is refused, since this
 //! host serves none. A question is answered once; at most [`PENDINGS`] are
@@ -103,7 +104,7 @@ impl Questions {
                     && let Some(rules) = open
                         .lasting
                         .as_ref()
-                        .map(|proposed| for_the_session(proposed, &open.tool))
+                        .map(|proposed| for_the_session(proposed, &open.tool, &open.input))
                     && !rules.is_empty()
                     && let Some(allow) = allow.as_object_mut()
                 {
@@ -144,9 +145,9 @@ pub(crate) fn refusal(request: &str) -> String {
     .to_string()
 }
 
-/// Of the rules the agent proposed, the ones that allow more of `tool` and
-/// name what, each kept for this session alone.
-fn for_the_session(proposed: &Value, tool: &str) -> Vec<Value> {
+/// Of the rules the agent proposed, the ones for `tool` that allow the call
+/// whose input is `input`, each kept for this session alone.
+fn for_the_session(proposed: &Value, tool: &str, input: &Value) -> Vec<Value> {
     proposed
         .as_array()
         .into_iter()
@@ -165,7 +166,7 @@ fn for_the_session(proposed: &Value, tool: &str) -> Vec<Value> {
                         && rule
                             .get("ruleContent")
                             .and_then(Value::as_str)
-                            .is_some_and(names_something)
+                            .is_some_and(|content| allows_the_ask(content, tool, input))
                 })
                 .collect();
             (!rules.is_empty()).then(|| {
@@ -194,7 +195,7 @@ fn pending(ask: &Ask, workspace: Option<&Path>) -> Pending {
             let path = match ask.tool.as_str() {
                 "Read" => field("file_path"),
                 "NotebookRead" => field("notebook_path"),
-                _ => Some(field("path").unwrap_or(".")),
+                _ => ask.input.get("path").map_or(Some("."), Value::as_str),
             };
             // A glob's pattern is a path of its own, read from where the
             // glob starts.
@@ -233,12 +234,44 @@ fn pending(ask: &Ask, workspace: Option<&Path>) -> Pending {
     }
 }
 
-/// Whether a rule's content names what it allows, rather than nothing or
-/// only a wildcard, which the agent reads as the whole tool.
-fn names_something(content: &str) -> bool {
-    content
-        .chars()
-        .any(|character| !(character == '*' || character == ':' || character.is_whitespace()))
+/// Whether a rule for `tool` whose content is `content` allows the call whose
+/// input is `input` and is no wider than the user can see it to be: for a
+/// command, the command itself, or with `:*` after it the commands that begin
+/// with those words; for a file tool, the path asked about, in the agent's
+/// own form for one from the root; for another tool, a name with no wildcard.
+/// A rule with a wildcard in what it names is never kept, nor one with no
+/// letter or digit, which the agent may read as the whole tool.
+fn allows_the_ask(content: &str, tool: &str, input: &Value) -> bool {
+    let field = |name: &str| input.get(name).and_then(Value::as_str);
+    let prefix = content.strip_suffix(":*");
+    let named = prefix.unwrap_or(content);
+    if named.contains(['*', '?', '[', '{']) || !named.chars().any(char::is_alphanumeric) {
+        return false;
+    }
+    match tool {
+        "Bash" => field("command").is_some_and(|command| {
+            command == named
+                || prefix.is_some_and(|words| {
+                    command
+                        .strip_prefix(words)
+                        .is_some_and(|rest| rest.starts_with(' '))
+                })
+        }),
+        "Read" | "Edit" | "Write" | "MultiEdit" => {
+            field("file_path").is_some_and(|path| is_the_path(content, path))
+        }
+        "NotebookRead" | "NotebookEdit" => {
+            field("notebook_path").is_some_and(|path| is_the_path(content, path))
+        }
+        "Grep" | "Glob" | "LS" => field("path").is_some_and(|path| is_the_path(content, path)),
+        _ => prefix.is_none(),
+    }
+}
+
+/// Whether a file rule's `content` names `path`, as written or, for one from
+/// the root, with the agent's extra leading slash.
+fn is_the_path(content: &str, path: &str) -> bool {
+    content == path || (path.starts_with('/') && content.strip_prefix('/') == Some(path))
 }
 
 /// Whether `path` is inside `workspace`: a relative path is, unless it climbs

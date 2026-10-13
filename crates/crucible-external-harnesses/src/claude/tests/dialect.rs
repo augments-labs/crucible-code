@@ -464,6 +464,7 @@ fn a_question_is_raised_as_what_the_tool_would_do() {
             json!({"pattern": "*", "file_path": "/work/a", "path": "/etc"}),
         ),
         ("LS", json!({"file_path": "/work/a", "path": "/etc"})),
+        ("Grep", json!({"pattern": "x", "path": 7})),
         (
             "Read",
             json!({"path": "/work/a", "file_path": "/etc/passwd"}),
@@ -583,6 +584,93 @@ fn a_session_allow_keeps_only_the_rules_for_the_tool_asked_about() {
             "behavior": "allow",
             "destination": "session",
         }]))
+    );
+}
+
+/// A session allow keeps a proposed rule only where it allows what was asked:
+/// a command, or the commands that begin with its words; the file asked about;
+/// or, for another tool, a name with no wildcard.
+#[test]
+fn a_session_allow_keeps_only_the_rules_that_allow_what_was_asked() {
+    let mut agent = turning(None);
+    let mut kept = |tool: &str, input: Value, contents: &[&str]| -> Vec<String> {
+        let rules: Vec<Value> = contents
+            .iter()
+            .map(|content| json!({"toolName": tool, "ruleContent": content}))
+            .collect();
+        let ask = json!({
+            "type": "control_request",
+            "request_id": "r1",
+            "request": {
+                "subtype": "can_use_tool",
+                "tool_name": tool,
+                "input": input,
+                "tool_use_id": "toolu_1",
+                "permission_suggestions": [{
+                    "type": "addRules",
+                    "rules": rules,
+                    "behavior": "allow",
+                    "destination": "session",
+                }],
+            },
+        });
+        let _ = agent.heard(&ask.to_string()).unwrap();
+        let frame: Value = serde_json::from_str(
+            &agent
+                .answer("r1", &Decision::Allow(Lasting::Session))
+                .unwrap(),
+        )
+        .unwrap();
+        frame
+            .pointer("/response/response/updatedPermissions/0/rules")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|rule| rule.get("ruleContent").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect()
+    };
+
+    assert_eq!(
+        kept(
+            "Bash",
+            json!({"command": "git push origin"}),
+            &[
+                "git push origin",
+                "git push:*",
+                "git:*",
+                "gi:*",
+                "curl:*",
+                "rm -rf *",
+                "git *",
+                "*;*",
+                "*a*",
+                "?*",
+                "\u{feff}*",
+                "\u{200b}*",
+                "*:*",
+                "( )",
+            ],
+        ),
+        ["git push origin", "git push:*", "git:*"]
+    );
+    assert_eq!(
+        kept(
+            "Edit",
+            json!({"file_path": "/work/a", "old_string": "a", "new_string": "b"}),
+            &[
+                "//**", "/**", "**/*", "~/**", "./**", "//work", "//work/*", "//work/a"
+            ],
+        ),
+        ["//work/a"]
+    );
+    assert_eq!(
+        kept(
+            "WebFetch",
+            json!({"url": "https://example.com/a"}),
+            &["domain:*", "domain:*.com", "\u{feff}", "domain:example.com"],
+        ),
+        ["domain:example.com"]
     );
 }
 

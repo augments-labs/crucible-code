@@ -30,7 +30,8 @@ turn is one message on the same input, ended by the frame that answers it.
 version is read from `claude --version` once each time crucible connects to
 it, and a release outside that range, or a program that does not say it is
 Claude Code, is sent nothing more and refused with a sentence saying which. A
-turn whose agent reports another release when it starts is stopped too.
+turn whose agent reports a release outside that range when it starts is
+stopped too.
 
 **Its profile.** `configDir` is optional: it is the directory the agent keeps
 its sign-in, settings and sessions under, and without it the agent uses its
@@ -53,21 +54,23 @@ then checks again. Signing out runs its own `claude auth logout`; without a
 **Permissions.** It runs in its `default` permission mode, whatever mode the
 conversation is in, and every action its own rules leave to a prompt comes to
 you as a question. Allowing for the rest of the session keeps, for that session
-alone and never in its settings files, only the agent's rule for the same tool
-that names what it allows, such as one command; where the agent offers none,
-or says its rule would allow more than you were asked, the allow is for that
-call alone. Once a turn is stopped, every question it asked is answered no,
-whatever was chosen.
+alone and never in its settings files, only the agent's rules for the same tool
+that allow what you were asked about: the command, or the commands that begin
+with its words; the file asked about; or for another tool, a name with no
+wildcard. Where the agent offers no such rule, or says its rule would allow
+more than you were asked, the allow is for that call alone. Once a turn is
+stopped, every question it asked is answered no, whatever was chosen.
 
 **Project settings.** The agent runs the hooks and helper commands and connects
-the servers a project's own Claude Code settings name before it is asked anything, as it
-does when you start it yourself in that directory, and those settings can allow
-actions it would otherwise ask about. A turn is stopped, saying why, when the
-agent reports that it sends requests with a key from its settings, a
-project's or a helper command rather than the account its profile is signed in
-to, or that it runs in a permission mode that asks less than `default`. A token or another
-provider a project's settings set in the agent's environment is not reported,
-so read a project's Claude Code settings before you start the agent in it.
+the servers a project's own Claude Code settings name before it is asked
+anything, as it does when you start it yourself in that directory, and those
+settings can allow actions it would otherwise ask about. A turn is stopped,
+saying why, when the agent reports that it sends requests with a key from its
+settings, a project's or a helper command rather than the account its profile
+is signed in to, or that it runs in a permission mode that asks less than
+`default`. A token or another provider a project's settings set in the agent's
+environment is not reported, so read a project's Claude Code settings before
+you start the agent in it.
 
 **Usage.** Each turn reports its tokens, its input the sum of its uncached,
 cache-read and cache-written parts, and its cost in US dollars as the agent
