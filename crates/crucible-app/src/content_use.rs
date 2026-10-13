@@ -239,8 +239,9 @@ const ANTIGRAVITY: Warning = Warning {
 
 /// What starting an installed agent does besides what it is asked, said
 /// with every agent route's warning, whatever its vendor says.
-pub const LAUNCHING: &str = "Starting it runs its profile's hooks, MCP servers and plugins, \
-                             which may send content on their own.";
+pub const LAUNCHING: &str = "Starting it runs the hooks, helper commands, MCP servers and \
+                             plugins its profile names, and any the project's own settings \
+                             name, which may send content on their own.";
 
 /// Every warned route this build has.
 pub const WARNED: [Warned; 19] = [

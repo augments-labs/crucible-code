@@ -3,6 +3,7 @@
 
 pub mod acp;
 pub mod antigravity;
+pub mod claude;
 #[cfg(feature = "proof")]
 pub mod conformance;
 #[cfg(feature = "proof")]

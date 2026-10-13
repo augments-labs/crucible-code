@@ -140,7 +140,7 @@ whatever its vendor's terms say, because a launch runs that program and not
 only a request. The panel shows the vendor's words and adds:
 
 ```text
-Starting it runs its profile's hooks, MCP servers and plugins, which may send content on their own.
+Starting it runs the hooks, helper commands, MCP servers and plugins its profile names, and any the project's own settings name, which may send content on their own.
 ```
 
 Nothing is started before the yes: not a turn, not a sign-in, not the check of
