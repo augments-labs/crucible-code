@@ -4,8 +4,10 @@
 //! installed under the dialect's program name, one install per case in a
 //! directory of its own, and holds the turn to the outcome the case names. A
 //! dialect brings only what is its own: a [`Set`] of the lines its program
-//! would write, and how many frames it opens a turn with. The suite composes
-//! every reply from those, so no dialect's tests repeat it.
+//! would write, the exchanges that open a turn, and the lines its program
+//! must hear back. The suite composes every reply from those, so no dialect's
+//! tests repeat it, and it judges what the program heard against the set,
+//! never against the dialect under test.
 //!
 //! The suite builds a [`Held`] for a route of its own and launches the fake
 //! peer itself. It is compiled under `proof` alone, never ships, and is the
@@ -63,20 +65,43 @@ pub const CASES: &[&str] = &[
 ];
 
 /// What a dialect's program writes, line by line, for the suite to compose
-/// replies from.
+/// replies from, and what it must hear.
 #[derive(Debug, Clone)]
 pub struct Set {
-    /// How many frames the dialect writes to begin a turn.
-    pub opening: u32,
+    /// The exchanges that begin a turn, in order: how many frames the dialect
+    /// writes, then the lines its program says back before the next.
+    pub opening: Vec<(u32, Vec<String>)>,
     /// A line reporting an effect under way: a tool started or a file
     /// changed.
     pub effect: String,
     /// The line that asks permission under the program's name `native`.
     pub ask: fn(native: &str) -> String,
+    /// The line the program must hear when the question `native` is decided
+    /// `decision`.
+    pub answer: fn(native: &str, decision: &Decision) -> String,
     /// The line that ends a turn answered.
     pub answered: String,
     /// The line that ends a turn cancelled.
     pub cancelled: String,
+    /// The line the program hears when its open turn is stopped, where the
+    /// dialect sends one.
+    pub stop: Option<String>,
+}
+
+impl Set {
+    /// A reply that plays the exchanges that open a turn.
+    fn opened(&self) -> Reply {
+        self.opening
+            .iter()
+            .fold(Reply::new(), |reply, (heard, said)| {
+                said.iter().fold(reply.hear(*heard), Reply::say)
+            })
+    }
+
+    /// How many frames the dialect writes to open a turn.
+    fn opening_frames(&self) -> u32 {
+        self.opening.iter().map(|(heard, _)| heard).sum()
+    }
 }
 
 /// A case that did not end as it must.
@@ -138,6 +163,8 @@ enum React {
     Nothing,
     /// Asks the turn to stop as soon as it starts.
     Interrupt,
+    /// Asks the turn to stop as soon as it reports an effect under way.
+    InterruptOnEffect,
     /// Allows every question as it is raised.
     Allow,
     /// Decides on `reference` as soon as the turn starts, and keeps how that
@@ -185,7 +212,10 @@ impl Recorder {
 impl Sink for Recorder {
     fn post(&self, event: Event) {
         match (&self.react, &event) {
-            (React::Interrupt, Event::Started { .. }) => self.control.interrupt(),
+            (React::Interrupt, Event::Started { .. })
+            | (React::InterruptOnEffect, Event::ToolActivity { .. } | Event::FileChanged { .. }) => {
+                self.control.interrupt();
+            }
             (React::Allow, Event::Pending(reference, _)) => {
                 // A refusal here leaves the question open, which the case's
                 // own check then sees as a turn that never ended answered.
@@ -228,15 +258,16 @@ impl Suite<'_> {
     async fn case(&self, index: usize) -> Result<(), String> {
         let here = self.directory.join(format!("case-{index}"));
         let set = self.set;
-        let opened = || Reply::new().hear(set.opening);
+        let opened = || set.opened();
         match index {
             0 => {
-                let played = self
-                    .one(&here, opened().say(&set.answered), React::Nothing, None)
-                    .await?;
+                // The program reads on to the end of its input, so a frame the
+                // dialect writes past its opening is counted.
+                let reply = opened().say(&set.answered).hear_out();
+                let played = self.one(&here, reply, React::Nothing, None).await?;
                 expect(&played.result, Outcome::Answered)?;
                 let heard = fake_peer::heard(&here);
-                if heard.len() != usize::try_from(set.opening).unwrap_or(usize::MAX) {
+                if heard.len() != usize::try_from(set.opening_frames()).unwrap_or(usize::MAX) {
                     return Err(format!("the agent heard {heard:?} where the turn opened"));
                 }
                 Ok(())
@@ -245,9 +276,7 @@ impl Suite<'_> {
                 let reply = opened().say((set.ask)("q")).hear(1).say(&set.answered);
                 let played = self.one(&here, reply, React::Allow, None).await?;
                 expect(&played.result, Outcome::Answered)?;
-                let answer = (self.dialect)()
-                    .answer("q", &Decision::Allow(Lasting::Once))
-                    .map_err(|failure| failure.reason().to_string())?;
+                let answer = (set.answer)("q", &Decision::Allow(Lasting::Once));
                 match fake_peer::heard(&here).last() {
                     Some(last) if *last == answer => Ok(()),
                     last => Err(format!("the agent last heard {last:?}, not its answer")),
@@ -314,28 +343,36 @@ impl Suite<'_> {
                 refused(&played.result)
             }
             10 => {
-                let mut reply = opened();
-                reply = if (self.dialect)().cancel().is_some() {
-                    reply.hear(1)
-                } else {
-                    reply.pause(Duration::from_millis(100))
+                let reply = opened().say(&set.effect);
+                let reply = match set.stop {
+                    Some(_) => reply.hear(1),
+                    None => reply.pause(Duration::from_millis(100)),
                 };
                 let reply = reply.say((set.ask)("late")).hear(1).say(&set.cancelled);
-                let played = self.one(&here, reply, React::Interrupt, None).await?;
+                let played = self
+                    .one(&here, reply, React::InterruptOnEffect, None)
+                    .await?;
                 expect(&played.result, Outcome::Cancelled)?;
                 if played.posted(|event| matches!(event, Event::Pending(..))) {
                     return Err("a question asked after the stop was shown".to_owned());
                 }
-                let denial = (self.dialect)()
-                    .answer("late", &Decision::Deny)
-                    .map_err(|failure| failure.reason().to_string())?;
-                match fake_peer::heard(&here).last() {
+                let heard = fake_peer::heard(&here);
+                if let Some(stop) = &set.stop
+                    && !heard.contains(stop)
+                {
+                    return Err(format!("the agent heard {heard:?}, and no stop"));
+                }
+                let denial = (set.answer)("late", &Decision::Deny);
+                match heard.last() {
                     Some(last) if *last == denial => Ok(()),
                     last => Err(format!("the agent last heard {last:?}, not a denial")),
                 }
             }
             11 => {
-                let reply = opened().linger().pause(ASLEEP);
+                // Stopped as it starts, the dialect may not have written past
+                // its first exchange, so the program waits on no more.
+                let first = set.opening.first().map_or(0, |(heard, _)| *heard);
+                let reply = Reply::new().hear(first).linger().pause(ASLEEP);
                 let played = self.one(&here, reply, React::Interrupt, None).await?;
                 expect(&played.result, Outcome::Cancelled)?;
                 let Some(first) = fake_peer::lingering(&here) else {
@@ -357,11 +394,8 @@ impl Suite<'_> {
     /// running.
     async fn earlier_run(&self, here: &Path) -> Result<(), String> {
         let set = self.set;
-        let first = Reply::new()
-            .hear(set.opening)
-            .say((set.ask)("q"))
-            .say(&set.answered);
-        let second = Reply::new().hear(set.opening).say(&set.answered);
+        let first = set.opened().say((set.ask)("q")).say(&set.answered);
+        let second = set.opened().say(&set.answered);
         let program = installed(here, self.dialect, &Script::of([first, second]))?;
         let control = Control::new().ok_or("no control could be numbered")?;
         let played = self.turn(&program, &control, React::Nothing, None).await?;
@@ -409,8 +443,12 @@ impl Suite<'_> {
         };
         let mut dialect = (self.dialect)();
         let here = program.parent().unwrap_or(program);
-        let mut launch = Launch::new(found, policy(here)?, Held::granted(ROUTE))
-            .asking(dialect.request(Shape::default()));
+        let shape = Shape {
+            workspace: Some(here),
+            ..Shape::default()
+        };
+        let mut launch =
+            Launch::new(found, policy(here)?, Held::granted(ROUTE)).asking(dialect.request(shape));
         if let Some(patience) = patience {
             launch = launch.waiting(patience);
         }

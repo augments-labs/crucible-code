@@ -1473,7 +1473,7 @@ const EXTERNAL_AGENT: Shape = Shape::Fields(&[
     },
     Field {
         name: "profileDir",
-        about: "For an antigravity agent: an absolute path to the profile directory it signs in and keeps its state under. Left off, its usual one. Read only from the configuration file in your home directory",
+        about: "For an antigravity agent, and required for one: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
         shape: Shape::Text,
         examples: &[],
         usual: None,

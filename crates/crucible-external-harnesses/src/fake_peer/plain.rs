@@ -21,7 +21,7 @@ impl Dialect for Plain {
         "plain"
     }
 
-    fn request(&self, _shape: Shape<'_>) -> Request {
+    fn request(&mut self, _shape: Shape<'_>) -> Request {
         Request {
             arguments: vec!["--print".to_owned()],
             environment: Vec::new(),
@@ -70,7 +70,7 @@ impl Dialect for Plain {
         Some("cancel".to_owned())
     }
 
-    fn account(&self, step: Account, _shape: Shape<'_>) -> Option<Request> {
+    fn account(&mut self, step: Account, _shape: Shape<'_>) -> Option<Request> {
         let argument = match step {
             Account::Version => "--version",
             Account::Status => "status",

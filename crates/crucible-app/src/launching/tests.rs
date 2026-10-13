@@ -4,9 +4,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crucible_config::Driver;
-use crucible_execution::{Event, Outcome, SessionRef, Sink, TurnRequest};
+use crucible_execution::{
+    Authentication, Decision, Event, Failure, Outcome, SessionRef, Sink, Text, TurnRequest,
+};
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
-use crucible_external_harnesses::{Account, Control, Discovery};
+use crucible_external_harnesses::{
+    Account, Act, Control, Dialect, Discovery, Ran, Reading, Request, Shape, Told,
+};
 use crucible_sandbox::{
     SandboxFilesystemAccess, SandboxNetworkPolicy, SandboxPolicy, SandboxService,
 };
@@ -154,7 +158,7 @@ async fn a_clean_turn_through_a_launch_is_complete_and_speaks_the_dialects_argum
     let control = Control::new().expect("a control");
 
     let mut host = launcher
-        .launch(&agent(&registry, &peer), &control, &Plain, None)
+        .launch(&agent(&registry, &peer), &control, &mut Plain, None)
         .await
         .expect("started");
     let kept = Kept::default();
@@ -332,12 +336,12 @@ async fn a_turn_or_a_probe_without_a_yes_starts_nothing() {
     let agent = agent(&registry, &peer);
     let control = Control::new().expect("a control");
 
-    let turn = launcher.launch(&agent, &control, &Plain, None).await;
+    let turn = launcher.launch(&agent, &control, &mut Plain, None).await;
     let probe = launcher
-        .account(&agent, &control, &Plain, Account::Version)
+        .account(&agent, &control, &mut Plain, Account::Version, &|_| {})
         .await;
     let status = launcher
-        .account(&agent, &control, &Plain, Account::Status)
+        .account(&agent, &control, &mut Plain, Account::Status, &|_| {})
         .await;
 
     assert!(matches!(turn, Err(Unlaunched::Asks(_))));
@@ -357,7 +361,13 @@ async fn a_probe_with_a_yes_reads_the_version() {
     let control = Control::new().expect("a control");
 
     let read = launcher
-        .account(&agent(&registry, &peer), &control, &Plain, Account::Version)
+        .account(
+            &agent(&registry, &peer),
+            &control,
+            &mut Plain,
+            Account::Version,
+            &|_| {},
+        )
         .await
         .expect("started");
 
@@ -379,7 +389,7 @@ async fn a_row_held_back_is_refused_with_its_documentation_and_nothing_internal(
     let control = Control::new().expect("a control");
 
     let refused = launcher
-        .launch(&agent(&registry, &peer), &control, &Plain, None)
+        .launch(&agent(&registry, &peer), &control, &mut Plain, None)
         .await
         .expect_err("held back");
 
@@ -418,7 +428,7 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
     assert!(matches!(missing.discovery(), Discovery::Missing));
 
     let refused = launcher
-        .launch(&missing, &control, &Plain, None)
+        .launch(&missing, &control, &mut Plain, None)
         .await
         .expect_err("missing");
 
@@ -427,6 +437,164 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
         "Not installed: no plain command on PATH and none at the configured executable. \
          Install Claude Code, then choose Check again."
     );
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
+}
+
+/// The plain protocol with its account steps spoken: a step begins with its
+/// own name, a `link` line is a sign-in link, and `in` ends it.
+#[derive(Debug, Default)]
+struct Speaking(Plain);
+
+impl Dialect for Speaking {
+    fn program(&self) -> &'static str {
+        self.0.program()
+    }
+
+    fn request(&mut self, shape: Shape<'_>) -> Request {
+        self.0.request(shape)
+    }
+
+    fn open(&mut self, turn: &TurnRequest) -> Result<Vec<String>, Failure> {
+        self.0.open(turn)
+    }
+
+    fn heard(&mut self, frame: &str) -> Result<Vec<Act>, Failure> {
+        self.0.heard(frame)
+    }
+
+    fn answer(&mut self, native: &str, decision: &Decision) -> Result<String, Failure> {
+        self.0.answer(native, decision)
+    }
+
+    fn cancel(&mut self) -> Option<String> {
+        self.0.cancel()
+    }
+
+    fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request> {
+        self.0.account(step, shape)
+    }
+
+    fn read(&self, step: Account, ran: &Ran) -> Reading {
+        self.0.read(step, ran)
+    }
+
+    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
+        Some(vec![format!("{step:?}")])
+    }
+
+    fn told(&mut self, _step: Account, frame: &str) -> Result<Told, Failure> {
+        Ok(match (frame.split_once(' '), frame) {
+            (Some(("link", link)), _) => Told::Link(Text::new(link)),
+            (_, "in") => Told::Done(Reading::Signed(Authentication::SignedIn)),
+            _ => Told::Nothing,
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_spoken_sign_in_hands_its_link_on_and_reads_its_end() {
+    let sample = Sample::new("launch-spoken");
+    let peer = installed(
+        &sample,
+        &Script::of([Reply::new()
+            .hear(1)
+            .say("link https://sign.in/here")
+            .say("in")]),
+    );
+    let consent = granted();
+    let policy = conversation(&sample);
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let registry = Registry::new(&SHIPPED);
+    let control = Control::new().expect("a control");
+    let shown = Mutex::new(Vec::new());
+
+    let read = launcher
+        .account(
+            &agent(&registry, &peer),
+            &control,
+            &mut Speaking::default(),
+            Account::SignIn,
+            &|link| {
+                shown
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(link.as_str().to_owned());
+            },
+        )
+        .await
+        .expect("started");
+
+    assert!(
+        matches!(read, Reading::Signed(Authentication::SignedIn)),
+        "the sign-in did not read as signed in"
+    );
+    assert_eq!(
+        shown.into_inner().unwrap_or_else(PoisonError::into_inner),
+        vec!["https://sign.in/here".to_owned()]
+    );
+    assert_eq!(
+        fake_peer::heard(peer.parent().expect("a directory")),
+        vec!["SignIn".to_owned()]
+    );
+}
+
+/// A profile is where the agent keeps its sign-in, so it is made private to
+/// the user before anything is started, whether it was missing or open.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_profile_is_made_private_to_the_user_before_the_agent_starts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sample = Sample::new("launch-private-profile");
+    let peer = installed(
+        &sample,
+        &Script::of([Reply::lines(["1.0.0"]), Reply::lines(["1.0.0"])]),
+    );
+    let consent = granted();
+    let policy = conversation(&sample);
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let registry = Registry::new(&SHIPPED);
+    let control = Control::new().expect("a control");
+    let beside = Sample::new("launch-private-profile-beside");
+    let missing = beside.root().join("profiles").join("missing");
+    let open = beside.root().join("open");
+    fs::create_dir_all(&open).expect("made");
+    fs::set_permissions(&open, fs::Permissions::from_mode(0o755)).expect("opened");
+
+    for profile in [&missing, &open] {
+        let agent =
+            Agent::routed(&route(&peer, Some(profile)), &registry, |_| None).expect("a row");
+        launcher
+            .account(&agent, &control, &mut Plain, Account::Version, &|_| {})
+            .await
+            .expect("started");
+        let mode = fs::metadata(profile).expect("there").permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{}", profile.display());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_profile_the_conversation_protects_is_refused_before_it_is_made() {
+    let sample = Sample::new("launch-protected-profile");
+    fs::create_dir_all(sample.root().join(".git")).expect("a repository");
+    let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
+    let consent = granted();
+    let policy = conversation(&sample);
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let registry = Registry::new(&SHIPPED);
+    let control = Control::new().expect("a control");
+    let inside = sample.root().join(".git").join("profile");
+    let agent = Agent::routed(&route(&peer, Some(&inside)), &registry, |_| None).expect("a row");
+
+    let refused = launcher
+        .account(&agent, &control, &mut Plain, Account::Version, &|_| {})
+        .await;
+
+    assert!(
+        matches!(refused, Err(Unlaunched::Policy(_))),
+        "the profile under .git was not refused by the policy"
+    );
+    assert!(!inside.exists(), "a profile under .git was made");
     assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
 }
 

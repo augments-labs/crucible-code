@@ -614,6 +614,19 @@ impl Reader<'_> {
             }
 
             let key = driver.profile_key();
+            if driver.profile_needed() && record.get(key).is_none() {
+                return Err(ConfigError::Needed {
+                    file: self.file.into(),
+                    path: format!("externalAgents.{name}").into(),
+                    name: key.into(),
+                    said: format!(
+                        "an {} agent keeps its sign-in in a profile directory of its own, so it is never one another Google product shares",
+                        driver.name()
+                    )
+                    .into(),
+                    at,
+                });
+            }
             if let Some(found) = record.get(key).and_then(Value::as_str)
                 && !Path::new(found).is_absolute()
             {

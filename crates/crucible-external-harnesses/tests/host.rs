@@ -6,14 +6,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crucible_execution::{Confinement, Event, Outcome, SessionRef, Sink, TurnRequest};
+use crucible_execution::{
+    Authentication, Confinement, Decision, Event, Failure, Outcome, SessionRef, Sink, Text,
+    TurnRequest,
+};
 use crucible_external_harnesses::conformance::{self, CASES, Set};
 use crucible_external_harnesses::fake_peer::{
     self, EXHAUSTED, Plain, Reply, Script, Stream, UNWRITABLE,
 };
 use crucible_external_harnesses::{
-    Account, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Ran, Refusal, Request,
-    STOP_GRACE, Shape,
+    Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Ran, Reading,
+    Refusal, Request, STOP_GRACE, Shape, Told,
 };
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
@@ -167,11 +170,17 @@ async fn version(
 async fn every_conformance_case_ends_as_it_must() {
     let at = Owned::new("conformance");
     let set = Set {
-        opening: 1,
+        opening: vec![(1, Vec::new())],
         effect: "file src/lib.rs".to_owned(),
         ask: |native| format!("ask {native} read the notes"),
+        answer: |native, decision| match decision {
+            Decision::Allow(_) => format!("allow {native}"),
+            Decision::Deny => format!("deny {native}"),
+            Decision::Answer(text) => format!("answer {native} {}", text.as_str()),
+        },
         answered: "end".to_owned(),
         cancelled: "cancelled".to_owned(),
+        stop: Some("cancel".to_owned()),
     };
     let passed = conformance::run(local(), || Box::new(Plain), &set, &at.0)
         .await
@@ -272,6 +281,195 @@ async fn a_second_run_of_one_agent_is_refused_while_the_first_lives() {
     assert!(matches!(second, Refusal::Busy), "{second}");
     first.stop(STOP_GRACE).await.expect("stopped");
     assert_eq!(fake_peer::played(&at.0), 1);
+}
+
+/// A stop given up on inside its grace has not confirmed the process ended,
+/// so the agent's place stays taken and no second run is started beside what
+/// may still be running.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_abandoned_in_its_grace_leaves_a_relaunch_refused() {
+    let at = Owned::new("abandoned-stop");
+    let program = found(
+        &at.0,
+        "plain",
+        &Script::of([
+            Reply::new().pause(Duration::from_mins(1)),
+            Reply::lines(["two"]),
+        ]),
+    );
+    let control = Control::new().expect("a control");
+    let host = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program.clone(), &at.0, Request::default()),
+    )
+    .await
+    .expect("started");
+
+    let abandoned = tokio::time::timeout(Duration::from_millis(200), host.stop(STOP_GRACE)).await;
+    let relaunched = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await;
+
+    assert!(abandoned.is_err(), "the stop finished inside its grace");
+    assert!(
+        matches!(relaunched, Err(Refusal::Unstopped)),
+        "{relaunched:?}"
+    );
+    assert_eq!(fake_peer::played(&at.0), 1);
+}
+
+/// The plain protocol with its account steps spoken: a step begins with its
+/// own name, a `link` line is a sign-in link, and `in` or `out` ends it.
+#[derive(Debug, Default)]
+struct Speaking(Plain);
+
+impl Dialect for Speaking {
+    fn program(&self) -> &'static str {
+        self.0.program()
+    }
+
+    fn request(&mut self, shape: Shape<'_>) -> Request {
+        self.0.request(shape)
+    }
+
+    fn open(&mut self, turn: &TurnRequest) -> Result<Vec<String>, Failure> {
+        self.0.open(turn)
+    }
+
+    fn heard(&mut self, frame: &str) -> Result<Vec<Act>, Failure> {
+        self.0.heard(frame)
+    }
+
+    fn answer(&mut self, native: &str, decision: &Decision) -> Result<String, Failure> {
+        self.0.answer(native, decision)
+    }
+
+    fn cancel(&mut self) -> Option<String> {
+        self.0.cancel()
+    }
+
+    fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request> {
+        self.0.account(step, shape)
+    }
+
+    fn read(&self, step: Account, ran: &Ran) -> Reading {
+        self.0.read(step, ran)
+    }
+
+    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
+        Some(vec![format!("{step:?}")])
+    }
+
+    fn told(&mut self, _step: Account, frame: &str) -> Result<Told, Failure> {
+        Ok(match frame.split_once(' ') {
+            Some(("link", link)) => Told::Link(Text::new(link)),
+            _ => match frame {
+                "in" => Told::Done(Reading::Signed(Authentication::SignedIn)),
+                "out" => Told::Done(Reading::Signed(Authentication::SignedOut)),
+                _ => Told::Nothing,
+            },
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
+async fn a_sign_in_shows_its_link_while_it_waits_and_is_stopped_past_its_bound() {
+    let at = Owned::new("spoken-sign-in");
+    let program = found(
+        &at.0,
+        "plain",
+        &Script::of([Reply::new()
+            .hear(1)
+            .say("link https://sign.in/here")
+            .pause(Duration::from_mins(1))
+            .say("in")]),
+    );
+    let control = Control::new().expect("a control");
+    let mut dialect = Speaking::default();
+    let request = dialect
+        .account(Account::SignIn, Shape::default())
+        .expect("a sign-in step");
+    let frames = dialect.spoken(Account::SignIn).expect("spoken");
+    let host = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, request),
+    )
+    .await
+    .expect("started");
+    let shown = Mutex::new(Vec::new());
+
+    let read = host
+        .speak(
+            &mut dialect,
+            Account::SignIn,
+            &frames,
+            &|link| {
+                shown
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(link.as_str().to_owned());
+            },
+            Duration::from_millis(500),
+        )
+        .await;
+
+    assert_eq!(
+        shown.into_inner().unwrap_or_else(PoisonError::into_inner),
+        vec!["https://sign.in/here".to_owned()]
+    );
+    assert!(
+        matches!(&read, Reading::Unreadable(failure) if failure.reason().as_str().contains("in time")),
+        "{read:?}"
+    );
+    assert_eq!(fake_peer::heard(&at.0), vec!["SignIn".to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
+async fn a_spoken_status_reads_what_the_agent_said_and_frees_its_place() {
+    let at = Owned::new("spoken-status");
+    let program = found(
+        &at.0,
+        "plain",
+        &Script::of([
+            Reply::new().hear(1).say("noise").say("out"),
+            Reply::lines(["1.0.0"]),
+        ]),
+    );
+    let control = Control::new().expect("a control");
+    let mut dialect = Speaking::default();
+    let request = dialect
+        .account(Account::Status, Shape::default())
+        .expect("a status step");
+    let frames = dialect.spoken(Account::Status).expect("spoken");
+    let host = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program.clone(), &at.0, request),
+    )
+    .await
+    .expect("started");
+
+    let read = host
+        .speak(&mut dialect, Account::Status, &frames, &|_| {}, PREPARING)
+        .await;
+    let after = version(&program, &at.0, &control).await;
+
+    assert!(
+        matches!(read, Reading::Signed(Authentication::SignedOut)),
+        "{read:?}"
+    );
+    assert_eq!(after.said, vec!["1.0.0".to_owned()]);
 }
 
 /// A sandbox that prepares sessions it can only watch.
