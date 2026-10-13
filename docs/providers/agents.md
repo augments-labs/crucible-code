@@ -55,12 +55,13 @@ then checks again. Signing out runs its own `claude auth logout`; without a
 conversation is in, and every action its own rules leave to a prompt comes to
 you as a question. Allowing for the rest of the session keeps, for that session
 alone and never in its settings files, only the agent's rules for the command
-you were asked about: the command itself, or every command that begins with
-the words a rule names, such as every `git` command for `git:*`. A rule with a
-wildcard, or for any other tool, is not kept. Where the agent offers no such
-rule, or says its rule would allow more than you were asked, the allow is for
-that call alone. Once a turn is
-stopped, every question it asked is answered no, whatever was chosen.
+you were asked about: the command itself, or every command that begins with the
+words a rule names, such as every `git` command for `git:*`. A rule with a
+wildcard or shell syntax in its words, such as `;`, `|`, `$`, a quote or `=`,
+or a rule for any other tool, is not kept. Where the agent offers no such rule,
+or says its rule would allow more than you were asked, the allow is for that
+call alone. Once a turn is stopped, every question it asked is answered no,
+whatever was chosen.
 
 **Project settings.** The agent runs the hooks and helper commands and connects
 the servers a project's own Claude Code settings name before it is asked
