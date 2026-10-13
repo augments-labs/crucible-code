@@ -526,7 +526,7 @@ async fn a_spoken_sign_in_hands_its_link_on_and_reads_its_end() {
 
     assert!(
         matches!(read, Reading::Signed(Authentication::SignedIn)),
-        "{read:?}"
+        "the sign-in did not read as signed in"
     );
     assert_eq!(
         shown.into_inner().unwrap_or_else(PoisonError::into_inner),
@@ -590,7 +590,10 @@ async fn a_profile_the_conversation_protects_is_refused_before_it_is_made() {
         .account(&agent, &control, &mut Plain, Account::Version, &|_| {})
         .await;
 
-    assert!(matches!(refused, Err(Unlaunched::Policy(_))), "{refused:?}");
+    assert!(
+        matches!(refused, Err(Unlaunched::Policy(_))),
+        "the profile under .git was not refused by the policy"
+    );
     assert!(!inside.exists(), "a profile under .git was made");
     assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
 }
