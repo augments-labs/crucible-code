@@ -8,6 +8,65 @@ This build reads the block and refuses to start a provider whose access names
 an agent, with a sentence saying so; the sections below say how each agent is
 run once one is started.
 
+## Claude Code
+
+crucible speaks to Claude Code over its own stream protocol: the program is
+started once for a run, printing and reading one JSON frame per line, and each
+turn is one message on the same input, ended by the frame that answers it.
+
+```json
+{
+  "externalAgents": {
+    "work": {
+      "driver": "claude",
+      "executable": "/usr/local/bin/claude",
+      "configDir": "/home/me/.claude-work"
+    }
+  }
+}
+```
+
+**Which release.** Releases 2.1.277 and later before 2.2.0 are run. Its
+version is read from `claude --version` once each time crucible connects to
+it, and a release outside that range, or a program that does not say it is
+Claude Code, is sent nothing more and refused with a sentence saying which.
+
+**Its profile.** `configDir` is optional: it is the directory the agent keeps
+its sign-in, settings and sessions under, and without it the agent uses its
+usual one under your home. The agent is started with an environment of its
+own: `PATH`, your home, user name, locale and time zone, and on Windows the
+variables that locate the system, and nothing else from your shell, so an
+Anthropic key or a cloud account your shell holds for another program never
+reaches it and the account it uses is the one its profile is signed in to. It
+is also told to send nothing it does not need to answer and to leave its own
+installation alone.
+
+**Signing in.** Whether it is signed in is read from its own
+`claude auth status` in its profile. Signing in happens in the agent's own
+terminal: crucible shows the command that signs the profile in, such as
+`CLAUDE_CONFIG_DIR='/home/me/.claude-work' claude auth login`, for you to run,
+then checks again. Signing out runs its own `claude auth logout`.
+
+**Permissions.** Ask runs it in its `default` permission mode and allow edits
+in `acceptEdits`; every action its own rules leave to a prompt comes to you as
+a question. Full access is refused rather than mapped to the mode that skips
+every prompt. Allowing for the rest of the session keeps the rule for that
+session alone, never in its settings files. Once a turn is stopped, every
+question it asked is answered no, whatever was chosen.
+
+**Project settings.** The agent runs the hooks and connects the servers a
+project's own Claude Code settings name before it is asked anything, as it
+does when you start it yourself in that directory.
+
+**Usage.** Each turn reports its tokens, its input the sum of its uncached,
+cache-read and cache-written parts, and its cost in US dollars as the agent
+counts it. A run that resumes a session the agent kept reports no cost for its
+first turn, since what the session cost before it is not known.
+
+**Network.** Its sandbox adds to what the conversation lets it reach
+`api.anthropic.com`, `claude.ai`, `claude.com` and `platform.claude.com`, by
+name, and no other host.
+
 ## Antigravity
 
 crucible speaks to Antigravity's agent server over the Agent Client Protocol.

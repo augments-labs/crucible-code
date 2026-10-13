@@ -1,8 +1,18 @@
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Arc;
+
+use crucible_external_harnesses::Control;
+use crucible_external_harnesses::fake_peer::{self, scripts};
+use crucible_sandbox::SandboxPolicy;
+use crucible_sandbox_local::LocalSandbox;
+use tokio::runtime::Handle;
 
 use super::*;
-use crate::content_use::{WARNED, agent_route, launches};
+use crate::access::Route;
+use crate::content_use::{Consent, Routes, WARNED, agent_route, launches};
+use crate::launching::{Agent, Launcher, Unlaunched};
+use crate::sample::Sample;
 
 /// Each row is one driver the configuration accepts, spelled with that
 /// driver's own profile key, held under that driver's agent route, and that
@@ -75,6 +85,62 @@ fn a_row_that_does_not_ship_is_not_offered() {
     assert_eq!(registry.shipping().count(), 0);
     assert!(registry.row(Driver::Antigravity).is_some());
     assert!(registry.row(Driver::Claude).is_none());
+}
+
+/// Claude Code's own row, held back from a release, is refused at launch by
+/// the section that documents it and nothing internal, and starts no
+/// process.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_claude_code_row_held_back_is_refused_by_its_section_and_starts_nothing() {
+    let shipped = REGISTRY.row(Driver::Claude).expect("Claude Code's row");
+    let held_back: &'static [Row] = Box::leak(Box::new([Row {
+        shipping: false,
+        ..*shipped
+    }]));
+    let registry = Registry::new(held_back);
+    let sample = Sample::new("backends-claude-held-back");
+    let here = sample.root().join("peer");
+    let peer = fake_peer::install(&here, "claude", &scripts::claude::stopped_first())
+        .expect("the fake peer is built");
+    let consent = Consent::new(Routes::production());
+    consent.give(shipped.route);
+    let policy = SandboxPolicy::standard(&sample.workspace())
+        .expect("a policy")
+        .with_enabled(false);
+    let sandbox = Arc::new(LocalSandbox::new().watching_on(Handle::current()));
+    let launcher = Launcher::new(sandbox, Handle::current(), &policy, &consent);
+    let route = Route::External {
+        provider: "anthropic",
+        instance: "work".into(),
+        driver: Driver::Claude,
+        executable: peer.to_string_lossy().into(),
+        profile: None,
+        enabled: true,
+    };
+    let agent = Agent::routed(&route, &registry, |_| None).expect("a row");
+    let control = Control::new().expect("a control");
+
+    let refused = launcher
+        .launch(&agent, &control, (shipped.dialect)().as_mut(), None)
+        .await
+        .expect_err("held back");
+
+    let said = refused.to_string();
+    assert!(matches!(refused, Unlaunched::Withheld { .. }), "{said}");
+    assert!(
+        said.starts_with("Claude Code ") && said.contains("docs/providers/agents.md#claude-code"),
+        "{said}"
+    );
+    assert!(!said.contains(".sdlc-skills"), "{said}");
+    assert!(
+        !said
+            .split(|letter: char| !letter.is_ascii_alphanumeric())
+            .any(|word| word.len() == 3
+                && word.starts_with('X')
+                && word[1..].bytes().all(|byte| byte.is_ascii_digit())),
+        "{said}"
+    );
+    assert_eq!(fake_peer::played(&here), 0);
 }
 
 /// The anchor a Markdown heading gets: lower case, spaces as hyphens, and

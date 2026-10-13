@@ -18,6 +18,7 @@
 use crucible_config::Driver;
 use crucible_external_harnesses::Dialect;
 use crucible_external_harnesses::antigravity::Antigravity;
+use crucible_external_harnesses::claude::Claude;
 
 /// The most rows a registry holds, which is more agents than any release has
 /// offered at once.
@@ -89,22 +90,40 @@ impl Registry {
 }
 
 /// The registry this build ships.
-pub static REGISTRY: Registry = Registry::new(&[Row {
-    driver: Driver::Antigravity,
-    dialect: || Box::new(Antigravity::default()),
-    profile_key: "profileDir",
-    route: "agent:antigravity",
-    docs_section: "antigravity",
-    // Its sign-in page, the token exchange behind it, and the service it
-    // asks, in its released and its daily build.
-    reaches: &[
-        "accounts.google.com",
-        "oauth2.googleapis.com",
-        "cloudcode-pa.googleapis.com",
-        "daily-cloudcode-pa.googleapis.com",
-    ],
-    shipping: true,
-}]);
+pub static REGISTRY: Registry = Registry::new(&[
+    Row {
+        driver: Driver::Claude,
+        dialect: || Box::new(Claude::default()),
+        profile_key: "configDir",
+        route: "agent:claude",
+        docs_section: "claude-code",
+        // The service it asks, and the sign-in pages and token exchange of
+        // a subscription account.
+        reaches: &[
+            "api.anthropic.com",
+            "claude.ai",
+            "claude.com",
+            "platform.claude.com",
+        ],
+        shipping: true,
+    },
+    Row {
+        driver: Driver::Antigravity,
+        dialect: || Box::new(Antigravity::default()),
+        profile_key: "profileDir",
+        route: "agent:antigravity",
+        docs_section: "antigravity",
+        // Its sign-in page, the token exchange behind it, and the service it
+        // asks, in its released and its daily build.
+        reaches: &[
+            "accounts.google.com",
+            "oauth2.googleapis.com",
+            "cloudcode-pa.googleapis.com",
+            "daily-cloudcode-pa.googleapis.com",
+        ],
+        shipping: true,
+    },
+]);
 
 #[cfg(test)]
 mod tests;
