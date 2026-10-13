@@ -56,6 +56,22 @@ impl Permission {
         Self::BypassPermissions,
     ];
 
+    /// The permission mode named `name` on the command line.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|permission| permission.name() == name)
+    }
+
+    /// Whether the agent, started in `self`, may run in `running` without
+    /// asking less than it was started to: the same mode, or one that
+    /// changes nothing or denies what would have prompted.
+    #[must_use]
+    pub fn admits(self, running: Self) -> bool {
+        running == self || matches!(running, Self::Plan | Self::DontAsk)
+    }
+
     /// Its name on the command line.
     #[must_use]
     pub const fn name(self) -> &'static str {

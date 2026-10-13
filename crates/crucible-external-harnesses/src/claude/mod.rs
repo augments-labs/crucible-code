@@ -2,8 +2,9 @@
 //! configuration directory of its own.
 //!
 //! [`Claude`] starts the installed program once for a run, printing frames
-//! and reading them, in the permission mode the [`Modes`] table gives, with
-//! its permission prompts sent to this side as questions. Each turn is a user
+//! and reading them, in its `default` permission mode unless it was made for
+//! a conversation's mode through the [`Modes`] table, with its permission
+//! prompts sent to this side as questions. Each turn is a user
 //! frame on the same input, and ends at the `result` frame that answers it; a
 //! run for a session the program kept starts by resuming it. The program is
 //! started with only the environment its profile builds, so no key or cloud
@@ -15,7 +16,13 @@
 //! parts, and the cost is the session's running total, so a turn reports the
 //! difference from the turn before. A fresh session has cost nothing before
 //! its first turn; a resumed one has cost an amount this run never heard, so
-//! its first turn reports no cost and the turns after it do.
+//! its first turn reports no cost and the turns after it do. A turn that
+//! reports its tokens and no cost leaves the total unknown in the same way.
+//!
+//! Each turn opens with a frame saying how the program runs it, and a turn
+//! it runs on a key its profile was not signed in with, in a permission mode
+//! that asks less than the one it was started in, or as a release nobody
+//! reviewed, is stopped before anything it says is read.
 //!
 //! Once a turn is told to stop, every question it asked is answered no,
 //! whatever was decided: the program was told to stop, and nobody is left to
@@ -48,13 +55,18 @@ use serde_json::json;
 
 use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape};
 use control::Questions;
-use wire::{Assistant, Ended as Result_, Frame, Subtype};
+use wire::{Assistant, Ended as Result_, Frame, Init, Subtype};
 
 /// The command it is looked up as.
 const PROGRAM: &str = "claude";
 
 /// The id of the one request this side makes: stopping the turn.
 const INTERRUPT: &str = "crucible-interrupt";
+
+/// Where a key the agent sends requests with came from, when it is not the
+/// account its profile is signed in to: the environment, which the profile
+/// never passes, so a project's settings set it, or a helper command.
+const KEYS_NOT_SIGNED_IN: [&str; 2] = ["ANTHROPIC_API_KEY", "apiKeyHelper"];
 
 /// The most calls that change a file a turn remembers until they report.
 const EDITS: usize = 64;
@@ -121,6 +133,35 @@ impl Claude {
         }
     }
 
+    /// The session `init` opens, where the program runs it as it was
+    /// started to.
+    ///
+    /// # Errors
+    ///
+    /// A [`Failure`] naming what differs, where it sends requests with a key
+    /// the profile was not signed in with, runs in a mode that asks less
+    /// than it was started in, or is a release nobody reviewed.
+    fn opened(&self, init: Init) -> Result<String, Failure> {
+        if KEYS_NOT_SIGNED_IN.contains(&init.key.as_str()) {
+            return Err(Failure::new(
+                "The agent is using an API key from its settings or a project's, not the \
+                 account its profile is signed in to, so the turn was stopped. Remove the key \
+                 from those settings, then try again.",
+            ));
+        }
+        if !Permission::named(&init.mode).is_some_and(|mode| self.permission.admits(mode)) {
+            return Err(Failure::new(&format!(
+                "The agent is running in its {} permission mode, not the {} mode it was \
+                 started in, so the turn was stopped. Check the project's Claude Code \
+                 settings, then try again.",
+                init.mode,
+                self.permission.name()
+            )));
+        }
+        Manifest::REVIEWED.reviewed(&init.version)?;
+        Ok(init.session)
+    }
+
     /// The acts a message from the model comes to.
     fn said(&mut self, said: Assistant) -> Vec<Act> {
         self.signed_out |= said.signed_out;
@@ -165,8 +206,8 @@ impl Claude {
     }
 
     /// The acts a `result` frame comes to: the turn's figures, then its end.
-    fn ended(&mut self, ended: Result_) -> Vec<Act> {
-        let mut acts = Vec::from_iter(self.usage(&ended).map(Act::Say));
+    fn ended(&mut self, ended: &Result_) -> Vec<Act> {
+        let mut acts = Vec::from_iter(self.usage(ended).map(Act::Say));
         acts.push(match ended.subtype {
             Subtype::Success if !ended.failed => Act::End(Outcome::Answered),
             Subtype::DuringExecution if self.stopping => Act::End(Outcome::Cancelled),
@@ -190,17 +231,23 @@ impl Claude {
     fn usage(&mut self, ended: &Result_) -> Option<Event> {
         let turn = self.turn?;
         let [uncached, read, written, output] = ended.tokens;
-        let spent = ended.cost.and_then(|now| {
-            let before = self.spent;
+        let before = self.spent;
+        // A turn that reported its tokens and not what the session cost
+        // leaves the total unknown, so the next turn that does cannot tell
+        // its own share. One that reported nothing, as a stopped turn may,
+        // leaves it where it was.
+        if let Some(now) = ended.cost {
             self.spent = Spent::Known(Some(now));
-            match before {
-                Spent::Known(None) => Some(now),
-                Spent::Known(Some(before)) if before.currency() == now.currency() => now
-                    .millionths()
-                    .checked_sub(before.millionths())
-                    .map(|millionths| Cost::new(millionths, now.currency())),
-                Spent::Known(Some(_)) | Spent::Unknown => None,
-            }
+        } else if ended.tokens.iter().any(Option::is_some) {
+            self.spent = Spent::Unknown;
+        }
+        let spent = ended.cost.and_then(|now| match before {
+            Spent::Known(None) => Some(now),
+            Spent::Known(Some(before)) if before.currency() == now.currency() => now
+                .millionths()
+                .checked_sub(before.millionths())
+                .map(|millionths| Cost::new(millionths, now.currency())),
+            Spent::Known(Some(_)) | Spent::Unknown => None,
         });
         let input = [uncached, read, written]
             .into_iter()
@@ -303,10 +350,10 @@ impl Dialect for Claude {
 
     fn heard(&mut self, frame: &str) -> Result<Vec<Act>, Failure> {
         Ok(match wire::frame(frame)? {
-            Frame::Session(session) => vec![Act::Session(session)],
+            Frame::Session(init) => vec![Act::Session(self.opened(init)?)],
             Frame::Assistant(said) => self.said(said),
             Frame::Reported(reported) => self.reported(reported),
-            Frame::Result(ended) => self.ended(ended),
+            Frame::Result(ended) => self.ended(&ended),
             Frame::Ask(ask) => {
                 let native = ask.request.clone();
                 let pending = self.questions.asked(ask, self.workspace.as_deref())?;

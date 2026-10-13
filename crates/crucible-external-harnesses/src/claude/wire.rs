@@ -16,7 +16,7 @@ const AMOUNT_CEILING: f64 = 1e12;
 
 /// The kinds of frame that report nothing a turn carries: partial messages,
 /// progress, status, suggestions and the program's own bookkeeping.
-const PASSED_OVER: [&str; 9] = [
+const PASSED_OVER: [&str; 11] = [
     "stream_event",
     "tool_progress",
     "tool_use_summary",
@@ -26,6 +26,8 @@ const PASSED_OVER: [&str; 9] = [
     "conversation_reset",
     "keep_alive",
     "transcript_mirror",
+    "active_goal",
+    "autocompact_state",
 ];
 
 /// The system frames that report nothing a turn carries.
@@ -65,8 +67,8 @@ const SYSTEM_PASSED_OVER: [&str; 30] = [
 /// One frame, as far as a turn is concerned.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Frame {
-    /// The session began or went on under this name.
-    Session(String),
+    /// The session began or went on, as the program runs it.
+    Session(Init),
     /// A message from the model.
     Assistant(Assistant),
     /// What the tools the model called reported, each a call's id and
@@ -84,6 +86,20 @@ pub(crate) enum Frame {
     Withdrawn(String),
     /// Nothing a turn reports.
     Nothing,
+}
+
+/// How the program runs the session a turn opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Init {
+    /// The session's name.
+    pub(crate) session: String,
+    /// Where the key it sends requests with came from, `none` where it
+    /// sends none.
+    pub(crate) key: String,
+    /// The permission mode it runs in.
+    pub(crate) mode: String,
+    /// Its version.
+    pub(crate) version: String,
 }
 
 /// A message from the model.
@@ -137,7 +153,8 @@ pub(crate) struct Ask {
     pub(crate) call: String,
     /// The call's input, which an allow sends back.
     pub(crate) input: Value,
-    /// The rules the program would add for an answer that lasts.
+    /// The rules the program would add for an answer that lasts, where it
+    /// offers any.
     pub(crate) lasting: Option<Value>,
     /// What the program says the call does, where it says.
     pub(crate) title: Option<String>,
@@ -172,7 +189,12 @@ pub(crate) fn frame(line: &str) -> Result<Frame, Failure> {
 /// A system frame.
 fn system(frame: &Value) -> Result<Frame, Failure> {
     match text(frame, "subtype")? {
-        "init" => Ok(Frame::Session(text(frame, "session_id")?.to_owned())),
+        "init" => Ok(Frame::Session(Init {
+            session: text(frame, "session_id")?.to_owned(),
+            key: text(frame, "apiKeySource")?.to_owned(),
+            mode: text(frame, "permissionMode")?.to_owned(),
+            version: text(frame, "claude_code_version")?.to_owned(),
+        })),
         subtype if SYSTEM_PASSED_OVER.contains(&subtype) => Ok(Frame::Nothing),
         _ => Err(unreviewed()),
     }
@@ -268,9 +290,17 @@ fn control(frame: &Value) -> Result<Frame, Failure> {
         tool: text(request, "tool_name")?.to_owned(),
         call: text(request, "tool_use_id")?.to_owned(),
         input: request.get("input").cloned().ok_or_else(missing)?,
+        // The agent marks an ask whose lasting rule would allow more than
+        // the ask itself; it offers no rule to keep.
         lasting: request
             .get("permission_suggestions")
             .filter(|rules| rules.is_array())
+            .filter(|_| {
+                request
+                    .get("suppress_always_allow_rule")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+            })
             .cloned(),
         title,
     }))

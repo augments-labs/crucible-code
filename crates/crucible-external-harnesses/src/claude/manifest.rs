@@ -5,7 +5,9 @@
 //! `result` frame carries were reviewed at the range's lower bound and at the
 //! release current when it was written. The version is read from what the
 //! program prints when asked, once per connect and never per turn, and a
-//! version outside the range, or one printed otherwise, is refused.
+//! version outside the range, or one printed otherwise, is refused. A turn
+//! whose opening frame names a version outside the range is refused too, as
+//! after the program was updated while connected.
 
 use crucible_execution::{Failure, Text};
 
@@ -39,7 +41,6 @@ impl Manifest {
     /// A [`Failure`] naming the range, where the line is not a version and
     /// this program's name, or the version is outside the range.
     pub fn admits(&self, said: &str) -> Result<Text, Failure> {
-        let (lowest, below) = (written(self.lowest), written(self.below));
         let printed = said
             .trim()
             .strip_suffix(&format!("({})", self.name))
@@ -47,6 +48,18 @@ impl Manifest {
             .ok_or_else(|| {
                 Failure::new(&format!("The program did not say it is {}.", self.name))
             })?;
+        self.reviewed(printed)
+    }
+
+    /// The version `printed`, three numbers alone, where it is one this
+    /// manifest lists.
+    ///
+    /// # Errors
+    ///
+    /// A [`Failure`] naming the range, where `printed` is not a version or
+    /// is outside the range.
+    pub fn reviewed(&self, printed: &str) -> Result<Text, Failure> {
+        let (lowest, below) = (written(self.lowest), written(self.below));
         match version(printed) {
             Some(version) if (self.lowest..self.below).contains(&version) => Ok(Text::new(printed)),
             Some(_) => Err(Failure::new(&format!(

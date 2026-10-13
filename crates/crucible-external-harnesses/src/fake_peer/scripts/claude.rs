@@ -49,6 +49,7 @@ pub fn init() -> String {
         "session_id": SESSION,
         "apiKeySource": "none",
         "permissionMode": "default",
+        "claude_code_version": "2.1.296",
     })
     .to_string()
 }
@@ -87,13 +88,15 @@ pub fn answered(total: Option<u64>) -> String {
             "output_tokens": OUTPUT,
         },
     });
-    if let Some(total) = total {
+    if let Some(total) = total
+        && let Some(ended) = ended.as_object_mut()
+    {
         #[expect(
             clippy::cast_precision_loss,
             reason = "a script's totals are a few dollars, exact in a double"
         )]
         let dollars = total as f64 / 1e6;
-        ended["total_cost_usd"] = json!(dollars);
+        ended.insert("total_cost_usd".to_owned(), json!(dollars));
     }
     ended.to_string()
 }

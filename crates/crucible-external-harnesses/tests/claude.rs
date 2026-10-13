@@ -257,8 +257,9 @@ fn prompts(here: &Path) -> usize {
     fake_peer::heard(here)
         .iter()
         .filter(|line| {
-            serde_json::from_str::<serde_json::Value>(line)
-                .is_ok_and(|frame| frame["type"] == "user")
+            serde_json::from_str::<serde_json::Value>(line).is_ok_and(|frame| {
+                frame.get("type").and_then(serde_json::Value::as_str) == Some("user")
+            })
         })
         .count()
 }

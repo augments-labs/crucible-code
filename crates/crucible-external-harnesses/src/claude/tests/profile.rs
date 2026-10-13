@@ -7,7 +7,7 @@ use crate::claude::profile::environment;
 
 /// Every variable that would choose the agent's account, endpoint or
 /// configuration over the profile's.
-const STRIPPED: [&str; 16] = [
+const STRIPPED: [&str; 18] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
@@ -17,6 +17,8 @@ const STRIPPED: [&str; 16] = [
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+    "CLAUDE_CODE_USE_MANTLE",
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_BEARER_TOKEN_BEDROCK",

@@ -131,7 +131,14 @@ async fn the_claude_code_row_held_back_is_refused_by_its_section_and_starts_noth
         said.starts_with("Claude Code ") && said.contains("docs/providers/agents.md#claude-code"),
         "{said}"
     );
-    assert!(!said.contains(".sdlc-skills"), "{said}");
+    // Names no directory of this repository's own bookkeeping, which a user's
+    // copy of the program does not have.
+    assert!(
+        !said
+            .split(|letter: char| letter.is_whitespace() || letter == '/')
+            .any(|part| part.starts_with('.')),
+        "{said}"
+    );
     assert!(
         !said
             .split(|letter: char| !letter.is_ascii_alphanumeric())
@@ -157,4 +164,32 @@ fn anchor(heading: &str) -> String {
             _ => None,
         })
         .collect()
+}
+
+/// Claude Code's table has one mode for each a conversation runs in, so a
+/// mode added to the conversation must be given its row there too.
+#[test]
+fn claude_code_s_modes_are_the_conversation_s() {
+    use crucible_external_harnesses::claude::Mode as Agents;
+    use crucible_tools::Mode;
+    let row = |mode: Mode| match mode {
+        Mode::Ask => Agents::Ask,
+        Mode::AllowEdits => Agents::AllowEdits,
+        Mode::FullAccess => Agents::FullAccess,
+    };
+    let mut modes = vec![Mode::default()];
+    while let Some(next) = modes
+        .last()
+        .map(|mode| mode.next())
+        .filter(|next| *next != Mode::default())
+    {
+        modes.push(next);
+    }
+    let rows: BTreeSet<_> = modes
+        .into_iter()
+        .map(|mode| format!("{:?}", row(mode)))
+        .collect();
+    let table: BTreeSet<_> = Agents::ALL.iter().map(|mode| format!("{mode:?}")).collect();
+
+    assert_eq!(rows, table);
 }

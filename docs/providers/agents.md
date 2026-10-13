@@ -33,7 +33,8 @@ Claude Code, is sent nothing more and refused with a sentence saying which.
 
 **Its profile.** `configDir` is optional: it is the directory the agent keeps
 its sign-in, settings and sessions under, and without it the agent uses its
-usual one under your home. The agent is started with an environment of its
+usual one under your home: the sign-in, hooks, MCP servers and plugins of the
+Claude Code you run yourself. The agent is started with an environment of its
 own: `PATH`, your home, user name, locale and time zone, and on Windows the
 variables that locate the system, and nothing else from your shell, so an
 Anthropic key or a cloud account your shell holds for another program never
@@ -45,18 +46,27 @@ installation alone.
 `claude auth status` in its profile. Signing in happens in the agent's own
 terminal: crucible shows the command that signs the profile in, such as
 `CLAUDE_CONFIG_DIR='/home/me/.claude-work' claude auth login`, for you to run,
-then checks again. Signing out runs its own `claude auth logout`.
+then checks again. Signing out runs its own `claude auth logout`; without a
+`configDir`, that signs out the Claude Code you run yourself too.
 
-**Permissions.** Ask runs it in its `default` permission mode and allow edits
-in `acceptEdits`; every action its own rules leave to a prompt comes to you as
-a question. Full access is refused rather than mapped to the mode that skips
-every prompt. Allowing for the rest of the session keeps the rule for that
-session alone, never in its settings files. Once a turn is stopped, every
-question it asked is answered no, whatever was chosen.
+**Permissions.** It runs in its `default` permission mode, whatever mode the
+conversation is in, and every action its own rules leave to a prompt comes to
+you as a question. Allowing for the rest of the session keeps, for that session
+alone and never in its settings files, only the agent's rule for the same tool
+that names what it allows, such as one command; where the agent offers none,
+or says its rule would allow more than you were asked, the allow is for that
+call alone. Once a turn is stopped, every question it asked is answered no,
+whatever was chosen.
 
 **Project settings.** The agent runs the hooks and connects the servers a
 project's own Claude Code settings name before it is asked anything, as it
-does when you start it yourself in that directory.
+does when you start it yourself in that directory, and those settings can allow
+actions it would otherwise ask about. A turn is stopped, saying why, when the
+agent reports that it sends requests with an API key from its settings or a
+project's rather than the account its profile is signed in to, or that it runs
+in a permission mode that asks less than `default`. A token or another
+provider a project's settings set in the agent's environment is not reported,
+so read a project's Claude Code settings before you start the agent in it.
 
 **Usage.** Each turn reports its tokens, its input the sum of its uncached,
 cache-read and cache-written parts, and its cost in US dollars as the agent

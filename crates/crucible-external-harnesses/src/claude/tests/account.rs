@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crucible_execution::Authentication;
 
+use crate::claude::account::quoted_for_powershell;
 use crate::claude::{Claude, sign_in};
 use crate::{Account, Dialect, Ran, Reading, Shape};
 
@@ -152,4 +153,14 @@ fn the_sign_in_command_names_the_profile() {
             r"CLAUDE_CONFIG_DIR='/p/o'\''k' claude auth login"
         );
     }
+}
+
+/// Every character PowerShell reads as a single quote is doubled, so a
+/// profile path cannot end the quoted string early.
+#[test]
+fn a_powershell_path_doubles_every_single_quote() {
+    assert_eq!(
+        quoted_for_powershell("C:\\p\\o'k\u{2018}a\u{2019}b\u{201A}c\u{201B}d"),
+        "'C:\\p\\o''k\u{2018}\u{2018}a\u{2019}\u{2019}b\u{201A}\u{201A}c\u{201B}\u{201B}d'"
+    );
 }

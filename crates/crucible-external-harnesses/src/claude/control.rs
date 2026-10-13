@@ -5,10 +5,12 @@
 //! call's own input back unchanged, so what runs is what was shown; a deny
 //! sends a refusal the model reads. An allow for the rest of the session
 //! carries only the rules the agent proposed that allow more of the same
-//! tool, each kept for this session alone: a proposal to change the mode,
-//! reach another directory or keep a rule in a settings file is dropped, so
-//! the answer grants no more than the user chose and writes nothing to the
-//! project.
+//! tool and name what, each kept for this session alone: a rule for the
+//! whole tool or for another tool, or a
+//! proposal to change the mode, reach another directory or keep a rule in a
+//! settings file is dropped, so the answer grants no more than the user chose
+//! and writes nothing to the project. Where the agent marks its rule as
+//! allowing more than the ask, the allow lasts for the call alone.
 //!
 //! Every other request the agent makes of its host is refused, since this
 //! host serves none. A question is answered once; at most [`PENDINGS`] are
@@ -28,6 +30,8 @@ struct Open {
     request: Box<str>,
     /// The call it is about.
     call: Box<str>,
+    /// The tool the call is of.
+    tool: Box<str>,
     /// The call's input, sent back with an allow.
     input: Value,
     /// The rules the agent proposed for an answer that lasts.
@@ -58,6 +62,7 @@ impl Questions {
         self.open.push(Open {
             request: ask.request.into(),
             call: ask.call.into(),
+            tool: ask.tool.into(),
             input: ask.input,
             lasting: ask.lasting,
         });
@@ -90,10 +95,14 @@ impl Questions {
                     "toolUseID": &*open.call,
                 });
                 if *lasting == Lasting::Session
-                    && let Some(rules) = open.lasting.as_ref().map(for_the_session)
+                    && let Some(rules) = open
+                        .lasting
+                        .as_ref()
+                        .map(|proposed| for_the_session(proposed, &open.tool))
                     && !rules.is_empty()
+                    && let Some(allow) = allow.as_object_mut()
                 {
-                    allow["updatedPermissions"] = Value::Array(rules);
+                    allow.insert("updatedPermissions".to_owned(), Value::Array(rules));
                 }
                 allow
             }
@@ -130,9 +139,9 @@ pub(crate) fn refusal(request: &str) -> String {
     .to_string()
 }
 
-/// Of the rules the agent proposed, the ones that only allow a tool, each
-/// kept for this session alone.
-fn for_the_session(proposed: &Value) -> Vec<Value> {
+/// Of the rules the agent proposed, the ones that allow more of `tool` and
+/// name what, each kept for this session alone.
+fn for_the_session(proposed: &Value, tool: &str) -> Vec<Value> {
     proposed
         .as_array()
         .into_iter()
@@ -142,13 +151,26 @@ fn for_the_session(proposed: &Value) -> Vec<Value> {
                 && rule.get("behavior").and_then(Value::as_str) == Some("allow")
         })
         .filter_map(|rule| {
-            let rules = rule.get("rules").filter(|rules| rules.is_array())?;
-            Some(json!({
-                "type": "addRules",
-                "rules": rules,
-                "behavior": "allow",
-                "destination": "session",
-            }))
+            let rules: Vec<&Value> = rule
+                .get("rules")
+                .and_then(Value::as_array)?
+                .iter()
+                .filter(|rule| {
+                    rule.get("toolName").and_then(Value::as_str) == Some(tool)
+                        && rule
+                            .get("ruleContent")
+                            .and_then(Value::as_str)
+                            .is_some_and(|content| !content.is_empty())
+                })
+                .collect();
+            (!rules.is_empty()).then(|| {
+                json!({
+                    "type": "addRules",
+                    "rules": rules,
+                    "behavior": "allow",
+                    "destination": "session",
+                })
+            })
         })
         .collect()
 }
@@ -165,7 +187,12 @@ fn pending(ask: &Ask, workspace: Option<&Path>) -> Pending {
             let path = ["file_path", "path", "notebook_path"]
                 .into_iter()
                 .find_map(field);
-            if within(path, workspace) {
+            // A glob's pattern is a path of its own, read from where the
+            // glob starts.
+            let pattern = (ask.tool == "Glob").then(|| field("pattern")).flatten();
+            if within(path, workspace)
+                && pattern.is_none_or(|pattern| within(Some(pattern), workspace))
+            {
                 Detail::Reads
             } else {
                 Detail::ReadsOutside
@@ -193,12 +220,17 @@ fn pending(ask: &Ask, workspace: Option<&Path>) -> Pending {
 }
 
 /// Whether `path` is inside `workspace`: a relative path is, unless it climbs
-/// out, and an absolute one is when it begins with the workspace and never
-/// climbs. With no path, or no workspace, it is not known to be.
+/// out or starts at the home, and an absolute one is when it begins with the
+/// workspace and never climbs. Where the place exists, or a directory above
+/// it does, a link is followed, and it must lead inside too. With no path, or
+/// no workspace, it is not known to be.
 fn within(path: Option<&str>, workspace: Option<&Path>) -> bool {
     let (Some(path), Some(workspace)) = (path, workspace) else {
         return false;
     };
+    if path.starts_with('~') {
+        return false;
+    }
     let path = Path::new(path);
     if path
         .components()
@@ -211,5 +243,13 @@ fn within(path: Option<&str>, workspace: Option<&Path>) -> bool {
     } else {
         workspace.join(path)
     };
-    path.starts_with(workspace)
+    if !path.starts_with(workspace) {
+        return false;
+    }
+    let Ok(workspace) = workspace.canonicalize() else {
+        return true;
+    };
+    path.ancestors()
+        .find_map(|place| place.canonicalize().ok())
+        .is_none_or(|place| place.starts_with(workspace))
 }

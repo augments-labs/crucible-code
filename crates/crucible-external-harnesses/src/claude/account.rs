@@ -80,8 +80,8 @@ pub fn sign_in(profile: Option<&Path>) -> Text {
     let profile = profile.display().to_string();
     if cfg!(windows) {
         Text::new(&format!(
-            "$env:CLAUDE_CONFIG_DIR='{}'; claude auth login",
-            profile.replace('\'', "''")
+            "$env:CLAUDE_CONFIG_DIR={}; claude auth login",
+            quoted_for_powershell(&profile)
         ))
     } else {
         Text::new(&format!(
@@ -89,4 +89,21 @@ pub fn sign_in(profile: Option<&Path>) -> Text {
             profile.replace('\'', r"'\''")
         ))
     }
+}
+
+/// `text` as a single-quoted PowerShell string: every character PowerShell
+/// reads as a single quote, the typographic ones too, is doubled.
+pub(crate) fn quoted_for_powershell(text: &str) -> String {
+    let mut quoted = String::from("'");
+    for character in text.chars() {
+        if matches!(
+            character,
+            '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}'
+        ) {
+            quoted.push(character);
+        }
+        quoted.push(character);
+    }
+    quoted.push('\'');
+    quoted
 }

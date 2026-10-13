@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use crucible_execution::{Decision, Detail, Event, Lasting, Outcome, Pending, TurnRequest, Usage};
+use crucible_execution::{
+    Cost, Decision, Detail, Event, Lasting, Outcome, Pending, TurnRequest, Usage,
+};
 use crucible_types::TurnId;
 use serde_json::{Value, json};
 
@@ -41,6 +43,19 @@ fn result(subtype: &str, failed: bool, input: u64, cost: f64) -> String {
     .to_string()
 }
 
+/// The frame a turn opens with, naming the session `4f0c`.
+fn init(key: &str, mode: &str, version: &str) -> String {
+    json!({
+        "type": "system",
+        "subtype": "init",
+        "session_id": "4f0c",
+        "apiKeySource": key,
+        "permissionMode": mode,
+        "claude_code_version": version,
+    })
+    .to_string()
+}
+
 /// The usage among `acts`.
 fn usage(acts: &[Act]) -> Option<&Usage> {
     acts.iter().find_map(|act| match act {
@@ -60,7 +75,7 @@ fn asking(request: &str, tool: &str, input: &Value) -> String {
             "input": input,
             "tool_use_id": "toolu_1",
             "permission_suggestions": [
-                {"type": "addRules", "rules": [{"toolName": tool}], "behavior": "allow", "destination": "localSettings"},
+                {"type": "addRules", "rules": [{"toolName": tool, "ruleContent": "ls"}], "behavior": "allow", "destination": "localSettings"},
                 {"type": "setMode", "mode": "bypassPermissions", "destination": "session"},
                 {"type": "addDirectories", "directories": ["/"], "destination": "session"},
             ],
@@ -80,8 +95,11 @@ fn the_prompt_is_one_user_frame() {
         panic!("{frames:?}")
     };
     let frame: Value = serde_json::from_str(frame).unwrap();
-    assert_eq!(frame["type"], "user");
-    assert_eq!(frame["message"]["content"][0]["text"], "hello");
+    assert_eq!(frame.pointer("/type"), Some(&json!("user")));
+    assert_eq!(
+        frame.pointer("/message/content/0/text"),
+        Some(&json!("hello"))
+    );
 }
 
 #[test]
@@ -114,10 +132,41 @@ fn only_a_kept_session_is_resumed() {
 #[test]
 fn the_session_is_named_from_its_first_frame() {
     let acts = turning(None)
-        .heard(&json!({"type": "system", "subtype": "init", "session_id": "4f0c"}).to_string())
+        .heard(&init("none", "default", "2.1.296"))
         .unwrap();
 
     assert!(matches!(acts.as_slice(), [Act::Session(session)] if session == "4f0c"));
+}
+
+/// A turn whose agent says it runs on a key nobody signed the profile in
+/// with, in a mode that asks less than it was started in, or as a release
+/// nobody reviewed, ends before anything it says is read.
+#[test]
+fn a_turn_the_agent_runs_otherwise_than_it_was_started_ends() {
+    for (key, mode, version) in [
+        ("ANTHROPIC_API_KEY", "default", "2.1.296"),
+        ("apiKeyHelper", "default", "2.1.296"),
+        ("none", "bypassPermissions", "2.1.296"),
+        ("none", "acceptEdits", "2.1.296"),
+        ("none", "auto", "2.1.296"),
+        ("none", "default", "2.2.0"),
+        ("none", "default", "2.1.276"),
+    ] {
+        assert!(
+            turning(None).heard(&init(key, mode, version)).is_err(),
+            "{key} {mode} {version}"
+        );
+    }
+    for (key, mode) in [
+        ("none", "plan"),
+        ("none", "dontAsk"),
+        ("/login managed key", "default"),
+    ] {
+        assert!(
+            turning(None).heard(&init(key, mode, "2.1.277")).is_ok(),
+            "{key} {mode}"
+        );
+    }
 }
 
 /// The main loop's text is said; a task's is not.
@@ -195,15 +244,9 @@ fn a_turn_reports_its_tokens_and_what_the_session_cost_grew_by() {
     assert_eq!(first_usage.cache_read_tokens(), Some(10));
     assert_eq!(first_usage.cache_write_tokens(), Some(5));
     assert_eq!(first_usage.output_tokens(), Some(7));
+    assert_eq!(first_usage.spent().map(Cost::millionths), Some(250_000));
     assert_eq!(
-        first_usage.spent().map(|cost| cost.millionths()),
-        Some(250_000)
-    );
-    assert_eq!(
-        usage(&second)
-            .unwrap()
-            .spent()
-            .map(|cost| cost.millionths()),
+        usage(&second).unwrap().spent().map(Cost::millionths),
         Some(125_000)
     );
     assert!(matches!(first.last(), Some(Act::End(Outcome::Answered))));
@@ -220,6 +263,36 @@ fn a_resumed_sessions_first_turn_reports_no_cost() {
     let usage = usage(&acts).unwrap();
     assert_eq!(usage.input_tokens(), Some(115));
     assert_eq!(usage.spent(), None);
+}
+
+/// After a turn that did not say what the session cost, the running total is
+/// not known, so the next priced turn reports no cost rather than the whole
+/// total as its own.
+#[test]
+fn a_priced_turn_after_an_unpriced_one_reports_no_cost() {
+    let mut agent = turning(None);
+    let unpriced = json!({
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": "done",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    });
+    let _ = agent.heard(&unpriced.to_string()).unwrap();
+    let _ = agent
+        .open(&TurnRequest::new(TurnId::FIRST.next(), "b"))
+        .unwrap();
+    let priced = agent.heard(&result("success", false, 1, 0.5)).unwrap();
+    let _ = agent
+        .open(&TurnRequest::new(TurnId::FIRST.next().next(), "c"))
+        .unwrap();
+    let after = agent.heard(&result("success", false, 1, 0.75)).unwrap();
+
+    assert_eq!(usage(&priced).unwrap().spent(), None);
+    assert_eq!(
+        usage(&after).unwrap().spent().map(Cost::millionths),
+        Some(250_000)
+    );
 }
 
 /// A running total that fell, as after the session was cleared, reports no
@@ -239,7 +312,7 @@ fn a_running_total_that_fell_reports_no_cost() {
 
     assert_eq!(usage(&fell).unwrap().spent(), None);
     assert_eq!(
-        usage(&after).unwrap().spent().map(|cost| cost.millionths()),
+        usage(&after).unwrap().spent().map(Cost::millionths),
         Some(250_000)
     );
 }
@@ -312,12 +385,16 @@ fn an_unreviewed_frame_is_refused() {
         assert!(agent.heard(&frame.to_string()).is_err(), "{frame}");
     }
     assert!(agent.heard("not json").is_err());
-    assert!(
-        agent
-            .heard(&json!({"type": "keep_alive"}).to_string())
-            .unwrap()
-            .is_empty()
-    );
+    for said_nothing in [
+        json!({"type": "keep_alive"}),
+        json!({"type": "active_goal", "value": null}),
+        json!({"type": "autocompact_state"}),
+    ] {
+        assert!(
+            agent.heard(&said_nothing.to_string()).unwrap().is_empty(),
+            "{said_nothing}"
+        );
+    }
 }
 
 #[test]
@@ -350,10 +427,35 @@ fn a_question_is_raised_as_what_the_tool_would_do() {
         detail(&mut agent, "Read", json!({"file_path": "src/a"})),
         Detail::Reads
     );
-    for outside in ["/etc/passwd", "/work/../etc/passwd", "../a"] {
+    for outside in [
+        "/etc/passwd",
+        "/work/../etc/passwd",
+        "../a",
+        "~/.ssh/id_rsa",
+        "~",
+    ] {
         assert_eq!(
             detail(&mut agent, "Read", json!({"file_path": outside})),
             Detail::ReadsOutside
+        );
+    }
+    assert_eq!(
+        detail(
+            &mut agent,
+            "Glob",
+            json!({"pattern": "src/**/*.rs", "path": "/work"})
+        ),
+        Detail::Reads
+    );
+    for pattern in ["/home/u/.ssh/*", "~/.ssh/*", "../**"] {
+        assert_eq!(
+            detail(
+                &mut agent,
+                "Glob",
+                json!({"pattern": pattern, "path": "/work"})
+            ),
+            Detail::ReadsOutside,
+            "{pattern}"
         );
     }
     assert_eq!(
@@ -380,24 +482,106 @@ fn only_an_allow_for_the_session_carries_rules_and_only_for_the_session() {
         let mut agent = turning(None);
         let _ = agent.heard(&asking("r1", "Bash", &input)).unwrap();
         let frame: Value = serde_json::from_str(&agent.answer("r1", decision).unwrap()).unwrap();
-        frame["response"].clone()
+        frame.pointer("/response").cloned().unwrap_or_default()
     };
 
     let once = answered(&Decision::Allow(Lasting::Once));
     let session = answered(&Decision::Allow(Lasting::Session));
     let denied = answered(&Decision::Deny);
 
-    assert_eq!(once["request_id"], "r1");
-    assert_eq!(once["response"]["behavior"], "allow");
-    assert_eq!(once["response"]["updatedInput"], input);
-    assert_eq!(once["response"]["toolUseID"], "toolu_1");
-    assert!(once["response"].get("updatedPermissions").is_none());
+    assert_eq!(once.pointer("/request_id"), Some(&json!("r1")));
+    assert_eq!(once.pointer("/response/behavior"), Some(&json!("allow")));
+    assert_eq!(once.pointer("/response/updatedInput"), Some(&input));
+    assert_eq!(once.pointer("/response/toolUseID"), Some(&json!("toolu_1")));
+    assert!(once.pointer("/response/updatedPermissions").is_none());
     assert_eq!(
-        session["response"]["updatedPermissions"],
-        json!([{"type": "addRules", "rules": [{"toolName": "Bash"}], "behavior": "allow", "destination": "session"}])
+        session.pointer("/response/updatedPermissions"),
+        Some(
+            &json!([{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "ls"}], "behavior": "allow", "destination": "session"}])
+        )
     );
-    assert_eq!(denied["response"]["behavior"], "deny");
-    assert!(denied["response"].get("updatedInput").is_none());
+    assert_eq!(denied.pointer("/response/behavior"), Some(&json!("deny")));
+    assert!(denied.pointer("/response/updatedInput").is_none());
+}
+
+/// A session allow carries only the proposed rules for the tool asked about
+/// that name what they allow, so a yes to one command grants neither the
+/// whole tool nor another tool.
+#[test]
+fn a_session_allow_keeps_only_the_rules_for_the_tool_asked_about() {
+    let mut agent = turning(None);
+    let ask = json!({
+        "type": "control_request",
+        "request_id": "r1",
+        "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "Bash",
+            "input": {"command": "ls"},
+            "tool_use_id": "toolu_1",
+            "permission_suggestions": [
+                {
+                    "type": "addRules",
+                    "rules": [
+                        {"toolName": "Bash", "ruleContent": "ls"},
+                        {"toolName": "Bash"},
+                        {"toolName": "Write"},
+                    ],
+                    "behavior": "allow",
+                    "destination": "session",
+                },
+                {"type": "addRules", "rules": [{"toolName": "WebFetch"}], "behavior": "allow", "destination": "session"},
+            ],
+        },
+    });
+    let _ = agent.heard(&ask.to_string()).unwrap();
+
+    let frame: Value = serde_json::from_str(
+        &agent
+            .answer("r1", &Decision::Allow(Lasting::Session))
+            .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        frame.pointer("/response/response/updatedPermissions"),
+        Some(&json!([{
+            "type": "addRules",
+            "rules": [{"toolName": "Bash", "ruleContent": "ls"}],
+            "behavior": "allow",
+            "destination": "session",
+        }]))
+    );
+}
+
+/// Where the agent says a lasting rule would allow more than the ask, a
+/// session allow is sent as an allow for this call alone.
+#[test]
+fn a_session_allow_the_agent_says_is_too_broad_lasts_for_the_call_alone() {
+    let mut agent = turning(None);
+    let mut ask: Value =
+        serde_json::from_str(&asking("r1", "Bash", &json!({"command": "ls"}))).unwrap();
+    if let Some(request) = ask.pointer_mut("/request").and_then(Value::as_object_mut) {
+        request.insert("suppress_always_allow_rule".to_owned(), json!(true));
+    }
+    let _ = agent.heard(&ask.to_string()).unwrap();
+
+    let frame: Value = serde_json::from_str(
+        &agent
+            .answer("r1", &Decision::Allow(Lasting::Session))
+            .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        frame.pointer("/response/response/behavior"),
+        Some(&json!("allow"))
+    );
+    assert!(
+        frame
+            .pointer("/response/response/updatedPermissions")
+            .is_none(),
+        "{frame}"
+    );
 }
 
 /// A question is answered once, and never with written words.
@@ -436,8 +620,8 @@ fn any_other_request_is_refused() {
         panic!("{acts:?}")
     };
     let frame: Value = serde_json::from_str(frame).unwrap();
-    assert_eq!(frame["response"]["subtype"], "error");
-    assert_eq!(frame["response"]["request_id"], "r7");
+    assert_eq!(frame.pointer("/response/subtype"), Some(&json!("error")));
+    assert_eq!(frame.pointer("/response/request_id"), Some(&json!("r7")));
 }
 
 /// The answer to this side's interrupt is passed over; an answer to anything
@@ -451,12 +635,57 @@ fn only_the_interrupt_is_answered() {
             .to_string()
     };
 
-    assert_eq!(interrupt["request"]["subtype"], "interrupt");
+    assert_eq!(
+        interrupt.pointer("/request/subtype"),
+        Some(&json!("interrupt"))
+    );
     assert!(
         agent
-            .heard(&answer(&interrupt["request_id"]))
+            .heard(&answer(
+                interrupt.pointer("/request_id").unwrap_or(&Value::Null)
+            ))
             .unwrap()
             .is_empty()
     );
     assert!(agent.heard(&answer(&json!("other"))).is_err());
+}
+
+/// A read through a link inside the workspace to a place outside it is asked
+/// about as a read outside.
+#[cfg(unix)]
+#[test]
+fn a_read_through_a_link_out_of_the_workspace_is_a_read_outside() {
+    let root = std::env::temp_dir().join(format!("crucible-claude-link-{}", std::process::id()));
+    let workspace = root.join("work");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let _ = std::fs::remove_file(workspace.join("out"));
+    std::os::unix::fs::symlink(&root, workspace.join("out")).unwrap();
+    std::fs::write(root.join("secret"), "x").unwrap();
+    let mut agent = Claude::default();
+    let _ = agent.request(Shape {
+        workspace: Some(&workspace),
+        ..Shape::default()
+    });
+    let _ = agent
+        .open(&TurnRequest::new(TurnId::FIRST, "hello"))
+        .unwrap();
+
+    let acts = agent
+        .heard(&asking("r1", "Read", &json!({"file_path": "out/secret"})))
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(
+        matches!(
+            acts.last(),
+            Some(Act::Ask {
+                pending: Pending::Permission {
+                    detail: Detail::ReadsOutside,
+                    ..
+                },
+                ..
+            })
+        ),
+        "{acts:?}"
+    );
 }
