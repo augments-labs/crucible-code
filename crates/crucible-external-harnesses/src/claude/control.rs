@@ -6,7 +6,8 @@
 //! sends a refusal the model reads. An allow for the rest of the session
 //! carries only the rules the agent proposed that allow more of the same
 //! tool and name what, each kept for this session alone: a rule for the
-//! whole tool or for another tool, or a
+//! whole tool, whether it names nothing or only a wildcard, or for another
+//! tool, or a
 //! proposal to change the mode, reach another directory or keep a rule in a
 //! settings file is dropped, so the answer grants no more than the user chose
 //! and writes nothing to the project. Where the agent marks its rule as
@@ -22,6 +23,10 @@ use crucible_execution::{Decision, Detail, Failure, Lasting, PENDINGS, Pending, 
 use serde_json::{Value, json};
 
 use super::wire::Ask;
+
+/// The longest path a read is checked for on the filesystem, the most Linux
+/// opens; a longer one is taken to be outside without looking.
+const LONGEST_PATH: usize = 4096;
 
 /// What a question keeps until it is answered.
 #[derive(Debug)]
@@ -160,7 +165,7 @@ fn for_the_session(proposed: &Value, tool: &str) -> Vec<Value> {
                         && rule
                             .get("ruleContent")
                             .and_then(Value::as_str)
-                            .is_some_and(|content| !content.is_empty())
+                            .is_some_and(names_something)
                 })
                 .collect();
             (!rules.is_empty()).then(|| {
@@ -184,14 +189,23 @@ fn pending(ask: &Ask, workspace: Option<&Path>) -> Pending {
             left_running: ask.input.get("run_in_background").and_then(Value::as_bool) == Some(true),
         },
         "Read" | "Grep" | "Glob" | "LS" | "NotebookRead" => {
-            let path = ["file_path", "path", "notebook_path"]
-                .into_iter()
-                .find_map(field);
+            // Each tool reads the field it names; a search given no place
+            // starts at the workspace.
+            let path = match ask.tool.as_str() {
+                "Read" => field("file_path"),
+                "NotebookRead" => field("notebook_path"),
+                _ => Some(field("path").unwrap_or(".")),
+            };
             // A glob's pattern is a path of its own, read from where the
             // glob starts.
             let pattern = (ask.tool == "Glob").then(|| field("pattern")).flatten();
             if within(path, workspace)
-                && pattern.is_none_or(|pattern| within(Some(pattern), workspace))
+                && pattern.is_none_or(|pattern| {
+                    within(Some(pattern), workspace)
+                        && path.is_some_and(|path| {
+                            within(Some(&format!("{path}/{pattern}")), workspace)
+                        })
+                })
             {
                 Detail::Reads
             } else {
@@ -219,16 +233,25 @@ fn pending(ask: &Ask, workspace: Option<&Path>) -> Pending {
     }
 }
 
+/// Whether a rule's content names what it allows, rather than nothing or
+/// only a wildcard, which the agent reads as the whole tool.
+fn names_something(content: &str) -> bool {
+    content
+        .chars()
+        .any(|character| !(character == '*' || character == ':' || character.is_whitespace()))
+}
+
 /// Whether `path` is inside `workspace`: a relative path is, unless it climbs
 /// out or starts at the home, and an absolute one is when it begins with the
 /// workspace and never climbs. Where the place exists, or a directory above
-/// it does, a link is followed, and it must lead inside too. With no path, or
-/// no workspace, it is not known to be.
+/// it does, a link is followed, and it must lead inside too; a link that
+/// leads nowhere is not known to. With no path, no workspace, or a path
+/// longer than [`LONGEST_PATH`], it is not known to be.
 fn within(path: Option<&str>, workspace: Option<&Path>) -> bool {
     let (Some(path), Some(workspace)) = (path, workspace) else {
         return false;
     };
-    if path.starts_with('~') {
+    if path.starts_with('~') || path.len() > LONGEST_PATH {
         return false;
     }
     let path = Path::new(path);
@@ -250,6 +273,10 @@ fn within(path: Option<&str>, workspace: Option<&Path>) -> bool {
         return true;
     };
     path.ancestors()
-        .find_map(|place| place.canonicalize().ok())
-        .is_none_or(|place| place.starts_with(workspace))
+        .find(|place| place.symlink_metadata().is_ok())
+        .is_none_or(|place| {
+            place
+                .canonicalize()
+                .is_ok_and(|place| place.starts_with(&workspace))
+        })
 }

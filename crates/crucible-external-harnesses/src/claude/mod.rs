@@ -22,7 +22,7 @@
 //! Each turn opens with a frame saying how the program runs it, and a turn
 //! it runs on a key its profile was not signed in with, in a permission mode
 //! that asks less than the one it was started in, or as a release nobody
-//! reviewed, is stopped before anything it says is read.
+//! reviewed, is stopped as soon as that frame is read.
 //!
 //! Once a turn is told to stop, every question it asked is answered no,
 //! whatever was decided: the program was told to stop, and nobody is left to
@@ -63,10 +63,10 @@ const PROGRAM: &str = "claude";
 /// The id of the one request this side makes: stopping the turn.
 const INTERRUPT: &str = "crucible-interrupt";
 
-/// Where a key the agent sends requests with came from, when it is not the
-/// account its profile is signed in to: the environment, which the profile
-/// never passes, so a project's settings set it, or a helper command.
-const KEYS_NOT_SIGNED_IN: [&str; 2] = ["ANTHROPIC_API_KEY", "apiKeyHelper"];
+/// Where the agent may say its key comes from when it sends requests as the
+/// account its profile is signed in to; any other source, such as the
+/// environment a project's settings set or a helper command, is refused.
+const KEYS_SIGNED_IN: [&str; 2] = ["none", "/login managed key"];
 
 /// The most calls that change a file a turn remembers until they report.
 const EDITS: usize = 64;
@@ -142,11 +142,11 @@ impl Claude {
     /// the profile was not signed in with, runs in a mode that asks less
     /// than it was started in, or is a release nobody reviewed.
     fn opened(&self, init: Init) -> Result<String, Failure> {
-        if KEYS_NOT_SIGNED_IN.contains(&init.key.as_str()) {
+        if !KEYS_SIGNED_IN.contains(&init.key.as_str()) {
             return Err(Failure::new(
-                "The agent is using an API key from its settings or a project's, not the \
-                 account its profile is signed in to, so the turn was stopped. Remove the key \
-                 from those settings, then try again.",
+                "The agent is using a key from its settings, a project's or a helper \
+                 command, not the account its profile is signed in to, so the turn was \
+                 stopped. Remove that key, then try again.",
             ));
         }
         if !Permission::named(&init.mode).is_some_and(|mode| self.permission.admits(mode)) {

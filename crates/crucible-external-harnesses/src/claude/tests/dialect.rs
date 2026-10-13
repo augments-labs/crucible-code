@@ -146,6 +146,7 @@ fn a_turn_the_agent_runs_otherwise_than_it_was_started_ends() {
     for (key, mode, version) in [
         ("ANTHROPIC_API_KEY", "default", "2.1.296"),
         ("apiKeyHelper", "default", "2.1.296"),
+        ("a source of a later release", "default", "2.1.296"),
         ("none", "bypassPermissions", "2.1.296"),
         ("none", "acceptEdits", "2.1.296"),
         ("none", "auto", "2.1.296"),
@@ -447,6 +448,34 @@ fn a_question_is_raised_as_what_the_tool_would_do() {
         ),
         Detail::Reads
     );
+    for (tool, input) in [
+        ("Grep", json!({"pattern": "fn main"})),
+        ("Glob", json!({"pattern": "src/**/*.rs"})),
+    ] {
+        assert_eq!(detail(&mut agent, tool, input), Detail::Reads, "{tool}");
+    }
+    for (tool, input) in [
+        (
+            "Grep",
+            json!({"pattern": "x", "file_path": "/work/a", "path": "/etc"}),
+        ),
+        (
+            "Glob",
+            json!({"pattern": "*", "file_path": "/work/a", "path": "/etc"}),
+        ),
+        ("LS", json!({"file_path": "/work/a", "path": "/etc"})),
+        (
+            "Read",
+            json!({"path": "/work/a", "file_path": "/etc/passwd"}),
+        ),
+        ("Read", json!({"file_path": "a/".repeat(4096)})),
+    ] {
+        assert_eq!(
+            detail(&mut agent, tool, input),
+            Detail::ReadsOutside,
+            "{tool}"
+        );
+    }
     for pattern in ["/home/u/.ssh/*", "~/.ssh/*", "../**"] {
         assert_eq!(
             detail(
@@ -524,6 +553,10 @@ fn a_session_allow_keeps_only_the_rules_for_the_tool_asked_about() {
                     "rules": [
                         {"toolName": "Bash", "ruleContent": "ls"},
                         {"toolName": "Bash"},
+                        {"toolName": "Bash", "ruleContent": "*"},
+                        {"toolName": "Bash", "ruleContent": ":*"},
+                        {"toolName": "Bash", "ruleContent": " "},
+                        {"toolName": "Bash", "ruleContent": "**"},
                         {"toolName": "Write"},
                     ],
                     "behavior": "allow",
@@ -670,22 +703,36 @@ fn a_read_through_a_link_out_of_the_workspace_is_a_read_outside() {
         .open(&TurnRequest::new(TurnId::FIRST, "hello"))
         .unwrap();
 
-    let acts = agent
-        .heard(&asking("r1", "Read", &json!({"file_path": "out/secret"})))
-        .unwrap();
+    std::fs::create_dir_all(workspace.join("sub")).unwrap();
+    let _ = std::fs::remove_file(workspace.join("sub/away"));
+    std::os::unix::fs::symlink(&root, workspace.join("sub/away")).unwrap();
+    let _ = std::fs::remove_file(workspace.join("gone"));
+    std::os::unix::fs::symlink(root.join("nowhere"), workspace.join("gone")).unwrap();
+
+    let mut details = Vec::new();
+    for (tool, input) in [
+        ("Read", json!({"file_path": "out/secret"})),
+        ("Glob", json!({"path": "sub", "pattern": "away/*"})),
+        ("Read", json!({"file_path": "gone/secret"})),
+    ] {
+        let acts = agent.heard(&asking("r1", tool, &input)).unwrap();
+        let _ = agent.answer("r1", &Decision::Deny).unwrap();
+        details.push(match acts.last() {
+            Some(Act::Ask {
+                pending: Pending::Permission { detail, .. },
+                ..
+            }) => detail.clone(),
+            other => panic!("{other:?}"),
+        });
+    }
     let _ = std::fs::remove_dir_all(&root);
 
-    assert!(
-        matches!(
-            acts.last(),
-            Some(Act::Ask {
-                pending: Pending::Permission {
-                    detail: Detail::ReadsOutside,
-                    ..
-                },
-                ..
-            })
-        ),
-        "{acts:?}"
+    assert_eq!(
+        details,
+        vec![
+            Detail::ReadsOutside,
+            Detail::ReadsOutside,
+            Detail::ReadsOutside
+        ]
     );
 }
