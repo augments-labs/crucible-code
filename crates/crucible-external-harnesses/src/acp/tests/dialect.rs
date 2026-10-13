@@ -248,6 +248,31 @@ fn a_turn_stopped_while_initializing_leaves_the_next_to_open_its_session() {
     assert!(frame.contains("\"session/new\""), "{frame}");
 }
 
+/// An agent refused at initializing, whether or not its turn was stopped, is
+/// initialized again by the next turn and never sent a session.
+#[test]
+fn an_agent_refused_at_initializing_is_initialized_again_by_the_next_turn() {
+    for stopped in [false, true] {
+        let (mut acp, _) = opened();
+        if stopped {
+            let _ = acp.cancel();
+        }
+        let _ = acp.heard(&initialized(2)).unwrap();
+
+        let frames = acp
+            .open(&TurnRequest::new(TurnId::FIRST.next(), "again"))
+            .unwrap();
+
+        let [frame] = frames.as_slice() else {
+            panic!("{frames:?}")
+        };
+        assert!(
+            frame.contains("\"initialize\""),
+            "stopped {stopped}: {frame}"
+        );
+    }
+}
+
 /// A permission asked of no open session, or of another one, is refused
 /// rather than asked of the user.
 #[test]

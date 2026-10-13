@@ -8,7 +8,7 @@
 //! with a version or a description its profile does not admit. The session is
 //! then opened, or resumed where the conversation has one, and the prompt goes
 //! out once the agent has named it. Later turns of the run send the prompt
-//! alone.
+//! alone, once a session is open.
 //!
 //! A turn stopped before its prompt is out sends the agent nothing more and
 //! ends cancelled once the request it is waiting on is answered; an agent it
@@ -17,12 +17,13 @@
 //! This client offers the agent no file system and no terminal, so the one
 //! request it answers is a permission, and only one asked of the session it
 //! opened. Any other request asks for authority the agent was never given,
-//! and the turn ends incomplete rather than leave it unanswered. A permission
-//! is shown as the input the agent would run or fetch with, or as saying it
-//! gave none, never as the title it gave the call, and is answered with one of the options the agent
-//! offered for it. Once the turn is stopped, a question answered is answered
-//! cancelled, as the protocol asks; one still open when it was stopped is
-//! left to the agent's own end of the turn.
+//! and the turn ends incomplete rather than leave it unanswered. What a
+//! permission would run or fetch is read from the input the agent gave the
+//! call, or said to be missing, never from the title it gave it, and the
+//! permission is answered with one of the options the agent offered for it.
+//! Once the turn is stopped, a question answered is answered cancelled, as
+//! the protocol asks; one still open when it was stopped is left to the
+//! agent's own end of the turn.
 //!
 //! Account steps are spoken over the same wire: each initializes the agent,
 //! then asks whether a session can be opened, signs in, or signs out, and a
