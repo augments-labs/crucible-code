@@ -587,48 +587,59 @@ fn a_session_allow_keeps_only_the_rules_for_the_tool_asked_about() {
     );
 }
 
+/// The rules a session allow keeps, of those proposed with `contents` for a
+/// call of `tool` whose input is `input`.
+fn kept_for_the_session(
+    agent: &mut Claude,
+    tool: &str,
+    input: &Value,
+    contents: &[&str],
+) -> Vec<String> {
+    let rules: Vec<Value> = contents
+        .iter()
+        .map(|content| json!({"toolName": tool, "ruleContent": content}))
+        .collect();
+    let ask = json!({
+        "type": "control_request",
+        "request_id": "r1",
+        "request": {
+            "subtype": "can_use_tool",
+            "tool_name": tool,
+            "input": input,
+            "tool_use_id": "toolu_1",
+            "permission_suggestions": [{
+                "type": "addRules",
+                "rules": rules,
+                "behavior": "allow",
+                "destination": "session",
+            }],
+        },
+    });
+    let _ = agent.heard(&ask.to_string()).unwrap();
+    let frame: Value = serde_json::from_str(
+        &agent
+            .answer("r1", &Decision::Allow(Lasting::Session))
+            .unwrap(),
+    )
+    .unwrap();
+    frame
+        .pointer("/response/response/updatedPermissions/0/rules")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|rule| rule.get("ruleContent").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect()
+}
+
 /// A session allow keeps a proposed rule only for a command, and only where it
 /// allows the command asked about or the commands that begin with its words;
 /// any other tool's rule is dropped.
 #[test]
 fn a_session_allow_keeps_only_the_rules_that_allow_what_was_asked() {
     let mut agent = turning(None);
-    let mut kept = |tool: &str, input: Value, contents: &[&str]| -> Vec<String> {
-        let rules: Vec<Value> = contents
-            .iter()
-            .map(|content| json!({"toolName": tool, "ruleContent": content}))
-            .collect();
-        let ask = json!({
-            "type": "control_request",
-            "request_id": "r1",
-            "request": {
-                "subtype": "can_use_tool",
-                "tool_name": tool,
-                "input": input,
-                "tool_use_id": "toolu_1",
-                "permission_suggestions": [{
-                    "type": "addRules",
-                    "rules": rules,
-                    "behavior": "allow",
-                    "destination": "session",
-                }],
-            },
-        });
-        let _ = agent.heard(&ask.to_string()).unwrap();
-        let frame: Value = serde_json::from_str(
-            &agent
-                .answer("r1", &Decision::Allow(Lasting::Session))
-                .unwrap(),
-        )
-        .unwrap();
-        frame
-            .pointer("/response/response/updatedPermissions/0/rules")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|rule| rule.get("ruleContent").and_then(Value::as_str))
-            .map(str::to_owned)
-            .collect()
+    let mut kept = |tool: &str, input: Value, contents: &[&str]| {
+        kept_for_the_session(&mut agent, tool, &input, contents)
     };
 
     assert_eq!(
@@ -698,6 +709,82 @@ fn a_session_allow_keeps_only_the_rules_that_allow_what_was_asked() {
         ),
         Vec::<String>::new()
     );
+}
+
+/// A session allow keeps a command's rule only where every check on it holds:
+/// each row fails one check alone and is dropped, and the last passes them all.
+#[test]
+fn a_session_allow_drops_a_rule_that_fails_any_one_check() {
+    for (check, tool, command, content, kept) in [
+        (
+            "a command's rule",
+            "PowerShell",
+            "git status",
+            "git:*",
+            false,
+        ),
+        ("a letter or digit", "Bash", "- status", "-:*", false),
+        ("no leading space", "Bash", " git status", " git:*", false),
+        ("no trailing space", "Bash", "git  status", "git :*", false),
+        (
+            "no U+FEFF",
+            "Bash",
+            "\u{feff}git status",
+            "\u{feff}git:*",
+            false,
+        ),
+        ("no wildcard", "Bash", "git* status", "git*:*", false),
+        (
+            "no other space",
+            "Bash",
+            "git\u{a0}x status",
+            "git\u{a0}x:*",
+            false,
+        ),
+        ("no assignment", "Bash", "A=1 curl x", "A=1:*", false),
+        ("no operator", "Bash", "ls; rm -rf x", "ls;:*", false),
+        ("no substitution", "Bash", "$(curl x)", "$(curl:*", false),
+        (
+            "no quote",
+            "Bash",
+            "bash -c \"ls -la\"",
+            "bash -c \"ls:*",
+            false,
+        ),
+        ("the command's words", "Bash", "gitx status", "git:*", false),
+        ("every check", "Bash", "git status", "git:*", true),
+    ] {
+        let mut agent = turning(None);
+        let rules =
+            kept_for_the_session(&mut agent, tool, &json!({"command": command}), &[content]);
+        assert_eq!(
+            rules == [content],
+            kept,
+            "{check}: {content:?} for {command:?}"
+        );
+    }
+    for (operator, command) in [
+        ("&", "ls& rm x"),
+        ("|", "ls| sh"),
+        ("<", "ls< x"),
+        (">", "ls> x"),
+        ("(", "ls( x"),
+        (")", "ls) x"),
+        ("$", "ls$ x"),
+        ("`", "ls` x"),
+        ("'", "ls' x"),
+        ("\\", "ls\\ x"),
+    ] {
+        let mut agent = turning(None);
+        let content = format!("ls{operator}:*");
+        let rules = kept_for_the_session(
+            &mut agent,
+            "Bash",
+            &json!({"command": command}),
+            &[&content],
+        );
+        assert!(rules.is_empty(), "{content:?} for {command:?}");
+    }
 }
 
 /// Where the agent says a lasting rule would allow more than the ask, a

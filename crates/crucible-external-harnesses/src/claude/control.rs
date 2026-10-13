@@ -7,11 +7,12 @@
 //! carries only the agent's proposed rules for the command asked about, each
 //! kept for this session alone: the command itself, or every command that
 //! begins with the words the rule names, such as every `git` command for
-//! `git:*`. Any other tool's rule, a rule with a wildcard, and a proposal to
-//! change the mode, reach another directory or keep a rule in a settings file
-//! is dropped, so the answer grants no more than the user chose and writes
-//! nothing to the project. Where none is left, or the agent marks its rule as
-//! allowing more than the ask, the allow lasts for the call alone.
+//! `git:*`. Any other tool's rule, a rule with a wildcard, a rule whose words
+//! hold shell syntax, and a proposal to change the mode, reach another
+//! directory or keep a rule in a settings file are dropped, so the answer
+//! grants no more than the user chose and writes nothing to the project.
+//! Where none is left, or the agent marks its rule as allowing more than the
+//! ask, the allow lasts for the call alone.
 //!
 //! Every other request the agent makes of its host is refused, since this
 //! host serves none. A question is answered once; at most [`PENDINGS`] are
@@ -27,6 +28,14 @@ use super::wire::Ask;
 /// The longest path a read is checked for on the filesystem, the most Linux
 /// opens; a longer one is taken to be outside without looking.
 const LONGEST_PATH: usize = 4096;
+
+/// What ends a command's words or opens shell syntax inside them: an
+/// operator, a redirection, a substitution, a quote, an escape or an
+/// assignment. A rule whose words hold one could allow a command that does
+/// more than the words say, so it is not kept.
+const SHELL_SYNTAX: [char; 13] = [
+    ';', '&', '|', '<', '>', '(', ')', '$', '`', '"', '\'', '\\', '=',
+];
 
 /// What a question keeps until it is answered.
 #[derive(Debug)]
@@ -238,8 +247,9 @@ fn pending(ask: &Ask, workspace: Option<&Path>) -> Pending {
 /// command's rule is: the command itself, or with `:*` after it the commands
 /// that begin with those words, each separated by a plain space. A rule with a
 /// wildcard or another kind of space in what it names is never kept, nor one
-/// with no letter or digit, nor any other tool's, whose rules the agent may
-/// read as more than they say.
+/// whose words before `:*` hold [`SHELL_SYNTAX`], nor one with no letter or
+/// digit, nor any other tool's, whose rules the agent may read as more than
+/// they say.
 fn allows_the_ask(content: &str, tool: &str, input: &Value) -> bool {
     let prefix = content.strip_suffix(":*");
     let named = prefix.unwrap_or(content);
@@ -250,6 +260,7 @@ fn allows_the_ask(content: &str, tool: &str, input: &Value) -> bool {
             matches!(character, '*' | '?' | '[' | '{' | '\u{feff}')
                 || (character.is_whitespace() && character != ' ')
         })
+        && prefix.is_none_or(|words| !words.contains(SHELL_SYNTAX))
         && input
             .get("command")
             .and_then(Value::as_str)
