@@ -26,7 +26,8 @@ use crate::policy::RunPolicy;
 use crate::{Post, Reporter};
 /// One run, and the services it runs against.
 ///
-/// A caller reaches one through [`Runner::starting`], and what it reaches is a
+/// A caller reaches one through [`Runner::starting`], or, for a run another
+/// agent drives, through [`RunContext::outside`], and what it reaches is a
 /// root. Descending is this crate's, because a context minted outside it would
 /// file a turn's events under runs that never ran:
 ///
@@ -84,9 +85,10 @@ impl<'a> RunContext<'a> {
     ///
     /// Crate-visible, because the policy argument is the whole of what this
     /// run may spend and nothing here checks it against a session. That check
-    /// is [`Runner::starting`]'s, which is why it is the only way in from
-    /// outside; reaching this directly would be the way to a run holding more
-    /// than the session it belongs to.
+    /// is [`Runner::starting`]'s, which is why it and [`RunContext::outside`],
+    /// whose policy no runner reads, are the only ways in from outside;
+    /// reaching this directly would be the way to a run holding more than the
+    /// session it belongs to.
     ///
     /// [`Runner::starting`]: crate::Runner::starting
     #[must_use]
@@ -106,6 +108,25 @@ impl<'a> RunContext<'a> {
             steer,
             aside,
         }
+    }
+
+    /// The root of a run another agent drives, which no [`Runner`] runs.
+    ///
+    /// Its events are this program's account of what that agent did, and
+    /// they are filed under this run as a runner's are under its own. No
+    /// runner reads its policy, so it holds the default and narrows nothing:
+    /// what the agent may do and spend is settled where it was started, not
+    /// here. It descends nothing, so it can claim nothing a session holds.
+    ///
+    /// [`Runner`]: crate::Runner
+    #[must_use]
+    pub fn outside(
+        events: &'a dyn Post,
+        cancel: &'a Cancel,
+        steer: &'a Steer,
+        aside: &'a Aside,
+    ) -> Self {
+        Self::new(RunPolicy::default(), events, cancel, steer, aside)
     }
 
     /// A run this one started, asking for `wanted` and getting no more than
@@ -332,6 +353,18 @@ mod tests {
         fn context(&self, policy: RunPolicy) -> RunContext<'_> {
             RunContext::new(policy, &self.events, &self.cancel, &self.steer, &self.aside)
         }
+    }
+
+    #[test]
+    fn a_run_no_runner_drives_is_its_own_root_and_reports_under_it() {
+        let nowhere = Nowhere::new();
+        let run = RunContext::outside(&nowhere.events, &nowhere.cancel, &nowhere.steer, &nowhere.aside);
+
+        assert_eq!(run.ancestry().root(), run.run());
+        assert_eq!(run.ancestry().depth(), 0);
+        run.reporting().post(Event::Retrying);
+        let seen = nowhere.seen.try_recv().expect("the event to be posted");
+        assert_eq!(seen.run(), run.run());
     }
 
     #[test]

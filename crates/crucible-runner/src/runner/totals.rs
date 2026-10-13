@@ -5,6 +5,9 @@
 //! overwritten in place: nothing per response is kept, so it is the same size
 //! after a thousand answers as after one. It is this process's count and is
 //! never written to the session; a session picked up starts counting again.
+//! A session another agent runs has no runner counting it, so its figures are
+//! what that agent reported, summed by whoever drives it and stated whole
+//! through [`Totals::reported`].
 //!
 //! **A response is counted once.** What a provider reports while a response
 //! arrives is that response's total so far rather than an increment, so the
@@ -234,6 +237,39 @@ impl Totals {
             pending: Pending::Unasked,
             waited: Duration::ZERO,
             started: Instant::now(),
+            added: 0,
+            removed: 0,
+        }
+    }
+
+    /// The figures of a session another agent ran, as it reported them:
+    /// tokens summed across its turns, the cost those reports came to, and
+    /// when the first of them started.
+    ///
+    /// Nothing here is counted by this program, so no request time and no
+    /// edited lines are known, and they read as nothing.
+    #[must_use]
+    pub const fn reported(
+        input: u64,
+        output: u64,
+        cache_read: u64,
+        cache_write: u64,
+        cost: SessionCost,
+        started: Instant,
+    ) -> Self {
+        Self {
+            settled: Heard {
+                input,
+                output,
+                cache_read,
+                cache_write,
+                reported: true,
+            },
+            cost,
+            reading: Heard::NOTHING,
+            pending: Pending::Unasked,
+            waited: Duration::ZERO,
+            started,
             added: 0,
             removed: 0,
         }

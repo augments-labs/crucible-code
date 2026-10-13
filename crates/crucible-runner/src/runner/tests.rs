@@ -392,6 +392,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
@@ -422,6 +423,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
@@ -446,6 +448,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
@@ -486,6 +489,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
@@ -516,6 +520,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
@@ -545,6 +550,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }

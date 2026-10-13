@@ -1952,6 +1952,33 @@ fn refusal(turned: &Turned) -> String {
 }
 
 #[test]
+fn an_uncertain_stop_says_what_was_under_way_may_have_happened_and_no_guardrail() {
+    // Stopped while another agent was acting: a reader told only that the turn
+    // stopped would take it that nothing changed, and one told a guardrail
+    // refused it would go looking for a check that never ran.
+    let (events, _seen) = std::sync::mpsc::channel();
+    let (cancel, steer, aside) = (
+        crucible_runtime::Cancel::new(),
+        crucible_runtime::Steer::new(),
+        crucible_runtime::Aside::new(),
+    );
+    let run = crucible_runner::RunContext::outside(&events, &cancel, &steer, &aside);
+    let turned = Turned::Uncertain(crucible_runner::RunResult::reported(
+        &run,
+        StopReason::Cancelled,
+        crucible_types::Spend::NONE,
+    ));
+    assert_eq!(refusal(&turned), "", "an uncertain stop was drawn as a refusal");
+
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    uncertain(&mut renderer).expect("the terminal to be written");
+    let written = renderer.terminal().written().to_string();
+
+    assert!(written.contains("may or may not have happened"), "{written}");
+    assert!(!written.contains("guardrail"), "{written}");
+}
+
+#[test]
 fn an_answer_a_guardrail_refused_says_the_answer_was_what_it_refused() {
     // The stop beside the rejection is the whole difference between "nothing
     // was asked" and "an answer was made and thrown away", and a reader told

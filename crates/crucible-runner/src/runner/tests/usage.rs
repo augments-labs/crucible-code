@@ -416,3 +416,33 @@ fn usage_totals_start_again_for_a_session_picked_up() {
     assert_eq!(totals.cost(), SessionCost::Unspent);
     assert_eq!(totals.api(), Duration::ZERO);
 }
+
+#[test]
+fn a_session_another_agent_ran_reads_as_it_reported_it() {
+    let started = Instant::now();
+    let cost = SessionCost::AtLeast(crucible_types::CostAmount::new(
+        crucible_types::PricingCurrency::new("USD"),
+        crucible_types::PricingUnit::MillionTokens,
+        7,
+    ));
+
+    let totals = Totals::reported(100, 10, 20, 5, cost, started);
+
+    assert_eq!(
+        (
+            totals.input(),
+            totals.output(),
+            totals.cache_read(),
+            totals.cache_write()
+        ),
+        (100, 10, 20, 5)
+    );
+    assert_eq!(totals.cost(), cost);
+    assert_eq!(totals.started(), started);
+    assert_eq!(
+        totals.api(),
+        Duration::ZERO,
+        "no agent reports how long its requests were out"
+    );
+    assert_eq!((totals.added(), totals.removed()), (0, 0));
+}

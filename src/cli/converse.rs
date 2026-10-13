@@ -1064,6 +1064,7 @@ fn ran<T: Terminal>(
     match &took.did {
         Did::Reported | Did::UsedUp => {}
         Did::Refused(turned) => draw::refused(renderer, turned)?,
+        Did::Uncertain => draw::uncertain(renderer)?,
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
         Did::Unsent(refusal) => renderer.commit(&format!("! {refusal}"))?,
@@ -1076,7 +1077,7 @@ fn ran<T: Terminal>(
     // line that asked for it — a rule is drawn from the first column, and a
     // mark shoved in front of one reads as a result that lost its start. The
     // blank above that record is the one it asks for on its way in.
-    if !matches!(took.did, Did::Reported | Did::UsedUp) {
+    if !matches!(took.did, Did::Reported | Did::UsedUp | Did::Uncertain) {
         replied(renderer, command, style)?;
     }
 
@@ -1763,6 +1764,7 @@ fn sent(
         // have reported nothing at all.
         let did = match ended {
             Ended::Turn(Ok(Turned::Ran(_))) | Ended::Room(Ok(Room::Made(_))) => Did::Reported,
+            Ended::Turn(Ok(Turned::Uncertain(_))) => Did::Uncertain,
             Ended::Turn(Ok(refused)) => Did::Refused(refused),
             Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
             Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
@@ -1808,6 +1810,11 @@ enum Did {
     /// lines in it, run as the next turn, would stop again or go to a vendor
     /// that has said the plan is spent.
     UsedUp,
+    /// It was reported as [`Self::Reported`] is, and it was stopped while
+    /// another agent was acting, so what it was doing may or may not have
+    /// happened. Said once the turn is over, because the stop it reported says
+    /// only that it stopped.
+    Uncertain,
     /// A guardrail turned the turn away, or could not decide about it. Carried
     /// back whole because the refusal may be the only thing the turn produced:
     /// a prompt refused before any request was made posts no event.
@@ -2010,6 +2017,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Sandbox { .. }
             | Event::Used { .. }
             | Event::PlanLimits { .. }
+            | Event::Reported { .. }
             | Event::Retrying => false,
 
             // Everything else is a row, or is about to be one. The model
