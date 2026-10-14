@@ -1210,6 +1210,36 @@ fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
 }
 
 #[test]
+fn a_failed_turn_on_an_agent_s_route_says_its_failure_once() {
+    // The conversation posts nothing of how an agent's turn ended; the one
+    // failure the terminal draws is the worker's, after what streamed.
+    let turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta("Editing the file.\n"),
+        beat(Event::Used {
+            totals: crucible_runner::Totals::new(),
+        }),
+        beat(Event::Failed {
+            error: TurnError::Provider(ProviderError::Protocol {
+                provider: "anthropic",
+                problem: "the agent stopped answering".into(),
+            }),
+        }),
+    ];
+
+    let drawn = transcript(turn);
+
+    assert!(drawn.starts_with("Editing the file.\n"), "{drawn}");
+    assert_eq!(
+        drawn.matches("the agent stopped answering").count(),
+        1,
+        "{drawn}"
+    );
+}
+
+#[test]
 fn an_answer_arriving_in_pieces_is_one_block() {
     // A delta is a piece of the wire rather than a paragraph, so the row is
     // owed before the first of them and never between two.

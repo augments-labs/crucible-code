@@ -52,6 +52,7 @@ pub use outcome::{RunResult, RunStatus, Turned};
 pub use policy::{Bounds, Compaction, MAXIMUM_TOOL_CONCURRENCY, Retry, RunPolicy, ToolScheduling};
 pub use runner::attachments;
 pub use runner::{
-    Breakdown, Category, PromptCacheCleanup, RunState, Runner, SessionCost, TOOL_RUNS, Totals,
+    Breakdown, Category, PromptCacheCleanup, ReportedTokens, RunState, Runner, SessionCost,
+    TOOL_RUNS, Totals,
 };
 pub use tools::Tools;

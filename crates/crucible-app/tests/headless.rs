@@ -120,6 +120,8 @@ struct Script {
     scope: CredentialScopeId,
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
     asked: Arc<AtomicUsize>,
+    /// What the user had said, as each request carried it.
+    sent: Arc<Mutex<Vec<Vec<String>>>>,
     /// The plan windows every response says its vendor reported.
     limits: Option<PlanWindows>,
     /// What its plan answers when asked, where it has a source to ask.
@@ -135,6 +137,7 @@ impl Script {
             scope: CredentialScopeId::new(),
             rounds: Mutex::new(rounds.into_iter()),
             asked: Arc::default(),
+            sent: Arc::default(),
             limits: None,
             answering: None,
             limits_asked: Arc::default(),
@@ -198,11 +201,23 @@ impl Provider for Script {
 
     fn stream<'a>(
         &'a self,
-        _request: Request<'a>,
+        request: Request<'a>,
         _cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        let said = request
+            .transcript
+            .messages()
+            .iter()
+            .filter_map(|message| match message {
+                Message::User { text, .. } => Some(text.to_string()),
+                _ => None,
+            })
+            .collect();
         Box::pin(async move {
             self.asked.fetch_add(1, Ordering::Relaxed);
+            if let Ok(mut sent) = self.sent.lock() {
+                sent.push(said);
+            }
             let round = self
                 .rounds
                 .lock()

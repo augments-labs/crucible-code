@@ -2,7 +2,7 @@
 //! its own.
 //!
 //! An installed agent reports in the execution contract's events, and a front
-//! end reads runner events. [`Outside`] runs one turn on the agent's backend
+//! end reads runner events. `Outside` runs one turn on the agent's backend
 //! and hands on each event it reports as the runner event a native turn posts
 //! for the same thing, through the turn's own [`RunContext`], so the terminal
 //! and a headless client read one stream whichever backend ran the turn.
@@ -12,7 +12,7 @@
 //! never as anything the permission engine reads.
 //!
 //! **One tally.** The figures an agent reports fold into the conversation's
-//! one [`Tally`], and each change is posted whole as `Used`, so what a front
+//! one `Tally`, and each change is posted whole as `Used`, so what a front
 //! end holds mid-turn and what is read between turns are the same figures.
 //! Tokens add up turn by turn. A cost reported in dollars adds to a priced
 //! sum; one in another currency, a sum too large to state, or a turn that
@@ -38,7 +38,8 @@
 //! the [`Relaunch`] the conversation holds, resuming the agent's own session
 //! by the name the agent last gave it. A change of mode does the same, since
 //! the agent is told its mode only at launch, and so it never changes
-//! mid-turn.
+//! mid-turn. A mode the agent has no launch for is never taken: neither by a
+//! change nor by a conversation moved onto the route in it.
 
 use std::collections::VecDeque;
 use std::future::poll_fn;
@@ -52,7 +53,8 @@ use crucible_execution::{
 };
 use crucible_models::ProviderError;
 use crucible_runner::{
-    Event as RunEvent, Reporter, RunContext, RunResult, SessionCost, Totals, TurnError, Turned,
+    Event as RunEvent, ReportedTokens, Reporter, RunContext, RunResult, SessionCost, Totals,
+    TurnError, Turned,
 };
 use crucible_runtime::BoxFuture;
 use crucible_session::{ExternalRef, RouteBinding, Session, Uncertain};
@@ -88,6 +90,41 @@ pub trait Relaunch: Send + Sync {
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>>;
 }
 
+/// The installed agent a conversation moves onto: its first run, what
+/// launches the next, and the route the session is bound to.
+pub struct Installed {
+    /// The agent's run, launched under the conversation's mode.
+    pub backend: Box<dyn Backend>,
+    /// What launches another.
+    pub relaunch: Box<dyn Relaunch>,
+    /// The route the session is bound to.
+    pub route: RouteBinding,
+}
+
+impl std::fmt::Debug for Installed {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Installed")
+            .field("route", &self.route)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Refuses anything attached to a turn on an installed agent, which no agent
+/// is handed.
+///
+/// # Errors
+///
+/// [`TurnError::Refused`] where something is attached.
+pub(crate) fn unattached(attached: &[Attachment]) -> Result<(), TurnError> {
+    if attached.is_empty() {
+        Ok(())
+    } else {
+        Err(TurnError::Refused(
+            "an attachment to an installed agent's turn".into(),
+        ))
+    }
+}
+
 /// The one currency an agent's cost is counted in.
 const DOLLARS: PricingCurrency = PricingCurrency::new("USD");
 
@@ -101,14 +138,8 @@ const UNKNOWN_EFFECTS: &str = " What the agent was doing may or may not have hap
 /// What an installed agent has reported using, over a whole session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Tally {
-    /// Input tokens, cache reads included.
-    input: u64,
-    /// Output tokens.
-    output: u64,
-    /// Input tokens read from a cache.
-    cache_read: u64,
-    /// Input tokens written to a cache.
-    cache_write: u64,
+    /// The tokens reported.
+    tokens: ReportedTokens,
     /// What it came to.
     cost: SessionCost,
     /// When the first turn began.
@@ -121,10 +152,12 @@ impl Tally {
     /// Nothing reported yet.
     pub(crate) const fn new() -> Self {
         Self {
-            input: 0,
-            output: 0,
-            cache_read: 0,
-            cache_write: 0,
+            tokens: ReportedTokens {
+                input: 0,
+                output: 0,
+                cache_read: 0,
+                cache_write: 0,
+            },
             cost: SessionCost::Unspent,
             started: None,
             open: None,
@@ -134,14 +167,7 @@ impl Tally {
     /// The session's figures, as a front end reads them.
     pub(crate) fn totals(&self) -> Totals {
         self.started.map_or_else(Totals::new, |started| {
-            Totals::reported(
-                self.input,
-                self.output,
-                self.cache_read,
-                self.cache_write,
-                self.cost,
-                started,
-            )
+            Totals::reported(self.tokens, self.cost, started)
         })
     }
 
@@ -157,10 +183,11 @@ impl Tally {
     /// The turn under way reported `usage`.
     pub(crate) fn used(&mut self, usage: &Usage) {
         let add = |sum: u64, more: Option<u64>| sum.saturating_add(more.unwrap_or(0));
-        self.input = add(self.input, usage.input_tokens());
-        self.output = add(self.output, usage.output_tokens());
-        self.cache_read = add(self.cache_read, usage.cache_read_tokens());
-        self.cache_write = add(self.cache_write, usage.cache_write_tokens());
+        let tokens = &mut self.tokens;
+        tokens.input = add(tokens.input, usage.input_tokens());
+        tokens.output = add(tokens.output, usage.output_tokens());
+        tokens.cache_read = add(tokens.cache_read, usage.cache_read_tokens());
+        tokens.cache_write = add(tokens.cache_write, usage.cache_write_tokens());
         if let Some(spent) = usage.spent() {
             self.cost = priced(self.cost, spent);
             if let Some(open) = &mut self.open {
@@ -258,20 +285,20 @@ impl std::fmt::Debug for Outside {
 }
 
 impl Outside {
-    /// A conversation on `route`, its agent's run `backend` launched under
+    /// A conversation on the agent `installed`, its run launched under
     /// `mode`, the session's agent named `named` and `transcript` what was
     /// seen of it so far.
-    // Each is an input of its own to the conversation moved, and a value
-    // gathering them would be built at its one caller and taken apart here.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        backend: Box<dyn Backend>,
-        relaunch: Box<dyn Relaunch>,
-        route: RouteBinding,
+        installed: Installed,
         transcript: Transcript,
         mode: Mode,
         named: Option<ExternalRef>,
     ) -> Self {
+        let Installed {
+            backend,
+            relaunch,
+            route,
+        } = installed;
         let driver = crucible_config::Driver::ALL
             .iter()
             .map(|driver| driver.name())
@@ -365,26 +392,16 @@ impl Outside {
     ///
     /// # Errors
     ///
-    /// [`TurnError::Refused`] where something is attached, which no agent is
-    /// handed, and [`TurnError::Provider`] where the agent could not be
-    /// launched or the turn failed, its text saying where what the agent was
-    /// doing may or may not have happened.
-    // The same inputs as the native runner's turn, and the session it records
-    // into, which the native runner holds and an agent's turn is handed.
-    #[allow(clippy::too_many_arguments)]
+    /// [`TurnError::Provider`] where the agent could not be launched or the
+    /// turn failed, its text saying where what the agent was doing may or may
+    /// not have happened.
     pub(crate) async fn turn(
         &mut self,
         prompt: &str,
-        attached: &[Attachment],
         asker: &mut dyn Asker,
         run: &RunContext<'_>,
         session: &Session,
     ) -> Result<Turned, TurnError> {
-        if !attached.is_empty() {
-            return Err(TurnError::Refused(
-                "an attachment to an installed agent's turn".into(),
-            ));
-        }
         if self.spent {
             self.retire().await;
         }

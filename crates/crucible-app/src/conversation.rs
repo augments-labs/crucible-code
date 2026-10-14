@@ -46,7 +46,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crucible_context::Room;
-use crucible_execution::Backend;
+use crucible_execution::Failure;
 use crucible_models::{
     Effort, FastForm, PromptCacheAttempt, PromptCacheCapabilities, Served, Speed,
 };
@@ -54,7 +54,7 @@ use crucible_runner::{
     Breakdown, Post, PromptCacheCleanup, RunContext, RunPolicy, Runner, Totals, TurnError, Turned,
 };
 use crucible_runtime::{Aside, Cancel, Steer};
-use crucible_session::{FilePromptCacheResourceStore, RouteBinding, Session, SessionError};
+use crucible_session::{FilePromptCacheResourceStore, Session, SessionError};
 use crucible_tools::{Looking, Mode, Summary};
 use crucible_types::{
     Attachment, Compacting, Modalities, Modality, PlanWindows, PromptCachePolicy,
@@ -63,7 +63,7 @@ use crucible_types::{
 use crucible_workspace::Workspace;
 
 use crate::client::Asker;
-use crate::outside::{Outside, Relaunch};
+use crate::outside::{self, Installed, Outside};
 
 /// What a conversation runs on.
 ///
@@ -213,35 +213,37 @@ impl Conversation {
         self.outside.is_none().then_some(&mut self.runner)
     }
 
-    /// Moves the conversation onto an installed agent's route: `session` is
-    /// recorded into from here on, bound to `route`, `transcript` is what was
-    /// seen of it so far, and `backend` is the agent's run, which `relaunch`
-    /// replaces once it is spent. The kept runner is handed a session that
-    /// keeps nothing and no transcript, so it holds no claim on a log and no
-    /// second copy while the agent runs the conversation. The session left is
-    /// returned.
-    // Each is an input of its own to the move, and a value gathering them
-    // would be built at each caller and taken apart here.
-    #[allow(clippy::too_many_arguments)]
+    /// Moves the conversation onto the route of the agent `installed`:
+    /// `session` is recorded into from here on, bound to that route,
+    /// `transcript` is what was seen of it so far, and the agent's run is
+    /// replaced through its relaunch once it is spent. The kept runner is
+    /// handed a session that keeps nothing and no transcript, so it holds no
+    /// claim on a log and no second copy while the agent runs the
+    /// conversation. The session left is returned.
+    ///
+    /// # Errors
+    ///
+    /// [`Failure`] where the agent has no launch in the conversation's mode:
+    /// nothing moves, the run handed over is closed, and `session` is let go.
     pub async fn external(
         &mut self,
         session: Arc<Session>,
         transcript: Transcript,
-        backend: Box<dyn Backend>,
-        relaunch: Box<dyn Relaunch>,
-        route: RouteBinding,
-    ) -> Arc<Session> {
+        installed: Installed,
+    ) -> Result<Arc<Session>, Failure> {
         let mode = self.settled().mode();
+        if let Err(refused) = installed.relaunch.admits(mode) {
+            let _closed = installed.backend.close().await;
+            return Err(refused);
+        }
         if let Some(mut outside) = self.outside.take() {
             outside.retire().await;
         }
         let named = session.external_ref().cloned();
         self.runner
             .pick_up(Arc::new(Session::nowhere()), Transcript::new());
-        self.outside = Some(Box::new(Outside::new(
-            backend, relaunch, route, transcript, mode, named,
-        )));
-        std::mem::replace(&mut self.session, session)
+        self.outside = Some(Box::new(Outside::new(installed, transcript, mode, named)));
+        Ok(std::mem::replace(&mut self.session, session))
     }
 
     /// Moves the conversation back onto this program's own models, closing
@@ -434,9 +436,8 @@ impl Conversation {
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
         if let Some(outside) = self.outside.as_deref_mut() {
-            return outside
-                .turn(prompt, &attached, ask, run, &self.session)
-                .await;
+            outside::unattached(&attached)?;
+            return outside.turn(prompt, ask, run, &self.session).await;
         }
         let asked = self.runner.speed();
         let turned = self.runner.turn(prompt, attached, ask, run).await;

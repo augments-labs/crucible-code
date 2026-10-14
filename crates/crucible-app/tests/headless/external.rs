@@ -20,7 +20,7 @@ use crucible_app::client::{self, Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::external::External;
 use crucible_app::launching::{Agent, Launcher};
-use crucible_app::outside::Relaunch;
+use crucible_app::outside::{Installed, Relaunch};
 use crucible_app::{Conversation, Settled};
 use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, Decision as Ruled, Lasting as Lasts, Pending,
@@ -141,6 +141,60 @@ impl Relaunch for Launching {
     }
 }
 
+/// The route the conversation is moved onto.
+fn binding() -> Result<RouteBinding, Failed> {
+    Ok(RouteBinding::new("claude", "work", None)?)
+}
+
+/// Claude Code's runs launched from the peer installed in `tree` playing
+/// `script`, once a connect's probe and status check have been played, and
+/// where the peer keeps what it heard.
+fn launching(tree: &Tree, script: &Peer) -> Result<(Launching, PathBuf), Failed> {
+    let peer = tree.0.join("peer");
+    let program = fake_peer::install(&peer, "claude", script)?;
+    let row = row()?;
+    let consent = Consent::new(Routes::production());
+    consent.give(row.route);
+    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false);
+    let runtime = runtime()?;
+    let sandbox: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
+    let route = Route::External {
+        provider: "anthropic",
+        instance: "work".into(),
+        driver: Driver::Claude,
+        executable: program.to_string_lossy().into(),
+        profile: None,
+        enabled: true,
+    };
+    let registry = Registry::new(std::slice::from_ref(row));
+    let agent = Agent::routed(&route, &registry, |_| None).ok_or("Claude Code's route")?;
+    let launching = Launching {
+        sandbox,
+        runtime: runtime.clone(),
+        policy,
+        consent,
+        agent,
+        row,
+        launched: Arc::default(),
+    };
+
+    // A connect: the version, then whether the profile is signed in.
+    runtime.block_on(async {
+        let starting = launching.launcher();
+        for step in [Account::Version, Account::Status] {
+            let control = Control::new().ok_or("no control")?;
+            let mut dialect = (row.dialect)(Mode::Ask)?;
+            starting
+                .account(&launching.agent, &control, dialect.as_mut(), step, &|_| {})
+                .await?;
+        }
+        Ok::<_, Failed>(())
+    })?;
+
+    Ok((launching, peer))
+}
+
 /// A conversation on Claude Code's route, the peer playing its script from a
 /// connect's probe and status check on, and where the peer keeps what it
 /// heard.
@@ -152,78 +206,55 @@ struct Outside {
 }
 
 impl Outside {
+    /// A conversation on the route from its first turn, recording into a
+    /// session started on it.
     fn new(tree: &Tree, script: &Peer) -> Result<Self, Failed> {
-        let peer = tree.0.join("peer");
-        let program = fake_peer::install(&peer, "claude", script)?;
-        let row = row()?;
-        let consent = Consent::new(Routes::production());
-        consent.give(row.route);
-        let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false);
-        let runtime = runtime()?;
-        let sandbox: Arc<dyn SandboxService> =
-            Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
-        let route = Route::External {
-            provider: "anthropic",
-            instance: "work".into(),
-            driver: Driver::Claude,
-            executable: program.to_string_lossy().into(),
-            profile: None,
-            enabled: true,
-        };
-        let registry = Registry::new(std::slice::from_ref(row));
-        let agent = Agent::routed(&route, &registry, |_| None).ok_or("Claude Code's route")?;
-        let launched = Arc::default();
-        let launching = Launching {
-            sandbox,
-            runtime: runtime.clone(),
-            policy,
-            consent,
-            agent,
-            row,
-            launched: Arc::clone(&launched),
-        };
-
-        // A connect: the version, then whether the profile is signed in.
-        runtime.block_on(async {
-            let starting = launching.launcher();
-            for step in [Account::Version, Account::Status] {
-                let control = Control::new().ok_or("no control")?;
-                let mut dialect = (row.dialect)(Mode::Ask)?;
-                starting
-                    .account(&launching.agent, &control, dialect.as_mut(), step, &|_| {})
-                    .await?;
-            }
-            Ok::<_, Failed>(())
-        })?;
-
-        let binding = RouteBinding::new("claude", "work", None)?;
         let session = Arc::new(Session::start_routed(
             &tree.sessions(),
             &tree.workspace()?,
             None,
-            &binding,
+            &binding()?,
         )?);
-        let mut conversation = super::conversation(tree, Script::new(Vec::new()), false)?;
-        runtime.block_on(async {
+        let conversation = super::conversation(tree, Script::new(Vec::new()), false)?;
+        let (outside, _left) = Self::onto(tree, script, conversation, session, Transcript::new())?;
+        Ok(outside)
+    }
+
+    /// `conversation` moved onto the route, recording into `session` with
+    /// `transcript` what was seen of it, and the session it left.
+    fn onto(
+        tree: &Tree,
+        script: &Peer,
+        mut conversation: Conversation,
+        session: Arc<Session>,
+        transcript: Transcript,
+    ) -> Result<(Self, Arc<Session>), Failed> {
+        let (launching, peer) = launching(tree, script)?;
+        let launched = Arc::clone(&launching.launched);
+        let route = binding()?;
+        let left = runtime()?.block_on(async {
             let backend = launching.launch(Mode::Ask, None).await?;
-            conversation
-                .external(
-                    session,
-                    Transcript::new(),
-                    backend,
-                    Box::new(launching),
-                    binding.clone(),
-                )
-                .await;
-            Ok::<_, Failed>(())
+            let installed = Installed {
+                backend,
+                relaunch: Box::new(launching),
+                route: route.clone(),
+            };
+            Ok::<_, Failed>(
+                conversation
+                    .external(session, transcript, installed)
+                    .await?,
+            )
         })?;
 
-        Ok(Self {
-            conversation,
-            peer,
-            route: binding,
-            launched,
-        })
+        Ok((
+            Self {
+                conversation,
+                peer,
+                route,
+                launched,
+            },
+            left,
+        ))
     }
 
     /// What each launch was asked for, in order.
@@ -447,7 +478,7 @@ fn mid_turn_the_settled_figures_and_the_last_used_agree() -> Result<(), Failed> 
 
 /// A turn's answer streams as a headless client would read it, the snapshot
 /// after it counts one turn and its messages, and no provider is named as
-/// serving the conversation.
+/// serving the conversation, nor is a model missing from it.
 #[test]
 fn a_turn_streams_and_is_counted_as_a_native_one_is() -> Result<(), Failed> {
     let tree = Tree::new("external-snapshot")?;
@@ -457,6 +488,10 @@ fn a_turn_streams_and_is_counted_as_a_native_one_is() -> Result<(), Failed> {
 
     assert!(matches!(ended, Ok(Turned::Ran(_))), "{ended:?}");
     assert_eq!(outside.conversation.serving(), None);
+    assert!(
+        outside.conversation.missing().is_none(),
+        "the turn was refused as having no model"
+    );
     let streamed: Vec<_> = events
         .iter()
         .filter_map(|event| client::progress(Asking::every(), event, None))
@@ -465,6 +500,16 @@ fn a_turn_streams_and_is_counted_as_a_native_one_is() -> Result<(), Failed> {
         streamed.iter().any(
             |progress| matches!(progress, Progress::Delta { text } if text.as_str() == "Done.")
         ),
+        "{streamed:?}"
+    );
+    assert!(
+        matches!(streamed.first(), Some(Progress::Started { .. })),
+        "{streamed:?}"
+    );
+    assert!(
+        streamed
+            .iter()
+            .any(|progress| matches!(progress, Progress::Used(_))),
         "{streamed:?}"
     );
     assert!(
@@ -626,27 +671,6 @@ fn a_run_lost_mid_effect_says_its_work_is_uncertain() -> Result<(), Failed> {
     Ok(())
 }
 
-/// After moving back inside, the next turn runs on the runner the
-/// conversation kept, over the transcript it was handed.
-#[test]
-fn moving_inside_continues_on_the_kept_runner() -> Result<(), Failed> {
-    let tree = Tree::new("external-inside")?;
-    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
-    let (first, _) = turn(&mut outside, "one", false)?;
-    assert!(first.is_ok(), "{first:?}");
-    let kept = outside.settled().transcript().clone();
-    let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
-
-    let _left = runtime()?.block_on(outside.conversation.inside(session, kept.clone()));
-
-    assert_eq!(outside.settled().transcript().messages(), kept.messages());
-    assert_eq!(
-        outside.conversation.settled().totals().cost(),
-        SessionCost::Unspent
-    );
-    Ok(())
-}
-
 /// A client on the far side of a wire, answering each action put to it as
 /// it was told to.
 struct Remote {
@@ -752,20 +776,189 @@ fn the_agent_s_question_reaches_the_client_and_its_answer_the_agent() -> Result<
     Ok(())
 }
 
-/// The runner a conversation moved back inside answers the next turn.
+/// Back inside, the next turn runs on the runner the conversation was
+/// assembled with, which still keeps its prompt caches where it was told to,
+/// and the request it sends carries the transcript it was handed.
 #[test]
-fn the_kept_runner_answers_after_moving_inside() -> Result<(), Failed> {
-    let tree = Tree::new("external-inside-turn")?;
-    let mut conversation = super::conversation(&tree, Script::new(vec![saying("hello")]), false)?;
-    let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
-    let _left = runtime()?.block_on(conversation.inside(session, Transcript::new()));
+fn moving_inside_continues_on_the_runner_as_it_was_assembled() -> Result<(), Failed> {
+    let tree = Tree::new("external-inside")?;
+    let script = Script::new(vec![saying("back")]);
+    let sent = Arc::clone(&script.sent);
+    let home = tree.home()?;
+    let native = super::conversation(&tree, script, false)?.remembering_caches_in(home.path());
+    let session = Arc::new(Session::start_routed(
+        &tree.sessions(),
+        &tree.workspace()?,
+        None,
+        &binding()?,
+    )?);
+    let (mut outside, _left) = Outside::onto(
+        &tree,
+        &connected([claude::clean()]),
+        native,
+        session,
+        Transcript::new(),
+    )?;
+    let (first, _) = turn(&mut outside, "one", false)?;
+    assert!(first.is_ok(), "{first:?}");
+    let kept = outside.settled().transcript().clone();
+    let inside = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
 
-    let (turned, said) = super::turn(&mut conversation, "hi")?;
+    let _left = runtime()?.block_on(outside.conversation.inside(inside, kept.clone()));
 
+    assert_eq!(outside.settled().transcript().messages(), kept.messages());
+    assert_eq!(outside.settled().totals().cost(), SessionCost::Unspent);
+    // Records nobody can read: a runner that still keeps its caches there
+    // reads them and says so, where one that forgot reads nothing.
+    let caches = home.path().join("prompt-cache");
+    std::fs::create_dir_all(&caches)?;
+    std::fs::write(caches.join("resources-v1.json"), "not records")?;
+    let listed = runtime()?.block_on(outside.conversation.prompt_cache_resources());
+    assert!(listed.is_err(), "the runner forgot its caches: {listed:?}");
+    let (turned, said) = super::turn(&mut outside.conversation, "two")?;
     assert!(
         matches!(&turned, Turned::Ran(result) if result.stop() == StopReason::Yielded),
         "{turned:?}"
     );
-    assert_eq!(said, "hello");
+    assert_eq!(said, "back");
+    let sent = sent.lock().map_err(|_| "the record")?.clone();
+    assert_eq!(sent, [vec!["one".to_owned(), "two".to_owned()]]);
+    Ok(())
+}
+
+/// A session picked back up shows what it held once the conversation is
+/// moved onto its route.
+#[test]
+fn moving_outside_shows_the_transcript_reopened() -> Result<(), Failed> {
+    let tree = Tree::new("external-reopened")?;
+    let workspace = tree.workspace()?;
+    let started = Session::start_routed(&tree.sessions(), &workspace, None, &binding()?)?;
+    let id = started.id().cloned().ok_or("an id")?;
+    started.append(&Message::User {
+        text: "before".into(),
+        attachments: Box::new([]),
+    });
+    drop(started);
+    let (reopened, transcript) =
+        Session::reopen_routed(&tree.sessions(), &workspace, &id, &binding()?)?;
+    let native = super::conversation(&tree, Script::new(Vec::new()), false)?;
+
+    let (outside, _left) = Outside::onto(
+        &tree,
+        &connected([]),
+        native,
+        Arc::new(reopened),
+        transcript,
+    )?;
+
+    let shown: Vec<_> = outside
+        .settled()
+        .transcript()
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::User { text, .. } => Some(text.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shown, ["before"]);
+    Ok(())
+}
+
+/// The session a conversation left when it moved outside is let go whole:
+/// it reopens in the same run, nobody holding it.
+#[test]
+fn the_session_left_for_the_route_reopens_at_once() -> Result<(), Failed> {
+    let tree = Tree::new("external-left")?;
+    let native = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    let id = native.session().id().cloned().ok_or("an id")?;
+    let session = Arc::new(Session::start_routed(
+        &tree.sessions(),
+        &tree.workspace()?,
+        None,
+        &binding()?,
+    )?);
+
+    let (_outside, left) =
+        Outside::onto(&tree, &connected([]), native, session, Transcript::new())?;
+    drop(left);
+
+    let reopened = Session::reopen(&tree.sessions(), &tree.workspace()?, &id);
+    assert!(reopened.is_ok(), "{:?}", reopened.err());
+    Ok(())
+}
+
+/// A conversation in a mode the agent has no launch for is not moved: it
+/// stays on its own runner, in the mode it was in.
+#[test]
+fn a_conversation_in_full_access_is_not_moved_onto_the_route() -> Result<(), Failed> {
+    let tree = Tree::new("external-full-access")?;
+    let mut native = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    assert_eq!(native.switch(Mode::FullAccess), Mode::FullAccess);
+    let (launching, _peer) = launching(&tree, &connected([claude::clean()]))?;
+    let session = Arc::new(Session::start_routed(
+        &tree.sessions(),
+        &tree.workspace()?,
+        None,
+        &binding()?,
+    )?);
+
+    let moved = runtime()?.block_on(async {
+        let backend = launching.launch(Mode::Ask, None).await?;
+        let installed = Installed {
+            backend,
+            relaunch: Box::new(launching),
+            route: binding()?,
+        };
+        Ok::<_, Failed>(native.external(session, Transcript::new(), installed).await)
+    })?;
+
+    assert!(moved.is_err(), "{moved:?}");
+    assert_eq!(native.settled().mode(), Mode::FullAccess);
+    assert!(
+        native.settled().model() == "script",
+        "{}",
+        native.settled().model()
+    );
+    Ok(())
+}
+
+/// A session whose run was lost with an edit under way keeps a line saying
+/// so, and the session picked back up on the route still has it.
+#[test]
+fn resuming_keeps_a_turn_whose_work_is_uncertain() -> Result<(), Failed> {
+    let tree = Tree::new("external-uncertain")?;
+    let mut outside = Outside::new(
+        &tree,
+        &connected([claude::crash(), claude::clean(), claude::clean()]),
+    )?;
+    let (ended, _) = turn(&mut outside, "go", false)?;
+    assert!(ended.is_err(), "{ended:?}");
+    let left = outside
+        .conversation
+        .session()
+        .id()
+        .cloned()
+        .ok_or("an id")?;
+    let log = std::fs::read_to_string(outside.conversation.session().path())?;
+    assert!(log.contains("uncertain"), "{log}");
+    let workspace = tree.workspace()?;
+    let cleared = runtime()?.block_on(outside.conversation.clear(
+        &tree.sessions(),
+        &workspace,
+        None,
+    ))?;
+    drop(cleared);
+
+    let _cleared = runtime()?.block_on(outside.conversation.resume(
+        &tree.sessions(),
+        &workspace,
+        &left,
+    ))?;
+
+    assert!(
+        outside.conversation.session().uncertain_turn().is_some(),
+        "the resumed session lost the uncertain turn"
+    );
     Ok(())
 }

@@ -93,7 +93,7 @@ use load::{Counting, Fixed, Load};
 use passes::AgentLoop;
 use state::Judged;
 pub use state::RunState;
-pub use totals::{SessionCost, Totals};
+pub use totals::{ReportedTokens, SessionCost, Totals};
 pub use work::TOOL_RUNS;
 use work::{Went, Work};
 

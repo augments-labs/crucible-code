@@ -207,6 +207,20 @@ impl Heard {
     }
 }
 
+/// The tokens another agent reported using, summed over a session, as
+/// [`Totals::reported`] states them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReportedTokens {
+    /// Input tokens, cache reads included.
+    pub input: u64,
+    /// Output tokens.
+    pub output: u64,
+    /// Input tokens read from a cache.
+    pub cache_read: u64,
+    /// Input tokens written to a cache.
+    pub cache_write: u64,
+}
+
 /// What a session has used: tokens, cost, time and lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Totals {
@@ -249,21 +263,13 @@ impl Totals {
     /// Nothing here is counted by this program, so no request time and no
     /// edited lines are known, and they read as nothing.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub const fn reported(
-        input: u64,
-        output: u64,
-        cache_read: u64,
-        cache_write: u64,
-        cost: SessionCost,
-        started: Instant,
-    ) -> Self {
+    pub const fn reported(tokens: ReportedTokens, cost: SessionCost, started: Instant) -> Self {
         Self {
             settled: Heard {
-                input,
-                output,
-                cache_read,
-                cache_write,
+                input: tokens.input,
+                output: tokens.output,
+                cache_read: tokens.cache_read,
+                cache_write: tokens.cache_write,
                 reported: true,
             },
             cost,

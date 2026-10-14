@@ -131,9 +131,11 @@ impl Asker for Nobody {}
 /// A conversation on the agent `backend`, relaunched by `relaunch`.
 fn outside(backend: Box<dyn Backend>, relaunch: Box<dyn Relaunch>) -> Outside {
     Outside::new(
-        backend,
-        relaunch,
-        RouteBinding::new("claude", "work", None).expect("a route"),
+        Installed {
+            backend,
+            relaunch,
+            route: RouteBinding::new("claude", "work", None).expect("a route"),
+        },
         Transcript::new(),
         Mode::Ask,
         None,
@@ -152,7 +154,7 @@ async fn turn(outside: &mut Outside) -> (Result<Turned, TurnError>, Vec<RunEvent
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let run = RunContext::outside(&events, &cancel, &steer, &aside);
     let session = Session::nowhere();
-    let turned = outside.turn("go", &[], &mut Nobody, &run, &session).await;
+    let turned = outside.turn("go", &mut Nobody, &run, &session).await;
     drop(events);
     let posted = heard.try_iter().map(EventEnvelope::into_event).collect();
     (turned, posted)
@@ -501,12 +503,9 @@ async fn an_uncertain_turn_says_so_and_its_run_is_replaced() {
 
 /// Nothing is attached to an agent's turn, and full access is never a mode
 /// an agent is launched in: the mode stays, and a cycle steps past it.
-#[tokio::test]
-async fn attachments_and_unlaunchable_modes_are_refused() {
+#[test]
+fn attachments_and_unlaunchable_modes_are_refused() {
     let mut outside = scripted([]);
-    let (events, _heard) = channel::<EventEnvelope>();
-    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
-    let run = RunContext::outside(&events, &cancel, &steer, &aside);
     let attached = [Attachment {
         path: "shot.png".into(),
         modality: crucible_types::Modality::Image,
@@ -514,11 +513,10 @@ async fn attachments_and_unlaunchable_modes_are_refused() {
         hash: [0; 32],
     }];
 
-    let refused = outside
-        .turn("look", &attached, &mut Nobody, &run, &Session::nowhere())
-        .await;
+    let refused = unattached(&attached);
 
     assert!(matches!(refused, Err(TurnError::Refused(_))), "{refused:?}");
+    assert!(unattached(&[]).is_ok());
     assert_eq!(outside.switch(Mode::FullAccess), Mode::Ask);
     assert_eq!(outside.cycle(), Mode::AllowEdits);
     assert_eq!(outside.cycle(), Mode::Ask);

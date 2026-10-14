@@ -426,7 +426,14 @@ fn a_session_another_agent_ran_reads_as_it_reported_it() {
         7,
     ));
 
-    let totals = Totals::reported(100, 10, 20, 5, cost, started);
+    let tokens = crate::ReportedTokens {
+        input: 100,
+        output: 10,
+        cache_read: 20,
+        cache_write: 5,
+    };
+
+    let totals = Totals::reported(tokens, cost, started);
 
     assert_eq!(
         (
