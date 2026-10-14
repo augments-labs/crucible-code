@@ -802,6 +802,10 @@ fn progress() -> Vec<Progress> {
             summary: marked(),
             summary_kind: SummaryKind::Other,
         },
+        Progress::ToolActivity {
+            tool: marked(),
+            summary: marked(),
+        },
         Progress::ToolFinished {
             call: marked(),
             failed: true,
@@ -1535,7 +1539,8 @@ fn framed(value: &Value) -> Vec<u8> {
 }
 
 fn asking(command: &Value) -> Value {
-    json!({"version": 3, "capabilities": [], "correlation": 41, "command": command})
+    json!({"version": Version::CURRENT.number(), "capabilities": [], "correlation": 41,
+        "command": command})
 }
 
 /// `frame` with `field` saying `value` instead.
@@ -1557,7 +1562,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 1, 2, 4, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 5, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1618,9 +1623,9 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
         (b"{\"version\": 2".to_vec(), None),
-        (framed(&json!({"version": 3})), None),
+        (framed(&json!({"version": 4})), None),
         (
-            framed(&json!({"version": 3, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 4, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
@@ -1643,7 +1648,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 3, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 4, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -1882,10 +1887,10 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":3,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":4,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -1895,7 +1900,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -2058,7 +2063,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 1, 2, 4, 65_536, u64::MAX] {
+        for version in [0, 1, 2, 3, 5, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -2192,7 +2197,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (3, 2_869_181_106_436_562_950),
+        (4, 12_365_793_780_345_120_662),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

@@ -23,8 +23,8 @@ use crucible_app::launching::{Agent, Launcher};
 use crucible_app::outside::{Installed, Relaunch};
 use crucible_app::{Conversation, Settled};
 use crucible_client_api::{
-    Capabilities as Asking, Command, Correlation, Decision as Ruled, Lasting as Lasts, Pending,
-    PendingId, Progress, Prompt, Request, Ruling,
+    Capabilities as Asking, Command, Correlation, Decision as Ruled, Lasting as Lasts, Outcome,
+    Pending, PendingId, Progress, Prompt, Request, Ruling, Stop, TurnOutcome,
 };
 use crucible_config::Driver;
 use crucible_execution::{
@@ -962,6 +962,73 @@ fn resuming_keeps_a_turn_whose_work_is_uncertain() -> Result<(), Failed> {
     assert!(
         outside.conversation.session().uncertain_turn().is_some(),
         "the resumed session lost the uncertain turn"
+    );
+    Ok(())
+}
+
+/// A headless client is told of the agent's own tool use as activity, never
+/// as a call it could be asked about, and of a turn whose agent did not heed
+/// the stop with that work under way as uncertain rather than cancelled.
+#[test]
+fn the_agent_s_tool_use_is_activity_and_a_stop_under_it_is_uncertain() -> Result<(), Failed> {
+    let tree = Tree::new("external-activity")?;
+    let unheeding = Reply::new()
+        .hear(1)
+        .say(claude::init())
+        .say(claude::effect())
+        .hear_out();
+    let mut outside = Outside::new(&tree, &connected([unheeding]))?;
+    let request = Request::new(
+        Asking::every(),
+        Correlation::new(1),
+        Command::Prompt(Prompt::new("go")?),
+    );
+    let mut remote = Remote {
+        saying: None,
+        put: Vec::new(),
+    };
+    let (events, reported) = mpsc::channel::<EventEnvelope>();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let watching = Watching {
+        events,
+        stopping: Some(cancel.clone()),
+    };
+    let ended = {
+        let run = outside
+            .conversation
+            .starting(&watching, &cancel, &steer, &aside);
+        runtime()?.block_on(client::turn(
+            &mut outside.conversation,
+            &request,
+            Box::default(),
+            &mut remote,
+            &run,
+        ))
+    };
+    drop(watching);
+
+    let streamed: Vec<_> = posted(&reported)
+        .iter()
+        .filter_map(|event| client::progress(Asking::every(), event, None))
+        .collect();
+    assert!(
+        streamed.iter().any(|progress| matches!(
+            progress,
+            Progress::ToolActivity { tool, .. } if tool.as_str() == "Edit"
+        )),
+        "{streamed:?}"
+    );
+    assert!(
+        !streamed
+            .iter()
+            .any(|progress| matches!(progress, Progress::ToolRequested { .. })),
+        "{streamed:?}"
+    );
+    assert_eq!(
+        ended.response(&request).outcome,
+        Outcome::Turn(TurnOutcome::Ran {
+            stop: Stop::Uncertain
+        })
     );
     Ok(())
 }

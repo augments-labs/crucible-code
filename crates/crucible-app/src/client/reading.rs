@@ -87,6 +87,12 @@ pub fn progress(
             summary: Text::cut(summary.as_str()),
             summary_kind: summary_kind(summary.argument()),
         },
+        // An installed agent's use of its own tools, told after the fact and
+        // never as a call anybody here is asked about.
+        Event::Reported { tool, summary } => Progress::ToolActivity {
+            tool: Text::cut(tool),
+            summary: Text::cut(summary),
+        },
         Event::ToolFinished { call, output, .. } => Progress::ToolFinished {
             call: Text::cut(call.as_str()),
             failed: output.is_failed(),
@@ -118,10 +124,8 @@ pub fn progress(
             stop: self::stop(*stop),
         },
         Event::Failed { error } => Progress::Failed(failed(error)),
-        // A refusal whose second send a stop ended is no retry. Another
-        // agent's use of its own tools has no word in the contract yet.
+        // A refusal whose second send a stop ended is no retry.
         Event::FastRefused { resent: false, .. }
-        | Event::Reported { .. }
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Wrote { .. }
