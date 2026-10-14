@@ -554,6 +554,7 @@ fn clearing_launches_a_new_run_and_the_session_left_reopens_on_its_route() -> Re
         [(Mode::Ask, None), (Mode::Ask, None)],
         "a cleared conversation resumed the agent's old session"
     );
+    assert_eq!(outside.conversation.session().finish(), None);
     let log = std::fs::read_to_string(outside.conversation.session().path())?;
     assert!(log.contains(claude::SESSION), "{log}");
     drop(cleared);
@@ -666,6 +667,7 @@ fn a_run_lost_mid_effect_says_its_work_is_uncertain() -> Result<(), Failed> {
             .any(|event| matches!(event, Event::Failed { .. })),
         "the turn posted its own failure"
     );
+    assert_eq!(outside.conversation.session().finish(), None);
     let log = std::fs::read_to_string(outside.conversation.session().path())?;
     assert!(log.contains("uncertain"), "{log}");
     Ok(())
@@ -940,6 +942,7 @@ fn resuming_keeps_a_turn_whose_work_is_uncertain() -> Result<(), Failed> {
         .id()
         .cloned()
         .ok_or("an id")?;
+    assert_eq!(outside.conversation.session().finish(), None);
     let log = std::fs::read_to_string(outside.conversation.session().path())?;
     assert!(log.contains("uncertain"), "{log}");
     let workspace = tree.workspace()?;
