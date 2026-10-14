@@ -462,6 +462,18 @@ fn on_the_agent(
         script,
     )
     .expect("the peer installed");
+    on_the_program(sample, services, &program, entry, (resuming, Mode::Ask))
+}
+
+/// [`on_the_agent`], with the agent's executable configured as `program`,
+/// picking up `resuming` in `mode`.
+fn on_the_program(
+    sample: &Sample,
+    services: &Services,
+    program: &std::path::Path,
+    entry: &str,
+    (resuming, mode): (Resuming, Mode),
+) -> Result<Conversation, AppError> {
     let settings = sample.user(&format!(
         r#"{{"sandbox": {{"enabled": false}},
             "providers": {{"anthropic": {{"access": {{"type": "externalAgent", "instance": "mine"}}}}}},
@@ -475,7 +487,7 @@ fn on_the_agent(
         model: None,
         effort: None,
         resuming,
-        mode: Mode::Ask,
+        mode,
         leaving: &crucible_builtins::Background::new(),
         services,
         settings: &settings,
@@ -590,6 +602,66 @@ fn a_session_an_agent_ran_is_continued_on_its_route() {
 
     assert_eq!(resumed.session().id(), Some(&id));
     assert_eq!(resumed.serving(), None);
+}
+
+#[test]
+fn an_agent_whose_program_cannot_be_run_is_not_started_and_no_log_is_written() {
+    let sample = Sample::new("agent-not-executable");
+    let program = sample.root().join("claude");
+    std::fs::write(&program, "not a program").expect("a file");
+
+    let Err(problem) = on_the_program(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask),
+    ) else {
+        panic!("an agent whose program cannot be run was started");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(
+        problem.to_string().contains("is not executable"),
+        "{problem}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
+}
+
+#[test]
+fn an_agent_with_no_launch_in_the_run_s_mode_is_not_started_and_no_log_is_written() {
+    let sample = Sample::new("agent-full-access");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let Err(problem) = on_the_program(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::FullAccess),
+    ) else {
+        panic!("an agent was started in a mode it has no launch in");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
 }
 
 #[test]

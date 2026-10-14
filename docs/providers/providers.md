@@ -19,12 +19,14 @@ provider for `meta/llama-4`.
 
 1. `--model provider/model`, where it names one outright.
 2. `provider` in your [configuration](../configuration/configuration.md), when
-   that provider still has a usable credential. This is the only setting that
+   that provider still has a usable credential, or its access names an
+   [installed agent](agents.md), which signs in for itself. This is the only setting that
    remembers a vendor choice, and it is read only from the configuration file
    in your home directory: a file a repository brings cannot choose who is sent
    your key.
 3. Exactly one provider having a usable credential: a stored account login, a
-   stored API key, or a key in one of the variables in [Keys](#keys). That is
+   stored API key, a key in one of the variables in [Keys](#keys), or access
+   naming an installed agent. That is
    the absence of a choice to make, and it lets a first run work with one
    credential and nothing configured.
 

@@ -1424,9 +1424,10 @@ pub fn resolving(
 /// is not a choice between competitors — it is the absence of anything to
 /// choose, which is what lets a first run work with one credential and no
 /// configuration at all. A stored account login counts beside an exported
-/// variable and a written-down key: it is read through [`credential_source`],
-/// the same answer construction would act on, so discovery and construction
-/// cannot disagree about what this machine holds.
+/// variable and a written-down key, and so does access naming an installed
+/// agent, which signs in for itself: each is read off the route
+/// [`access::resolve`] settles, the same answer construction would act on, so
+/// discovery and construction cannot disagree about what this machine holds.
 ///
 /// Several credentials and nothing choosing between them leaves the provider
 /// open rather than failing the launch. `/model` settles both halves
@@ -1443,7 +1444,7 @@ pub fn chosen(
     auth: startup::ProviderAuth<'_>,
 ) -> Result<Option<Served>, AppError> {
     choosing(providers, auth.settings, |one| {
-        credential_source(one, auth).is_some()
+        access::resolve(one, auth).is_ok()
     })
 }
 

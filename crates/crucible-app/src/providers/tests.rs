@@ -195,6 +195,34 @@ fn a_provider_holding_a_key_both_ways_is_one_provider_rather_than_two() {
 }
 
 #[test]
+fn a_provider_whose_access_names_an_agent_is_reachable_with_no_credential_of_its_own() {
+    // The agent signs in for itself, so a provider it runs for holds nothing
+    // crucible could read, and is reached all the same: named in the
+    // configuration it is the one asked, and alone it is the one there is.
+    let agent = r#""providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "mine"}}},
+        "externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}"#;
+    for (at, document) in [
+        format!(r#"{{"provider": "anthropic", {agent}}}"#),
+        format!("{{{agent}}}"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let sample = Sample::new(&format!("agent-chosen-{at}"));
+        let settings = sample.user(&document);
+
+        let found = landing(&settings, &holding(&[]), &StoredCredentials::default())
+            .expect("a provider an agent runs for");
+
+        assert_eq!(
+            found.map(|found| found.name),
+            Some("anthropic"),
+            "{document}"
+        );
+    }
+}
+
+#[test]
 fn a_stored_key_and_an_exported_key_leave_the_provider_for_model_to_choose() {
     let sample = Sample::new("stored-ambiguous");
     let keys = sample.stored("openai");

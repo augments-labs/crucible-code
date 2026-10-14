@@ -23,6 +23,7 @@ use crucible_builtins::{
 use crucible_config::{Home, Settings};
 use crucible_context::{ContextInputs, SystemPrompt};
 use crucible_credentials::{ApiKey, Credential, Header, HeaderKey};
+use crucible_external_harnesses::Discovery;
 use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
@@ -457,7 +458,8 @@ impl OnAgent {
 /// # Errors
 ///
 /// [`AppError::Unstartable`] where the agent is disconnected, has no launch in
-/// the run's mode, or names itself in a way a session cannot be bound to;
+/// the run's mode, has no program that can be run, or names itself in a way a
+/// session cannot be bound to;
 /// [`AppError::Unrouted`] where the session asked for was run on a provider's
 /// model; [`AppError::NoSession`] where none answers to the id; and
 /// [`AppError::Config`] where the run's confinement cannot be built.
@@ -493,12 +495,26 @@ fn on_agent(startup: &Startup<'_>, auth: ProviderAuth<'_>) -> Result<Option<OnAg
     let Some(agent) = launching::Agent::routed(&route, &REGISTRY, |name| {
         (startup.from)(name).map(OsString::from)
     }) else {
-        return Err(AppError::ExternalAgent {
-            provider: (*provider).into(),
-            instance: instance.clone(),
-        });
+        return Err(unstartable(
+            "this release has no launch for its driver".to_owned(),
+        ));
     };
-    (agent.row().dialect)(startup.mode).map_err(|refused| unstartable(refused.to_string()))?;
+    let dialect =
+        (agent.row().dialect)(startup.mode).map_err(|refused| unstartable(refused.to_string()))?;
+    // Found now, where a turn would find it only once a log had been written
+    // that no agent ever ran.
+    match agent.discovery() {
+        Discovery::Found(_) => {}
+        Discovery::Missing => {
+            return Err(unstartable(format!(
+                "no {} command on PATH and none at externalAgents.{instance}.executable",
+                dialect.program()
+            )));
+        }
+        Discovery::NotExecutable(path) => {
+            return Err(unstartable(format!("{} is not executable", path.display())));
+        }
+    }
     let bound = RouteBinding::new(driver.name(), instance, profile.as_deref())
         .map_err(|refused| unstartable(refused.to_string()))?;
     let (sessions, workspace) = (startup.sessions, startup.workspace);
