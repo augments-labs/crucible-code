@@ -103,7 +103,9 @@ pub enum Progress {
     /// reported some, as `/usage` reads them while it runs. Only a vendor that
     /// reports them sends this.
     Limits(Limits),
-    /// A turn reported that it finished.
+    /// A turn reported that it finished. A stop under an installed agent's
+    /// work is told here as cancelled; whether that work happened is the
+    /// turn's outcome to say.
     Finished {
         /// Its ordinal in the session.
         turn: u64,
