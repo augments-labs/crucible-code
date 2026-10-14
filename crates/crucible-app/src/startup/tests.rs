@@ -1359,7 +1359,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     })
     .expect("a session to assemble");
-    let runner = conversation.native_mut();
+    let runner = &mut conversation.runner;
 
     let asked = runner
         .instructions()
@@ -1550,15 +1550,15 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
 
     let hosted = starting(&["docs".to_owned()]);
     assert!(
-        hosted.native().offering().is_empty(),
+        hosted.runner.offering().is_empty(),
         "a live toolset has no generation until the turn that prepares it"
     );
 
     let alone = starting(&[]);
     assert!(
-        alone.native().offering().contains(&"bash".to_owned()),
+        alone.runner.offering().contains(&"bash".to_owned()),
         "a run that named no server is the built-in roster itself: {:?}",
-        alone.native().offering()
+        alone.runner.offering()
     );
 }
 

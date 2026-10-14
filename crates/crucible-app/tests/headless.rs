@@ -48,6 +48,8 @@ use crucible_workspace::Workspace;
 mod client;
 #[path = "headless/crossing.rs"]
 mod crossing;
+#[path = "headless/external.rs"]
+mod external;
 #[path = "headless/native.rs"]
 mod native;
 #[path = "headless/searching.rs"]
@@ -272,6 +274,8 @@ impl Ask for Nobody {
         Box::pin(async { (Verdict::Deny, Remember::Never) })
     }
 }
+
+impl crucible_app::client::Asker for Nobody {}
 
 /// Cannot say either way, by name and with the reason it could not.
 #[derive(Debug)]

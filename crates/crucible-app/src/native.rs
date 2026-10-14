@@ -540,3 +540,6 @@ const fn priced(cost: SessionCost) -> Option<CostAmount> {
         SessionCost::Unspent | SessionCost::AtLeast(_) | SessionCost::NotPriced => None,
     }
 }
+
+#[cfg(test)]
+mod tests;

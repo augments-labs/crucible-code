@@ -47,6 +47,7 @@ pub mod launching;
 pub mod mcp;
 mod models;
 pub mod native;
+pub mod outside;
 pub mod providers;
 pub mod remember;
 pub mod runtime;

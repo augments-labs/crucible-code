@@ -1685,6 +1685,8 @@ impl crucible_tools::Ask for Allowing {
     }
 }
 
+impl crucible_app::client::Asker for Allowing {}
+
 /// `text` with the clock readings in the session totals a turn posts put out
 /// of the comparison: how long requests were out, which a turn whose model
 /// waits makes longer by design, and the instant the session started. Every

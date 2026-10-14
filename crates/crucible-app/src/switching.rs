@@ -183,20 +183,25 @@ impl Conversation {
         rung: Option<Effort>,
         with: &Switching<'_>,
     ) -> Switched {
+        let Some(runner) = self.native() else {
+            return Switched::Unreachable(AppError::Installed {
+                driver: self.settled().serving(),
+            });
+        };
         let provider = selected.name;
         // The model in force chosen again keeps its speed; any other goes back
         // to standard, since the price shown for fast was that model's.
-        let another = self.serving != Some(provider) || self.native().model() != name;
+        let another = self.serving != Some(provider) || runner.model() != name;
         // Before retiring a cache or replacing the provider, so that a refusal
         // leaves the session exactly where it was.
-        if let Some(effort) = rung.or(self.native().effort())
+        if let Some(effort) = rung.or(runner.effort())
             && !serves(with.providers, provider, name, effort)
         {
             return Switched::Unsupported(effort);
         }
 
         let retained = if self.serving == Some(provider) {
-            if self.native().model() == name {
+            if self.runner.model() == name {
                 Retained::default()
             } else {
                 match self.retire().await {
@@ -215,7 +220,7 @@ impl Conversation {
                 Ok(retained) => retained,
                 Err(problem) => return Switched::CacheHeld(problem),
             };
-            self.native_mut().serve(set.provider);
+            self.runner.serve(set.provider);
             self.clearings_recorded().await;
             self.serving = Some(provider);
             retained
@@ -224,7 +229,7 @@ impl Conversation {
         // One generation, read once: the ceiling, the window and what the
         // model reads are three answers about the same model, and three
         // separate reads could take them from three generations.
-        self.native_mut().ask(
+        self.runner.ask(
             name,
             ceiling(with.providers, provider, name),
             Some(window(with.providers, selected, name, with.settings)),
@@ -254,15 +259,21 @@ impl Conversation {
 
     /// Thinks at `effort` from the next turn on, and writes it down beside the
     /// model for the next run.
+    ///
+    /// An installed agent chooses its own model, and is asked at no rung.
     pub fn think(&mut self, effort: Effort, with: &Switching<'_>) -> Rung {
-        let Some(provider) = self.serving.filter(|_| !self.native().model().is_empty()) else {
+        let serving = self.serving;
+        let Some(runner) = self.native_mut() else {
             return Rung::Unasked;
         };
-        if !serves(with.providers, provider, self.native().model(), effort) {
+        let Some(provider) = serving.filter(|_| !runner.model().is_empty()) else {
+            return Rung::Unasked;
+        };
+        if !serves(with.providers, provider, runner.model(), effort) {
             return Rung::Unsupported;
         }
 
-        self.native_mut().think(effort);
+        runner.think(effort);
 
         Rung::Taken {
             unwritten: remember::thinking(with.choosing, provider, effort).err(),
@@ -296,13 +307,13 @@ impl Conversation {
                 return LoggedIn::CacheHeld(problem);
             }
         };
-        self.native_mut().serve(set.provider);
+        self.runner.serve(set.provider);
         self.clearings_recorded().await;
         self.serving = Some(named.name);
 
         let unwritten = remember::asking(with.choosing, named.name).err();
         if changed {
-            self.native_mut().ask("", UNKNOWN_CEILING, None, None);
+            self.runner.ask("", UNKNOWN_CEILING, None, None);
         }
         self.reach(named, with);
         self.hastened_as_kept(with.choosing);
@@ -344,7 +355,7 @@ impl Conversation {
 
         let stored = with.logins.read();
         if let Ok(remaining) = (with.serving)(named, &stored) {
-            self.native_mut().serve(remaining.provider);
+            self.runner.serve(remaining.provider);
             self.clearings_recorded().await;
             self.reach(named, with);
             self.hastened_as_kept(with.choosing);
@@ -360,9 +371,9 @@ impl Conversation {
         } else {
             NOTHING_TO_ASK
         };
-        self.native_mut().ask("", UNKNOWN_CEILING, None, None);
-        self.native_mut().hasten(crucible_models::Speed::Standard);
-        self.native_mut().serve(Box::new(Unavailable::new(warning)));
+        self.runner.ask("", UNKNOWN_CEILING, None, None);
+        self.runner.hasten(crucible_models::Speed::Standard);
+        self.runner.serve(Box::new(Unavailable::new(warning)));
         self.clearings_recorded().await;
         self.serving = None;
         self.reachable = reachable;
@@ -388,7 +399,7 @@ impl Conversation {
     /// Builds the web sources again for `named` and the model now asked of it,
     /// from the credential it is set up with now; none where no model is.
     fn reach(&self, named: Served, with: &Switching<'_>) {
-        let model = self.native().model();
+        let model = self.runner.model();
         if model.is_empty() {
             self.web.stop();
         } else {

@@ -25,6 +25,16 @@
 //! it ends the way a stopped turn ends rather than as a future dropped at a
 //! step, which could leave a call recorded with no result.
 //!
+//! **A conversation runs on one backend at a time.** Its own runner is
+//! assembled at startup whatever the route, and kept: while the conversation
+//! is on an installed agent's route the runner holds no session and no
+//! transcript and runs nothing, the agent's turns run through
+//! [`crate::outside`], and a return to this program's own models continues on
+//! the runner as it was assembled. Each read of the conversation decides what
+//! an installed agent's route answers: what such a route cannot report reads
+//! as absent, and what it cannot do is refused with a sentence, never handed
+//! to the runner.
+//!
 //! **So are explicit prompt-cache operations**, and what picking a session up
 //! or changing vendor owes the session. Each clears from the transcript what
 //! the vendor being asked may not be sent, and the runner owes the session the
@@ -36,6 +46,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crucible_context::Room;
+use crucible_execution::Backend;
 use crucible_models::{
     Effort, FastForm, PromptCacheAttempt, PromptCacheCapabilities, Served, Speed,
 };
@@ -43,28 +54,37 @@ use crucible_runner::{
     Breakdown, Post, PromptCacheCleanup, RunContext, RunPolicy, Runner, Totals, TurnError, Turned,
 };
 use crucible_runtime::{Aside, Cancel, Steer};
-use crucible_session::{FilePromptCacheResourceStore, Session, SessionError};
-use crucible_tools::{Ask, Looking, Mode, Summary};
+use crucible_session::{FilePromptCacheResourceStore, RouteBinding, Session, SessionError};
+use crucible_tools::{Looking, Mode, Summary};
 use crucible_types::{
-    Attachment, Compacting, Modalities, PlanWindows, PromptCachePolicy, PromptCacheResourceError,
-    PromptCacheResourceRecord, SessionId, Spend, ToolCall, Transcript,
+    Attachment, Compacting, Modalities, Modality, PlanWindows, PromptCachePolicy,
+    PromptCacheResourceError, PromptCacheResourceRecord, SessionId, Spend, ToolCall, Transcript,
 };
 use crucible_workspace::Workspace;
+
+use crate::client::Asker;
+use crate::outside::{Outside, Relaunch};
 
 /// What a conversation runs on.
 ///
 /// Closed, and matched where it is read, so a backend added here makes every
 /// read of the conversation decide what that backend answers.
-#[derive(Debug)]
-enum Backed {
+#[derive(Debug, Clone, Copy)]
+enum Backed<'a> {
     /// This program's own runner.
-    Native(Runner),
+    Native(&'a Runner),
+    /// An installed agent.
+    External(&'a Outside),
 }
 
 /// A runner, the session it records into, and the provider it is asking.
 #[derive(Debug)]
 pub struct Conversation {
-    backed: Backed,
+    /// This program's own runner, kept whatever the route: what a credential
+    /// or a pace sets is set on it, for the conversation's return to it.
+    pub(crate) runner: Runner,
+    /// The installed agent the conversation is on, where it is on one.
+    outside: Option<Box<Outside>>,
     session: Arc<Session>,
     /// The registry name of the provider being asked, or `None` where nobody
     /// is. Not the runner's own word for it: a provider names itself for the
@@ -108,7 +128,8 @@ impl Conversation {
         build: impl FnOnce(Arc<Session>) -> Runner,
     ) -> Self {
         Self {
-            backed: Backed::Native(build(Arc::clone(&session))),
+            runner: build(Arc::clone(&session)),
+            outside: None,
             session,
             serving,
             reachable: false,
@@ -149,11 +170,10 @@ impl Conversation {
     /// and a model's capabilities together select a persistent mechanism.
     #[must_use]
     pub fn remembering_caches_in(self, home: &Path) -> Self {
-        let Backed::Native(runner) = self.backed;
         Self {
-            backed: Backed::Native(
-                runner.with_prompt_cache_store(FilePromptCacheResourceStore::in_home(home)),
-            ),
+            runner: self
+                .runner
+                .with_prompt_cache_store(FilePromptCacheResourceStore::in_home(home)),
             ..self
         }
     }
@@ -161,8 +181,15 @@ impl Conversation {
     /// What is settled between turns: the model, the mode, the transcript.
     /// What changes any of it is a method of this type.
     #[must_use]
-    pub const fn settled(&self) -> Settled<'_> {
-        Settled(self.native())
+    pub fn settled(&self) -> Settled<'_> {
+        Settled(self.backed())
+    }
+
+    /// What the conversation runs on now.
+    fn backed(&self) -> Backed<'_> {
+        self.outside
+            .as_deref()
+            .map_or(Backed::Native(&self.runner), Backed::External)
     }
 
     /// The runner itself, for a test outside this crate that reads what no
@@ -170,20 +197,61 @@ impl Conversation {
     /// that ships turns on.
     #[cfg(feature = "proof")]
     #[must_use]
-    pub const fn native_runner(&self) -> Option<&Runner> {
-        Some(self.native())
+    pub fn native_runner(&self) -> Option<&Runner> {
+        self.native()
     }
 
-    /// The runner this conversation drives.
-    pub(crate) const fn native(&self) -> &Runner {
-        let Backed::Native(runner) = &self.backed;
-        runner
+    /// The runner this conversation drives, or `None` while it is on an
+    /// installed agent's route.
+    pub(crate) fn native(&self) -> Option<&Runner> {
+        self.outside.is_none().then_some(&self.runner)
     }
 
-    /// The runner this conversation drives, to change.
-    pub(crate) fn native_mut(&mut self) -> &mut Runner {
-        let Backed::Native(runner) = &mut self.backed;
-        runner
+    /// The runner this conversation drives, to change, or `None` while it is
+    /// on an installed agent's route.
+    pub(crate) fn native_mut(&mut self) -> Option<&mut Runner> {
+        self.outside.is_none().then_some(&mut self.runner)
+    }
+
+    /// Moves the conversation onto an installed agent's route: `session` is
+    /// recorded into from here on, bound to `route`, `transcript` is what was
+    /// seen of it so far, and `backend` is the agent's run, which `relaunch`
+    /// replaces once it is spent. The kept runner is handed a session that
+    /// keeps nothing and no transcript, so it holds no claim on a log and no
+    /// second copy while the agent runs the conversation. The session left is
+    /// returned.
+    // Each is an input of its own to the move, and a value gathering them
+    // would be built at each caller and taken apart here.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn external(
+        &mut self,
+        session: Arc<Session>,
+        transcript: Transcript,
+        backend: Box<dyn Backend>,
+        relaunch: Box<dyn Relaunch>,
+        route: RouteBinding,
+    ) -> Arc<Session> {
+        let mode = self.settled().mode();
+        if let Some(mut outside) = self.outside.take() {
+            outside.retire().await;
+        }
+        let named = session.external_ref().cloned();
+        self.runner
+            .pick_up(Arc::new(Session::nowhere()), Transcript::new());
+        self.outside = Some(Box::new(Outside::new(
+            backend, relaunch, route, transcript, mode, named,
+        )));
+        std::mem::replace(&mut self.session, session)
+    }
+
+    /// Moves the conversation back onto this program's own models, closing
+    /// the installed agent's run, and continues on the kept runner recording
+    /// into `session` with `transcript`. The session left is returned.
+    pub async fn inside(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
+        if let Some(mut outside) = self.outside.take() {
+            outside.retire().await;
+        }
+        self.pick_up(session, transcript).await
     }
 
     /// The handle a turn or a compaction runs under: what it reports goes to
@@ -196,7 +264,10 @@ impl Conversation {
         steer: &'a Steer,
         aside: &'a Aside,
     ) -> RunContext<'a> {
-        self.native().starting(events, cancel, steer, aside)
+        match self.backed() {
+            Backed::Native(runner) => runner.starting(events, cancel, steer, aside),
+            Backed::External(_) => RunContext::outside(events, cancel, steer, aside),
+        }
     }
 
     /// The session being recorded into.
@@ -206,10 +277,11 @@ impl Conversation {
     }
 
     /// The registry name of the provider being asked, or `None` where a run
-    /// started with nobody to ask or signed out of the one it had.
+    /// started with nobody to ask or signed out of the one it had, or is on an
+    /// installed agent's route, which no provider serves.
     #[must_use]
-    pub const fn serving(&self) -> Option<&'static str> {
-        self.serving
+    pub fn serving(&self) -> Option<&'static str> {
+        self.serving.filter(|_| self.outside.is_none())
     }
 
     /// What a turn of this conversation would be missing, where nothing can
@@ -219,21 +291,35 @@ impl Conversation {
     /// not a turn: the prompt would be recorded, and a request naming nothing
     /// would go out, or be refused by the provider standing in only after the
     /// prompt was written down as said to a model nobody asked.
+    ///
+    /// An installed agent chooses its own model and is never missing one:
+    /// what refuses its turn is its launch.
     #[must_use]
     pub fn missing(&self) -> Option<crate::providers::Missing> {
-        let runner = self.native();
+        let runner = self.native()?;
         let answerable = !runner.model().is_empty() && runner.provider().reaches_a_model();
         (!answerable).then(|| crate::providers::missing(self.serving, self.reachable))
     }
 
-    /// Steps to the next permission mode, and says which it is.
+    /// Steps to the next permission mode, and says which it is. An installed
+    /// agent steps past a mode it cannot be launched in.
     pub fn cycle(&mut self) -> Mode {
-        self.native_mut().cycle()
+        match self.outside.as_deref_mut() {
+            Some(outside) => outside.cycle(),
+            None => self.runner.cycle(),
+        }
     }
 
-    /// Asks under `mode` from the next tool call on.
-    pub fn switch(&mut self, mode: Mode) {
-        self.native_mut().switch(mode);
+    /// Asks under `mode` from the next tool call on, and says the mode in
+    /// force. An installed agent is launched under it from its next turn,
+    /// and keeps the mode it has where it cannot be launched under `mode`.
+    pub fn switch(&mut self, mode: Mode) -> Mode {
+        if let Some(outside) = self.outside.as_deref_mut() {
+            outside.switch(mode)
+        } else {
+            self.runner.switch(mode);
+            mode
+        }
     }
 
     /// Makes room in the transcript by asking for a recap of it.
@@ -254,8 +340,13 @@ impl Conversation {
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        let asked = self.native().speed();
-        let made = self.native_mut().compact(why, run, spent).await;
+        let Some(runner) = self.native_mut() else {
+            return Err(TurnError::Refused(
+                "a recap of an installed agent's conversation, which the agent keeps".into(),
+            ));
+        };
+        let asked = runner.speed();
+        let made = runner.compact(why, run, spent).await;
         self.refusal_written(asked);
         made
     }
@@ -269,10 +360,12 @@ impl Conversation {
     pub async fn prompt_cache_resources(
         &mut self,
     ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        if !self.native().prompt_cache_resources_configured() {
-            return Ok(Vec::new());
+        match self.native_mut() {
+            Some(runner) if runner.prompt_cache_resources_configured() => {
+                runner.prompt_cache_resources().await
+            }
+            Some(_) | None => Ok(Vec::new()),
         }
-        self.native_mut().prompt_cache_resources().await
     }
 
     /// Deletes the persistent prompt-cache resources held with the provider
@@ -294,10 +387,12 @@ impl Conversation {
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
-        if !self.native().prompt_cache_resources_configured() {
-            return Ok(PromptCacheCleanup::default());
+        match self.native_mut() {
+            Some(runner) if runner.prompt_cache_resources_configured() => {
+                runner.clean_prompt_cache(cancel).await
+            }
+            Some(_) | None => Ok(PromptCacheCleanup::default()),
         }
-        self.native_mut().clean_prompt_cache(cancel).await
     }
 
     /// Retires the persistent prompt-cache resources this conversation owns
@@ -306,10 +401,12 @@ impl Conversation {
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
-        if !self.native().prompt_cache_retirement_pending() {
-            return Ok(PromptCacheCleanup::default());
+        match self.native_mut() {
+            Some(runner) if runner.prompt_cache_retirement_pending() => {
+                runner.retire_prompt_cache(cancel).await
+            }
+            Some(_) | None => Ok(PromptCacheCleanup::default()),
         }
-        self.native_mut().retire_prompt_cache(cancel).await
     }
 
     /// Takes one turn: `prompt` and what is attached to it, answered by the
@@ -326,15 +423,23 @@ impl Conversation {
     /// finished, as [`Runner::turn`] says, which also says what each failure
     /// leaves. A tool source's own step that gave up comes back as that
     /// source's failure.
+    ///
+    /// On an installed agent's route the turn is the agent's, as
+    /// [`crate::outside`] says, and each leave it asks for goes to `ask`.
     pub async fn turn(
         &mut self,
         prompt: &str,
         attached: Box<[Attachment]>,
-        ask: &mut dyn Ask,
+        ask: &mut dyn Asker,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        let asked = self.native().speed();
-        let turned = self.native_mut().turn(prompt, attached, ask, run).await;
+        if let Some(outside) = self.outside.as_deref_mut() {
+            return outside
+                .turn(prompt, &attached, ask, run, &self.session)
+                .await;
+        }
+        let asked = self.runner.speed();
+        let turned = self.runner.turn(prompt, attached, ask, run).await;
         self.refusal_written(asked);
         turned
     }
@@ -350,12 +455,26 @@ impl Conversation {
     ///
     /// [`SessionError`] where the new log could not be started; the session in
     /// hand is then untouched and still being recorded into.
+    ///
+    /// On an installed agent's route the new log is bound to the same route,
+    /// and the agent's run is closed, so that the next turn starts the agent
+    /// on a session of its own as new as the one shown.
     pub async fn clear(
         &mut self,
         sessions: &Path,
         workspace: &Workspace,
         branch: Option<&str>,
     ) -> Result<Arc<Session>, SessionError> {
+        if let Some(outside) = self.outside.as_deref_mut() {
+            let session = Arc::new(Session::start_routed(
+                sessions,
+                workspace,
+                branch,
+                outside.route(),
+            )?);
+            outside.restart(Transcript::new(), None).await;
+            return Ok(std::mem::replace(&mut self.session, session));
+        }
         let session = Arc::new(Session::start(sessions, workspace, branch)?);
         Ok(self.pick_up(session, Transcript::new()).await)
     }
@@ -366,12 +485,23 @@ impl Conversation {
     ///
     /// [`SessionError`] where no session of this workspace answers to `id`, or
     /// where its log could not be read; the session in hand is then untouched.
+    ///
+    /// On an installed agent's route only a session of the same route is
+    /// picked up, and the agent's next turn resumes the agent's own session
+    /// by the name the log recorded.
     pub async fn resume(
         &mut self,
         sessions: &Path,
         workspace: &Workspace,
         id: &SessionId,
     ) -> Result<Arc<Session>, SessionError> {
+        if let Some(outside) = self.outside.as_deref_mut() {
+            let (session, transcript) =
+                Session::reopen_routed(sessions, workspace, id, outside.route())?;
+            let named = session.external_ref().cloned();
+            outside.restart(transcript, named).await;
+            return Ok(std::mem::replace(&mut self.session, Arc::new(session)));
+        }
         let (session, transcript) = Session::reopen(sessions, workspace, id)?;
         Ok(self.pick_up(Arc::new(session), transcript).await)
     }
@@ -383,7 +513,7 @@ impl Conversation {
     /// been left.
     async fn pick_up(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
         let left = std::mem::replace(&mut self.session, Arc::clone(&session));
-        self.native_mut().pick_up(session, transcript);
+        self.runner.pick_up(session, transcript);
         self.clearings_recorded().await;
         left
     }
@@ -391,155 +521,233 @@ impl Conversation {
     /// Awaits the sessions owed lines by picking a session up or changing
     /// vendor taking them, as the module says.
     pub(crate) async fn clearings_recorded(&mut self) {
-        self.native_mut().record_clearings().await;
+        if let Some(runner) = self.native_mut() {
+            runner.record_clearings().await;
+        }
     }
 }
 
 /// A conversation's state between turns, to be read and never changed.
+///
+/// On an installed agent's route it reads what the agent's turns reported and
+/// what was seen of them, and what the agent does not report reads as absent.
 #[derive(Debug, Clone, Copy)]
-pub struct Settled<'a>(&'a Runner);
+pub struct Settled<'a>(Backed<'a>);
 
 #[cfg(feature = "proof")]
 impl<'a> From<&'a Runner> for Settled<'a> {
     /// What `runner` has settled, for a front end's test that builds a runner
     /// without a conversation around it.
     fn from(runner: &'a Runner) -> Self {
-        Self(runner)
+        Self(Backed::Native(runner))
     }
 }
 
 impl<'a> Settled<'a> {
     /// The model asked, as its provider spells it, or nothing where none is
-    /// named.
+    /// named, as on an installed agent's route, where the agent chooses.
     #[must_use]
     pub fn model(self) -> &'a str {
-        self.0.model()
+        match self.0 {
+            Backed::Native(runner) => runner.model(),
+            Backed::External(_) => "",
+        }
     }
 
     /// How hard the model is asked to think, where a rung is set.
     #[must_use]
     pub fn effort(self) -> Option<Effort> {
-        self.0.effort()
+        match self.0 {
+            Backed::Native(runner) => runner.effort(),
+            Backed::External(_) => None,
+        }
     }
 
     /// The pace the next request asks for.
     #[must_use]
     pub fn speed(self) -> Speed {
-        self.0.speed()
+        match self.0 {
+            Backed::Native(runner) => runner.speed(),
+            Backed::External(_) => Speed::default(),
+        }
     }
 
     /// The pace the last answer says it was served at.
     #[must_use]
     pub const fn served(self) -> Served {
-        self.0.served()
+        match self.0 {
+            Backed::Native(runner) => runner.served(),
+            Backed::External(_) => Served::Unsaid,
+        }
     }
 
     /// What asking for the fast pace looks like for the model asked.
     #[must_use]
     pub fn fast(self) -> FastForm {
-        self.0.provider().fast(self.0.model())
+        match self.0 {
+            Backed::Native(runner) => runner.provider().fast(runner.model()),
+            Backed::External(_) => FastForm::None,
+        }
     }
 
-    /// The permission mode a tool call is asked under.
+    /// The permission mode a tool call is asked under, or an installed agent
+    /// launched in.
     #[must_use]
     pub fn mode(self) -> Mode {
-        self.0.mode()
+        match self.0 {
+            Backed::Native(runner) => runner.mode(),
+            Backed::External(outside) => outside.mode(),
+        }
     }
 
-    /// The vendor the next turn reaches, in the provider's own word for it.
+    /// The vendor the next turn reaches, in the provider's own word for it,
+    /// or the installed agent's program.
     #[must_use]
     pub fn serving(self) -> &'static str {
-        self.0.serving()
+        match self.0 {
+            Backed::Native(runner) => runner.serving(),
+            Backed::External(outside) => outside.driver(),
+        }
     }
 
-    /// What the provider's requests have a shape for.
+    /// What the provider's requests have a shape for: text alone for an
+    /// installed agent, which is handed nothing attached.
     #[must_use]
     pub fn spells(self) -> Modalities {
-        self.0.provider().spells()
+        match self.0 {
+            Backed::Native(runner) => runner.provider().spells(),
+            Backed::External(_) => Modalities::empty().insert(Modality::Text),
+        }
     }
 
     /// What the model reads, where the session was told.
     #[must_use]
     pub fn reads(self) -> Option<Modalities> {
-        self.0.reads()
+        match self.0 {
+            Backed::Native(runner) => runner.reads(),
+            Backed::External(_) => None,
+        }
     }
 
     /// Everything said so far.
     #[must_use]
     pub fn transcript(self) -> &'a Transcript {
-        self.0.transcript()
+        match self.0 {
+            Backed::Native(runner) => runner.transcript(),
+            Backed::External(outside) => outside.transcript(),
+        }
     }
 
-    /// The tokens the next request would carry.
+    /// The tokens the next request would carry, which an installed agent
+    /// does not say.
     #[must_use]
     pub fn carrying(self) -> u64 {
-        self.0.carrying()
+        match self.0 {
+            Backed::Native(runner) => runner.carrying(),
+            Backed::External(_) => 0,
+        }
     }
 
     /// The share of the window left, in percent, where the window is known.
     #[must_use]
     pub fn left(self) -> Option<u8> {
-        self.0.left()
+        match self.0 {
+            Backed::Native(runner) => runner.left(),
+            Backed::External(_) => None,
+        }
     }
 
     /// What the next request carries, by category.
     #[must_use]
     pub fn breakdown(self) -> Breakdown {
-        self.0.breakdown()
+        match self.0 {
+            Backed::Native(runner) => runner.breakdown(),
+            Backed::External(_) => Breakdown::default(),
+        }
     }
 
     /// What the session has used so far.
     #[must_use]
-    pub const fn totals(self) -> Totals {
-        self.0.totals()
+    pub fn totals(self) -> Totals {
+        match self.0 {
+            Backed::Native(runner) => runner.totals(),
+            Backed::External(outside) => outside.totals(),
+        }
     }
 
-    /// The plan's limits, as the provider last reported them.
+    /// The plan's limits, as the provider last reported them; an installed
+    /// agent reports none.
     #[must_use]
     pub fn plan_limits(self) -> Option<PlanWindows> {
-        self.0.plan_limits()
+        match self.0 {
+            Backed::Native(runner) => runner.plan_limits(),
+            Backed::External(_) => None,
+        }
     }
 
     /// The bounds a run is held to.
     #[must_use]
-    pub const fn policy(self) -> RunPolicy {
-        self.0.policy()
+    pub fn policy(self) -> RunPolicy {
+        match self.0 {
+            Backed::Native(runner) => runner.policy(),
+            Backed::External(_) => RunPolicy::default(),
+        }
     }
 
     /// The line a recorded call is drawn as.
     #[must_use]
     pub fn about(self, call: &ToolCall) -> Summary {
-        self.0.about(call)
+        match self.0 {
+            Backed::Native(runner) => runner.about(call),
+            Backed::External(_) => Summary::new(""),
+        }
     }
 
     /// How a recorded call folds when drawn, where it does.
     #[must_use]
     pub fn folds(self, call: &ToolCall) -> Option<Looking> {
-        self.0.folds(call)
+        match self.0 {
+            Backed::Native(runner) => runner.folds(call),
+            Backed::External(_) => None,
+        }
     }
 
     /// Whether the session is owed lines saying what was cleared from what
     /// the vendor is sent.
     #[must_use]
     pub fn owes_clearings(self) -> bool {
-        self.0.owes_clearings()
+        match self.0 {
+            Backed::Native(runner) => runner.owes_clearings(),
+            Backed::External(_) => false,
+        }
     }
 
     /// When the prompt cache is asked for.
     #[must_use]
-    pub const fn prompt_cache_policy(self) -> PromptCachePolicy {
-        self.0.prompt_cache_policy()
+    pub fn prompt_cache_policy(self) -> PromptCachePolicy {
+        match self.0 {
+            Backed::Native(runner) => runner.prompt_cache_policy(),
+            Backed::External(_) => PromptCachePolicy::default(),
+        }
     }
 
     /// What the provider and model can cache.
     #[must_use]
     pub fn prompt_cache_capabilities(self) -> PromptCacheCapabilities {
-        self.0.prompt_cache_capabilities()
+        match self.0 {
+            Backed::Native(runner) => runner.prompt_cache_capabilities(),
+            Backed::External(_) => {
+                PromptCacheCapabilities::unknown("an installed agent keeps its own cache")
+            }
+        }
     }
 
     /// What the last request asked of the cache, where one did.
     #[must_use]
     pub const fn prompt_cache_attempt(self) -> Option<&'a PromptCacheAttempt> {
-        self.0.prompt_cache_attempt()
+        match self.0 {
+            Backed::Native(runner) => runner.prompt_cache_attempt(),
+            Backed::External(_) => None,
+        }
     }
 }

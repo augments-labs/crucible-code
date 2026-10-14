@@ -205,11 +205,7 @@ pub async fn perform(
         Command::SetSpeed(pace) => {
             Performed::Speed(conversation.hasten(reading::speed(*pace), &desk.switching))
         }
-        Command::SetMode(mode) => {
-            let mode = reading::mode_in(*mode);
-            conversation.switch(mode);
-            Performed::Mode(mode)
-        }
+        Command::SetMode(mode) => Performed::Mode(conversation.switch(reading::mode_in(*mode))),
         Command::CycleMode => Performed::Mode(conversation.cycle()),
         Command::Login { provider } => match served(desk, provider.as_str()) {
             Ok(named) => Performed::Login(conversation.logged_in(named, &desk.switching).await),
