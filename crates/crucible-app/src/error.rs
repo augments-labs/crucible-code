@@ -135,17 +135,40 @@ pub enum AppError {
     #[error(transparent)]
     Access(AccessError),
 
-    /// The provider is reached through an installed agent, and this build
-    /// does not start one in place of a provider.
+    /// The provider is reached through an installed agent, which runs a
+    /// conversation in place of the provider's models: what asks one of them
+    /// directly, a credential or a switch of model, has none to ask.
     #[error(
-        "providers.{provider}.access names the agent {instance}, and this build cannot start an \
-         installed agent; remove access to reach {provider} directly"
+        "providers.{provider}.access names the agent {instance}, which runs the conversation in \
+         place of {provider}'s models; remove access to reach {provider} directly"
     )]
     ExternalAgent {
         /// The provider.
         provider: Box<str>,
         /// The `externalAgents` entry it names.
         instance: Box<str>,
+    },
+
+    /// A session a provider's model ran was asked to be continued by a run on
+    /// an installed agent's route, which would hand the agent a history it
+    /// never had. Refused before anything is built or the log is touched.
+    #[error(
+        "this session was run on a provider's model, so the agent {instance} cannot continue it; \
+         continue it from a run on a provider"
+    )]
+    Unrouted {
+        /// The `externalAgents` entry the run is on.
+        instance: Box<str>,
+    },
+
+    /// The agent the provider's access names cannot be started on this run,
+    /// found before anything is built or the log is touched.
+    #[error("the agent {instance} cannot be started: {reason}")]
+    Unstartable {
+        /// The `externalAgents` entry it is.
+        instance: Box<str>,
+        /// Why, in a sentence.
+        reason: Box<str>,
     },
 
     /// The conversation is on an installed agent's route, and what was asked

@@ -221,6 +221,26 @@ fn the_childs_policy_opens_its_profile_and_keeps_protected_metadata() {
     assert_eq!(child.enabled(), conversation.enabled());
 }
 
+/// A conversation whose commands run unconfined has its child run so too: the
+/// host's network is already open to it, and a grant of the row's hosts is
+/// one an unconfined run cannot hold to, so the sandbox would refuse it.
+#[test]
+fn an_unconfined_conversation_grants_its_child_no_hosts_it_would_be_refused_for() {
+    let sample = Sample::new("launch-unconfined");
+    let conversation = SandboxPolicy::standard(&sample.workspace())
+        .expect("a policy")
+        .with_enabled(false);
+
+    let child = policy(&conversation, None, &["api.anthropic.com"]).expect("a policy");
+
+    assert!(!child.enabled());
+    assert!(
+        matches!(child.network(), SandboxNetworkPolicy::Closed),
+        "{:?}",
+        child.network()
+    );
+}
+
 /// A profile is a directory of the user's own, and what it holds as a
 /// repository or as crucible's own state is protected there as everywhere.
 #[test]

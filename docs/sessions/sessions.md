@@ -122,6 +122,11 @@ as a log that cannot be read, and `crucible sessions list` counts it among the
 logs it could not read, rather than taking it for a session a provider's
 model ran.
 
+The other way round, a run whose provider's access names an installed agent
+continues only a session that agent ran, on the same route: a session a
+provider's model ran, or one another agent ran, is refused with a sentence
+saying so, and its log is left as it was.
+
 A log name in the sessions directory that is a symbolic link or a pipe rather
 than a file is refused as a log that cannot be read is: `--continue` stops with
 `could not read the session log …` and the reason, having read nothing through

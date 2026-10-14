@@ -23,6 +23,7 @@ use crucible_builtins::{
 use crucible_config::{Home, Settings};
 use crucible_context::{ContextInputs, SystemPrompt};
 use crucible_credentials::{ApiKey, Credential, Header, HeaderKey};
+use crucible_external_harnesses::Discovery;
 use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
@@ -32,15 +33,19 @@ use crucible_provider::{
     Zai,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
+use crucible_sandbox::SandboxPolicy;
 use crucible_sandbox_local::LocalSandbox;
-use crucible_session::Session;
+use crucible_session::{RouteBinding, Session};
 use crucible_tools::{DescribeTool, Fetch, Mode, Put, Revealed, Search, Tool, ToolsetError};
 use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
 use crucible_workspace::Workspace;
 
 use crate::access::{self, AccessError, KeySource, Route, Settled};
+use crate::backends::REGISTRY;
 use crate::content_use::{self, Consent, Serving};
 use crate::following::Following;
+use crate::launching::{self, Launcher, Runs};
+use crate::outside::Installed;
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
 use crate::services::Services;
@@ -211,41 +216,44 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
         ..
     } = *startup;
 
-    // Before anything a session could be run on is built, and read without
-    // touching the log: a session an installed agent ran cannot be continued
-    // on a provider's model, and saying so is owed whatever else is wrong
-    // with this run. The one picked here is the one reopened below.
-    let picked = match &startup.resuming {
-        Resuming::No => None,
-        Resuming::Newest => Some(crucible_session::picked(sessions, workspace, None)?),
-        Resuming::Exact(id) => {
-            Some(crucible_session::picked(sessions, workspace, Some(id)).map_err(unknown)?)
-        }
-    };
-
-    // Before the session, and the last thing on the way in that can fail: the
-    // caller has already prepared the terminal for the same reason. Starting a
-    // session writes a file, and one written for a run that never happened is
-    // then the newest for this directory — which is what `--continue` would
-    // offer instead of the last real session.
     let auth = ProviderAuth {
         settings,
         from: startup.from,
         stored: startup.stored,
         subscriptions: startup.subscriptions,
     };
+    // A provider whose access names an installed agent runs the conversation
+    // on the agent's route, settled first for the reason the pick below is.
+    let on_agent = on_agent(startup, auth)?;
+
+    // Before anything a session could be run on is built, and read without
+    // touching the log: a session an installed agent ran cannot be continued
+    // on a provider's model, and saying so is owed whatever else is wrong
+    // with this run. The one picked here is the one reopened below.
+    let picked = match &startup.resuming {
+        _ if on_agent.is_some() => None,
+        Resuming::No => None,
+        Resuming::Newest => Some(crucible_session::picked(sessions, workspace, None)?),
+        Resuming::Exact(id) => {
+            Some(crucible_session::picked(sessions, workspace, Some(id)).map_err(unknown)?)
+        }
+    };
+    // The provider the kept runner asks: none on an agent's route, where the
+    // agent's own model answers.
+    let native = startup.provider.filter(|_| on_agent.is_none());
+
+    // Before the session, and the last thing on the way in that can fail: the
+    // caller has already prepared the terminal for the same reason. Starting a
+    // session writes a file, and one written for a run that never happened is
+    // then the newest for this directory — which is what `--continue` would
+    // offer instead of the last real session.
     // Before anything could be sent: what the user's own file says yes to,
     // and what each provider's requests would go on, are what the clients
     // ask before a request leaves.
     let consent = startup.services.consent();
     consent.recorded(settings.content_accepted().into_iter().map(str::to_owned));
     serve(consent, startup.providers, auth);
-    let provider = provider(
-        startup.provider,
-        startup.unasked,
-        auth,
-        startup.services.http(),
-    )?;
+    let provider = provider(native, startup.unasked, auth, startup.services.http())?;
 
     // Beside the provider, and for its reason: naming a server nobody wrote
     // down, or one whose program is not on this machine, is a run that cannot
@@ -263,7 +271,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // billed a plan session's searches to whatever key the shell carried.
     // Held in one place the two tools read at each call, so a switch of model
     // or provider puts what it builds where they will find it.
-    let following = Following::new(startup.provider.map(|one| one.name), web(startup, settings));
+    let following = Following::new(native.map(|one| one.name), web(startup, settings));
 
     // Before the session, for the reason the provider is: the runtime every
     // turn runs on, and every command the sandbox starts is watched on, is
@@ -279,7 +287,14 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // bound.
     let worker = startup.services.tool_worker()?.clone();
 
-    let (session, earlier) = if let Some(id) = picked {
+    // On an agent's route the log is the route's, and the kept runner is
+    // handed one that keeps nothing until the conversation is moved there.
+    let outside = on_agent
+        .map(|agent| agent.opened(sessions, workspace))
+        .transpose()?;
+    let (session, earlier) = if outside.is_some() {
+        (Session::nowhere(), None)
+    } else if let Some(id) = picked {
         let (session, transcript) = reopening(sessions, workspace, &id)?;
         (session, Some(transcript))
     } else {
@@ -303,6 +318,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // of its own, so the thread that draws never asks a process anything.
     startup.leaving.watching_on(runtime.clone());
     let offering = tools(startup, settings, &following, Arc::clone(&sandbox))?;
+    let agents_sandbox = Arc::clone(&sandbox);
 
     // Operator-authored instructions are the stable request prefix. Everything
     // that can move within the session is read by context assembly instead.
@@ -320,7 +336,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // for every run that never asked for one.
     let context = ContextInputs::new(workspace.root());
     let permission = settings.permission(startup.mode);
-    let serving = startup.provider.map(|one| one.name);
+    let serving = native.map(|one| one.name);
     let run_policy = policy(settings);
     let mut conversation = Conversation::recording(Arc::new(session), serving, |session| {
         let runner = if chosen.is_empty() {
@@ -348,6 +364,37 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
         }
     });
     recorded(&mut conversation, &runtime);
+    if let Some((session, transcript, agent)) = outside {
+        let OnAgent {
+            agent,
+            instance,
+            route,
+            policy,
+            ..
+        } = agent;
+        let runs = Runs::new(
+            Launcher::new(
+                agents_sandbox,
+                runtime.clone(),
+                &policy,
+                startup.services.consent(),
+            ),
+            settings.sandbox().enablement(),
+            agent,
+            &instance,
+        );
+        let installed = Installed {
+            backend: None,
+            relaunch: Box::new(runs),
+            route,
+        };
+        conversation
+            .opened_outside(Arc::new(session), transcript, installed)
+            .map_err(|refused| AppError::Unstartable {
+                instance,
+                reason: refused.reason().as_str().into(),
+            })?;
+    }
     // With nobody chosen, what a turn is missing is decided from the same
     // credentials the opening's sentence was: a provider to choose where one
     // can be reached, and a credential to set up where none can.
@@ -362,6 +409,138 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     Ok(conversation
         .consenting(startup.services.consent().clone())
         .following(following))
+}
+
+/// A run asked of a provider whose access names an installed agent: the
+/// agent, the entry it is, the route its session is bound to, the session
+/// picked up on that route, and the policy its runs are confined by.
+struct OnAgent {
+    /// The agent.
+    agent: launching::Agent,
+    /// The `externalAgents` entry it is.
+    instance: Box<str>,
+    /// The route its session is bound to.
+    route: RouteBinding,
+    /// The session picked up, where one was asked for.
+    picked: Option<SessionId>,
+    /// The conversation's own policy, which each run's widens.
+    policy: SandboxPolicy,
+}
+
+impl OnAgent {
+    /// The session the run records into, bound to the route, and what was
+    /// seen of it so far.
+    fn opened(
+        self,
+        sessions: &Path,
+        workspace: &Workspace,
+    ) -> Result<(Session, Transcript, Self), AppError> {
+        let (session, transcript) = if let Some(id) = &self.picked {
+            Session::reopen_routed(sessions, workspace, id, &self.route).map_err(unknown)?
+        } else {
+            let branch = crate::branching::current(workspace.root());
+            let started =
+                Session::start_routed(sessions, workspace, branch.as_deref(), &self.route)?;
+            (started, Transcript::new())
+        };
+        Ok((session, transcript, self))
+    }
+}
+
+/// The installed agent the provider `startup` asks for runs the conversation
+/// on, where that provider's access names one; nothing where it is reached
+/// some other way, or none is asked for.
+///
+/// Settled before anything is built or a log is touched: an agent that cannot
+/// be started, or a session no agent ran, is refused here. A route that cannot
+/// be settled at all is left to the provider's construction to say why.
+///
+/// # Errors
+///
+/// [`AppError::Unstartable`] where the agent is disconnected, has no launch in
+/// the run's mode, has no program that can be run, or names itself in a way a
+/// session cannot be bound to;
+/// [`AppError::Unrouted`] where the session asked for was run on a provider's
+/// model; [`AppError::NoSession`] where none answers to the id; and
+/// [`AppError::Config`] where the run's confinement cannot be built.
+fn on_agent(startup: &Startup<'_>, auth: ProviderAuth<'_>) -> Result<Option<OnAgent>, AppError> {
+    let Some(route) = startup
+        .provider
+        .and_then(|one| access::settle(one, auth).ok())
+        .map(|settled| settled.into_parts().0)
+    else {
+        return Ok(None);
+    };
+    let Route::External {
+        provider,
+        instance,
+        driver,
+        profile,
+        enabled,
+        ..
+    } = &route
+    else {
+        return Ok(None);
+    };
+    let unstartable = |reason: String| AppError::Unstartable {
+        instance: instance.clone(),
+        reason: reason.into(),
+    };
+    if !enabled {
+        return Err(unstartable(format!(
+            "it is disconnected; connect it again, or remove providers.{provider}.access to \
+             reach {provider} directly"
+        )));
+    }
+    let Some(agent) = launching::Agent::routed(&route, &REGISTRY, |name| {
+        (startup.from)(name).map(OsString::from)
+    }) else {
+        return Err(unstartable(
+            "this release has no launch for its driver".to_owned(),
+        ));
+    };
+    let dialect =
+        (agent.row().dialect)(startup.mode).map_err(|refused| unstartable(refused.to_string()))?;
+    // Found now, where a turn would find it only once a log had been written
+    // that no agent ever ran.
+    match agent.discovery() {
+        Discovery::Found(_) => {}
+        Discovery::Missing => {
+            return Err(unstartable(format!(
+                "no {} command on PATH and none at externalAgents.{instance}.executable",
+                dialect.program()
+            )));
+        }
+        Discovery::NotExecutable(path) => {
+            return Err(unstartable(format!("{} is not executable", path.display())));
+        }
+    }
+    let bound = RouteBinding::new(driver.name(), instance, profile.as_deref())
+        .map_err(|refused| unstartable(refused.to_string()))?;
+    let (sessions, workspace) = (startup.sessions, startup.workspace);
+    let picked = match &startup.resuming {
+        Resuming::No => None,
+        Resuming::Newest => Some(crucible_session::pick_routed(sessions, workspace, None)?),
+        Resuming::Exact(id) => {
+            Some(crucible_session::pick_routed(sessions, workspace, Some(id)).map_err(unknown)?)
+        }
+    };
+    let picked = match picked {
+        None => None,
+        Some((id, Some(_))) => Some(id),
+        Some((_, None)) => {
+            return Err(AppError::Unrouted {
+                instance: instance.clone(),
+            });
+        }
+    };
+    Ok(Some(OnAgent {
+        agent,
+        instance: instance.clone(),
+        route: bound,
+        picked,
+        policy: startup.settings.sandbox().enforcing_policy(workspace)?,
+    }))
 }
 
 /// Waits on `runtime` for what picking the session up owes it, before the

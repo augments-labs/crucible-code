@@ -51,6 +51,8 @@ impl Put for Nobody {
     }
 }
 
+impl crate::client::Asker for Nobody {}
+
 /// The built-in providers, as one generation to resolve a name against.
 fn catalogue() -> Providers {
     crate::providers::providers()
@@ -409,7 +411,7 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
 }
 
 #[test]
-fn a_provider_whose_access_names_an_agent_is_refused_and_no_key_answers_for_it() {
+fn a_provider_whose_access_names_an_agent_builds_no_model_of_its_own_and_no_key_answers_for_it() {
     let sample = Sample::new("agent-construction");
     let keys = sample.stored("anthropic");
     let settings = sample.user(
@@ -430,7 +432,7 @@ fn a_provider_whose_access_names_an_agent_is_refused_and_no_key_answers_for_it()
         },
         &http,
     )
-    .expect_err("an agent this build cannot start");
+    .expect_err("a model the agent runs in place of");
 
     let said = problem.to_string();
     assert!(
@@ -439,8 +441,255 @@ fn a_provider_whose_access_names_an_agent_is_refused_and_no_key_answers_for_it()
     );
     assert_eq!(
         said,
-        "providers.anthropic.access names the agent mine, and this build cannot start an \
-         installed agent; remove access to reach anthropic directly"
+        "providers.anthropic.access names the agent mine, which runs the conversation in place \
+         of anthropic's models; remove access to reach anthropic directly"
+    );
+}
+
+/// A run asking anthropic, whose access names the agent `mine`, Claude Code
+/// played by the fake peer playing `script` and configured with `entry`'s
+/// further keys, picking up `resuming`.
+fn on_the_agent(
+    sample: &Sample,
+    services: &Services,
+    script: &crucible_external_harnesses::fake_peer::Script,
+    entry: &str,
+    resuming: Resuming,
+) -> Result<Conversation, AppError> {
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        script,
+    )
+    .expect("the peer installed");
+    on_the_program(sample, services, &program, entry, (resuming, Mode::Ask))
+}
+
+/// [`on_the_agent`], with the agent's executable configured as `program`,
+/// picking up `resuming` in `mode`.
+fn on_the_program(
+    sample: &Sample,
+    services: &Services,
+    program: &std::path::Path,
+    entry: &str,
+    (resuming, mode): (Resuming, Mode),
+) -> Result<Conversation, AppError> {
+    let settings = sample.user(&format!(
+        r#"{{"sandbox": {{"enabled": false}},
+            "providers": {{"anthropic": {{"access": {{"type": "externalAgent", "instance": "mine"}}}}}},
+            "externalAgents": {{"mine": {{"driver": "claude", "executable": {}{entry}}}}}}}"#,
+        // Written as JSON writes a string, so a path's separators survive on
+        // every platform.
+        serde_json::Value::from(program.to_string_lossy()),
+    ));
+    assemble(&Startup {
+        providers: &catalogue(),
+        provider: Some(serving("anthropic")),
+        unasked: NO_MODEL_CHOSEN,
+        model: None,
+        effort: None,
+        resuming,
+        mode,
+        leaving: &crucible_builtins::Background::new(),
+        services,
+        settings: &settings,
+        sessions: &sample.logs(),
+        workspace: &sample.workspace(),
+        ledger: &Ledger::new(),
+        revealed: &Revealed::new(),
+        plan: &Plan::new(),
+        asking: Arc::new(Nobody),
+        hosting: &[],
+        terminal: true,
+        from: &|_| None,
+        stored: &StoredCredentials::default(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+    })
+}
+
+#[test]
+fn a_provider_whose_access_names_an_agent_starts_the_run_on_the_agent_s_route() {
+    // Nothing is started at assembly: the agent is launched by the first
+    // turn, once the route has its yes, and its answer is the turn's.
+    let sample = Sample::new("agent-startup");
+    let services = Services::new();
+    let script = crucible_external_harnesses::fake_peer::Script::of([
+        crucible_external_harnesses::fake_peer::scripts::claude::clean(),
+    ]);
+
+    let mut conversation = on_the_agent(&sample, &services, &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+
+    assert_eq!(conversation.serving(), None);
+    assert!(
+        crucible_external_harnesses::fake_peer::heard(&sample.root().join("peer")).is_empty(),
+        "the agent was started before a turn"
+    );
+    let route = crucible_session::pick_routed(&sample.logs(), &sample.workspace(), None)
+        .expect("the run's log")
+        .1
+        .expect("a log bound to the route");
+    assert_eq!((route.driver(), route.instance()), ("claude", "mine"));
+
+    let agent = crate::backends::REGISTRY
+        .row(crucible_config::Driver::Claude)
+        .expect("Claude Code's row");
+    conversation
+        .consent()
+        .expect("the run's consent")
+        .give(agent.route);
+    let (events, _seen) = std::sync::mpsc::channel();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let turned = {
+        let run = conversation.starting(&events, &cancel, &steer, &aside);
+        services
+            .runtime()
+            .handle()
+            .expect("the run's runtime")
+            .block_on(conversation.turn("hi", Box::new([]), &mut Nobody, &run))
+    };
+
+    assert!(
+        matches!(turned, Ok(crucible_runner::Turned::Ran(_))),
+        "{turned:?}"
+    );
+    assert!(
+        !crucible_external_harnesses::fake_peer::heard(&sample.root().join("peer")).is_empty(),
+        "the turn never reached the agent"
+    );
+}
+
+#[test]
+fn a_session_no_agent_ran_is_not_continued_on_an_agent_s_route() {
+    // The run would hand the agent a history it never had, so the log is
+    // left as it was and the run says where it can be continued.
+    let sample = Sample::new("agent-unrouted-resume");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    let (path, id) = (
+        session.path().to_owned(),
+        session.id().expect("an id").clone(),
+    );
+    session.append(&Message::said("rename the module"));
+    drop(session);
+    let before = std::fs::read(&path).expect("the log");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+
+    for resuming in [Resuming::Newest, Resuming::Exact(id)] {
+        let Err(problem) = on_the_agent(&sample, &Services::new(), &script, "", resuming) else {
+            panic!("a session no agent ran was continued on an agent's route");
+        };
+
+        assert!(matches!(problem, AppError::Unrouted { .. }), "{problem:?}");
+        assert_eq!(std::fs::read(&path).expect("the log"), before);
+    }
+}
+
+#[test]
+fn a_session_an_agent_ran_is_continued_on_its_route() {
+    let sample = Sample::new("agent-routed-resume");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let id = first.session().id().expect("an id").clone();
+    drop(first);
+
+    let resumed = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        "",
+        Resuming::Exact(id.clone()),
+    )
+    .expect("the session continued on its route");
+
+    assert_eq!(resumed.session().id(), Some(&id));
+    assert_eq!(resumed.serving(), None);
+}
+
+#[test]
+fn an_agent_whose_program_cannot_be_run_is_not_started_and_no_log_is_written() {
+    let sample = Sample::new("agent-not-executable");
+    // A directory, which no platform runs, where a program was expected.
+    let program = sample.root().join("claude");
+    std::fs::create_dir_all(&program).expect("a directory");
+
+    let Err(problem) = on_the_program(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask),
+    ) else {
+        panic!("an agent whose program cannot be run was started");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(
+        problem.to_string().contains("is not executable"),
+        "{problem}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
+}
+
+#[test]
+fn an_agent_with_no_launch_in_the_run_s_mode_is_not_started_and_no_log_is_written() {
+    let sample = Sample::new("agent-full-access");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let Err(problem) = on_the_program(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::FullAccess),
+    ) else {
+        panic!("an agent was started in a mode it has no launch in");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
+}
+
+#[test]
+fn a_disconnected_agent_is_not_started_and_no_log_is_written() {
+    let sample = Sample::new("agent-disconnected");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+
+    let Err(problem) = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        r#", "enabled": false"#,
+        Resuming::No,
+    ) else {
+        panic!("a disconnected agent was started");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(problem.to_string().contains("disconnected"), "{problem}");
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
     );
 }
 

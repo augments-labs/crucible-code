@@ -235,7 +235,7 @@ impl Outside {
         let left = runtime()?.block_on(async {
             let backend = launching.launch(Mode::Ask, None).await?;
             let installed = Installed {
-                backend,
+                backend: Some(backend),
                 relaunch: Box::new(launching),
                 route: route.clone(),
             };
@@ -908,7 +908,7 @@ fn a_conversation_in_full_access_is_not_moved_onto_the_route() -> Result<(), Fai
     let moved = runtime()?.block_on(async {
         let backend = launching.launch(Mode::Ask, None).await?;
         let installed = Installed {
-            backend,
+            backend: Some(backend),
             relaunch: Box::new(launching),
             route: binding()?,
         };
