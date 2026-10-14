@@ -62,6 +62,7 @@ use crucible_types::{
 };
 use crucible_workspace::Workspace;
 
+use crate::backends::{REGISTRY, Registry};
 use crate::client::Asker;
 use crate::outside::{self, Installed, Outside};
 
@@ -103,6 +104,8 @@ pub struct Conversation {
     /// run holds one: a turn on such a route with no yes is asked about
     /// before anything is sent.
     consent: Option<crate::content_use::Consent>,
+    /// The installed agents this conversation can be run on.
+    agents: &'static Registry,
     /// What the two web tools answer through: built for the provider and model
     /// being asked, and built again by each switch of either.
     pub(crate) web: crate::following::Following,
@@ -134,6 +137,7 @@ impl Conversation {
             serving,
             reachable: false,
             consent: None,
+            agents: &REGISTRY,
             web: crate::following::Following::default(),
             asks: crate::client::asking::Asks::default(),
         }
@@ -154,6 +158,19 @@ impl Conversation {
             consent: Some(consent),
             ..self
         }
+    }
+
+    /// The same conversation, run on the agents `agents` lists rather than
+    /// the ones this release ships.
+    #[must_use]
+    pub fn registry(self, agents: &'static Registry) -> Self {
+        Self { agents, ..self }
+    }
+
+    /// The installed agents this conversation can be run on.
+    #[must_use]
+    pub fn agents(&self) -> &'static Registry {
+        self.agents
     }
 
     /// What a turn on a route whose vendor uses what is sent is asked about

@@ -196,6 +196,15 @@ pub enum AppError {
     /// started, so no conversation was assembled.
     #[error(transparent)]
     Unstarted(#[from] crate::runtime::Unstarted),
+
+    /// A test build was asked to start agents from a registry it has no
+    /// name for. Only a test build has this, as it has [`crate::proof`].
+    #[cfg(feature = "proof")]
+    #[error("a test build's agents were asked for as {value:?}; the registries are fake and empty")]
+    ProofRegistry {
+        /// What was asked for, as far as it reads as text.
+        value: Box<str>,
+    },
 }
 
 impl From<AccessError> for AppError {
