@@ -477,8 +477,10 @@ fn on_the_program(
     let settings = sample.user(&format!(
         r#"{{"sandbox": {{"enabled": false}},
             "providers": {{"anthropic": {{"access": {{"type": "externalAgent", "instance": "mine"}}}}}},
-            "externalAgents": {{"mine": {{"driver": "claude", "executable": "{}"{entry}}}}}}}"#,
-        program.display()
+            "externalAgents": {{"mine": {{"driver": "claude", "executable": {}{entry}}}}}}}"#,
+        // Written as JSON writes a string, so a path's separators survive on
+        // every platform.
+        serde_json::Value::from(program.to_string_lossy()),
     ));
     assemble(&Startup {
         providers: &catalogue(),
@@ -607,8 +609,9 @@ fn a_session_an_agent_ran_is_continued_on_its_route() {
 #[test]
 fn an_agent_whose_program_cannot_be_run_is_not_started_and_no_log_is_written() {
     let sample = Sample::new("agent-not-executable");
+    // A directory, which no platform runs, where a program was expected.
     let program = sample.root().join("claude");
-    std::fs::write(&program, "not a program").expect("a file");
+    std::fs::create_dir_all(&program).expect("a directory");
 
     let Err(problem) = on_the_program(
         &sample,
