@@ -85,7 +85,8 @@ impl Retained {
     }
 }
 
-/// Why a model stopped, as this protocol spells it.
+/// Why a model stopped, as this protocol spells it, and one stop that is
+/// no model's: [`Stop::Uncertain`], which only a turn's outcome carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stop {
     /// It finished and yielded.
@@ -102,13 +103,17 @@ pub enum Stop {
     Paused,
     /// Somebody cancelled it.
     Cancelled,
+    /// Somebody stopped it while an installed agent was acting, so what the
+    /// agent was doing may or may not have happened. Only a turn's outcome
+    /// says this; the turn's own `finished` report calls it cancelled.
+    Uncertain,
     /// The provider gave a reason nobody here has heard of.
     Unknown,
 }
 
 impl Stop {
     /// Every reason.
-    pub const EVERY: [Self; 8] = [
+    pub const EVERY: [Self; 9] = [
         Self::Yielded,
         Self::WantsTools,
         Self::OutOfTokens,
@@ -116,6 +121,7 @@ impl Stop {
         Self::Filtered,
         Self::Paused,
         Self::Cancelled,
+        Self::Uncertain,
         Self::Unknown,
     ];
 
@@ -130,6 +136,7 @@ impl Stop {
             Self::Filtered => "filtered",
             Self::Paused => "paused",
             Self::Cancelled => "cancelled",
+            Self::Uncertain => "uncertain",
             Self::Unknown => "unknown",
         }
     }
