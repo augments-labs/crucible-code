@@ -132,7 +132,7 @@ impl Asker for Nobody {}
 fn outside(backend: Box<dyn Backend>, relaunch: Box<dyn Relaunch>) -> Outside {
     Outside::new(
         Installed {
-            backend,
+            backend: Some(backend),
             relaunch,
             route: RouteBinding::new("claude", "work", None).expect("a route"),
         },

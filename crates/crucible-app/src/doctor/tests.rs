@@ -587,7 +587,7 @@ fn a_chosen_provider_with_nothing_found_is_told_only_the_way_its_access_chose() 
         (
             "openai",
             r#"{"access": {"type": "externalAgent", "instance": "mine"}}"#,
-            "cannot start an installed agent",
+            "runs the conversation in place of openai's models",
             "remove `providers.openai.access`",
             "OPENAI_API_KEY",
         ),

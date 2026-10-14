@@ -40,6 +40,11 @@
 //! the agent is told its mode only at launch, and so it never changes
 //! mid-turn. A mode the agent has no launch for is never taken: neither by a
 //! change nor by a conversation moved onto the route in it.
+//!
+//! **Launched by its first turn.** A conversation moved onto the route with
+//! no run in hand launches one at its first turn, the same way a spent run is
+//! replaced, so a run that started on the route has asked nothing of the agent
+//! before somebody asks it something.
 
 use std::collections::VecDeque;
 use std::future::poll_fn;
@@ -90,11 +95,13 @@ pub trait Relaunch: Send + Sync {
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>>;
 }
 
-/// The installed agent a conversation moves onto: its first run, what
-/// launches the next, and the route the session is bound to.
+/// The installed agent a conversation moves onto: its first run where one
+/// was launched already, what launches the next, and the route the session is
+/// bound to.
 pub struct Installed {
-    /// The agent's run, launched under the conversation's mode.
-    pub backend: Box<dyn Backend>,
+    /// The agent's run, launched under the conversation's mode; `None` leaves
+    /// the first turn to launch it.
+    pub backend: Option<Box<dyn Backend>>,
     /// What launches another.
     pub relaunch: Box<dyn Relaunch>,
     /// The route the session is bound to.
@@ -286,7 +293,7 @@ impl std::fmt::Debug for Outside {
 
 impl Outside {
     /// A conversation on the agent `installed`, its run launched under
-    /// `mode`, the session's agent named `named` and `transcript` what was
+    /// `mode` now or by the first turn, the session's agent named `named` and `transcript` what was
     /// seen of it so far.
     pub(crate) fn new(
         installed: Installed,
@@ -310,7 +317,7 @@ impl Outside {
             .filter(|message| matches!(message, Message::User { .. }))
             .fold(TurnId::FIRST, |turn, _| turn.next());
         Self {
-            backend: Some(backend),
+            backend,
             relaunch,
             route,
             driver,

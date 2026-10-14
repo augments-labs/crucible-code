@@ -25,29 +25,41 @@
 //! The child's policy is the conversation's, widened in exactly two ways: its
 //! profile directory, where one is configured, is writable but for the
 //! metadata protected beneath any writable root, and the hosts its row names
-//! are reachable. Every other rule, the protected metadata included, stays as
-//! the conversation has it, so a profile directory inside one, named directly
-//! or through a link, is refused rather than opened.
+//! are reachable where the conversation's commands are confined, since an
+//! unconfined child reaches the host's network already. Every other rule, the
+//! protected metadata included, stays as the conversation has it, so a
+//! profile directory inside one, named directly or through a link, is refused
+//! rather than opened.
+//!
+//! A conversation on an agent's route launches through [`Runs`]: each launch
+//! takes the policy the conversation's commands would run under at that
+//! moment, confined or not as the sandbox is then, so a run started after the
+//! sandbox was turned off or on is held to the same choice a command would be.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crucible_execution::{Failure, Text};
+use crucible_execution::{Backend, Capabilities, Capability, Failure, SessionRef, Text};
 use crucible_external_harnesses::{
     Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Reading, Refusal, Request, Shape,
 };
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
-    SandboxDomainPattern, SandboxDomainPolicy, SandboxFilesystemAccess,
+    SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement, SandboxFilesystemAccess,
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxNetworkPolicy,
     SandboxNetworkProvenance, SandboxPolicy, SandboxPolicyError, SandboxService,
 };
+use crucible_session::ExternalRef;
+use crucible_tools::Mode;
 use tokio::runtime::Handle;
 
 use crate::access::Route;
 use crate::backends::{Registry, Row};
 use crate::content_use::{self, Consent, Unheld, Warned};
+use crate::external::External;
+use crate::outside::Relaunch;
 
 /// Why nothing was started.
 #[derive(Debug, thiserror::Error)]
@@ -157,7 +169,8 @@ pub fn discover(executable: &str, lookup: impl Fn(&str) -> Option<OsString>) -> 
 
 /// The policy an agent's child runs under: `conversation`'s, with `profile`,
 /// where its links lead, writable but for the metadata protected beneath any
-/// writable root, and the hosts in `reaches` reachable.
+/// writable root, and the hosts in `reaches` reachable where the conversation
+/// confines its commands.
 ///
 /// # Errors
 ///
@@ -185,7 +198,10 @@ pub fn policy(
             }
         }
     }
-    let network = if reaches.is_empty() {
+    // An unconfined child already reaches the host's whole network, and a
+    // grant of hosts is one an unconfined run cannot hold to, so the sandbox
+    // would refuse to start it.
+    let network = if reaches.is_empty() || !conversation.enabled() {
         conversation.network().clone()
     } else {
         let vendor = reaches
@@ -432,6 +448,109 @@ impl<'a> Launcher<'a> {
             launch,
         )
         .await?)
+    }
+}
+
+/// What each shipping dialect lets a run of its agent do: stop a turn,
+/// answer a request for leave once or for the session, and resume the agent's
+/// own session. Neither answers a question the agent asks with words, so that
+/// is left unclaimed.
+fn claims() -> Capabilities {
+    Capabilities::unknown()
+        .declared(Capability::Cancel, true)
+        .declared(Capability::PermissionOnce, true)
+        .declared(Capability::PermissionSession, true)
+        .declared(Capability::Resume, true)
+}
+
+/// What launches an installed agent's runs for a conversation on its route.
+pub struct Runs {
+    /// The sandbox every run is prepared by.
+    service: Arc<dyn SandboxService>,
+    /// Where each run's pipes are read and written.
+    runtime: Handle,
+    /// The conversation's own policy, confining.
+    policy: SandboxPolicy,
+    /// Whether the sandbox confines at the moment a run is launched.
+    enablement: Arc<SandboxEnablement>,
+    /// The content-use answers, which every launch is held by.
+    consent: Consent,
+    /// The agent launched.
+    agent: Agent,
+    /// The `externalAgents` entry it is.
+    instance: Box<str>,
+}
+
+impl std::fmt::Debug for Runs {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Runs")
+            .field("instance", &self.instance)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Runs {
+    /// Runs of `agent`, the entry `instance`, each started as `launcher`
+    /// starts one, under its policy confining as `enablement` then says.
+    #[must_use]
+    pub fn new(
+        launcher: Launcher<'_>,
+        enablement: Arc<SandboxEnablement>,
+        agent: Agent,
+        instance: &str,
+    ) -> Self {
+        Self {
+            service: launcher.service,
+            runtime: launcher.runtime,
+            policy: launcher.conversation.clone(),
+            enablement,
+            consent: launcher.consent.clone(),
+            agent,
+            instance: instance.into(),
+        }
+    }
+}
+
+impl Relaunch for Runs {
+    fn admits(&self, mode: Mode) -> Result<(), Failure> {
+        (self.agent.row().dialect)(mode).map(drop)
+    }
+
+    fn launch<'a>(
+        &'a self,
+        mode: Mode,
+        resume: Option<&'a ExternalRef>,
+    ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
+        Box::pin(async move {
+            let mut dialect = (self.agent.row().dialect)(mode)?;
+            let control =
+                Control::new().ok_or_else(|| Failure::new("no control for the agent's run"))?;
+            let session = SessionRef::new(&self.instance)
+                .ok_or_else(|| Failure::new("the agent's entry has no name a run can carry"))?;
+            let policy = self.policy.clone().with_enabled(self.enablement.enabled());
+            let host = Launcher::new(
+                Arc::clone(&self.service),
+                self.runtime.clone(),
+                &policy,
+                &self.consent,
+            )
+            .launch(
+                &self.agent,
+                &control,
+                dialect.as_mut(),
+                resume.map(ExternalRef::reference),
+            )
+            .await
+            .map_err(|refused| Failure::new(&refused.to_string()))?;
+            let backend: Box<dyn Backend> = Box::new(External::new(
+                host,
+                dialect,
+                session,
+                &self.instance,
+                claims(),
+            ));
+            Ok(backend)
+        })
     }
 }
 

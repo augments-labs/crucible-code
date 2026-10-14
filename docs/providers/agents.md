@@ -4,9 +4,12 @@ An entry under [`externalAgents`](../configuration/configuration.md#externalagen
 names a coding agent installed on this machine. crucible starts it as a child
 process under the conversation's sandbox, speaks to it over its own wire, and
 never reads or copies its credentials: the agent signs in and sends for itself.
-This build reads the block and refuses to start a provider whose access names
-an agent, with a sentence saying so; the sections below say how each agent is
-run once one is started.
+A provider whose access names an agent has its conversations run by that agent
+in place of its own models: no key for the provider is looked for, and the
+agent is started by the conversation's first turn rather than when crucible
+starts. A disconnected agent, or one that cannot run in the conversation's
+mode, is refused before anything is recorded. The sections below say how each
+agent is run.
 
 ## Claude Code
 

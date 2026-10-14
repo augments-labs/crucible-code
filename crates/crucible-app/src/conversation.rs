@@ -224,7 +224,7 @@ impl Conversation {
     /// # Errors
     ///
     /// [`Failure`] where the agent has no launch in the conversation's mode:
-    /// nothing moves, the run handed over is closed, and `session` is let go.
+    /// nothing moves, any run handed over is closed, and `session` is let go.
     pub async fn external(
         &mut self,
         session: Arc<Session>,
@@ -233,17 +233,52 @@ impl Conversation {
     ) -> Result<Arc<Session>, Failure> {
         let mode = self.settled().mode();
         if let Err(refused) = installed.relaunch.admits(mode) {
-            let _closed = installed.backend.close().await;
+            if let Some(backend) = installed.backend {
+                let _closed = backend.close().await;
+            }
             return Err(refused);
         }
         if let Some(mut outside) = self.outside.take() {
             outside.retire().await;
         }
+        Ok(self.moved(session, transcript, installed, mode))
+    }
+
+    /// [`Conversation::external`] for a conversation just assembled, which
+    /// holds no run of an agent to retire: `installed` hands over none either,
+    /// its first turn launching it, so nothing is awaited.
+    ///
+    /// # Errors
+    ///
+    /// [`Failure`] where the agent has no launch in the conversation's mode:
+    /// nothing moves, and `session` is let go.
+    pub(crate) fn opened_outside(
+        &mut self,
+        session: Arc<Session>,
+        transcript: Transcript,
+        installed: Installed,
+    ) -> Result<(), Failure> {
+        let mode = self.settled().mode();
+        installed.relaunch.admits(mode)?;
+        drop(self.moved(session, transcript, installed, mode));
+        Ok(())
+    }
+
+    /// Records into `session` on the route of the agent `installed`, launched
+    /// under `mode`, as [`Conversation::external`] says, and returns the
+    /// session left.
+    fn moved(
+        &mut self,
+        session: Arc<Session>,
+        transcript: Transcript,
+        installed: Installed,
+        mode: Mode,
+    ) -> Arc<Session> {
         let named = session.external_ref().cloned();
         self.runner
             .pick_up(Arc::new(Session::nowhere()), Transcript::new());
         self.outside = Some(Box::new(Outside::new(installed, transcript, mode, named)));
-        Ok(std::mem::replace(&mut self.session, session))
+        std::mem::replace(&mut self.session, session)
     }
 
     /// Moves the conversation back onto this program's own models, closing
