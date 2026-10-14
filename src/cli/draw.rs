@@ -161,10 +161,9 @@ pub(crate) fn event<T: Terminal>(
         | Event::Carried { .. }
         | Event::Used { .. }
         | Event::PlanLimits { .. }
-        | Event::Compacting { .. } => Ok(()),
-
-        // Another agent's use of its own tools is not drawn yet.
-        Event::Reported { .. } => Ok(()),
+        | Event::Compacting { .. }
+        // Another agent's use of its own tools, which is not drawn yet.
+        | Event::Reported { .. } => Ok(()),
 
         // What it came to does not. Room having been made is a thing that
         // happened to the session rather than a state it is in, and the row

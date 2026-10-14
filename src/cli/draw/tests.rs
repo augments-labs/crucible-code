@@ -1968,13 +1968,20 @@ fn an_uncertain_stop_says_what_was_under_way_may_have_happened_and_no_guardrail(
         StopReason::Cancelled,
         crucible_types::Spend::NONE,
     ));
-    assert_eq!(refusal(&turned), "", "an uncertain stop was drawn as a refusal");
+    assert_eq!(
+        refusal(&turned),
+        "",
+        "an uncertain stop was drawn as a refusal"
+    );
 
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
     uncertain(&mut renderer).expect("the terminal to be written");
     let written = renderer.terminal().written().to_string();
 
-    assert!(written.contains("may or may not have happened"), "{written}");
+    assert!(
+        written.contains("may or may not have happened"),
+        "{written}"
+    );
     assert!(!written.contains("guardrail"), "{written}");
 }
 

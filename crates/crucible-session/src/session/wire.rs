@@ -896,6 +896,9 @@ pub(crate) fn uncertain(turn: &Uncertain) -> String {
     .to_string()
 }
 
+/// How every uncertain line opens, as [`uncertain`] writes it.
+pub(crate) const UNCERTAIN_OPENS: &[u8] = br#"{"uncertain":"#;
+
 /// What an uncertain line says, or `None` if this is not one.
 pub(crate) fn uncertainty(line: &str) -> Option<Uncertain> {
     let value: Value = serde_json::from_str(line).ok()?;

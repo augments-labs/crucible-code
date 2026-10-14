@@ -207,7 +207,7 @@ impl Ended {
             // told as the stop it carries.
             Self::Turn(Ok(Turned::Ran(result) | Turned::Uncertain(result))) => {
                 Outcome::Turn(TurnOutcome::Ran {
-                stop: reading::stop(result.stop()),
+                    stop: reading::stop(result.stop()),
                 })
             }
             Self::Turn(Ok(Turned::Rejected { rejection, stop })) => {

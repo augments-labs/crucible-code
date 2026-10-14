@@ -358,7 +358,12 @@ mod tests {
     #[test]
     fn a_run_no_runner_drives_is_its_own_root_and_reports_under_it() {
         let nowhere = Nowhere::new();
-        let run = RunContext::outside(&nowhere.events, &nowhere.cancel, &nowhere.steer, &nowhere.aside);
+        let run = RunContext::outside(
+            &nowhere.events,
+            &nowhere.cancel,
+            &nowhere.steer,
+            &nowhere.aside,
+        );
 
         assert_eq!(run.ancestry().root(), run.run());
         assert_eq!(run.ancestry().depth(), 0);

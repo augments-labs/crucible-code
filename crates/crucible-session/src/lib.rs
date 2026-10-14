@@ -17,7 +17,7 @@ pub use checkpoint::{
 };
 pub use prompt_cache::FilePromptCacheResourceStore;
 pub use session::{
-    Discovered, Discovery, DisplayHistory, DisplayItem, ExternalRef, Glimpse, PROMPTS, Place,
-    Pruned, Reach, Recorded, Roots, RouteBinding, Session, SessionError, Uncertain, discovered,
-    glimpse, picked, prompts, recent, remember, retitle,
+    Discovered, Discovery, DisplayHistory, DisplayItem, ExternalRef, Glimpse, NATIVE_DRIVER,
+    PROMPTS, Place, Pruned, Reach, Recorded, Roots, RouteBinding, Session, SessionError, Uncertain,
+    discovered, glimpse, pick_routed, picked, prompts, recent, remember, retitle,
 };

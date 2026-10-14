@@ -355,15 +355,36 @@ fn a_route_named_as_long_as_a_session_may_keep_it_is_listed_and_not_refused() {
 }
 
 #[test]
+fn the_native_backend_is_one_name_for_the_contract_the_runner_and_the_store() {
+    // The listing reads a session with no route as the contract's native
+    // backend, and a route can never name it only because the store refuses
+    // the same spelling.
+    assert_eq!(super::NATIVE, crucible_session::NATIVE_DRIVER);
+    assert_eq!(super::NATIVE, crate::native::DRIVER);
+}
+
+#[test]
 fn a_route_whose_driver_is_spelled_as_a_providers_model_is_counted_and_not_listed() {
     // A row naming the native backend and a route is one every client
-    // refuses, and it would take the whole list down with it.
+    // refuses, and it would take the whole list down with it. No binding names
+    // that driver, so the log is one another build wrote.
     let sample = Sample::new("sessions-native-driver");
-    let route = crucible_session::RouteBinding::new(super::NATIVE, "work", None).expect("a route");
+    let route = crucible_session::RouteBinding::new("claude", "work", None).expect("a route");
     let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
         .expect("a routed session");
     session.append(&Message::said(PROMPT));
+    let path = session.path().to_owned();
     drop(session);
+    let log = std::fs::read_to_string(&path).expect("the log");
+    std::fs::write(
+        &path,
+        log.replacen(
+            r#""driver":"claude""#,
+            &format!(r#""driver":"{}""#, super::NATIVE),
+            1,
+        ),
+    )
+    .expect("the log rewritten");
     recorded(&sample, None, None);
 
     let listed = listing(&sample.root(), &sample.logs()).expect("a listing");

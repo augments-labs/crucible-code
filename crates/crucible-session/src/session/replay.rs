@@ -487,11 +487,8 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         }
 
         let Some(message) = whole.and_then(wire::message) else {
-            if whole.is_some_and(wire::has_continuation) {
-                return Err(trouble(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid provider continuation in a complete session record",
-                )));
+            if let Some(why) = never_torn(&raw, whole) {
+                return Err(trouble(io::Error::new(io::ErrorKind::InvalidData, why)));
             }
             // Where the damage sits is what decides what to do about it. At the
             // end of the file it is where the log stops, and what came before
@@ -584,6 +581,22 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         settled_results,
         ran,
     })
+}
+
+/// Why the complete line `raw` that does not read is refused wherever it
+/// stands, rather than cut at the end of a log as a torn write would be.
+///
+/// Each is a record whose loss changes what the session means: a continuation
+/// the provider needs to carry on, and the only record that the files may hold
+/// changes nobody was told about.
+fn never_torn(raw: &[u8], whole: Option<&str>) -> Option<&'static str> {
+    if whole.is_some_and(wire::has_continuation) {
+        Some("invalid provider continuation in a complete session record")
+    } else if raw.starts_with(wire::UNCERTAIN_OPENS) {
+        Some("a complete record of a turn left unsettled that does not read")
+    } else {
+        None
+    }
 }
 
 /// What the calls of the last message recorded as they started and ended.

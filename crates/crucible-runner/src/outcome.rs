@@ -325,8 +325,11 @@ mod tests {
             crucible_runtime::Aside::new(),
         );
         let run = crate::RunContext::outside(&events, &cancel, &steer, &aside);
-        let uncertain =
-            Turned::Uncertain(RunResult::reported(&run, StopReason::Cancelled, Spend::NONE));
+        let uncertain = Turned::Uncertain(RunResult::reported(
+            &run,
+            StopReason::Cancelled,
+            Spend::NONE,
+        ));
 
         assert_eq!(uncertain.stop(), Some(StopReason::Cancelled));
         assert_eq!(

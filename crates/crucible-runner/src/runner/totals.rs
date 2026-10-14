@@ -249,6 +249,7 @@ impl Totals {
     /// Nothing here is counted by this program, so no request time and no
     /// edited lines are known, and they read as nothing.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub const fn reported(
         input: u64,
         output: u64,

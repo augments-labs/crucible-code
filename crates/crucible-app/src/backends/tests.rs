@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use crucible_external_harnesses::{Control, Shape};
 use crucible_external_harnesses::fake_peer::{self, scripts};
+use crucible_external_harnesses::{Control, Shape};
 use crucible_sandbox::SandboxPolicy;
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tools::Mode;
@@ -222,7 +222,9 @@ fn claude_code_is_launched_in_the_conversation_s_mode_and_never_in_full_access()
 /// since it asks about every action itself.
 #[test]
 fn antigravity_runs_one_dialect_in_every_mode() {
-    let row = REGISTRY.row(Driver::Antigravity).expect("Antigravity's row");
+    let row = REGISTRY
+        .row(Driver::Antigravity)
+        .expect("Antigravity's row");
     for mode in every_mode() {
         let mut dialect = (row.dialect)(mode).expect("every mode");
         assert_eq!(
