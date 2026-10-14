@@ -148,6 +148,14 @@ pub enum AppError {
         instance: Box<str>,
     },
 
+    /// The conversation is on an installed agent's route, and what was asked
+    /// is chosen by the agent: its model, and so the provider serving it.
+    #[error("this conversation is on {driver}, which chooses its own model")]
+    Installed {
+        /// The agent's program, as the agent registry names it.
+        driver: &'static str,
+    },
+
     /// Provider construction and source resolution disagreed.
     #[error("no credential is available for {provider}; use /login or set its API key variable")]
     Authentication {

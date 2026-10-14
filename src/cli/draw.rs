@@ -161,7 +161,9 @@ pub(crate) fn event<T: Terminal>(
         | Event::Carried { .. }
         | Event::Used { .. }
         | Event::PlanLimits { .. }
-        | Event::Compacting { .. } => Ok(()),
+        | Event::Compacting { .. }
+        // Another agent's use of its own tools, which is not drawn yet.
+        | Event::Reported { .. } => Ok(()),
 
         // What it came to does not. Room having been made is a thing that
         // happened to the session rather than a state it is in, and the row
@@ -1794,6 +1796,27 @@ pub(crate) fn stopped<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Ter
     renderer.present(&rows)
 }
 
+/// Says that a turn was stopped while another agent was acting.
+///
+/// The turn reported its stop as it ended, as any stopped turn does; what that
+/// does not say is that the agent was in the middle of something, a command or
+/// an edit, when it stopped, and that it may or may not have happened. A reader
+/// told only that the turn stopped would take it that nothing changed.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
+pub(crate) fn uncertain<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
+    let rows: Vec<Row> = fold(UNCERTAIN, renderer.transcript_columns())
+        .into_iter()
+        .map(|row| Row::new().then(Slot::Quiet, row))
+        .collect();
+    renderer.present(&rows)
+}
+
+/// And what it says.
+const UNCERTAIN: &str = "what the agent was doing when it stopped may or may not have happened";
+
 /// Says that a guardrail turned a turn away, or could not decide about it.
 ///
 /// The one ending of a turn that may have drawn nothing at all: a prompt
@@ -1816,7 +1839,8 @@ pub(crate) fn refused<T: Terminal>(
     turned: &Turned,
 ) -> Result<(), TerminalError> {
     let said = match turned {
-        Turned::Ran(_) => return Ok(()),
+        // An uncertain stop is no refusal, and [`uncertain`] says it.
+        Turned::Ran(_) | Turned::Uncertain(_) => return Ok(()),
         Turned::Rejected { rejection, stop } => format!(
             "the guardrail `{}` refused {}: {}",
             rejection.guard(),

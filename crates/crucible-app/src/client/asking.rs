@@ -203,7 +203,7 @@ pub(super) fn started(conversation: &mut Conversation, now: Instant) -> Option<A
     {
         return None;
     }
-    let question = conversation.native().provider().ask_limits()?;
+    let question = conversation.native()?.provider().ask_limits()?;
     conversation.asks.sending(credential, now);
     Some(Asking {
         credential,
@@ -217,7 +217,9 @@ pub(super) fn started(conversation: &mut Conversation, now: Instant) -> Option<A
 pub fn asked(conversation: &mut Conversation, answered: Answered) -> Performed {
     match answered.asked {
         Asked::Answered(windows) if credential(conversation) == Some(answered.credential) => {
-            conversation.native_mut().answered_limits(windows);
+            if let Some(runner) = conversation.native_mut() {
+                runner.answered_limits(windows);
+            }
         }
         Asked::Closed => conversation.asks.close(answered.credential),
         // The client that would have sent it held it back: nothing left, so
@@ -247,7 +249,7 @@ pub(super) fn usage(conversation: &Conversation) -> Performed {
 fn credential(conversation: &Conversation) -> Option<Credential> {
     let serving = conversation.serving()?;
     let scope = conversation
-        .native()
+        .native()?
         .provider()
         .prompt_cache_route()
         .credential_scope;

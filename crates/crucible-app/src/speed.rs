@@ -62,20 +62,23 @@ impl Conversation {
     /// Asks the model in force at `speed` from the next turn on, and writes it
     /// down for the next run: fast together with the model in force, which a
     /// plain start then asks for where no project file names another, and
-    /// standard by taking fast out.
+    /// standard by taking fast out. An installed agent chooses its own pace,
+    /// as a model with no fast form does.
     pub fn hasten(&mut self, speed: Speed, with: &Switching<'_>) -> Hastened {
-        let Some(provider) = self.serving.filter(|_| !self.native().model().is_empty()) else {
+        let serving = self.serving;
+        let Some(runner) = self.native_mut() else {
+            return Hastened::Unsupported;
+        };
+        let Some(provider) = serving.filter(|_| !runner.model().is_empty()) else {
             return Hastened::Unasked;
         };
-        match self.native().provider().fast(self.native().model()) {
+        match runner.provider().fast(runner.model()) {
             FastForm::None => Hastened::Unsupported,
             FastForm::Own(_) => Hastened::Own,
             FastForm::Field(_) => {
-                self.native_mut().hasten(speed);
+                runner.hasten(speed);
                 let written = match speed {
-                    Speed::Fast => {
-                        remember::hastening(with.choosing, provider, self.native().model())
-                    }
+                    Speed::Fast => remember::hastening(with.choosing, provider, runner.model()),
                     Speed::Standard => remember::slowing(with.choosing, provider),
                 };
                 Hastened::Taken {
@@ -93,26 +96,25 @@ impl Conversation {
     /// Read from the file rather than from the settings the run started with,
     /// because a credential that moved took its provider's speed out of the
     /// file after those were read. A file that cannot be read asks standard.
+    /// The kept runner is set so on an installed agent's route too, for the
+    /// conversation's return to it.
     pub fn hastened_as_kept(&mut self, file: &Path) {
-        let switched = self
-            .native()
-            .provider()
-            .fast(self.native().model())
-            .switched();
+        let runner = &mut self.runner;
+        let switched = runner.provider().fast(runner.model()).switched();
         let kept = self
             .serving
-            .and_then(|provider| remember::hastened(file, provider, self.native().model()).ok());
+            .and_then(|provider| remember::hastened(file, provider, runner.model()).ok());
         let speed = match kept {
             Some(Speed::Fast) if switched => Speed::Fast,
             Some(_) | None => Speed::Standard,
         };
-        self.native_mut().hasten(speed);
+        runner.hasten(speed);
     }
 
     /// Standard from the next turn on, for `provider`, in the runner and in
     /// `file`.
     pub(crate) fn slowed(&mut self, provider: &str, file: &Path) -> Option<RememberError> {
-        self.native_mut().hasten(Speed::Standard);
+        self.runner.hasten(Speed::Standard);
         remember::slowing(file, provider).err()
     }
 
@@ -125,7 +127,7 @@ impl Conversation {
     /// refusal already said fast is off, and the next run asks once, is
     /// refused once and says so.
     pub(crate) fn refusal_written(&self, asked: Speed) {
-        if asked != Speed::Fast || self.native().speed() != Speed::Standard {
+        if asked != Speed::Fast || self.runner.speed() != Speed::Standard {
             return;
         }
         let (Some(provider), Some(file)) = (

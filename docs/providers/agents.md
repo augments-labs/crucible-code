@@ -51,17 +51,22 @@ terminal: crucible shows the command that signs the profile in, such as
 then checks again. Signing out runs its own `claude auth logout`; without a
 `configDir`, that signs out the Claude Code you run yourself too.
 
-**Permissions.** It runs in its `default` permission mode, whatever mode the
-conversation is in, and every action its own rules leave to a prompt comes to
-you as a question. Allowing for the rest of the session keeps, for that session
-alone and never in its settings files, only the agent's rules for the command
-you were asked about: the command itself, or every command that begins with the
-words a rule names, such as every `git` command for `git:*`. A rule with a
-wildcard or shell syntax in its words, such as `;`, `|`, `$`, a quote or `=`,
-or a rule for any other tool, is not kept. Where the agent offers no such rule,
-or says its rule would allow more than you were asked, the allow is for that
-call alone. Once a turn is stopped, every question it asked is answered no,
-whatever was chosen.
+**Permissions.** The conversation's mode chooses the permission mode it is
+started in: ask runs it in `default`, and allow edits in `acceptEdits`, which
+edits files without asking and asks before anything else. Full access is
+refused, since no permission mode keeps its promise without skipping the
+agent's prompts altogether, and the conversation stays in the mode it was in. A
+change of mode takes effect at the next turn, which starts the agent again and
+continues its session; the turn under way keeps the mode it began in. Every
+action its own rules leave to a prompt comes to you as a question. Allowing for
+the rest of the session keeps, for that session alone and never in its settings
+files, only the agent's rules for the command you were asked about: the command
+itself, or every command that begins with the words a rule names, such as every
+`git` command for `git:*`. A rule with a wildcard or shell syntax in its words,
+such as `;`, `|`, `$`, a quote or `=`, or a rule for any other tool, is not
+kept. Where the agent offers no such rule, or says its rule would allow more
+than you were asked, the allow is for that call alone. Once a turn is stopped,
+every question it asked is answered no, whatever was chosen.
 
 **Project settings.** The agent runs the hooks and helper commands and connects
 the servers a project's own Claude Code settings name before it is asked
@@ -69,17 +74,20 @@ anything, as it does when you start it yourself in that directory, and those
 settings can allow actions it would otherwise ask about. A turn is stopped,
 saying why, when the agent reports that it sends requests with a key from its
 settings, a project's or a helper command rather than the account its profile
-is signed in to, or that it runs in a permission mode that asks less than
-`default`. A token or another provider a project's settings set in the agent's
-environment is not reported, so read a project's Claude Code settings before
-you start the agent in it.
+is signed in to, or that it runs in a permission mode that asks less than the
+one it was started in. A token or another provider a project's settings set in
+the agent's environment is not reported, so read a project's Claude Code
+settings before you start the agent in it.
 
 **Usage.** Each turn reports its tokens, its input the sum of its uncached,
 cache-read and cache-written parts, and its cost in US dollars as the agent
 counts it. A run that resumes a session the agent kept reports no cost for its
 first turn, since what the session cost before it is not known; after a turn
 that reports its tokens and no cost, later turns of the run report no cost
-either.
+either. The session's cost is the sum of what its turns reported: a turn that
+reports none leaves it unpriced, and a stopped turn, which reports nothing,
+leaves what was summed before it as the least the session cost, or the session
+unpriced where nothing was.
 
 **Network.** Its sandbox adds to what the conversation lets it reach
 `api.anthropic.com`, `claude.ai`, `claude.com` and `platform.claude.com`, by

@@ -1210,6 +1210,36 @@ fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
 }
 
 #[test]
+fn a_failed_turn_on_an_agent_s_route_says_its_failure_once() {
+    // The conversation posts nothing of how an agent's turn ended; the one
+    // failure the terminal draws is the worker's, after what streamed.
+    let turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta("Editing the file.\n"),
+        beat(Event::Used {
+            totals: crucible_runner::Totals::new(),
+        }),
+        beat(Event::Failed {
+            error: TurnError::Provider(ProviderError::Protocol {
+                provider: "anthropic",
+                problem: "the agent stopped answering".into(),
+            }),
+        }),
+    ];
+
+    let drawn = transcript(turn);
+
+    assert!(drawn.starts_with("Editing the file.\n"), "{drawn}");
+    assert_eq!(
+        drawn.matches("the agent stopped answering").count(),
+        1,
+        "{drawn}"
+    );
+}
+
+#[test]
 fn an_answer_arriving_in_pieces_is_one_block() {
     // A delta is a piece of the wire rather than a paragraph, so the row is
     // owed before the first of them and never between two.
@@ -1949,6 +1979,40 @@ fn refusal(turned: &Turned) -> String {
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
     refused(&mut renderer, turned).expect("the terminal to be written");
     renderer.terminal().written().to_string()
+}
+
+#[test]
+fn an_uncertain_stop_says_what_was_under_way_may_have_happened_and_no_guardrail() {
+    // Stopped while another agent was acting: a reader told only that the turn
+    // stopped would take it that nothing changed, and one told a guardrail
+    // refused it would go looking for a check that never ran.
+    let (events, _seen) = std::sync::mpsc::channel();
+    let (cancel, steer, aside) = (
+        crucible_runtime::Cancel::new(),
+        crucible_runtime::Steer::new(),
+        crucible_runtime::Aside::new(),
+    );
+    let run = crucible_runner::RunContext::outside(&events, &cancel, &steer, &aside);
+    let turned = Turned::Uncertain(crucible_runner::RunResult::reported(
+        &run,
+        StopReason::Cancelled,
+        crucible_types::Spend::NONE,
+    ));
+    assert_eq!(
+        refusal(&turned),
+        "",
+        "an uncertain stop was drawn as a refusal"
+    );
+
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    uncertain(&mut renderer).expect("the terminal to be written");
+    let written = renderer.terminal().written().to_string();
+
+    assert!(
+        written.contains("may or may not have happened"),
+        "{written}"
+    );
+    assert!(!written.contains("guardrail"), "{written}");
 }
 
 #[test]

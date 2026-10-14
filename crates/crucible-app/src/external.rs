@@ -8,7 +8,10 @@
 //! the answer is the program's to act on inside its sandbox.
 //!
 //! The run posts the contract's own events, which its dialect made of the
-//! program's frames, so nothing is translated here. A turn whose stream could
+//! program's frames, so nothing is translated here. The one event added here
+//! is [`Event::Opened`]: once a turn has ended, the program's own name for its
+//! session is posted where it is new, so that whoever records the session can
+//! keep the name a later launch resumes it by. A turn whose stream could
 //! not be read to its end has already posted that it is uncertain and failed;
 //! it answers the failure, and the run it was on is spent.
 //!
@@ -30,8 +33,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use crucible_execution::{
-    Backend, Capabilities, Capability, Confined, Decision, Description, Error, Failure, Lasting,
-    Outcome, PendingRef, Scope, SessionRef, Sink, TurnRequest, Unsupported,
+    Backend, Capabilities, Capability, Confined, Decision, Description, Error, Event, Failure,
+    Lasting, Outcome, PendingRef, Scope, SessionRef, Sink, TurnRequest, Unsupported,
 };
 use crucible_external_harnesses::{
     CANCEL_GRACE, Control, Dialect, Host, STOP_GRACE, Undecided, Unstopped,
@@ -85,6 +88,8 @@ pub struct External {
     control: Control,
     /// The session the run records into, as the contract names it.
     session: SessionRef,
+    /// The program's own name for its session, as last posted.
+    opened: Mutex<Option<SessionRef>>,
     /// The command its program is looked up as.
     driver: &'static str,
     /// The `externalAgents` entry it is.
@@ -123,6 +128,7 @@ impl External {
             slot: Mutex::new(Slot::Idle(Running { host, dialect })),
             returned: Notify::new(),
             session,
+            opened: Mutex::new(None),
             instance: instance.into(),
             capabilities: capabilities.confined(confined),
         }
@@ -251,6 +257,14 @@ impl Backend for External {
                 .turn(running.dialect.as_mut(), &self.session, &turn, events)
                 .await;
             away.finished = true;
+            if let Some(named) = running.host.session().and_then(SessionRef::new) {
+                let mut opened = self.opened.lock().unwrap_or_else(PoisonError::into_inner);
+                if opened.as_ref() != Some(&named) {
+                    *opened = Some(named.clone());
+                    drop(opened);
+                    events.post(Event::Opened(named));
+                }
+            }
             Ok(ended?)
         })
     }

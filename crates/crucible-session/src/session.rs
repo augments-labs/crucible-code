@@ -41,7 +41,7 @@ use crucible_storage::{
     CallResultKey, CallResultReceipt, CallResultStoreError, JournalStore, RunItem, SessionOwner,
     SessionStore,
 };
-pub use crucible_storage::{ExternalRef, RouteBinding, Uncertain};
+pub use crucible_storage::{ExternalRef, NATIVE_DRIVER, RouteBinding, Uncertain};
 use crucible_types::{
     Attachment, Calibration, ContextError, ContextPatch, ContextSnapshot, Message,
     RecordedToolOutput, SessionId, ToolResult, Transcript,
@@ -183,6 +183,18 @@ pub enum SessionError {
         /// The route it was opened on, for a caller that says why this run
         /// is not on it.
         route: Box<RouteBinding>,
+    },
+
+    /// A session was asked for on an installed agent's route, and a
+    /// provider's model ran it, so the agent would be handed a history it
+    /// never had. Nothing in the log is read past its route or changed.
+    #[error(
+        "session {id} was run on a provider's model, not by an installed agent; \
+         its history is kept as it was, so carry it on with that model"
+    )]
+    Unrouted {
+        /// Which session.
+        id: Box<str>,
     },
 
     /// The session asked for is still being written by another crucible.
@@ -430,7 +442,7 @@ impl Session {
         // then on.
         index::ensure(directory)?;
 
-        Self::continuing(&newest(directory, workspace)?)
+        Self::continuing(&newest(directory, workspace)?, None)
     }
 
     /// Picks up the session `id` names, rather than the newest one.
@@ -467,19 +479,61 @@ impl Session {
             });
         }
 
-        Self::continuing(&path)
+        Self::continuing(&path, None)
+    }
+
+    /// Picks up the session `id` names on the installed agent's route
+    /// `route`, which is the agent's own resume of a session it ran.
+    ///
+    /// Checked as [`Session::reopen`] checks a log, and then held to the
+    /// route: a log another route opened is refused as [`Session::reopen`]
+    /// refuses it, and a log a provider's model ran is refused too, since the
+    /// agent would be handed a history it never had. The version and the
+    /// generation may have moved: an agent updated or started again is the
+    /// same route. What the log said about the agent's session, and a turn it
+    /// left unsettled, come back with it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Session::reopen`], with [`SessionError::Rerouted`] for a log of
+    /// another route and [`SessionError::Unrouted`] for one with none.
+    pub fn reopen_routed(
+        directory: &Path,
+        workspace: &Workspace,
+        id: &SessionId,
+        route: &RouteBinding,
+    ) -> Result<(Self, Transcript), SessionError> {
+        privacy::directory(directory).map_err(|source| SessionError::Directory {
+            at: directory.display().to_string().into(),
+            source,
+        })?;
+
+        let path = directory.join(format!("{}.{SUFFIX}", id.as_str()));
+
+        if !path.is_file() || !belongs(&path, workspace)? {
+            return Err(SessionError::Unknown {
+                id: id.as_str().into(),
+                at: workspace.root().display().to_string().into(),
+            });
+        }
+
+        Self::continuing(&path, Some(route))
     }
 
     /// The half of continuing a session that starts once the log is known.
     ///
-    /// Both ways in reach it: the newest log for this directory, and the one a
-    /// session was named by. What a continued session has to do to a log is the
+    /// Every way in reaches it: the newest log for this directory, the one a
+    /// session was named by, and the one an installed agent's route picks up,
+    /// which is `route`. What a continued session has to do to a log is the
     /// same either way, and it is the order of it that matters — claim, read,
     /// cut, and only then open the handle that appends.
-    fn continuing(path: &Path) -> Result<(Self, Transcript), SessionError> {
+    fn continuing(
+        path: &Path,
+        route: Option<&RouteBinding>,
+    ) -> Result<(Self, Transcript), SessionError> {
         // Before the claim, so a session this run may not pick up is left
-        // exactly as the agent that ran it left it.
-        unrouted(path)?;
+        // exactly as whatever ran it left it.
+        routed_as(path, route)?;
 
         // Before the log is read, and long before it is cut. A session another
         // crucible still has open is a file that is still being appended to:
@@ -1125,10 +1179,12 @@ fn is_conversation_message(message: &Message) -> bool {
 /// The session `id` names, or the newest recorded for `workspace` where it
 /// names none, read without claiming, replaying or cutting it.
 ///
-/// What a resume asks before it builds anything to run the session on: a
-/// session another route opened is answered before a byte of it is sent
-/// anywhere, and before the log is touched. The log is then picked up by the
-/// id this hands back, so a session started meanwhile cannot take its place.
+/// What a resume on a provider's model asks before it builds anything to run
+/// the session on: a session an installed agent opened is refused before a
+/// byte of it is sent anywhere, and before the log is touched; a resume that
+/// can continue a route asks [`pick_routed`] instead. The log is then picked
+/// up by the id this hands back, so a session started meanwhile cannot take
+/// its place.
 ///
 /// # Errors
 ///
@@ -1139,6 +1195,38 @@ pub fn picked(
     workspace: &Workspace,
     id: Option<&SessionId>,
 ) -> Result<SessionId, SessionError> {
+    let (path, id) = picking(directory, workspace, id)?;
+    routed_as(&path, None)?;
+    Ok(id)
+}
+
+/// The session `id` names, or the newest recorded for `workspace` where it
+/// names none, with the installed agent's route it was opened on, read
+/// without claiming, replaying or cutting it.
+///
+/// What a resume that can continue a route asks first: the route says which
+/// agent to start, and [`Session::reopen_routed`] then holds the log to it.
+/// `None` for a session a provider's model ran.
+///
+/// # Errors
+///
+/// As [`picked`], except that a routed log is answered rather than refused.
+pub fn pick_routed(
+    directory: &Path,
+    workspace: &Workspace,
+    id: Option<&SessionId>,
+) -> Result<(SessionId, Option<RouteBinding>), SessionError> {
+    let (path, id) = picking(directory, workspace, id)?;
+    Ok((id, route_of(&path)?))
+}
+
+/// The log `id` names, or the newest for `workspace`, and its id, checked to
+/// be one of this workspace's.
+fn picking(
+    directory: &Path,
+    workspace: &Workspace,
+    id: Option<&SessionId>,
+) -> Result<(PathBuf, SessionId), SessionError> {
     privacy::directory(directory).map_err(|source| SessionError::Directory {
         at: directory.display().to_string().into(),
         source,
@@ -1168,26 +1256,29 @@ pub fn picked(
         });
     };
 
-    unrouted(&path)?;
-    Ok(id)
+    Ok((path, id))
 }
 
-/// Refuses the log at `path` where an installed agent ran it.
+/// Refuses the log at `path` unless it was opened on `route`: an installed
+/// agent's, or a provider's model where `route` is `None`.
 ///
-/// Every way into a session this build has picks it up on a provider's
-/// model, and one an agent ran picked up there would send its history where
-/// it never went. Only its first two lines are read, so a refusal touches
+/// A session picked up on what did not run it would send its history where it
+/// never went. Only its first two lines are read, so a refusal touches
 /// nothing.
-fn unrouted(path: &Path) -> Result<(), SessionError> {
-    match route_of(path)? {
-        None => Ok(()),
-        Some(route) => Err(SessionError::Rerouted {
-            id: path
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into())
-                .unwrap_or_default(),
-            route: Box::new(route),
+fn routed_as(path: &Path, route: Option<&RouteBinding>) -> Result<(), SessionError> {
+    let id = || {
+        path.file_stem()
+            .map(|stem| stem.to_string_lossy().into())
+            .unwrap_or_default()
+    };
+    match (route_of(path)?, route) {
+        (None, None) => Ok(()),
+        (Some(opened), Some(route)) if opened.same_route(route) => Ok(()),
+        (Some(opened), _) => Err(SessionError::Rerouted {
+            id: id(),
+            route: Box::new(opened),
         }),
+        (None, Some(_)) => Err(SessionError::Unrouted { id: id() }),
     }
 }
 

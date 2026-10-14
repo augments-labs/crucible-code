@@ -2,10 +2,11 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use crucible_external_harnesses::Control;
 use crucible_external_harnesses::fake_peer::{self, scripts};
+use crucible_external_harnesses::{Control, Shape};
 use crucible_sandbox::SandboxPolicy;
 use crucible_sandbox_local::LocalSandbox;
+use crucible_tools::Mode;
 use tokio::runtime::Handle;
 
 use super::*;
@@ -39,7 +40,11 @@ fn every_row_agrees_with_its_driver_its_route_and_its_page() {
                 .any(|line| line.starts_with('#') && anchor(line) == row.docs_section),
             "{row:?}"
         );
-        assert_eq!((row.dialect)().program(), row.driver.name(), "{row:?}");
+        for mode in every_mode() {
+            if let Ok(dialect) = (row.dialect)(mode) {
+                assert_eq!(dialect.program(), row.driver.name(), "{row:?}");
+            }
+        }
     }
 }
 
@@ -74,7 +79,7 @@ fn every_agent_route_warned_is_a_drivers() {
 fn a_row_that_does_not_ship_is_not_offered() {
     static HELD_BACK: [Row; 1] = [Row {
         driver: Driver::Antigravity,
-        dialect: || Box::new(crucible_external_harnesses::fake_peer::Plain),
+        dialect: |_| Ok(Box::new(crucible_external_harnesses::fake_peer::Plain)),
         profile_key: "profileDir",
         route: "agent:antigravity",
         docs_section: "antigravity",
@@ -121,7 +126,12 @@ async fn the_claude_code_row_held_back_is_refused_by_its_section_and_starts_noth
     let control = Control::new().expect("a control");
 
     let refused = launcher
-        .launch(&agent, &control, (shipped.dialect)().as_mut(), None)
+        .launch(
+            &agent,
+            &control,
+            (shipped.dialect)(Mode::Ask).expect("asking").as_mut(),
+            None,
+        )
         .await
         .expect_err("held back");
 
@@ -171,12 +181,65 @@ fn anchor(heading: &str) -> String {
 #[test]
 fn claude_code_s_modes_are_the_conversation_s() {
     use crucible_external_harnesses::claude::Mode as Agents;
-    use crucible_tools::Mode;
-    let row = |mode: Mode| match mode {
-        Mode::Ask => Agents::Ask,
-        Mode::AllowEdits => Agents::AllowEdits,
-        Mode::FullAccess => Agents::FullAccess,
+    let rows: BTreeSet<_> = every_mode()
+        .into_iter()
+        .map(|mode| format!("{:?}", claude_mode(mode)))
+        .collect();
+    let table: BTreeSet<_> = Agents::ALL.iter().map(|mode| format!("{mode:?}")).collect();
+
+    assert_eq!(rows, table);
+}
+
+/// Claude Code is started in the permission mode its table gives the
+/// conversation's mode, and full access, which no permission mode keeps, is
+/// refused by the table's own sentence before anything is started.
+#[test]
+fn claude_code_is_launched_in_the_conversation_s_mode_and_never_in_full_access() {
+    let row = REGISTRY.row(Driver::Claude).expect("Claude Code's row");
+    for (mode, named) in [(Mode::Ask, "default"), (Mode::AllowEdits, "acceptEdits")] {
+        let mut dialect = (row.dialect)(mode).expect("a supported mode");
+        let arguments = dialect.request(Shape::default()).arguments;
+        assert!(
+            arguments.windows(2).any(|pair| pair
+                .iter()
+                .map(String::as_str)
+                .eq(["--permission-mode", named])),
+            "{mode:?}: {arguments:?}"
+        );
+    }
+    let Err(refused) = (row.dialect)(Mode::FullAccess) else {
+        panic!("full access was given a dialect");
     };
+    let crucible_external_harnesses::claude::Row::Unsupported(why) =
+        crucible_external_harnesses::claude::Modes::row(claude_mode(Mode::FullAccess))
+    else {
+        panic!("full access has a permission mode");
+    };
+    assert_eq!(refused.reason().as_str(), why);
+}
+
+/// Antigravity is given its one dialect whatever the conversation's mode,
+/// since it asks about every action itself.
+#[test]
+fn antigravity_runs_one_dialect_in_every_mode() {
+    let row = REGISTRY
+        .row(Driver::Antigravity)
+        .expect("Antigravity's row");
+    for mode in every_mode() {
+        let mut dialect = (row.dialect)(mode).expect("every mode");
+        assert_eq!(
+            dialect.request(Shape::default()).arguments,
+            (row.dialect)(Mode::Ask)
+                .expect("asking")
+                .request(Shape::default())
+                .arguments,
+            "{mode:?}"
+        );
+    }
+}
+
+/// Every mode a conversation runs in, in the order a cycle visits them.
+fn every_mode() -> Vec<Mode> {
     let mut modes = vec![Mode::default()];
     while let Some(next) = modes
         .last()
@@ -185,11 +248,5 @@ fn claude_code_s_modes_are_the_conversation_s() {
     {
         modes.push(next);
     }
-    let rows: BTreeSet<_> = modes
-        .into_iter()
-        .map(|mode| format!("{:?}", row(mode)))
-        .collect();
-    let table: BTreeSet<_> = Agents::ALL.iter().map(|mode| format!("{mode:?}")).collect();
-
-    assert_eq!(rows, table);
+    modes
 }

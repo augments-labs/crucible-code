@@ -65,11 +65,26 @@ impl Permission {
     }
 
     /// Whether the agent, started in `self`, may run in `running` without
-    /// asking less than it was started to: the same mode, or one that
-    /// changes nothing or denies what would have prompted.
+    /// asking less than it was started to: a mode that asks at least as much,
+    /// such as `default` after `acceptEdits`, or one that changes nothing or
+    /// denies what would have prompted.
     #[must_use]
-    pub fn admits(self, running: Self) -> bool {
-        running == self || matches!(running, Self::Plan | Self::DontAsk)
+    pub const fn admits(self, running: Self) -> bool {
+        running.lets_through() <= self.lets_through()
+    }
+
+    /// How much this mode lets through without asking, least first: changing
+    /// nothing and denying what would have prompted let nothing through, and
+    /// each mode after lets through everything the one before it does and
+    /// more.
+    const fn lets_through(self) -> u8 {
+        match self {
+            Self::Plan | Self::DontAsk => 0,
+            Self::Default => 1,
+            Self::AcceptEdits => 2,
+            Self::Auto => 3,
+            Self::BypassPermissions => 4,
+        }
     }
 
     /// Its name on the command line.

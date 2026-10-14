@@ -203,9 +203,13 @@ impl Ended {
                 providers::Missing::Provider => Missing::Provider,
                 providers::Missing::Model => Missing::Model,
             }),
-            Self::Turn(Ok(Turned::Ran(result))) => Outcome::Turn(TurnOutcome::Ran {
-                stop: reading::stop(result.stop()),
-            }),
+            // The contract has no word for an uncertain stop yet, so it is
+            // told as the stop it carries.
+            Self::Turn(Ok(Turned::Ran(result) | Turned::Uncertain(result))) => {
+                Outcome::Turn(TurnOutcome::Ran {
+                    stop: reading::stop(result.stop()),
+                })
+            }
             Self::Turn(Ok(Turned::Rejected { rejection, stop })) => {
                 Outcome::Turn(TurnOutcome::Rejected {
                     // Both were kept to a ceiling under this one before they

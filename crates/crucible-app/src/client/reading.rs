@@ -118,8 +118,10 @@ pub fn progress(
             stop: self::stop(*stop),
         },
         Event::Failed { error } => Progress::Failed(failed(error)),
-        // A refusal whose second send a stop ended is no retry.
+        // A refusal whose second send a stop ended is no retry. Another
+        // agent's use of its own tools has no word in the contract yet.
         Event::FastRefused { resent: false, .. }
+        | Event::Reported { .. }
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Wrote { .. }

@@ -42,7 +42,7 @@ mod tests;
 mod turning;
 
 pub use asking::{Answered, Asking, FLOOR, KEPT, asked, asking};
-pub use deciding::{Deciding, Front, Shown, TRIES, questions, warned};
+pub use deciding::{Asker, Deciding, Front, Shown, TRIES, questions, warned};
 pub use performing::{Cleared, Desk, Performed, Resumed, Setting, keep, perform};
 pub use reading::{context, mode_out as mode, pace, progress, rung, snapshot, usage};
 pub use turning::{Ended, interrupt, turn};

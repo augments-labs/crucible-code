@@ -394,7 +394,10 @@ impl<'a> Launcher<'a> {
         let program = match &agent.discovery {
             Discovery::Found(program) => program.clone(),
             missing @ (Discovery::Missing | Discovery::NotExecutable(_)) => {
-                let command = (row.dialect)().program();
+                // The command is the same in every mode, and asking is a mode
+                // every row runs in.
+                let command = (row.dialect)(crucible_tools::Mode::default())
+                    .map_or(row.driver.name(), |dialect| dialect.program());
                 return Err(missing.refusal(shown, command).map_or_else(
                     || Unlaunched::Unknown(row.route.to_owned()),
                     Unlaunched::NotInstalled,

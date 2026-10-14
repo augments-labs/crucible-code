@@ -1645,6 +1645,48 @@ fn usage_a_turn_keeps_what_it_last_reported_for_the_panel_over_it() {
 }
 
 #[test]
+fn usage_over_an_agent_s_turn_keeps_what_it_last_reported() {
+    // An agent's run reports whole figures, each replacing the last, so the
+    // panel over its turn reads the latest and never a sum of them.
+    use crucible_runner::{ReportedTokens, SessionCost};
+    use crucible_types::{CostAmount, PricingCurrency, PricingUnit};
+    use std::time::Instant;
+
+    let reported = |input, micros| {
+        let tokens = ReportedTokens {
+            input,
+            output: 10,
+            cache_read: 0,
+            cache_write: 0,
+        };
+        let cost = CostAmount::new(
+            PricingCurrency::new("USD"),
+            PricingUnit::MillionTokens,
+            micros,
+        );
+        Totals::reported(tokens, SessionCost::Priced(cost), Instant::now())
+    };
+    let mut turning = Turning::started(Breakdown::default()).using(Totals::new(), None);
+    let (first, second) = (reported(100, 7), reported(250, 19));
+
+    turning.saw(&Event::TurnStarted {
+        turn: TurnId::FIRST,
+    });
+    turning.saw(&Event::Used { totals: first });
+    turning.saw(&Event::Delta {
+        text: "Done.".into(),
+    });
+    turning.saw(&Event::Used { totals: second });
+    turning.saw(&Event::TurnFinished {
+        turn: TurnId::FIRST,
+        stop: StopReason::Yielded,
+    });
+
+    assert_eq!(turning.totals(), second);
+    assert_eq!(turning.totals().input(), 250);
+}
+
+#[test]
 fn the_footing_over_a_queue_follows_the_colour_rule() {
     // The panel brings its own accents — the rule and the highlighted line —
     // and the working row over it keeps its one, at either width the rows

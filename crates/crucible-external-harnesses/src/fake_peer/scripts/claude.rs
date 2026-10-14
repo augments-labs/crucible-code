@@ -4,8 +4,10 @@
 //! check, or a run, which hears one `user` frame per turn and ends each turn
 //! with its `result` frame. A run's `result` frames carry the session's
 //! running cost, so a run's second priced turn reports a larger total than its
-//! first. The named sequences open as a connect does, with the probe and the
-//! status check, and then play their runs in launch order.
+//! first. One run holds its turn open until it hears the stop, so a case can
+//! read a conversation while a turn is under way. The named sequences open as
+//! a connect does, with the probe and the status check, and then play their
+//! runs in launch order.
 
 use serde_json::{Value, json};
 
@@ -243,6 +245,13 @@ pub fn interrupt() -> Reply {
     interrupt_turn(Reply::new())
 }
 
+/// A run of one turn that says something and then holds the turn open, with
+/// no effect under way, until it hears the stop, which it answers.
+#[must_use]
+pub fn held_open() -> Reply {
+    held_turn(Reply::new())
+}
+
 /// A run that crashes once its effect is under way.
 #[must_use]
 pub fn crash() -> Reply {
@@ -285,6 +294,13 @@ pub fn two_priced() -> Script {
 #[must_use]
 pub fn priced_then_interrupt() -> Script {
     connected(interrupt_turn(priced_turn(Reply::new(), PRICE)))
+}
+
+/// A connect, then a run of a priced turn and one held open until it is
+/// stopped.
+#[must_use]
+pub fn priced_then_held() -> Script {
+    connected(held_turn(priced_turn(Reply::new(), PRICE)))
 }
 
 /// A connect, then a run whose first turn is stopped.
@@ -362,6 +378,16 @@ fn permission_turn(reply: Reply, total: u64) -> Reply {
 fn interrupt_turn(reply: Reply) -> Reply {
     turn(reply)
         .say(effect())
+        .hear(1)
+        .say(stopped())
+        .say(interrupted())
+}
+
+/// `reply`, then a turn that says something and waits to hear the stop, which
+/// it answers, ending the turn with no figures.
+fn held_turn(reply: Reply) -> Reply {
+    turn(reply)
+        .say(said("Working."))
         .hear(1)
         .say(stopped())
         .say(interrupted())

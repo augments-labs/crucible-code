@@ -483,8 +483,10 @@ impl<'n, 'r> Translating<'n, 'r> {
             // answered: the runner's own word for it would be a second one.
             // The rest is the runner's own bookkeeping, and what a terminal
             // draws from it: the contract has no word for any of it, and a
-            // consumer of the contract has asked for none of it.
+            // consumer of the contract has asked for none of it. Another
+            // agent's report is never one this runner makes.
             Reported::TurnFinished { .. }
+            | Reported::Reported { .. }
             | Reported::Failed { .. }
             | Reported::PromptCache { .. }
             | Reported::Sandbox { .. }
@@ -538,3 +540,6 @@ const fn priced(cost: SessionCost) -> Option<CostAmount> {
         SessionCost::Unspent | SessionCost::AtLeast(_) | SessionCost::NotPriced => None,
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -83,3 +83,25 @@ fn the_supported_modes_run_in_the_reviewed_permission_modes() {
         Row::Runs(Permission::AcceptEdits)
     );
 }
+
+/// A run that reports a mode asking at least as much as the one it was
+/// started in is admitted, and one asking less is refused.
+#[test]
+fn a_run_is_admitted_in_a_mode_that_asks_at_least_as_much() {
+    assert!(Permission::AcceptEdits.admits(Permission::Default));
+    assert!(Permission::AcceptEdits.admits(Permission::Plan));
+    assert!(Permission::AcceptEdits.admits(Permission::DontAsk));
+    assert!(Permission::Default.admits(Permission::Plan));
+    assert!(Permission::Default.admits(Permission::DontAsk));
+    assert!(!Permission::Default.admits(Permission::AcceptEdits));
+    assert!(!Permission::Default.admits(Permission::Auto));
+    assert!(!Permission::AcceptEdits.admits(Permission::Auto));
+    for started in Permission::ALL {
+        assert!(started.admits(started), "{started:?}");
+        assert_eq!(
+            started.admits(Permission::BypassPermissions),
+            started == Permission::BypassPermissions,
+            "{started:?}"
+        );
+    }
+}

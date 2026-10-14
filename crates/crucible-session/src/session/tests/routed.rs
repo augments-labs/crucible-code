@@ -1,0 +1,131 @@
+//! Picking up a session an installed agent ran, on the route it ran on.
+//!
+//! The resume that continues a route is the agent's own resume of its own
+//! session, so it keeps that session's history and what the log said about
+//! it; every other way in still refuses a routed log.
+
+use super::*;
+
+/// A session `route` ran, with one prompt and a turn left unsettled, closed.
+fn ran(sample: &Sample, route: &crate::RouteBinding) -> (PathBuf, crucible_types::SessionId) {
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, route)
+        .expect("a routed session");
+    let path = session.path().to_owned();
+    let id = session.id().expect("its id").clone();
+    session.append(&said("rename the module"));
+    assert!(session.external(&ExternalRef::new("work", "its-session").expect("a name")));
+    assert!(session.uncertain(&crucible_storage::Uncertain::new("editing", false)));
+    drop(session);
+    (path, id)
+}
+
+#[test]
+fn picking_a_routed_session_says_its_route_and_an_unrouted_one_none_touching_neither() {
+    let sample = Sample::new("session-pick-routed");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let (path, routed) = ran(&sample, &route);
+    let before = fs::read(&path).expect("the log");
+
+    let (id, found) =
+        crate::pick_routed(&sample.logs(), &sample.workspace(), Some(&routed)).expect("picked");
+    assert_eq!(id, routed);
+    assert!(found.is_some_and(|found| found.same_route(&route)));
+    assert_eq!(fs::read(&path).expect("the log"), before);
+    // Not claimed: the log is still free to be picked up.
+    assert!(matches!(claim(&path), Ok(Claimed::Taken(_))));
+
+    let plain = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    let unrouted = plain.id().expect("its id").clone();
+    plain.append(&said("and the tests"));
+    drop(plain);
+
+    let (id, found) =
+        crate::pick_routed(&sample.logs(), &sample.workspace(), Some(&unrouted)).expect("picked");
+    assert_eq!((id, found), (unrouted.clone(), None));
+
+    // With no id, the newest, which is the unrouted one started last.
+    let (id, found) =
+        crate::pick_routed(&sample.logs(), &sample.workspace(), None).expect("newest");
+    assert_eq!((id, found), (unrouted, None));
+}
+
+#[test]
+fn a_routed_session_continues_on_its_own_route_keeping_what_the_agent_left() {
+    let sample = Sample::new("session-reopen-routed");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let (_, id) = ran(&sample, &route);
+    // The same agent run again: a new version and generation are the same route.
+    let again = route.clone().reporting("2.0.0", false).generation_of(7);
+
+    let (session, transcript) =
+        Session::reopen_routed(&sample.logs(), &sample.workspace(), &id, &again)
+            .expect("continued on its route");
+
+    assert_eq!(transcript.messages(), &[said("rename the module")]);
+    assert_eq!(
+        session.external_ref().map(ExternalRef::reference),
+        Some("its-session")
+    );
+    assert_eq!(
+        session
+            .uncertain_turn()
+            .map(|turn| turn.under_way().as_str()),
+        Some("editing")
+    );
+}
+
+#[test]
+fn a_routed_resume_refuses_another_route_and_a_session_no_agent_ran() {
+    let sample = Sample::new("session-reopen-elsewhere");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let (path, id) = ran(&sample, &route);
+    let before = fs::read(&path).expect("the log");
+
+    let home = crate::RouteBinding::new("claude", "home", None).expect("a route");
+    let problem = Session::reopen_routed(&sample.logs(), &sample.workspace(), &id, &home)
+        .expect_err("another route");
+    assert!(
+        matches!(&problem, SessionError::Rerouted { route, .. } if route.instance() == "work"),
+        "{problem:?}"
+    );
+    assert_eq!(fs::read(&path).expect("the log"), before);
+
+    let plain = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    let unrouted = plain.id().expect("its id").clone();
+    plain.append(&said("and the tests"));
+    drop(plain);
+
+    let problem = Session::reopen_routed(&sample.logs(), &sample.workspace(), &unrouted, &route)
+        .expect_err("no route");
+    assert!(
+        matches!(&problem, SessionError::Unrouted { id } if &**id == unrouted.as_str()),
+        "{problem:?}"
+    );
+    assert!(
+        problem.to_string().contains("provider's model"),
+        "{problem}"
+    );
+}
+
+#[test]
+fn a_damaged_unsettled_turn_at_the_end_of_a_log_is_refused_rather_than_cut() {
+    // Cut as a torn tail, the one record that says the files may hold changes
+    // nobody was told about would be gone, and the session would carry on as
+    // though the last turn had settled.
+    let sample = Sample::new("session-uncertain-damaged");
+    let route = crate::RouteBinding::new("claude", "work", None).expect("a route");
+    let (path, id) = ran(&sample, &route);
+    let mut log = fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("the log");
+    writeln!(log, r#"{{"uncertain":{{"under_way":3}}}}"#).expect("a damaged line");
+    drop(log);
+    let before = fs::read(&path).expect("the log");
+
+    let problem = Session::reopen_routed(&sample.logs(), &sample.workspace(), &id, &route)
+        .expect_err("refused");
+
+    assert!(matches!(problem, SessionError::Log { .. }), "{problem:?}");
+    assert_eq!(fs::read(&path).expect("the log"), before);
+}

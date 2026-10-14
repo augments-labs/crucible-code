@@ -391,6 +391,19 @@ pub enum Event {
         receipt: Option<ToolReceipt>,
     },
 
+    /// Another agent, driving this run, used one of its own tools.
+    ///
+    /// A report of something it did over there, never a call to run here:
+    /// nothing that reads one runs anything, and no permission was asked of
+    /// this program for it. Both texts are the agent's, bounded by whoever
+    /// read them off its wire.
+    Reported {
+        /// Which tool, as the agent named it.
+        tool: Box<str>,
+        /// What it did with it, or the file it changed.
+        summary: Box<str>,
+    },
+
     /// The response the turn was waiting on failed before it said anything, and
     /// the same request is going out again.
     ///
@@ -587,6 +600,11 @@ impl std::fmt::Debug for Event {
                 .field("call", call)
                 .field("output", output)
                 .field("receipt", receipt)
+                .finish(),
+            Self::Reported { tool, summary } => f
+                .debug_struct("Reported")
+                .field("tool", tool)
+                .field("summary", summary)
                 .finish(),
             Self::Retrying => f.write_str("Retrying"),
             Self::FastRefused {

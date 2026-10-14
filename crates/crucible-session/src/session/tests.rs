@@ -1640,6 +1640,9 @@ mod ordinary;
 /// format that let an installed agent run a session.
 mod formats;
 
+/// Picking up a session an installed agent ran, on the route it ran on.
+mod routed;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {

@@ -149,7 +149,7 @@ pub mod session;
 
 pub use binding::{
     BINDING_NAME_BYTES, BINDING_PROFILE_BYTES, BindingError, Clipped, EXTERNAL_REFERENCE_BYTES,
-    ExternalRef, RouteBinding, UNCERTAIN_BYTES, Uncertain,
+    ExternalRef, NATIVE_DRIVER, RouteBinding, UNCERTAIN_BYTES, Uncertain,
 };
 pub use cache::PromptCacheResourceStore;
 pub use interruption::{

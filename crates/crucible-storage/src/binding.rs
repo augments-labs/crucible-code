@@ -14,12 +14,20 @@
 //! environment, a command line or a credential: what a resume compares is
 //! which route, and none of those says which. Two bindings are the
 //! [same route](RouteBinding::same_route) when the first four agree; a version
-//! or a generation that moved is the same agent run again.
+//! or a generation that moved is the same agent run again. No binding names the
+//! [native runner](NATIVE_DRIVER), which runs a session with no route.
+//!
+//! What an agent reports, its version and the work it had under way, is kept
+//! with its control characters removed: either is shown in a list or a message
+//! that would act on one rather than show it.
 
 use std::fmt;
 use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
+
+/// The driver name of the native runner, which no route names.
+pub const NATIVE_DRIVER: &str = "native";
 
 /// The most bytes a driver, instance or version keeps.
 pub const BINDING_NAME_BYTES: usize = 256;
@@ -47,6 +55,10 @@ pub enum BindingError {
     /// would act on rather than show.
     #[error("a session binding's {0} holds a control character")]
     Control(&'static str),
+    /// The driver named the native runner, which runs a session with no
+    /// route, so a binding to it would be refused by every resume.
+    #[error("a session binding's driver may not be the native runner")]
+    Native,
 }
 
 /// Text kept whole up to a ceiling, and saying whether anything was left out.
@@ -100,6 +112,13 @@ impl fmt::Debug for Clipped {
     }
 }
 
+/// `text` with its control characters removed, as what an agent reports is kept.
+fn shown(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_control())
+        .collect()
+}
+
 /// `text` as a field named `field`, refused rather than cut.
 fn exact(field: &'static str, text: &str, ceiling: usize) -> Result<Box<str>, BindingError> {
     if text.is_empty() {
@@ -142,8 +161,12 @@ impl RouteBinding {
     /// [`BindingError`] where a name is empty, holds a control character or
     /// is longer than [`BINDING_NAME_BYTES`], or the profile is the same past
     /// [`BINDING_PROFILE_BYTES`]: each is compared on resume, and a prefix of
-    /// one would compare equal to a route it is not.
+    /// one would compare equal to a route it is not. [`BindingError::Native`]
+    /// where the driver is [`NATIVE_DRIVER`].
     pub fn new(driver: &str, instance: &str, profile: Option<&str>) -> Result<Self, BindingError> {
+        if driver == NATIVE_DRIVER {
+            return Err(BindingError::Native);
+        }
         Ok(Self {
             driver: exact("driver", driver, BINDING_NAME_BYTES)?,
             instance: exact("instance", instance, BINDING_NAME_BYTES)?,
@@ -173,12 +196,12 @@ impl RouteBinding {
         self
     }
 
-    /// This binding, with the program reporting `version`, cut to
-    /// [`BINDING_NAME_BYTES`] and marked incomplete where it was cut or
-    /// `incomplete` says it already was.
+    /// This binding, with the program reporting `version`, its control
+    /// characters removed, cut to [`BINDING_NAME_BYTES`] and marked incomplete
+    /// where it was cut or `incomplete` says it already was.
     #[must_use]
     pub fn reporting(mut self, version: &str, incomplete: bool) -> Self {
-        self.version = Some(Clipped::new(version, BINDING_NAME_BYTES).missing(incomplete));
+        self.version = Some(Clipped::new(&shown(version), BINDING_NAME_BYTES).missing(incomplete));
         self
     }
 
@@ -286,13 +309,13 @@ pub struct Uncertain {
 }
 
 impl Uncertain {
-    /// A turn that stopped with `under_way` reported, cut to
-    /// [`UNCERTAIN_BYTES`] and marked incomplete where it was cut or
-    /// `incomplete` says it already was.
+    /// A turn that stopped with `under_way` reported, its control characters
+    /// removed, cut to [`UNCERTAIN_BYTES`] and marked incomplete where it was
+    /// cut or `incomplete` says it already was.
     #[must_use]
     pub fn new(under_way: &str, incomplete: bool) -> Self {
         Self {
-            under_way: Clipped::new(under_way, UNCERTAIN_BYTES).missing(incomplete),
+            under_way: Clipped::new(&shown(under_way), UNCERTAIN_BYTES).missing(incomplete),
         }
     }
 
@@ -342,6 +365,29 @@ mod tests {
             Err(BindingError::Control("instance"))
         );
         assert!(RouteBinding::new("claude", &"a".repeat(BINDING_NAME_BYTES), None).is_ok());
+    }
+
+    #[test]
+    fn no_route_names_the_native_driver() {
+        // A session the native runner runs has no route; one bound to it would
+        // be refused by every resume as another route's.
+        assert_eq!(
+            RouteBinding::new("native", "work", None),
+            Err(BindingError::Native)
+        );
+    }
+
+    #[test]
+    fn what_an_agent_reports_is_kept_without_its_control_characters() {
+        // Shown in a list or a message, a control character would be acted on
+        // rather than read.
+        let route = RouteBinding::new("claude", "work", None)
+            .unwrap()
+            .reporting("2.1\u{1b}[2J.0\n", false);
+        assert_eq!(route.version().map(Clipped::as_str), Some("2.1[2J.0"));
+        let turn = Uncertain::new("editing\u{7} src/lib.rs\r", false);
+        assert_eq!(turn.under_way().as_str(), "editing src/lib.rs");
+        assert_eq!(Clipped::new("a\u{7}b", 8).as_str(), "a\u{7}b");
     }
 
     #[test]

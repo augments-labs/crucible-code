@@ -71,17 +71,16 @@ pub(crate) fn listing(here: &Path, directory: &Path) -> Result<Listed, AppError>
 fn translated(found: &Discovery) -> Listing {
     let counted = |count: usize| u64::try_from(count).unwrap_or(u64::MAX);
     // A binding's names are as bounded as a contract name and hold no control
-    // character, so none is refused for its length; one that were, or a route
-    // whose driver is spelled as a provider's model, is a row that did not
-    // read, and is counted as one rather than listed under a guess or written
-    // as a row every client refuses.
+    // character, so none is refused for its length; one that were is a row
+    // that did not read, and is counted as one rather than listed under a
+    // guess. No binding's driver is spelled as a provider's model: the store
+    // refuses that name, so a log that says it is one the store cannot read.
     let sessions: Vec<Session> = found
         .sessions()
         .iter()
         .filter_map(|session: &Discovered| {
             let (backend, route) = match session.route() {
                 None => (Name::new(NATIVE).ok()?, None),
-                Some(route) if route.driver() == NATIVE => return None,
                 Some(route) => (
                     Name::new(route.driver()).ok()?,
                     Some(Name::new(route.instance()).ok()?),
