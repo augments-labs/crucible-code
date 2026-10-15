@@ -125,6 +125,7 @@ pub async fn turn(
         | Command::Logout { .. }
         | Command::Disconnect { .. }
         | Command::RemoveIntegration { .. }
+        | Command::SignOut { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }
@@ -175,6 +176,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::Logout { .. }
         | Command::Disconnect { .. }
         | Command::RemoveIntegration { .. }
+        | Command::SignOut { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }

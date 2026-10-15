@@ -419,6 +419,20 @@ pub enum LogoutOutcome {
         /// What the person is told, which says what was kept.
         said: Text,
     },
+    /// The instance, and every one sharing its sign-in, are out of use from
+    /// Crucible, durably, and the agent's own program says that sign-in is
+    /// signed out.
+    AgentSignedOut {
+        /// What the person is told.
+        said: Text,
+    },
+    /// The instance, and every one sharing its sign-in, are out of use from
+    /// Crucible, durably, but nothing showed that the agent's own sign-in was
+    /// signed out.
+    SignOutUnverified {
+        /// What the person is told, which says the sign-out is unverified.
+        said: Text,
+    },
     /// Nothing was removed, because a provider is still reached through the
     /// instance.
     StillReferenced {

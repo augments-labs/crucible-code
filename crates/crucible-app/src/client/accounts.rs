@@ -9,12 +9,12 @@
 //! Once a way is chosen, the operation takes its instance's credential scope
 //! through a [`Coordinator`] and keeps each stage in the scope's journal before
 //! taking the step it names, so a crash leaves the instance needing a check
-//! rather than half-changed without a record. The configuration is written
-//! last, through [`remember`], and the journal's record is finished only after
-//! that write. Where the journal cannot be kept after the run was closed, the
-//! client is told the operation failed: the run stays stopped, nothing is
-//! written, and the record left open is found by the next operation on the
-//! scope.
+//! rather than half-changed without a record. A disconnect or a removal writes
+//! the configuration last, through [`remember`], and the journal's record is
+//! finished only after that write. Where the journal cannot be kept after the
+//! run was closed, the client is told the operation failed: the run stays
+//! stopped, nothing is written, and the record left open is found by the next
+//! operation on the scope. A sign-out writes first, and is told apart below.
 //!
 //! What came of it is the application's [`Account`], read by a terminal whole,
 //! and translated for a client by [`Account::outcome`], a match written out
@@ -29,10 +29,25 @@
 //! | remove | remove | [`LogoutOutcome::IntegrationRemoved`] |
 //! | remove, the file not written | remove | [`ErrorCode::Failed`] |
 //! | remove, an instance the user file does not name | nothing | [`ErrorCode::InvalidArgument`] |
+//! | sign out | sign out | [`LogoutOutcome::AgentSignedOut`] |
+//! | sign out, not shown signed out afterwards | sign out | [`LogoutOutcome::SignOutUnverified`] |
+//! | sign out, the file not written | sign out | [`LogoutOutcome::StoppedForThisRunOnly`] |
+//! | sign out | disconnect instead | as disconnect |
+//! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
 //!
 //! A removal whose write fails after its run was stopped is told only that it
 //! failed: the settings are still there, so the next run starts the agent as
-//! before, and nothing is lasting about the stop to report.//! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
+//! before, and nothing is lasting about the stop to report.
+//!
+//! A sign-out takes every instance sharing the credential scope out of use
+//! before the agent's own program is run: their runs in this conversation are
+//! stopped, and `enabled: false` is written for each in one update of the
+//! user file. Only once that write has landed is the agent's logout run, and
+//! then a status step after it; where the write fails, no step is run. It is
+//! reported signed out only where both steps read signed out, and otherwise as
+//! unverified. Once the write has landed, a journal that cannot be kept is
+//! reported as unverified too, since the instances are already out of use; a
+//! stage the journal refused is not taken.
 
 use std::path::Path;
 
@@ -40,8 +55,10 @@ use crucible_client_api::{
     Command, ErrorCode, LogoutOutcome, Outcome, Problem, Refusal, Request, Text,
 };
 use crucible_config::{ConfigError, ExternalAgent};
-use crucible_execution::{Admission, Ending};
-use crucible_external_harnesses::{Contended, Coordinator, Journal, Stage, Work};
+use crucible_execution::{Admission, Ending, Failure};
+use crucible_external_harnesses::{
+    Account as Step, Contended, Coordinator, Ended, Journal, Reading, Stage, Work,
+};
 
 use super::deciding::{Confirmation, Front, confirmed};
 use super::performing::{Desk, Performed};
@@ -69,6 +86,15 @@ pub enum Account {
     /// The instance's run was stopped, and its settings could not be taken out
     /// of the file.
     Unremoved(RememberError),
+    /// Every instance sharing the credential scope takes no new work, which
+    /// is written down, and the agent's own program read signed out both by
+    /// its logout and by a status step after it.
+    SignedOut,
+    /// Every instance sharing the credential scope takes no new work, which
+    /// is written down, and the agent's sign-out could not be confirmed, for
+    /// this reason. A client is told the sentence alone, since the reason may
+    /// be what the agent's program printed.
+    SignOutUnverified(Failure),
     /// Nobody chose a way to go on, so nothing changed.
     Undecided,
     /// It did not begin, or could not be kept as it went.
@@ -97,6 +123,12 @@ impl Account {
             },
             Self::StillReferenced(provider) => LogoutOutcome::StillReferenced {
                 said: Text::cut(&format!("{provider} {STILL_REFERENCED}")),
+            },
+            Self::SignedOut => LogoutOutcome::AgentSignedOut {
+                said: Text::cut(Ended::SignedOut.says()),
+            },
+            Self::SignOutUnverified(failure) => LogoutOutcome::SignOutUnverified {
+                said: Text::cut(Ended::SignOutUnverified(failure.clone()).says()),
             },
             Self::Undecided => LogoutOutcome::Undecided,
             Self::Contended(Contended::Busy) => {
@@ -138,6 +170,12 @@ pub const STILL_REFERENCED: &str =
 
 /// The choice that goes on with a removal, by its name.
 pub const REMOVE: &str = "Remove integration settings";
+
+/// The choice that goes on with a sign-out, by its name.
+pub const SIGN_OUT: &str = "Sign out of the agent";
+
+/// The choice a sign-out offers instead, by its name.
+pub const DISCONNECT_INSTEAD: &str = "Disconnect from Crucible instead";
 
 /// Carries out `request` where it is an account operation, asking `front`
 /// which way to go before anything changes.
@@ -197,6 +235,28 @@ pub async fn account(
             let confirmation = removing(&agent, conversation.instance());
             match confirmed(request.capabilities(), front, &confirmation).await {
                 Some(0) => Performed::Account(remove(conversation, desk, &agent).await),
+                _ => Performed::Account(Account::Undecided),
+            }
+        }
+        Command::SignOut { instance } => {
+            let agents = desk.switching.settings.external_agents();
+            let Some(agent) = agents
+                .iter()
+                .find(|agent| agent.name() == instance.as_str())
+                .cloned()
+            else {
+                return Performed::Refused(ErrorCode::InvalidArgument.into());
+            };
+            let sharing: Vec<ExternalAgent> = agents
+                .into_iter()
+                .filter(|other| {
+                    other.driver() == agent.driver() && other.profile() == agent.profile()
+                })
+                .collect();
+            let confirmation = signing_out(&agent, &sharing, conversation.instance());
+            match confirmed(request.capabilities(), front, &confirmation).await {
+                Some(0) => Performed::Account(sign_out(conversation, desk, &agent, &sharing).await),
+                Some(1) => Performed::Account(disconnect(conversation, desk, &agent).await),
                 _ => Performed::Account(Account::Undecided),
             }
         }
@@ -287,6 +347,115 @@ fn removing(agent: &ExternalAgent, on: Option<&str>) -> Confirmation {
             ),
             ("Cancel".to_owned(), "Change nothing.".to_owned()),
         ],
+    }
+}
+
+/// The question a sign-out of `agent` puts, every instance in `sharing` on
+/// its credential scope, where the conversation is on the instance `on`.
+fn signing_out(agent: &ExternalAgent, sharing: &[ExternalAgent], on: Option<&str>) -> Confirmation {
+    let name = agent.name();
+    let working = if sharing.iter().any(|one| on == Some(one.name())) {
+        "Active work: this conversation runs on this profile, and its run will be stopped."
+    } else {
+        "Active work: none in this conversation."
+    };
+    let names: Vec<&str> = sharing.iter().map(ExternalAgent::name).collect();
+    Confirmation {
+        asks: format!("Sign {name} out of its agent account?"),
+        facts: vec![
+            format!("Agent: {name}, run as {}.", agent.executable()),
+            match agent.profile() {
+                Some(profile) => format!("Profile: {profile}."),
+                None => "Profile: the agent's default.".to_owned(),
+            },
+            "Account: not known to Crucible.".to_owned(),
+            working.to_owned(),
+            format!(
+                "Sharing: {} use this profile, and each is disconnected first.",
+                names.join(", ")
+            ),
+            "Outside Crucible: the agent's own program on this profile is signed out too."
+                .to_owned(),
+        ],
+        choices: vec![
+            (
+                SIGN_OUT.to_owned(),
+                "Crucible stops using every instance on this profile, then runs the agent's own \
+                 sign-out."
+                    .to_owned(),
+            ),
+            (
+                DISCONNECT_INSTEAD.to_owned(),
+                "Crucible stops using this instance; its sign-in is left as it is.".to_owned(),
+            ),
+            ("Cancel".to_owned(), "Change nothing.".to_owned()),
+        ],
+    }
+}
+
+/// Takes every instance in `sharing` out of use from Crucible, durably, and
+/// only then signs `agent`'s credential scope out through its own program.
+async fn sign_out(
+    conversation: &mut Conversation,
+    desk: &Desk<'_>,
+    agent: &ExternalAgent,
+    sharing: &[ExternalAgent],
+) -> Account {
+    let mut coordinator = match coordinating(desk.switching.choosing, agent) {
+        Ok(coordinator) => coordinator,
+        Err(contended) => return Account::Contended(contended),
+    };
+    let mut slot = match coordinator.begin(Work::SignOut, agent.profile(), 0) {
+        Ok(slot) => slot,
+        Err(contended) => return Account::Contended(contended),
+    };
+    if let Err(contended) = slot.advance(Stage::Closed) {
+        return Account::Contended(contended);
+    }
+    // Whether each run stopped is not what a sign-out reports: the agent's
+    // sign-in is what it changes, and every instance on it is disabled first.
+    for one in sharing {
+        let _ = conversation.disconnect(one.name()).await;
+    }
+    if let Err(contended) = slot.advance(Stage::Quiesced) {
+        return Account::Contended(contended);
+    }
+    let names: Vec<&str> = sharing.iter().map(ExternalAgent::name).collect();
+    if let Err(problem) = remember::disabling_every(desk.switching.choosing, &names) {
+        let _ = slot.finish(Ending::Failed);
+        return Account::ThisRunOnly(problem);
+    }
+    // The instances are out of use from here on, so a journal that cannot be
+    // kept no longer refuses the request: it leaves the sign-out unverified.
+    let unkept = || Account::SignOutUnverified(Failure::new("the journal could not be kept"));
+    if slot.advance(Stage::Mutating).is_err() {
+        return unkept();
+    }
+    let unstepped = || Reading::Unreadable(Failure::new("this run takes no agent steps"));
+    let logout = match conversation.steps() {
+        Some(steps) => steps.account(agent, Step::SignOut).await,
+        None => unstepped(),
+    };
+    if slot.advance(Stage::Verifying).is_err() {
+        return unkept();
+    }
+    let status = match conversation.steps() {
+        Some(steps) => steps.account(agent, Step::Status).await,
+        None => unstepped(),
+    };
+    let (ending, account) = match Ended::signed_out(&logout, &status) {
+        Ended::SignedOut => (Ending::Succeeded, Account::SignedOut),
+        Ended::SignOutUnverified(failure) | Ended::Unverified(failure) => {
+            (Ending::Unknown, Account::SignOutUnverified(failure))
+        }
+        Ended::SignedIn | Ended::Disconnected(_) => (
+            Ending::Unknown,
+            Account::SignOutUnverified(Failure::new("the sign-out was not read")),
+        ),
+    };
+    match slot.finish(ending) {
+        Ok(_) => account,
+        Err(_) => unkept(),
     }
 }
 

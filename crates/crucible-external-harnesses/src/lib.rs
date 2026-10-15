@@ -14,6 +14,7 @@ mod launch;
 mod lifecycle;
 mod pending;
 
+pub use antigravity::Ended;
 pub use host::{
     Account, Act, CANCEL_GRACE, Control, Dialect, Host, PREPARING, RAN_BYTES, Ran, Reading,
     SILENCE, STOP_GRACE, Shape, Told, Undecided, Unstopped, WAITING, WITHHELD_BYTES, stripped,

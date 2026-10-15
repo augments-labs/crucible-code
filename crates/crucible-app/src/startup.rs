@@ -46,7 +46,7 @@ use crate::access::{self, AccessError, KeySource, Route, Settled};
 use crate::backends::Registry;
 use crate::content_use::{self, Consent, Serving};
 use crate::following::Following;
-use crate::launching::{self, Launcher, Runs};
+use crate::launching::{self, Launcher, Runs, Steps};
 use crate::outside::Installed;
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
@@ -336,6 +336,7 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
     startup.leaving.watching_on(runtime.clone());
     let offering = tools(startup, settings, &following, Arc::clone(&sandbox))?;
     let agents_sandbox = Arc::clone(&sandbox);
+    let steps_sandbox = Arc::clone(&sandbox);
 
     // Operator-authored instructions are the stable request prefix. Everything
     // that can move within the session is read by context assembly instead.
@@ -423,6 +424,22 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
 
     if let Some(file) = startup.services.consent().file() {
         conversation.hastened_as_kept(file);
+    }
+    // A step on an agent the conversation is not on runs under the same
+    // policy its own commands would; where that cannot be built, no step runs.
+    if let Ok(policy) = settings.sandbox().enforcing_policy(workspace) {
+        let launcher = Launcher::new(
+            Arc::clone(&steps_sandbox),
+            runtime.clone(),
+            &policy,
+            startup.services.consent(),
+        );
+        conversation = conversation.stepping(Steps::new(
+            launcher,
+            settings.sandbox().enablement(),
+            agents,
+            (startup.from)("PATH").map(OsString::from),
+        ));
     }
     Ok(conversation
         .consenting(startup.services.consent().clone())

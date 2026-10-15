@@ -116,6 +116,23 @@ pub fn disabling(file: &Path, instance: &str) -> Result<(), RememberError> {
     })
 }
 
+/// Writes down that every installed agent in `instances` takes no new work,
+/// in one update of `file`, and changes nothing else in it.
+///
+/// # Errors
+///
+/// As [`disabling`], where any of them would be refused, and then none is
+/// written.
+pub fn disabling_every(file: &Path, instances: &[&str]) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        instances
+            .iter()
+            .try_fold(text.to_owned(), |text, instance| {
+                crucible_config::disabling(&text, named, instance)
+            })
+    })
+}
+
 /// Takes the installed agent `instance` out of `file`, and changes nothing
 /// else in it.
 ///
