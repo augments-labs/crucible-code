@@ -273,6 +273,15 @@ impl LoginOutcome {
                 failed("connect_unsaved", problem).text("said", said)
             }
             Self::Undecided => Writing::kind("undecided"),
+            Self::NextLaunch {
+                provider,
+                unwritten,
+            } => noting(
+                Writing::kind("next_launch").text("provider", provider),
+                "unwritten",
+                unwritten.as_ref(),
+            ),
+            Self::Stored { provider } => Writing::kind("stored").text("provider", provider),
         }
         .finish()
     }
@@ -295,6 +304,13 @@ impl LoginOutcome {
                 problem: problem(&mut fields)?,
             },
             "undecided" => Self::Undecided,
+            "next_launch" => Self::NextLaunch {
+                provider: fields.text("provider")?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            "stored" => Self::Stored {
+                provider: fields.text("provider")?,
+            },
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;
@@ -308,6 +324,7 @@ impl Standing {
             Self::Environment(variable) => Writing::kind("environment").text("variable", variable),
             Self::StoredKey => Writing::kind("stored_key"),
             Self::Subscription => Writing::kind("subscription"),
+            Self::External { instance } => Writing::kind("external").text("instance", instance),
         }
         .finish()
     }
@@ -318,6 +335,9 @@ impl Standing {
             "environment" => Self::Environment(fields.text("variable")?),
             "stored_key" => Self::StoredKey,
             "subscription" => Self::Subscription,
+            "external" => Self::External {
+                instance: fields.text("instance")?,
+            },
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;

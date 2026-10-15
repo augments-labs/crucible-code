@@ -2201,3 +2201,180 @@ fn a_connect_naming_no_instance_with_no_agent_shipping_is_refused_unasked() -> R
     assert_eq!(file, UNINSTALLED);
     Ok(())
 }
+
+/// The user file of a conversation on `work`: the provider reached through it.
+const ROUTED: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}},
+  "providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}}
+}
+"#;
+
+/// What [`ROUTED`] holds once a key for the provider is logged in on the route.
+const KEYED: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}},
+  "providers": {"anthropic": {"access": {"type":"apiKey"}}},
+  "provider": "anthropic"
+}
+"#;
+
+/// Stores a key for `provider` and asks `command` of the conversation on the
+/// route, the user file holding `file` first; and answers what the client was
+/// told and what the user file then held.
+fn crediting(
+    tree: &Tree,
+    outside: &mut Outside,
+    file: &str,
+    provider: &str,
+    command: fn(crucible_client_api::Name) -> Command,
+) -> Result<(Outcome, String), Failed> {
+    let mut desk = super::Desk::new(tree, &[])?;
+    if let Some(directory) = desk.choosing.parent() {
+        std::fs::create_dir_all(directory)?;
+    }
+    std::fs::write(&desk.choosing, file)?;
+    desk.settings = super::written(tree)?;
+    desk.logins.keep(provider, "a-key-no-vendor-issued")?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let at = client::Desk {
+        switching: desk.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads: |_| false,
+        environment: super::unset,
+        notes: |_| Err(crucible_client_api::ErrorCode::InvalidArgument.into()),
+    };
+    let request = Request::new(
+        Asking::every(),
+        Correlation::new(1),
+        command(crucible_client_api::Name::new(provider)?),
+    );
+    let performed = runtime()?.block_on(client::perform(&mut outside.conversation, &request, &at));
+    let outcome = performed.response(&request).outcome;
+    Ok((outcome, std::fs::read_to_string(&desk.choosing)?))
+}
+
+fn login(provider: crucible_client_api::Name) -> Command {
+    Command::Login { provider }
+}
+
+fn logout(provider: crucible_client_api::Name) -> Command {
+    Command::Logout { provider }
+}
+
+/// A key logged in for the provider the route reaches is written down as how
+/// it is reached and asked from the next run on, and the conversation stays on
+/// the route meanwhile.
+#[test]
+fn a_login_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name, Text};
+
+    let tree = Tree::new("external-login-routed")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+
+    let (outcome, file) = crediting(&tree, &mut outside, ROUTED, "anthropic", login)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::NextLaunch {
+            provider: Text::cut("anthropic"),
+            unwritten: None,
+        })
+    );
+    assert_eq!(file, KEYED);
+    assert!(
+        super::Desk::new(&tree, &[])?
+            .logins
+            .read()
+            .held("anthropic")
+            .is_some(),
+        "the key logged in is no longer stored"
+    );
+    let standing = client::snapshot(&outside.conversation);
+    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
+    assert_eq!(standing.provider, None);
+    Ok(())
+}
+
+/// Where the user file cannot say so, it is left byte for byte as it was, the
+/// client is told why, and the conversation stays on the route.
+#[test]
+fn a_login_whose_write_fails_leaves_the_route_written_as_it_was() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name};
+
+    // The providers written twice, so the block the file means is not one a
+    // scan of the text can be sure of.
+    let spelled = ROUTED.replace(r#""providers": {"#, r#""providers": {}, "providers": {"#);
+    let tree = Tree::new("external-login-unwritten")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+
+    let (outcome, file) = crediting(&tree, &mut outside, &spelled, "anthropic", login)?;
+
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Login(LoginOutcome::NextLaunch {
+                unwritten: Some(_),
+                ..
+            })
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(file, spelled);
+    let standing = client::snapshot(&outside.conversation);
+    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
+    Ok(())
+}
+
+/// A key logged in for another provider is stored and nothing else: the file
+/// and the route are as they were.
+#[test]
+fn a_login_for_another_provider_on_the_route_is_only_stored() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name, Text};
+
+    let tree = Tree::new("external-login-stored")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+
+    let (outcome, file) = crediting(&tree, &mut outside, ROUTED, "openai", login)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::Stored {
+            provider: Text::cut("openai"),
+        })
+    );
+    assert_eq!(file, ROUTED);
+    let standing = client::snapshot(&outside.conversation);
+    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
+    Ok(())
+}
+
+/// The stored key of the provider the route reaches is forgotten, and the
+/// client is told the installed agent still reaches it.
+#[test]
+fn a_logout_of_the_route_s_provider_says_the_agent_still_reaches_it() -> Result<(), Failed> {
+    use crucible_client_api::{LogoutOutcome, Retained, Standing, Text};
+
+    let tree = Tree::new("external-logout-routed")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+
+    let (outcome, file) = crediting(&tree, &mut outside, ROUTED, "anthropic", logout)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Logout(LogoutOutcome::StillServed {
+            retained: Retained::default(),
+            standing: Standing::External {
+                instance: Text::cut("work"),
+            },
+        })
+    );
+    assert_eq!(file, ROUTED);
+    assert_eq!(
+        super::Desk::new(&tree, &[])?
+            .logins
+            .read()
+            .held("anthropic"),
+        None
+    );
+    Ok(())
+}

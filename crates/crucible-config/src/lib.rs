@@ -72,7 +72,8 @@ pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{
     accepting, allowing, asking, choosing, connecting, disabling, drawing, forgetting, hastened,
-    hastening, installing, reading, removing, sandboxing, setting, slowing, thinking, unasked,
+    hastening, installing, reaching, reading, removing, sandboxing, setting, slowing, thinking,
+    unasked,
 };
 pub use settings::{
     Access, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, McpServer, SandboxSettings,

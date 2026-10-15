@@ -504,6 +504,16 @@ fn model(switched: &Switched) -> ModelOutcome {
 fn login(logged_in: &LoggedIn) -> LoginOutcome {
     match logged_in {
         LoggedIn::Unusable(problem) => LoginOutcome::Unusable(Problem::failed(problem)),
+        LoggedIn::NextLaunch {
+            provider,
+            unwritten,
+        } => LoginOutcome::NextLaunch {
+            provider: crucible_client_api::Text::cut(provider),
+            unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+        },
+        LoggedIn::Stored { provider } => LoginOutcome::Stored {
+            provider: crucible_client_api::Text::cut(provider),
+        },
         LoggedIn::Elsewhere => LoginOutcome::Elsewhere,
         LoggedIn::CacheHeld(problem) => LoginOutcome::CacheHeld(Problem::failed(problem)),
         LoggedIn::Serving {
@@ -524,6 +534,12 @@ fn logout(logged_out: &LoggedOut) -> LogoutOutcome {
             problem: Problem::failed(problem),
         },
         LoggedOut::Kept => LogoutOutcome::Kept,
+        LoggedOut::Routed { instance } => LogoutOutcome::StillServed {
+            retained: reading::retained(crate::switching::Retained::default()),
+            standing: Standing::External {
+                instance: crucible_client_api::Text::cut(instance),
+            },
+        },
         LoggedOut::StillServed { retained, source } => LogoutOutcome::StillServed {
             retained: reading::retained(*retained),
             standing: match source {

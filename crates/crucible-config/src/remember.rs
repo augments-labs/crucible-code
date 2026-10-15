@@ -520,6 +520,30 @@ pub fn connecting(
     Ok(written)
 }
 
+/// The text of a configuration file that reaches `provider` as `access` says
+/// and asks it, in the one text handed back.
+///
+/// `providers.<provider>.access` is written first and the top-level
+/// `provider` last, so no file is ever written that asks the provider by a way
+/// it was not meant to be reached. Either already so is left as it was.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, including an `access` the
+/// provider may not take, and [`ConfigError::Unspliceable`] where the answer
+/// cannot be written without rewriting.
+pub fn reaching(
+    text: &str,
+    file: &str,
+    provider: &str,
+    access: &crate::settings::Access,
+) -> Result<String, ConfigError> {
+    let reached = beside(text, file, provider, "access", &access.written())?;
+    let written = asking(&reached, file, provider)?;
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok(written)
+}
+
 /// The text of a configuration file that installs `agent` under its name,
 /// with its driver, executable and profile directory where it has one, then
 /// reaches `provider` through it and lets it take new work, as

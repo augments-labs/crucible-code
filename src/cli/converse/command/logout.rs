@@ -210,6 +210,13 @@ fn forgetting<T: Terminal>(
             return say(renderer, &format!("! {problem}"));
         }
         LoggedOut::Kept => (Retained::default(), KEPT.to_owned()),
+        LoggedOut::Routed { instance } => (
+            Retained::default(),
+            format!(
+                "{} is still reached through the agent {instance}",
+                named.name
+            ),
+        ),
         LoggedOut::StillServed { retained, source } => (retained, not_stored(named.name, &source)),
         LoggedOut::SignedOut { retained } => {
             (retained, "the active session is now signed out".to_owned())

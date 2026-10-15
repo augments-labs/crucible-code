@@ -11,6 +11,12 @@
 //! to supply, and answered with a value that says what happened and leaves
 //! every sentence about it to whoever is showing it.
 //!
+//! A conversation on an installed agent's route keeps that route, its session
+//! and its run whatever credential is given or forgotten: the agent answers,
+//! and nothing here serves it. A credential given there for the provider the
+//! route reaches is written down as the way that provider is reached from the
+//! next run on; one for another provider is only stored.
+//!
 //! What an answer deliberately carries beside the outcome: what a cache
 //! retirement could not remove, and what could not be written down. Neither
 //! undoes the switch. Both are something a reader is told, and a front end
@@ -121,6 +127,22 @@ pub enum LoggedIn {
     /// Written, and nothing could be set up from it: what the next run here
     /// would meet, said now.
     Unusable(AppError),
+    /// The conversation keeps the installed agent's route it is on for the
+    /// provider, which is reached directly with the credential from the next
+    /// run on.
+    NextLaunch {
+        /// The provider.
+        provider: &'static str,
+        /// Why the next run will still reach it through the agent, where it
+        /// will.
+        unwritten: Option<RememberError>,
+    },
+    /// The conversation keeps the installed agent's route it is on, and the
+    /// credential is stored for another provider: nothing else changed.
+    Stored {
+        /// The provider the credential is for.
+        provider: &'static str,
+    },
     /// Another provider is answering and keeps the session it has. A
     /// credential says a provider can be reached, never which to ask.
     Elsewhere,
@@ -151,6 +173,12 @@ pub enum LoggedOut {
     /// Forgotten, and another provider is the one answering: nothing about the
     /// session moved.
     Kept,
+    /// Forgotten, and the provider is still reached through the installed
+    /// agent the conversation is on: nothing about the session moved.
+    Routed {
+        /// The configured instance.
+        instance: Box<str>,
+    },
     /// Forgotten, and the provider still answers from a credential the store
     /// never held or still holds.
     StillServed {
@@ -165,6 +193,43 @@ pub enum LoggedOut {
         /// What the retirement left behind.
         retained: Retained,
     },
+}
+
+/// What a credential just stored for `named` comes to while the conversation
+/// is on the installed agent `instance`, which keeps answering either way.
+///
+/// The kind of credential stored decides how the route's provider is reached
+/// next: an account by its subscription, a key as a key.
+fn beside_the_route(instance: &str, named: Served, with: &Switching<'_>) -> LoggedIn {
+    if !routes(with.settings, named, instance) {
+        return LoggedIn::Stored {
+            provider: named.name,
+        };
+    }
+    let access = match with.logins.read().held(named.name) {
+        Some(held) if held.kind == crucible_auth::Kind::Account => {
+            crucible_config::Access::Subscription
+        }
+        Some(_) => crucible_config::Access::ApiKey,
+        None => {
+            return LoggedIn::Unusable(AppError::Authentication {
+                provider: named.name.into(),
+            });
+        }
+    };
+    LoggedIn::NextLaunch {
+        provider: named.name,
+        unwritten: remember::reaching(with.choosing, named.name, &access).err(),
+    }
+}
+
+/// Whether `named` is reached through the installed agent `instance`.
+fn routes(settings: &Settings, named: Served, instance: &str) -> bool {
+    matches!(
+        settings.access(named.name),
+        Some(crucible_config::Access::ExternalAgent { instance: through })
+            if *through == *instance
+    )
 }
 
 impl Conversation {
@@ -289,6 +354,9 @@ impl Conversation {
     /// asked, any model name left over from before is retired with the
     /// provider it belonged to, and the conversation is left asking for none.
     pub async fn logged_in(&mut self, named: Served, with: &Switching<'_>) -> LoggedIn {
+        if let Some(instance) = self.instance() {
+            return beside_the_route(instance, named, with);
+        }
         let set = match (with.serving)(named, &with.logins.read()) {
             Ok(set) => set,
             Err(problem) => {
@@ -333,7 +401,11 @@ impl Conversation {
     /// made with a credential is deleted with it, and once the credential is
     /// gone there is nothing left to delete it with.
     pub async fn log_out(&mut self, named: Served, with: &Switching<'_>) -> LoggedOut {
-        let answering = self.serving == Some(named.name);
+        let routed = self
+            .instance()
+            .filter(|instance| routes(with.settings, named, instance))
+            .map(Box::from);
+        let answering = self.serving() == Some(named.name);
         let retained = if answering {
             match self.retire().await {
                 Ok(retained) => retained,
@@ -352,7 +424,7 @@ impl Conversation {
         }
         if !answering {
             self.reread(with);
-            return LoggedOut::Kept;
+            return routed.map_or(LoggedOut::Kept, |instance| LoggedOut::Routed { instance });
         }
 
         let stored = with.logins.read();
