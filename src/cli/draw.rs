@@ -161,9 +161,16 @@ pub(crate) fn event<T: Terminal>(
         | Event::Carried { .. }
         | Event::Used { .. }
         | Event::PlanLimits { .. }
-        | Event::Compacting { .. }
-        // Another agent's use of its own tools, which is not drawn yet.
-        | Event::Reported { .. } => Ok(()),
+        | Event::Compacting { .. } => Ok(()),
+
+        // Something the agent running this turn did with its own tools, over
+        // there: a block of its own, worded as the agent's and not as a call,
+        // because nothing ran here and nobody here was asked.
+        Event::Reported { tool, summary } => {
+            renderer.settle()?;
+            renderer.apart()?;
+            renderer.present(&[reported(&tool, &summary, columns, style.glyphs())])
+        }
 
         // What it came to does not. Room having been made is a thing that
         // happened to the session rather than a state it is in, and the row
@@ -1751,6 +1758,29 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
         Row::new().then(Slot::Quiet, result),
         rule(),
     ]
+}
+
+/// The row saying the agent running the turn used `tool` on `summary`.
+///
+/// Both are the agent's words, so control bytes are taken out before they are
+/// drawn, and the row is cut to `columns` rather than folded: one report is
+/// one row, however much the agent said about it.
+pub(super) fn reported(tool: &str, summary: &str, columns: usize, glyphs: Glyphs) -> Row {
+    // Trimmed again because a control byte at either end is a space only once
+    // it has been flattened, and a tool with no name left is still a tool.
+    let tool = flattened(tool);
+    let tool = match tool.trim() {
+        "" => "a tool",
+        named => named,
+    };
+    let summary = flattened(summary);
+    let summary = summary.trim();
+    let said = if summary.is_empty() {
+        format!("the agent used {tool}")
+    } else {
+        format!("the agent used {tool} {} {summary}", glyphs.dot())
+    };
+    Row::new().then(Slot::Quiet, said).clipped(columns)
 }
 
 /// What a request to make room says when there was none to make.

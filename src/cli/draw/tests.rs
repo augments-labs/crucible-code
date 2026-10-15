@@ -2793,3 +2793,98 @@ fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
         assert_eq!(drawn, screen_drops, "U+{:04X}", u32::from(character));
     }
 }
+
+/// What the terminal is sent, and the rows it then shows, when the agent
+/// running the turn reports using `tool` on `summary`, in a window `columns`
+/// wide.
+fn reported(tool: &str, summary: &str, columns: usize) -> (String, Vec<String>) {
+    let mut renderer = Renderer::new(Recording::new(columns, 24));
+
+    event(
+        &mut renderer,
+        Event::Reported {
+            tool: tool.into(),
+            summary: summary.into(),
+        },
+        &here(),
+        Style::plain(),
+        &mut Kept::default(),
+    )
+    .expect("the report to draw");
+
+    let terminal = renderer.terminal();
+    (terminal.written().to_string(), terminal.picture().said())
+}
+
+#[test]
+fn what_an_agent_reports_it_did_is_drawn_as_the_agents_and_not_as_a_call() {
+    let (_, rows) = reported("Edit", "src/lib.rs", 80);
+
+    assert_eq!(rows, ["the agent used Edit · src/lib.rs"]);
+}
+
+#[test]
+fn a_report_with_nothing_said_of_it_names_the_tool_alone() {
+    let (_, rows) = reported("Search", "", 80);
+
+    assert_eq!(rows, ["the agent used Search"]);
+}
+
+#[test]
+fn a_report_draws_none_of_the_control_bytes_the_agent_sent() {
+    let (written, rows) = reported("Bash", "ls\u{1b}[31m -la\u{7}\nrm -rf x", 80);
+
+    assert!(
+        !written.contains("\u{1b}[31m") && !written.contains('\u{7}'),
+        "the agent's control bytes reached the terminal: {written:?}"
+    );
+    assert_eq!(rows, ["the agent used Bash · ls [31m -la  rm -rf x"]);
+}
+
+#[test]
+fn a_report_too_long_for_the_window_stands_on_one_row() {
+    let (_, rows) = reported("Bash", &"x".repeat(200), 40);
+
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    assert!(
+        rows.iter().all(|row| crucible_tui::columns(row) <= 40),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_report_naming_no_tool_says_a_tool_rather_than_leaving_a_gap() {
+    let (_, rows) = reported(" \u{7} ", "src/lib.rs", 80);
+
+    assert_eq!(rows, ["the agent used a tool · src/lib.rs"]);
+}
+
+#[test]
+fn a_report_mid_answer_stands_apart_and_the_answer_resumes_under_it() {
+    let turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta("Editing the file.\n"),
+        beat(Event::Reported {
+            tool: "Edit".into(),
+            summary: "src/lib.rs".into(),
+        }),
+        delta("Done.\n"),
+        beat(Event::TurnFinished {
+            turn: TurnId::FIRST,
+            stop: StopReason::Yielded,
+        }),
+    ];
+
+    assert_eq!(
+        transcript(turn),
+        concat!(
+            "Editing the file.\n",
+            "\n",
+            "the agent used Edit · src/lib.rs\n",
+            "\n",
+            "Done.\n",
+        ),
+    );
+}
