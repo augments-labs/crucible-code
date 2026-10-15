@@ -3,8 +3,7 @@ source: tests/whole_screen/agents.rs
 expression: picture
 ---
 80x40 cursor 39,0 scrolled 0
-|│                                                                             │┃|
-|│ CRUCIBLE                                                                    │┃|
+|│ CRUCIBLE                                                                    ││|
 |│ /…/workspace                                                                │┃|
 |│                                                                             │┃|
 |│ Recent sessions                                                             │┃|
@@ -26,13 +25,14 @@ expression: picture
 |                                                                                |
 |Log in                                                                          |
 |                                                                                |
+|Claude Code cannot be started.                                                  |
+|                                                                                |
 |Found                                                                           |
 |/scratch------------------------------------------------------------------------|
 |--------------------------------------------------------------------------------|
 |--------------------------------------------------------------------------------|
 |/a-directory-to-be-working-in/and-something-below-that-again/workspace/agents/cl|
 |aude but it is not executable.                                                  |
-|                                                                                |
 |Make it executable, then choose Check again.                                    |
 |Agent: claude, run as claude.                                                   |
 |                                                                                |

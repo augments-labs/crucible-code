@@ -45,11 +45,13 @@ pub enum Put {
     Permission,
     /// An account question offering the choice named, which the client takes.
     Choose(&'static str),
-    /// That the agent's program was not found, with the fact that says what
-    /// to install, answered with the choice named.
+    /// That the agent's program was not found, with the facts that say why
+    /// and what to install, answered with the choice named.
     Missing {
-        /// How the question begins.
+        /// The question.
         asks: &'static str,
+        /// How the first fact, saying why the program cannot start, begins.
+        why: &'static str,
         /// The fact naming what to install.
         install: &'static str,
         /// The choice the client takes.
@@ -95,7 +97,8 @@ pub static ACCOUNTS: [Expected; 5] = [
         put: &[
             Put::Choose(NOT_INSTALLED),
             Put::Missing {
-                asks: "Not installed",
+                asks: "Antigravity cannot be started.",
+                why: "Not installed",
                 install: "Install Antigravity, then choose Check again.",
                 answer: "Go back",
             },

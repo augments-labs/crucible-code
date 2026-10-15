@@ -16,10 +16,11 @@ expression: picture
 |                                        |
 |                                        |
 |                                        |
-|                                        |
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
+|                                        |
+|Claude Code cannot be started.          |
 |                                        |
 |Found                                   |
 |/scratch--------------------------------|
@@ -31,7 +32,6 @@ expression: picture
 |/a-directory-to-be-working-in/and-someth|
 |ing-below-that-again/workspace/agents/cl|
 |aude but it is not executable.          |
-|                                        |
 |Make it executable, then choose Check   |
 |again.                                  |
 |Agent: claude, run as claude.           |
