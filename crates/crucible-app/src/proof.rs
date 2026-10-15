@@ -6,7 +6,12 @@
 //! and nowhere else: `fake` lists every agent this build knows how to run as
 //! though this release shipped it, `empty` lists none, and with the variable
 //! unset the binary starts what ships. A test that calls something taking a
-//! registry hands it [`registry`] over whatever rows it needs.
+//! registry hands it [`registry`] over whatever rows it needs. [`ACCOUNTS`]
+//! is what a client driving an installed agent is asked and told, step by
+//! step, for every suite that drives one to assert against.
+
+pub mod accounts;
+pub use accounts::ACCOUNTS;
 
 use std::ffi::OsStr;
 

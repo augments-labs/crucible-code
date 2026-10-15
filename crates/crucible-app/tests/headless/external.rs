@@ -2779,3 +2779,223 @@ fn a_session_whose_agent_is_gone_or_disconnected_is_refused_and_nothing_starts()
     assert!(reopened.is_ok(), "{:?}", reopened.err());
     Ok(())
 }
+
+/// A client that answers what it is put as a step of the proof table says,
+/// and keeps what it was put.
+#[cfg(feature = "proof")]
+struct Following {
+    answers: std::collections::VecDeque<crucible_app::proof::accounts::Put>,
+    put: Vec<Pending>,
+}
+
+#[cfg(feature = "proof")]
+impl Following {
+    fn of(step: &crucible_app::proof::accounts::Expected) -> Self {
+        Self {
+            answers: step.put.iter().copied().collect(),
+            put: Vec::new(),
+        }
+    }
+}
+
+#[cfg(feature = "proof")]
+impl Front for Following {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Ruled>> {
+        use crucible_app::proof::accounts::Put;
+
+        Box::pin(async move {
+            self.put.push(pending.clone());
+            let id = pending.id();
+            Some(match self.answers.pop_front()? {
+                Put::Permission => Ruled::Ruled {
+                    id,
+                    ruling: Ruling::Allow,
+                    lasting: Lasts::Once,
+                },
+                Put::Choose(name) | Put::Missing { answer: name, .. } => Ruled::Picked {
+                    id,
+                    choice: crucible_client_api::Said::new(name).ok()?,
+                },
+            })
+        })
+    }
+
+    fn refused(&mut self, _refusal: crucible_client_api::Refusal) {}
+}
+
+/// Whether `pending` is what `put` says the client is asked.
+#[cfg(feature = "proof")]
+fn is_put(pending: &Pending, put: crucible_app::proof::accounts::Put) -> bool {
+    use crucible_app::proof::accounts::Put;
+
+    match (put, pending) {
+        (Put::Permission, Pending::Permission { .. }) => true,
+        (Put::Choose(name), Pending::Account { choices, .. }) => {
+            choices.iter().any(|choice| choice.name.as_str() == name)
+        }
+        (
+            Put::Missing {
+                asks: begins,
+                install,
+                answer,
+            },
+            Pending::Account {
+                asks,
+                facts,
+                choices,
+                ..
+            },
+        ) => {
+            asks.as_str().starts_with(begins)
+                && facts.iter().any(|fact| fact.as_str() == install)
+                && choices.iter().any(|choice| choice.name.as_str() == answer)
+        }
+        _ => false,
+    }
+}
+
+/// Where a turn's stop goes once it has begun: through the client's own
+/// cancel, whose answer is kept.
+#[cfg(feature = "proof")]
+struct Interrupting {
+    cancel: Cancel,
+    told: Mutex<Option<Outcome>>,
+}
+
+#[cfg(feature = "proof")]
+impl Post for Interrupting {
+    fn post(&self, reported: EventEnvelope) {
+        if matches!(reported.event(), Event::TurnStarted { .. }) {
+            let request = Request::new(Asking::every(), Correlation::new(2), Command::Cancel);
+            let told = client::interrupt(&request, &self.cancel);
+            if let Ok(mut kept) = self.told.lock() {
+                kept.get_or_insert(told);
+            }
+        }
+    }
+}
+
+/// Takes `step` of the proof table on `conversation`, answering as it says,
+/// and answers what the client was put and what it was told.
+#[cfg(feature = "proof")]
+fn taking(
+    tree: &Tree,
+    conversation: &mut Conversation,
+    step: &crucible_app::proof::accounts::Expected,
+) -> Result<(Vec<Pending>, Vec<Outcome>), Failed> {
+    use crucible_app::proof::accounts::{INSTANCE, PROVIDER, Step};
+    use crucible_client_api::Name;
+
+    let mut following = Following::of(step);
+    let file = std::fs::read_to_string(super::Desk::new(tree, &[])?.choosing)?;
+    let told = match step.step {
+        Step::Connect | Step::ConnectMissing | Step::Disconnect => {
+            let named = step.step != Step::ConnectMissing;
+            let provider = Name::new(PROVIDER)?;
+            let connect = move |instance| Command::Connect {
+                provider: provider.clone(),
+                instance: named.then_some(instance),
+            };
+            let disconnect = |instance| Command::Disconnect { instance };
+            let command: &dyn Fn(Name) -> Command = if step.step == Step::Disconnect {
+                &disconnect
+            } else {
+                &connect
+            };
+            let asked = Asked {
+                installed: (&file, INSTANCE),
+                command,
+                asking: Asking::every(),
+                after: None,
+            };
+            vec![accounting_on(tree, conversation, &asked, &mut following)?.0]
+        }
+        Step::Prompt | Step::Interrupt => {
+            let request = Request::new(
+                Asking::every(),
+                Correlation::new(1),
+                Command::Prompt(Prompt::new("go")?),
+            );
+            let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+            let interrupting = Interrupting {
+                cancel: cancel.clone(),
+                told: Mutex::new(None),
+            };
+            let quiet = Watching {
+                events: mpsc::channel().0,
+                stopping: None,
+            };
+            let post: &dyn Post = if step.step == Step::Interrupt {
+                &interrupting
+            } else {
+                &quiet
+            };
+            let ended = {
+                let run = conversation.starting(post, &cancel, &steer, &aside);
+                runtime()?.block_on(client::turn(
+                    conversation,
+                    &request,
+                    Box::default(),
+                    &mut following,
+                    &run,
+                ))
+            };
+            let cancelling = interrupting.told.into_inner().ok().flatten();
+            cancelling
+                .into_iter()
+                .chain([ended.response(&request).outcome])
+                .collect()
+        }
+    };
+    Ok((following.put, told))
+}
+
+/// A client driving an installed agent from a conversation on the provider's
+/// model is asked and told, at every step, what the proof table says: the
+/// connect moves it onto the agent, a prompt asks one permission and runs to
+/// its end, an interrupt is heard and stops the turn, a disconnect takes the
+/// instance out of use, and a connect to an agent not installed says what to
+/// install.
+#[cfg(feature = "proof")]
+#[test]
+fn a_client_driving_an_agent_is_asked_and_told_what_the_proof_table_says() -> Result<(), Failed> {
+    use crucible_app::proof::ACCOUNTS;
+
+    let tree = Tree::new("external-proof-accounts")?;
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let run = Reply::new()
+        .hear(1)
+        .say(claude::init())
+        .say(claude::asked("q"))
+        .hear(1)
+        .say(claude::said("Done."))
+        .say(claude::answered(Some(claude::PRICE)))
+        .hear(1)
+        .say(claude::init())
+        .say(claude::said("Working."))
+        .hear(1)
+        .say(claude::stopped())
+        .say(claude::interrupted());
+    let script = connected([claude::signed_in(), run]);
+    let (mut conversation, _) = stepped(&tree, native, &script)?;
+    let choosing = super::Desk::new(&tree, &[])?.choosing;
+    if let Some(directory) = choosing.parent() {
+        std::fs::create_dir_all(directory)?;
+    }
+    std::fs::write(&choosing, UNCONNECTED)?;
+
+    for step in &ACCOUNTS {
+        let (put, told) = taking(&tree, &mut conversation, step)?;
+
+        assert_eq!(told, (step.told)(), "{:?}", step.step);
+        assert_eq!(put.len(), step.put.len(), "{:?}: {put:?}", step.step);
+        for (pending, expected) in put.iter().zip(step.put) {
+            assert!(is_put(pending, *expected), "{:?}: {pending:?}", step.step);
+        }
+    }
+    Ok(())
+}
