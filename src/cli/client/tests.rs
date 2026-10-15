@@ -506,6 +506,21 @@ fn renumbered(noted: Vec<Noted>) -> Vec<Noted> {
             Noted::Decided(Decision::Accepted { id }) => {
                 Noted::Decided(Decision::Accepted { id: ordinal(id) })
             }
+            Noted::Decided(Decision::Picked { id, choice }) => Noted::Decided(Decision::Picked {
+                id: ordinal(id),
+                choice,
+            }),
+            Noted::Put(Pending::Account {
+                id,
+                asks,
+                facts,
+                choices,
+            }) => Noted::Put(Pending::Account {
+                id: ordinal(id),
+                asks,
+                facts,
+                choices,
+            }),
             Noted::Put(Pending::Warning {
                 id,
                 route,

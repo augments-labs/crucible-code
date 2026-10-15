@@ -123,6 +123,7 @@ pub async fn turn(
         | Command::CycleMode
         | Command::Login { .. }
         | Command::Logout { .. }
+        | Command::Disconnect { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }
@@ -171,6 +172,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::CycleMode
         | Command::Login { .. }
         | Command::Logout { .. }
+        | Command::Disconnect { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }

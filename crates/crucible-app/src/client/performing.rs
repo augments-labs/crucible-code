@@ -125,6 +125,8 @@ pub enum Performed {
     Login(LoggedIn),
     /// `/logout`.
     Logout(LoggedOut),
+    /// An account operation on an installed agent.
+    Account(super::accounts::Account),
     /// `/cache`: the persistent resources remembered.
     Cache(Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError>),
     /// `/cache clean`.
@@ -175,7 +177,9 @@ pub async fn perform(
     desk: &Desk<'_>,
 ) -> Performed {
     match request.command() {
-        Command::Prompt(_) | Command::Compact | Command::Cancel => {
+        // A disconnect asks which way to go, and only `account` has a front
+        // end to ask.
+        Command::Prompt(_) | Command::Compact | Command::Cancel | Command::Disconnect { .. } => {
             Performed::Refused(ErrorCode::Busy.into())
         }
         // No turn is stopped here, so there is no action this could be about.
@@ -303,6 +307,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::CycleMode
         | Command::Login { .. }
         | Command::Logout { .. }
+        | Command::Disconnect { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }
@@ -434,6 +439,7 @@ impl Performed {
             Self::Mode(mode) => Outcome::Mode(reading::mode_out(*mode)),
             Self::Login(logged_in) => Outcome::Login(login(logged_in)),
             Self::Logout(logged_out) => Outcome::Logout(logout(logged_out)),
+            Self::Account(account) => account.outcome(),
             Self::Cache(listed) => Outcome::Cache(cache(listed)),
             Self::Cleaned(cleaned) => Outcome::Cleaned(match cleaned {
                 Ok(counted) => CleanOutcome::Counted {

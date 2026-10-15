@@ -57,11 +57,20 @@ pub enum Capability {
     Questions,
     /// It wants the provisional progress of a turn as well as its outcome.
     Progress,
+    /// It can be put the confirmations an account operation on an installed
+    /// agent asks for, and choose among them. An operation for a client
+    /// without this puts nothing and changes nothing.
+    Account,
 }
 
 impl Capability {
     /// Every capability this build has heard of.
-    pub const EVERY: [Self; 3] = [Self::Permissions, Self::Questions, Self::Progress];
+    pub const EVERY: [Self; 4] = [
+        Self::Permissions,
+        Self::Questions,
+        Self::Progress,
+        Self::Account,
+    ];
 
     /// The word it crosses as.
     #[must_use]
@@ -70,6 +79,7 @@ impl Capability {
             Self::Permissions => "permissions",
             Self::Questions => "questions",
             Self::Progress => "progress",
+            Self::Account => "account",
         }
     }
 
@@ -78,6 +88,7 @@ impl Capability {
             Self::Permissions => 1,
             Self::Questions => 2,
             Self::Progress => 4,
+            Self::Account => 8,
         }
     }
 }
@@ -100,6 +111,7 @@ impl Capabilities {
             .with(Capability::Permissions)
             .with(Capability::Questions)
             .with(Capability::Progress)
+            .with(Capability::Account)
     }
 
     /// These, and `one`.

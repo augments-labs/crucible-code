@@ -1,0 +1,253 @@
+//! The account operations on an installed agent, as a client asks for them.
+//!
+//! Each asks which way to go before anything changes, through the [`Front`]
+//! it is handed, and a client that did not say it answers account questions is
+//! asked nothing: the operation is [`Account::Undecided`] and the files are as
+//! they were. So is one where the client cancelled, went back, or answered
+//! nothing.
+//!
+//! Once a way is chosen, the operation takes its instance's credential scope
+//! through a [`Coordinator`] and keeps each stage in the scope's journal before
+//! taking the step it names, so a crash leaves the instance needing a check
+//! rather than half-changed without a record. The configuration is written
+//! last, through [`remember`], and the journal's record is finished only after
+//! that write.
+//!
+//! What came of it is the application's [`Account`], read by a terminal whole,
+//! and translated for a client by [`Account::outcome`], a match written out
+//! here.
+//!
+//! | Asked | Chosen | Outcome |
+//! | --- | --- | --- |
+//! | disconnect | disconnect | [`LogoutOutcome::Disconnected`] |
+//! | disconnect, its run not confirmed stopped | disconnect | [`LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped`] |
+//! | disconnect, the file not written | disconnect | [`LogoutOutcome::StoppedForThisRunOnly`] |
+//! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
+
+use std::path::Path;
+
+use crucible_client_api::{
+    Command, ErrorCode, LogoutOutcome, Outcome, Problem, Refusal, Request, Text,
+};
+use crucible_config::ExternalAgent;
+use crucible_execution::{Admission, Ending};
+use crucible_external_harnesses::{Contended, Coordinator, Journal, Stage, Work};
+
+use super::deciding::{Confirmation, Front, confirmed};
+use super::performing::{Desk, Performed};
+use crate::Conversation;
+use crate::remember::{self, RememberError};
+
+/// What came of an account operation, in the application's own values.
+#[derive(Debug)]
+pub enum Account {
+    /// The instance takes no new work, which is written down.
+    Disconnected {
+        /// Whether the work it had running in this conversation is known to
+        /// have stopped, which it is where there was none.
+        stopped: bool,
+    },
+    /// The instance takes no new work in this conversation, and that could
+    /// not be written down.
+    ThisRunOnly(RememberError),
+    /// Nobody chose a way to go on, so nothing changed.
+    Undecided,
+    /// It did not begin, or could not be kept as it went.
+    Contended(Contended),
+}
+
+impl Account {
+    /// What happened, as a client is told it.
+    #[must_use]
+    pub fn outcome(&self) -> Outcome {
+        Outcome::Logout(match self {
+            Self::Disconnected { stopped: true } => LogoutOutcome::Disconnected {
+                said: Text::cut(DISCONNECTED),
+            },
+            Self::Disconnected { stopped: false } => {
+                LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped {
+                    said: Text::cut(NOT_CONFIRMED_STOPPED),
+                }
+            }
+            Self::ThisRunOnly(problem) => LogoutOutcome::StoppedForThisRunOnly {
+                said: Text::cut(THIS_RUN_ONLY),
+                problem: Problem::failed(problem),
+            },
+            Self::Undecided => LogoutOutcome::Undecided,
+            Self::Contended(Contended::Busy) => {
+                return Outcome::Refused(ErrorCode::Busy.into());
+            }
+            Self::Contended(
+                Contended::Unresolved(_)
+                | Contended::Refused(_)
+                | Contended::Order
+                | Contended::Journal(_),
+            ) => return Outcome::Refused(ErrorCode::Failed.into()),
+        })
+    }
+}
+
+/// What a person is told once an instance is disconnected. Whether the agent
+/// is still signed in is not known here, so nothing is said of it but that
+/// Crucible did not change it.
+pub const DISCONNECTED: &str = "Disconnected from Crucible. External credentials were not changed.";
+
+/// What a person is told where the run could not be confirmed stopped.
+pub const NOT_CONFIRMED_STOPPED: &str = "New work disabled; existing work not confirmed stopped.";
+
+/// What a person is told where the disconnect could not be written down.
+pub const THIS_RUN_ONLY: &str = "Stopped for this run only; disconnect could not be saved.";
+
+/// The choice that goes on with a disconnect, by its name.
+pub const DISCONNECT: &str = "Disconnect from Crucible";
+
+/// Carries out `request` where it is an account operation, asking `front`
+/// which way to go before anything changes.
+///
+/// Any other command is refused as [`ErrorCode::Busy`] and nothing is done:
+/// [`perform`](super::perform) and the other doors answer them. An instance
+/// the configuration does not name is refused as
+/// [`ErrorCode::InvalidArgument`], before anything is asked.
+pub async fn account(
+    conversation: &mut Conversation,
+    request: &Request,
+    desk: &Desk<'_>,
+    front: &mut dyn Front,
+) -> Performed {
+    match request.command() {
+        Command::Disconnect { instance } => {
+            let Some(agent) = desk
+                .switching
+                .settings
+                .external_agents()
+                .into_iter()
+                .find(|agent| agent.name() == instance.as_str())
+            else {
+                return Performed::Refused(ErrorCode::InvalidArgument.into());
+            };
+            let confirmation = disconnecting(&agent, conversation.instance());
+            match confirmed(request.capabilities(), front, &confirmation).await {
+                Some(0) => Performed::Account(disconnect(conversation, desk, &agent).await),
+                _ => Performed::Account(Account::Undecided),
+            }
+        }
+        Command::Prompt(_)
+        | Command::Compact
+        | Command::Cancel
+        | Command::Decide(_)
+        | Command::Clear
+        | Command::Resume(_)
+        | Command::SelectModel { .. }
+        | Command::SetEffort(_)
+        | Command::SetSpeed(_)
+        | Command::SetMode(_)
+        | Command::CycleMode
+        | Command::Login { .. }
+        | Command::Logout { .. }
+        | Command::InspectCache
+        | Command::CleanCache
+        | Command::Sandbox { .. }
+        | Command::Theme(_)
+        | Command::Setting { .. }
+        | Command::Help
+        | Command::ReleaseNotes { .. }
+        | Command::Context
+        | Command::Usage
+        | Command::AskLimits
+        | Command::Exit => Performed::Refused(Refusal::from(ErrorCode::Busy)),
+    }
+}
+
+/// The question a disconnect of `agent` puts, where the conversation is on
+/// the instance `on`.
+fn disconnecting(agent: &ExternalAgent, on: Option<&str>) -> Confirmation {
+    let name = agent.name();
+    let working = if on == Some(name) {
+        "Active work: this conversation runs on it, and its run will be stopped."
+    } else {
+        "Active work: none in this conversation."
+    };
+    Confirmation {
+        asks: format!("Disconnect {name} from Crucible?"),
+        facts: vec![
+            format!("Agent: {name}, run as {}.", agent.executable()),
+            match agent.profile() {
+                Some(profile) => format!("Profile: {profile}."),
+                None => "Profile: the agent's default.".to_owned(),
+            },
+            "Account: not known to Crucible.".to_owned(),
+            working.to_owned(),
+            "Sharing: other programs using this profile keep their sign-in; Crucible cannot \
+             tell which share it."
+                .to_owned(),
+        ],
+        choices: vec![
+            (
+                DISCONNECT.to_owned(),
+                "Crucible stops using this agent; its sign-in is left as it is.".to_owned(),
+            ),
+            ("Cancel".to_owned(), "Change nothing.".to_owned()),
+        ],
+    }
+}
+
+/// Takes `agent` out of use from Crucible: refused new work, its run in this
+/// conversation stopped, and `enabled: false` written down.
+async fn disconnect(
+    conversation: &mut Conversation,
+    desk: &Desk<'_>,
+    agent: &ExternalAgent,
+) -> Account {
+    let mut coordinator = match coordinating(desk.switching.choosing, agent) {
+        Ok(coordinator) => coordinator,
+        Err(contended) => return Account::Contended(contended),
+    };
+    // No generation of the instance's settings is kept yet, so every record
+    // says the first.
+    let mut slot = match coordinator.begin(Work::Disconnect, agent.profile(), 0) {
+        Ok(slot) => slot,
+        Err(contended) => return Account::Contended(contended),
+    };
+    if let Err(contended) = slot.advance(Stage::Closed) {
+        return Account::Contended(contended);
+    }
+    let stopped = conversation.disconnect(agent.name()).await.unwrap_or(true);
+    for stage in [Stage::Quiesced, Stage::Committing] {
+        if let Err(contended) = slot.advance(stage) {
+            return Account::Contended(contended);
+        }
+    }
+    match remember::disabling(desk.switching.choosing, agent.name()) {
+        Ok(()) => match slot.finish(Ending::Succeeded) {
+            Ok(_) => Account::Disconnected { stopped },
+            Err(contended) => Account::Contended(contended),
+        },
+        Err(problem) => {
+            // The record is closed as failed; the next start reads the file,
+            // which still enables the instance.
+            let _ = slot.finish(Ending::Failed);
+            Account::ThisRunOnly(problem)
+        }
+    }
+}
+
+/// The coordinator of `agent`'s credential scope, its journal kept beside the
+/// user file `choosing`.
+fn coordinating(choosing: &Path, agent: &ExternalAgent) -> Result<Coordinator, Contended> {
+    let directory = choosing
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join("accounts");
+    let scope = format!(
+        "{}:{}",
+        agent.driver().name(),
+        agent.profile().unwrap_or("default")
+    );
+    let journal = Journal::of(directory, &scope)?;
+    let admission = if agent.enabled() {
+        Admission::Enabled
+    } else {
+        Admission::Disabled
+    };
+    Ok(Coordinator::restore(journal, agent.name(), admission)?)
+}

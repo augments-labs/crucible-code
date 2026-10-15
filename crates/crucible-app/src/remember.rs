@@ -101,6 +101,21 @@ pub fn sandboxing(file: &Path, enabled: bool) -> Result<(), RememberError> {
     })
 }
 
+/// Writes down that the installed agent `instance` takes no new work, and
+/// changes nothing else in `file`.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration
+/// or names no such instance.
+pub fn disabling(file: &Path, instance: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::disabling(text, named, instance)
+    })
+}
+
 /// Writes down that picking a session up should stop asking about its size.
 ///
 /// # Errors

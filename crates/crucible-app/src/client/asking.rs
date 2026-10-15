@@ -181,6 +181,7 @@ pub fn asking(
         | Command::CycleMode
         | Command::Login { .. }
         | Command::Logout { .. }
+        | Command::Disconnect { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }
