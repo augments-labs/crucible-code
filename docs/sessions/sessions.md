@@ -304,6 +304,11 @@ log this build cannot read is refused rather than half-understood, and a session
 another crucible has open is not available. The picker says so on the marked
 session's own line rather than waiting for Enter to find out.
 
+A session an [installed agent](../providers/agents.md) ran says which on that
+same line, as `execution: <instance>`, with the agent it is an instance of in
+parentheses where the two are named differently; taking it starts that agent
+again. A run with no keyboard, given the listing instead, says it on the row.
+
 The picker looks through every session the index names, not the handful the
 opening screen reads, and lists up to 100 of them. It opens on this
 directory's, and three keys change what it shows, each pressed again to undo

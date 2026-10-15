@@ -3,9 +3,11 @@
 //! A different read from [`mod@super::replay`], for a different reason. That
 //! one finds one log and hands back everything in it, because a session is
 //! about to be continued. This one finds a bounded number — a few on the first
-//! frame, every indexed one after it — and takes one line from each, because
-//! somebody is about to be shown a list — and the welcome screen runs it before
-//! the first frame, where twenty milliseconds is the whole budget.
+//! frame, every indexed one after it — and takes from each the first thing
+//! asked and, where an installed agent ran it, the route on the line after the
+//! header, because somebody is about to be shown a list — and the welcome
+//! screen runs it before the first frame, where twenty milliseconds is the
+//! whole budget.
 //!
 //! Candidate names come from the fixed recent-session index. An older flat log
 //! directory is indexed once by session start, after the first frame; this
@@ -37,7 +39,7 @@ use crucible_types::{Message, SessionId};
 
 use super::index;
 use super::privacy::opened;
-use super::replay::route_at;
+use super::replay::{route_at, route_in};
 use super::wire;
 use super::{RouteBinding, SessionError};
 
@@ -102,8 +104,9 @@ impl Roots<'_> {
 
 /// How much of one log may be read looking for what was first asked.
 ///
-/// The first message is the first line after the header, so this is reached
-/// only by a prompt with a pasted file in it. Reading stops there and the
+/// The first message is the first line after the header, or the one after the
+/// route where an installed agent ran the session, so this is reached only by a
+/// prompt with a pasted file in it; the route's line counts against it too. Reading stops there and the
 /// session is left out, rather than the startup path being handed a length
 /// somebody else chose. The header `--continue` reads is held to the same
 /// ceiling, so a log this list can read the start of is one it can take too.
@@ -133,6 +136,8 @@ pub struct Recorded {
     messages: usize,
     /// The title somebody saved over the first prompt, where they did.
     titled: Option<Box<str>>,
+    /// The installed agent that ran it, where one did.
+    route: Option<RouteBinding>,
 }
 
 impl Recorded {
@@ -192,6 +197,17 @@ impl Recorded {
     #[must_use]
     pub fn title(&self) -> &str {
         self.titled.as_deref().unwrap_or(&self.asked)
+    }
+
+    /// The installed agent that ran it, where one did; `None` for a session
+    /// a provider's model ran.
+    ///
+    /// Its names were checked for control characters when the line was read,
+    /// as every route is, but they came from a file: whoever draws them
+    /// flattens them.
+    #[must_use]
+    pub const fn route(&self) -> Option<&RouteBinding> {
+        self.route.as_ref()
     }
 }
 
@@ -491,9 +507,12 @@ fn heading(path: &Path, roots: Roots<'_>) -> Heading {
 ///
 /// The header decides most of it: a log belongs to one of `roots` or it does
 /// not, and one written by a build that spelled things differently is left out
-/// rather than half-read. What is left is the first message, which is the first
-/// thing that was asked — and a log with none, crucible opened and left without
-/// a word typed, is no session to offer under any roots.
+/// rather than half-read. What is left is the route on the line after the
+/// header, where an installed agent ran it, and the first message, which is the
+/// first thing that was asked — and a log with none, crucible opened and left
+/// without a word typed, is no session to offer under any roots. A line that
+/// opens as a route and does not read whole leaves the session out, as
+/// [`discovered`] counts it unreadable.
 ///
 /// Opened as [`opened`] opens a log, and a log it refuses is one fewer row,
 /// as a log that will not open is.
@@ -515,10 +534,24 @@ fn read(path: &Path, roots: Roots<'_>) -> Option<Recorded> {
         return None;
     }
 
+    let mut route = None;
+    let mut after_header = true;
     loop {
         line.clear();
         if log.read_line(&mut line).ok()? == 0 {
             return None;
+        }
+
+        // The line after the header names the installed agent that ran the
+        // session, where one did, and is the first message otherwise, so it
+        // is read whole before either is decided. One that opens as a route
+        // and does not read whole is a session a resume refuses, and is not
+        // offered as one a provider's model ran.
+        if std::mem::take(&mut after_header)
+            && let Some(read) = route_in(line.as_bytes())
+        {
+            route = Some(read.ok()?);
+            continue;
         }
 
         if let Some(Message::User { text, .. }) = wire::message(line.trim_end()) {
@@ -540,6 +573,7 @@ fn read(path: &Path, roots: Roots<'_>) -> Option<Recorded> {
                     .filter(|branch| !branch.is_empty()),
                 messages: 0,
                 titled: None,
+                route,
             });
         }
     }

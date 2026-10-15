@@ -256,7 +256,7 @@ pub(super) fn route_at(log: &mut impl BufRead) -> io::Result<Option<RouteBinding
 /// The one place a route is read from a log. A route is the line after the
 /// header, as it is written, and nowhere else: one taken from further down
 /// would let a line a log gained later decide what continues it.
-fn route_in(line: &[u8]) -> Option<io::Result<RouteBinding>> {
+pub(super) fn route_in(line: &[u8]) -> Option<io::Result<RouteBinding>> {
     line.starts_with(wire::ROUTE_OPENS).then(|| {
         line.strip_suffix(b"\n")
             .and_then(|whole| str::from_utf8(whole).ok())

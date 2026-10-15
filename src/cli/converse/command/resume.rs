@@ -60,7 +60,7 @@ use crucible_workspace::Workspace;
 
 use crate::cli::Fatal;
 use crate::cli::client::astray;
-use crate::cli::draw::when;
+use crate::cli::draw::{flattened, when};
 
 use super::super::region::{self, Ended, Moved};
 use super::super::{Held, finding, replaying};
@@ -1066,7 +1066,8 @@ fn printed<T: Terminal>(
     })
 }
 
-/// The listing, one row a session: the id, the age, and the title.
+/// The listing, one row a session: the id, the age, the installed agent that
+/// ran it where one did, and the title.
 ///
 /// The id leads because it is the row's handle — the exact word `/resume` and
 /// `--resume` take, for the runs that have no picker to walk.
@@ -1081,7 +1082,7 @@ fn listing(listed: &[&Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
     // width in this program is measured by. These are this module's own words
     // and this module's own digits — ASCII, one column each — and the string
     // being padded is the one being measured. What arrived from a file is the
-    // title, which is not padded and not measured.
+    // agent's names and the title, which are not padded and not measured.
     let widest = ages.iter().map(String::len).max().unwrap_or_default();
 
     listed
@@ -1091,6 +1092,15 @@ fn listing(listed: &[&Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
             let mut row = Row::new()
                 .then(Slot::Accent, format!("{}  ", session.id().as_str()))
                 .then(Slot::Quiet, format!("{age:widest$}  "));
+            // A name may be hundreds of columns long, so the agent's are kept
+            // to half the room left and the title keeps the other half.
+            if let Some(ran) = ran(session) {
+                let room = columns.saturating_sub(row.columns()) / 2;
+                row = row.then(
+                    Slot::Quiet,
+                    format!("{}  ", clip(&ran, room.saturating_sub(2))),
+                );
+            }
 
             let room = columns.saturating_sub(row.columns());
             row.push(Slot::Plain, clip(session.title(), room));
@@ -1125,8 +1135,8 @@ fn peeked(directory: &Path, workspace: &Workspace, session: &Recorded) -> Option
     glimpse(directory, &there, session.id()).ok()
 }
 
-/// The line under the preview: age, count, branch, and whether the session is
-/// held open elsewhere.
+/// The line under the preview: age, the installed agent that ran it where one
+/// did, count, branch, and whether the session is held open elsewhere.
 ///
 /// The claim is said here, inline, rather than kept for a refusal: the reader
 /// finds out while they are looking at the row, before Enter has closed the
@@ -1135,6 +1145,7 @@ fn meta(session: &Recorded, held: Option<&Glimpse>, now: SystemTime, glyphs: Gly
     let count = session.messages();
 
     let mut parts = vec![when::ago(session.started(), now)];
+    parts.extend(ran(session));
 
     // Nought is what the index holds for a session that has not ended since
     // there were counts to hold, rather than a session nobody said anything
@@ -1156,6 +1167,26 @@ fn meta(session: &Recorded, held: Option<&Glimpse>, now: SystemTime, glyphs: Gly
     }
 
     parts.join(&format!(" {} ", glyphs.dot()))
+}
+
+/// Which installed agent ran `session`: the instance, in the words the row
+/// under the box uses while one runs, and the agent it is an instance of, in
+/// parentheses, where the two are named differently. `None` for a session a
+/// provider's model ran, whose rows say nothing new.
+///
+/// Picking the session up starts that agent again, so this is said before
+/// Enter rather than after. The names are read off the session's log, which is
+/// a file, so they are flattened before they are drawn.
+fn ran(session: &Recorded) -> Option<String> {
+    let route = session.route()?;
+    let instance = flattened(route.instance());
+    if route.driver() == route.instance() {
+        return Some(format!("execution: {instance}"));
+    }
+    Some(format!(
+        "execution: {instance} ({})",
+        flattened(route.driver())
+    ))
 }
 
 /// The tail of a session, drawn into `room` columns the way resuming it would
