@@ -231,16 +231,32 @@ pub fn reopening(
         .ok()
         .filter(|route| route.same_route(opened))
         .ok_or(Unresumable::Rerouted)?;
-    let unstartable = |reason: &str| Unresumable::Unstartable(reason.to_owned());
     if !entry.enabled() {
-        return Err(unstartable("it is disconnected; connect it again"));
+        return Err(Unresumable::Unstartable(
+            "it is disconnected; connect it again".to_owned(),
+        ));
     }
-    let agent = Agent::configured(entry, registry, lookup)
-        .ok_or_else(|| unstartable("this release has no launch for its driver"))?;
-    agent
-        .startable(mode, entry.name())
-        .map_err(Unresumable::Unstartable)?;
+    let agent = startable(entry, registry, lookup, mode).map_err(Unresumable::Unstartable)?;
     Ok((agent, route))
+}
+
+/// The agent the configuration's `entry` is, as `registry` knows its driver,
+/// its program looked for through `lookup`, where it can be started in `mode`.
+///
+/// # Errors
+///
+/// What to say where `registry` has no row for its driver, `mode` has no
+/// launch for it, or its program cannot be run.
+pub fn startable(
+    entry: &ExternalAgent,
+    registry: &Registry,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    mode: Mode,
+) -> Result<Agent, String> {
+    let agent = Agent::configured(entry, registry, lookup)
+        .ok_or_else(|| "this release has no launch for its driver".to_owned())?;
+    agent.startable(mode, entry.name())?;
+    Ok(agent)
 }
 
 /// What the program configured as `executable` is: the path as written when
@@ -721,6 +737,26 @@ impl Steps {
             mode,
             opened,
         )
+    }
+
+    /// The agent the configuration's `entry` is, as [`startable`] finds it on
+    /// the `PATH` every step is, beside the route a session on it is bound
+    /// to.
+    ///
+    /// # Errors
+    ///
+    /// What to say where the entry cannot be started in `mode`, or its route
+    /// cannot be written down.
+    pub fn onto(&self, entry: &ExternalAgent, mode: Mode) -> Result<(Agent, RouteBinding), String> {
+        let route = RouteBinding::new(entry.driver().name(), entry.name(), entry.profile())
+            .map_err(|refused| refused.to_string())?;
+        let agent = startable(
+            entry,
+            self.registry,
+            |name| (name == "PATH").then(|| self.path.clone()).flatten(),
+            mode,
+        )?;
+        Ok((agent, route))
     }
 
     /// Runs of `agent`, the entry `instance`, each launched under the policy

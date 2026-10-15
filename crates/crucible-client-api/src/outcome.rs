@@ -362,6 +362,10 @@ pub enum LoginOutcome {
     AgentConnected {
         /// What the person is told.
         said: Text,
+        /// The instance the conversation moved onto, in a new session, where
+        /// it was on the provider's model; the session it left stays listed
+        /// and can be resumed. Absent where it stayed where it was.
+        onto: Option<Name>,
     },
     /// The agent read signed in, and the configuration that would reach the
     /// provider through it could not be written, so nothing changed.
