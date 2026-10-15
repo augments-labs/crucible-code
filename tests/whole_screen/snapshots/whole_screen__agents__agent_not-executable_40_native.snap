@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 23,0 scrollback 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /login                                |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Make it executable, then choose Check   |
+|again.                                  |
+|Agent: claude, run as claude.           |
+|                                        |
+|› Check again                           |
+|  Look for the agent's program again.   |
+|                                        |
+|  Go back                               |
+|  Choose another agent.                 |
+|                                        |
+|esc to go back                          |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |

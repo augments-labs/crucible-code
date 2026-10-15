@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 39,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /login                                |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Choose how usage is paid for.           |
+|                                        |
+|› Your account with subscription        |
+|  Usage included in your paid plan      |
+|                                        |
+|  Provide your own API key              |
+|  API usage billing                     |
+|                                        |
+|  Use an installed coding agent         |
+|  Sign in through an official harness   |
+|                                        |
+|esc to cancel                           |

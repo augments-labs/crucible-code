@@ -804,7 +804,9 @@ fi
 # `transport` for the confinement it starts under and the bounded frames over
 # its pipes, `privacy` for its owner-only journal, and `runtime` and `types` for
 # what it waits in and is identified by. `app external-harnesses` is the
-# composition root launching one.
+# composition root launching one. `code external-harnesses` is a test-only
+# edge: the whole-screen captures install its fake peer as an agent's program,
+# and the command line names nothing of it.
 allowed='code app
 code attachments
 code auth
@@ -813,6 +815,7 @@ code config
 code context
 code credentials
 code extension
+code external-harnesses
 code mcp
 code models
 code privacy

@@ -2,7 +2,7 @@
   "harness": {
     "tests/whole_screen/screen.rs": "927fa97afb953a0589c2928d6dba9a6c1a67a4852eebca70797323b7473e8660",
     "tests/whole_screen/vendor.rs": "47b1c989828849cf2b712646681e350c048b59fe1fbc2b8838bfb3663db6dd3c",
-    "tests/whole_screen/watched.rs": "5ec694d3ebae867e158552530fcec9647b2e23c4a0243d734c0f5f5733bca149"
+    "tests/whole_screen/watched.rs": "5a44cad4f5c77826d9e36bbd7dfc795f7e526bd579009e0d32ab94288d549d6e"
   },
   "captures": [
     {
@@ -244,6 +244,474 @@
         "Watched::open(\"resized\", 80, 24)"
       ],
       "sha256": "a86fc54a177180ffaf7f4414dc80f2ce9d36d6accb05e3a4b0bb65889e87ab10"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_agents_40_fullscreen.snap",
+      "case": "the_agents_a_provider_can_be_reached_through_are_listed",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "d19e865a9d476828d42fc8aa30e6322e5a047fece6f58640de865d99a9a514a6"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_agents_40_native.snap",
+      "case": "the_agents_a_provider_can_be_reached_through_are_listed",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "60172a12bd1be191e4de8b6dccb917563ceaa6d071359cbcd95b5afc6fa345ed"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_agents_80_fullscreen.snap",
+      "case": "the_agents_a_provider_can_be_reached_through_are_listed",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "e726bc86d9747e17cfc80f3ad537bda25219bf58e666a9627918da92bcf68395"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_agents_80_native.snap",
+      "case": "the_agents_a_provider_can_be_reached_through_are_listed",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "40037bbdd375122828ca051352b7f72d313b3958c20d421a1e10c13a341ba500"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_connected_40_fullscreen.snap",
+      "case": "a_connect_moves_the_conversation_onto_the_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "c96e339d8211ce48b3955cda11aff20977db7bb4252886eb0c4bb5ecdc11e8f7"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_connected_40_native.snap",
+      "case": "a_connect_moves_the_conversation_onto_the_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "cbe5b99304e7ff593f58f57a499ca16a4b5774175eaf1a6a1316c352b8ab6233"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_connected_80_fullscreen.snap",
+      "case": "a_connect_moves_the_conversation_onto_the_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "fafa23352197a0dc07c68e2311f4764a57c16df375d8a17cbbaa046e788d42fc"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_connected_80_native.snap",
+      "case": "a_connect_moves_the_conversation_onto_the_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "ef9f8b266e8e8cd673830cc98c4a37c7663aeded6adf1e4a8f217529a52a5af7"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_first_40_fullscreen.snap",
+      "case": "the_first_login_panel_offers_an_installed_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "6c30d823711ef399e0e863d51ca7848f4f8083ba02f53d84b600843d8cd6ad76"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_first_40_native.snap",
+      "case": "the_first_login_panel_offers_an_installed_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "0242ce80496b6b6e5be4e71d7d1ac83b125778b5c69eeb1575c281ccb2e2a825"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_first_80_fullscreen.snap",
+      "case": "the_first_login_panel_offers_an_installed_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "9e1a2927a9d574bebe2d11f996eddec8236718342ef176ba79913d300b717db4"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_first_80_native.snap",
+      "case": "the_first_login_panel_offers_an_installed_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "e0b6c0863f96c7f71763daa162f5a8f5982270bfe76e0ae1fde4192e24401dc3"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_hold_40_fullscreen.snap",
+      "case": "the_question_before_an_agent_first_starts_says_what_it_runs",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "bc83e1d3f7ddc2faada8f2f002930c9dd055a2dfc0595a5eb628d55070703ce5"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_hold_40_native.snap",
+      "case": "the_question_before_an_agent_first_starts_says_what_it_runs",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "6109e8da08b85524f256bcffb94c4dc973a9154570ffb0216da6f8c4fc4b1a7c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_hold_80_fullscreen.snap",
+      "case": "the_question_before_an_agent_first_starts_says_what_it_runs",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "8ca0c6cf339c5877eaa4f558e6846cc11abf9d641ac9f30e5c3dd2c72b750cf0"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_hold_80_native.snap",
+      "case": "the_question_before_an_agent_first_starts_says_what_it_runs",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "3bcf6ad0f67706b40a53921f9e939d4b56aec07bef73ec1a22d6fcd406320a3b"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_instances_40_fullscreen.snap",
+      "case": "an_agent_with_several_instances_asks_which",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "68dc0d3674d456428b1b65f1b7803bad7fb4985986ca32b320baddb62c2d92c5"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_instances_40_native.snap",
+      "case": "an_agent_with_several_instances_asks_which",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "49afc7c90ed9a9ad69087fc1b48db86c855aedf7e2b1eaa7e2be66d6a8b7717c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_instances_80_fullscreen.snap",
+      "case": "an_agent_with_several_instances_asks_which",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "4bdd6054027054ee8c467c23994b1241927adaddec75b6ca82b6c73f7e720950"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_instances_80_native.snap",
+      "case": "an_agent_with_several_instances_asks_which",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "420f154a0c4255253c985d08aa9f8164cf1f13dafef8b9076a829b09bfa58280"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_logout_40_fullscreen.snap",
+      "case": "the_logout_panel_offers_what_can_be_done_with_an_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "cbec7bc177cce6c124cce1a5d5de36de7ed89018af8b9492c6c5cdf45d008da9"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_logout_40_native.snap",
+      "case": "the_logout_panel_offers_what_can_be_done_with_an_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "f7e974ace2cfde3da709d8bf53fedf2d173407b20c9e4db6750b11593b9c8e55"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_logout_80_fullscreen.snap",
+      "case": "the_logout_panel_offers_what_can_be_done_with_an_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "da47eeb74b4a1d03d1d42ce540e147554981ceeb2fee3714ba01ae27d8e88894"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_logout_80_native.snap",
+      "case": "the_logout_panel_offers_what_can_be_done_with_an_agent",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "f6c26feeb185ac1dadf6b475e4d5f3a4c2682222270a260ea737920f2ec02fd7"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_missing_40_fullscreen.snap",
+      "case": "an_agent_whose_program_is_not_installed_says_so",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "a16a162f35abe34f07cfb1a7535f2aa5a92c103f07057aeccbf0e6997aec3615"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_missing_40_native.snap",
+      "case": "an_agent_whose_program_is_not_installed_says_so",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "f465ba2a2c12a8e3ce047297d6d02e6469d384bdc0131a1b5343f978d813b080"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_missing_80_fullscreen.snap",
+      "case": "an_agent_whose_program_is_not_installed_says_so",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "c501882c72279689b6ed5caf89a074b9ad5c9f22f869fba2999c7070df6ac564"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_missing_80_native.snap",
+      "case": "an_agent_whose_program_is_not_installed_says_so",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "d066afed34c1a3160099ac9370171e0216e9bef164bc9bfcbf99e852855d18b7"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_not-executable_40_fullscreen.snap",
+      "case": "an_agent_whose_program_cannot_be_run_says_so",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "9121823e8a58c108f39eda2a930ae3f7968720bc51fc94f958e2f9bfb96e9f4c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_not-executable_40_native.snap",
+      "case": "an_agent_whose_program_cannot_be_run_says_so",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "4e7e81a5a2f5f02b6e8e2078c2f3a96e19d8c0879656c25e5bd149f90ccfab87"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_not-executable_80_fullscreen.snap",
+      "case": "an_agent_whose_program_cannot_be_run_says_so",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "1e59d571fe724dd0b2360ca1ea7156c4880e3d757711b93f0adc17974e868dfa"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_not-executable_80_native.snap",
+      "case": "an_agent_whose_program_cannot_be_run_says_so",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "300ce83f03290d742998fe5828a486e641e4cf580a77627af64aa12996cf1557"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_route_40_fullscreen.snap",
+      "case": "the_route_is_confirmed_before_anything_is_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "2d4c76ffdd9c24a136872a0f08617bdc5bbb36b658a894cb3f34587384650b32"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_route_40_native.snap",
+      "case": "the_route_is_confirmed_before_anything_is_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "c070ef388b1192746e0b6505aa6b4471b36755905ae2e615c2903ebb7b403cae"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_route_80_fullscreen.snap",
+      "case": "the_route_is_confirmed_before_anything_is_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "4b42a2b716afbd9b19189fc0ea7a7c9af85865148e6206a544d2724250950432"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_route_80_native.snap",
+      "case": "the_route_is_confirmed_before_anything_is_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "0bcd84d6343c5d06832dc34ff020e924be5561b3d40cb787c489aa4e1d1431c4"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-in_40_fullscreen.snap",
+      "case": "a_signed_in_agent_offers_its_account",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "1f8465af04cdfb86073c5ee9f437ce93e2046b6fbb06bc37a9347078772ccf86"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-in_40_native.snap",
+      "case": "a_signed_in_agent_offers_its_account",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "93760cd55dc80e3ac6d42ff0a17284f00fa0d3f46058019f54bfc818bfaca5e8"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-in_80_fullscreen.snap",
+      "case": "a_signed_in_agent_offers_its_account",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "060f9bdc0e9da8a1b9ca73528948225e8ef6de7e15bf90eef3733a92e26a5e43"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-in_80_native.snap",
+      "case": "a_signed_in_agent_offers_its_account",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "e6cfc9f42d964ce22a31062355bdbf4176e8c4a254a8afc0eb935dfec829f9c3"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-out_40_fullscreen.snap",
+      "case": "a_signed_out_agent_says_how_to_sign_in",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "fc66849d0e700f08a19c52429fecfc0b7b84eb5903a0fdafdd81e5ca14735a80"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-out_40_native.snap",
+      "case": "a_signed_out_agent_says_how_to_sign_in",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "357e6d1b59bda5e12ea09d231ba22583ed5b1a71d0d76814836be52f1567f315"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-out_80_fullscreen.snap",
+      "case": "a_signed_out_agent_says_how_to_sign_in",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "97453efa7d5fdd195437ef9b3ea70b213efec5fd0413fa4b5803f777012f7026"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-out_80_native.snap",
+      "case": "a_signed_out_agent_says_how_to_sign_in",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "e9de88bd21064c738ec32f1bfba4c4f3d28789c8c1358a89f1e441493d6c7a6f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_uncertain_40_fullscreen.snap",
+      "case": "a_run_lost_mid_effect_says_its_work_is_uncertain",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "dabaebc6b2bf8bf212e3a7689e5be49ba2e334e1694760d86efb8921e267bc43"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_uncertain_40_native.snap",
+      "case": "a_run_lost_mid_effect_says_its_work_is_uncertain",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "01b13e70645116a9f0893d0209a5028507d2cc53dedcb328116156152ee024da"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_uncertain_80_fullscreen.snap",
+      "case": "a_run_lost_mid_effect_says_its_work_is_uncertain",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "b86bd12e22849308baeb7a056e9d62d42c9a17c5d748d9ea34be18c6f2070dfc"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_uncertain_80_native.snap",
+      "case": "a_run_lost_mid_effect_says_its_work_is_uncertain",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "e05c72767df3e52416cf6d599591ed030b7ec606675c96c1b5c1b3215385471f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_unverified_40_fullscreen.snap",
+      "case": "an_agent_whose_sign_in_cannot_be_read_says_so_in_one_reason",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "6d2dc320202aad65c4f8ca39c50ae1b63ca361d70b5065a05cd442f9f293b3ca"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_unverified_40_native.snap",
+      "case": "an_agent_whose_sign_in_cannot_be_read_says_so_in_one_reason",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "3dfc8c4f59e86d798d198136e4d1c3895a1fd6c1a592fa9c82abb4757b429634"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_unverified_80_fullscreen.snap",
+      "case": "an_agent_whose_sign_in_cannot_be_read_says_so_in_one_reason",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "26259b7d7edc6f2076fc9735ce760a131ded3761771bbbb7d1beef7ef0532751"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_unverified_80_native.snap",
+      "case": "an_agent_whose_sign_in_cannot_be_read_says_so_in_one_reason",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "160423681ebeefea98cbf4352fb291a4ecc95e6c191d70bb74773c7e1050d7b5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_is_committed_above_a_box_that_is_still_where_it_was.snap",
