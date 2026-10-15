@@ -1475,9 +1475,16 @@ fn a_removal_of_an_instance_the_user_file_does_not_hold_is_refused_unasked() -> 
 }
 
 /// Two instances on Claude Code's default profile, and one on a profile of
-/// its own.
+/// its own, written as an absolute path on each platform.
+#[cfg(not(windows))]
 const SHARED: &str = r#"{
   "externalAgents": {"work": {"driver": "claude", "executable": "claude"}, "spare": {"driver": "claude", "executable": "claude"}, "apart": {"driver": "claude", "executable": "claude", "configDir": "/nowhere/apart"}},
+  "updates": {"check": "auto"}
+}
+"#;
+#[cfg(windows)]
+const SHARED: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}, "spare": {"driver": "claude", "executable": "claude"}, "apart": {"driver": "claude", "executable": "claude", "configDir": "C:/nowhere/apart"}},
   "updates": {"check": "auto"}
 }
 "#;
