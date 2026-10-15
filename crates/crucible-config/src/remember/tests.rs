@@ -5,7 +5,7 @@ use crucible_tools::{Ask, Command, Mode, Remember, Sensitivity, Settled, Verdict
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 
 use crate::document::{Document, Origin};
-use crate::settings::Settings;
+use crate::settings::{Driver, ExternalAgent, Settings};
 
 use super::*;
 
@@ -929,6 +929,93 @@ fn connecting_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
     assert!(matches!(
         connecting("{", FILE, "anthropic", "work"),
         Err(ConfigError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn installing_an_agent_writes_its_block_the_provider_s_access_and_enables_it_last() {
+    let profile = if cfg!(windows) {
+        r"C:\Users\me\.crucible\agents\antigravity"
+    } else {
+        "/home/me/.crucible/agents/antigravity"
+    };
+    for (text, driver, executable, profile) in [
+        ("", Driver::Claude, "claude", None),
+        (
+            "{\n  \"provider\": \"anthropic\"\n}\n",
+            Driver::Claude,
+            "claude",
+            None,
+        ),
+        (
+            r#"{"externalAgents": {"home": {"driver": "claude", "executable": "claude"}}}"#,
+            Driver::Antigravity,
+            "agy_acp_server.par",
+            Some(profile),
+        ),
+    ] {
+        let name = driver.name();
+        let written = installing(
+            text,
+            FILE,
+            "anthropic",
+            &ExternalAgent::unwritten(name, driver, executable, profile),
+        )
+        .unwrap_or_else(|problem| panic!("{text}: {problem}"));
+        let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+        assert_eq!(
+            settings.access("anthropic"),
+            Some(crate::settings::Access::ExternalAgent {
+                instance: name.into()
+            }),
+            "{written}"
+        );
+        let installed = settings
+            .external_agents()
+            .into_iter()
+            .find(|agent| agent.name() == name)
+            .map(|agent| {
+                (
+                    agent.enabled(),
+                    agent.driver(),
+                    agent.executable().to_owned(),
+                    agent.profile().map(str::to_owned),
+                )
+            });
+        assert_eq!(
+            installed,
+            Some((
+                true,
+                driver,
+                executable.to_owned(),
+                profile.map(str::to_owned)
+            )),
+            "{written}"
+        );
+        // Everything the file held before is still held.
+        if let Ok(before) = serde_json::from_str::<Value>(text) {
+            let after: Value = serde_json::from_str(&written).unwrap_or_default();
+            for (key, value) in before.as_object().into_iter().flatten() {
+                if key != "externalAgents" {
+                    assert_eq!(after.get(key), Some(value), "{written}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn installing_an_agent_the_file_already_names_is_refused() {
+    let text =
+        r#"{"externalAgents": {"claude": {"driver": "claude", "executable": "claude-work"}}}"#;
+    assert!(matches!(
+        installing(
+            text,
+            FILE,
+            "anthropic",
+            &ExternalAgent::unwritten("claude", Driver::Claude, "claude", None),
+        ),
+        Err(ConfigError::Unspliceable { .. })
     ));
 }
 

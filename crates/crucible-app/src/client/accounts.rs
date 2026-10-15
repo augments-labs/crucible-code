@@ -38,7 +38,9 @@
 //! | connect, signed in | use it, then connect; the file not written | [`LoginOutcome::ConnectUnsaved`] |
 //! | connect | the agent's route accepted; the yes not written | [`LoginOutcome::ConnectUnsaved`] |
 //! | connect | cancel, back, or nobody | [`LoginOutcome::Undecided`] |
-//! | connect, an instance not named | nothing | [`ErrorCode::InvalidArgument`] |
+//! | connect, an instance the file does not name | nothing | [`ErrorCode::InvalidArgument`] |
+//! | connect, no instance named, no agent shipping | nothing | [`ErrorCode::InvalidArgument`] |
+//! | connect, no instance named | an agent not found, then cancel | [`LoginOutcome::Undecided`] |
 //!
 //! A removal whose write fails after its run was stopped is told only that it
 //! failed: the settings are still there, so the next run starts the agent as
@@ -54,6 +56,13 @@
 //! reported as unverified too, since the instances are already out of use; a
 //! stage the journal refused is not taken.
 //!
+//! A connect that names no instance first asks which shipping agent to go
+//! through, then which of its configured instances where there are several,
+//! and looks for the agent's program without running it: one not found is
+//! said to be so, with what to install. An agent with no configured instance
+//! is given one named after it, run as its usual command, written to the user
+//! file only with the route.
+//!
 //! A connect starts nothing of the agent's before its content-use route has a
 //! yes, and then reads only whether the agent is signed in. Signed in, the
 //! client is asked to use that account and then to confirm the route; not
@@ -61,7 +70,8 @@
 //! signs the agent in where it has one, and may check again, [`CHECKS`] times
 //! in all. Nothing is written before the route is confirmed: then the
 //! provider's `access` names the instance and the instance is enabled, in one
-//! update of the user file, under the scope's journal.
+//! update of the user file, under the scope's journal, the instance's own
+//! settings first where they are new.
 
 use std::path::Path;
 
@@ -72,7 +82,7 @@ use crucible_config::{ConfigError, ExternalAgent};
 use crucible_execution::Authentication;
 use crucible_execution::{Admission, Ending, Failure};
 use crucible_external_harnesses::{
-    Account as Step, Contended, Coordinator, Ended, Journal, Reading, Stage, Work,
+    Account as Step, Contended, Coordinator, Discovery, Ended, Journal, Reading, Stage, Work,
 };
 
 use super::deciding::{Confirmation, Front, confirmed};
@@ -336,15 +346,32 @@ pub async fn account(
             else {
                 return Performed::Refused(ErrorCode::UnknownProvider.into());
             };
-            // Which agent to ask about, where none is named, is a question
-            // this door does not put yet.
-            let Some(agent) = instance.as_ref().and_then(|instance| {
-                desk.switching
-                    .settings
-                    .external_agents()
-                    .into_iter()
-                    .find(|agent| agent.name() == instance.as_str())
-            }) else {
+            let Some(instance) = instance else {
+                if conversation.agents().shipping().next().is_none() {
+                    return Performed::Refused(ErrorCode::InvalidArgument.into());
+                }
+                let Some((agent, row, written)) =
+                    choose(conversation, request, desk, front, served.name).await
+                else {
+                    return Performed::Account(Account::Unconnected);
+                };
+                let asked = Connecting {
+                    provider: served.name,
+                    agent: &agent,
+                    row,
+                    written,
+                };
+                return Performed::Account(
+                    connect(conversation, request, desk, front, &asked).await,
+                );
+            };
+            let Some(agent) = desk
+                .switching
+                .settings
+                .external_agents()
+                .into_iter()
+                .find(|agent| agent.name() == instance.as_str())
+            else {
                 return Performed::Refused(ErrorCode::InvalidArgument.into());
             };
             let Some(row) = crate::backends::REGISTRY.row(agent.driver()) else {
@@ -354,6 +381,7 @@ pub async fn account(
                 provider: served.name,
                 agent: &agent,
                 row,
+                written: true,
             };
             Performed::Account(connect(conversation, request, desk, front, &asked).await)
         }
@@ -557,11 +585,184 @@ async fn sign_out(
 }
 
 /// A connect asked for: the provider to reach, the instance to reach it
-/// through, and the row of that instance's agent.
+/// through, the row of that instance's agent, and whether the user file
+/// already names the instance or it is written with the route.
 struct Connecting<'a> {
     provider: &'static str,
     agent: &'a ExternalAgent,
     row: &'static crate::backends::Row,
+    written: bool,
+}
+
+/// What a connect naming no instance goes through: the agent the client
+/// picks, the instance of it, its row, and whether the user file already
+/// names the instance.
+type Chosen = (ExternalAgent, &'static crate::backends::Row, bool);
+
+/// Asks `front` which shipping agent to reach `provider` through, and which
+/// configured instance of it where there are several, then looks for its
+/// program without starting it; answers nothing where the client cancelled
+/// or answered nothing.
+///
+/// An agent with no configured instance is offered one named after it, run
+/// as its usual command, which is written only with the route. An agent whose
+/// program is not found is said to be so, and may be looked for again or
+/// another picked, [`CHECKS`] times in all for each.
+async fn choose(
+    conversation: &Conversation,
+    request: &Request,
+    desk: &Desk<'_>,
+    front: &mut dyn Front,
+    provider: &str,
+) -> Option<Chosen> {
+    let capabilities = request.capabilities();
+    let rows: Vec<&'static crate::backends::Row> = conversation.agents().shipping().collect();
+    let shown = |row: &crate::backends::Row| {
+        conversation
+            .consent()
+            .and_then(|consent| consent.routes().warned(row.route))
+            .map_or(row.driver.name(), |warned| warned.shown)
+    };
+    for _ in 0..CHECKS {
+        let mut choices: Vec<(String, String)> = rows
+            .iter()
+            .map(|row| {
+                let agent = shown(row);
+                (
+                    agent.to_owned(),
+                    format!("Reach {provider} through {agent}."),
+                )
+            })
+            .collect();
+        choices.push(("Cancel".to_owned(), "Change nothing.".to_owned()));
+        let agents = Confirmation {
+            asks: format!("Which agent should {provider} be reached through?"),
+            facts: vec![
+                "Crucible looks for the agent's program; nothing is started or written yet."
+                    .to_owned(),
+            ],
+            choices,
+        };
+        let row = *rows.get(confirmed(capabilities, front, &agents).await?)?;
+        let Some((agent, written)) = instance(desk, front, capabilities, row, shown(row)).await?
+        else {
+            continue;
+        };
+        if found(
+            conversation,
+            front,
+            capabilities,
+            &agent,
+            (shown(row), command(row)),
+        )
+        .await?
+        {
+            return Some((agent, row, written));
+        }
+    }
+    None
+}
+
+/// The instance of `row`'s agent, shown as `agent`, a connect goes through:
+/// the one configured, one asked for of several, or one named after the
+/// agent where none is; `Some(None)` where the client went back to the list
+/// of agents, and nothing where it cancelled or answered nothing.
+async fn instance(
+    desk: &Desk<'_>,
+    front: &mut dyn Front,
+    capabilities: crucible_client_api::Capabilities,
+    row: &crate::backends::Row,
+    agent: &str,
+) -> Option<Option<(ExternalAgent, bool)>> {
+    let mut configured: Vec<ExternalAgent> = desk
+        .switching
+        .settings
+        .external_agents()
+        .into_iter()
+        .filter(|configured| configured.driver() == row.driver)
+        .collect();
+    if configured.len() > 1 {
+        let mut choices: Vec<(String, String)> = configured
+            .iter()
+            .map(|one| {
+                (
+                    one.name().to_owned(),
+                    format!("Run as {}; {}", one.executable(), profiled(one)),
+                )
+            })
+            .collect();
+        choices.push(("Go back".to_owned(), "Choose another agent.".to_owned()));
+        let instances = Confirmation {
+            asks: format!("Which {agent} should be used?"),
+            facts: vec![format!("{agent} is configured {} times.", configured.len())],
+            choices,
+        };
+        let picked = confirmed(capabilities, front, &instances).await?;
+        return Some((picked < configured.len()).then(|| (configured.swap_remove(picked), true)));
+    }
+    if let Some(only) = configured.pop() {
+        return Some(Some((only, true)));
+    }
+    let name = row.driver.name();
+    // A driver whose agent shares its usual home with another program of its
+    // vendor is given a directory of its own beside the user file.
+    let profile = if row.driver.profile_needed() {
+        let home = desk.switching.choosing.parent()?;
+        Some(home.join("agents").join(name).to_str()?.to_owned())
+    } else {
+        None
+    };
+    Some(Some((
+        ExternalAgent::unwritten(name, row.driver, command(row), profile.as_deref()),
+        false,
+    )))
+}
+
+/// The command `row`'s agent is run as: the same in every mode, and asking
+/// is a mode every row runs in.
+fn command(row: &crate::backends::Row) -> &'static str {
+    (row.dialect)(crucible_tools::Mode::default())
+        .map_or(row.driver.name(), |dialect| dialect.program())
+}
+
+/// Whether `agent`'s program, its agent shown and run as `named` says, is
+/// installed: told where it is not, the client may look again until it is or
+/// go back to the list of agents; nothing where it cancelled or answered
+/// nothing.
+async fn found(
+    conversation: &Conversation,
+    front: &mut dyn Front,
+    capabilities: crucible_client_api::Capabilities,
+    agent: &ExternalAgent,
+    (shown, command): (&str, &str),
+) -> Option<bool> {
+    for _ in 0..CHECKS {
+        let discovery = conversation.steps().map_or(Discovery::Missing, |steps| {
+            steps.discover(agent.executable())
+        });
+        let Some([said, next]) = discovery.refusal(shown, command) else {
+            return Some(true);
+        };
+        let missing = Confirmation {
+            asks: said,
+            facts: vec![
+                next,
+                format!("Agent: {}, run as {}.", agent.name(), agent.executable()),
+            ],
+            choices: vec![
+                (
+                    CHECK_AGAIN.to_owned(),
+                    "Look for the agent's program again.".to_owned(),
+                ),
+                ("Go back".to_owned(), "Choose another agent.".to_owned()),
+            ],
+        };
+        match confirmed(capabilities, front, &missing).await? {
+            0 => {}
+            _ => return Some(false),
+        }
+    }
+    None
 }
 
 /// Reaches the provider asked for through its instance once the agent reads
@@ -578,6 +779,7 @@ async fn connect(
         provider,
         agent,
         row,
+        written,
     } = *asked;
     let capabilities = request.capabilities();
     // Nothing of the agent's is started before its route has a yes, and a yes
@@ -612,7 +814,7 @@ async fn connect(
         match confirmed(capabilities, front, &question).await {
             Some(0) if signed => {
                 match confirmed(capabilities, front, &routing(agent, provider, keyed)).await {
-                    Some(0) => return commit(desk, provider, agent),
+                    Some(0) => return commit(desk, provider, agent, written),
                     // Going back is one level up: the sign-in is read again.
                     Some(_) => {}
                     None => return Account::Unconnected,
@@ -627,8 +829,9 @@ async fn connect(
 }
 
 /// Writes down that `provider` is reached through `agent`, and that `agent`
-/// takes new work, under its scope's journal.
-fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent) -> Account {
+/// takes new work, under its scope's journal; `agent` itself too, where the
+/// user file was not `written` with it.
+fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent, written: bool) -> Account {
     let mut coordinator = match coordinating(desk.switching.choosing, agent) {
         Ok(coordinator) => coordinator,
         Err(contended) => return Account::Contended(contended),
@@ -640,7 +843,12 @@ fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent) -> Account {
     if let Err(contended) = slot.advance(Stage::Committing) {
         return Account::Contended(contended);
     }
-    if let Err(problem) = remember::connecting(desk.switching.choosing, provider, agent.name()) {
+    let wrote = if written {
+        remember::connecting(desk.switching.choosing, provider, agent.name())
+    } else {
+        remember::installing(desk.switching.choosing, provider, agent)
+    };
+    if let Err(problem) = wrote {
         let _ = slot.finish(Ending::Failed);
         return Account::ConnectUnsaved(problem);
     }

@@ -171,6 +171,20 @@ impl ExternalAgent {
         self.profile.as_deref()
     }
 
+    /// An instance named `name` of `driver`, run as `executable` with its
+    /// profile directory at `profile`, as a configuration that has not been
+    /// written yet would state it, taking no new work until it is.
+    #[must_use]
+    pub fn unwritten(name: &str, driver: Driver, executable: &str, profile: Option<&str>) -> Self {
+        Self {
+            name: name.into(),
+            enabled: false,
+            driver,
+            executable: executable.into(),
+            profile: profile.map(Into::into),
+        }
+    }
+
     fn read(name: &str, record: &Value) -> Option<Self> {
         let driver = Driver::of(record.get("driver")?.as_str()?)?;
         Some(Self {
