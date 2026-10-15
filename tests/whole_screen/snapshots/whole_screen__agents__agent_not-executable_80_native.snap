@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 33,0 scrollback 0
+80x40 cursor 35,0 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -19,14 +19,16 @@ expression: picture
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |› /login                                                                        |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Log in                                                                          |
 |                                                                                |
+|Found                                                                           |
+|/scratch------------------------------------------------------------------------|
+|--------------------------------------------------------------------------------|
+|--------------------------------------------------------------------------------|
+|/a-directory-to-be-working-in/and-something-below-that-again/workspace/agents/cl|
+|aude but it is not executable.                                                  |
 |Make it executable, then choose Check again.                                    |
 |Agent: claude, run as claude.                                                   |
 |                                                                                |
@@ -37,8 +39,6 @@ expression: picture
 |  Choose another agent.                                                         |
 |                                                                                |
 |esc to go back                                                                  |
-|                                                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

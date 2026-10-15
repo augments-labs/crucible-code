@@ -783,9 +783,12 @@ async fn found(
         let Some([said, next]) = discovery.refusal(shown, command) else {
             return Some(true);
         };
+        // Why it cannot start is a fact, which the terminal keeps however short
+        // its window, rather than the question it gives up first.
         let missing = Confirmation {
-            asks: said,
+            asks: format!("{shown} cannot be started."),
             facts: vec![
+                said,
                 next,
                 format!("Agent: {}, run as {}.", agent.name(), agent.executable()),
             ],

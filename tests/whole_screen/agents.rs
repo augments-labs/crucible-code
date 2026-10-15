@@ -147,7 +147,7 @@ fn an_agent_whose_program_is_not_installed_says_so() {
         |window| {
             agents(window);
             takes(window, "Antigravity");
-            window.types_until("", "Check again");
+            window.types_until("", "Not installed");
         },
     );
 }
@@ -170,7 +170,9 @@ fn an_agent_whose_program_cannot_be_run_says_so() {
             std::fs::set_permissions(&program, permissions).expect("a file nobody may run");
             agents(window);
             takes(window, "Claude Code");
-            window.types_until("", "Check again");
+            // Why it cannot run is the panel's grounds, kept however short
+            // the window is.
+            window.types_until("", "is not executable");
         },
     );
 }

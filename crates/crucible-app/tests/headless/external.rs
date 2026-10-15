@@ -2330,7 +2330,10 @@ fn a_connect_to_an_agent_not_installed_says_so_and_writes_nothing() -> Result<()
     assert_eq!(put, [agents.clone(), missing.clone(), missing, agents]);
     let told = picking.put.get(1).is_some_and(|put| match put {
         Pending::Account { asks, facts, .. } => {
-            asks.as_str().starts_with("Not installed")
+            asks.as_str() == "Antigravity cannot be started."
+                && facts
+                    .first()
+                    .is_some_and(|fact| fact.as_str().starts_with("Not installed"))
                 && facts
                     .iter()
                     .any(|fact| fact.as_str() == "Install Antigravity, then choose Check again.")
@@ -2385,7 +2388,8 @@ fn a_connect_to_an_agent_whose_program_cannot_run_says_so_and_writes_nothing() -
     let said = format!("Found {} but it is not executable.", program.display());
     let told = picking.put.get(1).is_some_and(|put| match put {
         Pending::Account { asks, facts, .. } => {
-            asks.as_str() == said
+            asks.as_str() == "Claude Code cannot be started."
+                && facts.first().is_some_and(|fact| fact.as_str() == said)
                 && facts
                     .iter()
                     .any(|fact| fact.as_str() == "Make it executable, then choose Check again.")
@@ -3025,7 +3029,8 @@ fn is_put(pending: &Pending, put: crucible_app::proof::accounts::Put) -> bool {
         }
         (
             Put::Missing {
-                asks: begins,
+                asks: question,
+                why,
                 install,
                 answer,
             },
@@ -3036,7 +3041,10 @@ fn is_put(pending: &Pending, put: crucible_app::proof::accounts::Put) -> bool {
                 ..
             },
         ) => {
-            asks.as_str().starts_with(begins)
+            asks.as_str() == question
+                && facts
+                    .first()
+                    .is_some_and(|fact| fact.as_str().starts_with(why))
                 && facts.iter().any(|fact| fact.as_str() == install)
                 && choices.iter().any(|choice| choice.name.as_str() == answer)
         }

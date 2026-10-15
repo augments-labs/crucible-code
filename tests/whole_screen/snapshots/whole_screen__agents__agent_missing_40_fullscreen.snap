@@ -23,15 +23,15 @@ expression: picture
 |                                        |
 |                                        |
 |                                        |
-|                                        |
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
 |                                        |
+|Antigravity cannot be started.          |
+|                                        |
 |Not installed: no antigravity command on|
 |PATH and none at the configured         |
 |executable.                             |
-|                                        |
 |Install Antigravity, then choose Check  |
 |again.                                  |
 |Agent: antigravity, run as antigravity. |
