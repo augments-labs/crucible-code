@@ -232,9 +232,11 @@ pub fn reopening(
         .filter(|route| route.same_route(opened))
         .ok_or(Unresumable::Rerouted)?;
     if !entry.enabled() {
-        return Err(Unresumable::Unstartable(
-            "it is disconnected; connect it again".to_owned(),
-        ));
+        return Err(Unresumable::Unstartable(format!(
+            "it is disconnected: set externalAgents.{}.enabled to true in the user \
+             configuration file",
+            entry.name()
+        )));
     }
     let agent = startable(entry, registry, lookup, mode).map_err(Unresumable::Unstartable)?;
     Ok((agent, route))

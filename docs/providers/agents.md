@@ -42,7 +42,9 @@ directly. Taking one offers *Connect* (where a provider is being asked),
 *Disconnect from Crucible* (where it is enabled), *Sign out of the agent* and
 *Remove integration settings*; each then asks its own question, naming the
 agent, its profile and the work it has running, and Escape there changes
-nothing.
+nothing. Disconnecting, or signing out, writes the agent's `enabled: false`
+and takes away the `access` of every provider reached through it, in one
+update, so the next session asks that provider directly.
 
 Connecting the provider a conversation is asking through an agent moves that
 conversation onto the agent at once, in a new session bound to the agent with

@@ -51,7 +51,9 @@
 //! A sign-out takes every instance sharing the credential scope out of use
 //! before the agent's own program is run: their runs in this conversation are
 //! stopped, and `enabled: false` is written for each in one update of the
-//! user file. Only once that write has landed is the agent's logout run, and
+//! user file, with the `access` of every provider reached through any of
+//! them, so the next start asks those providers directly. A disconnect writes
+//! the same for its one instance. Only once that write has landed is the agent's logout run, and
 //! then a status step after it; where the write fails, no step is run. It is
 //! reported signed out only where both steps read signed out, and otherwise as
 //! unverified. Once the write has landed, a journal that cannot be kept is
@@ -484,7 +486,9 @@ fn disconnecting(agent: &ExternalAgent, on: Option<&str>) -> Confirmation {
         choices: vec![
             (
                 DISCONNECT.to_owned(),
-                "Crucible stops using this agent; its sign-in is left as it is.".to_owned(),
+                "Crucible stops using this agent, and a provider reached through it is asked \
+                 directly from the next session; its sign-in is left as it is."
+                    .to_owned(),
             ),
             ("Cancel".to_owned(), "Change nothing.".to_owned()),
         ],
@@ -557,7 +561,9 @@ fn signing_out(agent: &ExternalAgent, sharing: &[ExternalAgent], on: Option<&str
             ),
             (
                 DISCONNECT_INSTEAD.to_owned(),
-                "Crucible stops using this instance; its sign-in is left as it is.".to_owned(),
+                "Crucible stops using this instance, and a provider reached through it is asked \
+                 directly from the next session; its sign-in is left as it is."
+                    .to_owned(),
             ),
             ("Cancel".to_owned(), "Change nothing.".to_owned()),
         ],
@@ -1117,7 +1123,9 @@ async fn remove(
 }
 
 /// Takes `agent` out of use from Crucible: refused new work, its run in this
-/// conversation stopped, and `enabled: false` written down.
+/// conversation stopped, and `enabled: false` written down with every
+/// provider's `access` through it taken away, so the next start asks that
+/// provider directly.
 async fn disconnect(
     conversation: &mut Conversation,
     desk: &Desk<'_>,

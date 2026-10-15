@@ -552,8 +552,9 @@ fn started_on(
         return Err(unstartable(
             instance,
             format!(
-                "it is disconnected; connect it again, or remove providers.{provider}.access to \
-                 reach {provider} directly"
+                "it is disconnected: set externalAgents.{instance}.enabled to true in the user \
+                 configuration file, or remove providers.{provider}.access there to reach \
+                 {provider} directly"
             ),
         ));
     }

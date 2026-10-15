@@ -217,7 +217,7 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 | --- | --- |
 | `driver` | Which agent it is: `claude` or `antigravity`. Required. |
 | `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
-| `enabled` | `false` keeps the entry and sends it no new work. Defaults to `true`. |
+| `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
 | `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
 | `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. |
