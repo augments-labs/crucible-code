@@ -550,6 +550,8 @@ fn a_provider_whose_access_names_an_agent_starts_the_run_on_the_agent_s_route() 
         .1
         .expect("a log bound to the route");
     assert_eq!((route.driver(), route.instance()), ("claude", "mine"));
+    // The kept runner records nowhere, so the route's log is the only one.
+    assert_eq!(logs_in(&sample), 1, "a log no route is bound to was opened");
 
     let agent = crate::backends::REGISTRY
         .row(crucible_config::Driver::Claude)
@@ -577,6 +579,18 @@ fn a_provider_whose_access_names_an_agent_starts_the_run_on_the_agent_s_route() 
         !crucible_external_harnesses::fake_peer::heard(&sample.root().join("peer")).is_empty(),
         "the turn never reached the agent"
     );
+}
+
+/// How many session logs `sample` holds.
+fn logs_in(sample: &Sample) -> usize {
+    std::fs::read_dir(sample.logs())
+        .expect("the sessions directory")
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .is_ok_and(|entry| entry.path().extension().is_some_and(|it| it == "jsonl"))
+        })
+        .count()
 }
 
 /// Whether a `/login` for `provider` by `access` wrote the user file, and the
@@ -739,6 +753,61 @@ fn a_session_an_agent_ran_is_continued_on_its_route() {
 
     assert_eq!(resumed.session().id(), Some(&id));
     assert_eq!(resumed.serving(), None);
+}
+
+#[test]
+fn a_session_an_agent_ran_is_continued_on_its_route_by_the_agent_s_own_session() {
+    // The first turn after the resume starts the agent on the session it
+    // kept, by the name the log recorded, and the log is claimed once.
+    let sample = Sample::new("agent-routed-resume-turn");
+    let services = Services::new();
+    let script = crucible_external_harnesses::fake_peer::Script::of([
+        crucible_external_harnesses::fake_peer::scripts::claude::clean(),
+    ]);
+    let first = on_the_agent(&sample, &services, &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let id = first.session().id().expect("an id").clone();
+    let route = first.session().route().expect("the run's route").clone();
+    assert!(
+        first
+            .session()
+            .external(&crucible_session::ExternalRef::new("mine", "earlier").expect("a name"))
+    );
+    drop(first);
+
+    let mut resumed = on_the_agent(&sample, &services, &script, "", Resuming::Exact(id.clone()))
+        .expect("the session continued on its route");
+    let held = Session::reopen_routed(&sample.logs(), &sample.workspace(), &id, &route).map(|_| ());
+    assert!(held.is_err(), "the session was left unclaimed");
+    let agent = crate::backends::REGISTRY
+        .row(crucible_config::Driver::Claude)
+        .expect("Claude Code's row");
+    resumed
+        .consent()
+        .expect("the run's consent")
+        .give(agent.route);
+    let (events, _seen) = std::sync::mpsc::channel();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let turned = {
+        let run = resumed.starting(&events, &cancel, &steer, &aside);
+        services
+            .runtime()
+            .handle()
+            .expect("the run's runtime")
+            .block_on(resumed.turn("again", Box::new([]), &mut Nobody, &run))
+    };
+
+    assert!(
+        matches!(turned, Ok(crucible_runner::Turned::Ran(_))),
+        "{turned:?}"
+    );
+    let argued = crucible_external_harnesses::fake_peer::argued(&sample.root().join("peer"));
+    assert!(
+        argued
+            .last()
+            .is_some_and(|start| start.windows(2).any(|pair| pair == ["--resume", "earlier"])),
+        "{argued:?}"
+    );
 }
 
 /// A run asking anthropic, whose block is `anthropic`, with the agent `mine`
