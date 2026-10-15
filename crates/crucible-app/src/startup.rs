@@ -442,9 +442,10 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
         .following(following))
 }
 
-/// A run asked of a provider whose access names an installed agent: the
-/// agent, the entry it is, the route its session is bound to, the session
-/// picked up on that route, and the policy its runs are confined by.
+/// A run on an installed agent's route, asked of a provider whose access
+/// names the agent or continuing a session the agent ran: the agent, the
+/// entry it is, the route its session is bound to, the session picked up on
+/// that route, and the policy its runs are confined by.
 struct OnAgent {
     /// The agent.
     agent: launching::Agent,

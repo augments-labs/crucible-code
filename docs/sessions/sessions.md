@@ -115,11 +115,13 @@ rather than silently starting a new session.
 
 A session an installed agent ran is continued on that agent's route, whatever
 the provider asked is reached by: `--continue` and `--resume` start the run on
-the agent the session names, with no provider or credential looked for, as
-long as `externalAgents` still names it with the same driver and profile and it
-is connected. Where it no longer does, they refuse the session, naming the
+the agent the session names, with no provider or credential needed, as long
+as `externalAgents` still names it with the same driver and profile and it is
+connected. Where it no longer does, they refuse the session, naming the
 agent's configured name, and its history is kept as it was, with nothing cut
-from or appended to its log; start a new session to carry on. `/resume` on a
+from or appended to its log; start a new session to carry on. An agent whose
+program cannot be found, or that has no launch in the run's mode, is refused
+the way a new session on it is. `/resume` on a
 provider's model refuses it the same way. A log whose line naming the agent is
 damaged or cut short is refused as a log that cannot be read, and
 `crucible sessions list` counts it among the logs it could not read, rather

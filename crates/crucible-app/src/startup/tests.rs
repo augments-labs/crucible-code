@@ -719,6 +719,42 @@ fn a_session_an_agent_ran_is_continued_on_its_route_whatever_the_provider_asked_
 }
 
 #[test]
+fn a_session_an_agent_ran_is_not_continued_once_its_agent_names_another_profile() {
+    // The same entry, now opening the agent's sessions somewhere else: the
+    // agent there never ran this one, so its history is kept as it was.
+    let sample = Sample::new("agent-routed-resume-profile");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let (path, id) = (
+        first.session().path().to_owned(),
+        first.session().id().expect("an id").clone(),
+    );
+    drop(first);
+    let before = std::fs::read(&path).expect("the log");
+    let profile = serde_json::Value::from(sample.root().join("elsewhere").to_string_lossy());
+
+    let Err(problem) = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        &format!(r#", "configDir": {profile}"#),
+        Resuming::Exact(id),
+    ) else {
+        panic!("a session was continued on an agent that never ran it");
+    };
+
+    assert!(
+        matches!(
+            &problem,
+            AppError::Session(crucible_session::SessionError::Rerouted { .. })
+        ),
+        "{problem:?}"
+    );
+    assert_eq!(std::fs::read(&path).expect("the log"), before);
+}
+
+#[test]
 fn a_session_an_agent_ran_is_not_continued_on_its_route_once_the_agent_is_disconnected() {
     let sample = Sample::new("agent-routed-resume-disconnected");
     let script = crucible_external_harnesses::fake_peer::Script::of([]);
