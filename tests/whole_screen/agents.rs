@@ -434,6 +434,76 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
     }
 }
 
+/// Fails where `/model` or `/effort` on an agent's route opens a shelf of the
+/// providers' models or a ladder of rungs, none of which the agent is asked
+/// for, rather than saying the agent chooses its own.
+#[test]
+fn model_and_effort_on_an_agent_route_say_the_agent_chooses() {
+    for native in [false, true] {
+        for columns in [80, 40] {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agent-model-{columns}-{mode}");
+            let script = Script::of(signed_in([claude::held_open()]));
+            let vendor = Vendor::answering("Not asked.");
+            let mut window = Watched::capturing_agents(
+                &case,
+                (columns, 40),
+                native,
+                &vendor,
+                (Some(&script), ""),
+            );
+            connected(&mut window);
+            let joined = |picture: &str| {
+                picture
+                    .replace("|\n|", " ")
+                    // The full screen's scroll bar stands between a folded
+                    // line's halves.
+                    .replace('┃', " ")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let said = |window: &Watched| joined(&window.picture());
+            let chooses = "runs on the agent claude, which chooses its own model";
+
+            let thinks = format!("{chooses} and how hard it thinks");
+
+            window.types("/model\r");
+            let model = said(&window);
+            assert!(model.contains(chooses), "{case}: {model}");
+            assert!(!model.contains("a model, or a vendor"), "{case}: {model}");
+
+            window.types("/model claude-test-1\r");
+            let named = said(&window);
+            assert_eq!(named.matches(chooses).count(), 2, "{case}: {named}");
+
+            window.types("/effort\r");
+            let effort = said(&window);
+            assert!(effort.contains(&thinks), "{case}: {effort}");
+            assert!(!effort.contains("Smarter"), "{case}: {effort}");
+
+            window.types("/effort high\r");
+            let rung = said(&window);
+            assert_eq!(rung.matches(&thinks).count(), 2, "{case}: {rung}");
+
+            // Mid-turn the shelf would be stood over the running turn, and its
+            // pick held for a next turn the agent would answer anyway.
+            window.types_and_catches_where("Keep working.\r", "a turn under way", |picture| {
+                picture.contains("esc to interrupt")
+            });
+            window.types_and_catches_where("/model\r", "said over the turn", |picture| {
+                joined(picture).matches(chooses).count() == 5
+            });
+            let running = said(&window);
+            window.types_until("\x1b", "! stopped");
+            assert!(
+                !running.contains("a model, or a vendor"),
+                "{case}: {running}"
+            );
+        }
+    }
+}
+
 /// Fails where `/usage`, or the Usage tab of `/settings`, over a running turn
 /// on an agent's route draws a native row, a plan limit or nothing spent,
 /// rather than what the agent reported of the turn before, headed as its

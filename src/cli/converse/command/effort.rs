@@ -26,6 +26,9 @@
 //! What is taken is written down beside the model, under the same provider, for
 //! the same reason: how hard to think is the same answer every time this
 //! machine is used, and asking it once a session is asking it for ever.
+//!
+//! An installed agent is asked at no rung, so on its route this says the agent
+//! chooses rather than standing a ladder.
 
 use crucible_app::Conversation;
 use crucible_app::Settled;
@@ -40,7 +43,7 @@ use crate::cli::converse::picking::{self, Taken};
 use crucible_app::providers::rungs;
 use crucible_app::switching::Rung;
 
-use super::{Terms, say};
+use super::{Terms, chosen_by_agent, say};
 
 /// What escape leaves behind, in place of the listing it used to write.
 const LEFT: &str = "cancelled, no rung taken";
@@ -85,7 +88,8 @@ fn title(model: &str, glyphs: Glyphs) -> String {
 const OPENS_ON: Effort = Effort::High;
 
 /// Runs it: the rung named, one taken off the ladder, or the rung in force and
-/// the lines that ask for the others.
+/// the lines that ask for the others. On an installed agent's route, which
+/// chooses how hard it thinks, it says so and does none of these.
 ///
 /// `keys` is whether there is a keyboard to walk a ladder with. Down a pipe
 /// there is not, and a ladder waiting for a key nobody can press is a session
@@ -102,6 +106,10 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
+    let execution = crucible_app::client::execution(conversation);
+    if let Some(said) = chosen_by_agent(&execution, true) {
+        return say(renderer, &said);
+    }
     // A rung is asked of a model, so the ladder is stood over one by name and
     // there has to be one. Without a provider there is nobody to write it under
     // either, and the two want different sentences: one says set a key, the

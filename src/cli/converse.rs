@@ -1540,7 +1540,9 @@ impl Turn<'_, '_> {
             effort: self.says.effort,
             pace: self.says.pace,
         };
-        let picked = command::deferred(renderer, self.terms, current, command, &mut |renderer| {
+        let execution = self.execution.clone();
+        let asked = (current, &execution);
+        let picked = command::deferred(renderer, self.terms, asked, command, &mut |renderer| {
             self.drain(renderer);
             Ok(())
         })?;
