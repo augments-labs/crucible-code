@@ -8,6 +8,9 @@ use crate::cli::converse::tests::{asking_plan, plain, stalled_plan};
 use crucible_tui::Recording;
 use std::sync::atomic::Ordering;
 
+/// The route a provider's own model is asked on.
+const NATIVE: api::Execution = api::Execution::Native;
+
 /// Thursday 22 October 2026, noon UTC.
 const NOW: i64 = 1_792_670_400;
 /// 15:40 the same day.
@@ -204,7 +207,7 @@ fn panel(
     glyphs: Glyphs,
     clock: &Clock,
 ) -> Vec<Row> {
-    let rows = body(heading, usage, asking, columns, glyphs, clock);
+    let rows = body(heading, usage, &NATIVE, asking, columns, glyphs, clock);
     framed(rows, columns, glyphs, "esc to close".to_owned())
 }
 
@@ -272,7 +275,15 @@ fn usage_with_a_weekly_window_is_the_mockup_at_80_columns() {
 
 #[test]
 fn usage_stands_every_reported_window_in_the_fixed_order() {
-    let rows = body("", &every_window(), None, 80, Glyphs::Unicode, &clock());
+    let rows = body(
+        "",
+        &every_window(),
+        &NATIVE,
+        None,
+        80,
+        Glyphs::Unicode,
+        &clock(),
+    );
     let art = art(&rows);
     let limits = art
         .iter()
@@ -302,6 +313,7 @@ fn usage_with_no_windows_reported_says_so_and_a_price_is_a_sum() {
     let rows = body(
         "anthropic · API key",
         &keyed(),
+        &NATIVE,
         None,
         80,
         Glyphs::Unicode,
@@ -331,6 +343,88 @@ fn usage_with_no_windows_reported_says_so_and_a_price_is_a_sum() {
     let last = rows.last().unwrap();
     assert_eq!(tone(last, "limits not reported"), Some(Slot::Quiet));
     assert_eq!(tone(rows.get(3).unwrap(), "$1.84"), Some(Slot::Plain));
+}
+
+/// The route an installed agent configured as `claude` runs the turns on.
+fn agent() -> api::Execution {
+    api::Execution::Instance(Name::new("claude").unwrap())
+}
+
+#[test]
+fn usage_on_an_agents_route_heads_its_figures_as_the_agents_report() {
+    let rows = body(
+        "claude",
+        &keyed(),
+        &agent(),
+        None,
+        80,
+        Glyphs::Unicode,
+        &clock(),
+    );
+
+    // No API time or lines changed: the agent reports neither. No plan limit
+    // either, and the cost is the agent's sum, never a native price.
+    assert_eq!(
+        art(&rows),
+        [
+            "Usage · claude",
+            "",
+            "Session · as claude reported it",
+            "  Total cost       $1.84",
+            "  Wall time        38m 05s",
+            "  Tokens           1.42M in · 38.1k out · 1.21M cache read · 92.4k cache write",
+            "",
+            "Context",
+            &format!("  {}  38% used", bar(25, 66)),
+            "",
+            "Plan limits",
+            "  not reported by agents",
+        ]
+    );
+}
+
+#[test]
+fn usage_on_an_agents_route_draws_no_plan_limit_it_was_handed() {
+    for columns in [80, 40] {
+        let rows = body(
+            "claude",
+            &every_window(),
+            &agent(),
+            Some("anthropic"),
+            columns,
+            Glyphs::Unicode,
+            &clock(),
+        );
+        assert_eq!(
+            plan_limits(&rows),
+            ["Plan limits", "  not reported by agents"],
+            "at {columns}"
+        );
+        let art = art(&rows);
+        assert!(
+            !art.iter()
+                .any(|row| row.contains("API time") || row.contains("Lines changed")),
+            "at {columns}: {art:#?}"
+        );
+        assert_eq!(
+            art.get(..3),
+            Some(&["Usage · claude", "", "Session · as claude reported it"].map(String::from)[..]),
+            "at {columns}"
+        );
+    }
+}
+
+#[test]
+fn the_heading_on_an_agents_route_names_the_agent_not_a_native_credential() {
+    let native = heading(Some("anthropic"), Some("API key"), &NATIVE, Glyphs::Unicode);
+    assert_eq!(native, "anthropic · API key");
+    let routed = heading(
+        Some("anthropic"),
+        Some("API key"),
+        &agent(),
+        Glyphs::Unicode,
+    );
+    assert_eq!(routed, "claude");
 }
 
 #[test]
@@ -431,6 +525,7 @@ fn usage_draws_with_ascii_where_the_font_has_no_blocks() {
     let rows = body(
         "openai - ChatGPT sign-in",
         &weekly(),
+        &NATIVE,
         None,
         80,
         Glyphs::Ascii,
@@ -557,7 +652,15 @@ fn a_reset_already_past_says_the_window_started_again_since_the_reading() {
     let mut usage = weekly();
     usage.limits = plan(vec![limit(Window::Weekly, 31, last_monday)]);
     for columns in [40, 80] {
-        let rows = art(&body("", &usage, None, columns, Glyphs::Unicode, &guessed));
+        let rows = art(&body(
+            "",
+            &usage,
+            &NATIVE,
+            None,
+            columns,
+            Glyphs::Unicode,
+            &guessed,
+        ));
         let line = rows
             .iter()
             .find(|row| row.contains("since passed"))
@@ -575,7 +678,7 @@ fn usage_with_no_window_known_says_so_in_place_of_the_bar() {
     let mut usage = keyed();
     usage.context.left = None;
     usage.context.window = None;
-    let rows = body("", &usage, None, 80, Glyphs::Unicode, &clock());
+    let rows = body("", &usage, &NATIVE, None, 80, Glyphs::Unicode, &clock());
 
     assert!(art(&rows).contains(&"  window not known".to_owned()));
 }
@@ -751,7 +854,15 @@ fn usage_follows_the_colour_rule() {
 
 #[test]
 fn usage_draws_a_model_group_under_the_plan_wide_windows_as_the_mockup_does() {
-    let rows = body("", &with_a_group(), None, 80, Glyphs::Unicode, &clock());
+    let rows = body(
+        "",
+        &with_a_group(),
+        &NATIVE,
+        None,
+        80,
+        Glyphs::Unicode,
+        &clock(),
+    );
 
     assert_eq!(
         plan_limits(&rows),
@@ -777,7 +888,15 @@ fn usage_draws_a_model_group_under_the_plan_wide_windows_as_the_mockup_does() {
 
 #[test]
 fn usage_at_40_columns_stands_a_model_group_under_the_plan_wide_windows() {
-    let rows = body("", &with_a_group(), None, 40, Glyphs::Unicode, &clock());
+    let rows = body(
+        "",
+        &with_a_group(),
+        &NATIVE,
+        None,
+        40,
+        Glyphs::Unicode,
+        &clock(),
+    );
 
     assert_eq!(
         plan_limits(&rows),
@@ -801,7 +920,15 @@ fn usage_at_40_columns_stands_a_model_group_under_the_plan_wide_windows() {
 
 #[test]
 fn usage_counts_widen_the_figure_column_and_unlimited_has_no_bar() {
-    let rows = body("", &counted_only(), None, 80, Glyphs::Unicode, &clock());
+    let rows = body(
+        "",
+        &counted_only(),
+        &NATIVE,
+        None,
+        80,
+        Glyphs::Unicode,
+        &clock(),
+    );
 
     // The groups follow the heading directly, and a model the plan does not
     // include is left out, name and all.
@@ -823,7 +950,15 @@ fn usage_counts_widen_the_figure_column_and_unlimited_has_no_bar() {
     let unlimited = rows.last().unwrap();
     assert_eq!(tone(unlimited, "unlimited"), Some(Slot::Quiet));
 
-    let narrow = body("", &counted_only(), None, 40, Glyphs::Unicode, &clock());
+    let narrow = body(
+        "",
+        &counted_only(),
+        &NATIVE,
+        None,
+        40,
+        Glyphs::Unicode,
+        &clock(),
+    );
     assert_eq!(
         plan_limits(&narrow),
         [
@@ -866,6 +1001,7 @@ fn usage_while_asking_says_so_last_in_the_block() {
         let rows = body(
             "",
             &weekly(),
+            &NATIVE,
             Some("openai"),
             columns,
             Glyphs::Unicode,
@@ -885,6 +1021,7 @@ fn usage_while_asking_says_so_last_in_the_block() {
         let alone = body(
             "",
             &keyed(),
+            &NATIVE,
             Some("openai"),
             columns,
             Glyphs::Unicode,
@@ -897,11 +1034,20 @@ fn usage_while_asking_says_so_last_in_the_block() {
 #[test]
 fn usage_with_more_limits_than_crossed_says_so_below_the_block_and_over_asking() {
     for columns in [80, 40, 12] {
-        let rows = body("", &with_more(), None, columns, Glyphs::Unicode, &clock());
+        let rows = body(
+            "",
+            &with_more(),
+            &NATIVE,
+            None,
+            columns,
+            Glyphs::Unicode,
+            &clock(),
+        );
         let drawn = plan_limits(&rows);
         let mut whole = plan_limits(&body(
             "",
             &with_a_group(),
+            &NATIVE,
             None,
             columns,
             Glyphs::Unicode,
@@ -919,6 +1065,7 @@ fn usage_with_more_limits_than_crossed_says_so_below_the_block_and_over_asking()
         let asking = plan_limits(&body(
             "",
             &with_more(),
+            &NATIVE,
             Some("openai"),
             columns,
             Glyphs::Unicode,
@@ -932,7 +1079,15 @@ fn usage_with_more_limits_than_crossed_says_so_below_the_block_and_over_asking()
 #[test]
 fn usage_with_neither_a_limit_nor_a_question_out_says_none_were_reported() {
     for columns in [80, 40] {
-        let rows = body("", &keyed(), None, columns, Glyphs::Unicode, &clock());
+        let rows = body(
+            "",
+            &keyed(),
+            &NATIVE,
+            None,
+            columns,
+            Glyphs::Unicode,
+            &clock(),
+        );
         assert_eq!(
             plan_limits(&rows),
             ["Plan limits", "  limits not reported"],
@@ -953,7 +1108,7 @@ fn usage_cuts_a_long_group_name_to_fit_and_names_every_window_length() {
             limit(Window::Yearly, 2, NOVEMBER),
         ],
     ));
-    let rows = body("", &usage, None, 40, Glyphs::Unicode, &clock());
+    let rows = body("", &usage, &NATIVE, None, 40, Glyphs::Unicode, &clock());
     let art = plan_limits(&rows);
 
     let cut: String = name.chars().take(37).collect();
@@ -995,7 +1150,7 @@ fn usage_opened_again_within_a_minute_asks_nothing_and_shows_the_last_answer() {
 /// The panel as a key-reading wait left it, where there was no room to stand
 /// it and a key was pressed with the plan's answer still out.
 fn after_a_key(usage: api::Usage, conversation: &mut Conversation, terms: &Terms) -> Shown {
-    let mut shown = Shown::of(terms, conversation.serving(), usage);
+    let mut shown = Shown::of(terms, conversation.serving(), NATIVE, usage);
     shown.out = terms.ask_limits(conversation);
     assert!(shown.out.is_some(), "the plan was not asked");
     awaited(&mut shown, terms, conversation, |_| Ok(true)).unwrap();
@@ -1052,7 +1207,7 @@ fn usage_closed_with_the_question_out_answers_it_and_the_next_opening_asks_nothi
     let (client, journal) = crate::cli::client::Client::noting();
     let mut terms = plain();
     terms.client = client;
-    let mut shown = Shown::of(&terms, conversation.serving(), keyed());
+    let mut shown = Shown::of(&terms, conversation.serving(), NATIVE, keyed());
     shown.out = terms.ask_limits(&mut conversation);
     assert!(shown.out.is_some(), "the plan was not asked");
 
@@ -1108,7 +1263,15 @@ fn usage_parts_each_plan_window_from_the_next_with_a_blank_row() {
         (80, with_a_group(), vec![3, 7]),
         (40, with_a_group(), vec![4, 9]),
     ] {
-        let rows = plan_limits(&body("", &usage, None, columns, Glyphs::Unicode, &clock()));
+        let rows = plan_limits(&body(
+            "",
+            &usage,
+            &NATIVE,
+            None,
+            columns,
+            Glyphs::Unicode,
+            &clock(),
+        ));
         let blank: Vec<usize> = rows
             .iter()
             .enumerate()
@@ -1143,6 +1306,7 @@ fn usage_shows_every_reset_with_its_date_a_reset_later_today_among_them() {
         let rows = plan_limits(&body(
             "",
             &every_window(),
+            &NATIVE,
             None,
             columns,
             Glyphs::Unicode,
@@ -1170,7 +1334,7 @@ fn two_windows() -> api::Usage {
 #[test]
 fn usage_taller_than_its_room_stands_in_it_and_scrolls_with_the_arrows() {
     let terms = plain();
-    let mut shown = Shown::of(&terms, None, two_windows());
+    let mut shown = Shown::of(&terms, None, NATIVE, two_windows());
     shown.clock = clock();
     // At 40 columns the body is 22 rows, and with the rule, the blank rows
     // and the footer the panel would be 26: a 24-row window holds 19 of them

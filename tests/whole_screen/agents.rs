@@ -299,3 +299,68 @@ fn a_run_lost_mid_effect_says_its_work_is_uncertain() {
         },
     );
 }
+
+/// Fails where `/usage`, or the Usage tab of `/settings`, over a running turn
+/// on an agent's route draws a native row, a plan limit or nothing spent,
+/// rather than what the agent reported of the turn before, headed as its
+/// report.
+#[test]
+fn usage_over_a_running_agent_turn_draws_what_the_agent_reported() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-usage-mid-turn-{mode}");
+        let script = Script::of(signed_in([claude::priced_and_held()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        connected(&mut window);
+        window.types_until("First.\r", "Done.");
+        // The turn under way redraws its spinner, so the screen never
+        // settles: each step is caught as it is drawn.
+        window.types_and_catches("Second.\r", "Working.");
+
+        window.types_and_catches("/usage\r", "Session · as claude reported it");
+        let panel = window.picture();
+        reported(&panel, &format!("/usage in {mode}"));
+
+        window.types_and_catches_where("\u{1b}", "the panel closed", |picture| {
+            !picture.contains("as claude reported it")
+        });
+        window.types_and_catches("/settings\r", "esc to close");
+        window.types_and_catches("\t", "Session · as claude reported it");
+        reported(&window.picture(), &format!("the Usage tab in {mode}"));
+    }
+}
+
+/// Asserts `picture` shows the priced turn the agent reported, headed as its
+/// report, and nothing only a native route has.
+fn reported(picture: &str, drawn: &str) {
+    let dollars = format!(
+        "${}.{:02}",
+        claude::PRICE / 1_000_000,
+        claude::PRICE / 10_000 % 100
+    );
+    let cost = picture
+        .lines()
+        .find(|line| line.contains("Total cost"))
+        .unwrap_or_else(|| panic!("{drawn} has a cost row\n{picture}"));
+    assert!(
+        cost.contains(&dollars),
+        "{drawn} costs {dollars}\n{picture}"
+    );
+    let output = format!("{} out", claude::OUTPUT);
+    assert!(
+        picture.contains(&output),
+        "{drawn} has the tokens\n{picture}"
+    );
+    for unwanted in ["nothing asked yet", "API time", "Lines changed"] {
+        assert!(
+            !picture.contains(unwanted),
+            "{drawn} draws {unwanted:?}\n{picture}"
+        );
+    }
+    assert!(
+        picture.contains("not reported by agents"),
+        "{drawn}\n{picture}"
+    );
+}

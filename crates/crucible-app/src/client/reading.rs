@@ -41,14 +41,7 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
     Snapshot {
         session: conversation.session().id().cloned(),
         provider: conversation.serving().and_then(|name| Name::new(name).ok()),
-        execution: match conversation.instance() {
-            // Bound alike, so an instance a route was bound to is always one;
-            // `an_instance_a_route_binds_is_a_name_a_client_reads` holds them.
-            Some(instance) => {
-                Name::new(instance).map_or(api::Execution::Native, api::Execution::Instance)
-            }
-            None => api::Execution::Native,
-        },
+        execution: execution(conversation),
         billing: match (conversation.instance(), conversation.credential()) {
             (Some(_), _) => api::Billing::External,
             (None, Some(CredentialSource::Subscription)) => api::Billing::Subscription,
@@ -76,6 +69,23 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
         carrying: settled.carrying(),
         left: settled.left().and_then(Percent::new),
         pending: None,
+    }
+}
+
+/// Who runs `conversation`'s turns: this program, or an installed agent.
+///
+/// The one field of [`snapshot`] the terminal reads, for what `/usage` heads
+/// its figures with; it is read alone so that a turn starting builds nothing
+/// else.
+#[must_use]
+pub fn execution(conversation: &Conversation) -> api::Execution {
+    match conversation.instance() {
+        // Bound alike, so an instance a route was bound to is always one;
+        // `an_instance_a_route_binds_is_a_name_a_client_reads` holds them.
+        Some(instance) => {
+            Name::new(instance).map_or(api::Execution::Native, api::Execution::Instance)
+        }
+        None => api::Execution::Native,
     }
 }
 

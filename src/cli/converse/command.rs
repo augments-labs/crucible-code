@@ -511,6 +511,8 @@ pub(super) struct Counted {
     pub(super) usage: api::Usage,
     /// The provider the turn asks, by its name in the registry.
     pub(super) serving: Option<&'static str>,
+    /// Who runs the turn: this program, or an installed agent.
+    pub(super) execution: api::Execution,
     /// The permission mode the turn runs under.
     pub(super) mode: Mode,
     /// The session being recorded into, where the run is being kept at all.
