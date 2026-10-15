@@ -444,6 +444,9 @@ fn a_permission_the_mode_allows_is_answered_with_the_allow_once_offered() {
         (Allowing::Edits, "move", Some("yes")),
         (Allowing::Edits, "execute", None),
         (Allowing::Edits, "fetch", None),
+        (Allowing::Edits, "read", None),
+        (Allowing::Edits, "search", None),
+        (Allowing::Edits, "other", None),
         (Allowing::Everything, "execute", Some("yes")),
         (Allowing::Everything, "fetch", Some("yes")),
         (Allowing::Everything, "edit", Some("yes")),
@@ -465,4 +468,17 @@ fn a_permission_with_no_allow_once_offered_is_asked_in_full_access() {
         answered_by_itself(Allowing::Everything, "execute", &offered),
         None
     );
+}
+
+/// Once the turn is told to stop, even full access answers nothing yes by
+/// itself: the question is left to be answered no.
+#[test]
+fn a_permission_asked_after_a_stop_is_never_answered_yes() {
+    let mut acp = prompting_allowing(Allowing::Everything);
+    let _ = acp.cancel();
+    let acts = acp
+        .heard(&permission("execute", &[("yes", "allow_once")]))
+        .unwrap();
+
+    assert!(matches!(acts.as_slice(), [Act::Ask { .. }]), "{acts:?}");
 }

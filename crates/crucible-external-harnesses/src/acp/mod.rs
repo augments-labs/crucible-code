@@ -23,7 +23,9 @@
 //! permission is answered with one of the options the agent offered for it.
 //! A client made [`Acp::allowing`] answers what its [`Allowing`] names itself,
 //! with the one-time allow the agent offered and never a lasting one, and asks
-//! the person where the agent offered no such allow.
+//! the person where the agent offered no such allow. Whether a call changes a
+//! file is the kind the agent gave it, which nothing else holds it to: allowing
+//! edits trusts the agent to name what it would run as a command.
 //! Once the turn is stopped, a question answered is answered cancelled, as
 //! the protocol asks; one still open when it was stopped is left to the
 //! agent's own end of the turn.
@@ -85,7 +87,13 @@ impl Allowing {
     const fn allows(self, detail: &Detail) -> bool {
         match self {
             Self::Nothing => false,
-            Self::Edits => matches!(detail, Detail::MutatesFile),
+            Self::Edits => match detail {
+                Detail::MutatesFile => true,
+                Detail::Reads
+                | Detail::ReadsOutside
+                | Detail::Network { .. }
+                | Detail::Command { .. } => false,
+            },
             Self::Everything => true,
         }
     }

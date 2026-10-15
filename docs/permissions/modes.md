@@ -11,7 +11,8 @@ than what it stays at: <kbd>Shift-Tab</kbd> steps it while you type, and
 A mode decides exactly one thing: what happens to a call no
 [rule](rules.md) mentions. It is never a way around the engine. Every call
 takes the same route to running whatever the mode, a `deny` or `ask` rule
-holds in every one, and a read inside the workspace runs in every one.
+holds in every one, and a read inside the workspace runs in every one. A
+conversation on an installed agent is the exception, [below](#on-an-installed-agent).
 
 | A call that would… | `ask` | `allowEdits` | `fullAccess` |
 | --- | --- | --- | --- |
@@ -93,11 +94,13 @@ was.
 ## On an installed agent
 
 A conversation running on an [installed agent](../providers/agents.md) keeps
-these three modes, and each starts the agent in one of its own: the one that
-asks, the one that edits files without asking, and the one that asks about
-nothing. The agent's other modes are never offered. Its actions are decided by
-its own rules, not the ones here, so a `deny` rule does not stop it in
-`fullAccess`; its sandbox holds it in every mode.
+these three modes, and the agent is held to each: in `ask` its every question
+comes to you, in `allowEdits` it changes files without asking you, and in
+`fullAccess` it asks you about nothing. Claude Code is started in its own
+mode for each, and its other modes are never offered; Antigravity's questions
+are answered yes for you, one action at a time, where the mode allows it. Its
+actions are decided by its own rules, not the ones here, so a `deny` rule does
+not stop it in `fullAccess`; its sandbox holds it in every mode.
 
 ## When nobody can answer
 
