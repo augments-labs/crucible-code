@@ -1,0 +1,27 @@
+---
+source: crates/crucible-tui/src/panel.rs
+expression: "picture(&panel.rows(columns, glyphs), columns)"
+---
+<Accent>────────────────────────────────────────</>
+
+<Strong>Log in</>
+
+Choose the provider whose API key you
+have.
+
+Execution: the agent runs its own tools
+on this machine.
+Sign in: run `some-agent auth login
+--device-code --no-browser` in a
+terminal, then choose Check again.
+
+<Accent>›</> <Strong>Anthropic</>
+  <Quiet>set ANTHROPIC_API_KEY</>
+
+  MoonshotAI
+  <Quiet>set MOONSHOT_API_KEY</>
+
+  OpenAI
+  <Quiet>set OPENAI_API_KEY</>
+
+<Quiet>esc to cancel</>

@@ -137,6 +137,7 @@ pub(super) fn ask_while<T: Terminal>(
                 title: warned.shown,
                 said: Some(warned.warning.sentence),
                 source: Some(&cited),
+                told: &[],
                 shown,
                 chosen: *marked,
                 footer: &footer,

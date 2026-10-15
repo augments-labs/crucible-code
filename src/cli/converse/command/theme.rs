@@ -466,6 +466,7 @@ fn laid(standing: &Standing, style: Style, columns: usize, room: usize) -> Vec<R
         source: None,
         title: TITLE,
         said: Some(SAID),
+        told: &[],
         shown: &shown,
         chosen: match standing.axis {
             Axis::Interface => standing.interface,

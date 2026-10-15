@@ -324,6 +324,7 @@ pub(super) fn confirmed<T: Terminal>(
         source: None,
         title: "Switch model?",
         said: Some(&says),
+        told: &[],
         shown: &rows,
         chosen: 0,
         footer: "esc to go back",

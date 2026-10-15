@@ -176,6 +176,7 @@ fn chosen<T: Terminal>(
         source: None,
         title: "Remove stored credential",
         said: Some(SAID),
+        told: &[],
         shown: &shown,
         chosen: 0,
         // The one key worth naming: the arrows and Enter are what a list with a
