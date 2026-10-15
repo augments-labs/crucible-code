@@ -735,15 +735,15 @@ fn usage_tab_asks_the_plan_when_turned_to_and_draws_its_answer() {
 fn usage_tab_on_an_agents_route_heads_its_figures_as_the_agents_report() {
     let terms = plain();
     let mut counted = counted();
-    counted.serving = Some("anthropic");
-    counted.execution = api::Execution::Instance(api::Name::new("claude").unwrap());
+    counted.serving = Some("deepseek");
+    counted.execution = api::Execution::Instance(api::Name::new("work").unwrap());
     let mut panel = Panel::new(&terms, &counted);
     panel.turn(Tab::Usage);
 
     let rows = drawn(&mut panel, 80, 40);
     for wanted in [
-        "Usage · claude",
-        "Session · as claude reported it",
+        "Usage · work",
+        "Session · as work reported it",
         "  not reported by agents",
     ] {
         assert!(

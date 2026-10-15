@@ -345,15 +345,15 @@ fn usage_with_no_windows_reported_says_so_and_a_price_is_a_sum() {
     assert_eq!(tone(rows.get(3).unwrap(), "$1.84"), Some(Slot::Plain));
 }
 
-/// The route an installed agent configured as `claude` runs the turns on.
+/// The route an installed agent configured as `work` runs the turns on.
 fn agent() -> api::Execution {
-    api::Execution::Instance(Name::new("claude").unwrap())
+    api::Execution::Instance(Name::new("work").unwrap())
 }
 
 #[test]
 fn usage_on_an_agents_route_heads_its_figures_as_the_agents_report() {
     let rows = body(
-        "claude",
+        "work",
         &keyed(),
         &agent(),
         None,
@@ -367,9 +367,9 @@ fn usage_on_an_agents_route_heads_its_figures_as_the_agents_report() {
     assert_eq!(
         art(&rows),
         [
-            "Usage · claude",
+            "Usage · work",
             "",
-            "Session · as claude reported it",
+            "Session · as work reported it",
             "  Total cost       $1.84",
             "  Wall time        38m 05s",
             "  Tokens           1.42M in · 38.1k out · 1.21M cache read · 92.4k cache write",
@@ -387,10 +387,10 @@ fn usage_on_an_agents_route_heads_its_figures_as_the_agents_report() {
 fn usage_on_an_agents_route_draws_no_plan_limit_it_was_handed() {
     for columns in [80, 40] {
         let rows = body(
-            "claude",
+            "work",
             &every_window(),
             &agent(),
-            Some("anthropic"),
+            Some("deepseek"),
             columns,
             Glyphs::Unicode,
             &clock(),
@@ -408,7 +408,7 @@ fn usage_on_an_agents_route_draws_no_plan_limit_it_was_handed() {
         );
         assert_eq!(
             art.get(..3),
-            Some(&["Usage · claude", "", "Session · as claude reported it"].map(String::from)[..]),
+            Some(&["Usage · work", "", "Session · as work reported it"].map(String::from)[..]),
             "at {columns}"
         );
     }
@@ -416,15 +416,10 @@ fn usage_on_an_agents_route_draws_no_plan_limit_it_was_handed() {
 
 #[test]
 fn the_heading_on_an_agents_route_names_the_agent_not_a_native_credential() {
-    let native = heading(Some("anthropic"), Some("API key"), &NATIVE, Glyphs::Unicode);
-    assert_eq!(native, "anthropic · API key");
-    let routed = heading(
-        Some("anthropic"),
-        Some("API key"),
-        &agent(),
-        Glyphs::Unicode,
-    );
-    assert_eq!(routed, "claude");
+    let native = heading(Some("deepseek"), Some("API key"), &NATIVE, Glyphs::Unicode);
+    assert_eq!(native, "deepseek · API key");
+    let routed = heading(Some("deepseek"), Some("API key"), &agent(), Glyphs::Unicode);
+    assert_eq!(routed, "work");
 }
 
 #[test]

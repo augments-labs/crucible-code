@@ -1326,7 +1326,7 @@ fn a_refused_key_is_answered_by_its_mark_and_never_its_text() {
 fn a_fact_an_agent_gave_reaches_the_panel_with_none_of_its_control_bytes() {
     let drawn = drawn_facts(&[
         "Reason: \u{1b}]0;title\u{7}status\tunavailable\nretry".to_owned(),
-        "Agent: claude, run as claude.".to_owned(),
+        "Agent: work, run as work.".to_owned(),
     ]);
 
     assert!(
@@ -1335,6 +1335,6 @@ fn a_fact_an_agent_gave_reaches_the_panel_with_none_of_its_control_bytes() {
     );
     assert_eq!(
         drawn.get(1).map(String::as_str),
-        Some("Agent: claude, run as claude.")
+        Some("Agent: work, run as work.")
     );
 }
