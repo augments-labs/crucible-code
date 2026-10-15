@@ -2665,19 +2665,55 @@ fn a_session_an_agent_ran_resumes_on_its_route_from_another_route() -> Result<()
         fake_peer::argued(&outside.peer)
     );
     assert_eq!(users(outside.settled()), ["before", "after"]);
+    let home = RouteBinding::new("claude", "home", None)?;
+    let held = Session::reopen_routed(&tree.sessions(), &tree.workspace()?, &id, &home);
+    assert!(held.is_err(), "the session was left unclaimed");
+    Ok(())
+}
+
+/// `/resume` of another session the same agent ran, from a conversation on
+/// its route, goes on on that route: its history shown, the agent asked for
+/// its own session by the name the log kept, and the log claimed once.
+#[test]
+fn a_session_an_agent_ran_resumes_on_its_route_from_that_route() -> Result<(), Failed> {
+    let tree = Tree::new("external-resume-same-route")?;
+    let id = recorded_on(&tree, "work", "before")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean(), claude::clean()]))?;
+    let (first, _) = turn(&mut outside, "elsewhere", false)?;
+    assert!(first.is_ok(), "{first:?}");
+
+    let outcome = resuming_at(&tree, &mut outside.conversation, INSTALLED, id.clone())?;
+    let (turned, _) = turn(&mut outside, "after", false)?;
+
+    assert!(
+        matches!(outcome, Outcome::Resumed(ResumeOutcome::Picked { .. })),
+        "{outcome:?}"
+    );
+    assert!(turned.is_ok(), "{turned:?}");
+    assert_eq!(outside.conversation.session().id(), Some(&id));
+    assert!(
+        resumed_as(&outside.peer, EARLIER),
+        "{:?}",
+        fake_peer::argued(&outside.peer)
+    );
+    assert_eq!(users(outside.settled()), ["before", "after"]);
+    let held = Session::reopen_routed(&tree.sessions(), &tree.workspace()?, &id, &binding()?);
+    assert!(held.is_err(), "the session was left unclaimed");
     Ok(())
 }
 
 /// `/resume` of a session a provider's model ran, on a route the run moved
 /// onto from a provider's model, goes back to the runner it started on, which
-/// is sent its earlier turns.
+/// still keeps its prompt caches where it was told to, shows the session's
+/// history, and is sent its earlier turns.
 #[test]
 fn a_session_a_provider_ran_resumes_on_the_kept_runner_of_a_run_that_started_native()
 -> Result<(), Failed> {
     let tree = Tree::new("external-resume-inside")?;
     let script = Script::new(vec![saying("first"), saying("back")]);
     let sent = Arc::clone(&script.sent);
-    let mut native = started_native(&tree, script)?;
+    let home = tree.home()?;
+    let mut native = started_native(&tree, script)?.remembering_caches_in(home.path());
     let id = native.session().id().cloned().ok_or("an id")?;
     let (first, _) = super::turn(&mut native, "one")?;
     assert!(matches!(first, Turned::Ran(_)), "{first:?}");
@@ -2692,12 +2728,20 @@ fn a_session_a_provider_ran_resumes_on_the_kept_runner_of_a_run_that_started_nat
     drop(left);
 
     let outcome = resuming_at(&tree, &mut outside.conversation, INSTALLED, id.clone())?;
+    assert_eq!(users(outside.settled()), ["one"]);
+    // Records nobody can read: a runner that still keeps its caches there
+    // reads them and says so, where one that forgot reads nothing.
+    let caches = home.path().join("prompt-cache");
+    std::fs::create_dir_all(&caches)?;
+    std::fs::write(caches.join("resources-v1.json"), "not records")?;
+    let listed = runtime()?.block_on(outside.conversation.prompt_cache_resources());
     let (turned, said) = super::turn(&mut outside.conversation, "two")?;
 
     assert!(
         matches!(outcome, Outcome::Resumed(ResumeOutcome::Picked { .. })),
         "{outcome:?}"
     );
+    assert!(listed.is_err(), "the runner forgot its caches: {listed:?}");
     assert!(matches!(turned, Turned::Ran(_)), "{turned:?}");
     assert_eq!(said, "back");
     assert_eq!(outside.conversation.session().id(), Some(&id));
