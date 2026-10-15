@@ -11,7 +11,10 @@
 //! taking the step it names, so a crash leaves the instance needing a check
 //! rather than half-changed without a record. The configuration is written
 //! last, through [`remember`], and the journal's record is finished only after
-//! that write.
+//! that write. Where the journal cannot be kept after the run was closed, the
+//! client is told the operation failed: the run stays stopped, nothing is
+//! written, and the record left open is found by the next operation on the
+//! scope.
 //!
 //! What came of it is the application's [`Account`], read by a terminal whole,
 //! and translated for a client by [`Account::outcome`], a match written out
@@ -106,8 +109,8 @@ pub const DISCONNECT: &str = "Disconnect from Crucible";
 ///
 /// Any other command is refused as [`ErrorCode::Busy`] and nothing is done:
 /// [`perform`](super::perform) and the other doors answer them. An instance
-/// the configuration does not name is refused as
-/// [`ErrorCode::InvalidArgument`], before anything is asked.
+/// the configuration does not name, or names as already disabled, is refused
+/// as [`ErrorCode::InvalidArgument`], before anything is asked.
 pub async fn account(
     conversation: &mut Conversation,
     request: &Request,
@@ -121,7 +124,7 @@ pub async fn account(
                 .settings
                 .external_agents()
                 .into_iter()
-                .find(|agent| agent.name() == instance.as_str())
+                .find(|agent| agent.name() == instance.as_str() && agent.enabled())
             else {
                 return Performed::Refused(ErrorCode::InvalidArgument.into());
             };
@@ -223,8 +226,9 @@ async fn disconnect(
             Err(contended) => Account::Contended(contended),
         },
         Err(problem) => {
-            // The record is closed as failed; the next start reads the file,
-            // which still enables the instance.
+            // The record is closed as failed where it can be, and otherwise
+            // left open for the next operation to find; either way the file
+            // still enables the instance.
             let _ = slot.finish(Ending::Failed);
             Account::ThisRunOnly(problem)
         }

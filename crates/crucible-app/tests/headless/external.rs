@@ -1112,13 +1112,25 @@ fn disconnecting(
     asking: Asking,
     choosing: &mut Choosing,
 ) -> Result<(Outcome, String), Failed> {
+    disconnecting_from(tree, outside, (INSTALLED, "work"), asking, choosing)
+}
+
+/// The same, the user file holding `installed.0` and the instance asked about
+/// named `installed.1`.
+fn disconnecting_from(
+    tree: &Tree,
+    outside: &mut Outside,
+    installed: (&str, &str),
+    asking: Asking,
+    choosing: &mut Choosing,
+) -> Result<(Outcome, String), Failed> {
     use crucible_client_api::Name;
 
     let mut desk = super::Desk::new(tree, &[])?;
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
     }
-    std::fs::write(&desk.choosing, INSTALLED)?;
+    std::fs::write(&desk.choosing, installed.0)?;
     desk.settings = super::written(tree)?;
     let (workspace, sessions) = (tree.workspace()?, tree.sessions());
     let at = client::Desk {
@@ -1133,7 +1145,7 @@ fn disconnecting(
         asking,
         Correlation::new(1),
         Command::Disconnect {
-            instance: Name::new("work")?,
+            instance: Name::new(installed.1)?,
         },
     );
     let performed = runtime()?.block_on(client::account(
@@ -1212,6 +1224,46 @@ fn a_disconnect_not_chosen_changes_nothing() -> Result<(), Failed> {
         assert_eq!(choosing.put.is_empty(), case == "unclaimed", "{case}");
         let (turned, _events) = turn(&mut outside, "again", false)?;
         assert!(turned.is_ok(), "{case}: {turned:?}");
+    }
+    Ok(())
+}
+
+/// An instance the file does not name, or names as already disabled, is
+/// refused before anything is asked, and the file is left as it was.
+#[test]
+fn a_disconnect_of_an_instance_not_in_use_is_refused_unasked() -> Result<(), Failed> {
+    use crucible_client_api::ErrorCode;
+
+    let disabled = INSTALLED.replace(
+        r#""executable": "claude"}"#,
+        r#""executable": "claude", "enabled": false}"#,
+    );
+    for (case, file, instance) in [
+        ("unknown", INSTALLED.to_owned(), "elsewhere"),
+        ("disabled", disabled, "work"),
+    ] {
+        let tree = Tree::new(&format!("external-refused-{case}"))?;
+        let mut outside = Outside::new(&tree, &connected([]))?;
+        let mut choosing = Choosing {
+            choice: Some(client::accounts::DISCONNECT),
+            put: Vec::new(),
+        };
+
+        let (outcome, kept) = disconnecting_from(
+            &tree,
+            &mut outside,
+            (&file, instance),
+            Asking::every(),
+            &mut choosing,
+        )?;
+
+        assert_eq!(
+            outcome,
+            Outcome::Refused(ErrorCode::InvalidArgument.into()),
+            "{case}"
+        );
+        assert!(choosing.put.is_empty(), "{case}: {:?}", choosing.put);
+        assert_eq!(kept, file, "{case}");
     }
     Ok(())
 }
