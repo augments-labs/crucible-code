@@ -9,17 +9,20 @@
 //!
 //! **Rows, not a screen.** This hands back rows and draws nothing itself. It
 //! never asks how tall the terminal is, never assumes its rule is the first
-//! thing on it, and takes its title, its sentence and its footer from the
-//! caller. That is what lets it stand under a wordmark on a first run, with the
-//! room that is left, instead of being copied and changed; a string written in
-//! here is that reuse taken away.
+//! thing on it, and takes its title, its sentence, its facts and its footer
+//! from the caller. That is what lets it stand under a wordmark on a first run,
+//! with the room that is left, instead of being copied and changed; a string
+//! written in here is that reuse taken away.
 //!
 //! **What clips and what folds.** A description is a label, so it is cut and
 //! ended in the ellipsis. The sentence is prose, so it folds — half an
 //! explanation explains nothing, and a sentence that outruns the window is
-//! carried onto a second row. A display name does neither: it is cut where a column ends and
-//! never given an ellipsis, because a name is what has to be typed and an
-//! ellipsis inside one would be typed with it.
+//! carried onto a second row. The facts a choice rests on fold the same way and
+//! are never clipped, since one of them can be a command to type: a word longer
+//! than the row is broken onto the next one rather than shortened. A display
+//! name does neither: it is cut where a column ends and never given an
+//! ellipsis, because a name is what has to be typed and an ellipsis inside one
+//! would be typed with it.
 //!
 //! **Where the colour goes.** The mark is carried on the display-name row
 //! alone — chosen [`Slot::Strong`], passed over [`Slot::Plain`], and every
@@ -53,8 +56,9 @@ const POINTING: usize = 2;
 /// blank, the title, a blank above the list, and a blank and the footer under
 /// it.
 ///
-/// The sentence is gone by the rung this counts for, and the row saying how many
-/// entries were left out is counted with the entries rather than here.
+/// The sentence is gone by the rung this counts for, the facts are counted in
+/// [`Panel::fits`] by the rows they fold to, and the row saying how many entries
+/// were left out is counted with the entries rather than here.
 const CHROME: usize = 6;
 
 /// Rows one more entry costs: its two, and the blank that parts it from the one
@@ -152,6 +156,12 @@ pub struct Panel<'a> {
     /// vouches for. `None` for a sentence that is crucible's own; given up with
     /// the sentence when the window is short.
     pub source: Option<&'a str>,
+    /// Facts the choice rests on, each folded onto rows of its own under the
+    /// sentence and never cut: a fact can be a command to type, and half a
+    /// command is a different one. Kept on every rung of [`Panel::within`],
+    /// because a choice whose grounds are gone is not the same choice. An empty
+    /// fact folds to no rows and is not drawn.
+    pub told: &'a [&'a str],
     /// What to offer, in the order it is listed.
     pub shown: &'a [Offered<'a>],
     /// Which entry a key would act on.
@@ -201,7 +211,8 @@ impl Panel<'_> {
     /// Four rungs, giving up explanation before choices and choices before the
     /// live form itself: the whole panel, then the same without its sentence,
     /// then the entries scrolled to whatever fits with the marked one kept in
-    /// view, then nothing at all.
+    /// view, then nothing at all. The facts are on every rung that draws: where
+    /// they and one entry do not fit, nothing does.
     ///
     /// The last rung is the one that matters. A panel drawn at as-much-as-fits
     /// reads as the whole panel, and is a lie about what was on offer — so a
@@ -251,7 +262,7 @@ impl Panel<'_> {
         glyphs: Glyphs,
         headings: &[Heading<'_>],
     ) -> Vec<Row> {
-        let Some(fits) = self.fits(room, headings) else {
+        let Some(fits) = self.fits(columns, room, headings) else {
             return Vec::new();
         };
 
@@ -279,10 +290,11 @@ impl Panel<'_> {
     /// that says how many were left out, and `None` where that is none of them.
     ///
     /// Every heading is counted whether or not it is in the window, so a window
-    /// that carries one down from above it is never a row over.
-    fn fits(&self, room: usize, headings: &[Heading<'_>]) -> Option<usize> {
-        let fits =
-            (room.checked_sub(CHROME + HEADING * headings.len())? / ENTRY).min(self.shown.len());
+    /// that carries one down from above it is never a row over. The facts are
+    /// counted too, since this rung keeps them as every other does.
+    fn fits(&self, columns: usize, room: usize, headings: &[Heading<'_>]) -> Option<usize> {
+        let kept = CHROME + HEADING * headings.len() + self.facts(columns).len();
+        let fits = (room.checked_sub(kept)? / ENTRY).min(self.shown.len());
         (fits > 0).then_some(fits)
     }
 
@@ -307,6 +319,7 @@ impl Panel<'_> {
         ];
 
         rows.extend(self.sentence(columns));
+        rows.extend(self.facts(columns));
         rows.push(Row::new());
 
         for (at, one) in shown.iter().enumerate() {
@@ -368,6 +381,28 @@ impl Panel<'_> {
         {
             rows.push(Row::new().then(Slot::Quiet, line));
         }
+        rows
+    }
+
+    /// The blank row and the facts under it, where there are any.
+    ///
+    /// Folded as the sentence is and in the same foreground, one fact after
+    /// another with nothing between them: they are read together, as the
+    /// grounds of one choice.
+    fn facts(&self, columns: usize) -> Vec<Row> {
+        let folded: Vec<Row> = self
+            .told
+            .iter()
+            .flat_map(|fact| fold(fact, columns))
+            .map(Row::plain)
+            .collect();
+
+        if folded.is_empty() {
+            return folded;
+        }
+
+        let mut rows = vec![Row::new()];
+        rows.extend(folded);
         rows
     }
 }
@@ -550,6 +585,7 @@ mod tests {
             source: None,
             title: "Log in",
             said: Some(SAID),
+            told: &[],
             shown,
             chosen,
             footer: "esc to cancel",
@@ -775,6 +811,7 @@ mod tests {
             source: None,
             title: "Welcome",
             said: None,
+            told: &[],
             shown: &shown,
             chosen: 0,
             footer: "press enter to continue",
@@ -835,6 +872,7 @@ mod tests {
                  its terms say; that covers only what you send afterwards.",
             ),
             source: Some("kimi.ai terms of service, 30 Sep 2026"),
+            told: &[],
             shown,
             chosen: 0,
             footer: "enter to choose · esc to go back",
@@ -911,6 +949,75 @@ mod tests {
         }
     }
 
+    /// What a choice rests on: a plain fact, and a command too long for a
+    /// narrow row.
+    const TOLD: [&str; 2] = [
+        "Execution: the agent runs its own tools on this machine.",
+        "Sign in: run `some-agent auth login --device-code --no-browser` in a terminal, then \
+         choose Check again.",
+    ];
+
+    /// The login panel with [`TOLD`] under its sentence.
+    fn grounded<'a>(shown: &'a [Offered<'a>], chosen: usize) -> Panel<'a> {
+        Panel {
+            told: &TOLD,
+            ..login(shown, chosen)
+        }
+    }
+
+    /// Whether every fact in [`TOLD`] is somewhere in `rows`, cut nowhere.
+    ///
+    /// Spaces are set aside on both sides because folding moves them: a fact
+    /// folded at a space and one broken inside a word both read whole here,
+    /// and one missing a single character does not.
+    fn whole(rows: &[String]) -> bool {
+        let bare = |text: &str| text.split_whitespace().collect::<String>();
+        let drawn: String = rows.iter().map(|row| bare(row)).collect();
+        TOLD.iter().all(|fact| drawn.contains(&bare(fact)))
+    }
+
+    #[test]
+    fn a_fact_is_drawn_whole_at_any_width() {
+        let shown = offered();
+        for columns in [20, 40, 80] {
+            let rows = art(&grounded(&shown, 0), columns, Glyphs::Unicode);
+            assert!(whole(&rows), "at {columns}: {rows:?}");
+        }
+    }
+
+    #[test]
+    fn facts_stand_plain_between_the_sentence_and_the_entries() {
+        let shown = offered();
+        let panel = grounded(&shown, 0);
+        let rows = panel.rows(80, Glyphs::Unicode);
+        let texts: Vec<String> = rows.iter().map(Row::text).collect();
+        let at = |text: &str| texts.iter().position(|row| row.contains(text));
+
+        let (Some(said), Some(first), Some(last), Some(entry)) = (
+            at(SAID),
+            at("Execution:"),
+            at("Check again."),
+            at("Anthropic"),
+        ) else {
+            panic!("a part is missing: {texts:?}");
+        };
+        assert!(said + 1 < first && last + 1 < entry, "{texts:?}");
+        for between in [said + 1, last + 1] {
+            assert_eq!(texts.get(between).map(|row| row.trim()), Some(""));
+        }
+        for row in rows.get(first..=last).unwrap_or_default() {
+            assert_eq!(slots(row), [Slot::Plain], "{texts:?}");
+        }
+    }
+
+    #[test]
+    fn a_panel_with_facts_draws_at_forty_and_eighty_columns() {
+        let shown = offered();
+        for columns in [40, 80] {
+            pictured("told", &grounded(&shown, 0), columns, Glyphs::Unicode);
+        }
+    }
+
     /// The rungs down, for a window the whole panel does not fit in.
     mod ladder {
         use super::*;
@@ -973,6 +1080,44 @@ mod tests {
                     within(&login(&shown, 0), 80, room).is_empty(),
                     "something was drawn in {room} rows"
                 );
+            }
+        }
+
+        #[test]
+        fn a_window_short_of_the_sentence_keeps_the_facts() {
+            let shown = offered();
+            let panel = grounded(&shown, 0);
+            let rows = within(&panel, 80, panel.rows(80, Glyphs::Unicode).len() - 1);
+
+            assert!(!rows.iter().any(|row| row.contains(SAID)), "{rows:?}");
+            assert!(whole(&rows), "{rows:?}");
+        }
+
+        #[test]
+        fn a_scrolled_list_keeps_its_facts_and_its_room() {
+            // Every rung that draws anything draws the facts whole, inside the
+            // room it was given; a room too short for them and one entry draws
+            // nothing.
+            let shown = many();
+            for chosen in [0, 3, 4] {
+                let panel = grounded(&shown, chosen);
+                for columns in [20, 40, 80] {
+                    for room in 0..=40 {
+                        let rows = within(&panel, columns, room);
+                        assert!(rows.len() <= room, "{columns}x{room}: {rows:?}");
+                        if rows.is_empty() {
+                            let least = CHROME + panel.facts(columns).len() + ENTRY;
+                            assert!(room < least, "{columns}x{room}: nothing drawn");
+                            continue;
+                        }
+                        assert!(whole(&rows), "{columns}x{room}: {rows:?}");
+                        let name = shown.get(chosen).expect("the marked entry").name;
+                        assert!(
+                            rows.iter().any(|row| row.contains(name)),
+                            "{columns}x{room}: {rows:?}"
+                        );
+                    }
+                }
             }
         }
 

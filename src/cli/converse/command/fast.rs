@@ -237,6 +237,7 @@ fn chosen<T: Terminal>(
         source: None,
         title: &title,
         said: cost.caveat,
+        told: &[],
         shown: &shown,
         // On the speed in force, so Enter changes nothing by accident.
         chosen: usize::from(asked.pace.speed == Speed::Fast),
