@@ -103,7 +103,7 @@ const KEYS: [&str; 77] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 56] = [
+const MORE_KEYS: [&str; 57] = [
     "added",
     "api_ms",
     "cache_read",
@@ -160,6 +160,7 @@ const MORE_KEYS: [&str; 56] = [
     "said",
     "choice",
     "external",
+    "onto",
 ];
 
 /// The field names of the inspection document, kept apart for the same reason.
@@ -518,7 +519,14 @@ fn login_outcomes() -> Vec<Outcome> {
             retained: retained(),
             unwritten: None,
         }),
-        Outcome::Login(LoginOutcome::AgentConnected { said: marked() }),
+        Outcome::Login(LoginOutcome::AgentConnected {
+            said: marked(),
+            onto: None,
+        }),
+        Outcome::Login(LoginOutcome::AgentConnected {
+            said: marked(),
+            onto: Some(name("work")),
+        }),
         Outcome::Login(LoginOutcome::ConnectUnsaved {
             said: marked(),
             problem: problem(),
@@ -1261,25 +1269,26 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             SpeedOutcome::Taken { unwritten: None } => (4, 5),
         },
         Outcome::Login(login) => match login {
-            LoginOutcome::Unusable(_) => (0, 11),
-            LoginOutcome::Elsewhere => (1, 11),
-            LoginOutcome::CacheHeld(_) => (2, 11),
+            LoginOutcome::Unusable(_) => (0, 12),
+            LoginOutcome::Elsewhere => (1, 12),
+            LoginOutcome::CacheHeld(_) => (2, 12),
             LoginOutcome::Serving {
                 unwritten: Some(_), ..
-            } => (3, 11),
+            } => (3, 12),
             LoginOutcome::Serving {
                 unwritten: None, ..
-            } => (4, 11),
-            LoginOutcome::AgentConnected { .. } => (5, 11),
-            LoginOutcome::ConnectUnsaved { .. } => (6, 11),
-            LoginOutcome::Undecided => (7, 11),
+            } => (4, 12),
+            LoginOutcome::AgentConnected { onto: None, .. } => (5, 12),
+            LoginOutcome::AgentConnected { onto: Some(_), .. } => (6, 12),
+            LoginOutcome::ConnectUnsaved { .. } => (7, 12),
+            LoginOutcome::Undecided => (8, 12),
             LoginOutcome::NextLaunch {
                 unwritten: Some(_), ..
-            } => (8, 11),
+            } => (9, 12),
             LoginOutcome::NextLaunch {
                 unwritten: None, ..
-            } => (9, 11),
-            LoginOutcome::Stored { .. } => (10, 11),
+            } => (10, 12),
+            LoginOutcome::Stored { .. } => (11, 12),
         },
         Outcome::Logout(logout) => logout_arm(logout),
         Outcome::Cache(cache) => match cache {
@@ -2410,7 +2419,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 11_385_675_316_066_440_812),
+        (4, 17_786_917_631_896_265_498),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

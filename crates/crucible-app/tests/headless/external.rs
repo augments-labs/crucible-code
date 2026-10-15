@@ -1237,6 +1237,16 @@ fn accounting(
     asked: &Asked<'_>,
     choosing: &mut dyn Front,
 ) -> Result<(Outcome, String), Failed> {
+    accounting_on(tree, &mut outside.conversation, asked, choosing)
+}
+
+/// [`accounting`], of `conversation` wherever it is.
+fn accounting_on(
+    tree: &Tree,
+    conversation: &mut Conversation,
+    asked: &Asked<'_>,
+    choosing: &mut dyn Front,
+) -> Result<(Outcome, String), Failed> {
     use crucible_client_api::Name;
 
     let (installed, asking) = (asked.installed, asked.asking);
@@ -1263,12 +1273,7 @@ fn accounting(
         Correlation::new(1),
         (asked.command)(Name::new(installed.1)?),
     );
-    let performed = runtime()?.block_on(client::account(
-        &mut outside.conversation,
-        &request,
-        &at,
-        choosing,
-    ));
+    let performed = runtime()?.block_on(client::account(conversation, &request, &at, choosing));
     let outcome = performed.response(&request).outcome;
     Ok((outcome, std::fs::read_to_string(&desk.choosing)?))
 }
@@ -1881,10 +1886,77 @@ fn a_connect_writes_the_route_and_enables_the_instance() -> Result<(), Failed> {
         outcome,
         Outcome::Login(LoginOutcome::AgentConnected {
             said: crucible_client_api::Text::cut(client::accounts::CONNECTED),
+            onto: None,
         })
     );
     assert_eq!(picking.put.len(), 2, "{:?}", picking.put);
     assert_eq!(file, CONNECTED_FILE);
+    Ok(())
+}
+
+/// A connect of the provider a conversation is asking moves it onto the
+/// agent, in a new session bound to the route with nothing carried over, and
+/// the session it left can be resumed with what it held.
+#[test]
+fn a_connect_moves_a_conversation_on_the_provider_s_model_onto_the_route() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Name};
+
+    let tree = Tree::new("external-connect-moves")?;
+    let mut native = started_native(&tree, Script::new(vec![saying("first")]))?;
+    let (first, _) = super::turn(&mut native, "one")?;
+    let left = native.session().id().cloned().ok_or("an id")?;
+    let script = connected([claude::signed_in(), claude::clean()]);
+    let (mut conversation, peer) = stepped(&tree, native, &script)?;
+    let mut picking = Picking::of([
+        Some(client::accounts::USE_ACCOUNT),
+        Some(client::accounts::CONNECT),
+    ]);
+    let provider = Name::new("anthropic")?;
+    let command = move |instance| Command::Connect {
+        provider: provider.clone(),
+        instance: Some(instance),
+    };
+    let asked = Asked {
+        installed: (UNCONNECTED, "work"),
+        command: &command,
+        asking: Asking::every(),
+        after: None,
+    };
+
+    let (outcome, file) = accounting_on(&tree, &mut conversation, &asked, &mut picking)?;
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::AgentConnected {
+            said: crucible_client_api::Text::cut(client::accounts::MOVED),
+            onto: Some(Name::new("work")?),
+        })
+    );
+    let moved = conversation.session().id().cloned();
+    let carried = users(conversation.settled());
+    let (turned, _) = super::turn(&mut conversation, "after")?;
+
+    assert!(matches!(first, Turned::Ran(_)), "{first:?}");
+    assert_eq!(file, CONNECTED_FILE);
+    let route = conversation.session().route().map(RouteBinding::instance);
+    assert_eq!(route, Some("work"));
+    assert!(moved.is_some_and(|moved| moved != left), "no new session");
+    assert!(carried.is_empty(), "{carried:?}");
+    assert!(matches!(turned, Turned::Ran(_)), "{turned:?}");
+    assert_eq!(users(conversation.settled()), ["after"]);
+    assert!(
+        fake_peer::argued(&peer).len() > 2,
+        "the agent never ran a turn"
+    );
+    let (_, kept) = Session::reopen(&tree.sessions(), &tree.workspace()?, &left)?;
+    let kept: Vec<_> = kept
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::User { text, .. } => Some(text.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kept, ["one"]);
     Ok(())
 }
 

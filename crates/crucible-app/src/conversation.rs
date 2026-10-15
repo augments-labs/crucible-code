@@ -679,6 +679,46 @@ impl Conversation {
         }
     }
 
+    /// Moves a conversation on a provider's model onto the installed agent
+    /// `entry`, in a new session bound to its route with nothing carried
+    /// over, and returns the session left, which stays on the disk where a
+    /// resume can find it. A conversation already on an agent's route does not
+    /// move.
+    ///
+    /// # Errors
+    ///
+    /// What to say where it is on an agent's route, the agent cannot be
+    /// started in the conversation's mode, or the new log could not be
+    /// started; the session in hand is then untouched.
+    pub async fn onto(
+        &mut self,
+        sessions: &Path,
+        workspace: &Workspace,
+        branch: Option<&str>,
+        entry: &ExternalAgent,
+    ) -> Result<Arc<Session>, String> {
+        if self.outside.is_some() {
+            return Err("it is on an installed agent's route".to_owned());
+        }
+        let Some(steps) = self.steps.as_ref() else {
+            return Err(
+                "the sandbox policy its runs are confined by could not be built".to_owned(),
+            );
+        };
+        let (agent, route) = steps.onto(entry, self.settled().mode())?;
+        let relaunch = Box::new(steps.runs(agent, entry.name()));
+        let session = Session::start_routed(sessions, workspace, branch, &route)
+            .map_err(|refused| refused.to_string())?;
+        let installed = Installed {
+            backend: None,
+            relaunch,
+            route,
+        };
+        self.external(Arc::new(session), Transcript::new(), installed)
+            .await
+            .map_err(|refused| refused.reason().as_str().to_owned())
+    }
+
     /// Records into `session` from here on, and returns the one left.
     ///
     /// The session is swapped first and the runner handed the new one second,

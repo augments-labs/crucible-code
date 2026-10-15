@@ -11,6 +11,7 @@ use super::{
     RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome,
     TurnOutcome, maybe_problem,
 };
+use crate::bounds::Name;
 use crate::error::{ErrorCode, Refusal};
 use crate::wire::{self, Fields, Writing};
 
@@ -270,7 +271,9 @@ impl LoginOutcome {
                 "unwritten",
                 unwritten.as_ref(),
             ),
-            Self::AgentConnected { said } => Writing::kind("agent_connected").text("said", said),
+            Self::AgentConnected { said, onto } => Writing::kind("agent_connected")
+                .text("said", said)
+                .maybe("onto", onto.as_ref().map(Name::as_str)),
             Self::ConnectUnsaved { said, problem } => {
                 failed("connect_unsaved", problem).text("said", said)
             }
@@ -300,6 +303,10 @@ impl LoginOutcome {
             },
             "agent_connected" => Self::AgentConnected {
                 said: fields.text("said")?,
+                onto: fields
+                    .maybe("onto")
+                    .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
+                    .transpose()?,
             },
             "connect_unsaved" => Self::ConnectUnsaved {
                 said: fields.text("said")?,

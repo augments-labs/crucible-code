@@ -35,6 +35,8 @@
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
 //! | connect, signed in | use it, then connect | [`LoginOutcome::AgentConnected`] |
+//! | connect, signed in, on the provider's model | use it, then connect | [`LoginOutcome::AgentConnected`], naming the instance moved onto |
+//! | connect, signed in, on the provider's model, the agent not startable | use it, then connect | [`LoginOutcome::AgentConnected`], naming none |
 //! | connect, signed in | use it, then connect; the file not written | [`LoginOutcome::ConnectUnsaved`] |
 //! | connect | the agent's route accepted; the yes not written | [`LoginOutcome::ConnectUnsaved`] |
 //! | connect | cancel, back, or nobody | [`LoginOutcome::Undecided`] |
@@ -72,11 +74,18 @@
 //! provider's `access` names the instance and the instance is enabled, in one
 //! update of the user file, under the scope's journal, the instance's own
 //! settings first where they are new.
+//!
+//! A conversation asking the provider's model when the connect is written
+//! moves onto the instance in a new session, bound to its route, with nothing
+//! carried over; the session left stays listed and can be resumed. Where it
+//! cannot move, it stays where it was and the next run starts on the agent.
+//! A conversation on an agent's route, or asking another provider, stays
+//! where it is.
 
 use std::path::Path;
 
 use crucible_client_api::{
-    Command, ErrorCode, LoginOutcome, LogoutOutcome, Outcome, Problem, Refusal, Request, Text,
+    Command, ErrorCode, LoginOutcome, LogoutOutcome, Name, Outcome, Problem, Refusal, Request, Text,
 };
 use crucible_config::{ConfigError, ExternalAgent};
 use crucible_execution::Authentication;
@@ -123,8 +132,16 @@ pub enum Account {
     /// Nobody chose a way to go on, so nothing changed.
     Undecided,
     /// The provider named here is reached through the instance, which takes
-    /// new work, and that is written down.
+    /// new work, and that is written down; the conversation stayed where it
+    /// was, since it was not on that provider's model.
     Connected,
+    /// As [`Account::Connected`], and the conversation, which was on that
+    /// provider's model, moved onto the instance named here in a new session.
+    Moved(Box<str>),
+    /// As [`Account::Connected`], and the conversation, which was on that
+    /// provider's model, stayed on it for this reason; the next run starts on
+    /// the instance.
+    Unmoved(String),
     /// The agent read signed in, and the route through it could not be
     /// written down, so nothing changed.
     ConnectUnsaved(RememberError),
@@ -170,6 +187,19 @@ impl Account {
             Self::Connected => {
                 return Outcome::Login(LoginOutcome::AgentConnected {
                     said: Text::cut(CONNECTED),
+                    onto: None,
+                });
+            }
+            Self::Moved(instance) => {
+                return Outcome::Login(LoginOutcome::AgentConnected {
+                    said: Text::cut(MOVED),
+                    onto: Name::new(instance).ok(),
+                });
+            }
+            Self::Unmoved(_) => {
+                return Outcome::Login(LoginOutcome::AgentConnected {
+                    said: Text::cut(UNMOVED),
+                    onto: None,
                 });
             }
             Self::ConnectUnsaved(problem) => {
@@ -233,6 +263,16 @@ pub const DISCONNECT_INSTEAD: &str = "Disconnect from Crucible instead";
 
 /// What a person is told once a provider is reached through an agent.
 pub const CONNECTED: &str = "Connected. The provider is reached through this agent.";
+
+/// What a person is told once a provider is reached through an agent and the
+/// conversation, which was on that provider's model, moved onto the agent.
+pub const MOVED: &str = "Connected. This conversation now runs on the agent, in a new session; \
+     the earlier one can be resumed.";
+
+/// What a person is told once a provider is reached through an agent and the
+/// conversation, which was on that provider's model, could not move onto it.
+pub const UNMOVED: &str = "Connected. This conversation stays on the provider's model; \
+     the next run starts on the agent.";
 
 /// What a person is told where the agent is signed in and the route through
 /// it could not be written down.
@@ -814,7 +854,7 @@ async fn connect(
         match confirmed(capabilities, front, &question).await {
             Some(0) if signed => {
                 match confirmed(capabilities, front, &routing(agent, provider, keyed)).await {
-                    Some(0) => return commit(desk, provider, agent, written),
+                    Some(0) => return moved(conversation, desk, provider, agent, written).await,
                     // Going back is one level up: the sign-in is read again.
                     Some(_) => {}
                     None => return Account::Unconnected,
@@ -826,6 +866,37 @@ async fn connect(
         }
     }
     Account::Unconnected
+}
+
+/// [`commit`], then moves `conversation` onto `agent` where it was asking
+/// `provider`'s model, as [`Conversation::onto`] says. A conversation on an
+/// agent's route, or asking another provider, stays where it is.
+async fn moved(
+    conversation: &mut Conversation,
+    desk: &Desk<'_>,
+    provider: &str,
+    agent: &ExternalAgent,
+    written: bool,
+) -> Account {
+    let committed = commit(desk, provider, agent, written);
+    if !matches!(committed, Account::Connected) || conversation.serving() != Some(provider) {
+        return committed;
+    }
+    let branch = crate::branching::current(desk.workspace.root());
+    match conversation
+        .onto(desk.sessions, desk.workspace, branch.as_deref(), agent)
+        .await
+    {
+        Ok(left) => {
+            // Nothing holds the session left after this; its log stays on the
+            // disk where a resume can find it. Whether it closed cleanly is not
+            // reported: the outcome says what the connect did, and the log's
+            // own trouble is found again when it is resumed.
+            let _unclosed = left.finish();
+            Account::Moved(agent.name().into())
+        }
+        Err(reason) => Account::Unmoved(reason),
+    }
 }
 
 /// Writes down that `provider` is reached through `agent`, and that `agent`
