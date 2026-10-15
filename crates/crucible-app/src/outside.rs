@@ -19,7 +19,9 @@
 //! answered without a cost leaves the session not priced for good. A turn
 //! that ended after it began with no cost reported, stopped, cut short,
 //! failed, or left by its caller, leaves the sum so far as a floor, since it
-//! may have spent and did not say. A turn begins when the agent's host says
+//! may have spent and did not say. Beside them the tally keeps what the
+//! last turn said it read, which a turn under way replaces only once it says
+//! its own. A turn begins when the agent's host says
 //! it has, before anything is written to the agent, so a turn whose request
 //! may never have left still counts as one that may have spent: the figures
 //! never read lower than what was spent. A launch refused before that
@@ -153,6 +155,12 @@ pub(crate) struct Tally {
     started: Option<Instant>,
     /// The turn under way, and whether it reported a cost.
     open: Option<bool>,
+    /// The tokens the last turn that said so read: kept through the next
+    /// until it says its own, then that turn's, summed where it says more
+    /// than once.
+    read: u64,
+    /// Whether the turn under way has said what it read.
+    reread: bool,
 }
 
 impl Tally {
@@ -168,6 +176,8 @@ impl Tally {
             cost: SessionCost::Unspent,
             started: None,
             open: None,
+            read: 0,
+            reread: false,
         }
     }
 
@@ -184,6 +194,7 @@ impl Tally {
         let changed = self.end(false);
         self.started.get_or_insert_with(Instant::now);
         self.open = Some(false);
+        self.reread = false;
         changed
     }
 
@@ -192,6 +203,11 @@ impl Tally {
         let add = |sum: u64, more: Option<u64>| sum.saturating_add(more.unwrap_or(0));
         let tokens = &mut self.tokens;
         tokens.input = add(tokens.input, usage.input_tokens());
+        if let Some(read) = usage.input_tokens() {
+            let before = if self.reread { self.read } else { 0 };
+            self.read = before.saturating_add(read);
+            self.reread = true;
+        }
         tokens.output = add(tokens.output, usage.output_tokens());
         tokens.cache_read = add(tokens.cache_read, usage.cache_read_tokens());
         tokens.cache_write = add(tokens.cache_write, usage.cache_write_tokens());
@@ -347,6 +363,12 @@ impl Outside {
     /// The session's figures.
     pub(crate) fn totals(&self) -> Totals {
         self.tally.totals()
+    }
+
+    /// The tokens the agent said its last turn read, cache reads included,
+    /// until the turn under way says its own; 0 before any turn said.
+    pub(crate) const fn read(&self) -> u64 {
+        self.tally.read
     }
 
     /// The permission mode the agent is launched in.

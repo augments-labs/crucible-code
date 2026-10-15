@@ -1074,7 +1074,9 @@ free. Project instructions are what
 the figure the line above the box calls `window left`, the share of the room
 left before compaction, so the two always agree. A model whose window crucible
 does not know shows the tokens alone, with `window not known` in place of the
-size and no bar. Escape closes it.
+size and no bar. On an installed agent's route the agent builds its own
+requests, so crucible counts none of their parts, and a last row, `held by the
+agent`, gives the tokens the agent said its last turn read. Escape closes it.
 
 `/usage` stands a panel over the prompt box, headed with the provider and what
 pays for it (`API key`, or the sign-in's name, such as `ChatGPT sign-in`), with

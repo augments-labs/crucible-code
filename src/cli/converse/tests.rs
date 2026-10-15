@@ -398,6 +398,7 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         leaving: &mut leaving,
         terms: &terms,
         serving: Some("anthropic"),
+        external: None,
     };
 
     while turn.step(&mut renderer) {}
@@ -2085,3 +2086,48 @@ fn a_run_that_asked_not_to_be_kept_is_not_sent_anywhere() {
 }
 
 mod research;
+
+/// A panel standing over a turn on an installed agent's route reads what the
+/// agent said its last turn read, as `/context` between turns does; on a
+/// provider's model it reads none.
+#[test]
+fn a_panel_over_a_turn_reads_what_the_agent_holds_only_on_its_route() {
+    let (_post, seen) = sync_channel(CAPACITY);
+    let terms = plain();
+    let opening = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        terms.plan.clone(),
+        terms.sending.get(),
+        Answers {
+            input: &mut input,
+            keys: false,
+        },
+        &opening,
+    );
+    let mut turning = Turning::started(crucible_runner::Breakdown::default());
+    let mut says = typing::under(crucible_app::Settled::from(&scripted(
+        Script::new(Vec::new()),
+        Tools::new(),
+        Arc::new(Session::nowhere()),
+    )));
+    let mut seen = Inbox::new(seen);
+    let mut drawn = Ok(());
+    let mut meanwhile = typing::Meanwhile::Nothing;
+    let mut leaving = None;
+    for external in [None, Some(58_200)] {
+        let turn = Turn {
+            turning: &mut turning,
+            held: &mut held,
+            says: &mut says,
+            seen: &mut seen,
+            drawn: &mut drawn,
+            meanwhile: &mut meanwhile,
+            leaving: &mut leaving,
+            terms: &terms,
+            serving: None,
+            external,
+        };
+        assert_eq!(turn.counted().usage.context.external, external);
+    }
+}

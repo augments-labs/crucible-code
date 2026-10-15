@@ -103,7 +103,7 @@ const KEYS: [&str; 77] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 55] = [
+const MORE_KEYS: [&str; 56] = [
     "added",
     "api_ms",
     "cache_read",
@@ -159,6 +159,7 @@ const MORE_KEYS: [&str; 55] = [
     "facts",
     "said",
     "choice",
+    "external",
 ];
 
 /// The field names of the inspection document, kept apart for the same reason.
@@ -571,9 +572,10 @@ fn login_outcomes() -> Vec<Outcome> {
     ]
 }
 
-/// How a window is spent, where everything about it is known, and where none
-/// of what may be left out is there.
-fn contexts() -> [Context; 2] {
+/// How a window is spent, where everything about it is known, where none of
+/// what may be left out is there, and on an installed agent's route, where
+/// the agent's part is all that crosses.
+fn contexts() -> [Context; 3] {
     [
         Context {
             model: Model::new(MARKER),
@@ -586,6 +588,7 @@ fn contexts() -> [Context; 2] {
             messages: 41_600,
             reserve: 36_000,
             free: 103_900,
+            external: None,
         },
         Context {
             model: None,
@@ -598,6 +601,20 @@ fn contexts() -> [Context; 2] {
             messages: 41_600,
             reserve: 0,
             free: 0,
+            external: None,
+        },
+        Context {
+            model: None,
+            window: None,
+            left: None,
+            system: 0,
+            instructions: 0,
+            tools: 0,
+            mcp: 0,
+            messages: 0,
+            reserve: 0,
+            free: 0,
+            external: Some(58_200),
         },
     ]
 }
@@ -645,7 +662,7 @@ fn plan_limits() -> Limits {
 /// not priced with none, known only as a floor, and before anything was asked
 /// with one window. Callers destructure it by position, so keep this order.
 fn usages() -> [Usage; 4] {
-    let [context, unknown] = contexts();
+    let [context, unknown, _] = contexts();
     let used = Used {
         cost: Cost::Priced {
             currency: name("USD"),
@@ -852,7 +869,7 @@ fn responses() -> Vec<Response> {
 }
 
 fn progress() -> Vec<Progress> {
-    let [whole, unknown] = contexts();
+    let [whole, unknown, agent] = contexts();
     let [counted, unpriced, _, unspent] = usages();
     vec![
         Progress::Started { turn: 1 },
@@ -899,6 +916,7 @@ fn progress() -> Vec<Progress> {
             ..whole
         }),
         Progress::Context(unknown),
+        Progress::Context(agent),
         // Every cost and every window, each streamed as `/usage` reads it.
         Progress::Used(counted.used),
         Progress::Used(unpriced.used),
@@ -1469,6 +1487,7 @@ fn every_arm_that_crosses_has_a_specimen() {
         either("context.model", context.model.is_some());
         either("context.window", context.window.is_some());
         either("context.left", context.left.is_some());
+        either("context.external", context.external.is_some());
     }
     for snapshot in snapshots() {
         either("snapshot.session", snapshot.session.is_some());
@@ -1485,6 +1504,7 @@ fn every_arm_that_crosses_has_a_specimen() {
         "context.model",
         "context.window",
         "context.left",
+        "context.external",
         "snapshot.session",
         "snapshot.provider",
         "snapshot.model",
@@ -2390,7 +2410,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 12_378_865_755_158_300_729),
+        (4, 11_385_675_316_066_440_812),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2400,7 +2420,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
 fn a_context_with_no_window_says_no_room_left_and_none_free() {
     // Both are read against the window, so without one a frame that states
     // either states a figure nothing measured.
-    let [_, unknown] = contexts();
+    let [_, unknown, _] = contexts();
     let response = Response {
         correlation: Some(Correlation::new(3)),
         outcome: Outcome::Context(unknown),
@@ -2456,6 +2476,30 @@ fn a_context_streamed_during_a_turn_names_no_model() {
         Progress::decode(&framed(&frame)).unwrap_err().code(),
         ErrorCode::Malformed
     );
+}
+
+#[test]
+fn a_context_says_what_an_agent_holds_only_on_its_route() {
+    let [whole, _, agent] = contexts();
+    // A context streamed during a turn names no model.
+    let whole = Context {
+        model: None,
+        ..whole
+    };
+    for (context, held) in [(whole, None), (agent, Some(58_200))] {
+        let streamed = Progress::Context(context);
+        let frame: Value = serde_json::from_slice(&streamed.encode().unwrap()).unwrap();
+        assert_eq!(
+            frame.pointer("/context/external").and_then(Value::as_u64),
+            held
+        );
+        let Ok(Progress::Context(read)) = Progress::decode(&framed(&frame)) else {
+            panic!("{frame}");
+        };
+        assert_eq!(read.external, held);
+        assert_eq!(read.tokens(Category::External), held.unwrap_or(0));
+        assert!(!Category::EVERY.contains(&Category::External));
+    }
 }
 
 #[test]

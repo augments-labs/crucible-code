@@ -65,6 +65,7 @@ fn weekly() -> api::Usage {
             messages: 184_600,
             reserve: 128_000,
             free: 542_300,
+            external: None,
         },
         limits: plan(vec![limit(Window::Weekly, 31, MONDAY)]),
     }

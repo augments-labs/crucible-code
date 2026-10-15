@@ -158,6 +158,8 @@ pub enum Performed {
         model: Box<str>,
         /// The runner's count of it.
         breakdown: Breakdown,
+        /// What an installed agent said its last turn read, on its route.
+        external: Option<u64>,
     },
     /// `/usage`: what the session has used, and the plan's limits as the
     /// runner holds them once it was asked. Only [`Command::AskLimits`] asks
@@ -255,6 +257,7 @@ pub async fn perform(
         Command::Context => Performed::Context {
             model: conversation.settled().model().into(),
             breakdown: conversation.settled().breakdown(),
+            external: conversation.settled().external(),
         },
         Command::Usage => asking::usage(conversation),
         // Asked and awaited in a row: a client that would rather keep going
@@ -489,9 +492,14 @@ impl Performed {
             }),
             Self::Help => Outcome::help(),
             Self::Notes(notes) => Outcome::Notes(notes.clone()),
-            Self::Context { model, breakdown } => {
-                Outcome::Context(reading::context(model, breakdown))
-            }
+            Self::Context {
+                model,
+                breakdown,
+                external,
+            } => Outcome::Context(crucible_client_api::Context {
+                external: *external,
+                ..reading::context(model, breakdown)
+            }),
             Self::Usage(usage) => Outcome::Usage(usage.as_ref().clone()),
             Self::Leaving => Outcome::Leaving,
         }

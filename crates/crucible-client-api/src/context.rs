@@ -6,8 +6,15 @@
 //! were counted from: no instruction, schema or message crosses, only how much
 //! of the window each kind of them takes.
 //!
-//! It also crosses as [`Progress::Context`](crate::Progress::Context) during a
-//! turn, with the model left out.
+//! On an installed agent's route the agent builds its requests, so Crucible
+//! counts none of them, and the one part that crosses is
+//! [`Category::External`]: what the agent said its last turn read. A frame
+//! from a provider's model leaves that field out, so a reader shows it only
+//! where it is present.
+//!
+//! It also crosses inside a [`Usage`](crate::Usage), and as
+//! [`Progress::Context`](crate::Progress::Context) during a turn on a
+//! provider's model, with the model left out; an agent's route streams none.
 //!
 //! What is left of the window is the same whole-number reading a
 //! [`Snapshot`](crate::Snapshot) carries, so a client showing both never shows
@@ -24,7 +31,8 @@ use crate::wire::{Fields, Writing, text, written};
 /// What a part of the window is held by.
 ///
 /// Closed: content that reaches a request is one of these, and a new kind of
-/// it is a new arm every reader decides about.
+/// it is a new arm every reader decides about. [`Category::EVERY`] lists the
+/// parts Crucible counts; [`Category::External`] is outside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Category {
     /// Crucible's own instructions, or the ones that replaced them.
@@ -42,10 +50,14 @@ pub enum Category {
     Reserve,
     /// What nothing holds yet.
     Free,
+    /// What an installed agent holds, which Crucible cannot see into: the
+    /// tokens the agent said its last turn read, cache reads included.
+    External,
 }
 
 impl Category {
-    /// Every part, in the order a window is filled.
+    /// Every part Crucible counts, in the order a window is filled; not
+    /// [`Category::External`], which only an installed agent reports.
     pub const EVERY: [Self; 7] = [
         Self::System,
         Self::Instructions,
@@ -66,6 +78,7 @@ impl Category {
             Self::Messages => "messages",
             Self::Reserve => "reserve",
             Self::Free => "free",
+            Self::External => "external",
         }
     }
 }
@@ -96,10 +109,14 @@ pub struct Context {
     pub reserve: u64,
     /// Tokens nothing holds; 0 where the window is not known.
     pub free: u64,
+    /// Tokens an installed agent said its last turn read, on its route
+    /// alone: 0 until it says, and left out on a provider's model.
+    pub external: Option<u64>,
 }
 
 impl Context {
-    /// The tokens `category` holds.
+    /// The tokens `category` holds; for [`Category::External`], 0 where the
+    /// agent reported nothing.
     #[must_use]
     pub const fn tokens(&self, category: Category) -> u64 {
         match category {
@@ -110,6 +127,10 @@ impl Context {
             Category::Messages => self.messages,
             Category::Reserve => self.reserve,
             Category::Free => self.free,
+            Category::External => match self.external {
+                Some(tokens) => tokens,
+                None => 0,
+            },
         }
     }
 
@@ -125,6 +146,7 @@ impl Context {
             )
             .maybe("window", self.window)
             .maybe("left", self.left.map(Percent::get))
+            .maybe(Category::External.field(), self.external)
             .finish()
     }
 
@@ -154,6 +176,7 @@ impl Context {
             messages: fields.number(Category::Messages.field())?,
             reserve: fields.number(Category::Reserve.field())?,
             free: fields.number(Category::Free.field())?,
+            external: fields.maybe_number(Category::External.field())?,
         };
         fields.done()?;
         // Both are read against the window: without one, either is a figure

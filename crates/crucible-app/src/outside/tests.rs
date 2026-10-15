@@ -369,6 +369,30 @@ async fn a_sum_that_cannot_be_stated_is_not_priced() {
     assert_eq!(tally.totals().cost(), SessionCost::NotPriced);
 }
 
+/// What a turn read stands until the next turn says its own, adds up within
+/// a turn that says it twice, and stays where a turn says nothing of it.
+#[test]
+fn what_a_turn_read_stands_until_the_next_says_its_own() {
+    let mut tally = Tally::new();
+    assert_eq!(tally.read, 0);
+    tally.begin();
+    tally.used(&Usage::of(TurnId::FIRST).input(125));
+    tally.used(&Usage::of(TurnId::FIRST).input(200));
+    tally.end(true);
+    assert_eq!(tally.read, 325);
+
+    let second = TurnId::FIRST.next();
+    tally.begin();
+    assert_eq!(tally.read, 325, "the turn under way has said nothing");
+    tally.used(&Usage::of(second).output(40));
+    assert_eq!(tally.read, 325, "the turn said nothing of what it read");
+    tally.used(&Usage::of(second).input(300));
+    assert_eq!(tally.read, 300);
+    tally.used(&Usage::of(second).input(u64::MAX));
+    tally.end(true);
+    assert_eq!(tally.read, u64::MAX);
+}
+
 /// The figures reported add up across turns, and a session that has begun
 /// no turn reads as having used nothing.
 #[tokio::test]

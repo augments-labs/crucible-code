@@ -209,7 +209,7 @@ fn used_up(
 }
 
 /// How the window of the next request to `model` is spent, as a client reads
-/// it.
+/// it: the parts Crucible counts, and none an installed agent holds.
 ///
 /// Every category the runner counts is placed by name, so one it adds is a
 /// category this match, and so the contract, has to be told about. The
@@ -234,7 +234,8 @@ pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
 /// The wall time is read as this is called. Called between turns by
 /// [`perform`](super::perform), and by the terminal mid-turn with the figures
 /// that turn last reported; a client with no terminal is streamed the same
-/// figures by [`progress`].
+/// figures by [`progress`]. Its context carries none of what an installed
+/// agent holds: the caller that knows the route sets that.
 #[must_use]
 pub fn usage(
     model: &str,
@@ -395,6 +396,7 @@ fn counted(breakdown: &Breakdown) -> api::Context {
         messages: 0,
         reserve: 0,
         free: 0,
+        external: None,
     };
     for category in Category::EVERY {
         let tokens = breakdown.tokens(category);
