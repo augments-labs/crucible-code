@@ -239,22 +239,16 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
         stored: startup.stored,
         subscriptions: startup.subscriptions,
     };
-    // A provider whose access names an installed agent runs the conversation
-    // on the agent's route, settled first for the reason the pick below is.
-    let on_agent = on_agent(startup, auth, agents)?;
-
     // Before anything a session could be run on is built, and read without
-    // touching the log: a session an installed agent ran cannot be continued
-    // on a provider's model, and saying so is owed whatever else is wrong
-    // with this run. The one picked here is the one reopened below.
-    let picked = match &startup.resuming {
-        _ if on_agent.is_some() => None,
-        Resuming::No => None,
-        Resuming::Newest => Some(crucible_session::picked(sessions, workspace, None)?),
-        Resuming::Exact(id) => {
-            Some(crucible_session::picked(sessions, workspace, Some(id)).map_err(unknown)?)
-        }
-    };
+    // touching the log: the session a resume asks for, and the installed
+    // agent's route it was opened on, where one was, since a session is
+    // continued on what ran it and saying it cannot be is owed whatever else
+    // is wrong with this run. The one picked here is the one reopened below.
+    let resumed = resumed(startup)?;
+    // A session an agent ran runs the conversation on the agent's route, and
+    // so does a provider whose access names an installed agent.
+    let on_agent = on_agent(startup, auth, agents, resumed.as_ref())?;
+    let picked = resumed.filter(|_| on_agent.is_none()).map(|(id, _)| id);
     // The provider the kept runner asks: none on an agent's route, where the
     // agent's own model answers.
     let native = startup.provider.filter(|_| on_agent.is_none());
@@ -484,9 +478,24 @@ impl OnAgent {
     }
 }
 
-/// The installed agent the provider `startup` asks for runs the conversation
-/// on, where that provider's access names one; nothing where it is reached
-/// some other way, or none is asked for.
+/// The session `startup` asks to pick up, and the installed agent's route it
+/// was opened on, where it was; read without claiming, replaying or cutting
+/// it.
+fn resumed(startup: &Startup<'_>) -> Result<Option<(SessionId, Option<RouteBinding>)>, AppError> {
+    let (sessions, workspace) = (startup.sessions, startup.workspace);
+    Ok(match &startup.resuming {
+        Resuming::No => None,
+        Resuming::Newest => Some(crucible_session::pick_routed(sessions, workspace, None)?),
+        Resuming::Exact(id) => {
+            Some(crucible_session::pick_routed(sessions, workspace, Some(id)).map_err(unknown)?)
+        }
+    })
+}
+
+/// The installed agent the run is on: the one the session `resumed` was
+/// opened on, where it was opened on one, and otherwise the one the provider
+/// `startup` asks for runs the conversation on, where that provider's access
+/// names one; nothing where the run is on a provider's model.
 ///
 /// Settled before anything is built or a log is touched: an agent that cannot
 /// be started, or a session no agent ran, is refused here. A route that cannot
@@ -494,24 +503,40 @@ impl OnAgent {
 ///
 /// # Errors
 ///
-/// [`AppError::Unstartable`] where the agent is not among `agents`, is
-/// disconnected, has no launch in the run's mode, has no program that can be
-/// run, or names itself in a way a session cannot be bound to;
-/// [`AppError::Unrouted`] where the session asked for was run on a provider's
-/// model; [`AppError::NoSession`] where none answers to the id; and
-/// [`AppError::Config`] where the run's confinement cannot be built.
+/// [`AppError::Unstartable`] where the agent is disconnected, has no launch in
+/// the run's mode, has no program that can be run, or names itself in a way a
+/// session cannot be bound to; [`AppError::Unrouted`] where the session asked
+/// for was run on a provider's model and the provider asked for is reached
+/// through an agent; [`AppError::Session`] where the agent the session was
+/// opened on is no longer configured as it was; and [`AppError::Config`] where
+/// the run's confinement cannot be built.
 fn on_agent(
     startup: &Startup<'_>,
     auth: ProviderAuth<'_>,
     agents: &'static Registry,
+    resumed: Option<&(SessionId, Option<RouteBinding>)>,
 ) -> Result<Option<OnAgent>, AppError> {
-    let Some(route) = startup
+    let asked = startup
         .provider
         .and_then(|one| access::settle(one, auth).ok())
-        .map(|settled| settled.into_parts().0)
-    else {
-        return Ok(None);
-    };
+        .map(|settled| settled.into_parts().0);
+    match (resumed, asked) {
+        (Some((id, Some(opened))), _) => reopened_on(startup, agents, id, opened).map(Some),
+        (Some((_, None)), Some(Route::External { instance, .. })) => {
+            Err(AppError::Unrouted { instance })
+        }
+        (Some((_, None)), _) | (None, None) => Ok(None),
+        (None, Some(route)) => started_on(startup, agents, &route),
+    }
+}
+
+/// The agent `route` names, where it is an installed agent's, for a run that
+/// starts a new session on it.
+fn started_on(
+    startup: &Startup<'_>,
+    agents: &'static Registry,
+    route: &Route,
+) -> Result<Option<OnAgent>, AppError> {
     let Route::External {
         provider,
         instance,
@@ -519,69 +544,130 @@ fn on_agent(
         profile,
         enabled,
         ..
-    } = &route
+    } = route
     else {
         return Ok(None);
     };
-    let unstartable = |reason: String| AppError::Unstartable {
-        instance: instance.clone(),
-        reason: reason.into(),
-    };
     if !enabled {
-        return Err(unstartable(format!(
-            "it is disconnected; connect it again, or remove providers.{provider}.access to \
-             reach {provider} directly"
-        )));
+        return Err(unstartable(
+            instance,
+            format!(
+                "it is disconnected; connect it again, or remove providers.{provider}.access to \
+                 reach {provider} directly"
+            ),
+        ));
     }
-    let Some(agent) = launching::Agent::routed(&route, agents, |name| {
+    let Some(agent) = launching::Agent::routed(route, agents, |name| {
         (startup.from)(name).map(OsString::from)
     }) else {
         return Err(unstartable(
+            instance,
             "this release has no launch for its driver".to_owned(),
         ));
     };
-    let dialect =
-        (agent.row().dialect)(startup.mode).map_err(|refused| unstartable(refused.to_string()))?;
-    // Found now, where a turn would find it only once a log had been written
-    // that no agent ever ran.
-    match agent.discovery() {
-        Discovery::Found(_) => {}
-        Discovery::Missing => {
-            return Err(unstartable(format!(
-                "no {} command on PATH and none at externalAgents.{instance}.executable",
-                dialect.program()
-            )));
-        }
-        Discovery::NotExecutable(path) => {
-            return Err(unstartable(format!("{} is not executable", path.display())));
-        }
-    }
-    let bound = RouteBinding::new(driver.name(), instance, profile.as_deref())
-        .map_err(|refused| unstartable(refused.to_string()))?;
-    let (sessions, workspace) = (startup.sessions, startup.workspace);
-    let picked = match &startup.resuming {
-        Resuming::No => None,
-        Resuming::Newest => Some(crucible_session::pick_routed(sessions, workspace, None)?),
-        Resuming::Exact(id) => {
-            Some(crucible_session::pick_routed(sessions, workspace, Some(id)).map_err(unknown)?)
-        }
-    };
-    let picked = match picked {
-        None => None,
-        Some((id, Some(_))) => Some(id),
-        Some((_, None)) => {
-            return Err(AppError::Unrouted {
-                instance: instance.clone(),
-            });
-        }
-    };
+    startable(startup, &agent, instance)?;
+    let route = RouteBinding::new(driver.name(), instance, profile.as_deref())
+        .map_err(|refused| unstartable(instance, refused.to_string()))?;
     Ok(Some(OnAgent {
         agent,
         instance: instance.clone(),
-        route: bound,
-        picked,
-        policy: startup.settings.sandbox().enforcing_policy(workspace)?,
+        route,
+        picked: None,
+        policy: startup
+            .settings
+            .sandbox()
+            .enforcing_policy(startup.workspace)?,
     }))
+}
+
+/// The agent the session `id` was opened on as `opened`, as the
+/// configuration still names it, for a run that continues that session.
+///
+/// Whatever the provider asked for is reached through: the session goes on
+/// where it was run, or not at all.
+fn reopened_on(
+    startup: &Startup<'_>,
+    agents: &'static Registry,
+    id: &SessionId,
+    opened: &RouteBinding,
+) -> Result<OnAgent, AppError> {
+    let gone = || {
+        AppError::Session(crucible_session::SessionError::Rerouted {
+            id: id.as_str().into(),
+            route: Box::new(opened.clone()),
+        })
+    };
+    let entry = startup
+        .settings
+        .external_agents()
+        .into_iter()
+        .find(|entry| entry.name() == opened.instance())
+        .ok_or_else(gone)?;
+    let route = RouteBinding::new(entry.driver().name(), entry.name(), entry.profile())
+        .ok()
+        .filter(|route| route.same_route(opened))
+        .ok_or_else(gone)?;
+    let instance = entry.name();
+    if !entry.enabled() {
+        return Err(unstartable(
+            instance,
+            "it is disconnected; connect it again".to_owned(),
+        ));
+    }
+    let Some(agent) = launching::Agent::configured(&entry, agents, |name| {
+        (startup.from)(name).map(OsString::from)
+    }) else {
+        return Err(unstartable(
+            instance,
+            "this release has no launch for its driver".to_owned(),
+        ));
+    };
+    startable(startup, &agent, instance)?;
+    Ok(OnAgent {
+        agent,
+        instance: instance.into(),
+        route,
+        picked: Some(id.clone()),
+        policy: startup
+            .settings
+            .sandbox()
+            .enforcing_policy(startup.workspace)?,
+    })
+}
+
+/// Refuses `agent`, the `externalAgents` entry `instance`, where the run's
+/// mode has no launch for it or its program cannot be run.
+fn startable(
+    startup: &Startup<'_>,
+    agent: &launching::Agent,
+    instance: &str,
+) -> Result<(), AppError> {
+    let dialect = (agent.row().dialect)(startup.mode)
+        .map_err(|refused| unstartable(instance, refused.to_string()))?;
+    // Found now, where a turn would find it only once a log had been written
+    // that no agent ever ran.
+    match agent.discovery() {
+        Discovery::Found(_) => Ok(()),
+        Discovery::Missing => Err(unstartable(
+            instance,
+            format!(
+                "no {} command on PATH and none at externalAgents.{instance}.executable",
+                dialect.program()
+            ),
+        )),
+        Discovery::NotExecutable(path) => Err(unstartable(
+            instance,
+            format!("{} is not executable", path.display()),
+        )),
+    }
+}
+
+/// The agent `instance` cannot be started on this run, for `reason`.
+fn unstartable(instance: &str, reason: String) -> AppError {
+    AppError::Unstartable {
+        instance: instance.into(),
+        reason: reason.into(),
+    }
 }
 
 /// Waits on `runtime` for what picking the session up owes it, before the

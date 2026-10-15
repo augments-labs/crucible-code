@@ -113,19 +113,23 @@ a permission question into one. See
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.
 
-A session an installed agent ran is not continued by a provider's model:
-`--continue`, `--resume` and `/resume` refuse it, naming the agent's configured
-name, before any provider or credential is looked for. Its history is kept as
-it was, and nothing is cut from or appended to its log. Start a new session to
-carry on. A log whose line naming the agent is damaged or cut short is refused
-as a log that cannot be read, and `crucible sessions list` counts it among the
-logs it could not read, rather than taking it for a session a provider's
-model ran.
+A session an installed agent ran is continued on that agent's route, whatever
+the provider asked is reached by: `--continue` and `--resume` start the run on
+the agent the session names, with no provider or credential looked for, as
+long as `externalAgents` still names it with the same driver and profile and it
+is connected. Where it no longer does, they refuse the session, naming the
+agent's configured name, and its history is kept as it was, with nothing cut
+from or appended to its log; start a new session to carry on. `/resume` on a
+provider's model refuses it the same way. A log whose line naming the agent is
+damaged or cut short is refused as a log that cannot be read, and
+`crucible sessions list` counts it among the logs it could not read, rather
+than taking it for a session a provider's model ran.
 
 The other way round, a run whose provider's access names an installed agent
-continues only a session that agent ran, on the same route: a session a
-provider's model ran, or one another agent ran, is refused with a sentence
-saying so, and its log is left as it was.
+does not continue a session a provider's model ran: `--continue` and
+`--resume` refuse it and say it resumes on the next launch that reaches a
+provider directly, and `/resume` refuses it, or one another agent ran, with a
+sentence saying so. Its log is left as it was.
 
 A log name in the sessions directory that is a symbolic link or a pipe rather
 than a file is refused as a log that cannot be read is: `--continue` stops with
