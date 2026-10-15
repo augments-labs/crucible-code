@@ -666,6 +666,9 @@ It exits 0 once the credential is stored and 1 when nothing was: a key that
 does not fit, a sign-in that failed or was declined, a store that could not be
 written, or a user configuration file that could not be read, since what goes
 with a credential is settled from it. A login never signs another provider in.
+An [installed coding agent](../providers/agents.md) keeps its own sign-in, so
+`auth login` stores nothing for one; it is connected inside a session, through
+`/login`.
 
 ### `auth logout PROVIDER`
 

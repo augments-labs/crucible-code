@@ -225,8 +225,8 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 A profile key belongs to its driver, and the other driver's is refused by name.
 An entry names a program crucible would start, so the block is read only from
 the configuration file in your home directory, and `/settings` shows none of
-it. This build reads the block and refuses to start a provider whose access
-names an agent, with a sentence saying so.
+it. A provider whose access names an entry has its conversations run by that
+agent; see [installed coding agents](../providers/agents.md).
 
 ### `systemPrompt`
 
