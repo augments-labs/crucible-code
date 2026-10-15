@@ -490,6 +490,21 @@ wire_names_no_vendor 'Responses' \
     'crates/crucible-provider/src/responses.rs' \
     'crates/crucible-provider/src/responses/*'
 
+section "the client contract names no vendor"
+# Every front end and every route a conversation runs on speak this contract, so
+# a vendor's name in it, a test's fixture included, would be one vendor's case
+# written into what all of them share. Providers and agents reach it as names.
+contract=$(git ls-files 'crates/crucible-client-api/src/*')
+vendors='anthropic|claude|google|gemini|antigravity|openai|chatgpt|codex'
+if [[ -z "$contract" ]]; then
+    printf '    FAIL the client contract was not found; this check measured nothing\n'
+    failed=1
+elif named=$(printf '%s\n' "$contract" | xargs grep -n -i -E "$vendors"); then
+    printf '%s\n' "$named" | sed 's/^/    /'
+    printf '    FAIL the client contract names a vendor; give it a name no vendor owns\n'
+    failed=1
+fi
+
 section "accepted screens"
 # The whole-screen suite proves a capture matches its accepted picture. It
 # cannot prove the picture is still the one a reviewer accepted, because a
