@@ -94,46 +94,49 @@ impl Registry {
 }
 
 /// The registry this build ships.
-pub static REGISTRY: Registry = Registry::new(&[
-    Row {
-        driver: Driver::Claude,
-        // Started in the permission mode the reviewed table gives the
-        // conversation's mode, and refused in one it gives none.
-        dialect: |mode| {
-            Claude::in_mode(claude_mode(mode)).map(|claude| Box::new(claude) as Box<dyn Dialect>)
-        },
-        profile_key: "configDir",
-        route: "agent:claude",
-        docs_section: "claude-code",
-        // The service it asks, and the sign-in pages and token exchange of
-        // a subscription account.
-        reaches: &[
-            "api.anthropic.com",
-            "claude.ai",
-            "claude.com",
-            "platform.claude.com",
-        ],
-        shipping: true,
+pub static REGISTRY: Registry = Registry::new(&[CLAUDE, ANTIGRAVITY]);
+
+/// Claude Code's row, as this release ships it.
+pub(crate) const CLAUDE: Row = Row {
+    driver: Driver::Claude,
+    // Started in the permission mode the reviewed table gives the
+    // conversation's mode, and refused in one it gives none.
+    dialect: |mode| {
+        Claude::in_mode(claude_mode(mode)).map(|claude| Box::new(claude) as Box<dyn Dialect>)
     },
-    Row {
-        driver: Driver::Antigravity,
-        // The agent asks about every action itself, whatever the
-        // conversation's mode says.
-        dialect: |_| Ok(Box::new(Antigravity::default())),
-        profile_key: "profileDir",
-        route: "agent:antigravity",
-        docs_section: "antigravity",
-        // Its sign-in page, the token exchange behind it, and the service it
-        // asks, in its released and its daily build.
-        reaches: &[
-            "accounts.google.com",
-            "oauth2.googleapis.com",
-            "cloudcode-pa.googleapis.com",
-            "daily-cloudcode-pa.googleapis.com",
-        ],
-        shipping: true,
-    },
-]);
+    profile_key: "configDir",
+    route: "agent:claude",
+    docs_section: "claude-code",
+    // The service it asks, and the sign-in pages and token exchange of
+    // a subscription account.
+    reaches: &[
+        "api.anthropic.com",
+        "claude.ai",
+        "claude.com",
+        "platform.claude.com",
+    ],
+    shipping: true,
+};
+
+/// Antigravity's row, as this release ships it.
+pub(crate) const ANTIGRAVITY: Row = Row {
+    driver: Driver::Antigravity,
+    // The agent asks about every action itself, whatever the
+    // conversation's mode says.
+    dialect: |_| Ok(Box::new(Antigravity::default())),
+    profile_key: "profileDir",
+    route: "agent:antigravity",
+    docs_section: "antigravity",
+    // Its sign-in page, the token exchange behind it, and the service it
+    // asks, in its released and its daily build.
+    reaches: &[
+        "accounts.google.com",
+        "oauth2.googleapis.com",
+        "cloudcode-pa.googleapis.com",
+        "daily-cloudcode-pa.googleapis.com",
+    ],
+    shipping: true,
+};
 
 /// The mode Claude Code's table has for the conversation's `mode`.
 const fn claude_mode(mode: Mode) -> crucible_external_harnesses::claude::Mode {

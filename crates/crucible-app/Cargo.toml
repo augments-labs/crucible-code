@@ -111,7 +111,8 @@ crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 # Nothing in the workspace turns it on as a dependency; only the binary's
 # `[dev-dependencies]` do, which cargo does not resolve for a release build. It
 # is not in the shipped binary and it is not API anyone can rely on. It also
-# builds the agents' fake peer, which the headless suite drives.
+# builds the agents' fake peer, which the headless suite drives, and lets the
+# binary choose the agents it can start from an environment variable.
 [features]
 proof = ["crucible-external-harnesses/proof"]
 

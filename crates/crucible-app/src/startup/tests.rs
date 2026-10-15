@@ -466,13 +466,30 @@ fn on_the_agent(
 }
 
 /// [`on_the_agent`], with the agent's executable configured as `program`,
-/// picking up `resuming` in `mode`.
+/// picking up `resuming` in `mode`, on what this release ships.
 fn on_the_program(
     sample: &Sample,
     services: &Services,
     program: &std::path::Path,
     entry: &str,
     (resuming, mode): (Resuming, Mode),
+) -> Result<Conversation, AppError> {
+    on_the_program_over(
+        sample,
+        services,
+        program,
+        entry,
+        (resuming, mode, &crate::backends::REGISTRY),
+    )
+}
+
+/// [`on_the_program`], with `agents` the agents the run can be started on.
+fn on_the_program_over(
+    sample: &Sample,
+    services: &Services,
+    program: &std::path::Path,
+    entry: &str,
+    (resuming, mode, agents): (Resuming, Mode, &'static Registry),
 ) -> Result<Conversation, AppError> {
     let settings = sample.user(&format!(
         r#"{{"sandbox": {{"enabled": false}},
@@ -482,29 +499,32 @@ fn on_the_program(
         // every platform.
         serde_json::Value::from(program.to_string_lossy()),
     ));
-    assemble(&Startup {
-        providers: &catalogue(),
-        provider: Some(serving("anthropic")),
-        unasked: NO_MODEL_CHOSEN,
-        model: None,
-        effort: None,
-        resuming,
-        mode,
-        leaving: &crucible_builtins::Background::new(),
-        services,
-        settings: &settings,
-        sessions: &sample.logs(),
-        workspace: &sample.workspace(),
-        ledger: &Ledger::new(),
-        revealed: &Revealed::new(),
-        plan: &Plan::new(),
-        asking: Arc::new(Nobody),
-        hosting: &[],
-        terminal: true,
-        from: &|_| None,
-        stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
-    })
+    assembled(
+        &Startup {
+            providers: &catalogue(),
+            provider: Some(serving("anthropic")),
+            unasked: NO_MODEL_CHOSEN,
+            model: None,
+            effort: None,
+            resuming,
+            mode,
+            leaving: &crucible_builtins::Background::new(),
+            services,
+            settings: &settings,
+            sessions: &sample.logs(),
+            workspace: &sample.workspace(),
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| None,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        },
+        agents,
+    )
 }
 
 #[test]
@@ -665,6 +685,85 @@ fn an_agent_with_no_launch_in_the_run_s_mode_is_not_started_and_no_log_is_writte
         std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
         "a log was written for a run that never started"
     );
+}
+
+#[test]
+fn an_agent_the_run_s_registry_has_no_row_for_is_not_started_and_no_log_is_written() {
+    static NONE: Registry = Registry::new(&[]);
+    let sample = Sample::new("agent-unregistered");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let Err(problem) = on_the_program_over(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask, &NONE),
+    ) else {
+        panic!("an agent the run's registry has no row for was started");
+    };
+
+    assert!(
+        problem.to_string().contains("no launch for its driver"),
+        "{problem}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
+}
+
+#[test]
+fn a_run_s_conversation_holds_the_registry_its_start_was_settled_against() {
+    static CLAUDE_ONLY: Registry = Registry::new(&[crate::backends::CLAUDE]);
+    let sample = Sample::new("agent-registry-kept");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let conversation = on_the_program_over(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask, &CLAUDE_ONLY),
+    )
+    .expect("a run on the agent's route");
+
+    assert!(std::ptr::eq(conversation.agents(), &raw const CLAUDE_ONLY));
+}
+
+#[test]
+fn a_conversation_nobody_handed_a_registry_runs_on_what_ships() {
+    let sample = Sample::new("agent-registry-default");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let conversation = on_the_program(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask),
+    )
+    .expect("a run on the agent's route");
+
+    assert!(std::ptr::eq(
+        conversation.agents(),
+        &raw const crate::backends::REGISTRY
+    ));
 }
 
 #[test]

@@ -8,7 +8,9 @@
 //!
 //! Nothing in here reads the environment or the disk on its own account: the
 //! lookup is a parameter, which is what lets a startup be failed both ways it
-//! can fail without a key or a home directory anywhere near the test.
+//! can fail without a key or a home directory anywhere near the test. The one
+//! exception is a test build: under `proof`, [`assemble`] reads which agents
+//! it can start from the variable `crate::proof` names.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -41,7 +43,7 @@ use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
 use crucible_workspace::Workspace;
 
 use crate::access::{self, AccessError, KeySource, Route, Settled};
-use crate::backends::REGISTRY;
+use crate::backends::Registry;
 use crate::content_use::{self, Consent, Serving};
 use crate::following::Following;
 use crate::launching::{self, Launcher, Runs};
@@ -207,8 +209,23 @@ impl fmt::Debug for Startup<'_> {
 /// [`AppError`] where no provider, server or session could be set up as
 /// asked, and [`AppError::Unstarted`] where the runtime the conversation's
 /// turns run on would not start; nothing is written to the disk for a startup
-/// that fails.
+/// that fails. A test build also refuses, before anything is built, agents
+/// its environment asks for under a name it has no registry for.
 pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
+    // A test build starts the agents its environment names, so a test of the
+    // whole program can run it over agents this release does not ship; a
+    // build that ships has no reader of that name.
+    #[cfg(feature = "proof")]
+    let agents = crate::proof::registry_from_environment()?;
+    #[cfg(not(feature = "proof"))]
+    let agents = &crate::backends::REGISTRY;
+    assembled(startup, agents)
+}
+
+/// [`assemble`], with `agents` the installed agents the run can be started
+/// on: the ones its start is settled against, which the conversation it
+/// returns records.
+fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Conversation, AppError> {
     let Startup {
         settings,
         sessions,
@@ -224,7 +241,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     };
     // A provider whose access names an installed agent runs the conversation
     // on the agent's route, settled first for the reason the pick below is.
-    let on_agent = on_agent(startup, auth)?;
+    let on_agent = on_agent(startup, auth, agents)?;
 
     // Before anything a session could be run on is built, and read without
     // touching the log: a session an installed agent ran cannot be continued
@@ -408,6 +425,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     }
     Ok(conversation
         .consenting(startup.services.consent().clone())
+        .registry(agents)
         .following(following))
 }
 
@@ -457,13 +475,17 @@ impl OnAgent {
 ///
 /// # Errors
 ///
-/// [`AppError::Unstartable`] where the agent is disconnected, has no launch in
-/// the run's mode, has no program that can be run, or names itself in a way a
-/// session cannot be bound to;
+/// [`AppError::Unstartable`] where the agent is not among `agents`, is
+/// disconnected, has no launch in the run's mode, has no program that can be
+/// run, or names itself in a way a session cannot be bound to;
 /// [`AppError::Unrouted`] where the session asked for was run on a provider's
 /// model; [`AppError::NoSession`] where none answers to the id; and
 /// [`AppError::Config`] where the run's confinement cannot be built.
-fn on_agent(startup: &Startup<'_>, auth: ProviderAuth<'_>) -> Result<Option<OnAgent>, AppError> {
+fn on_agent(
+    startup: &Startup<'_>,
+    auth: ProviderAuth<'_>,
+    agents: &'static Registry,
+) -> Result<Option<OnAgent>, AppError> {
     let Some(route) = startup
         .provider
         .and_then(|one| access::settle(one, auth).ok())
@@ -492,7 +514,7 @@ fn on_agent(startup: &Startup<'_>, auth: ProviderAuth<'_>) -> Result<Option<OnAg
              reach {provider} directly"
         )));
     }
-    let Some(agent) = launching::Agent::routed(&route, &REGISTRY, |name| {
+    let Some(agent) = launching::Agent::routed(&route, agents, |name| {
         (startup.from)(name).map(OsString::from)
     }) else {
         return Err(unstartable(

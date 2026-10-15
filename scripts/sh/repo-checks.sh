@@ -1157,6 +1157,87 @@ while IFS= read -r line; do
     failed=1
 done <<<"$sandbox_state"
 
+section "the agents a test build starts stay out of a release"
+# A test of the whole program runs the binary over agents this release does not
+# ship, or over none, by naming them in one variable that `crucible-app`'s
+# `proof` module reads. A build that ships must have no reader of it, so the
+# name is allowed only where it is read and in the whole-screen cases that set
+# it, the module is compiled only under `proof`, and `proof` is turned on the
+# way `per-checkout-state` is above: by a dev-dependency and by nothing a
+# release build resolves. Its own one edge, to the fake peer's `proof`, is the
+# only feature it may turn on.
+seam_name="CRUCIBLE_CODE_PROOF_REGISTRY"
+seam_reader="crates/crucible-app/src/proof.rs"
+seam_root="crates/crucible-app/src/lib.rs"
+named=$(grep -rlF --include='*.rs' "$seam_name" crates src tests || true)
+if ! grep -Fxq "$seam_reader" <<<"$named"; then
+    printf '    FAIL %s does not read %s; this check measured nothing\n' "$seam_reader" "$seam_name"
+    failed=1
+fi
+while IFS= read -r file; do
+    [[ -z "$file" || "$file" == "$seam_reader" || "$file" == tests/whole_screen/* ]] && continue
+    printf '    FAIL %s names %s; only %s and tests/whole_screen/ may\n' "$file" "$seam_name" "$seam_reader"
+    failed=1
+done <<<"$named"
+declared=$(grep -nE '^[[:space:]]*pub mod proof;' "$seam_root" || true)
+if [[ $(grep -c . <<<"$declared") -ne 1 ]]; then
+    printf '    FAIL %s declares pub mod proof; %d times, not once\n' "$seam_root" "$(grep -c . <<<"$declared")"
+    failed=1
+else
+    line=${declared%%:*}
+    if [[ "$(sed -n "$((line - 1))p" "$seam_root")" != '#[cfg(feature = "proof")]' ]]; then
+        printf '    FAIL %s:%s declares pub mod proof; without #[cfg(feature = "proof")] on the line above\n' "$seam_root" "$line"
+        failed=1
+    fi
+fi
+proof_feature=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c '
+import json, sys
+
+OWNER, FEATURE = "crucible-app", "proof"
+ALLOWED = {"crucible-external-harnesses/proof"}
+packages = json.load(sys.stdin)["packages"]
+owner = [package for package in packages if package["name"] == OWNER]
+if len(owner) != 1 or FEATURE not in owner[0]["features"]:
+    sys.exit(0)
+for enabled in owner[0]["features"][FEATURE]:
+    if enabled not in ALLOWED:
+        print(f"{OWNER}/{FEATURE} turns on {enabled}; it may turn on only {sorted(ALLOWED)}")
+tested = 0
+for package in packages:
+    name = package["name"]
+    keys = set()
+    for dependency in package["dependencies"]:
+        if dependency["name"] != OWNER:
+            continue
+        keys.add(dependency.get("rename") or dependency["name"])
+        if FEATURE not in dependency["features"]:
+            continue
+        kind = dependency["kind"] or "normal"
+        if kind == "dev":
+            tested += 1
+        else:
+            print(f"{name} turns on {OWNER}/{FEATURE} in a {kind} dependency, which a release build resolves")
+    for feature, enables in package["features"].items():
+        if name == OWNER:
+            named = feature != FEATURE and FEATURE in enables
+        else:
+            named = any(f"{key}{joint}{FEATURE}" in enables for key in keys for joint in ("/", "?/"))
+        if named:
+            print(f"{name} turns on {OWNER}/{FEATURE} through its feature {feature}, which a release build can ask for")
+if tested:
+    print("measured")
+')
+if ! grep -Fxq measured <<<"$proof_feature"; then
+    printf '    FAIL crucible-app was not found declaring proof and a package turning it on for its tests; this check measured nothing\n'
+    failed=1
+fi
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == measured ]] && continue
+    printf '    FAIL %s\n' "$line"
+    failed=1
+done <<<"$proof_feature"
+
 section "no spawned thread in the hosted crates"
 # No shipped source in the transport, MCP, extension or external-harnesses
 # crates starts its own thread: a `thread::spawn` in any of the four fails, which is also what keeps
