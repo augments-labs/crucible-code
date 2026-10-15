@@ -100,6 +100,10 @@ impl Relaunch for Again {
         }
     }
 
+    fn model(&self) -> Option<&str> {
+        None
+    }
+
     fn launch<'a>(
         &'a self,
         _: Mode,

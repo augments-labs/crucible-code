@@ -400,6 +400,7 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         serving: Some("anthropic"),
         external: None,
         execution: crucible_client_api::Execution::Native,
+        model: None,
     };
 
     while turn.step(&mut renderer) {}
@@ -2129,6 +2130,7 @@ fn a_panel_over_a_turn_reads_what_the_agent_holds_only_on_its_route() {
             serving: None,
             external,
             execution: crucible_client_api::Execution::Native,
+            model: None,
         };
         assert_eq!(turn.counted().usage.context.external, external);
     }

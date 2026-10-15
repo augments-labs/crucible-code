@@ -76,9 +76,9 @@ pub use remember::{
     unasked,
 };
 pub use settings::{
-    Access, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, McpServer, SandboxSettings,
-    ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail, TranscriptColours,
-    Updates, When, local, user,
+    Access, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, MODEL_CHARS, McpServer,
+    SandboxSettings, ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail,
+    TranscriptColours, Updates, When, local, model_name, user,
 };
 pub use shape::THEME;
 pub use shape::rows::{Row, RowId, Values, row, rows};

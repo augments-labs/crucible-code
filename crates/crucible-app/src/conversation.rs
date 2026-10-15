@@ -399,6 +399,14 @@ impl Conversation {
             .map(|outside| outside.route().instance())
     }
 
+    /// The model the installed agent the conversation is on is started with,
+    /// where it is on one and a model was chosen for it; otherwise the agent
+    /// chooses its own.
+    #[must_use]
+    pub(crate) fn agent_model(&self) -> Option<&str> {
+        self.outside.as_deref().and_then(Outside::model)
+    }
+
     /// Stops the conversation's work on the installed agent `instance`, where
     /// it is on that one: no turn launches it again, and the run held is
     /// closed. `None` where the conversation is not on it, and otherwise
@@ -419,7 +427,8 @@ impl Conversation {
     /// would go out, or be refused by the provider standing in only after the
     /// prompt was written down as said to a model nobody asked.
     ///
-    /// An installed agent chooses its own model and is never missing one:
+    /// An installed agent runs on the model its entry names, or else chooses
+    /// its own, and is never missing one:
     /// what refuses its turn is its launch.
     #[must_use]
     pub fn missing(&self) -> Option<crate::providers::Missing> {

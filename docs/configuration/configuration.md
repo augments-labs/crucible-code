@@ -221,6 +221,7 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 | `authentication` | How it signs in: `account`, its own login, the only value. |
 | `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
 | `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. |
+| `model` | For `claude`: the model it is started on, as it names it, such as `opus`. Without it the agent chooses. |
 
 A profile key belongs to its driver, and the other driver's is refused by name.
 An entry names a program crucible would start, so the block is read only from

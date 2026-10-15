@@ -59,11 +59,28 @@ fn an_instance_is_read_back_with_its_drivers_profile() {
     assert_eq!(personal.driver(), Driver::Claude);
     assert_eq!(personal.executable(), "claude");
     assert_eq!(personal.profile(), Some(profile.as_str()));
+    assert_eq!(personal.model(), None, "the agent's own default");
 
     assert_eq!(work.name(), "work");
     assert!(!work.enabled());
     assert_eq!(work.driver(), Driver::Antigravity);
     assert_eq!(work.profile(), Some(other.as_str()));
+}
+
+#[test]
+fn an_instance_is_read_back_with_the_model_it_is_started_with() {
+    let read = settings(
+        &serde_json::json!({"externalAgents": {
+            "personal": {"driver": "claude", "executable": "claude", "model": "opus"}
+        }})
+        .to_string(),
+    );
+    let agents = read.external_agents();
+    let [personal] = agents.as_slice() else {
+        panic!("one instance was written, got {agents:?}");
+    };
+
+    assert_eq!(personal.model(), Some("opus"));
 }
 
 #[test]

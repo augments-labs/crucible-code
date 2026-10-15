@@ -125,6 +125,7 @@ async fn run(
         resume,
         profile: Some(here),
         workspace: Some(here),
+        model: None,
     };
     let launch = Launch::new(program.clone(), policy(here), Held::granted(ROUTE))
         .asking(dialect.request(shape));

@@ -208,7 +208,8 @@ pub struct Snapshot {
     pub billing: Billing,
     /// Whether any installed agent is offered.
     pub agents: Agents,
-    /// The model in force, where one is.
+    /// The model in force, where one is: on an installed agent's route, the
+    /// one its entry starts it on, and none where the agent chooses its own.
     pub model: Option<Model>,
     /// The effort in force, where one was asked for.
     pub effort: Option<Rung>,

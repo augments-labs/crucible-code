@@ -88,6 +88,10 @@ pub trait Relaunch: Send + Sync {
     /// [`Failure`] saying why the agent has no launch under `mode`.
     fn admits(&self, mode: Mode) -> Result<(), Failure>;
 
+    /// The model each run is started with, as the agent names it, where one
+    /// was chosen; `None` leaves the agent its own.
+    fn model(&self) -> Option<&str>;
+
     /// A new run of the agent under `mode`, resuming the agent's own session
     /// `resume` names, or starting one where it is `None`.
     fn launch<'a>(
@@ -379,6 +383,11 @@ impl Outside {
     /// The route the session is bound to.
     pub(crate) const fn route(&self) -> &RouteBinding {
         &self.route
+    }
+
+    /// The model the agent's runs are started with, where one was chosen.
+    pub(crate) fn model(&self) -> Option<&str> {
+        self.relaunch.model()
     }
 
     /// Launches the agent under `mode` from the next turn, where it can be;

@@ -63,6 +63,8 @@ pub enum Route {
         executable: Box<str>,
         /// The profile directory its driver's key names, where one is written.
         profile: Option<Box<str>>,
+        /// The model it is started with, where its entry names one.
+        model: Option<Box<str>>,
         /// Whether new work may be sent through it. Carried rather than
         /// refused here, because a disabled agent is still the route the user
         /// chose: what to say about it belongs to whoever would have started it.
@@ -377,6 +379,7 @@ fn settled(
                 driver: agent.driver(),
                 executable: agent.executable().into(),
                 profile: agent.profile().map(Into::into),
+                model: agent.model().map(Into::into),
                 enabled: agent.enabled(),
             }))
         }

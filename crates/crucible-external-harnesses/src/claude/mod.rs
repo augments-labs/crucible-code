@@ -4,7 +4,8 @@
 //! [`Claude`] starts the installed program once for a run, printing frames
 //! and reading them, in its `default` permission mode unless it was made for
 //! a conversation's mode through the [`Modes`] table, with its permission
-//! prompts sent to this side as questions. Each turn is a user
+//! prompts sent to this side as questions, and with the model chosen for it
+//! where one was, else its own default. Each turn is a user
 //! frame on the same input, and ends at the `result` frame that answers it; a
 //! run for a session the program kept starts by resuming it. The program is
 //! started with only the environment its profile builds, so no key or cloud
@@ -317,6 +318,9 @@ impl Dialect for Claude {
         ]
         .map(str::to_owned)
         .to_vec();
+        if let Some(model) = shape.model {
+            arguments.extend(["--model".to_owned(), model.to_owned()]);
+        }
         if let Some(resume) = shape.resume {
             arguments.extend(["--resume".to_owned(), resume.to_owned()]);
         }

@@ -647,3 +647,28 @@ fn an_answer_laid_out_again_at_each_width_is_laid_out_once_to_be_written() {
         "times the answer was laid out, on each terminal"
     );
 }
+
+#[test]
+fn an_agent_s_model_is_named_where_its_entry_chose_one() {
+    // `/model` names the model the entry starts the agent on, rather than
+    // saying the agent chooses; `/effort` is still the agent's to choose.
+    let work = crucible_client_api::Execution::Instance(
+        crucible_client_api::Name::new("work").expect("a name"),
+    );
+    let opus = crucible_client_api::Model::new("opus");
+
+    let said = super::chosen_by_agent(&work, opus.as_ref(), false).expect("on a route");
+    assert!(said.contains("started on the model opus"), "{said}");
+    let said = super::chosen_by_agent(&work, opus.as_ref(), true).expect("on a route");
+    assert!(said.ends_with("which chooses how hard it thinks"), "{said}");
+    let said = super::chosen_by_agent(&work, None, false).expect("on a route");
+    assert!(said.ends_with("which chooses its own model"), "{said}");
+    assert_eq!(
+        super::chosen_by_agent(
+            &crucible_client_api::Execution::Native,
+            opus.as_ref(),
+            false
+        ),
+        None
+    );
+}

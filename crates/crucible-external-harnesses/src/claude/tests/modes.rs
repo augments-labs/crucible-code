@@ -38,6 +38,7 @@ fn only_full_access_launches_the_agent_with_its_prompts_skipped() {
                 resume,
                 profile: Some(Path::new("/profiles/work")),
                 workspace: Some(Path::new("/work")),
+                model: None,
             });
             let named = Modes::permission(mode).name();
             assert!(
@@ -82,6 +83,38 @@ fn a_run_is_admitted_in_a_mode_that_asks_at_least_as_much() {
             started.admits(Permission::BypassPermissions),
             started == Permission::BypassPermissions,
             "{started:?}"
+        );
+    }
+}
+
+/// A model chosen is named on the command line by its own argument, and none
+/// chosen leaves the agent's own default, with no model named at all.
+#[test]
+fn the_model_chosen_is_the_one_the_agent_is_started_with() {
+    for (model, named) in [(Some("opus"), Some("opus")), (None, None)] {
+        let request = Claude::in_mode(Mode::Ask).request(Shape {
+            resume: Some("4f0c"),
+            model,
+            ..Shape::default()
+        });
+        let at = request
+            .arguments
+            .iter()
+            .position(|argument| argument == "--model");
+        assert_eq!(
+            at.and_then(|at| request.arguments.get(at + 1))
+                .map(String::as_str),
+            named,
+            "{:?}",
+            request.arguments
+        );
+        assert!(
+            !request
+                .arguments
+                .iter()
+                .any(|argument| argument.starts_with("--model=")),
+            "{:?}",
+            request.arguments
         );
     }
 }

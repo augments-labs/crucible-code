@@ -34,7 +34,7 @@ pub(crate) mod sandbox;
 mod updates;
 mod variables;
 
-pub use access::{Access, Driver, ExternalAgent};
+pub use access::{Access, Driver, ExternalAgent, MODEL_CHARS, model_name};
 pub use compaction::{Compaction, When};
 pub use input::Sending;
 pub use layers::{local, user};

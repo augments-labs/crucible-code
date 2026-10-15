@@ -223,6 +223,13 @@
             ],
             "type": "string"
           },
+          "model": {
+            "description": "For a claude agent: the model it is started with, as the agent names it, such as opus or sonnet. Left off, the agent's own default. Letters, digits and . _ - : @ / [ ] only, not starting with -. Read only from the configuration file in your home directory",
+            "examples": [
+              "opus"
+            ],
+            "type": "string"
+          },
           "profileDir": {
             "description": "For an antigravity agent, and required for one: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
             "type": "string"

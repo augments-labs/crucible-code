@@ -110,6 +110,8 @@ pub struct Agent {
     discovery: Discovery,
     /// Its profile directory, where one is configured.
     profile: Option<PathBuf>,
+    /// The model it is started with, where its entry names one.
+    model: Option<Box<str>>,
 }
 
 impl Agent {
@@ -126,6 +128,7 @@ impl Agent {
             driver,
             executable,
             profile,
+            model,
             ..
         } = route
         else {
@@ -135,6 +138,7 @@ impl Agent {
             row: registry.row(*driver)?,
             discovery: discover(executable, lookup),
             profile: profile.as_deref().map(PathBuf::from),
+            model: model.clone(),
         })
     }
 
@@ -151,6 +155,7 @@ impl Agent {
             row: registry.row(agent.driver())?,
             discovery: discover(agent.executable(), lookup),
             profile: agent.profile().map(PathBuf::from),
+            model: agent.model().map(Into::into),
         })
     }
 
@@ -158,6 +163,12 @@ impl Agent {
     #[must_use]
     pub const fn row(&self) -> &'static Row {
         self.row
+    }
+
+    /// The model it is started with, where its entry names one.
+    #[must_use]
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
     }
 
     /// What looking for its program found.
@@ -192,6 +203,7 @@ impl Agent {
             resume,
             profile: self.profile.as_deref(),
             workspace: Some(workspace),
+            model: self.model.as_deref(),
         }
     }
 }
@@ -621,6 +633,10 @@ impl Runs {
 impl Relaunch for Runs {
     fn admits(&self, mode: Mode) -> Result<(), Failure> {
         (self.agent.row().dialect)(mode).map(drop)
+    }
+
+    fn model(&self) -> Option<&str> {
+        self.agent.model()
     }
 
     fn launch<'a>(

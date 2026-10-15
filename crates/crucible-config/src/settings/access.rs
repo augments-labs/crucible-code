@@ -136,9 +136,37 @@ impl Driver {
         }
     }
 
+    /// Whether it is started with a model `externalAgents.<name>.model`
+    /// names. An agent that is not chooses its own, and a model written for it
+    /// would be one nothing reads.
+    #[must_use]
+    pub const fn takes_model(self) -> bool {
+        match self {
+            Self::Claude => true,
+            Self::Antigravity => false,
+        }
+    }
+
     fn of(written: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|one| one.name() == written)
     }
+}
+
+/// The most characters a model an agent is started with is named in.
+pub const MODEL_CHARS: usize = 128;
+
+/// Whether `found` names a model an agent can be started with: letters,
+/// digits and `. _ - : @ / [ ]`, at most [`MODEL_CHARS`] of them, and never a
+/// leading `-`, since it is handed to the agent's program as an argument of
+/// its own and must never be read there as an option.
+#[must_use]
+pub fn model_name(found: &str) -> bool {
+    !found.is_empty()
+        && found.len() <= MODEL_CHARS
+        && !found.starts_with('-')
+        && found
+            .chars()
+            .all(|one| one.is_ascii_alphanumeric() || "._-:@/[]".contains(one))
 }
 
 /// One installed agent, as the document states it.
@@ -152,6 +180,7 @@ pub struct ExternalAgent {
     driver: Driver,
     executable: Box<str>,
     profile: Option<Box<str>>,
+    model: Option<Box<str>>,
 }
 
 impl ExternalAgent {
@@ -185,6 +214,13 @@ impl ExternalAgent {
         self.profile.as_deref()
     }
 
+    /// The model it is started with, as the agent names it, where one is
+    /// written; otherwise the agent's own default.
+    #[must_use]
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
     /// An instance named `name` of `driver`, run as `executable` with its
     /// profile directory at `profile`, as a configuration that has not been
     /// written yet would state it, taking no new work until it is.
@@ -196,6 +232,7 @@ impl ExternalAgent {
             driver,
             executable: executable.into(),
             profile: profile.map(Into::into),
+            model: None,
         }
     }
 
@@ -213,6 +250,7 @@ impl ExternalAgent {
                 .get(driver.profile_key())
                 .and_then(Value::as_str)
                 .map(Into::into),
+            model: record.get("model").and_then(Value::as_str).map(Into::into),
         })
     }
 }

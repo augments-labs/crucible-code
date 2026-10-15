@@ -84,6 +84,7 @@ fn route(executable: &Path, profile: Option<&Path>) -> Route {
         driver: Driver::Claude,
         executable: executable.to_string_lossy().into(),
         profile: profile.map(|profile| profile.to_string_lossy().into()),
+        model: None,
         enabled: true,
     }
 }
@@ -644,4 +645,19 @@ fn a_bare_name_is_found_on_path_and_an_absolute_one_where_it_is_written() {
     assert!(matches!(by_name, Discovery::Found(found) if found.path() == peer));
     assert!(matches!(written, Discovery::Found(found) if found.path() == peer));
     assert!(matches!(relative, Discovery::Missing));
+}
+
+/// The model a route names is the one every start of its agent is given, and
+/// a route naming none leaves the agent its own.
+#[test]
+fn an_agent_is_started_with_the_model_its_route_names() {
+    for (model, given) in [(Some("opus"), Some("opus")), (None, None)] {
+        let mut named = route(Path::new("/bin/claude"), None);
+        if let Route::External { model: at, .. } = &mut named {
+            *at = model.map(Into::into);
+        }
+        let agent =
+            Agent::routed(&named, &Registry::new(&SHIPPED), |_| None).expect("Claude Code's row");
+        assert_eq!(agent.shape(None, Path::new("/work")).model, given);
+    }
 }

@@ -540,6 +540,63 @@ fn an_antigravity_instance_needs_a_profile_of_its_own() {
     );
 }
 
+/// The model is handed to the agent's program as an argument of its own, so
+/// a value that could be read as an option, or that holds anything a model's
+/// name does not, is refused before anything is started.
+#[test]
+fn an_agent_model_is_a_name_and_never_an_option() {
+    for model in [
+        "-x",
+        "--dangerously-skip-permissions",
+        "opus sonnet",
+        "",
+        "op\nus",
+    ] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "claude", "executable": "claude", "model": {}}}}}}}"#,
+            serde_json::Value::from(model)
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{model:?}: got {err:?}"
+        );
+        assert!(
+            said.contains("externalAgents.mine.model"),
+            "{model:?}: got {said}"
+        );
+    }
+    for model in [
+        "opus",
+        "claude-opus-5-5",
+        "claude-opus-5-5[1m]",
+        "us.anthropic/claude:v1@x",
+    ] {
+        assert!(
+            mine(&format!(
+                r#"{{"externalAgents": {{"mine": {{"driver": "claude", "executable": "claude", "model": "{model}"}}}}}}"#
+            ))
+            .is_ok(),
+            "{model}"
+        );
+    }
+}
+
+/// A model written for an agent that chooses its own would be one nothing
+/// reads, so it is refused rather than left to look as if it were in force.
+#[test]
+fn a_model_for_an_agent_that_chooses_its_own_is_refused() {
+    let err = mine(
+        r#"{"externalAgents": {"mine": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy", "model": "opus"}}}"#,
+    )
+    .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+    assert!(said.contains("externalAgents.mine.model"), "got {said}");
+    assert!(said.contains("antigravity"), "got {said}");
+}
+
 #[test]
 fn a_driver_crucible_does_not_know_is_refused() {
     let err = mine(r#"{"externalAgents": {"mine": {"driver": "codex", "executable": "codex"}}}"#)

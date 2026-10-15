@@ -423,6 +423,7 @@ fn an_agent_access_resolves_to_its_instance_as_written() {
                 driver: Driver::Claude,
                 executable: "claude".into(),
                 profile: None,
+                model: None,
                 enabled,
             }
         );
@@ -484,4 +485,29 @@ fn an_agent_access_naming_no_instance_written_is_refused() {
         "{refused:?}"
     );
     assert!(said.contains("elsewhere"), "{said}");
+}
+
+/// The model an agent's entry names is carried on its route, so the launch
+/// that route makes is started with it.
+#[test]
+fn an_agent_access_carries_the_model_its_entry_names() {
+    let sample = Sample::new("access-agent-model");
+    let settings = sample.user(
+        r#"{"providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "mine"}}},
+            "externalAgents": {"mine": {"driver": "claude", "executable": "claude", "model": "opus"}}}"#,
+    );
+
+    let route = resolved(
+        serving("anthropic"),
+        &settings,
+        &lookup(None),
+        None,
+        NO_SUBSCRIPTION,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(&route, Route::External { model: Some(model), .. } if &**model == "opus"),
+        "{route:?}"
+    );
 }
