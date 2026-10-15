@@ -117,6 +117,11 @@ pub struct Conversation {
     /// What the two web tools answer through: built for the provider and model
     /// being asked, and built again by each switch of either.
     pub(crate) web: crate::following::Following,
+    /// The provider this conversation was asking when a connect during this
+    /// run moved it onto the installed agent named beside it: the route that
+    /// connect wrote is not in the files this run read at launch. Cleared by
+    /// every other move between routes.
+    pub(crate) moved_from: Option<(&'static str, Box<str>)>,
     /// When the plan behind each credential was last asked how much of its
     /// limits is used, and which credentials are not to be asked again.
     pub(crate) asks: crate::client::asking::Asks,
@@ -149,6 +154,7 @@ impl Conversation {
             agents: &REGISTRY,
             steps: None,
             web: crate::following::Following::default(),
+            moved_from: None,
             asks: crate::client::asking::Asks::default(),
         }
     }
@@ -328,6 +334,7 @@ impl Conversation {
         mode: Mode,
     ) -> Arc<Session> {
         let named = session.external_ref().cloned();
+        self.moved_from = None;
         self.runner
             .pick_up(Arc::new(Session::nowhere()), Transcript::new());
         self.outside = Some(Box::new(Outside::new(installed, transcript, mode, named)));
@@ -341,6 +348,7 @@ impl Conversation {
         if let Some(mut outside) = self.outside.take() {
             outside.retire().await;
         }
+        self.moved_from = None;
         self.pick_up(session, transcript).await
     }
 
@@ -714,9 +722,12 @@ impl Conversation {
             relaunch,
             route,
         };
-        self.external(Arc::new(session), Transcript::new(), installed)
+        let left = self
+            .external(Arc::new(session), Transcript::new(), installed)
             .await
-            .map_err(|refused| refused.reason().as_str().to_owned())
+            .map_err(|refused| refused.reason().as_str().to_owned())?;
+        self.moved_from = self.serving.map(|provider| (provider, entry.name().into()));
+        Ok(left)
     }
 
     /// Records into `session` from here on, and returns the one left.

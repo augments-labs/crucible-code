@@ -17,8 +17,11 @@ rewrites the provider's `access` from `externalAgent` to `subscription` or
 `apiKey` and makes it the `provider` asked, so the next session asks the
 provider directly; if that cannot be written, the file is left as it was and
 the next session still runs on the agent. `/login` for another provider only
-stores the credential, and `/logout` for the provider the agent reaches removes
-the stored credential and says the agent still reaches it.
+stores the credential; either way its line ends by saying this conversation
+stays on its agent. The provider the agent reaches includes the one a connect
+during this run moved the conversation off. `/logout` for the
+provider the agent reaches removes the stored credential and says the agent
+still reaches it.
 
 `/login` offers a third choice, *Use an installed coding agent*, where an
 agent can run and a provider is being asked: it connects that provider through
@@ -43,7 +46,9 @@ nothing.
 
 Connecting the provider a conversation is asking through an agent moves that
 conversation onto the agent at once, in a new session bound to the agent with
-nothing carried over; the session it left stays listed and can be resumed.
+nothing carried over, and the line it ends on names the agent and says the
+conversation starts fresh there; the session it left stays listed and can be
+resumed.
 Where the agent cannot be started in the conversation's mode, the conversation
 stays on the provider's model and the next session starts on the agent. A
 conversation already on an agent stays on it.

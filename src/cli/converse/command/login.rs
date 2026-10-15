@@ -75,8 +75,8 @@ use std::time::Duration;
 
 use crucible_app::Conversation;
 use crucible_app::client::accounts::{
-    CONNECT_UNSAVED, CONNECTED, DISCONNECTED, HOLD_UNKEPT, MOVED, NOT_CONFIRMED_STOPPED, REMOVED,
-    STILL_REFERENCED, THIS_RUN_ONLY, UNMOVED,
+    CONNECT_UNSAVED, CONNECTED, DISCONNECTED, HOLD_UNKEPT, NOT_CONFIRMED_STOPPED, REMOVED,
+    STILL_REFERENCED, THIS_RUN_ONLY, UNMOVED, moved_onto,
 };
 use crucible_app::client::{Account, Performed, snapshot};
 use crucible_app::content_use;
@@ -513,7 +513,7 @@ pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
     Some(match account {
         Account::Undecided | Account::Unconnected => return None,
         Account::Connected => (CONNECTED.to_owned(), true),
-        Account::Moved(_) => (MOVED.to_owned(), true),
+        Account::Moved(instance) => (moved_onto(instance), true),
         Account::Unmoved(reason) => (format!("{UNMOVED} ({reason})"), true),
         Account::ConnectUnsaved(problem) => (format!("! {CONNECT_UNSAVED} {problem}"), false),
         Account::HoldUnkept(problem) => (format!("! {HOLD_UNKEPT} {problem}"), false),
@@ -1544,13 +1544,19 @@ fn taken<T: Terminal>(
         } => {
             return say(
                 renderer,
-                &format!("login successful; {provider} is asked directly from the next run"),
+                &format!(
+                    "login successful; {provider} is asked directly from the next launch; \
+                     this conversation stays on its agent"
+                ),
             );
         }
         LoggedIn::Stored { provider } => {
             return say(
                 renderer,
-                &format!("login successful; the credential for {provider} is stored"),
+                &format!(
+                    "login successful; the credential for {provider} is stored; \
+                     this conversation stays on its agent"
+                ),
             );
         }
 

@@ -23,8 +23,8 @@ expression: picture
 |╰─────────────────────────────────────────────────────────────────────────────╯ |
 |                                                                                |
 |› /login                                                                        |
-|⎿ Connected. This conversation now runs on the agent, in a new session; the     |
-|  earlier one can be resumed.                                                   |
+|⎿ Connected. This conversation now runs on the agent claude and starts fresh,   |
+|  in a new session; the earlier one can be resumed.                             |
 |  execution: claude · billing: external                                         |
 |                                                                                |
 |                                                                                |

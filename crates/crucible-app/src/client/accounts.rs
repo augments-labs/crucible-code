@@ -192,7 +192,7 @@ impl Account {
             }
             Self::Moved(instance) => {
                 return Outcome::Login(LoginOutcome::AgentConnected {
-                    said: Text::cut(MOVED),
+                    said: Text::cut(&moved_onto(instance)),
                     onto: Name::new(instance).ok(),
                 });
             }
@@ -265,9 +265,15 @@ pub const DISCONNECT_INSTEAD: &str = "Disconnect from Crucible instead";
 pub const CONNECTED: &str = "Connected. The provider is reached through this agent.";
 
 /// What a person is told once a provider is reached through an agent and the
-/// conversation, which was on that provider's model, moved onto the agent.
-pub const MOVED: &str = "Connected. This conversation now runs on the agent, in a new session; \
-     the earlier one can be resumed.";
+/// conversation, which was on that provider's model, moved onto `instance`:
+/// the route it is on now, and that nothing came with it.
+#[must_use]
+pub fn moved_onto(instance: &str) -> String {
+    format!(
+        "Connected. This conversation now runs on the agent {instance} and starts fresh, \
+         in a new session; the earlier one can be resumed."
+    )
+}
 
 /// What a person is told once a provider is reached through an agent and the
 /// conversation, which was on that provider's model, could not move onto it.

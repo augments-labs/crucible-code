@@ -198,10 +198,20 @@ pub enum LoggedOut {
 /// What a credential just stored for `named` comes to while the conversation
 /// is on the installed agent `instance`, which keeps answering either way.
 ///
-/// The kind of credential stored decides how the route's provider is reached
-/// next: an account by its subscription, a key as a key.
-fn beside_the_route(instance: &str, named: Served, with: &Switching<'_>) -> LoggedIn {
-    if !routes(with.settings, named, instance) {
+/// The route's provider is the one the files read at launch reached through
+/// `instance`, or the one a connect during this run moved the conversation
+/// off onto `instance`, whose route those files do not have. The kind of
+/// credential stored decides how that provider is reached next: an account by
+/// its subscription, a key as a key.
+fn beside_the_route(
+    instance: &str,
+    moved_from: Option<&(&'static str, Box<str>)>,
+    named: Served,
+    with: &Switching<'_>,
+) -> LoggedIn {
+    let moved_off =
+        moved_from.is_some_and(|(provider, onto)| *provider == named.name && **onto == *instance);
+    if !moved_off && !routes(with.settings, named, instance) {
         return LoggedIn::Stored {
             provider: named.name,
         };
@@ -355,7 +365,7 @@ impl Conversation {
     /// provider it belonged to, and the conversation is left asking for none.
     pub async fn logged_in(&mut self, named: Served, with: &Switching<'_>) -> LoggedIn {
         if let Some(instance) = self.instance() {
-            return beside_the_route(instance, named, with);
+            return beside_the_route(instance, self.moved_from.as_ref(), named, with);
         }
         let set = match (with.serving)(named, &with.logins.read()) {
             Ok(set) => set,
