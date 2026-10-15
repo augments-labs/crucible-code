@@ -107,6 +107,18 @@ fn connected(window: &mut Watched) {
     window.types_until("", "Connected.");
 }
 
+/// The box a key for the provider on `row` is typed into, at any width.
+fn keyed(window: &mut Watched, row: &str) {
+    window.types_until("/login\r", "Provide your own API key");
+    takes(window, "Provide your own API key");
+    window.types_until("", "DeepSeek");
+    takes(window, row);
+    if window.picture().contains("Use it anyway") {
+        window.types("\r");
+    }
+    window.types_until("", "API key ─");
+}
+
 /// A signed-in status, then the runs `then` plays.
 fn signed_in(then: impl IntoIterator<Item = Reply>) -> Vec<Reply> {
     std::iter::once(claude::signed_in()).chain(then).collect()
@@ -306,6 +318,72 @@ fn a_run_lost_mid_effect_says_its_work_is_uncertain() {
             window.types_until("Change the file.\r", "have happened.");
         },
     );
+}
+
+/// Fails where a move onto the agent's route does not name the route and say
+/// the conversation starts fresh there, or where a key stored while on it does
+/// not say this conversation stays on its agent: for the provider the agent
+/// reaches, from the next launch on, and for another, stored and nothing more.
+#[test]
+fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_is() {
+    for native in [false, true] {
+        for columns in [80, 40] {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agent-route-lines-{columns}-{mode}");
+            let script = Script::of(signed_in([]));
+            let vendor = Vendor::answering("Not asked.");
+            let mut window = Watched::capturing_agents(
+                &case,
+                (columns, 40),
+                native,
+                &vendor,
+                (Some(&script), ""),
+            );
+            connected(&mut window);
+            let said = |window: &Watched| {
+                window
+                    .picture()
+                    .replace("|\n|", " ")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let moved = said(&window);
+            assert!(
+                moved.contains("now runs on the agent claude and starts fresh"),
+                "{case}: {moved}"
+            );
+
+            keyed(&mut window, "Anthropic");
+            window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
+            let next = said(&window);
+            assert!(
+                next.contains(
+                    "anthropic is asked directly from the next launch; \
+                     this conversation stays on its agent"
+                ),
+                "{case}: {next}"
+            );
+            let file = std::fs::read_to_string(window.home().join("config.json"))
+                .expect("the configuration file");
+            let written: serde_json::Value =
+                serde_json::from_str(&file).expect("a configuration in its format");
+            let access = written
+                .pointer("/providers/anthropic/access/type")
+                .and_then(serde_json::Value::as_str);
+            assert_eq!(access, Some("apiKey"), "{case}: {written}");
+
+            keyed(&mut window, "DeepSeek");
+            window.types_until("not-a-key-either\r", "deepseek is stored");
+            let stored = said(&window);
+            assert!(
+                stored.contains(
+                    "the credential for deepseek is stored; this conversation stays on its agent"
+                ),
+                "{case}: {stored}"
+            );
+        }
+    }
 }
 
 /// Fails where `/usage`, or the Usage tab of `/settings`, over a running turn

@@ -1957,7 +1957,7 @@ fn a_connect_moves_a_conversation_on_the_provider_s_model_onto_the_route() -> Re
     assert_eq!(
         outcome,
         Outcome::Login(LoginOutcome::AgentConnected {
-            said: crucible_client_api::Text::cut(client::accounts::MOVED),
+            said: crucible_client_api::Text::cut(&client::accounts::moved_onto("work")),
             onto: Some(Name::new("work")?),
         })
     );
@@ -1987,6 +1987,95 @@ fn a_connect_moves_a_conversation_on_the_provider_s_model_onto_the_route() -> Re
         })
         .collect();
     assert_eq!(kept, ["one"]);
+    Ok(())
+}
+
+/// A key logged in, after a connect moved the conversation onto the agent,
+/// for the provider it was moved off is written down as how that provider is
+/// reached from the next run on, though the files read at launch had no route.
+#[test]
+fn a_key_for_the_provider_a_connect_moved_off_is_written_for_the_next_run() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Name, Text};
+
+    let tree = Tree::new("external-connect-then-key")?;
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let script = connected([claude::signed_in(), claude::clean()]);
+    let (mut conversation, _peer) = stepped(&tree, native, &script)?;
+    let mut picking = Picking::of([
+        Some(client::accounts::USE_ACCOUNT),
+        Some(client::accounts::CONNECT),
+    ]);
+    let provider = Name::new("anthropic")?;
+    let command = move |instance| Command::Connect {
+        provider: provider.clone(),
+        instance: Some(instance),
+    };
+    let asked = Asked {
+        installed: (UNCONNECTED, "work"),
+        command: &command,
+        asking: Asking::every(),
+        after: None,
+    };
+    let (moved, file) = accounting_on(&tree, &mut conversation, &asked, &mut picking)?;
+    assert!(
+        matches!(moved, Outcome::Login(LoginOutcome::AgentConnected { .. })),
+        "{moved:?}"
+    );
+    super::Desk::new(&tree, &[])?
+        .logins
+        .keep("anthropic", "a-key-no-vendor-issued")?;
+
+    let (outcome, keyed) = credited_on(&tree, &mut conversation, UNCONNECTED, "anthropic", login)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::NextLaunch {
+            provider: Text::cut("anthropic"),
+            unwritten: None,
+        })
+    );
+    assert_eq!(file, CONNECTED_FILE);
+    let keyed: serde_json::Value = serde_json::from_str(&keyed)?;
+    assert_eq!(
+        keyed.pointer("/providers/anthropic/access/type"),
+        Some(&serde_json::json!("apiKey"))
+    );
+    assert_eq!(
+        keyed.pointer("/provider"),
+        Some(&serde_json::json!("anthropic"))
+    );
+    Ok(())
+}
+
+/// A key logged in, after `/resume` moved a conversation on a provider's model
+/// onto an agent that does not reach that provider, is only stored: how the
+/// provider is reached is not rewritten.
+#[test]
+fn a_key_for_the_provider_a_resume_moved_off_is_only_stored() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Text};
+
+    let tree = Tree::new("external-resume-then-key")?;
+    let id = recorded_on(&tree, "work", "before")?;
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let (mut conversation, _peer) = stepped(&tree, native, &connected([claude::clean()]))?;
+    let resumed = resuming_at(&tree, &mut conversation, INSTALLED, id)?;
+    assert!(
+        matches!(resumed, Outcome::Resumed(ResumeOutcome::Picked { .. })),
+        "{resumed:?}"
+    );
+    super::Desk::new(&tree, &[])?
+        .logins
+        .keep("anthropic", "a-key-no-vendor-issued")?;
+
+    let (outcome, file) = credited_on(&tree, &mut conversation, INSTALLED, "anthropic", login)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::Stored {
+            provider: Text::cut("anthropic"),
+        })
+    );
+    assert_eq!(file, INSTALLED);
     Ok(())
 }
 
@@ -2468,6 +2557,17 @@ fn credited(
     provider: &str,
     command: fn(crucible_client_api::Name) -> Command,
 ) -> Result<(Outcome, String), Failed> {
+    credited_on(tree, &mut outside.conversation, file, provider, command)
+}
+
+/// What [`credited`] does, of any conversation.
+fn credited_on(
+    tree: &Tree,
+    conversation: &mut Conversation,
+    file: &str,
+    provider: &str,
+    command: fn(crucible_client_api::Name) -> Command,
+) -> Result<(Outcome, String), Failed> {
     let mut desk = super::Desk::new(tree, &[])?;
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
@@ -2488,7 +2588,7 @@ fn credited(
         Correlation::new(1),
         command(crucible_client_api::Name::new(provider)?),
     );
-    let performed = runtime()?.block_on(client::perform(&mut outside.conversation, &request, &at));
+    let performed = runtime()?.block_on(client::perform(conversation, &request, &at));
     let outcome = performed.response(&request).outcome;
     Ok((outcome, std::fs::read_to_string(&desk.choosing)?))
 }

@@ -8,8 +8,9 @@ expression: picture
 |                                        |
 |› /login                                |
 |⎿ Connected. This conversation now runs |
-|  on the agent, in a new session; the   |
-|  earlier one can be resumed.           |
+|  on the agent claude and starts fresh, |
+|  in a new session; the earlier one can |
+|  be resumed.                           |
 |  execution: claude · billing: external |
 |                                        |
 |› Change the file.                      |
@@ -20,7 +21,6 @@ expression: picture
 |finished the turn; it ended with exit   |
 |status: 9 What the agent was doing may  |
 |or may not have happened.               |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

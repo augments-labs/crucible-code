@@ -10,7 +10,7 @@
 
 use crucible_client_api::{LoginOutcome, LogoutOutcome, Name, Outcome, Stop, Text, TurnOutcome};
 
-use crate::client::accounts::{CONNECT, DISCONNECT, DISCONNECTED, MOVED, USE_ACCOUNT};
+use crate::client::accounts::{CONNECT, DISCONNECT, DISCONNECTED, USE_ACCOUNT, moved_onto};
 
 /// The instance the chain connects, disconnects, and runs on between.
 pub const INSTANCE: &str = "work";
@@ -111,7 +111,7 @@ pub static ACCOUNTS: [Expected; 5] = [
 /// The conversation moved onto [`INSTANCE`].
 fn connected() -> Vec<Outcome> {
     vec![Outcome::Login(LoginOutcome::AgentConnected {
-        said: Text::cut(MOVED),
+        said: Text::cut(&moved_onto(INSTANCE)),
         onto: Name::new(INSTANCE).ok(),
     })]
 }
