@@ -92,6 +92,16 @@ pub enum Command {
         /// The instance, by the name the configuration gives it.
         instance: Name,
     },
+    /// Reach a provider through an installed agent's instance from now on,
+    /// once the agent reads signed in and the client confirms the route.
+    /// Asked for as [`Command::Disconnect`] is.
+    Connect {
+        /// The provider to reach, by the name `/login` gives it.
+        provider: Name,
+        /// The instance, by the name the configuration gives it. A client
+        /// that names none is refused until it can be asked which agent.
+        instance: Option<Name>,
+    },
     /// List the persistent prompt-cache resources this conversation holds.
     InspectCache,
     /// Delete them.
@@ -142,7 +152,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 27] = [
+    pub const KINDS: [&'static str; 28] = [
         "prompt",
         "compact",
         "cancel",
@@ -159,6 +169,7 @@ impl Command {
         "disconnect",
         "remove_integration",
         "sign_out",
+        "connect",
         "inspect_cache",
         "clean_cache",
         "sandbox",
@@ -192,6 +203,7 @@ impl Command {
             Self::Disconnect { .. } => "disconnect",
             Self::RemoveIntegration { .. } => "remove_integration",
             Self::SignOut { .. } => "sign_out",
+            Self::Connect { .. } => "connect",
             Self::InspectCache => "inspect_cache",
             Self::CleanCache => "clean_cache",
             Self::Sandbox { .. } => "sandbox",
@@ -229,6 +241,9 @@ impl Command {
             Self::Disconnect { instance }
             | Self::RemoveIntegration { instance }
             | Self::SignOut { instance } => object.with("instance", instance.as_str()),
+            Self::Connect { provider, instance } => object
+                .with("provider", provider.as_str())
+                .maybe("instance", instance.as_ref().map(Name::as_str)),
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
             Self::Setting { name, value } => object
@@ -285,6 +300,13 @@ impl Command {
             },
             "sign_out" => Self::SignOut {
                 instance: fields.name("instance")?,
+            },
+            "connect" => Self::Connect {
+                provider: fields.name("provider")?,
+                instance: fields
+                    .maybe("instance")
+                    .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
+                    .transpose()?,
             },
             "inspect_cache" => Self::InspectCache,
             "clean_cache" => Self::CleanCache,

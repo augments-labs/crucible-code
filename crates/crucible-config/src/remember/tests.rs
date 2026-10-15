@@ -867,6 +867,72 @@ fn disabling_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
 }
 
 #[test]
+fn connecting_an_agent_writes_the_provider_s_access_then_enables_it_and_nothing_else() {
+    let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\",\n      \"enabled\": false\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}\n  }\n}\n";
+    let written = connecting(text, FILE, "anthropic", "work").unwrap();
+    assert_eq!(
+        written,
+        "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\",\n      \"enabled\": true\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}\n  },\n  \"providers\": {\n    \"anthropic\": {\n      \"access\": {\"instance\":\"work\",\"type\":\"externalAgent\"}\n    }\n  }\n}\n"
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    assert_eq!(
+        settings.access("anthropic"),
+        Some(crate::settings::Access::ExternalAgent {
+            instance: "work".into()
+        })
+    );
+    let mut enabled: Vec<(String, bool)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.enabled()))
+        .collect();
+    enabled.sort();
+    assert_eq!(
+        enabled,
+        [("home".to_owned(), false), ("work".to_owned(), true)]
+    );
+    // Written again, it is already so.
+    assert_eq!(
+        connecting(&written, FILE, "anthropic", "work").unwrap(),
+        written
+    );
+}
+
+#[test]
+fn connecting_an_agent_that_says_nothing_of_enabled_leaves_it_saying_nothing() {
+    let text = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude"}}, "providers": {"anthropic": {"access": {"type": "subscription"}}}}"#;
+    assert_eq!(
+        connecting(text, FILE, "anthropic", "work").unwrap(),
+        text.replace(
+            r#"{"type": "subscription"}"#,
+            r#"{"instance":"work","type":"externalAgent"}"#
+        )
+    );
+}
+
+#[test]
+fn connecting_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
+    for text in [
+        "",
+        "{}",
+        r#"{"externalAgents": {}}"#,
+        r#"{"externalAgents": {"home": {"driver": "claude", "executable": "claude"}}}"#,
+    ] {
+        assert!(
+            matches!(
+                connecting(text, FILE, "anthropic", "work"),
+                Err(ConfigError::Unspliceable { .. })
+            ),
+            "{text}"
+        );
+    }
+    assert!(matches!(
+        connecting("{", FILE, "anthropic", "work"),
+        Err(ConfigError::Malformed { .. })
+    ));
+}
+
+#[test]
 fn removing_an_agent_cuts_out_its_block_and_nothing_else() {
     let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\"\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
     let written = removing(text, FILE, "work").unwrap();

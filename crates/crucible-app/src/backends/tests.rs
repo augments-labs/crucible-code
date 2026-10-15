@@ -84,6 +84,7 @@ fn a_row_that_does_not_ship_is_not_offered() {
         route: "agent:antigravity",
         docs_section: "antigravity",
         reaches: &[],
+        sign_in: |_| None,
         shipping: false,
     }];
     let registry = Registry::new(&HELD_BACK);

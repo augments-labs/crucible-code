@@ -230,6 +230,9 @@ impl Outside {
         transcript: Transcript,
     ) -> Result<(Self, Arc<Session>), Failed> {
         let (launching, peer) = launching(tree, script)?;
+        // The conversation holds its sends to the yeses the runs are launched
+        // under, as one started by the application does.
+        conversation = conversation.consenting(launching.consent.clone());
         // An account step on any configured instance finds the installed
         // peer on the `PATH`, as a bare `claude` would be found.
         conversation = conversation.stepping(Steps::new(
@@ -263,6 +266,14 @@ impl Outside {
             },
             left,
         ))
+    }
+
+    /// Takes back the yes the agent's route was given, as though it had
+    /// never been answered.
+    fn unanswer(&self) {
+        if let Some(consent) = self.conversation.consent() {
+            consent.withdraw("agent:claude");
+        }
     }
 
     /// What each launch was asked for, in order.
@@ -1134,7 +1145,7 @@ fn disconnecting_from(
 ) -> Result<(Outcome, String), Failed> {
     let asked = Asked {
         installed,
-        command: |instance| Command::Disconnect { instance },
+        command: &|instance| Command::Disconnect { instance },
         asking,
         after: None,
     };
@@ -1145,7 +1156,7 @@ fn disconnecting_from(
 /// instance named `installed.1`.
 struct Asked<'a> {
     installed: (&'a str, &'a str),
-    command: fn(crucible_client_api::Name) -> Command,
+    command: &'a dyn Fn(crucible_client_api::Name) -> Command,
     asking: Asking,
     /// What the user file holds once the settings were read from it, where
     /// that is something else: as though another file named the instance.
@@ -1158,7 +1169,7 @@ fn accounting(
     tree: &Tree,
     outside: &mut Outside,
     asked: &Asked<'_>,
-    choosing: &mut Choosing,
+    choosing: &mut dyn Front,
 ) -> Result<(Outcome, String), Failed> {
     use crucible_client_api::Name;
 
@@ -1316,7 +1327,7 @@ fn removing(
 ) -> Result<(Outcome, String), Failed> {
     let asked = Asked {
         installed,
-        command: |instance| Command::RemoveIntegration { instance },
+        command: &|instance| Command::RemoveIntegration { instance },
         asking: Asking::every(),
         after: None,
     };
@@ -1459,7 +1470,7 @@ fn a_removal_of_an_instance_the_user_file_does_not_hold_is_refused_unasked() -> 
     };
     let asked = Asked {
         installed: (INSTALLED, "work"),
-        command: |instance| Command::RemoveIntegration { instance },
+        command: &|instance| Command::RemoveIntegration { instance },
         asking: Asking::every(),
         after: Some(elsewhere),
     };
@@ -1503,7 +1514,7 @@ fn signing_out(
 ) -> Result<(Outcome, String, usize), Failed> {
     let asked = Asked {
         installed: (installed, "work"),
-        command: |instance| Command::SignOut { instance },
+        command: &|instance| Command::SignOut { instance },
         asking: Asking::every(),
         after,
     };
@@ -1672,6 +1683,330 @@ fn a_sign_out_not_chosen_signs_nothing_out() -> Result<(), Failed> {
         assert_eq!(outcome, expected, "{case}");
         assert_eq!(file, kept, "{case}");
         assert_eq!(started, 0, "{case}: the agent's program was started");
+    }
+    Ok(())
+}
+
+/// A client that answers each account question with the next choice named,
+/// accepts a warning where any is named, and goes back where none is, or once
+/// the choices run out.
+struct Picking {
+    choices: std::collections::VecDeque<Option<&'static str>>,
+    put: Vec<Pending>,
+}
+
+impl Picking {
+    fn of(choices: impl IntoIterator<Item = Option<&'static str>>) -> Self {
+        Self {
+            choices: choices.into_iter().collect(),
+            put: Vec::new(),
+        }
+    }
+}
+
+impl Front for Picking {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Ruled>> {
+        Box::pin(async move {
+            self.put.push(pending.clone());
+            Some(match self.choices.pop_front().flatten() {
+                Some(_) if matches!(pending, Pending::Warning { .. }) => {
+                    Ruled::Accepted { id: pending.id() }
+                }
+                Some(name) => Ruled::Picked {
+                    id: pending.id(),
+                    choice: crucible_client_api::Said::new(name).ok()?,
+                },
+                None => Ruled::Declined { id: pending.id() },
+            })
+        })
+    }
+
+    fn refused(&mut self, _refusal: crucible_client_api::Refusal) {}
+}
+
+/// The user file a connect is written to: the instance installed and off.
+const UNCONNECTED: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude", "enabled": false}},
+  "updates": {"check": "auto"}
+}
+"#;
+
+/// What [`UNCONNECTED`] holds once the provider is connected through `work`.
+const CONNECTED_FILE: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude", "enabled": true}},
+  "updates": {"check": "auto"},
+  "providers": {
+    "anthropic": {
+      "access": {"instance":"work","type":"externalAgent"}
+    }
+  }
+}
+"#;
+
+/// Asks to connect `provider` through `instance`, or through none, of a
+/// client that answers as `picking` does, once the conversation's own run has
+/// started; and answers what the client was told and what the user file then
+/// held.
+fn connecting(
+    tree: &Tree,
+    outside: &mut Outside,
+    provider: &str,
+    instance: Option<&str>,
+    picking: &mut Picking,
+) -> Result<(Outcome, String), Failed> {
+    Ok(connecting_counted(tree, outside, provider, instance, picking)?.0)
+}
+
+/// The same, answering also how many times the agent's program was started
+/// for the connect.
+fn connecting_counted(
+    tree: &Tree,
+    outside: &mut Outside,
+    provider: &str,
+    instance: Option<&str>,
+    picking: &mut Picking,
+) -> Result<((Outcome, String), usize), Failed> {
+    use crucible_client_api::Name;
+
+    let provider = Name::new(provider)?;
+    let named = instance.is_some();
+    let command = move |instance| Command::Connect {
+        provider: provider.clone(),
+        instance: named.then_some(instance),
+    };
+    let asked = Asked {
+        installed: (UNCONNECTED, instance.unwrap_or("work")),
+        command: &command,
+        asking: Asking::every(),
+        after: None,
+    };
+    for _ in 0..500 {
+        if fake_peer::played(&outside.peer) >= 3 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let before = fake_peer::played(&outside.peer);
+    let asked = accounting(tree, outside, &asked, picking)?;
+    Ok((asked, fake_peer::played(&outside.peer) - before))
+}
+
+/// Signed in, used, and confirmed, a connect writes the provider's access to
+/// the instance and enables it, and changes nothing else in the file.
+#[test]
+fn a_connect_writes_the_route_and_enables_the_instance() -> Result<(), Failed> {
+    use crucible_client_api::LoginOutcome;
+
+    let tree = Tree::new("external-connect")?;
+    let script = connected([claude::clean(), claude::signed_in()]);
+    let mut outside = Outside::new(&tree, &script)?;
+    let mut picking = Picking::of([
+        Some(client::accounts::USE_ACCOUNT),
+        Some(client::accounts::CONNECT),
+    ]);
+
+    let (outcome, file) = connecting(&tree, &mut outside, "anthropic", Some("work"), &mut picking)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::AgentConnected {
+            said: crucible_client_api::Text::cut(client::accounts::CONNECTED),
+        })
+    );
+    assert_eq!(picking.put.len(), 2, "{:?}", picking.put);
+    assert_eq!(file, CONNECTED_FILE);
+    Ok(())
+}
+
+/// Signed out at first, the client is told the command that signs the agent
+/// in, and checking again once it reads signed in goes on to connect.
+#[test]
+fn a_connect_checks_again_until_the_agent_reads_signed_in() -> Result<(), Failed> {
+    use crucible_client_api::LoginOutcome;
+
+    let tree = Tree::new("external-connect-again")?;
+    let script = connected([claude::clean(), claude::signed_out(), claude::signed_in()]);
+    let mut outside = Outside::new(&tree, &script)?;
+    let mut picking = Picking::of([
+        Some(client::accounts::CHECK_AGAIN),
+        Some(client::accounts::USE_ACCOUNT),
+        Some(client::accounts::CONNECT),
+    ]);
+
+    let (outcome, file) = connecting(&tree, &mut outside, "anthropic", Some("work"), &mut picking)?;
+
+    assert!(
+        matches!(outcome, Outcome::Login(LoginOutcome::AgentConnected { .. })),
+        "{outcome:?}"
+    );
+    assert_eq!(picking.put.len(), 3, "{:?}", picking.put);
+    let told = match picking.put.first() {
+        Some(Pending::Account { facts, .. }) => facts
+            .iter()
+            .any(|fact| fact.as_str().contains("claude auth login")),
+        _ => false,
+    };
+    assert!(told, "{:?}", picking.put.first());
+    assert_eq!(file, CONNECTED_FILE);
+    Ok(())
+}
+
+/// A connect that writes nothing: its name, what the agent's status reads
+/// say, what the client picks, and the first choice of each question put.
+type Kept = (
+    &'static str,
+    Vec<Reply>,
+    Vec<Option<&'static str>>,
+    &'static [&'static str],
+);
+
+/// Cancelled signed out, unverified, or signed in; checked again while it
+/// still cannot be read; going back from the route and then cancelling; and a
+/// client that answers nothing: each is asked what its sign-in reads as, and
+/// leaves the file byte for byte as it was.
+#[test]
+fn a_connect_not_carried_through_writes_nothing() -> Result<(), Failed> {
+    use client::accounts::{CHECK_AGAIN, CONNECT, USE_ACCOUNT};
+    use crucible_client_api::LoginOutcome;
+
+    let cancel = Some("Cancel");
+    let cases: [Kept; 6] = [
+        (
+            "signed-out",
+            vec![claude::signed_out()],
+            vec![cancel],
+            &[CHECK_AGAIN],
+        ),
+        (
+            "unverified",
+            vec![Reply::new()],
+            vec![cancel],
+            &[CHECK_AGAIN],
+        ),
+        (
+            "unverified-again",
+            vec![Reply::new(), Reply::new()],
+            vec![Some(CHECK_AGAIN), cancel],
+            &[CHECK_AGAIN, CHECK_AGAIN],
+        ),
+        (
+            "signed-in",
+            vec![claude::signed_in()],
+            vec![cancel],
+            &[USE_ACCOUNT],
+        ),
+        (
+            "back",
+            vec![claude::signed_in(), claude::signed_in()],
+            vec![Some(USE_ACCOUNT), Some("Go back"), cancel],
+            &[USE_ACCOUNT, CONNECT, USE_ACCOUNT],
+        ),
+        ("nobody", vec![claude::signed_in()], vec![], &[USE_ACCOUNT]),
+    ];
+    for (case, replies, choices, offered) in cases {
+        let tree = Tree::new(&format!("external-connect-kept-{case}"))?;
+        let script = connected(std::iter::once(claude::clean()).chain(replies));
+        let mut outside = Outside::new(&tree, &script)?;
+        let mut picking = Picking::of(choices);
+
+        let (outcome, file) =
+            connecting(&tree, &mut outside, "anthropic", Some("work"), &mut picking)?;
+
+        assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided), "{case}");
+        let first: Vec<&str> = picking
+            .put
+            .iter()
+            .filter_map(|put| match put {
+                Pending::Account { choices, .. } => {
+                    choices.first().map(|choice| choice.name.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(first, offered, "{case}");
+        assert_eq!(file, UNCONNECTED, "{case}");
+    }
+    Ok(())
+}
+
+/// A connect naming no instance, an instance the file does not name, or a
+/// provider this release does not offer is refused before anything is asked.
+#[test]
+fn a_connect_naming_no_known_instance_or_provider_is_refused_unasked() -> Result<(), Failed> {
+    use crucible_client_api::ErrorCode;
+
+    for (case, provider, instance, refused) in [
+        ("no-instance", "anthropic", None, ErrorCode::InvalidArgument),
+        (
+            "unknown-instance",
+            "anthropic",
+            Some("elsewhere"),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            "unknown-provider",
+            "nowhere",
+            Some("work"),
+            ErrorCode::UnknownProvider,
+        ),
+    ] {
+        let tree = Tree::new(&format!("external-connect-refused-{case}"))?;
+        let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+        let mut picking = Picking::of([Some(client::accounts::USE_ACCOUNT)]);
+
+        let (outcome, file) = connecting(&tree, &mut outside, provider, instance, &mut picking)?;
+
+        assert_eq!(outcome, Outcome::Refused(refused.into()), "{case}");
+        assert!(picking.put.is_empty(), "{case}: {:?}", picking.put);
+        assert_eq!(file, UNCONNECTED, "{case}");
+    }
+    Ok(())
+}
+
+/// With the agent's route not yet answered, a connect asks it first: declined,
+/// the agent's program is not started and nothing is written; accepted where
+/// the yes cannot be written down, the client is told so, and still nothing
+/// is started or written.
+#[test]
+fn a_connect_asks_the_agent_s_route_before_starting_the_agent() -> Result<(), Failed> {
+    use crucible_client_api::LoginOutcome;
+
+    let unkept = crucible_client_api::Text::cut(client::accounts::HOLD_UNKEPT);
+    for (case, choices, said) in [
+        ("declined", vec![None], None),
+        (
+            "unkept",
+            vec![Some(client::accounts::USE_ACCOUNT)],
+            Some(unkept),
+        ),
+    ] {
+        let tree = Tree::new(&format!("external-connect-held-{case}"))?;
+        let script = connected([claude::clean(), claude::signed_in()]);
+        let mut outside = Outside::new(&tree, &script)?;
+        outside.unanswer();
+        let mut picking = Picking::of(choices);
+
+        let ((outcome, file), started) =
+            connecting_counted(&tree, &mut outside, "anthropic", Some("work"), &mut picking)?;
+
+        match (&outcome, &said) {
+            (Outcome::Login(LoginOutcome::Undecided), None) => {}
+            (Outcome::Login(LoginOutcome::ConnectUnsaved { said: told, .. }), Some(said)) => {
+                assert_eq!(told, said, "{case}");
+            }
+            _ => return Err(format!("{case}: {outcome:?}").into()),
+        }
+        assert!(
+            matches!(picking.put.as_slice(), [Pending::Warning { .. }]),
+            "{case}: {:?}",
+            picking.put
+        );
+        assert_eq!(started, 0, "{case}: the agent's program was started");
+        assert_eq!(file, UNCONNECTED, "{case}");
     }
     Ok(())
 }

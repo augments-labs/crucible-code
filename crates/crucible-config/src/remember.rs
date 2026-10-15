@@ -463,6 +463,62 @@ pub fn disabling(text: &str, file: &str, instance: &str) -> Result<String, Confi
     Ok(splice::over(text, was, "false"))
 }
 
+/// The text of a configuration file that reaches `provider` through the
+/// installed agent `instance`, and lets that instance take new work.
+///
+/// `providers.<provider>.access` is written first and the instance's
+/// `enabled: true` last, both in the one text handed back, so no file is ever
+/// written that admits work through an instance no provider was meant to
+/// reach. An instance that says nothing of `enabled` is already enabled and is
+/// left saying nothing; one already reached and enabled leaves the text as it
+/// was.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, including an `access` the
+/// provider may not take, and [`ConfigError::Unspliceable`] where
+/// `externalAgents.<instance>` is not an object the file holds or the answer
+/// cannot be written without rewriting.
+pub fn connecting(
+    text: &str,
+    file: &str,
+    provider: &str,
+    instance: &str,
+) -> Result<String, ConfigError> {
+    let at = format!("externalAgents.{instance}.enabled");
+    let refused = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: at.clone().into(),
+        written: "true".into(),
+    };
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let Some(block) = document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .filter(|block| block.is_object())
+    else {
+        return Err(refused());
+    };
+    let access = serde_json::json!({
+        "type": crate::settings::access::Kind::ExternalAgent.name(),
+        "instance": instance,
+    });
+    let reached = beside(text, file, provider, "access", &access)?;
+    let written = if block.get("enabled").and_then(Value::as_bool) == Some(false) {
+        let root = splice::root(&reached).ok_or_else(refused)?;
+        let agents = splice::member(&reached, root, "externalAgents").ok_or_else(refused)?;
+        let held = splice::member(&reached, agents, instance).ok_or_else(refused)?;
+        let was = splice::member(&reached, held, "enabled").ok_or_else(refused)?;
+        splice::over(&reached, was, "true")
+    } else {
+        reached
+    };
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok(written)
+}
+
 /// The text of a configuration file without the installed agent `instance`.
 ///
 /// Only `externalAgents.<instance>` goes, with the comma that separated it

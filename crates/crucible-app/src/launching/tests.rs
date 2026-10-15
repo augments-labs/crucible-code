@@ -32,6 +32,7 @@ static SHIPPED: [Row; 1] = [Row {
     route: "agent:claude",
     docs_section: "claude-code",
     reaches: &[],
+    sign_in: |_| None,
     shipping: true,
 }];
 
