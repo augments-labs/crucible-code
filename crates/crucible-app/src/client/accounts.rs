@@ -51,7 +51,9 @@
 //! A sign-out takes every instance sharing the credential scope out of use
 //! before the agent's own program is run: their runs in this conversation are
 //! stopped, and `enabled: false` is written for each in one update of the
-//! user file. Only once that write has landed is the agent's logout run, and
+//! user file, with the `access` of every provider reached through any of
+//! them, so the next start asks those providers directly. A disconnect writes
+//! the same for its one instance. Only once that write has landed is the agent's logout run, and
 //! then a status step after it; where the write fails, no step is run. It is
 //! reported signed out only where both steps read signed out, and otherwise as
 //! unverified. Once the write has landed, a journal that cannot be kept is

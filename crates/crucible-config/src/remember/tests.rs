@@ -868,6 +868,19 @@ fn disabling_an_agent_takes_away_every_access_reached_through_it_and_no_other() 
 }
 
 #[test]
+fn disabling_an_agent_takes_an_access_written_first_with_the_comma_after_it() {
+    let text = r#"{"providers": {"openai": {"access": {"type": "externalAgent", "instance": "work"}, "model": "m"}}, "externalAgents": {"work": {"enabled": false, "driver": "claude", "executable": "claude"}}}"#;
+    assert_eq!(
+        disabling(text, FILE, "work").unwrap(),
+        text.replace(
+            r#"{"access": {"type": "externalAgent", "instance": "work"}, "model": "m"}"#,
+            // The space after the comma is a neighbour's, and stays.
+            r#"{ "model": "m"}"#
+        )
+    );
+}
+
+#[test]
 fn disabling_an_enabled_agent_turns_its_word_over_in_place() {
     let text = r#"{"externalAgents": {"work": {"enabled": true, "driver": "claude", "executable": "claude"}}}"#;
     assert_eq!(
