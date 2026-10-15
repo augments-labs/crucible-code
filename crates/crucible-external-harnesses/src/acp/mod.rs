@@ -21,6 +21,9 @@
 //! permission would run or fetch is read from the input the agent gave the
 //! call, or said to be missing, never from the title it gave it, and the
 //! permission is answered with one of the options the agent offered for it.
+//! A client made [`Acp::allowing`] answers what its [`Allowing`] names itself,
+//! with the one-time allow the agent offered and never a lasting one, and asks
+//! the person where the agent offered no such allow.
 //! Once the turn is stopped, a question answered is answered cancelled, as
 //! the protocol asks; one still open when it was stopped is left to the
 //! agent's own end of the turn.
@@ -37,7 +40,7 @@ mod wire;
 use std::path::PathBuf;
 
 use crucible_execution::{
-    Authentication, Decision, Detail, Failure, Outcome, Pending, Text, TurnRequest,
+    Authentication, Decision, Detail, Failure, Lasting, Outcome, Pending, Text, TurnRequest,
 };
 use crucible_transport::FRAME_BYTES;
 use crucible_types::TurnId;
@@ -63,6 +66,30 @@ const METHODS: usize = 16;
 
 /// The most options one permission question keeps.
 const OPTIONS: usize = 16;
+
+/// The permissions this client answers yes to by itself, in the conversation's
+/// mode, rather than asking the person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Allowing {
+    /// None: every permission is asked.
+    #[default]
+    Nothing,
+    /// Changing a file: anything else is asked.
+    Edits,
+    /// Every permission.
+    Everything,
+}
+
+impl Allowing {
+    /// Whether a permission for a call of this detail is answered yes here.
+    const fn allows(self, detail: &Detail) -> bool {
+        match self {
+            Self::Nothing => false,
+            Self::Edits => matches!(detail, Detail::MutatesFile),
+            Self::Everything => true,
+        }
+    }
+}
 
 /// One agent that speaks the protocol, as this client runs it.
 #[derive(Debug, Clone, Copy)]
@@ -199,6 +226,8 @@ enum Awaited {
 pub struct Acp {
     /// The agent.
     profile: Profile,
+    /// The permissions answered yes here rather than asked.
+    allowing: Allowing,
     /// The directory sessions are opened in.
     workspace: Option<PathBuf>,
     /// The session to resume, where there is one.
@@ -224,11 +253,22 @@ pub struct Acp {
 }
 
 impl Acp {
+    /// The client of the agent `profile` describes, answering yes by itself
+    /// to what `allowing` names.
+    #[must_use]
+    pub fn allowing(profile: Profile, allowing: Allowing) -> Self {
+        Self {
+            allowing,
+            ..Self::new(profile)
+        }
+    }
+
     /// The client of the agent `profile` describes.
     #[must_use]
     pub fn new(profile: Profile) -> Self {
         Self {
             profile,
+            allowing: Allowing::Nothing,
             workspace: None,
             resume: None,
             next: 0,
@@ -476,6 +516,25 @@ impl Acp {
         }
     }
 
+    /// `asked`, answered here with the one-time allow the agent offered where
+    /// the mode allows it and the turn has not been told to stop, and else
+    /// left to be asked.
+    fn allowed(&mut self, asked: Act) -> Act {
+        let Act::Ask {
+            native,
+            pending: Pending::Permission { detail, .. },
+        } = &asked
+        else {
+            return asked;
+        };
+        if self.stopping || !self.allowing.allows(detail) {
+            return asked;
+        }
+        self.permissions
+            .answer(native, &Decision::Allow(Lasting::Once))
+            .map_or(asked, Act::Send)
+    }
+
     /// What the answer `outcome` to the account step `awaited` means.
     fn stepped(
         &mut self,
@@ -600,7 +659,8 @@ impl Dialect for Acp {
                         "The agent asked a permission for a session this client did not open.",
                     ));
                 }
-                Ok(vec![self.asked(&id, &params)])
+                let asked = self.asked(&id, &params);
+                Ok(vec![self.allowed(asked)])
             }
             Frame::Request { .. } => Err(Failure::new(
                 "The agent asked for something this client does not offer it.",

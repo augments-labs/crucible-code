@@ -20,6 +20,7 @@
 use crucible_config::Driver;
 use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
+use crucible_external_harnesses::acp::Allowing;
 use crucible_external_harnesses::antigravity::Antigravity;
 use crucible_external_harnesses::claude::Claude;
 use crucible_tools::Mode;
@@ -34,7 +35,8 @@ pub struct Row {
     /// Which agent, as the configuration names it.
     pub driver: Driver,
     /// Its wire, fresh for each run, as it is spoken in the conversation's
-    /// mode, or why the agent does not run in that mode.
+    /// mode, or why the agent does not run in that mode. Every shipped row
+    /// runs in every mode.
     pub dialect: fn(Mode) -> Result<Box<dyn Dialect>, Failure>,
     /// The key of its `externalAgents` entry that names its profile directory.
     pub profile_key: &'static str,
@@ -105,10 +107,8 @@ pub static REGISTRY: Registry = Registry::new(&[CLAUDE, ANTIGRAVITY]);
 pub(crate) const CLAUDE: Row = Row {
     driver: Driver::Claude,
     // Started in the permission mode the reviewed table gives the
-    // conversation's mode, and refused in one it gives none.
-    dialect: |mode| {
-        Claude::in_mode(claude_mode(mode)).map(|claude| Box::new(claude) as Box<dyn Dialect>)
-    },
+    // conversation's mode.
+    dialect: |mode| Ok(Box::new(Claude::in_mode(claude_mode(mode)))),
     profile_key: "configDir",
     route: "agent:claude",
     docs_section: "claude-code",
@@ -127,9 +127,9 @@ pub(crate) const CLAUDE: Row = Row {
 /// Antigravity's row, as this release ships it.
 pub(crate) const ANTIGRAVITY: Row = Row {
     driver: Driver::Antigravity,
-    // The agent asks about every action itself, whatever the
-    // conversation's mode says.
-    dialect: |_| Ok(Box::new(Antigravity::default())),
+    // The agent asks about every action itself, and what the
+    // conversation's mode allows is answered yes without asking.
+    dialect: |mode| Ok(Box::new(Antigravity::allowing(antigravity_allowing(mode)))),
     profile_key: "profileDir",
     route: "agent:antigravity",
     docs_section: "antigravity",
@@ -144,6 +144,15 @@ pub(crate) const ANTIGRAVITY: Row = Row {
     sign_in: |_| None,
     shipping: true,
 };
+
+/// What Antigravity answers yes to by itself in the conversation's `mode`.
+const fn antigravity_allowing(mode: Mode) -> Allowing {
+    match mode {
+        Mode::Ask => Allowing::Nothing,
+        Mode::AllowEdits => Allowing::Edits,
+        Mode::FullAccess => Allowing::Everything,
+    }
+}
 
 /// The mode Claude Code's table has for the conversation's `mode`.
 const fn claude_mode(mode: Mode) -> crucible_external_harnesses::claude::Mode {

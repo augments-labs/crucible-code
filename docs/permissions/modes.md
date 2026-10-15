@@ -90,6 +90,15 @@ session moving.
 from. A word that names none of them is refused, and the session stays where it
 was.
 
+## On an installed agent
+
+A conversation running on an [installed agent](../providers/agents.md) keeps
+these three modes, and each starts the agent in one of its own: the one that
+asks, the one that edits files without asking, and the one that asks about
+nothing. The agent's other modes are never offered. Its actions are decided by
+its own rules, not the ones here, so a `deny` rule does not stop it in
+`fullAccess`; its sandbox holds it in every mode.
+
 ## When nobody can answer
 
 When input has ended (a prompt piped in, a closed terminal), a question has
