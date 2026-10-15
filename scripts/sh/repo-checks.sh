@@ -1256,6 +1256,72 @@ while IFS= read -r line; do
     failed=1
 done <<<"$proof_feature"
 
+section "the external route is removable"
+# Running a conversation on an installed agent is one route a release can drop
+# by deleting what it adds, so every tracked file that names it is one this list
+# marks removable, whole or in the route's part. The names are the harness crate
+# and its fake peer, the configuration's `externalAgent` access with its
+# `ExternalAgent` type and `externalAgents` block, and the `agent:` content-use
+# routes. A driver's bare name is not one, since native code names the vendor's
+# models. A listed `.rs` file brings its `tests.rs` and `tests/` along, and an
+# entry no tracked file matches fails, so the list stays the one a removal reads.
+removable=(
+    crates/crucible-external-harnesses
+    # The application's route: the backends, the launch, the turn and its
+    # translation, the accounts, the test build's registry, the `agent:` rows,
+    # the writes, the start-up arm, the switch, and the refusals they raise.
+    crates/crucible-app/src/{access,backends,launching,external,outside}.rs
+    crates/crucible-app/src/{proof,content_use,remember,startup,switching}.rs
+    crates/crucible-app/src/{conversation,error,lib,client}.rs
+    crates/crucible-app/src/client/{accounts,performing,reading}.rs
+    crates/crucible-app/src/proof/accounts.rs
+    crates/crucible-app/src/doctor.rs crates/crucible-app/src/providers/tests.rs
+    crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
+    crates/crucible-app/Cargo.toml
+    # The configuration's access variant and block, their rows and checks.
+    crates/crucible-config/src/{lib,shape,remember,error,settings}.rs
+    crates/crucible-config/src/settings/access.rs crates/crucible-config/src/shape/rows/tests.rs
+    crates/crucible-config/src/document/check.rs
+    schema/crucible-code-schema.json
+    # The client contract's account commands and their variants.
+    crates/crucible-client-api/src/{command,outcome,pending,snapshot,wire,tests}.rs
+    # The terminal's choosers and the whole-screen cases over them.
+    src/cli/converse/command/{login,logout}.rs
+    tests/whole_screen/{agents,main,watched}.rs scripts/screen-baseline.json
+    Cargo.toml Cargo.lock scripts/sh/repo-checks.sh
+    docs/providers/{agents,index,providers,content-use}.md
+    docs/configuration/configuration.md docs/reference/cli.md
+    docs/security/index.md docs/sessions/sessions.md
+    docs/getting-started/{troubleshooting,how-crucible-works}.md
+    README.md CONTRIBUTING.md
+)
+pathspecs=()
+for entry in "${removable[@]}"; do
+    if [[ -z "$(git ls-files -- "$entry")" ]]; then
+        printf '    FAIL %s is listed as removable and no tracked file is\n' "$entry"
+        failed=1
+    fi
+    pathspecs+=("$entry")
+    if [[ $entry == *.rs && $entry != */tests.rs ]]; then
+        pathspecs+=("${entry%.rs}/tests.rs" "${entry%.rs}/tests")
+    fi
+done
+naming=$({
+    git grep -l -F -e crucible-external-harnesses -e crucible_external_harnesses \
+        -e crucible-fake-peer -e externalAgent -e ExternalAgent
+    git grep -l -E '(^|[^A-Za-z_-])agent:[a-z]'
+} | LC_ALL=C sort -u)
+if [[ -z "$naming" ]]; then
+    printf '    FAIL no tracked file names the external route; this check measured nothing\n'
+    failed=1
+fi
+listed=$(git ls-files -- "${pathspecs[@]}" | LC_ALL=C sort -u)
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    printf '    FAIL %s names the external route and is not listed as removable\n' "$file"
+    failed=1
+done < <(LC_ALL=C comm -23 <(printf '%s\n' "$naming") <(printf '%s\n' "$listed"))
+
 section "no spawned thread in the hosted crates"
 # No shipped source in the transport, MCP, extension or external-harnesses
 # crates starts its own thread: a `thread::spawn` in any of the four fails, which is also what keeps
