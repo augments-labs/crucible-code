@@ -85,6 +85,13 @@ pub enum Command {
         /// The instance, by the name the configuration gives it.
         instance: Name,
     },
+    /// Stop using an installed agent's instance from Crucible, with every
+    /// instance sharing its sign-in, and then sign that sign-in out through
+    /// the agent's own program. Asked for as [`Command::Disconnect`] is.
+    SignOut {
+        /// The instance, by the name the configuration gives it.
+        instance: Name,
+    },
     /// List the persistent prompt-cache resources this conversation holds.
     InspectCache,
     /// Delete them.
@@ -135,7 +142,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 26] = [
+    pub const KINDS: [&'static str; 27] = [
         "prompt",
         "compact",
         "cancel",
@@ -151,6 +158,7 @@ impl Command {
         "logout",
         "disconnect",
         "remove_integration",
+        "sign_out",
         "inspect_cache",
         "clean_cache",
         "sandbox",
@@ -183,6 +191,7 @@ impl Command {
             Self::Logout { .. } => "logout",
             Self::Disconnect { .. } => "disconnect",
             Self::RemoveIntegration { .. } => "remove_integration",
+            Self::SignOut { .. } => "sign_out",
             Self::InspectCache => "inspect_cache",
             Self::CleanCache => "clean_cache",
             Self::Sandbox { .. } => "sandbox",
@@ -217,9 +226,9 @@ impl Command {
             Self::Login { provider } | Self::Logout { provider } => {
                 object.with("provider", provider.as_str())
             }
-            Self::Disconnect { instance } | Self::RemoveIntegration { instance } => {
-                object.with("instance", instance.as_str())
-            }
+            Self::Disconnect { instance }
+            | Self::RemoveIntegration { instance }
+            | Self::SignOut { instance } => object.with("instance", instance.as_str()),
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
             Self::Setting { name, value } => object
@@ -272,6 +281,9 @@ impl Command {
                 instance: fields.name("instance")?,
             },
             "remove_integration" => Self::RemoveIntegration {
+                instance: fields.name("instance")?,
+            },
+            "sign_out" => Self::SignOut {
                 instance: fields.name("instance")?,
             },
             "inspect_cache" => Self::InspectCache,

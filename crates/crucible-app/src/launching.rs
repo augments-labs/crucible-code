@@ -35,12 +35,19 @@
 //! takes the policy the conversation's commands would run under at that
 //! moment, confined or not as the sandbox is then, so a run started after the
 //! sandbox was turned off or on is held to the same choice a command would be.
+//!
+//! An account step on any instance the configuration names, the
+//! conversation's route or not, is taken through [`Steps`], under the same
+//! policy at that moment and the same gates. What it read is all it returns:
+//! a step that could not be started reads as unreadable, saying why, so a
+//! caller claims nothing the step did not establish.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crucible_config::ExternalAgent;
 use crucible_execution::{Backend, Capabilities, Capability, Failure, SessionRef, Text};
 use crucible_external_harnesses::{
     Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Reading, Refusal, Request, Shape,
@@ -127,6 +134,22 @@ impl Agent {
             row: registry.row(*driver)?,
             discovery: discover(executable, lookup),
             profile: profile.as_deref().map(PathBuf::from),
+        })
+    }
+
+    /// The agent the configuration's entry `agent` is, as `registry` knows
+    /// its driver, with its program looked for through `lookup`; nothing where
+    /// `registry` has no row for its driver.
+    #[must_use]
+    pub fn configured(
+        agent: &ExternalAgent,
+        registry: &Registry,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Option<Self> {
+        Some(Self {
+            row: registry.row(agent.driver())?,
+            discovery: discover(agent.executable(), lookup),
+            profile: agent.profile().map(PathBuf::from),
         })
     }
 
@@ -551,6 +574,82 @@ impl Relaunch for Runs {
             ));
             Ok(backend)
         })
+    }
+}
+
+/// What takes an account step of any installed agent the configuration
+/// names.
+pub struct Steps {
+    /// The sandbox every step is prepared by.
+    service: Arc<dyn SandboxService>,
+    /// Where each step's pipes are read and written.
+    runtime: Handle,
+    /// The conversation's own policy, confining.
+    policy: SandboxPolicy,
+    /// Whether the sandbox confines at the moment a step is started.
+    enablement: Arc<SandboxEnablement>,
+    /// The content-use answers, which every step is held by.
+    consent: Consent,
+    /// The installed agents a configured entry is read against.
+    registry: &'static Registry,
+    /// The `PATH` an agent's program is looked for on.
+    path: Option<OsString>,
+}
+
+impl std::fmt::Debug for Steps {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Steps").finish_non_exhaustive()
+    }
+}
+
+impl Steps {
+    /// Steps each started as `launcher` starts one, under its policy
+    /// confining as `enablement` then says, of the agents `registry` knows,
+    /// their programs looked for on `path`.
+    #[must_use]
+    pub fn new(
+        launcher: Launcher<'_>,
+        enablement: Arc<SandboxEnablement>,
+        registry: &'static Registry,
+        path: Option<OsString>,
+    ) -> Self {
+        Self {
+            service: launcher.service,
+            runtime: launcher.runtime,
+            policy: launcher.conversation.clone(),
+            enablement,
+            consent: launcher.consent.clone(),
+            registry,
+            path,
+        }
+    }
+
+    /// What the account step `step` of the configured `agent` read, run to
+    /// its end; unreadable, saying why, where it could not be started.
+    pub async fn account(&self, agent: &ExternalAgent, step: Account) -> Reading {
+        let unreadable = |why: &str| Reading::Unreadable(Failure::new(why));
+        let Some(chosen) = Agent::configured(agent, self.registry, |name| {
+            (name == "PATH").then(|| self.path.clone()).flatten()
+        }) else {
+            return unreadable("this release has no launch for the agent's driver");
+        };
+        let mut dialect = match (chosen.row.dialect)(Mode::default()) {
+            Ok(dialect) => dialect,
+            Err(refused) => return Reading::Unreadable(refused),
+        };
+        let Some(control) = Control::new() else {
+            return unreadable("no control for the agent's program");
+        };
+        let policy = self.policy.clone().with_enabled(self.enablement.enabled());
+        Launcher::new(
+            Arc::clone(&self.service),
+            self.runtime.clone(),
+            &policy,
+            &self.consent,
+        )
+        .account(&chosen, &control, dialect.as_mut(), step, &|_| {})
+        .await
+        .unwrap_or_else(|refused| unreadable(&refused.to_string()))
     }
 }
 

@@ -431,6 +431,9 @@ fn commands() -> Vec<Command> {
         Command::RemoveIntegration {
             instance: name("work"),
         },
+        Command::SignOut {
+            instance: name("work"),
+        },
         Command::InspectCache,
         Command::CleanCache,
         Command::Sandbox { enabled: true },
@@ -534,6 +537,8 @@ fn login_outcomes() -> Vec<Outcome> {
             problem: problem(),
         }),
         Outcome::Logout(LogoutOutcome::IntegrationRemoved { said: marked() }),
+        Outcome::Logout(LogoutOutcome::AgentSignedOut { said: marked() }),
+        Outcome::Logout(LogoutOutcome::SignOutUnverified { said: marked() }),
         Outcome::Logout(LogoutOutcome::StillReferenced { said: marked() }),
         Outcome::Logout(LogoutOutcome::Undecided),
     ]
@@ -1071,65 +1076,68 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 30),
-        Command::Compact => (1, 30),
-        Command::Cancel => (2, 30),
-        Command::Decide(_) => (3, 30),
-        Command::Clear => (4, 30),
-        Command::Resume(_) => (5, 30),
+        Command::Prompt(_) => (0, 31),
+        Command::Compact => (1, 31),
+        Command::Cancel => (2, 31),
+        Command::Decide(_) => (3, 31),
+        Command::Clear => (4, 31),
+        Command::Resume(_) => (5, 31),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 30),
-        Command::SelectModel { effort: None, .. } => (7, 30),
-        Command::SetEffort(_) => (8, 30),
-        Command::SetMode(_) => (9, 30),
-        Command::CycleMode => (10, 30),
-        Command::Login { .. } => (11, 30),
-        Command::Logout { .. } => (12, 30),
-        Command::InspectCache => (13, 30),
-        Command::CleanCache => (14, 30),
-        Command::Sandbox { enabled: true } => (15, 30),
-        Command::Sandbox { enabled: false } => (16, 30),
-        Command::Theme(Theme::Drawing(_)) => (17, 30),
-        Command::Theme(Theme::Syntax(_)) => (18, 30),
-        Command::Help => (19, 30),
-        Command::ReleaseNotes { version: None } => (20, 30),
-        Command::ReleaseNotes { version: Some(_) } => (21, 30),
-        Command::Exit => (22, 30),
-        Command::SetSpeed(_) => (23, 30),
-        Command::Context => (24, 30),
-        Command::Usage => (25, 30),
-        Command::Setting { .. } => (26, 30),
-        Command::AskLimits => (27, 30),
-        Command::Disconnect { .. } => (28, 30),
-        Command::RemoveIntegration { .. } => (29, 30),
+        } => (6, 31),
+        Command::SelectModel { effort: None, .. } => (7, 31),
+        Command::SetEffort(_) => (8, 31),
+        Command::SetMode(_) => (9, 31),
+        Command::CycleMode => (10, 31),
+        Command::Login { .. } => (11, 31),
+        Command::Logout { .. } => (12, 31),
+        Command::InspectCache => (13, 31),
+        Command::CleanCache => (14, 31),
+        Command::Sandbox { enabled: true } => (15, 31),
+        Command::Sandbox { enabled: false } => (16, 31),
+        Command::Theme(Theme::Drawing(_)) => (17, 31),
+        Command::Theme(Theme::Syntax(_)) => (18, 31),
+        Command::Help => (19, 31),
+        Command::ReleaseNotes { version: None } => (20, 31),
+        Command::ReleaseNotes { version: Some(_) } => (21, 31),
+        Command::Exit => (22, 31),
+        Command::SetSpeed(_) => (23, 31),
+        Command::Context => (24, 31),
+        Command::Usage => (25, 31),
+        Command::Setting { .. } => (26, 31),
+        Command::AskLimits => (27, 31),
+        Command::Disconnect { .. } => (28, 31),
+        Command::RemoveIntegration { .. } => (29, 31),
+        Command::SignOut { .. } => (30, 31),
     }
 }
 
 const fn logout_arm(one: &LogoutOutcome) -> (usize, usize) {
     match one {
-        LogoutOutcome::CacheHeld(_) => (0, 13),
-        LogoutOutcome::Unforgotten { .. } => (1, 13),
-        LogoutOutcome::Kept => (2, 13),
+        LogoutOutcome::CacheHeld(_) => (0, 15),
+        LogoutOutcome::Unforgotten { .. } => (1, 15),
+        LogoutOutcome::Kept => (2, 15),
         LogoutOutcome::StillServed {
             standing: Standing::Environment(_),
             ..
-        } => (3, 13),
+        } => (3, 15),
         LogoutOutcome::StillServed {
             standing: Standing::StoredKey,
             ..
-        } => (4, 13),
+        } => (4, 15),
         LogoutOutcome::StillServed {
             standing: Standing::Subscription,
             ..
-        } => (5, 13),
-        LogoutOutcome::SignedOut { .. } => (6, 13),
-        LogoutOutcome::Disconnected { .. } => (7, 13),
-        LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { .. } => (8, 13),
-        LogoutOutcome::StoppedForThisRunOnly { .. } => (9, 13),
-        LogoutOutcome::IntegrationRemoved { .. } => (10, 13),
-        LogoutOutcome::StillReferenced { .. } => (11, 13),
-        LogoutOutcome::Undecided => (12, 13),
+        } => (5, 15),
+        LogoutOutcome::SignedOut { .. } => (6, 15),
+        LogoutOutcome::Disconnected { .. } => (7, 15),
+        LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { .. } => (8, 15),
+        LogoutOutcome::StoppedForThisRunOnly { .. } => (9, 15),
+        LogoutOutcome::IntegrationRemoved { .. } => (10, 15),
+        LogoutOutcome::StillReferenced { .. } => (11, 15),
+        LogoutOutcome::Undecided => (12, 15),
+        LogoutOutcome::AgentSignedOut { .. } => (13, 15),
+        LogoutOutcome::SignOutUnverified { .. } => (14, 15),
     }
 }
 
@@ -2335,7 +2343,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 3_579_482_399_947_206_447),
+        (4, 7_891_293_448_357_664_370),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

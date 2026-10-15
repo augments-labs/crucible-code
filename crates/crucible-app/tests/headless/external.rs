@@ -19,7 +19,7 @@ use crucible_app::backends::{REGISTRY, Registry, Row};
 use crucible_app::client::{self, Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::external::External;
-use crucible_app::launching::{Agent, Launcher};
+use crucible_app::launching::{Agent, Launcher, Steps};
 use crucible_app::outside::{Installed, Relaunch};
 use crucible_app::{Conversation, Settled};
 use crucible_client_api::{
@@ -34,7 +34,7 @@ use crucible_external_harnesses::fake_peer::{self, Reply, Script as Peer, script
 use crucible_external_harnesses::{Account, Control};
 use crucible_runner::{Event, EventEnvelope, Post, SessionCost, Totals, TurnError, Turned};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
-use crucible_sandbox::{SandboxPolicy, SandboxService};
+use crucible_sandbox::{SandboxEnablement, SandboxPolicy, SandboxService};
 use crucible_sandbox_local::LocalSandbox;
 use crucible_session::{ExternalRef, RouteBinding, Session};
 use crucible_tools::Mode;
@@ -230,6 +230,14 @@ impl Outside {
         transcript: Transcript,
     ) -> Result<(Self, Arc<Session>), Failed> {
         let (launching, peer) = launching(tree, script)?;
+        // An account step on any configured instance finds the installed
+        // peer on the `PATH`, as a bare `claude` would be found.
+        conversation = conversation.stepping(Steps::new(
+            launching.launcher(),
+            Arc::new(SandboxEnablement::new(false, false)),
+            Box::leak(Box::new(Registry::new(std::slice::from_ref(launching.row)))),
+            Some(peer.clone().into_os_string()),
+        ));
         let launched = Arc::clone(&launching.launched);
         let route = binding()?;
         let left = runtime()?.block_on(async {
@@ -1463,5 +1471,207 @@ fn a_removal_of_an_instance_the_user_file_does_not_hold_is_refused_unasked() -> 
     assert_eq!(file, elsewhere);
     let (turned, _events) = turn(&mut outside, "again", false)?;
     assert!(turned.is_ok(), "{turned:?}");
+    Ok(())
+}
+
+/// Two instances on Claude Code's default profile, and one on a profile of
+/// its own, written as an absolute path on each platform.
+#[cfg(not(windows))]
+const SHARED: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}, "spare": {"driver": "claude", "executable": "claude"}, "apart": {"driver": "claude", "executable": "claude", "configDir": "/nowhere/apart"}},
+  "updates": {"check": "auto"}
+}
+"#;
+#[cfg(windows)]
+const SHARED: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}, "spare": {"driver": "claude", "executable": "claude"}, "apart": {"driver": "claude", "executable": "claude", "configDir": "C:/nowhere/apart"}},
+  "updates": {"check": "auto"}
+}
+"#;
+
+/// Asks to sign the instance `work` of the user file `installed` out, of a
+/// client that answers `choice`, the file holding `after` once the settings
+/// were read, where that is something else; and answers what the client was
+/// told, what the file then held, and how many times the agent's program was
+/// started for it.
+fn signing_out(
+    tree: &Tree,
+    outside: &mut Outside,
+    installed: &str,
+    after: Option<&str>,
+    choice: Option<&'static str>,
+) -> Result<(Outcome, String, usize), Failed> {
+    let asked = Asked {
+        installed: (installed, "work"),
+        command: |instance| Command::SignOut { instance },
+        asking: Asking::every(),
+        after,
+    };
+    let mut choosing = Choosing {
+        choice,
+        put: Vec::new(),
+    };
+    // The conversation's run is started as it opens, and is counted once the
+    // peer has read its script: after the probe, the status check and it.
+    for _ in 0..500 {
+        if fake_peer::played(&outside.peer) >= 3 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let before = fake_peer::played(&outside.peer);
+    let (outcome, file) = accounting(tree, outside, &asked, &mut choosing)?;
+    Ok((outcome, file, fake_peer::played(&outside.peer) - before))
+}
+
+/// A sign-out writes `enabled: false` for every instance on the profile, and
+/// for nothing else, before the agent's own logout and a status step after it
+/// run; with both reading signed out, it is said to be signed out.
+#[test]
+fn a_sign_out_disables_every_instance_on_the_profile_then_signs_the_agent_out() -> Result<(), Failed>
+{
+    use crucible_client_api::LogoutOutcome;
+
+    let tree = Tree::new("external-sign-out")?;
+    let script = connected([claude::clean(), Reply::new(), claude::signed_out()]);
+    let mut outside = Outside::new(&tree, &script)?;
+
+    let (outcome, file, started) = signing_out(
+        &tree,
+        &mut outside,
+        SHARED,
+        None,
+        Some(client::accounts::SIGN_OUT),
+    )?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Logout(LogoutOutcome::AgentSignedOut {
+            said: crucible_client_api::Text::cut("Signed out of this agent profile"),
+        })
+    );
+    assert_eq!(
+        file,
+        SHARED.replace(
+            r#""executable": "claude"},"#,
+            r#""executable": "claude", "enabled": false},"#
+        )
+    );
+    assert_eq!(started, 2, "a logout and a status step");
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_err(), "a signed-out agent took a turn");
+    Ok(())
+}
+
+/// Where the agent does not read signed out afterwards, every instance on the
+/// profile is still written off, and the sign-out is said to be unverified.
+#[test]
+fn a_sign_out_the_agent_does_not_confirm_is_unverified() -> Result<(), Failed> {
+    use crucible_client_api::LogoutOutcome;
+
+    let tree = Tree::new("external-sign-out-unverified")?;
+    let script = connected([claude::clean(), Reply::new(), claude::signed_in()]);
+    let mut outside = Outside::new(&tree, &script)?;
+
+    let (outcome, file, started) = signing_out(
+        &tree,
+        &mut outside,
+        SHARED,
+        None,
+        Some(client::accounts::SIGN_OUT),
+    )?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Logout(LogoutOutcome::SignOutUnverified {
+            said: crucible_client_api::Text::cut("Disconnected; external sign-out unverified"),
+        })
+    );
+    assert_eq!(
+        file,
+        SHARED.replace(
+            r#""executable": "claude"},"#,
+            r#""executable": "claude", "enabled": false},"#
+        )
+    );
+    assert_eq!(started, 2, "a logout and a status step");
+    Ok(())
+}
+
+/// Where `enabled: false` cannot be written, the agent's program is not
+/// started at all, and the client is told the stop holds for this run only.
+#[test]
+fn a_sign_out_whose_write_fails_starts_no_agent_program() -> Result<(), Failed> {
+    use crucible_client_api::LogoutOutcome;
+
+    let elsewhere = r#"{"updates": {"check": "auto"}}
+"#;
+    let tree = Tree::new("external-sign-out-unwritten")?;
+    let script = connected([claude::clean(), Reply::new(), claude::signed_out()]);
+    let mut outside = Outside::new(&tree, &script)?;
+
+    let (outcome, file, started) = signing_out(
+        &tree,
+        &mut outside,
+        SHARED,
+        Some(elsewhere),
+        Some(client::accounts::SIGN_OUT),
+    )?;
+
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Logout(LogoutOutcome::StoppedForThisRunOnly { .. })
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(file, elsewhere);
+    assert_eq!(started, 0, "the agent's program was started");
+    Ok(())
+}
+
+/// Cancelling or going back leaves the file byte for byte as it was and
+/// starts nothing; choosing to disconnect instead writes off that instance
+/// alone and starts nothing either.
+#[test]
+fn a_sign_out_not_chosen_signs_nothing_out() -> Result<(), Failed> {
+    use crucible_client_api::LogoutOutcome;
+
+    let disconnected = SHARED.replacen(
+        r#""executable": "claude"},"#,
+        r#""executable": "claude", "enabled": false},"#,
+        1,
+    );
+    for (case, choice, expected, kept) in [
+        (
+            "cancel",
+            Some("Cancel"),
+            Outcome::Logout(LogoutOutcome::Undecided),
+            SHARED,
+        ),
+        (
+            "back",
+            None,
+            Outcome::Logout(LogoutOutcome::Undecided),
+            SHARED,
+        ),
+        (
+            "instead",
+            Some(client::accounts::DISCONNECT_INSTEAD),
+            Outcome::Logout(LogoutOutcome::Disconnected {
+                said: crucible_client_api::Text::cut(client::accounts::DISCONNECTED),
+            }),
+            disconnected.as_str(),
+        ),
+    ] {
+        let tree = Tree::new(&format!("external-sign-out-kept-{case}"))?;
+        let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+
+        let (outcome, file, started) = signing_out(&tree, &mut outside, SHARED, None, choice)?;
+
+        assert_eq!(outcome, expected, "{case}");
+        assert_eq!(file, kept, "{case}");
+        assert_eq!(started, 0, "{case}: the agent's program was started");
+    }
     Ok(())
 }

@@ -334,6 +334,10 @@ impl LogoutOutcome {
             Self::IntegrationRemoved { said } => {
                 Writing::kind("integration_removed").text("said", said)
             }
+            Self::AgentSignedOut { said } => Writing::kind("agent_signed_out").text("said", said),
+            Self::SignOutUnverified { said } => {
+                Writing::kind("sign_out_unverified").text("said", said)
+            }
             Self::StillReferenced { said } => Writing::kind("still_referenced").text("said", said),
             Self::Undecided => Writing::kind("undecided"),
         }
@@ -369,6 +373,12 @@ impl LogoutOutcome {
                 problem: problem(&mut fields)?,
             },
             "integration_removed" => Self::IntegrationRemoved {
+                said: fields.text("said")?,
+            },
+            "agent_signed_out" => Self::AgentSignedOut {
+                said: fields.text("said")?,
+            },
+            "sign_out_unverified" => Self::SignOutUnverified {
                 said: fields.text("said")?,
             },
             "still_referenced" => Self::StillReferenced {

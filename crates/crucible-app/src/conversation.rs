@@ -109,6 +109,9 @@ pub struct Conversation {
     consent: Option<crate::content_use::Consent>,
     /// The installed agents this conversation's start was settled against.
     agents: &'static Registry,
+    /// What takes an installed agent's account steps, where the run built
+    /// one: nothing where the policy a step would run under could not be.
+    steps: Option<crate::launching::Steps>,
     /// What the two web tools answer through: built for the provider and model
     /// being asked, and built again by each switch of either.
     pub(crate) web: crate::following::Following,
@@ -142,6 +145,7 @@ impl Conversation {
             reachable: false,
             consent: None,
             agents: &REGISTRY,
+            steps: None,
             web: crate::following::Following::default(),
             asks: crate::client::asking::Asks::default(),
         }
@@ -178,6 +182,23 @@ impl Conversation {
     #[must_use]
     pub(crate) fn credited(self, source: Option<crate::providers::CredentialSource>) -> Self {
         Self { source, ..self }
+    }
+
+    /// The same conversation, taking an installed agent's account steps
+    /// through `steps`.
+    #[must_use]
+    pub fn stepping(self, steps: crate::launching::Steps) -> Self {
+        Self {
+            steps: Some(steps),
+            ..self
+        }
+    }
+
+    /// What takes an installed agent's account steps, where the run built
+    /// one.
+    #[must_use]
+    pub const fn steps(&self) -> Option<&crate::launching::Steps> {
+        self.steps.as_ref()
     }
 
     /// The installed agents this conversation's start was settled against.
