@@ -411,21 +411,21 @@ fn commands() -> Vec<Command> {
         Command::Clear,
         Command::Resume(SessionId::new()),
         Command::SelectModel {
-            provider: name("anthropic"),
-            model: name("claude-sonnet-5"),
+            provider: name("acme"),
+            model: name("acme-large-5"),
             effort: Some(Rung::High),
         },
         Command::SelectModel {
-            provider: name("anthropic"),
-            model: name("claude-sonnet-5"),
+            provider: name("acme"),
+            model: name("acme-large-5"),
             effort: None,
         },
         Command::CycleMode,
         Command::Login {
-            provider: name("anthropic"),
+            provider: name("acme"),
         },
         Command::Logout {
-            provider: name("anthropic"),
+            provider: name("acme"),
         },
         Command::Disconnect {
             instance: name("work"),
@@ -437,11 +437,11 @@ fn commands() -> Vec<Command> {
             instance: name("work"),
         },
         Command::Connect {
-            provider: name("anthropic"),
+            provider: name("acme"),
             instance: Some(name("work")),
         },
         Command::Connect {
-            provider: name("anthropic"),
+            provider: name("acme"),
             instance: None,
         },
         Command::InspectCache,
@@ -648,7 +648,7 @@ fn plan_limits() -> Limits {
                 ],
             },
             LimitGroup {
-                model: Some(name("GPT-5.3-Codex-Spark")),
+                model: Some(name("acme-small-5")),
                 limits: vec![
                     limit(
                         Window::Lasting { minutes: 180 },
@@ -948,7 +948,7 @@ fn snapshots() -> Vec<Snapshot> {
         .zip(Agents::EVERY.into_iter().cycle())
         .map(|((pending, billing), agents)| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
-            provider: pending.as_ref().map(|_| name("anthropic")),
+            provider: pending.as_ref().map(|_| name("acme")),
             execution: if billing == Billing::External {
                 Execution::Instance(name("work"))
             } else {
@@ -2004,7 +2004,7 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     };
     let fullest = Snapshot {
         session: Some(SessionId::new()),
-        provider: Some(name("anthropic")),
+        provider: Some(name("acme")),
         execution: Execution::Instance(Name::new(&"n".repeat(NAME_BYTES)).unwrap()),
         billing: Billing::Subscription,
         agents: Agents::Available,
@@ -2688,7 +2688,7 @@ fn limit_every_window_and_reading_reads_back_as_it_was_written() {
     assert_eq!(Progress::decode(&frame).unwrap(), one);
     assert_eq!(
         value.pointer("/limits/1/model"),
-        Some(&json!("GPT-5.3-Codex-Spark")),
+        Some(&json!("acme-small-5")),
         "{value}"
     );
     assert_eq!(

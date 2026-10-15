@@ -21,7 +21,7 @@ fn session(nth: u64, words: Option<&Text>) -> Session {
         branch: words.cloned(),
         messages: nth * 2,
         title: words.cloned(),
-        backend: Name::new(if words.is_some() { "claude" } else { NATIVE }).unwrap(),
+        backend: Name::new(if words.is_some() { "peer" } else { NATIVE }).unwrap(),
         route: words.map(|_| Name::new("work").unwrap()),
     }
 }
@@ -128,7 +128,7 @@ fn each_session_crosses_with_its_id_start_count_branch_title_backend_and_route()
     assert_eq!(at(&document, "/sessions/0/title/text"), &json!("words"));
     assert_eq!(document.pointer("/sessions/1/branch"), None);
     assert_eq!(document.pointer("/sessions/1/title"), None);
-    assert_eq!(at(&document, "/sessions/0/backend"), &json!("claude"));
+    assert_eq!(at(&document, "/sessions/0/backend"), &json!("peer"));
     assert_eq!(at(&document, "/sessions/0/route"), &json!("work"));
     assert_eq!(at(&document, "/sessions/1/backend"), &json!("native"));
     assert_eq!(document.pointer("/sessions/1/route"), None);
