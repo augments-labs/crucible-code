@@ -48,7 +48,7 @@ Connecting the provider a conversation is asking through an agent moves that
 conversation onto the agent at once, in a new session bound to the agent with
 nothing carried over, and the line it ends on names the agent and says the
 conversation starts fresh there; the session it left stays listed and can be
-resumed.
+resumed. In `/resume`, a session an agent ran names the agent on its line.
 Where the agent cannot be started in the conversation's mode, the conversation
 stays on the provider's model and the next session starts on the agent. A
 conversation already on an agent stays on it.

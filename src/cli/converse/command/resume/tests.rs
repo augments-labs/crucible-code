@@ -18,7 +18,7 @@ use crucible_auth::Store;
 use crucible_builtins::{Ledger, Plan};
 use crucible_runner::{Agent, Model, Runner, Tools};
 use crucible_runtime::Cancel;
-use crucible_session::Session;
+use crucible_session::{RouteBinding, Session};
 use crucible_tools::Revealed;
 use crucible_tui::{Recording, Renderer, Row};
 use crucible_types::{
@@ -764,6 +764,79 @@ fn the_meta_line_counts_the_messages_and_names_the_branch() {
     assert!(!said.contains("1 messages"), "{said}");
     assert!(said.contains("feature/x"), "{said}");
     assert!(!said.contains("in use elsewhere"), "{said}");
+}
+
+/// A session the installed agent `instance` of `driver` ran, holding one
+/// prompt, and the same session as the list reads it.
+fn ran_by(sample: &Sample, driver: &str, instance: &str) -> Recorded {
+    let route = RouteBinding::new(driver, instance, None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a new session");
+    let id = session.id().expect("a recorded session has a name").clone();
+    session.append(&Message::said("asked of an agent"));
+    drop(session);
+
+    on_the_list(sample, &id)
+}
+
+#[test]
+fn an_agent_s_session_says_on_its_meta_line_which_agent_ran_it() {
+    // Picking it up starts that agent again, so the reader learns which one
+    // before Enter rather than after; the instance is named in the words the
+    // row under the box uses once it is running. A provider's session says
+    // nothing of the kind, as before.
+    let sample = Sample::new("resume-meta-agent");
+    let named = ran_by(&sample, "stream", "work");
+    let native = recorded_in(&sample, &sample.workspace(), None, Some("asked of a model"));
+    let native = on_the_list(&sample, &native);
+    let glyphs = Style::plain().glyphs();
+
+    let said = meta(&named, None, SystemTime::now(), glyphs);
+    assert!(said.contains("execution: work (stream)"), "{said}");
+
+    let same = ran_by(&Sample::new("resume-meta-same"), "work", "work");
+    let said = meta(&same, None, SystemTime::now(), glyphs);
+    assert!(said.contains("execution: work"), "{said}");
+    assert!(!said.contains("(work)"), "{said}");
+
+    let said = meta(&native, None, SystemTime::now(), glyphs);
+    assert!(!said.contains("execution:"), "{said}");
+}
+
+#[test]
+fn the_list_names_the_agent_that_ran_a_session() {
+    // The run with no keyboard has no meta line to read, so its row says it.
+    let sample = Sample::new("resume-list-agent");
+    let named = ran_by(&sample, "stream", "work");
+    let native = recorded_in(&sample, &sample.workspace(), None, Some("asked of a model"));
+    let native = on_the_list(&sample, &native);
+
+    let rows = listing(&[&named, &native], SystemTime::now(), 120);
+    let drawn: Vec<String> = rows.iter().map(Row::text).collect();
+    let [agent, model] = drawn.as_slice() else {
+        panic!("two rows: {drawn:?}");
+    };
+
+    assert!(agent.contains("execution: work (stream)"), "{agent}");
+    assert!(agent.contains("asked of an agent"), "{agent}");
+    assert!(!model.contains("execution:"), "{model}");
+    assert!(model.contains("asked of a model"), "{model}");
+}
+
+#[test]
+fn a_long_agent_name_leaves_the_title_room_on_the_list() {
+    let sample = Sample::new("resume-list-long-agent");
+    let long = "w".repeat(200);
+    let named = ran_by(&sample, "stream", &long);
+
+    let rows = listing(&[&named], SystemTime::now(), 120);
+    let drawn: Vec<String> = rows.iter().map(Row::text).collect();
+    let [row] = drawn.as_slice() else {
+        panic!("one row: {drawn:?}");
+    };
+
+    assert!(row.contains("execution: www"), "{row}");
+    assert!(row.contains("asked of"), "{row}");
 }
 
 #[test]
