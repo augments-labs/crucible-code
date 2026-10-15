@@ -1758,16 +1758,16 @@ fn connecting(
     instance: Option<&str>,
     picking: &mut Picking,
 ) -> Result<(Outcome, String), Failed> {
-    Ok(connecting_counted(tree, outside, provider, instance, picking)?.0)
+    Ok(connecting_counted(tree, outside, UNCONNECTED, (provider, instance), picking)?.0)
 }
 
-/// The same, answering also how many times the agent's program was started
-/// for the connect.
+/// The same, the user file holding `file` first, answering also how many
+/// times the agent's program was started for the connect.
 fn connecting_counted(
     tree: &Tree,
     outside: &mut Outside,
-    provider: &str,
-    instance: Option<&str>,
+    file: &'static str,
+    (provider, instance): (&str, Option<&str>),
     picking: &mut Picking,
 ) -> Result<((Outcome, String), usize), Failed> {
     use crucible_client_api::Name;
@@ -1779,7 +1779,7 @@ fn connecting_counted(
         instance: named.then_some(instance),
     };
     let asked = Asked {
-        installed: (UNCONNECTED, instance.unwrap_or("work")),
+        installed: (file, instance.unwrap_or("work")),
         command: &command,
         asking: Asking::every(),
         after: None,
@@ -1933,14 +1933,13 @@ fn a_connect_not_carried_through_writes_nothing() -> Result<(), Failed> {
     Ok(())
 }
 
-/// A connect naming no instance, an instance the file does not name, or a
-/// provider this release does not offer is refused before anything is asked.
+/// A connect naming an instance the file does not name, or a provider this
+/// release does not offer, is refused before anything is asked.
 #[test]
 fn a_connect_naming_no_known_instance_or_provider_is_refused_unasked() -> Result<(), Failed> {
     use crucible_client_api::ErrorCode;
 
     for (case, provider, instance, refused) in [
-        ("no-instance", "anthropic", None, ErrorCode::InvalidArgument),
         (
             "unknown-instance",
             "anthropic",
@@ -1990,8 +1989,13 @@ fn a_connect_asks_the_agent_s_route_before_starting_the_agent() -> Result<(), Fa
         outside.unanswer();
         let mut picking = Picking::of(choices);
 
-        let ((outcome, file), started) =
-            connecting_counted(&tree, &mut outside, "anthropic", Some("work"), &mut picking)?;
+        let ((outcome, file), started) = connecting_counted(
+            &tree,
+            &mut outside,
+            UNCONNECTED,
+            ("anthropic", Some("work")),
+            &mut picking,
+        )?;
 
         match (&outcome, &said) {
             (Outcome::Login(LoginOutcome::Undecided), None) => {}
@@ -2008,5 +2012,192 @@ fn a_connect_asks_the_agent_s_route_before_starting_the_agent() -> Result<(), Fa
         assert_eq!(started, 0, "{case}: the agent's program was started");
         assert_eq!(file, UNCONNECTED, "{case}");
     }
+    Ok(())
+}
+
+/// The user file holding no agent at all.
+const UNINSTALLED: &str = r#"{
+  "updates": {"check": "auto"}
+}
+"#;
+
+/// The user file holding two instances of the one agent.
+const TWICE: &str = r#"{
+  "externalAgents": {
+    "work": {"driver": "claude", "executable": "claude", "enabled": false},
+    "home": {"driver": "claude", "executable": "claude", "enabled": false}
+  }
+}
+"#;
+
+/// The names of the choices each account question put offered, in order.
+fn offered(put: &[Pending]) -> Vec<Vec<&str>> {
+    put.iter()
+        .filter_map(|put| match put {
+            Pending::Account { choices, .. } => {
+                Some(choices.iter().map(|choice| choice.name.as_str()).collect())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A connect naming no instance: its name, what the user file holds first,
+/// what the client picks, the instance it then goes through, and how many
+/// questions were put.
+type Picked = (
+    &'static str,
+    &'static str,
+    Vec<Option<&'static str>>,
+    &'static str,
+    usize,
+);
+
+/// Naming no instance, a connect asks which agent first; then goes through
+/// the one instance of it configured, the one picked of several, or, where
+/// none is, one named after the agent, written with the route.
+#[test]
+fn a_connect_naming_no_instance_asks_the_agent_and_then_its_instance() -> Result<(), Failed> {
+    use client::accounts::{CONNECT, USE_ACCOUNT};
+    use crucible_client_api::LoginOutcome;
+    use crucible_config::Access;
+
+    let agent = Some("Claude Code");
+    let agents = vec!["Claude Code", "Antigravity", "Cancel"];
+    let cases: [Picked; 3] = [
+        (
+            "one",
+            UNCONNECTED,
+            vec![agent, Some(USE_ACCOUNT), Some(CONNECT)],
+            "work",
+            3,
+        ),
+        (
+            "several",
+            TWICE,
+            vec![agent, Some("home"), Some(USE_ACCOUNT), Some(CONNECT)],
+            "home",
+            4,
+        ),
+        (
+            "none",
+            UNINSTALLED,
+            vec![agent, Some(USE_ACCOUNT), Some(CONNECT)],
+            "claude",
+            3,
+        ),
+    ];
+    for (case, before, choices, through, asked) in cases {
+        let tree = Tree::new(&format!("external-connect-pick-{case}"))?;
+        let script = connected([claude::clean(), claude::signed_in()]);
+        let mut outside = Outside::new(&tree, &script)?;
+        let mut picking = Picking::of(choices);
+
+        let ((outcome, file), _) = connecting_counted(
+            &tree,
+            &mut outside,
+            before,
+            ("anthropic", None),
+            &mut picking,
+        )?;
+
+        assert!(
+            matches!(outcome, Outcome::Login(LoginOutcome::AgentConnected { .. })),
+            "{case}: {outcome:?}"
+        );
+        let put = offered(&picking.put);
+        assert_eq!(put.len(), asked, "{case}: {put:?}");
+        assert_eq!(put.first(), Some(&agents), "{case}");
+        let settings = super::written(&tree)?;
+        assert_eq!(
+            settings.access("anthropic"),
+            Some(Access::ExternalAgent {
+                instance: through.into()
+            }),
+            "{case}: {file}"
+        );
+        let enabled: Vec<(String, bool)> = settings
+            .external_agents()
+            .iter()
+            .map(|agent| (agent.name().to_owned(), agent.enabled()))
+            .collect();
+        let others = enabled
+            .iter()
+            .filter(|(name, on)| (name == through) != *on)
+            .count();
+        assert_eq!(others, 0, "{case}: {enabled:?}");
+    }
+    Ok(())
+}
+
+/// An agent whose program is not installed is said to be so, with what to
+/// install; looked for again it is still not there; going back offers the
+/// agents again; and cancelling starts nothing and writes nothing.
+#[test]
+fn a_connect_to_an_agent_not_installed_says_so_and_writes_nothing() -> Result<(), Failed> {
+    use client::accounts::CHECK_AGAIN;
+    use crucible_client_api::LoginOutcome;
+
+    let tree = Tree::new("external-connect-missing")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let mut picking = Picking::of([
+        Some("Antigravity"),
+        Some(CHECK_AGAIN),
+        Some("Go back"),
+        Some("Cancel"),
+    ]);
+
+    let ((outcome, file), started) = connecting_counted(
+        &tree,
+        &mut outside,
+        UNINSTALLED,
+        ("anthropic", None),
+        &mut picking,
+    )?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    let put = offered(&picking.put);
+    let missing = vec![CHECK_AGAIN, "Go back"];
+    let agents = vec!["Claude Code", "Antigravity", "Cancel"];
+    assert_eq!(put, [agents.clone(), missing.clone(), missing, agents]);
+    let told = picking.put.get(1).is_some_and(|put| match put {
+        Pending::Account { asks, facts, .. } => {
+            asks.as_str().starts_with("Not installed")
+                && facts
+                    .iter()
+                    .any(|fact| fact.as_str() == "Install Antigravity, then choose Check again.")
+        }
+        _ => false,
+    });
+    assert!(told, "{:?}", picking.put.get(1));
+    assert_eq!(started, 0, "the agent's program was started");
+    assert_eq!(file, UNINSTALLED);
+    Ok(())
+}
+
+/// Naming no instance where no agent this build knows ships is refused
+/// before anything is asked.
+#[cfg(feature = "proof")]
+#[test]
+fn a_connect_naming_no_instance_with_no_agent_shipping_is_refused_unasked() -> Result<(), Failed> {
+    use crucible_app::proof;
+    use crucible_client_api::ErrorCode;
+
+    let tree = Tree::new("external-connect-none-shipping")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    outside.conversation = proof::agents(outside.conversation, proof::registry(&[]));
+    let mut picking = Picking::of([Some("Claude Code")]);
+
+    let ((outcome, file), _) = connecting_counted(
+        &tree,
+        &mut outside,
+        UNINSTALLED,
+        ("anthropic", None),
+        &mut picking,
+    )?;
+
+    assert_eq!(outcome, Outcome::Refused(ErrorCode::InvalidArgument.into()));
+    assert!(picking.put.is_empty(), "{:?}", picking.put);
+    assert_eq!(file, UNINSTALLED);
     Ok(())
 }

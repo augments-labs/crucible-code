@@ -15,6 +15,7 @@ use crucible_tools::Minted;
 use serde_json::Value;
 
 use crate::error::ConfigError;
+use crate::settings::access::ExternalAgent;
 use crate::shape::rows::{Row, Values};
 use crate::shape::whole;
 
@@ -519,6 +520,51 @@ pub fn connecting(
     Ok(written)
 }
 
+/// The text of a configuration file that installs `agent` under its name,
+/// with its driver, executable and profile directory where it has one, then
+/// reaches `provider` through it and lets it take new work, as
+/// [`connecting`] does, in the one text handed back: the instance is written
+/// disabled and enabled last.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, and
+/// [`ConfigError::Unspliceable`] where the file already names an instance
+/// called as `agent` is, or the answer cannot be written without rewriting.
+pub fn installing(
+    text: &str,
+    file: &str,
+    provider: &str,
+    agent: &ExternalAgent,
+) -> Result<String, ConfigError> {
+    let (instance, driver) = (agent.name(), agent.driver());
+    let at = format!("externalAgents.{instance}");
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let mut block = serde_json::json!({
+        "driver": driver.name(),
+        "executable": agent.executable(),
+        "enabled": false,
+    });
+    if let (Some(profile), Some(fields)) = (agent.profile(), block.as_object_mut()) {
+        fields.insert(driver.profile_key().to_owned(), Value::from(profile));
+    }
+    if document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .is_some()
+    {
+        return Err(ConfigError::Unspliceable {
+            file: file.into(),
+            at: at.into(),
+            written: block.to_string().into(),
+        });
+    }
+    let installed = spliced_at(text, file, &["externalAgents", instance], &at, &block)?;
+    connecting(&installed, file, provider, instance)
+}
+
 /// The text of a configuration file without the installed agent `instance`.
 ///
 /// Only `externalAgents.<instance>` goes, with the comma that separated it
@@ -608,19 +654,31 @@ pub fn setting(text: &str, file: &str, row: &Row, word: &str) -> Result<String, 
 /// `text` with `answer` at `row`'s key, every object on the way created.
 fn spliced(text: &str, file: &str, row: &Row, answer: &Value) -> Result<String, ConfigError> {
     let path: Vec<&str> = row.path().collect();
+    spliced_at(text, file, &path, row.key(), answer)
+}
+
+/// `text` with `answer` at `path`, spelled `key` where it is refused, every
+/// object on the way created.
+fn spliced_at(
+    text: &str,
+    file: &str,
+    path: &[&str],
+    key: &str,
+    answer: &Value,
+) -> Result<String, ConfigError> {
     let written = answer.to_string();
 
     if text.trim().is_empty() {
         return Ok(format!(
             "{{\n  {}\n}}\n",
-            nested(&path, &written, Some("  "))
+            nested(path, &written, Some("  "))
         ));
     }
 
     let value = parsed(text, file)?;
     let refuse = || ConfigError::Unspliceable {
         file: file.into(),
-        at: row.key().into(),
+        at: key.into(),
         written: written.clone().into(),
     };
     let mut span = splice::root(text)

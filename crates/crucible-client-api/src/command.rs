@@ -99,7 +99,9 @@ pub enum Command {
         /// The provider to reach, by the name `/login` gives it.
         provider: Name,
         /// The instance, by the name the configuration gives it. A client
-        /// that names none is refused until it can be asked which agent.
+        /// that names none is asked which agent, and which of its instances
+        /// where several are configured; one with none configured is given
+        /// one named after the agent.
         instance: Option<Name>,
     },
     /// List the persistent prompt-cache resources this conversation holds.

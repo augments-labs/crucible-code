@@ -624,6 +624,15 @@ impl Steps {
         }
     }
 
+    /// What is installed as `executable`, looked for on the `PATH` every step
+    /// is.
+    #[must_use]
+    pub fn discover(&self, executable: &str) -> Discovery {
+        discover(executable, |name| {
+            (name == "PATH").then(|| self.path.clone()).flatten()
+        })
+    }
+
     /// What the account step `step` of the configured `agent` read, run to
     /// its end; unreadable, saying why, where it could not be started.
     pub async fn account(&self, agent: &ExternalAgent, step: Account) -> Reading {

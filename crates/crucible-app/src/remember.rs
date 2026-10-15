@@ -149,6 +149,24 @@ pub fn connecting(file: &Path, provider: &str, instance: &str) -> Result<(), Rem
     })
 }
 
+/// Writes into `file` the installed agent `agent`, that `provider` is
+/// reached through it, and that it takes new work, the last, in one update;
+/// and changes nothing else in it.
+///
+/// # Errors
+///
+/// As [`connecting`], and [`RememberError::Unusable`] where the file already
+/// names an instance called as `agent` is.
+pub fn installing(
+    file: &Path,
+    provider: &str,
+    agent: &crucible_config::ExternalAgent,
+) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::installing(text, named, provider, agent)
+    })
+}
+
 /// Takes the installed agent `instance` out of `file`, and changes nothing
 /// else in it.
 ///
