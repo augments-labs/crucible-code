@@ -252,11 +252,10 @@ impl Outside {
         let conversation = super::conversation(tree, Script::new(Vec::new()), false)?;
         let (outside, _left) = Self::onto_on(
             tree,
-            script,
+            (script, model),
             conversation,
             session,
             Transcript::new(),
-            model,
         )?;
         Ok(outside)
     }
@@ -270,17 +269,17 @@ impl Outside {
         session: Arc<Session>,
         transcript: Transcript,
     ) -> Result<(Self, Arc<Session>), Failed> {
-        Self::onto_on(tree, script, conversation, session, transcript, None)
+        Self::onto_on(tree, (script, None), conversation, session, transcript)
     }
 
-    /// [`Outside::onto`], with each run started on `model` where one is named.
+    /// [`Outside::onto`], with the agent playing `script` and each run
+    /// started on `model` where one is named.
     fn onto_on(
         tree: &Tree,
-        script: &Peer,
+        (script, model): (&Peer, Option<&str>),
         mut conversation: Conversation,
         session: Arc<Session>,
         transcript: Transcript,
-        model: Option<&str>,
     ) -> Result<(Self, Arc<Session>), Failed> {
         let (launching, peer) = launching_on(tree, script, model)?;
         // The conversation holds its sends to the yeses the runs are launched
