@@ -135,7 +135,10 @@ how usage is paid for: a subscription, where you sign in to your account
 (OpenAI, or Kimi Code on kimi.ai or kimi.com) or give a plan's key (MiniMax,
 or Qwen's Coding Plan or Token Plan), or your own API key. Authentication does
 not silently choose a model; `/model` selects the provider, model and supported reasoning
-effort explicitly.
+effort explicitly. While it asks for a provider, `/login` also offers to run
+the conversation through a coding agent installed on this machine, such as
+Claude Code or Antigravity, on the agent's own sign-in; see [installed coding
+agents](docs/providers/agents.md).
 
 Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
 accept API keys only, not product subscription logins. The other providers read
@@ -155,7 +158,7 @@ Useful commands:
 ```text
 /model       choose a provider, model and effort
 /fast        ask the model for its vendor's fast form, at its price
-/login       add an account or API-key credential
+/login       add an account, an API key or an installed agent
 /mode        inspect or change the permission mode
 /settings    change a setting, and see what is in force
 /resume      continue an earlier session in this workspace

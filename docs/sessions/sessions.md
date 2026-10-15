@@ -308,6 +308,9 @@ A session an [installed agent](../providers/agents.md) ran says which on that
 same line, as `execution: <instance>`, with the agent it is an instance of in
 parentheses where the two are named differently; taking it starts that agent
 again. A run with no keyboard, given the listing instead, says it on the row.
+Connecting the provider a conversation asks through an agent changes the
+session recorded to as well: where the agent can start, the conversation starts
+fresh in a new session the agent runs, and the one it left stays on this list.
 
 The picker looks through every session the index names, not the handful the
 opening screen reads, and lists up to 100 of them. It opens on this

@@ -647,9 +647,11 @@ never learn whether it came from an account or a key.
 
 ### Account login today
 
-`/login` offers ChatGPT and Kimi Code accounts. The other rows of its
-subscription list, MiniMax's plan and Qwen's Coding Plan and Token Plan, take a
-plan's key and sign in to nothing; see [rows and sites](#rows-and-sites).
+`/login` reaches a provider three ways: an account, your own API key, or an
+[installed coding agent](agents.md). The accounts it signs in to are ChatGPT
+and Kimi Code. The other rows of its subscription list, MiniMax's plan and
+Qwen's Coding Plan and Token Plan, take a plan's key and sign in to nothing;
+see [rows and sites](#rows-and-sites).
 ChatGPT uses browser PKCE or device authorization and is fixed to the ChatGPT
 subscription Responses endpoint.
 Kimi Code uses RFC 8628 device authorization, with one row for each of Kimi's
@@ -679,6 +681,11 @@ Plan and xAI's SuperGrok have no row: Meta keeps the Muse Code credential for
 Muse Code alone, the Z.ai Coding Plan names the tools it may be used in and
 crucible is not one, and the other two are not offered in this release. Google accepts a Gemini Developer API
 key only; Gemini product subscriptions are not an authentication route here.
+
+An installed coding agent stores nothing here: *Use an installed coding agent*
+connects the provider being asked to an agent, which then runs the
+conversation's turns on the account its own profile is signed in to, and
+crucible never reads its credentials. See [installed coding agents](agents.md).
 
 Google requests use `POST https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse`
 with `stream:true`, `store:false`, and local input history, never

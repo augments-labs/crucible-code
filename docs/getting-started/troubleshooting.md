@@ -393,6 +393,22 @@ there, and a later write that succeeds still lands, so freeing the space is
 enough; nothing has to be restarted. See [when recording
 stops](../sessions/sessions.md#when-recording-stops).
 
+## Installed coding agents
+
+### `crucible: the agent <name> cannot be started: <reason>`
+
+The provider asked for has its `access` set to the
+[installed agent](../providers/agents.md) `externalAgents.<name>`, and this
+launch cannot run it, so nothing was recorded. `it is disconnected` means the
+entry's `enabled` is `false`: set it back to `true`, or, for a new session,
+remove `providers.<provider>.access` to reach the provider directly.
+`no <command> command on PATH and none at externalAgents.<name>.executable`
+and `<path> is not executable` mean its program cannot be run where it was
+looked for: install it, or point `executable` at it. A mode the agent has no
+launch for says which modes it runs in instead, as Claude Code does for full
+access. `--continue` and `--resume` refuse a session the agent ran the same
+way, and leave its log as it was.
+
 ## Permissions and the sandbox
 
 ### `<tool> was not allowed`

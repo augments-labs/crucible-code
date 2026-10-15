@@ -215,10 +215,14 @@ while it proves nothing. rustdoc does not check the error code written beside
 `compile_fail`, so that code records which failure the example is about rather
 than enforcing it, and the hash is what keeps both from changing unreviewed.
 
-The Rust tests include the whole-screen pseudo-terminal suite. Run that suite on
-its own with:
+The Rust tests include the whole-screen pseudo-terminal suite. Its
+installed-agent cases start a fake agent, built from
+`crucible-external-harnesses`, in place of a vendor's program; the gate builds
+it, and a case that finds it missing or built from other sources says so with
+the command that builds it. Run that suite on its own with:
 
 ```bash
+cargo build -p crucible-external-harnesses --features proof --bin crucible-fake-peer
 cargo test --test whole_screen
 ```
 
