@@ -77,6 +77,14 @@ pub enum Command {
         /// The instance, by the name the configuration gives it.
         instance: Name,
     },
+    /// Remove an installed agent's instance from the configuration once no
+    /// provider is reached through it, leaving the agent's sign-in, its
+    /// program and every conversation as they are. Asked for as
+    /// [`Command::Disconnect`] is.
+    RemoveIntegration {
+        /// The instance, by the name the configuration gives it.
+        instance: Name,
+    },
     /// List the persistent prompt-cache resources this conversation holds.
     InspectCache,
     /// Delete them.
@@ -127,7 +135,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 25] = [
+    pub const KINDS: [&'static str; 26] = [
         "prompt",
         "compact",
         "cancel",
@@ -142,6 +150,7 @@ impl Command {
         "login",
         "logout",
         "disconnect",
+        "remove_integration",
         "inspect_cache",
         "clean_cache",
         "sandbox",
@@ -173,6 +182,7 @@ impl Command {
             Self::Login { .. } => "login",
             Self::Logout { .. } => "logout",
             Self::Disconnect { .. } => "disconnect",
+            Self::RemoveIntegration { .. } => "remove_integration",
             Self::InspectCache => "inspect_cache",
             Self::CleanCache => "clean_cache",
             Self::Sandbox { .. } => "sandbox",
@@ -207,7 +217,9 @@ impl Command {
             Self::Login { provider } | Self::Logout { provider } => {
                 object.with("provider", provider.as_str())
             }
-            Self::Disconnect { instance } => object.with("instance", instance.as_str()),
+            Self::Disconnect { instance } | Self::RemoveIntegration { instance } => {
+                object.with("instance", instance.as_str())
+            }
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
             Self::Setting { name, value } => object
@@ -257,6 +269,9 @@ impl Command {
                 provider: fields.name("provider")?,
             },
             "disconnect" => Self::Disconnect {
+                instance: fields.name("instance")?,
+            },
+            "remove_integration" => Self::RemoveIntegration {
                 instance: fields.name("instance")?,
             },
             "inspect_cache" => Self::InspectCache,

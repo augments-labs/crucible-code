@@ -1470,13 +1470,13 @@ while IFS= read -r line; do
 done <<<"$probes"
 
 section "a request read from bytes is decided about first"
-# Six commands change what the session may do or whom it acts as: a permission
+# Seven commands change what the session may do or whom it acts as: a permission
 # mode, the sandbox, an account signed in or out, and an installed agent
-# disconnected. The application performs
+# disconnected or removed. The application performs
 # them for whoever hands them in, which is safe while every request is built on
 # the host by the front end standing there. `Request::decode` is where one could
 # come from somewhere else, and nothing that ships calls it. A file that starts
-# to is written down here with what it does about each of the six, so that
+# to is written down here with what it does about each of the seven, so that
 # reading requests from outside is a decision taken command by command and not
 # a line added. A row is `file command what-is-done-about-it`.
 request_owner=crates/crucible-client-api/src
@@ -1484,6 +1484,7 @@ authority='cycle_mode
 disconnect
 login
 logout
+remove_integration
 sandbox
 set_mode'
 decided=''
@@ -1501,9 +1502,11 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # twenty-fourth, reads figures the vendor keeps about the credential already in
 # use and changes nothing either. Disconnecting an installed agent, the
 # twenty-fifth, takes an account out of the session's reach, so it joined the
-# five. One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 25)); then
-    printf '    FAIL the client contract no longer has the 25 commands the six were picked out of; decide whether the new one changes what a session may do, then move the 25 in this check\n'
+# five. Removing an installed agent's settings, the twenty-sixth, takes the
+# same account out of reach for good, so it joined them too. One more is one
+# nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 26)); then
+    printf '    FAIL the client contract no longer has the 26 commands the seven were picked out of; decide whether the new one changes what a session may do, then move the 26 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -1551,7 +1554,7 @@ done <<<"$decided"
 # Reading bytes is one way a request arrives from somewhere else. The other is
 # an adapter that reads a format of its own and builds the command: the variants
 # are public, and no `decode` is named on that road. So the files that name one
-# of the six are written down too. They are the terminal, which builds them
+# of the seven are written down too. They are the terminal, which builds them
 # from keys pressed on the host, and the application, which performs them, or,
 # at the door that asks a plan for its limits and the door for an installed
 # agent's account, refuses those it does not own unperformed. A
@@ -1589,13 +1592,13 @@ named=$(grep -rlE --include='*.rs' "(^|[^A-Za-z0-9_])Command::($variants)([^A-Za
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     if ! grep -Fxq "$file" <<<"$naming"; then
-        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the six if that is outside the host, then add the file here\n' "$file"
+        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the seven if that is outside the host, then add the file here\n' "$file"
         failed=1
     fi
 done <<<"$named"
 while IFS= read -r file; do
     if ! grep -Fxq "$file" <<<"$named"; then
-        printf '    FAIL %s was not found naming one of the six; take it out, or the search measured nothing\n' "$file"
+        printf '    FAIL %s was not found naming one of the seven; take it out, or the search measured nothing\n' "$file"
         failed=1
     fi
 done <<<"$naming"

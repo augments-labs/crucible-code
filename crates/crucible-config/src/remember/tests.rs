@@ -865,3 +865,64 @@ fn disabling_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
         Err(ConfigError::Malformed { .. })
     ));
 }
+
+#[test]
+fn removing_an_agent_cuts_out_its_block_and_nothing_else() {
+    let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\"\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
+    let written = removing(text, FILE, "work").unwrap();
+    assert_eq!(
+        written,
+        "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n"
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let names: Vec<String> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| agent.name().to_owned())
+        .collect();
+    assert_eq!(names, ["home"]);
+
+    // The only one leaves the object empty.
+    let only = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#;
+    let emptied = removing(only, FILE, "work").unwrap();
+    assert_eq!(emptied, r#"{"externalAgents": {}}"#);
+
+    // The last one goes with the comma before it.
+    let last = removing(text, FILE, "home").unwrap();
+    assert!(!last.contains("home"), "{last}");
+    assert!(last.contains("\"work\""), "{last}");
+    Settings::resolve(vec![Document::sample(&last, Origin::User)]);
+}
+
+#[test]
+fn removing_an_agent_a_provider_is_reached_through_is_refused_and_writes_nothing() {
+    let text = r#"{"providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}},
+        "externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#;
+    match removing(text, FILE, "work") {
+        Err(ConfigError::StillReferenced {
+            instance, provider, ..
+        }) => assert_eq!((&*instance, &*provider), ("work", "anthropic")),
+        other => panic!("{other:?}"),
+    }
+    // Reached through another instance, it does not hold this one.
+    let elsewhere = text.replace(r#""instance": "work""#, r#""instance": "home""#);
+    assert!(removing(&elsewhere, FILE, "work").is_ok());
+}
+
+#[test]
+fn removing_an_agent_the_file_does_not_name_is_refused() {
+    for text in [
+        "",
+        "{}",
+        r#"{"externalAgents": {}}"#,
+        r#"{"externalAgents": {"home": {"driver": "claude", "executable": "claude"}}}"#,
+    ] {
+        assert!(
+            matches!(
+                removing(text, FILE, "work"),
+                Err(ConfigError::Unremovable { .. })
+            ),
+            "{text}"
+        );
+    }
+}

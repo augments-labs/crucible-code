@@ -331,6 +331,10 @@ impl LogoutOutcome {
             Self::StoppedForThisRunOnly { said, problem } => {
                 failed("stopped_for_this_run_only", problem).text("said", said)
             }
+            Self::IntegrationRemoved { said } => {
+                Writing::kind("integration_removed").text("said", said)
+            }
+            Self::StillReferenced { said } => Writing::kind("still_referenced").text("said", said),
             Self::Undecided => Writing::kind("undecided"),
         }
         .finish()
@@ -363,6 +367,12 @@ impl LogoutOutcome {
             "stopped_for_this_run_only" => Self::StoppedForThisRunOnly {
                 said: fields.text("said")?,
                 problem: problem(&mut fields)?,
+            },
+            "integration_removed" => Self::IntegrationRemoved {
+                said: fields.text("said")?,
+            },
+            "still_referenced" => Self::StillReferenced {
+                said: fields.text("said")?,
             },
             "undecided" => Self::Undecided,
             _ => return Err(ErrorCode::Malformed.into()),

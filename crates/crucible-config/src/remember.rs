@@ -463,6 +463,46 @@ pub fn disabling(text: &str, file: &str, instance: &str) -> Result<String, Confi
     Ok(splice::over(text, was, "false"))
 }
 
+/// The text of a configuration file without the installed agent `instance`.
+///
+/// Only `externalAgents.<instance>` goes, with the comma that separated it
+/// from its neighbour; nothing else is changed. Nothing is removed while a provider's
+/// `access` in the same text still reaches it through the instance, so no
+/// provider is left naming an agent that is not there.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, [`ConfigError::StillReferenced`]
+/// while a provider reaches it, and [`ConfigError::Unremovable`] where
+/// `externalAgents.<instance>` is not in the file or cannot be cut out without
+/// rewriting it.
+pub fn removing(text: &str, file: &str, instance: &str) -> Result<String, ConfigError> {
+    let refused = || ConfigError::Unremovable {
+        file: file.into(),
+        at: format!("externalAgents.{instance}").into(),
+    };
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    if let Some(provider) = crate::settings::access::referencing(document.value(), instance) {
+        return Err(ConfigError::StillReferenced {
+            file: file.into(),
+            instance: instance.into(),
+            provider: provider.into(),
+        });
+    }
+    if document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .is_none()
+    {
+        return Err(refused());
+    }
+    let root = splice::root(text).ok_or_else(refused)?;
+    let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
+    splice::remove(text, agents, instance).ok_or_else(refused)
+}
+
 /// The text of a configuration file that reads fenced code in `theme`.
 ///
 /// The same splice as [`drawing`], one key over. See it for what is preserved.

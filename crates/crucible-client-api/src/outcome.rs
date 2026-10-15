@@ -413,6 +413,18 @@ pub enum LogoutOutcome {
         /// Why it could not be written down.
         problem: Problem,
     },
+    /// The instance's settings are gone from the configuration. The agent's
+    /// sign-in, its program and the conversations held were not touched.
+    IntegrationRemoved {
+        /// What the person is told, which says what was kept.
+        said: Text,
+    },
+    /// Nothing was removed, because a provider is still reached through the
+    /// instance.
+    StillReferenced {
+        /// What the person is told, which names the provider.
+        said: Text,
+    },
     /// Nobody chose a way to go on, so nothing changed: the client could not
     /// be asked, or it cancelled.
     Undecided,

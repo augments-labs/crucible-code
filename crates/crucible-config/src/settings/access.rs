@@ -205,6 +205,13 @@ impl Settings {
         }
     }
 
+    /// The first provider whose `access` reaches it through the agent
+    /// instance `instance`, in the order the document names providers.
+    #[must_use]
+    pub fn referencing(&self, instance: &str) -> Option<String> {
+        referencing(&self.value, instance)
+    }
+
     /// Every agent instance the document names, in the order it names them.
     ///
     /// Empty where none is written, which is the ordinary machine.
@@ -222,3 +229,15 @@ impl Settings {
 
 #[cfg(test)]
 mod tests;
+
+/// The first provider in `document` whose `access` reaches it through the
+/// agent instance `instance`.
+pub(crate) fn referencing(document: &Value, instance: &str) -> Option<String> {
+    let providers = document.get("providers")?.as_object()?;
+    providers.iter().find_map(|(provider, block)| {
+        let access = block.get("access")?;
+        let through = access.get("type")?.as_str() == Some(Kind::ExternalAgent.name())
+            && access.get("instance")?.as_str() == Some(instance);
+        through.then(|| provider.clone())
+    })
+}

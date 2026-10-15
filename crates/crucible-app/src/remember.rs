@@ -116,6 +116,35 @@ pub fn disabling(file: &Path, instance: &str) -> Result<(), RememberError> {
     })
 }
 
+/// Takes the installed agent `instance` out of `file`, and changes nothing
+/// else in it.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration,
+/// names no such instance, or still reaches a provider through it.
+pub fn removing(file: &Path, instance: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::removing(text, named, instance)
+    })
+}
+
+/// Whether [`removing`] would take the installed agent `instance` out of
+/// `file` as it stands now, writing nothing.
+///
+/// # Errors
+///
+/// As [`removing`] would, but for the file being held by another crucible,
+/// which is not looked at.
+pub fn removable(file: &Path, instance: &str) -> Result<(), RememberError> {
+    let named = file.display().to_string();
+    let text = text_of(file, &named)?;
+    crucible_config::removing(&text, &named, instance)?;
+    Ok(())
+}
+
 /// Writes down that picking a session up should stop asking about its size.
 ///
 /// # Errors
