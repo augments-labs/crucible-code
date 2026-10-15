@@ -593,6 +593,120 @@ fn logs_in(sample: &Sample) -> usize {
         .count()
 }
 
+/// Whether a `/login` for `provider` by `access` wrote the user file, and the
+/// run started after it, asking `provider` with `stored` the credentials kept.
+/// The file first reaches `provider` through the agent `mine`, and `spelled`
+/// turns its text into what is written.
+fn after_logging_in(
+    sample: &Sample,
+    (provider, access): (&'static str, &crucible_config::Access),
+    spelled: fn(&str) -> String,
+    stored: &StoredCredentials,
+) -> (bool, Result<Conversation, AppError>) {
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &script,
+    )
+    .expect("the peer installed");
+    sample.user(&spelled(&format!(
+        r#"{{"sandbox": {{"enabled": false}},
+            "providers": {{"{provider}": {{"access": {{"type": "externalAgent", "instance": "mine"}}}}}},
+            "externalAgents": {{"mine": {{"driver": "claude", "executable": {}}}}}}}"#,
+        serde_json::Value::from(program.to_string_lossy()),
+    )));
+    // What the login writes, and nothing where the file cannot say it.
+    let written = crate::remember::reaching(&sample.user_file(), provider, access).is_ok();
+    let settings = sample.user(&std::fs::read_to_string(sample.user_file()).expect("the file"));
+    let services = Services::new();
+    let next = assembled(
+        &Startup {
+            providers: &catalogue(),
+            provider: Some(serving(provider)),
+            unasked: NO_MODEL_CHOSEN,
+            model: None,
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &services,
+            settings: &settings,
+            sessions: &sample.logs(),
+            workspace: &sample.workspace(),
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| None,
+            stored,
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        },
+        &crate::backends::REGISTRY,
+    );
+    (written, next)
+}
+
+#[test]
+fn the_run_after_a_login_on_an_agent_s_route_asks_the_provider_by_its_credential() {
+    // A key or an account alike: what the login wrote is what the next run
+    // reaches the provider by, on this program's own model. OpenAI's account,
+    // since its accounts are ones this program can sign in.
+    for (provider, access) in [
+        ("anthropic", crucible_config::Access::ApiKey),
+        ("openai", crucible_config::Access::Subscription),
+    ] {
+        let sample = Sample::new("agent-login-next-run");
+        let stored = if access == crucible_config::Access::Subscription {
+            sample.subscribed(provider)
+        } else {
+            sample.stored(provider)
+        };
+
+        let (written, next) =
+            after_logging_in(&sample, (provider, &access), str::to_owned, &stored);
+        let next = next.expect("the next run");
+
+        assert!(written, "{provider}");
+
+        assert_eq!(next.serving(), Some(provider));
+        assert!(next.session().route().is_none(), "{provider}");
+        let newest = crucible_session::pick_routed(&sample.logs(), &sample.workspace(), None)
+            .expect("the run's log");
+        assert!(
+            newest.1.is_none(),
+            "{provider}: its log is bound to the route"
+        );
+    }
+}
+
+#[test]
+fn the_run_after_a_login_the_file_could_not_say_stays_on_the_agent_s_route() {
+    // The providers written twice, so the block the file means is not one a
+    // scan of the text can be sure of: it is left as it was, and so is the
+    // route.
+    let sample = Sample::new("agent-login-unwritten-next-run");
+    let stored = sample.stored("anthropic");
+    let twice =
+        |file: &str| file.replacen(r#""providers": {"#, r#""providers": {}, "providers": {"#, 1);
+
+    let (written, next) = after_logging_in(
+        &sample,
+        ("anthropic", &crucible_config::Access::ApiKey),
+        twice,
+        &stored,
+    );
+    let next = next.expect("the next run");
+
+    assert!(!written);
+
+    assert_eq!(next.serving(), None);
+    let route = next.session().route().expect("the run's route");
+    assert_eq!((route.driver(), route.instance()), ("claude", "mine"));
+}
+
 #[test]
 fn a_session_no_agent_ran_is_not_continued_on_an_agent_s_route() {
     // The run would hand the agent a history it never had, so the log is

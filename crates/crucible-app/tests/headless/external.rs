@@ -2365,13 +2365,26 @@ fn crediting(
     provider: &str,
     command: fn(crucible_client_api::Name) -> Command,
 ) -> Result<(Outcome, String), Failed> {
+    super::Desk::new(tree, &[])?
+        .logins
+        .keep(provider, "a-key-no-vendor-issued")?;
+    credited(tree, outside, file, provider, command)
+}
+
+/// [`crediting`], with whatever is already stored for `provider`.
+fn credited(
+    tree: &Tree,
+    outside: &mut Outside,
+    file: &str,
+    provider: &str,
+    command: fn(crucible_client_api::Name) -> Command,
+) -> Result<(Outcome, String), Failed> {
     let mut desk = super::Desk::new(tree, &[])?;
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
     }
     std::fs::write(&desk.choosing, file)?;
     desk.settings = super::written(tree)?;
-    desk.logins.keep(provider, "a-key-no-vendor-issued")?;
     let (workspace, sessions) = (tree.workspace()?, tree.sessions());
     let at = client::Desk {
         switching: desk.with(),
@@ -2427,6 +2440,50 @@ fn a_login_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Resul
             .is_some(),
         "the key logged in is no longer stored"
     );
+    let standing = client::snapshot(&outside.conversation);
+    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
+    assert_eq!(standing.provider, None);
+    Ok(())
+}
+
+/// An account signed in for the provider the route reaches is written down as
+/// reached by its subscription from the next run on, and the conversation stays
+/// on the route meanwhile. OpenAI's, since its accounts are ones this program
+/// can sign in.
+#[test]
+fn a_subscription_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Result<(), Failed>
+{
+    use crucible_client_api::{Execution, LoginOutcome, Name, Text};
+
+    let tree = Tree::new("external-login-subscribed")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+    let home = tree.home()?;
+    std::fs::create_dir_all(home.path())?;
+    std::fs::write(
+        home.path().join("auth.json"),
+        concat!(
+            r#"{"version":2,"keys":{},"subscriptions":{"openai":{"#,
+            r#""access_token":"test-access","refresh_token":"test-refresh","#,
+            r#""details":{"account_id":"test-account"},"#,
+            r#""expires_at":18446744073709551615,"refreshed_at":1}},"identities":{}}"#,
+        ),
+    )?;
+
+    let routed = ROUTED.replace("anthropic", "openai");
+
+    let (outcome, file) = credited(&tree, &mut outside, &routed, "openai", login)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::NextLaunch {
+            provider: Text::cut("openai"),
+            unwritten: None,
+        })
+    );
+    let subscribed = KEYED
+        .replace("anthropic", "openai")
+        .replace(r#""apiKey""#, r#""subscription""#);
+    assert_eq!(file, subscribed);
     let standing = client::snapshot(&outside.conversation);
     assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
     assert_eq!(standing.provider, None);
