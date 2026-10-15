@@ -476,7 +476,7 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     let style = walk.terms.style();
     let renderer = &mut *walk.renderer;
     let mut cramped = false;
-    let performed = walk.terms.account(
+    let performed = walk.terms.operate(
         walk.conversation,
         Command::Connect {
             provider,

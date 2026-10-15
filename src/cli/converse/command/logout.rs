@@ -368,7 +368,7 @@ fn acting<T: Terminal>(
 
     let style = terms.style();
     let mut cramped = false;
-    let performed = terms.account(conversation, command, |question| {
+    let performed = terms.operate(conversation, command, |question| {
         let replied = answered(renderer, style, question)?;
         cramped |= replied.is_none();
         Ok::<_, Fatal>(replied)
