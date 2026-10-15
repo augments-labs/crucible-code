@@ -600,6 +600,7 @@ fn a_session_no_agent_ran_is_not_continued_on_an_agent_s_route() {
         };
 
         assert!(matches!(problem, AppError::Unrouted { .. }), "{problem:?}");
+        assert!(problem.to_string().contains("next launch"), "{problem}");
         assert_eq!(std::fs::read(&path).expect("the log"), before);
     }
 }
@@ -624,6 +625,164 @@ fn a_session_an_agent_ran_is_continued_on_its_route() {
 
     assert_eq!(resumed.session().id(), Some(&id));
     assert_eq!(resumed.serving(), None);
+}
+
+/// A run asking anthropic, whose block is `anthropic`, with the agent `mine`
+/// configured as Claude Code played by `program` and `others` further
+/// `externalAgents` entries, picking up `resuming`.
+fn resuming_over(
+    sample: &Sample,
+    program: &std::path::Path,
+    (anthropic, others): (&str, &str),
+    resuming: Resuming,
+) -> Result<Conversation, AppError> {
+    let program = serde_json::Value::from(program.to_string_lossy());
+    let settings = sample.user(&format!(
+        r#"{{"sandbox": {{"enabled": false}},
+            "providers": {{"anthropic": {anthropic}}},
+            "externalAgents": {{"mine": {{"driver": "claude", "executable": {program}}}{others}}}}}"#
+    ));
+    assembled(
+        &Startup {
+            providers: &catalogue(),
+            provider: Some(serving("anthropic")),
+            unasked: NO_MODEL_CHOSEN,
+            model: None,
+            effort: None,
+            resuming,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
+            settings: &settings,
+            sessions: &sample.logs(),
+            workspace: &sample.workspace(),
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| None,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        },
+        &crate::backends::REGISTRY,
+    )
+}
+
+#[test]
+fn a_session_an_agent_ran_is_continued_on_its_route_whatever_the_provider_asked_is_reached_by() {
+    // Asked of a provider's own model, and of a provider another agent
+    // answers for: either way the session goes on where it was run, with no
+    // credential looked for, since none is asked of a provider.
+    let sample = Sample::new("agent-routed-resume-elsewhere");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let id = first.session().id().expect("an id").clone();
+    first.session().append(&Message::said("rename the module"));
+    drop(first);
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &script,
+    )
+    .expect("the peer installed");
+    let other = format!(
+        r#", "other": {{"driver": "claude", "executable": {}}}"#,
+        serde_json::Value::from(program.to_string_lossy())
+    );
+    let asking = [
+        ("{}", ""),
+        (
+            r#"{"access": {"type": "externalAgent", "instance": "other"}}"#,
+            other.as_str(),
+        ),
+    ];
+
+    for (anthropic, others) in asking {
+        for resuming in [Resuming::Newest, Resuming::Exact(id.clone())] {
+            let resumed = resuming_over(&sample, &program, (anthropic, others), resuming)
+                .expect("the session continued on its route");
+
+            assert_eq!(resumed.session().id(), Some(&id), "{anthropic}");
+            let route = resumed.session().route().expect("the session's route");
+            assert_eq!(route.instance(), "mine", "{anthropic}");
+            assert_eq!(resumed.serving(), None, "{anthropic}");
+            assert_eq!(
+                resumed.settled().transcript().messages().len(),
+                1,
+                "the session's history was not shown"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_session_an_agent_ran_is_not_continued_once_its_agent_names_another_profile() {
+    // The same entry, now opening the agent's sessions somewhere else: the
+    // agent there never ran this one, so its history is kept as it was.
+    let sample = Sample::new("agent-routed-resume-profile");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let (path, id) = (
+        first.session().path().to_owned(),
+        first.session().id().expect("an id").clone(),
+    );
+    drop(first);
+    let before = std::fs::read(&path).expect("the log");
+    let profile = serde_json::Value::from(sample.root().join("elsewhere").to_string_lossy());
+
+    let Err(problem) = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        &format!(r#", "configDir": {profile}"#),
+        Resuming::Exact(id),
+    ) else {
+        panic!("a session was continued on an agent that never ran it");
+    };
+
+    assert!(
+        matches!(
+            &problem,
+            AppError::Session(crucible_session::SessionError::Rerouted { .. })
+        ),
+        "{problem:?}"
+    );
+    assert_eq!(std::fs::read(&path).expect("the log"), before);
+}
+
+#[test]
+fn a_session_an_agent_ran_is_not_continued_on_its_route_once_the_agent_is_disconnected() {
+    let sample = Sample::new("agent-routed-resume-disconnected");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let (path, id) = (
+        first.session().path().to_owned(),
+        first.session().id().expect("an id").clone(),
+    );
+    drop(first);
+    let before = std::fs::read(&path).expect("the log");
+
+    let Err(problem) = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        r#", "enabled": false"#,
+        Resuming::Exact(id),
+    ) else {
+        panic!("a session was continued on a disconnected agent");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(problem.to_string().contains("disconnected"), "{problem}");
+    assert_eq!(std::fs::read(&path).expect("the log"), before);
 }
 
 #[test]

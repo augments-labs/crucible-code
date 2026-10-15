@@ -151,10 +151,11 @@ pub enum AppError {
 
     /// A session a provider's model ran was asked to be continued by a run on
     /// an installed agent's route, which would hand the agent a history it
-    /// never had. Refused before anything is built or the log is touched.
+    /// never had. Refused before anything is built or the log is touched; a
+    /// run started on a provider's model continues it.
     #[error(
         "this session was run on a provider's model, so the agent {instance} cannot continue it; \
-         continue it from a run on a provider"
+         resume it on the next launch that reaches a provider directly"
     )]
     Unrouted {
         /// The `externalAgents` entry the run is on.
