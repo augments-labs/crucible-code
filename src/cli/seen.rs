@@ -1,9 +1,9 @@
-//! One receiver for the two things the drawing thread has to answer.
+//! One receiver for everything the drawing thread has to hear or answer.
 //!
 //! A turn runs as a task on the application's runtime and reports through
 //! [`Post`]; it also stops mid-flight to ask a question through a [`Front`].
 //! The thread that draws is parked in `recv`, and a channel has no `select`,
-//! so both have to arrive on the same one. That is all [`Seen`] is: the union
+//! so reports and questions have to arrive on the same one. That is all [`Seen`] is: the union
 //! of what can turn up.
 //!
 //! The alternative — a second thread forwarding events into the first — buys
@@ -12,10 +12,10 @@
 //! A question is put under the identity the application minted for it, and an
 //! answer goes back as a [`Decision`] naming that identity: this thread is one
 //! front end of [`crucible_app::client`], and is held to what any other is.
-//! Each [`Seen::Question`] and [`Seen::Asked`] carries its own one-shot reply
-//! channel, made fresh when the question is and travelling with it rather
-//! than living on [`Asking`] or [`Putting`] for the length of a turn: the
-//! channel is the identity. A stray reply cannot settle a question it was not
+//! Each [`Seen::Question`], [`Seen::Leave`] and [`Seen::Asked`] carries its
+//! own one-shot reply channel, made fresh when the question is and travelling
+//! with it rather than living on [`Asking`] or [`Putting`] for the length of a
+//! turn: the channel is the identity. A stray reply cannot settle a question it was not
 //! made for, because there is no shared channel left for it to arrive on —
 //! the receiver it would have to reach was dropped with the question it
 //! answered, or with the question that was never answered before something
@@ -37,8 +37,10 @@ use tokio::runtime::{Handle, RuntimeFlavor};
 use tokio::sync::oneshot;
 
 use crucible_app::Conversation;
-use crucible_app::client::{self, Ended, Front, Shown};
+use crucible_app::client::{self, Ended, Front, Leave, Shown};
 use crucible_client_api::bounds::SAID_BYTES;
+use crucible_client_api::inspection::Claim;
+use crucible_client_api::pending::Effect;
 use crucible_client_api::{
     Capabilities, Command, Decision, Lasting, Pending, Picked, Refusal, Ruling, Said,
 };
@@ -88,6 +90,15 @@ pub(crate) enum Seen {
         reply: oneshot::Sender<Answer>,
     },
 
+    /// An installed agent is waiting on leave to act. Ask, then answer.
+    Leave {
+        /// What it asked leave to do, and who would do it.
+        leaving: Leaving,
+        /// Where the verdict goes, made fresh for the reason
+        /// [`Seen::Question`]'s `reply` is.
+        reply: oneshot::Sender<Answer>,
+    },
+
     /// A tool is waiting on a person. Put the questions, then answer.
     Asked {
         /// What to put, in the order it should be answered.
@@ -96,6 +107,56 @@ pub(crate) enum Seen {
         /// reason [`Seen::Question`]'s `reply` is.
         reply: oneshot::Sender<Given>,
     },
+}
+
+/// What an installed agent asked leave to do, carried to the thread that draws.
+///
+/// Owned, because it travels down a channel; each word is the agent reader's,
+/// already held to that reader's ceilings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Leaving {
+    /// The agent's name for the tool that would act.
+    pub(crate) tool: String,
+    /// The spelling its rules are matched against.
+    pub(crate) summary: String,
+    /// The kind of thing it would do.
+    pub(crate) effect: Effect,
+    /// The line that would run, or what would be sent.
+    pub(crate) sent: Option<String>,
+    /// Whether a command would be left running after its turn has ended.
+    pub(crate) left_running: bool,
+    /// The configured instance that runs it.
+    pub(crate) instance: String,
+    /// How the actions it takes are held in, where something has said.
+    pub(crate) confinement: Option<Claim>,
+}
+
+impl Leaving {
+    /// What `leave` asks, owned.
+    fn of(leave: &Leave<'_>) -> Self {
+        Self {
+            tool: leave.tool.to_owned(),
+            summary: leave.summary.to_owned(),
+            effect: leave.effect,
+            sent: leave.sent.map(str::to_owned),
+            left_running: leave.left_running,
+            instance: leave.acting.instance.to_owned(),
+            confinement: leave.acting.confinement,
+        }
+    }
+
+    /// What it would act on: what it would send, where it sends something,
+    /// and otherwise the spelling its rules are matched against.
+    pub(crate) fn subject(&self) -> &str {
+        self.sent.as_deref().unwrap_or(&self.summary)
+    }
+
+    /// The row saying who runs it and how far it is held in, parted by `dot`;
+    /// `unknown` where nothing has said how.
+    pub(crate) fn acting(&self, dot: &str) -> String {
+        let held = self.confinement.map_or("unknown", Claim::as_str);
+        format!("execution: {} {dot} confinement: {held}", self.instance)
+    }
 }
 
 /// A worker's events, on their way to the thread that draws.
@@ -226,20 +287,25 @@ impl Front for Asking {
     ) -> BoxFuture<'a, Option<Decision>> {
         Box::pin(async move {
             // A model's questions come through the tool that asks them, which
-            // is lent its own ends; a turn stops here on a call and nothing
-            // else.
-            let Shown::Call { call, sensitivity } = shown else {
-                return None;
+            // is lent its own ends. What stops a turn here is a call that
+            // needs a verdict or an installed agent asking leave to act; any
+            // other question is refused unseen.
+            let (reply, hear) = oneshot::channel();
+            let question = match shown {
+                Shown::Call { call, sensitivity } => Seen::Question {
+                    call: call.clone(),
+                    sensitivity: sensitivity.clone(),
+                    reply,
+                },
+                Shown::External(leave) => Seen::Leave {
+                    leaving: Leaving::of(&leave),
+                    reply,
+                },
+                Shown::Questions(_) | Shown::Warning(_) | Shown::Account(_) => return None,
             };
 
             self.client.put(pending);
 
-            let (reply, hear) = oneshot::channel();
-            let question = Seen::Question {
-                call: call.clone(),
-                sensitivity: sensitivity.clone(),
-                reply,
-            };
             deliver(&self.to, question)?;
             let (verdict, remember) = hear.await.ok()?;
 

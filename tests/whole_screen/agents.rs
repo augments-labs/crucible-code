@@ -498,3 +498,48 @@ fn reported(picture: &str, drawn: &str) {
         "{drawn}\n{picture}"
     );
 }
+
+/// Fails where an agent's leave to act is not put to the person as a panel, or
+/// where that panel does not say who runs the action and how it is held in.
+#[test]
+fn an_agent_asking_leave_to_act_is_put_as_a_panel() {
+    captured(
+        &Capture {
+            name: "permission",
+            replies: Some(signed_in([claude::permission()])),
+            configured: "",
+        },
+        |window| {
+            connected(window);
+            window.types_until("List them.\r", "Do you want to proceed?");
+        },
+    );
+}
+
+/// Fails where a yes on an agent's panel does not reach the agent, so that
+/// its turn goes on to its answer.
+#[test]
+fn a_yes_on_an_agent_panel_lets_the_agent_go_on() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-permission-yes-{mode}");
+        let script = Script::of(signed_in([claude::permission()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+
+        connected(&mut window);
+        window.types_until("List them.\r", "Do you want to proceed?");
+        let asked = window.picture();
+        window.types_until("\r", "Done.");
+
+        // The connect line above says which agent runs the turns; only the
+        // panel says how far what it runs is held in.
+        assert!(
+            asked.contains("execution: claude · confinement: unsupported"),
+            "{case}: {asked}"
+        );
+        assert!(asked.contains("Bash command"), "{case}: {asked}");
+        assert!(asked.contains("3. No "), "{case}: {asked}");
+    }
+}

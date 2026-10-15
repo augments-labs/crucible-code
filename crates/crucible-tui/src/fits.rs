@@ -497,6 +497,7 @@ fn a_permission_question_fits_the_window_it_is_answered_in() {
         subject: LONG,
         payload: &PAYLOAD,
         description: PROSE,
+        acting: LONG,
         attribution: "the model's own words about it",
         explanation: &EXPLANATION,
         from: 0,

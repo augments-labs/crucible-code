@@ -57,6 +57,7 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_builtins::Ended;
+use crucible_client_api::pending::Effect;
 use crucible_runner::{Event, TurnError, Turned};
 use crucible_tools::{Argument, Sensitivity, Summary, ToolOutput};
 use crucible_tui::{
@@ -71,6 +72,7 @@ use crucible_workspace::{Workspace, written};
 use super::converse::Parting;
 use super::converse::command::Clock;
 use super::kept::Kept;
+use super::seen::Leaving;
 use super::style::Style;
 
 pub(crate) mod opening;
@@ -760,6 +762,44 @@ pub(crate) fn question<T: Terminal>(
     }
 
     mark(renderer, &answers(style.glyphs()))
+}
+
+/// Draws the leave an installed agent asks, and leaves the cursor where the
+/// answer goes, bounded by the window for the reason [`question`] is.
+///
+/// The row saying who would act stands under the question, so that an answer
+/// is never given to a question that did not say whose action it is.
+pub(crate) fn leave<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    leaving: &Leaving,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let columns = renderer.transcript_columns();
+
+    renderer.settle()?;
+    for row in left(leaving, style.glyphs(), columns) {
+        renderer.commit(&row)?;
+    }
+
+    mark(renderer, &answers(style.glyphs()))
+}
+
+/// The rows of an installed agent's leave to act, folded to `columns` and
+/// worded as [`asked`] words a call with the same effect.
+fn left(leaving: &Leaving, glyphs: Glyphs, columns: usize) -> Vec<String> {
+    let tool = &leaving.tool;
+    let what = leaving.subject();
+    let said = match leaving.effect {
+        Effect::Reads => format!("? {tool} wants to read: {what}"),
+        Effect::ReadsOutside => format!("? {tool} wants to read, outside the workspace: {what}"),
+        Effect::MutatesFile => format!("? {tool} wants to change: {what}"),
+        Effect::SpawnsProcess => format!("? {tool} wants to run: {what}"),
+        Effect::ReachesNetwork => format!("? {tool} wants to send: {what}"),
+    };
+
+    let mut rows = wrapped(&said, columns);
+    rows.extend(wrapped(&leaving.acting(glyphs.dot()), columns));
+    rows
 }
 
 /// One question, written into the transcript where there was no room to stand a

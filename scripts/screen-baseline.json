@@ -534,6 +534,42 @@
       "sha256": "1200655fc8bdd0a279d367bb514240eb23326a47b1bad2d023dbb678cc9fe088"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_permission_40_fullscreen.snap",
+      "case": "an_agent_asking_leave_to_act_is_put_as_a_panel",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "c9753229443ba4df94f37d86c51f1af5ea8f121258e1aecbbf3e3438ea1750cc"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_permission_40_native.snap",
+      "case": "an_agent_asking_leave_to_act_is_put_as_a_panel",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "f7a48085340a98595a2294fa24d7955e09e31d161a857d2ac1cbd265475b5e8a"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_permission_80_fullscreen.snap",
+      "case": "an_agent_asking_leave_to_act_is_put_as_a_panel",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "3632f6ae99b7fe029d471497013678af84d84a2151f11c7baa913a2f99b1b4a3"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_permission_80_native.snap",
+      "case": "an_agent_asking_leave_to_act_is_put_as_a_panel",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
+      ],
+      "sha256": "4db42137290ed096097ae9982bd4c18432fcadf2ead69c94c3dec77c7eba639c"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_route_40_fullscreen.snap",
       "case": "the_route_is_confirmed_before_anything_is_written",
       "opened": [

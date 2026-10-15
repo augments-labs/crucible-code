@@ -71,7 +71,7 @@ use crucible_types::{
     StopReason, Transcript, TurnId,
 };
 
-use crate::client::Asker;
+use crate::client::{Acting, Asker};
 
 /// What launches an installed agent again, for a conversation whose backend is
 /// spent, cleared, or wanted under another mode.
@@ -609,7 +609,9 @@ async fn drive(
             continue;
         };
         let decided = {
-            let mut asking = asker.pending(&pending);
+            let described = telling.backend.describe();
+            let acting = Acting::new(telling.instance, described.capabilities());
+            let mut asking = asker.pending(&pending, acting);
             poll_fn(|cx| {
                 if let Poll::Ready(decision) = asking.as_mut().poll(cx) {
                     return Poll::Ready(Ok(decision));

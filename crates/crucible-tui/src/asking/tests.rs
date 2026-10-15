@@ -18,6 +18,7 @@ fn asking<'a>(payload: &'a [&'a str]) -> Question<'a> {
         subject: "Bash command",
         payload,
         description: "",
+        acting: "",
         attribution: "",
         explanation: &[],
         from: 0,
@@ -290,6 +291,36 @@ fn a_description_is_one_row_however_much_the_model_wrote() {
             .any(|row| row.starts_with("    Format every crate")),
         "{said:?}"
     );
+}
+
+#[test]
+fn the_row_saying_who_acts_is_folded_whole_and_stays_on_every_rung() {
+    // The panel's own words, not the asker's: a name cut short is a yes
+    // given to somebody unnamed, so this folds where a description clips, and
+    // no rung of the ladder gives it up.
+    let mut question = asking(&["ls"]);
+    question.acting = "execution: claude · confinement: unsupported";
+    let narrow = 30;
+
+    for room in [24, 12] {
+        let said = inside(&question.within(narrow, room, Glyphs::Unicode));
+        let at = said
+            .iter()
+            .position(|row| row == "    ls")
+            .expect("the command");
+
+        assert_eq!(
+            said.get(at + 1..at + 3),
+            Some(
+                [
+                    "    execution: claude ·".to_owned(),
+                    "    confinement: unsupported".to_owned(),
+                ]
+                .as_slice()
+            ),
+            "{said:?}"
+        );
+    }
 }
 
 #[test]
