@@ -523,6 +523,15 @@ fn login_outcomes() -> Vec<Outcome> {
             problem: problem(),
         }),
         Outcome::Login(LoginOutcome::Undecided),
+        Outcome::Login(LoginOutcome::NextLaunch {
+            provider: marked(),
+            unwritten: Some(problem()),
+        }),
+        Outcome::Login(LoginOutcome::NextLaunch {
+            provider: marked(),
+            unwritten: None,
+        }),
+        Outcome::Login(LoginOutcome::Stored { provider: marked() }),
         Outcome::Logout(LogoutOutcome::CacheHeld(problem())),
         Outcome::Logout(LogoutOutcome::Unforgotten {
             retained: retained(),
@@ -540,6 +549,10 @@ fn login_outcomes() -> Vec<Outcome> {
         Outcome::Logout(LogoutOutcome::StillServed {
             retained: retained(),
             standing: Standing::Subscription,
+        }),
+        Outcome::Logout(LogoutOutcome::StillServed {
+            retained: retained(),
+            standing: Standing::External { instance: marked() },
         }),
         Outcome::Logout(LogoutOutcome::SignedOut {
             retained: retained(),
@@ -1132,30 +1145,34 @@ const fn command_arm(one: &Command) -> (usize, usize) {
 
 const fn logout_arm(one: &LogoutOutcome) -> (usize, usize) {
     match one {
-        LogoutOutcome::CacheHeld(_) => (0, 15),
-        LogoutOutcome::Unforgotten { .. } => (1, 15),
-        LogoutOutcome::Kept => (2, 15),
+        LogoutOutcome::CacheHeld(_) => (0, 16),
+        LogoutOutcome::Unforgotten { .. } => (1, 16),
+        LogoutOutcome::Kept => (2, 16),
         LogoutOutcome::StillServed {
             standing: Standing::Environment(_),
             ..
-        } => (3, 15),
+        } => (3, 16),
         LogoutOutcome::StillServed {
             standing: Standing::StoredKey,
             ..
-        } => (4, 15),
+        } => (4, 16),
         LogoutOutcome::StillServed {
             standing: Standing::Subscription,
             ..
-        } => (5, 15),
-        LogoutOutcome::SignedOut { .. } => (6, 15),
-        LogoutOutcome::Disconnected { .. } => (7, 15),
-        LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { .. } => (8, 15),
-        LogoutOutcome::StoppedForThisRunOnly { .. } => (9, 15),
-        LogoutOutcome::IntegrationRemoved { .. } => (10, 15),
-        LogoutOutcome::StillReferenced { .. } => (11, 15),
-        LogoutOutcome::Undecided => (12, 15),
-        LogoutOutcome::AgentSignedOut { .. } => (13, 15),
-        LogoutOutcome::SignOutUnverified { .. } => (14, 15),
+        } => (5, 16),
+        LogoutOutcome::StillServed {
+            standing: Standing::External { .. },
+            ..
+        } => (6, 16),
+        LogoutOutcome::SignedOut { .. } => (7, 16),
+        LogoutOutcome::Disconnected { .. } => (8, 16),
+        LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { .. } => (9, 16),
+        LogoutOutcome::StoppedForThisRunOnly { .. } => (10, 16),
+        LogoutOutcome::IntegrationRemoved { .. } => (11, 16),
+        LogoutOutcome::StillReferenced { .. } => (12, 16),
+        LogoutOutcome::Undecided => (13, 16),
+        LogoutOutcome::AgentSignedOut { .. } => (14, 16),
+        LogoutOutcome::SignOutUnverified { .. } => (15, 16),
     }
 }
 
@@ -1224,18 +1241,25 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             SpeedOutcome::Taken { unwritten: None } => (4, 5),
         },
         Outcome::Login(login) => match login {
-            LoginOutcome::Unusable(_) => (0, 8),
-            LoginOutcome::Elsewhere => (1, 8),
-            LoginOutcome::CacheHeld(_) => (2, 8),
+            LoginOutcome::Unusable(_) => (0, 11),
+            LoginOutcome::Elsewhere => (1, 11),
+            LoginOutcome::CacheHeld(_) => (2, 11),
             LoginOutcome::Serving {
                 unwritten: Some(_), ..
-            } => (3, 8),
+            } => (3, 11),
             LoginOutcome::Serving {
                 unwritten: None, ..
-            } => (4, 8),
-            LoginOutcome::AgentConnected { .. } => (5, 8),
-            LoginOutcome::ConnectUnsaved { .. } => (6, 8),
-            LoginOutcome::Undecided => (7, 8),
+            } => (4, 11),
+            LoginOutcome::AgentConnected { .. } => (5, 11),
+            LoginOutcome::ConnectUnsaved { .. } => (6, 11),
+            LoginOutcome::Undecided => (7, 11),
+            LoginOutcome::NextLaunch {
+                unwritten: Some(_), ..
+            } => (8, 11),
+            LoginOutcome::NextLaunch {
+                unwritten: None, ..
+            } => (9, 11),
+            LoginOutcome::Stored { .. } => (10, 11),
         },
         Outcome::Logout(logout) => logout_arm(logout),
         Outcome::Cache(cache) => match cache {
@@ -2364,7 +2388,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 12_542_537_120_981_854_169),
+        (4, 12_378_865_755_158_300_729),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

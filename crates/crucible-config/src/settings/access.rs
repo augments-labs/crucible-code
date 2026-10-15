@@ -53,6 +53,20 @@ pub enum Access {
     },
 }
 
+impl Access {
+    /// The `access` value that states this, as the user file spells it.
+    pub(crate) fn written(&self) -> Value {
+        match self {
+            Self::Subscription => serde_json::json!({"type": Kind::Subscription.name()}),
+            Self::ApiKey => serde_json::json!({"type": Kind::ApiKey.name()}),
+            Self::ExternalAgent { instance } => serde_json::json!({
+                "type": Kind::ExternalAgent.name(),
+                "instance": instance,
+            }),
+        }
+    }
+}
+
 /// The discriminant `access.type` is spelled with.
 ///
 /// Its own type so the spellings the shape declares and the ones [`Access`]

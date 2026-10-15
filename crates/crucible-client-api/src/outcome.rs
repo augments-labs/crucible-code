@@ -369,6 +369,22 @@ pub enum LoginOutcome {
     /// Nobody chose a way to go on, so nothing changed: the client could not
     /// be asked, or it cancelled or went back.
     Undecided,
+    /// The conversation is on an installed agent's route for the provider,
+    /// and keeps it: the provider is reached directly, with the credential
+    /// stored, from the next launch on.
+    NextLaunch {
+        /// The provider.
+        provider: Text,
+        /// Why the next launch will still reach it through the agent, where
+        /// that could not be written down.
+        unwritten: Option<Problem>,
+    },
+    /// The conversation is on an installed agent's route, and the credential
+    /// is stored for another provider: nothing else changed.
+    Stored {
+        /// The provider the credential is for.
+        provider: Text,
+    },
 }
 
 /// What still authenticates a provider once its stored credential is gone.
@@ -382,6 +398,11 @@ pub enum Standing {
     StoredKey,
     /// A stored account.
     Subscription,
+    /// The installed agent the conversation reaches it through.
+    External {
+        /// The configured instance.
+        instance: Text,
+    },
 }
 
 /// How forgetting a stored credential ended.

@@ -1322,6 +1322,34 @@ fn taken<T: Terminal>(
         // refused every turn is the state this whole command exists to end.
         LoggedIn::Unusable(problem) => return say(renderer, &format!("! {problem}")),
 
+        // The installed agent keeps answering this run, so the line says when
+        // the credential is used instead, and says so only once it is written.
+        LoggedIn::NextLaunch {
+            provider,
+            unwritten: Some(problem),
+        } => {
+            say(renderer, &format!("! {problem}"))?;
+            return say(
+                renderer,
+                &format!("login successful; {provider} is still reached through its agent"),
+            );
+        }
+        LoggedIn::NextLaunch {
+            provider,
+            unwritten: None,
+        } => {
+            return say(
+                renderer,
+                &format!("login successful; {provider} is asked directly from the next run"),
+            );
+        }
+        LoggedIn::Stored { provider } => {
+            return say(
+                renderer,
+                &format!("login successful; the credential for {provider} is stored"),
+            );
+        }
+
         // A credential says a provider can be reached and never which to ask, so
         // where another provider is already answering, it keeps the session it
         // has: the model in force belongs to that vendor, and pulling both out

@@ -911,6 +911,46 @@ fn connecting_an_agent_that_says_nothing_of_enabled_leaves_it_saying_nothing() {
 }
 
 #[test]
+fn reaching_a_provider_directly_writes_its_access_and_asks_it_and_nothing_else() {
+    use crate::settings::Access;
+
+    let text = "{\n  \"provider\": \"openai\",\n  \"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}},\n  \"providers\": {\n    \"anthropic\": {\n      \"access\": {\"type\": \"externalAgent\", \"instance\": \"work\"}\n    }\n  }\n}\n";
+    for (access, spelled) in [
+        (Access::Subscription, r#"{"type":"subscription"}"#),
+        (Access::ApiKey, r#"{"type":"apiKey"}"#),
+    ] {
+        let written = reaching(text, FILE, "anthropic", &access).unwrap();
+        assert_eq!(
+            written,
+            text.replace("\"openai\"", "\"anthropic\"")
+                .replace(r#"{"type": "externalAgent", "instance": "work"}"#, spelled)
+        );
+        let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+        assert_eq!(settings.access("anthropic"), Some(access.clone()));
+        assert_eq!(settings.provider(), Some("anthropic"));
+        // Written again, it is already so.
+        assert_eq!(
+            reaching(&written, FILE, "anthropic", &access).unwrap(),
+            written
+        );
+    }
+}
+
+#[test]
+fn reaching_a_provider_into_a_file_it_cannot_be_written_into_writes_nothing() {
+    use crate::settings::Access;
+
+    assert!(matches!(
+        reaching("{", FILE, "anthropic", &Access::Subscription),
+        Err(ConfigError::Malformed { .. })
+    ));
+    assert!(matches!(
+        reaching("[]", FILE, "anthropic", &Access::Subscription),
+        Err(ConfigError::Unspliceable { .. })
+    ));
+}
+
+#[test]
 fn connecting_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
     for text in [
         "",

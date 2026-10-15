@@ -11,6 +11,15 @@ starts. A disconnected agent, or one that cannot run in the conversation's
 mode, is refused before anything is recorded. The sections below say how each
 agent is run.
 
+`/login` in a conversation running on an agent leaves the agent answering. For
+the provider the agent reaches, it stores the subscription or key, then
+rewrites the provider's `access` from `externalAgent` to `subscription` or
+`apiKey` and makes it the `provider` asked, so the next session asks the
+provider directly; if that cannot be written, the file is left as it was and
+the next session still runs on the agent. `/login` for another provider only
+stores the credential, and `/logout` for the provider the agent reaches removes
+the stored credential and says the agent still reaches it.
+
 ## Claude Code
 
 crucible speaks to Claude Code over its own stream protocol: the program is

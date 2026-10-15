@@ -149,6 +149,23 @@ pub fn connecting(file: &Path, provider: &str, instance: &str) -> Result<(), Rem
     })
 }
 
+/// Writes into `file` that `provider` is reached as `access` says and is the
+/// one asked, in one update; and changes nothing else in it.
+///
+/// # Errors
+///
+/// As [`connecting`], and [`RememberError::Unusable`] where the file cannot
+/// say so.
+pub fn reaching(
+    file: &Path,
+    provider: &str,
+    access: &crucible_config::Access,
+) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::reaching(text, named, provider, access)
+    })
+}
+
 /// Writes into `file` the installed agent `agent`, that `provider` is
 /// reached through it, and that it takes new work, the last, in one update;
 /// and changes nothing else in it.
