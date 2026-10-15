@@ -12,6 +12,10 @@
 //! During a sign-in the link is shown to the user; during a turn or a status
 //! check it means the profile is signed out, and the turn fails saying so;
 //! during a sign-out or a version check it answers nothing asked.
+//!
+//! The agent asks about every action itself; one made [`Antigravity::allowing`]
+//! answers yes to what the conversation's mode allows without asking, as
+//! [`Acp::allowing`] does.
 
 mod account;
 mod manifest;
@@ -22,7 +26,7 @@ pub use manifest::Manifest;
 
 use crucible_execution::{Authentication, Decision, Failure, TurnRequest};
 
-use crate::acp::{Acp, Initialized, Profile};
+use crate::acp::{Acp, Allowing, Initialized, Profile};
 use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
 
 /// The command it is looked up as.
@@ -63,6 +67,16 @@ impl Default for Antigravity {
     fn default() -> Self {
         Self {
             acp: Acp::new(PROFILE),
+        }
+    }
+}
+
+impl Antigravity {
+    /// The wire answering yes by itself to what `allowing` names.
+    #[must_use]
+    pub fn allowing(allowing: Allowing) -> Self {
+        Self {
+            acp: Acp::allowing(PROFILE, allowing),
         }
     }
 }

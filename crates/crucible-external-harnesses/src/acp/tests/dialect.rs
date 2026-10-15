@@ -8,7 +8,7 @@ use crucible_execution::{
 use crucible_types::TurnId;
 use serde_json::{Value, json};
 
-use crate::acp::{Acp, Initialized, Profile};
+use crate::acp::{Acp, Allowing, Initialized, Profile};
 use crate::{Account, Act, Dialect, Reading, Shape, Told};
 
 /// Admits every agent.
@@ -377,4 +377,108 @@ fn each_turn_of_a_run_reports_what_it_added_to_the_cost() {
     assert_eq!(again.len(), 1, "{again:?}");
     assert_eq!(spent(&first), Some(250_000));
     assert_eq!(spent(&second), Some(500_000));
+}
+
+/// A permission request of the open session for a call of `kind`, offering
+/// `options`, each an id and its kind.
+fn permission(kind: &str, options: &[(&str, &str)]) -> String {
+    let options: Vec<Value> = options
+        .iter()
+        .map(|(id, kind)| json!({"optionId": id, "name": id, "kind": kind}))
+        .collect();
+    json!({"jsonrpc": "2.0", "id": "q", "method": "session/request_permission", "params": {
+        "sessionId": "s",
+        "toolCall": {"toolCallId": "t", "title": "t", "kind": kind, "rawInput": {"command": "ls"}},
+        "options": options,
+    }})
+    .to_string()
+}
+
+/// A client allowing `allowing`, whose session `s` is open and whose first
+/// prompt is out.
+fn prompting_allowing(allowing: Allowing) -> Acp {
+    let mut acp = Acp::allowing(PROFILE, allowing);
+    let _ = acp.request(Shape {
+        workspace: Some(Path::new("/work")),
+        ..Shape::default()
+    });
+    let _ = acp.open(&TurnRequest::new(TurnId::FIRST, "hello")).unwrap();
+    let _ = acp.heard(&initialized(1)).unwrap();
+    let _ = acp.heard(&response(1, &json!({"sessionId": "s"}))).unwrap();
+    acp
+}
+
+/// What a client allowing `allowing` does with a permission for a call of
+/// `kind`, offering `options`: the option id it answered with by itself, or
+/// `None` where it asked.
+fn answered_by_itself(allowing: Allowing, kind: &str, options: &[(&str, &str)]) -> Option<String> {
+    let mut acp = prompting_allowing(allowing);
+    let acts = acp.heard(&permission(kind, options)).unwrap();
+    match acts.as_slice() {
+        [Act::Ask { .. }] => None,
+        [Act::Send(frame)] => {
+            let sent: Value = serde_json::from_str(frame).unwrap();
+            assert_eq!(sent.pointer("/id"), Some(&json!("q")), "{frame}");
+            sent.pointer("/result/outcome/optionId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A client answers yes by itself, with the one-time allow the agent offered,
+/// to what its mode allows, and asks the person everything else.
+#[test]
+fn a_permission_the_mode_allows_is_answered_with_the_allow_once_offered() {
+    let offered = [
+        ("no", "reject_once"),
+        ("yes", "allow_once"),
+        ("always", "allow_always"),
+    ];
+    for (allowing, kind, answered) in [
+        (Allowing::Nothing, "edit", None),
+        (Allowing::Nothing, "execute", None),
+        (Allowing::Edits, "edit", Some("yes")),
+        (Allowing::Edits, "delete", Some("yes")),
+        (Allowing::Edits, "move", Some("yes")),
+        (Allowing::Edits, "execute", None),
+        (Allowing::Edits, "fetch", None),
+        (Allowing::Edits, "read", None),
+        (Allowing::Edits, "search", None),
+        (Allowing::Edits, "other", None),
+        (Allowing::Everything, "execute", Some("yes")),
+        (Allowing::Everything, "fetch", Some("yes")),
+        (Allowing::Everything, "edit", Some("yes")),
+    ] {
+        assert_eq!(
+            answered_by_itself(allowing, kind, &offered).as_deref(),
+            answered,
+            "{allowing:?} {kind}"
+        );
+    }
+}
+
+/// Where the agent offers no one-time allow, even full access asks the
+/// person rather than grant a lasting one.
+#[test]
+fn a_permission_with_no_allow_once_offered_is_asked_in_full_access() {
+    let offered = [("no", "reject_once"), ("always", "allow_always")];
+    assert_eq!(
+        answered_by_itself(Allowing::Everything, "execute", &offered),
+        None
+    );
+}
+
+/// Once the turn is told to stop, even full access answers nothing yes by
+/// itself: the question is left to be answered no.
+#[test]
+fn a_permission_asked_after_a_stop_is_never_answered_yes() {
+    let mut acp = prompting_allowing(Allowing::Everything);
+    let _ = acp.cancel();
+    let acts = acp
+        .heard(&permission("execute", &[("yes", "allow_once")]))
+        .unwrap();
+
+    assert!(matches!(acts.as_slice(), [Act::Ask { .. }]), "{acts:?}");
 }

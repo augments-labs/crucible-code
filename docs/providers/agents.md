@@ -107,13 +107,15 @@ then checks again. Signing out runs its own `claude auth logout`; without a
 `configDir`, that signs out the Claude Code you run yourself too.
 
 **Permissions.** The conversation's mode chooses the permission mode it is
-started in: ask runs it in `default`, and allow edits in `acceptEdits`, which
-edits files without asking and asks before anything else. Full access is
-refused, since no permission mode keeps its promise without skipping the
-agent's prompts altogether, and the conversation stays in the mode it was in. A
-change of mode takes effect at the next turn, which starts the agent again and
-continues its session; the turn under way keeps the mode it began in. Every
-action its own rules leave to a prompt comes to you as a question, which
+started in: ask runs it in `default`, allow edits in `acceptEdits`, which edits
+files without asking and asks before anything else, and full access in
+`bypassPermissions`, which asks about nothing. Its other permission modes are
+never used. A change of mode takes effect at the next turn, which starts the
+agent again and continues its session; the turn under way keeps the mode it
+began in. crucible's own rules are not consulted for the agent's actions, so
+in full access a `deny` rule does not stop it; its sandbox still holds it in.
+In ask and allow edits, every action its own rules leave to a prompt comes to
+you as a question, which
 names the agent that would act and how far what it runs is held in, such as
 `execution: work · confinement: enforced`; a no refuses that action alone, and
 the agent's turn goes on without it. Allowing for
@@ -196,6 +198,14 @@ prints during a turn means the profile is signed out, and the turn fails
 saying to sign in. Signing out runs the agent's own logout, then asks again
 whether a session can be opened, and says the sign-out is unverified unless
 the agent then answers that it is signed out.
+
+**Permissions.** The agent asks about every action itself. In ask mode each
+question comes to you; in allow edits crucible answers yes, for that action
+alone, to a change, deletion or move of a file, and asks you the rest; in full
+access it answers yes to every question, for that action alone. Where the agent
+offers no yes for that action alone, the question comes to you whatever the
+mode. crucible's own rules are not consulted for the agent's actions, and once
+a turn is stopped nothing more is answered yes.
 
 **Network.** Its sandbox adds to what the conversation lets it reach
 `accounts.google.com`, `oauth2.googleapis.com`, `cloudcode-pa.googleapis.com`

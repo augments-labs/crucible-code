@@ -40,7 +40,7 @@ mod wire;
 
 pub use account::sign_in;
 pub use manifest::Manifest;
-pub use modes::{Mode, Modes, Permission, Row};
+pub use modes::{Mode, Modes, Permission};
 
 pub use crate::antigravity::Ended;
 
@@ -110,13 +110,9 @@ impl Default for Claude {
 
 impl Claude {
     /// The wire for a conversation in `mode`.
-    ///
-    /// # Errors
-    ///
-    /// A [`Failure`] naming why, where the reviewed table supports no
-    /// permission mode for it.
-    pub fn in_mode(mode: Mode) -> Result<Self, Failure> {
-        Modes::permission(mode).map(Self::with)
+    #[must_use]
+    pub fn in_mode(mode: Mode) -> Self {
+        Self::with(Modes::permission(mode))
     }
 
     /// The wire started in `permission`.

@@ -736,7 +736,7 @@ fn resuming_continues_the_agent_s_own_session() -> Result<(), Failed> {
 }
 
 /// A change of mode is taken at the next turn's launch, never by the run
-/// under way, and full access is never one a run is launched in.
+/// under way.
 #[test]
 fn a_mode_change_takes_effect_at_the_next_launch() -> Result<(), Failed> {
     let tree = Tree::new("external-mode")?;
@@ -744,7 +744,6 @@ fn a_mode_change_takes_effect_at_the_next_launch() -> Result<(), Failed> {
     let (first, _) = turn(&mut outside, "one", false)?;
     assert!(first.is_ok(), "{first:?}");
 
-    assert_eq!(outside.conversation.switch(Mode::FullAccess), Mode::Ask);
     assert_eq!(
         outside.conversation.switch(Mode::AllowEdits),
         Mode::AllowEdits
@@ -758,6 +757,32 @@ fn a_mode_change_takes_effect_at_the_next_launch() -> Result<(), Failed> {
         [
             (Mode::Ask, None),
             (Mode::AllowEdits, Some(claude::SESSION.to_owned()))
+        ]
+    );
+    Ok(())
+}
+
+/// Full access is a mode an agent's run is switched to, and the next turn's
+/// run is launched in it, continuing the session.
+#[test]
+fn full_access_is_taken_at_the_next_launch_on_an_agent() -> Result<(), Failed> {
+    let tree = Tree::new("external-full-access")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean(), claude::clean()]))?;
+    let (first, _) = turn(&mut outside, "one", false)?;
+    assert!(first.is_ok(), "{first:?}");
+
+    assert_eq!(
+        outside.conversation.switch(Mode::FullAccess),
+        Mode::FullAccess
+    );
+    let (second, _) = turn(&mut outside, "two", false)?;
+
+    assert!(second.is_ok(), "{second:?}");
+    assert_eq!(
+        outside.launched(),
+        [
+            (Mode::Ask, None),
+            (Mode::FullAccess, Some(claude::SESSION.to_owned()))
         ]
     );
     Ok(())
@@ -1009,11 +1034,11 @@ fn the_session_left_for_the_route_reopens_at_once() -> Result<(), Failed> {
     Ok(())
 }
 
-/// A conversation in a mode the agent has no launch for is not moved: it
-/// stays on its own runner, in the mode it was in.
+/// A conversation in full access is moved onto the route and stays in full
+/// access there.
 #[test]
-fn a_conversation_in_full_access_is_not_moved_onto_the_route() -> Result<(), Failed> {
-    let tree = Tree::new("external-full-access")?;
+fn a_conversation_in_full_access_is_moved_onto_the_route_in_it() -> Result<(), Failed> {
+    let tree = Tree::new("external-full-access-moved")?;
     let mut native = super::conversation(&tree, Script::new(Vec::new()), false)?;
     assert_eq!(native.switch(Mode::FullAccess), Mode::FullAccess);
     let (launching, _peer) = launching(&tree, &connected([claude::clean()]))?;
@@ -1034,13 +1059,8 @@ fn a_conversation_in_full_access_is_not_moved_onto_the_route() -> Result<(), Fai
         Ok::<_, Failed>(native.external(session, Transcript::new(), installed).await)
     })?;
 
-    assert!(moved.is_err(), "{moved:?}");
+    assert!(moved.is_ok(), "{moved:?}");
     assert_eq!(native.settled().mode(), Mode::FullAccess);
-    assert!(
-        native.settled().model() == "script",
-        "{}",
-        native.settled().model()
-    );
     Ok(())
 }
 

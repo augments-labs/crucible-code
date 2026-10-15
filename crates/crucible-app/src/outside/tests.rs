@@ -68,8 +68,9 @@ impl Backend for Scripted {
     }
 }
 
-/// Launches the backends it holds in order, refusing full access and any
-/// launch past the last, and remembers each resume it was asked for.
+/// Launches the backends it holds in order, refusing full access, as an agent
+/// with no launch for a mode would, and any launch past the last, and
+/// remembers each resume it was asked for.
 struct Again {
     backends: Mutex<VecDeque<Result<Box<dyn Backend>, Failure>>>,
     resumed: Resumed,
@@ -525,8 +526,9 @@ async fn an_uncertain_turn_says_so_and_its_run_is_replaced() {
     );
 }
 
-/// Nothing is attached to an agent's turn, and full access is never a mode
-/// an agent is launched in: the mode stays, and a cycle steps past it.
+/// Nothing is attached to an agent's turn, and a mode the agent has no launch
+/// for, full access in this fake, is not taken: the mode stays, and a cycle
+/// steps past it.
 #[test]
 fn attachments_and_unlaunchable_modes_are_refused() {
     let mut outside = scripted([]);

@@ -999,8 +999,25 @@ fn an_agent_whose_program_cannot_be_run_is_not_started_and_no_log_is_written() {
     );
 }
 
+/// The shipped Claude Code row, refusing full access, as an agent with no
+/// launch for a mode would.
+fn without_full_access(
+    mode: Mode,
+) -> Result<Box<dyn crucible_external_harnesses::Dialect>, crucible_execution::Failure> {
+    match mode {
+        Mode::FullAccess => Err(crucible_execution::Failure::new(
+            "full access is not offered",
+        )),
+        Mode::Ask | Mode::AllowEdits => (crate::backends::CLAUDE.dialect)(mode),
+    }
+}
+
 #[test]
 fn an_agent_with_no_launch_in_the_run_s_mode_is_not_started_and_no_log_is_written() {
+    static REFUSING: Registry = Registry::new(&[crate::backends::Row {
+        dialect: without_full_access,
+        ..crate::backends::CLAUDE
+    }]);
     let sample = Sample::new("agent-full-access");
     let program = crucible_external_harnesses::fake_peer::install(
         &sample.root().join("peer"),
@@ -1009,12 +1026,12 @@ fn an_agent_with_no_launch_in_the_run_s_mode_is_not_started_and_no_log_is_writte
     )
     .expect("the peer installed");
 
-    let Err(problem) = on_the_program(
+    let Err(problem) = on_the_program_over(
         &sample,
         &Services::new(),
         &program,
         "",
-        (Resuming::No, Mode::FullAccess),
+        (Resuming::No, Mode::FullAccess, &REFUSING),
     ) else {
         panic!("an agent was started in a mode it has no launch in");
     };

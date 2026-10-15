@@ -191,38 +191,10 @@ fn claude_code_s_modes_are_the_conversation_s() {
     assert_eq!(rows, table);
 }
 
-/// Claude Code is started in the permission mode its table gives the
-/// conversation's mode, and full access, which no permission mode keeps, is
-/// refused by the table's own sentence before anything is started.
+/// Antigravity is started the same way whatever the conversation's mode,
+/// since what the mode allows is answered on its wire.
 #[test]
-fn claude_code_is_launched_in_the_conversation_s_mode_and_never_in_full_access() {
-    let row = REGISTRY.row(Driver::Claude).expect("Claude Code's row");
-    for (mode, named) in [(Mode::Ask, "default"), (Mode::AllowEdits, "acceptEdits")] {
-        let mut dialect = (row.dialect)(mode).expect("a supported mode");
-        let arguments = dialect.request(Shape::default()).arguments;
-        assert!(
-            arguments.windows(2).any(|pair| pair
-                .iter()
-                .map(String::as_str)
-                .eq(["--permission-mode", named])),
-            "{mode:?}: {arguments:?}"
-        );
-    }
-    let Err(refused) = (row.dialect)(Mode::FullAccess) else {
-        panic!("full access was given a dialect");
-    };
-    let crucible_external_harnesses::claude::Row::Unsupported(why) =
-        crucible_external_harnesses::claude::Modes::row(claude_mode(Mode::FullAccess))
-    else {
-        panic!("full access has a permission mode");
-    };
-    assert_eq!(refused.reason().as_str(), why);
-}
-
-/// Antigravity is given its one dialect whatever the conversation's mode,
-/// since it asks about every action itself.
-#[test]
-fn antigravity_runs_one_dialect_in_every_mode() {
+fn antigravity_is_started_the_same_way_in_every_mode() {
     let row = REGISTRY
         .row(Driver::Antigravity)
         .expect("Antigravity's row");
@@ -250,4 +222,36 @@ fn every_mode() -> Vec<Mode> {
         modes.push(next);
     }
     modes
+}
+
+/// Each of the conversation's modes launches Claude Code in the one
+/// permission mode mapped to it, full access in the one that skips its
+/// prompts.
+#[test]
+fn claude_code_is_launched_in_the_permission_mode_mapped_to_each_mode() {
+    let row = REGISTRY.row(Driver::Claude).expect("Claude Code's row");
+    for (mode, named) in [
+        (Mode::Ask, "default"),
+        (Mode::AllowEdits, "acceptEdits"),
+        (Mode::FullAccess, "bypassPermissions"),
+    ] {
+        let mut dialect = (row.dialect)(mode).expect("every mode is launched");
+        let arguments = dialect.request(Shape::default()).arguments;
+        assert!(
+            arguments.windows(2).any(|pair| pair
+                .iter()
+                .map(String::as_str)
+                .eq(["--permission-mode", named])),
+            "{mode:?}: {arguments:?}"
+        );
+    }
+}
+
+/// Antigravity answers yes by itself to nothing when asking, to edits when
+/// allowing them, and to everything in full access.
+#[test]
+fn antigravity_answers_yes_by_itself_to_what_each_mode_allows() {
+    assert_eq!(antigravity_allowing(Mode::Ask), Allowing::Nothing);
+    assert_eq!(antigravity_allowing(Mode::AllowEdits), Allowing::Edits);
+    assert_eq!(antigravity_allowing(Mode::FullAccess), Allowing::Everything);
 }
