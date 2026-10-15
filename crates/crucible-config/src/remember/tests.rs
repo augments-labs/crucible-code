@@ -1006,7 +1006,8 @@ fn installing_an_agent_writes_its_block_the_provider_s_access_and_enables_it_las
 
 #[test]
 fn installing_an_agent_the_file_already_names_is_refused() {
-    let text = r#"{"externalAgents": {"claude": {"driver": "antigravity", "executable": "/opt/agy", "profileDir": "/p"}}}"#;
+    let text =
+        r#"{"externalAgents": {"claude": {"driver": "claude", "executable": "claude-work"}}}"#;
     assert!(matches!(
         installing(
             text,
