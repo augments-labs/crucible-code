@@ -484,7 +484,9 @@ fn disconnecting(agent: &ExternalAgent, on: Option<&str>) -> Confirmation {
         choices: vec![
             (
                 DISCONNECT.to_owned(),
-                "Crucible stops using this agent; its sign-in is left as it is.".to_owned(),
+                "Crucible stops using this agent, and a provider reached through it is asked \
+                 directly from the next session; its sign-in is left as it is."
+                    .to_owned(),
             ),
             ("Cancel".to_owned(), "Change nothing.".to_owned()),
         ],
@@ -557,7 +559,9 @@ fn signing_out(agent: &ExternalAgent, sharing: &[ExternalAgent], on: Option<&str
             ),
             (
                 DISCONNECT_INSTEAD.to_owned(),
-                "Crucible stops using this instance; its sign-in is left as it is.".to_owned(),
+                "Crucible stops using this instance, and a provider reached through it is asked \
+                 directly from the next session; its sign-in is left as it is."
+                    .to_owned(),
             ),
             ("Cancel".to_owned(), "Change nothing.".to_owned()),
         ],
@@ -1117,7 +1121,9 @@ async fn remove(
 }
 
 /// Takes `agent` out of use from Crucible: refused new work, its run in this
-/// conversation stopped, and `enabled: false` written down.
+/// conversation stopped, and `enabled: false` written down with every
+/// provider's `access` through it taken away, so the next start asks that
+/// provider directly.
 async fn disconnect(
     conversation: &mut Conversation,
     desk: &Desk<'_>,

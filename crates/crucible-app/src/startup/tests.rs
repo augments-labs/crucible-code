@@ -1128,6 +1128,16 @@ fn a_disconnected_agent_is_not_started_and_no_log_is_written() {
         "{problem:?}"
     );
     assert!(problem.to_string().contains("disconnected"), "{problem}");
+    // Nothing can be connected from a start that is refused, so the refusal
+    // names the line to change instead.
+    assert!(
+        problem.to_string().contains(".enabled to true in "),
+        "{problem}"
+    );
+    assert!(
+        !problem.to_string().contains("connect it again"),
+        "{problem}"
+    );
     assert!(
         std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
         "a log was written for a run that never started"

@@ -101,8 +101,9 @@ pub fn sandboxing(file: &Path, enabled: bool) -> Result<(), RememberError> {
     })
 }
 
-/// Writes down that the installed agent `instance` takes no new work, and
-/// changes nothing else in `file`.
+/// Writes down that the installed agent `instance` takes no new work and that
+/// no provider is reached through it any longer, and changes nothing else in
+/// `file`.
 ///
 /// # Errors
 ///
@@ -116,8 +117,9 @@ pub fn disabling(file: &Path, instance: &str) -> Result<(), RememberError> {
     })
 }
 
-/// Writes down that every installed agent in `instances` takes no new work,
-/// in one update of `file`, and changes nothing else in it.
+/// Writes down that every installed agent in `instances` takes no new work and
+/// reaches no provider, in one update of `file`, and changes nothing else in
+/// it.
 ///
 /// # Errors
 ///

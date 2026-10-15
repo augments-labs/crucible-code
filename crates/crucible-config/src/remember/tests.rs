@@ -836,6 +836,38 @@ fn disabling_an_agent_writes_its_enabled_false_and_nothing_else() {
 }
 
 #[test]
+fn disabling_an_agent_takes_away_every_access_reached_through_it_and_no_other() {
+    let text = "{\n  \"provider\": \"openai\",\n  \"providers\": {\n    \"openai\": {\n      \"model\": \"m\",\n      \"access\": {\"instance\": \"work\", \"type\": \"externalAgent\"}\n    },\n    \"google\": {\"access\": {\"type\": \"externalAgent\", \"instance\": \"work\"}},\n    \"moonshot\": {\"access\": {\"type\": \"externalAgent\", \"instance\": \"home\"}},\n    \"anthropic\": {\"access\": {\"type\": \"apiKey\"}}\n  },\n  \"externalAgents\": {\n    \"work\": {\"driver\": \"claude\", \"executable\": \"claude\"},\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
+    let written = disabling(text, FILE, "work").unwrap();
+    assert_eq!(
+        written,
+        text.replace(
+            "\"model\": \"m\",\n      \"access\": {\"instance\": \"work\", \"type\": \"externalAgent\"}\n",
+            "\"model\": \"m\"\n"
+        )
+        .replace(
+            "\"google\": {\"access\": {\"type\": \"externalAgent\", \"instance\": \"work\"}}",
+            "\"google\": {}"
+        )
+        .replace(
+            "\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}",
+            "\"work\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}"
+        )
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    assert_eq!(settings.referencing("work"), None);
+    assert_eq!(settings.referencing("home").as_deref(), Some("moonshot"));
+    // Written again, it is already so.
+    assert_eq!(disabling(&written, FILE, "work").unwrap(), written);
+    // An agent already disabled still lets go of what reaches it.
+    let disabled = text.replace(
+        "\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}",
+        "\"work\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}",
+    );
+    assert_eq!(disabling(&disabled, FILE, "work").unwrap(), written);
+}
+
+#[test]
 fn disabling_an_enabled_agent_turns_its_word_over_in_place() {
     let text = r#"{"externalAgents": {"work": {"enabled": true, "driver": "claude", "executable": "claude"}}}"#;
     assert_eq!(

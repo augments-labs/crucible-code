@@ -422,16 +422,20 @@ pub fn sandboxing(text: &str, file: &str, enabled: bool) -> Result<String, Confi
 }
 
 /// The text of a configuration file where the installed agent `instance`
-/// takes no new work: its block's `enabled` is `false`, and every other byte
-/// is where it was.
+/// takes no new work: its block's `enabled` is `false`, every provider's
+/// `access` that reached it through the instance is gone, so the next start
+/// asks that provider directly rather than being refused, and every other
+/// byte is where it was.
 ///
 /// Only the user file names installed agents, so `text` is that file's. An
-/// instance already disabled leaves it as it was.
+/// instance already disabled that no provider reaches leaves it as it was.
 ///
 /// # Errors
 ///
 /// Refuses malformed or invalid configuration, and [`ConfigError::Unspliceable`]
-/// where `externalAgents.<instance>` is not an object the file holds.
+/// where `externalAgents.<instance>` is not an object the file holds, and
+/// [`ConfigError::Unremovable`] where an `access` cannot be taken out without
+/// rewriting.
 pub fn disabling(text: &str, file: &str, instance: &str) -> Result<String, ConfigError> {
     let at = format!("externalAgents.{instance}.enabled");
     let refused = || ConfigError::Unspliceable {
@@ -449,19 +453,45 @@ pub fn disabling(text: &str, file: &str, instance: &str) -> Result<String, Confi
     else {
         return Err(refused());
     };
-    if block.get("enabled").and_then(Value::as_bool) == Some(false) {
-        return Ok(text.to_owned());
+    let disabled = if block.get("enabled").and_then(Value::as_bool) == Some(false) {
+        text.to_owned()
+    } else {
+        let root = splice::root(text).ok_or_else(refused)?;
+        let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
+        let at = splice::member(text, agents, instance).ok_or_else(refused)?;
+        if block.get("enabled").is_none() {
+            splice::insert(text, at, |_| "\"enabled\": false".to_owned())
+        } else {
+            let was = splice::member(text, at, "enabled").ok_or_else(refused)?;
+            splice::over(text, was, "false")
+        }
+    };
+    unreached(disabled, file, instance)
+}
+
+/// `text` without the `access` of any provider that reaches it through the
+/// installed agent `instance`.
+///
+/// One provider at a time, read again after each, so each cut is made in the
+/// text the one before it left; a document names a bounded number of
+/// providers, and each pass takes one away or stops.
+fn unreached(mut text: String, file: &str, instance: &str) -> Result<String, ConfigError> {
+    loop {
+        let document =
+            crate::document::Document::parse(&text, file, crate::document::Origin::User)?;
+        let Some(provider) = crate::settings::access::referencing(document.value(), instance)
+        else {
+            return Ok(text);
+        };
+        let refused = || ConfigError::Unremovable {
+            file: file.into(),
+            at: format!("providers.{provider}.access").into(),
+        };
+        let root = splice::root(&text).ok_or_else(refused)?;
+        let providers = splice::member(&text, root, "providers").ok_or_else(refused)?;
+        let block = splice::member(&text, providers, &provider).ok_or_else(refused)?;
+        text = splice::remove(&text, block, "access").ok_or_else(refused)?;
     }
-    let root = splice::root(text).ok_or_else(refused)?;
-    let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
-    let at = splice::member(text, agents, instance).ok_or_else(refused)?;
-    if block.get("enabled").is_none() {
-        return Ok(splice::insert(text, at, |_| {
-            "\"enabled\": false".to_owned()
-        }));
-    }
-    let was = splice::member(text, at, "enabled").ok_or_else(refused)?;
-    Ok(splice::over(text, was, "false"))
 }
 
 /// The text of a configuration file that reaches `provider` through the

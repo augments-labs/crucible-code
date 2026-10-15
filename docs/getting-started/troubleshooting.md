@@ -400,8 +400,10 @@ stops](../sessions/sessions.md#when-recording-stops).
 The provider asked for has its `access` set to the
 [installed agent](../providers/agents.md) `externalAgents.<name>`, and this
 launch cannot run it, so nothing was recorded. `it is disconnected` means the
-entry's `enabled` is `false`: set it back to `true`, or, for a new session,
-remove `providers.<provider>.access` to reach the provider directly.
+entry's `enabled` is `false` while a provider's `access` still names it, which
+only an edit by hand leaves, since *Disconnect from Crucible* takes that
+`access` away: set `enabled` back to `true`, or, for a new session, remove
+`providers.<provider>.access` to reach the provider directly.
 `no <command> command on PATH and none at externalAgents.<name>.executable`
 and `<path> is not executable` mean its program cannot be run where it was
 looked for: install it, or point `executable` at it. A mode the agent has no
