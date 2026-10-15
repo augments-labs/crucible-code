@@ -98,6 +98,7 @@ use crate::cli::converse::picking::{self, Picked};
 use crate::cli::converse::region;
 use crate::cli::converse::secret::{self, Asked};
 use crate::cli::converse::warning::{self, Answer, Put};
+use crate::cli::draw::flattened;
 use crate::cli::style::Style;
 
 use super::{Terms, about, say};
@@ -572,7 +573,8 @@ pub(super) fn answered<T: Terminal>(
         Question::Account(confirmation) => {
             // Keys pressed while the application worked answer nothing.
             region::unheard(renderer)?;
-            let told: Vec<&str> = confirmation.facts.iter().map(String::as_str).collect();
+            let flat = drawn_facts(&confirmation.facts);
+            let told: Vec<&str> = flat.iter().map(String::as_str).collect();
             let shown: Vec<Offered<'_>> = confirmation
                 .choices
                 .iter()
@@ -599,6 +601,12 @@ pub(super) fn answered<T: Terminal>(
             Answer::Cramped => None,
         },
     })
+}
+
+/// `facts` as a panel draws them: each can carry an agent's own words, so
+/// none of their control bytes reach the terminal.
+fn drawn_facts(facts: &[String]) -> Vec<String> {
+    facts.iter().map(flattened).collect()
 }
 
 /// The rows of one list, in the order the registry gives them.

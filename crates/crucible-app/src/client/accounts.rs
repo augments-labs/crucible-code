@@ -850,8 +850,10 @@ async fn connect(
             Reading::Signed(
                 Authentication::Unknown | Authentication::Expired | Authentication::Unverifiable,
             )
-            | Reading::Version(_)
-            | Reading::Unreadable(_) => unverified(agent),
+            // The agent answered here, so it left no failure to give as the
+            // reason.
+            | Reading::Version(_) => unverified(agent, None),
+            Reading::Unreadable(failure) => unverified(agent, Some(failure)),
         };
         let signed = matches!(status, Reading::Signed(Authentication::SignedIn));
         match confirmed(capabilities, front, &question).await {
@@ -978,16 +980,26 @@ fn signed_out(agent: &ExternalAgent, row: &crate::backends::Row) -> Confirmation
     }
 }
 
-/// What the person is told where `agent`'s sign-in could not be read.
-fn unverified(agent: &ExternalAgent) -> Confirmation {
+/// What the person is told where `agent`'s sign-in could not be read, with
+/// the one reason the agent's run gave, where it gave one.
+///
+/// The reason is the harness's own words, bounded and with its withheld values
+/// hidden, and only its first line: a front end takes control bytes out where
+/// it draws it.
+fn unverified(agent: &ExternalAgent, failure: Option<&Failure>) -> Confirmation {
     let name = agent.name();
+    let mut facts = vec![
+        format!("Agent: {name}, run as {}.", agent.executable()),
+        profiled(agent),
+        "Status: the agent did not say whether it is signed in.".to_owned(),
+    ];
+    let reason = failure.and_then(reason);
+    if let Some(reason) = reason {
+        facts.push(format!("Reason: {reason}"));
+    }
     Confirmation {
         asks: Ended::Unverified(Failure::new("")).says().to_owned(),
-        facts: vec![
-            format!("Agent: {name}, run as {}.", agent.executable()),
-            profiled(agent),
-            "Status: the agent did not say whether it is signed in.".to_owned(),
-        ],
+        facts,
         choices: vec![
             (
                 CHECK_AGAIN.to_owned(),
@@ -996,6 +1008,29 @@ fn unverified(agent: &ExternalAgent) -> Confirmation {
             ("Cancel".to_owned(), "Change nothing.".to_owned()),
         ],
     }
+}
+
+/// The most characters a reason shown for an unread sign-in keeps.
+pub(super) const REASON_CHARS: usize = 160;
+
+/// The one line of `failure` a person is shown as its reason: its first line
+/// that says anything, cut to [`REASON_CHARS`] with an ellipsis where it is
+/// longer, and nothing where none does. A panel folds its facts whole, so a
+/// reason as long as what an agent can write would leave no room for the
+/// choices under it.
+pub(super) fn reason(failure: &Failure) -> Option<String> {
+    let line = failure
+        .reason()
+        .as_str()
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    if line.chars().count() <= REASON_CHARS {
+        return Some(line.to_owned());
+    }
+    let mut cut: String = line.chars().take(REASON_CHARS.saturating_sub(1)).collect();
+    cut.push('…');
+    Some(cut)
 }
 
 /// The route a connect of `provider` through `agent` would write, `keyed`

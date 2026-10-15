@@ -20,7 +20,6 @@ expression: picture
 |                                                                                |
 |› /login                                                                        |
 |                                                                                |
-|                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Log in                                                                          |
@@ -30,6 +29,7 @@ expression: picture
 |Agent: claude, run as claude.                                                   |
 |Profile: the agent's default.                                                   |
 |Status: the agent did not say whether it is signed in.                          |
+|Reason: The agent exited with status 2: status unavailable                      |
 |                                                                                |
 |› Check again                                                                   |
 |  Read the agent's sign-in again.                                               |

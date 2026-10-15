@@ -1030,3 +1030,20 @@ fn no_other_kind_of_question_is_settled_by_a_choice() {
     assert!(!heeded(&mut warning, Capabilities::every()));
     assert_eq!(warning.refused, [ErrorCode::WrongDecision]);
 }
+
+/// The reason a sign-in could not be read is one short line, however much the
+/// agent said: a panel's facts are folded whole, and a line the length of the
+/// agent's standard error would leave no room for the choices under it.
+#[test]
+fn a_sign_in_reason_is_the_agents_first_line_cut_short() {
+    use crucible_execution::Failure;
+
+    let reason = |said: &str| super::accounts::reason(&Failure::new(said));
+    let long = "x".repeat(8 * 1024);
+
+    assert_eq!(reason("\n  first  \nsecond").as_deref(), Some("first"));
+    assert_eq!(reason(" \n\t\n"), None);
+    let cut = reason(&long).expect("a reason");
+    assert_eq!(cut.chars().count(), super::accounts::REASON_CHARS);
+    assert!(cut.ends_with('…'), "{cut}");
+}
