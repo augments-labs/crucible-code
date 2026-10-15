@@ -646,7 +646,7 @@ impl Conversation {
                         "the sandbox policy its runs are confined by could not be built",
                     ));
                 };
-                let agent = steps
+                let (agent, route) = steps
                     .reopening(entries, self.settled().mode(), &opened)
                     .map_err(|refused| match refused {
                         Unresumable::Rerouted => Unpicked::Session(SessionError::Rerouted {
@@ -661,7 +661,7 @@ impl Conversation {
                 let installed = Installed {
                     backend: None,
                     relaunch,
-                    route: opened,
+                    route,
                 };
                 self.external(Arc::new(session), transcript, installed)
                     .await

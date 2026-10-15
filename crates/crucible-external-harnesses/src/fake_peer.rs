@@ -20,9 +20,10 @@
 //! on.
 //!
 //! What it hears is kept, bounded, in a file named `heard`, and the arguments
-//! of each start in one named `argued`, so a test can say what reached it; a reply can also start a grandchild that beats into a file
-//! named `lingering` until it is stopped, so a test can see whether stopping
-//! the peer reached the process it started.
+//! of each start in one named `argued`, so a test can say what reached it; a
+//! reply can also start a grandchild that beats into a file named `lingering`
+//! until it is stopped, so a test can see whether stopping the peer reached
+//! the process it started.
 //!
 //! A peer built from other sources than the ones calling it would play a
 //! script by rules the caller does not know. Both carry a digest of those

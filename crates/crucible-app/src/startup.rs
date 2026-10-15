@@ -592,7 +592,7 @@ fn reopened_on(
     opened: &RouteBinding,
 ) -> Result<OnAgent, AppError> {
     let instance = opened.instance();
-    let agent = launching::reopening(
+    let (agent, route) = launching::reopening(
         &startup.settings.external_agents(),
         agents,
         |name| (startup.from)(name).map(OsString::from),
@@ -609,7 +609,7 @@ fn reopened_on(
     Ok(OnAgent {
         agent,
         instance: instance.into(),
-        route: opened.clone(),
+        route,
         picked: Some(id.clone()),
         policy: startup
             .settings

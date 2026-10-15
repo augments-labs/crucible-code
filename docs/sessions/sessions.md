@@ -136,7 +136,7 @@ does not continue a session a provider's model ran: `--continue` and
 provider directly. `/resume` of it goes back to the provider's model a run that
 started on one moved off, with the session's earlier turns; a run that started
 on an agent's route has no provider's model set up, so `/resume` says the
-session resumes on the next launch that reaches a provider directly. Either
+session resumes on the next launch that reaches a provider directly. The
 refusal leaves its log as it was.
 
 A log name in the sessions directory that is a symbolic link or a pipe rather

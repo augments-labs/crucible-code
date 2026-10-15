@@ -208,7 +208,9 @@ pub enum Unresumable {
 
 /// The agent the session opened on `opened` goes on on: the entry of
 /// `entries` that is still that agent, as `registry` knows its driver, its
-/// program looked for through `lookup`, and startable in `mode`.
+/// program looked for through `lookup`, and startable in `mode`; beside it,
+/// the route that entry is now, which the run records from here on rather
+/// than what the log was opened with.
 ///
 /// # Errors
 ///
@@ -220,14 +222,14 @@ pub fn reopening(
     lookup: impl Fn(&str) -> Option<OsString>,
     mode: Mode,
     opened: &RouteBinding,
-) -> Result<Agent, Unresumable> {
+) -> Result<(Agent, RouteBinding), Unresumable> {
     let entry = entries
         .iter()
         .find(|entry| entry.name() == opened.instance())
-        .filter(|entry| {
-            RouteBinding::new(entry.driver().name(), entry.name(), entry.profile())
-                .is_ok_and(|route| route.same_route(opened))
-        })
+        .ok_or(Unresumable::Rerouted)?;
+    let route = RouteBinding::new(entry.driver().name(), entry.name(), entry.profile())
+        .ok()
+        .filter(|route| route.same_route(opened))
         .ok_or(Unresumable::Rerouted)?;
     let unstartable = |reason: &str| Unresumable::Unstartable(reason.to_owned());
     if !entry.enabled() {
@@ -238,7 +240,7 @@ pub fn reopening(
     agent
         .startable(mode, entry.name())
         .map_err(Unresumable::Unstartable)?;
-    Ok(agent)
+    Ok((agent, route))
 }
 
 /// What the program configured as `executable` is: the path as written when
@@ -701,7 +703,7 @@ impl Steps {
 
     /// The agent the session opened on `opened` goes on on, as [`reopening`]
     /// finds it among `entries`, its program looked for on the `PATH` every
-    /// step is, startable in `mode`.
+    /// step is, startable in `mode`, and the route that entry is now.
     ///
     /// # Errors
     ///
@@ -711,7 +713,7 @@ impl Steps {
         entries: &[ExternalAgent],
         mode: Mode,
         opened: &RouteBinding,
-    ) -> Result<Agent, Unresumable> {
+    ) -> Result<(Agent, RouteBinding), Unresumable> {
         reopening(
             entries,
             self.registry,
