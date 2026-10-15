@@ -8,12 +8,13 @@
 //! the picture taken there is the snapshot.
 
 use std::os::unix::fs::PermissionsExt as _;
+use std::path::Path;
 
 use crucible_external_harnesses::fake_peer::scripts::claude;
-use crucible_external_harnesses::fake_peer::{Reply, Script};
+use crucible_external_harnesses::fake_peer::{self, Reply, Script};
 
 use crate::vendor::Vendor;
-use crate::watched::Watched;
+use crate::watched::{self, Watched};
 use crate::{scrubbed, takes, timeless};
 
 /// The widths every screen is captured at, each with rows enough for the
@@ -248,7 +249,7 @@ fn an_agent_whose_sign_in_cannot_be_read_says_so_in_one_reason() {
             name: "unverified",
             replies: Some(vec![
                 Reply::new()
-                    .mutter("\u{1b}[31mstatus \u{7}unavailable\u{1b}]0;title\u{7}")
+                    .mutter(format!("\u{1b}[31mstatus \u{7}unavailable{RETITLED}"))
                     .exit(2),
             ]),
             configured: "",
@@ -261,8 +262,148 @@ fn an_agent_whose_sign_in_cannot_be_read_says_so_in_one_reason() {
                 !picture.contains("[31m") && !picture.contains("]0;"),
                 "{picture}"
             );
+            untitled(window);
         },
     );
+}
+
+/// An escape sequence that, written as it stands, sets the window's title to a
+/// word of its own.
+const RETITLED: &str = "\u{1b}]0;retitled\u{7}";
+
+/// Fails where text carrying [`RETITLED`] reached the terminal as the command
+/// it spells rather than as words.
+fn untitled(window: &Watched) {
+    let commands = window.commands();
+    assert!(
+        !commands.iter().any(|said| said.contains("retitled")),
+        "{commands:?}"
+    );
+}
+
+/// `text` inside a string of the configuration file, with the two control
+/// characters [`RETITLED`] holds spelled as JSON escapes.
+fn quoted(text: &Path) -> String {
+    text.display()
+        .to_string()
+        .replace('\u{1b}', "\\u001b")
+        .replace('\u{7}', "\\u0007")
+}
+
+/// Opens `name` at eighty columns in each screen mode, the fake peer playing
+/// `script` where it is installed, and holds the window `reaching` leaves to
+/// [`untitled`]. `configured` turns the directory agents are installed in into
+/// members of the configuration before launch; `reaching` runs after it.
+fn retitling(
+    name: &str,
+    script: Option<&Script>,
+    configured: impl Fn(&Path) -> String,
+    reaching: impl Fn(&mut Watched),
+) {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-{name}-{mode}");
+        let configured = configured(&watched::agents(&case));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (script, &configured));
+        reaching(&mut window);
+        untitled(&window);
+    }
+}
+
+#[test]
+fn a_program_path_that_spells_a_command_never_reaches_the_terminal_as_one() {
+    retitling(
+        "retitled-path",
+        None,
+        |installed| {
+            let program = quoted(&installed.join(RETITLED).join("claude"));
+            format!(
+                "  \"externalAgents\": {{\"work\": {{\"driver\": \"claude\", \
+                 \"executable\": \"{program}\"}}}},\n"
+            )
+        },
+        |window| {
+            let directory = window.workspace().join("agents").join(RETITLED);
+            std::fs::create_dir_all(&directory).expect("a directory named for a command");
+            let program = directory.join("claude");
+            std::fs::write(&program, "not a program\n").expect("a file that is no program");
+            let mut permissions = std::fs::metadata(&program)
+                .expect("its metadata")
+                .permissions();
+            permissions.set_mode(0o644);
+            std::fs::set_permissions(&program, permissions).expect("a file nobody may run");
+            agents(window);
+            takes(window, "Claude Code");
+            window.types_until("", "is not executable");
+        },
+    );
+}
+
+#[test]
+fn a_profile_path_that_spells_a_command_never_reaches_the_terminal_as_one() {
+    retitling(
+        "retitled-profile",
+        Some(&Script::of([claude::signed_out()])),
+        |installed| {
+            let profile = quoted(&installed.join(RETITLED));
+            format!(
+                "  \"externalAgents\": {{\"work\": {{\"driver\": \"claude\", \
+                 \"executable\": \"claude\", \"configDir\": \"{profile}\"}}}},\n"
+            )
+        },
+        |window| {
+            let profile = window.workspace().join("agents").join(RETITLED);
+            std::fs::create_dir_all(profile).expect("a profile named for a command");
+            checked(window, "auth login");
+        },
+    );
+}
+
+/// Fails where leaving a list of agents, or what to do with one, with nothing
+/// taken starts an agent or writes anything.
+#[test]
+fn leaving_an_agent_chooser_with_nothing_taken_sends_nothing() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-left-{mode}");
+        let script = Script::of(signed_in([]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), WORK));
+        let configuration = window.home().join("config.json");
+        let before = std::fs::read_to_string(&configuration).expect("the configuration");
+        agents(&mut window);
+        window.types_until("\x1b", "Choose how usage is paid for.");
+        window.types_until("\x1b", "cancelled, nothing signed in");
+        window.types_until("/logout\r", "external agent instance");
+        takes(&mut window, "work");
+        window.types_until("", "Choose what to do with this agent.");
+        window.types_until("\x1b", "cancelled, nothing signed out");
+        assert_eq!(fake_peer::played(&watched::agents(&case)), 0);
+        assert!(!window.home().join("auth.json").exists());
+        let after = std::fs::read_to_string(&configuration).expect("the configuration");
+        assert_eq!(after, before);
+    }
+}
+
+/// Fails where `/login` with no agent's program installed stops offering an
+/// account or a key.
+#[test]
+fn login_with_no_agent_installed_still_offers_an_account_and_a_key() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-none-{mode}");
+        let vendor = Vendor::answering("Not asked.");
+        let mut window = Watched::capturing_agents(&case, (80, 40), native, &vendor, (None, ""));
+        window.types_until("/login\r", "Provide your own API key");
+        let picture = window.picture();
+        assert!(
+            picture.contains("Your account with subscription"),
+            "{picture}"
+        );
+    }
 }
 
 #[test]
