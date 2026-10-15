@@ -62,12 +62,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_client_api::bounds::ITEMS;
+use crucible_client_api::inspection::Claim;
 use crucible_client_api::pending::Operation;
 use crucible_client_api::{
     Asked, Capabilities, Capability, Choice, Decision, Effect, ErrorCode, Lasting, Pending,
     PendingId, Picked, Refusal, Ruling, Said, Text,
 };
-use crucible_execution::Detail;
+use crucible_execution::{Confinement, Detail};
 use crucible_runtime::BoxFuture;
 use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
 use crucible_types::{Answered, Question, ToolCall};
@@ -113,10 +114,63 @@ pub enum Shown<'a> {
     Questions(&'a [Question]),
     /// The route a send would go on, whose vendor uses what is sent.
     Warning(&'a Warned),
-    /// What an installed agent asked leave to do.
-    External(&'a crucible_execution::Pending),
+    /// What an installed agent asked leave to do, and who would do it.
+    External(Leave<'a>),
     /// Which way an account operation on an installed agent goes on.
     Account(&'a Confirmation),
+}
+
+/// What an installed agent asked leave to do, as the host holds it, whole,
+/// and who would do it: the agent's own words for the action, read as a
+/// client is told them, beside who runs it and how far it is held in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Leave<'a> {
+    /// The agent's name for the tool that would act.
+    pub tool: &'a str,
+    /// The spelling its rules are matched against.
+    pub summary: &'a str,
+    /// The kind of thing it would do.
+    pub effect: Effect,
+    /// The line that would run, or what would be sent, as the call carried
+    /// it: nothing for a read or a change to a file.
+    pub sent: Option<&'a str>,
+    /// Whether a command would be left running after its turn has ended.
+    pub left_running: bool,
+    /// Who acts on it: the agent, by the name its configured instance goes by.
+    pub acting: Acting<'a>,
+}
+
+/// Who runs an installed agent's actions, and how they are held in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Acting<'a> {
+    /// The configured instance that runs them.
+    pub instance: &'a str,
+    /// How the actions it takes on this machine are held in, in the sandbox's
+    /// own word: nothing where nothing has said.
+    pub confinement: Option<Claim>,
+}
+
+impl<'a> Acting<'a> {
+    /// The actions of `instance`, held in as `claims` says.
+    #[must_use]
+    pub fn new(instance: &'a str, claims: &crucible_execution::Capabilities) -> Self {
+        Self {
+            instance,
+            confinement: claims
+                .confinement()
+                .map(|confined| claimed(confined.level())),
+        }
+    }
+}
+
+/// The sandbox's word for confinement `level`, as `crucible sandbox inspect`
+/// says it.
+const fn claimed(level: Confinement) -> Claim {
+    match level {
+        Confinement::HardEnforced => Claim::Enforced,
+        Confinement::Observed => Claim::Observed,
+        Confinement::Unsupported => Claim::Unsupported,
+    }
 }
 
 /// An account operation's question, as the host holds it, whole.
@@ -276,12 +330,13 @@ const DENIED: (Verdict, Remember) = (Verdict::Deny, Remember::Never);
 /// Whoever answers the pending actions of a turn: the permission engine's
 /// questions, and those an installed agent raises while it runs a turn.
 pub trait Asker: Ask {
-    /// Puts `pending`, which an installed agent raised, and answers what was
-    /// decided. No, unless the asker says otherwise: an asker that puts
-    /// nothing has nobody to say yes.
+    /// Puts `pending`, which an installed agent raised and `acting` would act
+    /// on, and answers what was decided. No, unless the asker says otherwise:
+    /// an asker that puts nothing has nobody to say yes.
     fn pending<'a>(
         &'a mut self,
         _pending: &'a crucible_execution::Pending,
+        _acting: Acting<'a>,
     ) -> BoxFuture<'a, crucible_execution::Decision> {
         Box::pin(std::future::ready(crucible_execution::Decision::Deny))
     }
@@ -367,6 +422,7 @@ impl Asker for Deciding<'_> {
     fn pending<'a>(
         &'a mut self,
         pending: &'a crucible_execution::Pending,
+        acting: Acting<'a>,
     ) -> BoxFuture<'a, crucible_execution::Decision> {
         Box::pin(async move {
             const DENY: crucible_execution::Decision = crucible_execution::Decision::Deny;
@@ -391,7 +447,8 @@ impl Asker for Deciding<'_> {
                     Detail::Command { sent, .. } | Detail::Network { sent } => sent.incomplete(),
                     Detail::Reads | Detail::ReadsOutside | Detail::MutatesFile => false,
                 };
-            let tool = Text::cut(tool.as_str());
+            let named = tool.as_str();
+            let tool = Text::cut(named);
             let subject = Text::cut(summary.as_str());
             let cut = match &asked {
                 Operation::Command { sent, .. } | Operation::Network { sent } => sent.truncated(),
@@ -410,7 +467,20 @@ impl Asker for Deciding<'_> {
                 subject,
                 asked,
             };
-            match ruled(self.front, &put, Shown::External(pending)).await {
+            let (sent, left_running) = match detail {
+                Detail::Command { sent, left_running } => (Some(sent.as_str()), *left_running),
+                Detail::Network { sent } => (Some(sent.as_str()), false),
+                Detail::Reads | Detail::ReadsOutside | Detail::MutatesFile => (None, false),
+            };
+            let shown = Shown::External(Leave {
+                tool: named,
+                summary: summary.as_str(),
+                effect,
+                sent,
+                left_running,
+                acting,
+            });
+            match ruled(self.front, &put, shown).await {
                 Some((Ruling::Allow, Lasting::Once)) => {
                     crucible_execution::Decision::Allow(crucible_execution::Lasting::Once)
                 }

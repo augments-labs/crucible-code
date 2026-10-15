@@ -1047,3 +1047,28 @@ fn a_sign_in_reason_is_the_agents_first_line_cut_short() {
     assert_eq!(cut.chars().count(), super::accounts::REASON_CHARS);
     assert!(cut.ends_with('…'), "{cut}");
 }
+
+#[test]
+fn an_agent_action_is_put_naming_who_runs_it_in_the_sandbox_s_own_word() {
+    // The word a front shows is the one `crucible sandbox inspect` prints for
+    // the same level, so the panel and the report never disagree about it.
+    use crucible_client_api::inspection::Claim;
+    use crucible_execution::{Capabilities, Confined, Confinement, Scope};
+
+    let words = [
+        (Confinement::HardEnforced, Claim::Enforced),
+        (Confinement::Observed, Claim::Observed),
+        (Confinement::Unsupported, Claim::Unsupported),
+    ];
+    for (level, word) in words {
+        let claims = Capabilities::unknown().confined(Confined::new(level, Scope::Instance));
+        let acting = super::Acting::new("work", &claims);
+
+        assert_eq!(acting.instance, "work");
+        assert_eq!(acting.confinement, Some(word), "{level:?}");
+    }
+
+    // Nothing said is nothing claimed, never the weakest word.
+    let acting = super::Acting::new("work", &Capabilities::unknown());
+    assert_eq!(acting.confinement, None);
+}

@@ -1291,7 +1291,7 @@ impl Turn<'_, '_> {
                     // are what a drawing thread that has stopped means, said
                     // out loud rather than by going quiet.
                     match one {
-                        Seen::Question { reply, .. } => {
+                        Seen::Question { reply, .. } | Seen::Leave { reply, .. } => {
                             let _ = reply.send(verdict(None));
                         }
                         Seen::Asked { reply, .. } => {
@@ -2020,7 +2020,7 @@ fn breaks(one: &Seen) -> bool {
     match one {
         // Both are the reader being shown something, and a count of what was
         // looked at belongs above it rather than around it.
-        Seen::Question { .. } | Seen::Asked { .. } => true,
+        Seen::Question { .. } | Seen::Leave { .. } | Seen::Asked { .. } => true,
 
         Seen::Turn(event) => match event {
             // The calls themselves, and what arrives while they are out. None
@@ -2157,6 +2157,18 @@ fn shown<T: Terminal>(
             match answer {
                 Ok(answer) => {
                     // A worker that stopped waiting has already denied itself.
+                    let _ = reply.send(answer);
+                }
+                Err(problem) => return refuse(reply, verdict(None), problem),
+            }
+        }
+        // Put as a call is, under the same rule about the clock.
+        Seen::Leave { leaving, reply } => {
+            let answer = terms.ending.unclocked().and_then(|_unclocked| {
+                answering::leave(renderer, &leaving, &mut held.answers, style)
+            });
+            match answer {
+                Ok(answer) => {
                     let _ = reply.send(answer);
                 }
                 Err(problem) => return refuse(reply, verdict(None), problem),

@@ -28,6 +28,11 @@
 //! A blank is what separates one block here from the next, so withholding one
 //! is the whole of what joins that row to the command it describes.
 //!
+//! **Who would act on a yes is the panel's own row, and it folds.** It sits
+//! under the caption, written by whoever stands the panel rather than by
+//! whatever asks, so it is folded whole like the payload and no rung gives it
+//! up.
+//!
 //! **The prose says whose words it is before it says anything else.** The
 //! paragraphs are the model's and everything drawn around them is not, and the
 //! person deciding whether to allow a command is exactly the one who has to
@@ -127,6 +132,13 @@ pub struct Question<'a> {
     pub payload: &'a [&'a str],
     /// One row under the payload saying what the call is for, or empty.
     pub description: &'a str,
+    /// The panel's own rows under that, saying who would act on a yes, or
+    /// empty.
+    ///
+    /// Folded rather than clipped, and never given up: whatever asks does not
+    /// write it, so it cannot make the panel taller than its caller chose, and
+    /// a yes given under a name cut short is a yes to somebody unnamed.
+    pub acting: &'a str,
     /// The row that opens the prose, naming whose words the rest of it is.
     ///
     /// Drawn quiet like the row that counts what is below, because both are the
@@ -263,6 +275,11 @@ impl Question<'_> {
         if !self.description.is_empty() {
             let line = clip(self.description, payload);
             rows.push(framed(said(PAYLOAD, Slot::Quiet, line), inner, glyphs));
+        }
+        if !self.acting.is_empty() {
+            for line in fold(self.acting, payload) {
+                rows.push(framed(said(PAYLOAD, Slot::Quiet, line), inner, glyphs));
+            }
         }
         let (prose, cut) = self.told(inner, payload, glyphs, spare);
         rows.extend(prose);

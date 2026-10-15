@@ -725,6 +725,42 @@ fn a_question_about_several_commands_shows_the_line_that_was_sent() {
 }
 
 #[test]
+fn an_agent_asking_where_there_is_no_room_for_a_panel_says_who_would_act() {
+    // The row a time is all a small window gets, and a question that did not
+    // say whose action it is would be answered for somebody unnamed.
+    let leaving = Leaving {
+        tool: "Bash".to_owned(),
+        summary: "Bash(ls)".to_owned(),
+        effect: crucible_client_api::pending::Effect::SpawnsProcess,
+        sent: Some("ls -la".to_owned()),
+        left_running: false,
+        instance: "work".to_owned(),
+        confinement: Some(crucible_client_api::inspection::Claim::Enforced),
+    };
+
+    assert_eq!(
+        left(&leaving, Glyphs::Ascii, WIDE),
+        [
+            "? Bash wants to run: ls -la",
+            "execution: work - confinement: enforced",
+        ]
+    );
+
+    let unsaid = Leaving {
+        sent: None,
+        confinement: None,
+        ..leaving
+    };
+    assert_eq!(
+        left(&unsaid, Glyphs::Unicode, WIDE),
+        [
+            "? Bash wants to run: Bash(ls)",
+            "execution: work · confinement: unknown",
+        ]
+    );
+}
+
+#[test]
 fn a_question_about_a_process_cannot_be_made_into_a_row_nobody_counted() {
     // The program is reported whole when the command chains or redirects,
     // so this text is the model's to choose. A row it broke itself is one

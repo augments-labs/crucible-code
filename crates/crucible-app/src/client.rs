@@ -47,7 +47,7 @@ mod turning;
 pub use accounts::{Account, account};
 pub use asking::{Answered, Asking, FLOOR, KEPT, asked, asking};
 pub use deciding::{
-    Asker, Confirmation, Deciding, Front, Shown, TRIES, confirmed, questions, warned,
+    Acting, Asker, Confirmation, Deciding, Front, Leave, Shown, TRIES, confirmed, questions, warned,
 };
 pub use performing::{Cleared, Desk, Performed, Resumed, Setting, keep, perform};
 pub use reading::{

@@ -175,6 +175,10 @@ to say yes and both are explicit; everything that is not one of them leaves the
 tool unrun. At the panel there is no anything-else: every key that answers is
 one of the three, and `esc` is how to refuse without choosing one.
 
+An [installed agent](../providers/agents.md) asking leave to act
+gets the same panel with its third answer reading `No`: the agent runs its own
+turn, so a no refuses that one action and the turn goes on.
+
 `s` is the answer for a command you will run twenty times this afternoon and
 never think about again. Durable standing policy is edited as a rule with the
 configuration file open, where its scope can be reviewed before it takes
@@ -195,6 +199,10 @@ and the turn carries on. That costs you nothing (a retry hits the same wall
 without a question), while ending the turn on a rule match would let one stray
 call throw away a piece of work. In a sentence: a rule stops a call, you stop
 a turn.
+
+An installed agent's turn is the one exception to the first: crucible does not
+run that turn, so your no is sent back to the agent as a refusal of that action
+and the agent decides what to do next.
 
 ## What "calls like this one" means
 

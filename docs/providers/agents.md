@@ -108,7 +108,10 @@ refused, since no permission mode keeps its promise without skipping the
 agent's prompts altogether, and the conversation stays in the mode it was in. A
 change of mode takes effect at the next turn, which starts the agent again and
 continues its session; the turn under way keeps the mode it began in. Every
-action its own rules leave to a prompt comes to you as a question. Allowing for
+action its own rules leave to a prompt comes to you as a question, which
+names the agent that would act and how far what it runs is held in, such as
+`execution: work · confinement: enforced`; a no refuses that action alone, and
+the agent's turn goes on without it. Allowing for
 the rest of the session keeps, for that session alone and never in its settings
 files, only the agent's rules for the command you were asked about: the command
 itself, or every command that begins with the words a rule names, such as every

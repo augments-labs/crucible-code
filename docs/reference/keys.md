@@ -176,10 +176,10 @@ A call that needs your verdict stands a panel where the box was:
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. While the explanation is open and was cut to fit, scrolls it instead. |
-| <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> | Takes that answer at once: `Yes, once`, `Yes, and don't ask again this session`, `No, and end the turn`. |
+| <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> | Takes that answer at once: `Yes, once`, `Yes, and don't ask again this session`, `No, and end the turn` (`No` on an installed agent's panel, where the turn goes on). |
 | <kbd>Enter</kbd> | Takes the marked answer. |
 | <kbd>Ctrl+E</kbd> | Opens the explanation the call sent, under the command or the path, and hides it again. Only where the footer names it. |
-| <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Refuses, the same as `No, and end the turn`. |
+| <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Refuses, the same as the third answer. |
 | Anything else | Nothing. The wheel scrolls the transcript. |
 
 The footer names the keys that apply: `esc to cancel` alone, or
