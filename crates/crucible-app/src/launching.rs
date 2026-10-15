@@ -38,7 +38,8 @@
 //!
 //! An account step on any instance the configuration names, the
 //! conversation's route or not, is taken through [`Steps`], under the same
-//! policy at that moment and the same gates. What it read is all it returns:
+//! policy at that moment and the same gates, and so is the run of a session
+//! an agent ran, picked back up on that agent from elsewhere. What it read is all it returns:
 //! a step that could not be started reads as unreadable, saying why, so a
 //! caller claims nothing the step did not establish.
 
@@ -58,7 +59,7 @@ use crucible_sandbox::{
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxNetworkPolicy,
     SandboxNetworkProvenance, SandboxPolicy, SandboxPolicyError, SandboxService,
 };
-use crucible_session::ExternalRef;
+use crucible_session::{ExternalRef, RouteBinding};
 use crucible_tools::Mode;
 use tokio::runtime::Handle;
 
@@ -165,6 +166,26 @@ impl Agent {
         &self.discovery
     }
 
+    /// Whether it, the `externalAgents` entry `instance`, can be started in
+    /// `mode`: found now, where a turn would find it only once a log had been
+    /// written that no agent ever ran.
+    ///
+    /// # Errors
+    ///
+    /// What to say where `mode` has no launch for it or its program cannot be
+    /// run.
+    pub fn startable(&self, mode: Mode, instance: &str) -> Result<(), String> {
+        let dialect = (self.row.dialect)(mode).map_err(|refused| refused.to_string())?;
+        match &self.discovery {
+            Discovery::Found(_) => Ok(()),
+            Discovery::Missing => Err(format!(
+                "no {} command on PATH and none at externalAgents.{instance}.executable",
+                dialect.program()
+            )),
+            Discovery::NotExecutable(path) => Err(format!("{} is not executable", path.display())),
+        }
+    }
+
     /// The shape every start of it in `workspace` is given.
     fn shape<'a>(&'a self, resume: Option<&'a str>, workspace: &'a Path) -> Shape<'a> {
         Shape {
@@ -173,6 +194,51 @@ impl Agent {
             workspace: Some(workspace),
         }
     }
+}
+
+/// Why a session an installed agent ran does not go on on that agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unresumable {
+    /// No entry of the configuration is the agent as the session was opened
+    /// on: the entry is gone, or names another driver or profile.
+    Rerouted,
+    /// The entry is, and cannot be started, for this reason.
+    Unstartable(String),
+}
+
+/// The agent the session opened on `opened` goes on on: the entry of
+/// `entries` that is still that agent, as `registry` knows its driver, its
+/// program looked for through `lookup`, and startable in `mode`.
+///
+/// # Errors
+///
+/// [`Unresumable`] where no entry is that agent, or the one that is cannot be
+/// started.
+pub fn reopening(
+    entries: &[ExternalAgent],
+    registry: &Registry,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    mode: Mode,
+    opened: &RouteBinding,
+) -> Result<Agent, Unresumable> {
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name() == opened.instance())
+        .filter(|entry| {
+            RouteBinding::new(entry.driver().name(), entry.name(), entry.profile())
+                .is_ok_and(|route| route.same_route(opened))
+        })
+        .ok_or(Unresumable::Rerouted)?;
+    let unstartable = |reason: &str| Unresumable::Unstartable(reason.to_owned());
+    if !entry.enabled() {
+        return Err(unstartable("it is disconnected; connect it again"));
+    }
+    let agent = Agent::configured(entry, registry, lookup)
+        .ok_or_else(|| unstartable("this release has no launch for its driver"))?;
+    agent
+        .startable(mode, entry.name())
+        .map_err(Unresumable::Unstartable)?;
+    Ok(agent)
 }
 
 /// What the program configured as `executable` is: the path as written when
@@ -631,6 +697,43 @@ impl Steps {
         discover(executable, |name| {
             (name == "PATH").then(|| self.path.clone()).flatten()
         })
+    }
+
+    /// The agent the session opened on `opened` goes on on, as [`reopening`]
+    /// finds it among `entries`, its program looked for on the `PATH` every
+    /// step is, startable in `mode`.
+    ///
+    /// # Errors
+    ///
+    /// As [`reopening`].
+    pub fn reopening(
+        &self,
+        entries: &[ExternalAgent],
+        mode: Mode,
+        opened: &RouteBinding,
+    ) -> Result<Agent, Unresumable> {
+        reopening(
+            entries,
+            self.registry,
+            |name| (name == "PATH").then(|| self.path.clone()).flatten(),
+            mode,
+            opened,
+        )
+    }
+
+    /// Runs of `agent`, the entry `instance`, each launched under the policy
+    /// and the yeses every step is.
+    #[must_use]
+    pub fn runs(&self, agent: Agent, instance: &str) -> Runs {
+        Runs {
+            service: Arc::clone(&self.service),
+            runtime: self.runtime.clone(),
+            policy: self.policy.clone(),
+            enablement: Arc::clone(&self.enablement),
+            consent: self.consent.clone(),
+            agent,
+            instance: instance.into(),
+        }
     }
 
     /// What the account step `step` of the configured `agent` read, run to

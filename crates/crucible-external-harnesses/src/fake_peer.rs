@@ -6,9 +6,9 @@
 //! [`install`] puts it in a test's directory under the name a dialect looks
 //! for, with its [`Script`] in a file named `script` beside it, and the path it
 //! returns is the executable the test configures. The peer reads that file
-//! through its own path and ignores its environment and every argument, so the
-//! arguments a dialect builds and the empty environment a launch starts from
-//! reach it unchanged.
+//! through its own path and ignores its environment, and acts on no argument,
+//! so the arguments a dialect builds and the empty environment a launch starts
+//! from reach it unchanged.
 //!
 //! A script is a sequence of [`Reply`] values, one for each start: a probe, an
 //! account step and a turn each consume the next. The peer keeps its place in a
@@ -19,8 +19,8 @@
 //! standard error, which is what a launch failure carries and a test asserts
 //! on.
 //!
-//! What it hears is kept, bounded, in a file named `heard`, so a test can say
-//! what reached it; a reply can also start a grandchild that beats into a file
+//! What it hears is kept, bounded, in a file named `heard`, and the arguments
+//! of each start in one named `argued`, so a test can say what reached it; a reply can also start a grandchild that beats into a file
 //! named `lingering` until it is stopped, so a test can see whether stopping
 //! the peer reached the process it started.
 //!
@@ -69,6 +69,9 @@ const PLAYED: &str = "played";
 
 /// The file what the peer heard is kept in.
 const HEARD: &str = "heard";
+
+/// The file the arguments of each start are kept in.
+const ARGUED: &str = "argued";
 
 /// The file a lingering grandchild beats into.
 const LINGERING: &str = "lingering";
@@ -400,6 +403,7 @@ pub(crate) fn installed(
         target.clone(),
         directory.join(PLAYED),
         directory.join(HEARD),
+        directory.join(ARGUED),
     ] {
         match fs::remove_file(&leftover) {
             Err(problem) if problem.kind() != io::ErrorKind::NotFound => return Err(problem.into()),
@@ -428,6 +432,26 @@ pub fn played(directory: &Path) -> usize {
 pub fn heard(directory: &Path) -> Vec<String> {
     fs::read_to_string(directory.join(HEARD))
         .map(|heard| heard.lines().map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+/// The arguments each start of the peer installed in `directory` was given,
+/// in order, as far as they were kept.
+#[must_use]
+pub fn argued(directory: &Path) -> Vec<Vec<String>> {
+    fs::read_to_string(directory.join(ARGUED))
+        .map(|argued| {
+            argued
+                .lines()
+                .map(|start| {
+                    start
+                        .split('\t')
+                        .filter(|argument| !argument.is_empty())
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -515,6 +539,15 @@ fn play() -> ExitCode {
     if keep(&directory, played.saturating_add(1)).is_err() {
         return refuse("fake peer: counter unwritable", UNWRITABLE);
     }
+    let arguments: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|argument| argument.to_string_lossy().replace(['\t', '\n'], " "))
+        .collect();
+    remember(
+        &directory,
+        ARGUED,
+        format!("{}\n", arguments.join("\t")).as_bytes(),
+    );
     match perform(&directory, reply) {
         Ok(status) => status,
         // Its host stopped listening; there is nobody left to play to.
@@ -542,7 +575,7 @@ fn perform(directory: &Path, reply: &Reply) -> io::Result<ExitCode> {
                     if read == 0 {
                         return Ok(ExitCode::SUCCESS);
                     }
-                    remember(directory, &line);
+                    remember(directory, HEARD, &line);
                     left = left.map(|left| left.saturating_sub(1));
                 }
             }
@@ -589,9 +622,10 @@ fn perform(directory: &Path, reply: &Reply) -> io::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Keeps `line` of what was heard, while what is kept is under its bound.
-fn remember(directory: &Path, line: &[u8]) {
-    let path = directory.join(HEARD);
+/// Keeps `line` in `directory`'s file `file`, while what it holds is under
+/// [`HEARD_BYTES`].
+fn remember(directory: &Path, file: &str, line: &[u8]) {
+    let path = directory.join(file);
     let kept = fs::metadata(&path).map_or(0, |kept| kept.len());
     if kept.saturating_add(line.len() as u64) > HEARD_BYTES {
         return;

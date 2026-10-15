@@ -24,7 +24,7 @@ use crucible_app::outside::{Installed, Relaunch};
 use crucible_app::{Conversation, Settled};
 use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, Decision as Ruled, Lasting as Lasts, Outcome,
-    Pending, PendingId, Progress, Prompt, Request, Ruling, Stop, TurnOutcome,
+    Pending, PendingId, Progress, Prompt, Request, ResumeOutcome, Ruling, Stop, TurnOutcome,
 };
 use crucible_config::Driver;
 use crucible_execution::{
@@ -38,7 +38,9 @@ use crucible_sandbox::{SandboxEnablement, SandboxPolicy, SandboxService};
 use crucible_sandbox_local::LocalSandbox;
 use crucible_session::{ExternalRef, RouteBinding, Session};
 use crucible_tools::Mode;
-use crucible_types::{CostAmount, Message, PricingCurrency, PricingUnit, StopReason, Transcript};
+use crucible_types::{
+    CostAmount, Message, PricingCurrency, PricingUnit, SessionId, StopReason, Transcript,
+};
 
 use super::{Failed, Nobody, Script, Tree, saying};
 
@@ -195,6 +197,19 @@ fn launching(tree: &Tree, script: &Peer) -> Result<(Launching, PathBuf), Failed>
     Ok((launching, peer))
 }
 
+/// What takes Claude Code's account steps, and the runs of a session it ran
+/// picked up from elsewhere, as `launching` starts them: any configured
+/// instance finds the peer installed in `peer` on the `PATH`, as a bare
+/// `claude` would be found.
+fn steps(launching: &Launching, peer: &std::path::Path) -> Steps {
+    Steps::new(
+        launching.launcher(),
+        Arc::new(SandboxEnablement::new(false, false)),
+        Box::leak(Box::new(Registry::new(std::slice::from_ref(launching.row)))),
+        Some(peer.to_path_buf().into_os_string()),
+    )
+}
+
 /// A conversation on Claude Code's route, the peer playing its script from a
 /// connect's probe and status check on, and where the peer keeps what it
 /// heard.
@@ -233,14 +248,7 @@ impl Outside {
         // The conversation holds its sends to the yeses the runs are launched
         // under, as one started by the application does.
         conversation = conversation.consenting(launching.consent.clone());
-        // An account step on any configured instance finds the installed
-        // peer on the `PATH`, as a bare `claude` would be found.
-        conversation = conversation.stepping(Steps::new(
-            launching.launcher(),
-            Arc::new(SandboxEnablement::new(false, false)),
-            Box::leak(Box::new(Registry::new(std::slice::from_ref(launching.row)))),
-            Some(peer.clone().into_os_string()),
-        ));
+        conversation = conversation.stepping(steps(&launching, &peer));
         let launched = Arc::clone(&launching.launched);
         let route = binding()?;
         let left = runtime()?.block_on(async {
@@ -648,6 +656,7 @@ fn resuming_continues_the_agent_s_own_session() -> Result<(), Failed> {
         &tree.sessions(),
         &workspace,
         &left,
+        &[],
     ))?;
     let (third, _) = turn(&mut outside, "three", false)?;
 
@@ -1011,6 +1020,7 @@ fn resuming_keeps_a_turn_whose_work_is_uncertain() -> Result<(), Failed> {
         &tree.sessions(),
         &workspace,
         &left,
+        &[],
     ))?;
 
     assert!(
@@ -2376,5 +2386,268 @@ fn a_logout_of_the_route_s_provider_says_the_agent_still_reaches_it() -> Result<
             .held("anthropic"),
         None
     );
+    Ok(())
+}
+
+/// The user file of a run whose sessions an agent ran under two entries.
+const TWO_ENTRIES: &str = r#"{
+  "externalAgents": {
+    "work": {"driver": "claude", "executable": "claude"},
+    "home": {"driver": "claude", "executable": "claude"}
+  }
+}
+"#;
+
+/// What the agent called each session [`recorded_on`] keeps.
+const EARLIER: &str = "earlier";
+
+/// A session Claude Code ran under the entry `instance`, holding `said`, and
+/// what the agent called it, [`EARLIER`].
+fn recorded_on(tree: &Tree, instance: &str, said: &str) -> Result<SessionId, Failed> {
+    let route = RouteBinding::new("claude", instance, None)?;
+    let session = Session::start_routed(&tree.sessions(), &tree.workspace()?, None, &route)?;
+    let id = session.id().cloned().ok_or("an id")?;
+    session.append(&Message::User {
+        text: said.into(),
+        attachments: Box::new([]),
+    });
+    assert!(session.external(&ExternalRef::new(instance, EARLIER)?));
+    drop(session);
+    Ok(id)
+}
+
+/// `conversation`, able to start Claude Code's runs as the application's is,
+/// from the peer playing `script` once a connect's probe and status check have
+/// been played; and where the peer keeps what it heard.
+fn stepped(
+    tree: &Tree,
+    conversation: Conversation,
+    script: &Peer,
+) -> Result<(Conversation, PathBuf), Failed> {
+    let (launching, peer) = launching(tree, script)?;
+    let conversation = conversation
+        .consenting(launching.consent.clone())
+        .stepping(steps(&launching, &peer));
+    Ok((conversation, peer))
+}
+
+/// A conversation that started on a provider's model, asking `script`.
+fn started_native(tree: &Tree, script: Script) -> Result<Conversation, Failed> {
+    super::conversing(tree, script, &super::Guard::Nothing, Some("anthropic"))
+}
+
+/// Asks `/resume id` of `conversation`, the user file holding `file`, and
+/// answers what the client was told.
+fn resuming_at(
+    tree: &Tree,
+    conversation: &mut Conversation,
+    file: &str,
+    id: SessionId,
+) -> Result<Outcome, Failed> {
+    let mut desk = super::Desk::new(tree, &[])?;
+    if let Some(directory) = desk.choosing.parent() {
+        std::fs::create_dir_all(directory)?;
+    }
+    std::fs::write(&desk.choosing, file)?;
+    desk.settings = super::written(tree)?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let at = client::Desk {
+        switching: desk.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads: |_| false,
+        environment: super::unset,
+        notes: |_| Err(crucible_client_api::ErrorCode::InvalidArgument.into()),
+    };
+    let request = Request::new(Asking::every(), Correlation::new(1), Command::Resume(id));
+    let performed = runtime()?.block_on(client::perform(conversation, &request, &at));
+    Ok(performed.response(&request).outcome)
+}
+
+/// What the user said in `settled`'s transcript, in order.
+fn users(settled: Settled<'_>) -> Vec<String> {
+    settled
+        .transcript()
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            Message::User { text, .. } => Some(text.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether the last start of the peer kept in `peer` resumed the agent's
+/// session called `reference`.
+fn resumed_as(peer: &std::path::Path, reference: &str) -> bool {
+    fake_peer::argued(peer)
+        .last()
+        .is_some_and(|start| start.windows(2).any(|pair| pair == ["--resume", reference]))
+}
+
+/// `/resume` of a session an agent ran, from a conversation on a provider's
+/// model, goes on on that agent: its history shown, and the agent asked for
+/// its own session by the name the log kept.
+#[test]
+fn a_session_an_agent_ran_resumes_on_its_route_from_a_provider_s_model() -> Result<(), Failed> {
+    let tree = Tree::new("external-resume-from-native")?;
+    let id = recorded_on(&tree, "work", "before")?;
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let (mut conversation, peer) = stepped(&tree, native, &connected([claude::clean()]))?;
+
+    let outcome = resuming_at(&tree, &mut conversation, INSTALLED, id.clone())?;
+    let (turned, _) = super::turn(&mut conversation, "after")?;
+
+    assert!(
+        matches!(outcome, Outcome::Resumed(ResumeOutcome::Picked { .. })),
+        "{outcome:?}"
+    );
+    assert!(matches!(turned, Turned::Ran(_)), "{turned:?}");
+    assert_eq!(conversation.session().id(), Some(&id));
+    assert!(resumed_as(&peer, EARLIER), "{:?}", fake_peer::argued(&peer));
+    assert_eq!(users(conversation.settled()), ["before", "after"]);
+    // Claimed once, by the conversation now recording into it.
+    let held = Session::reopen_routed(&tree.sessions(), &tree.workspace()?, &id, &binding()?);
+    assert!(held.is_err(), "the session was left unclaimed");
+    Ok(())
+}
+
+/// `/resume` of a session an agent ran under another entry moves the
+/// conversation off the route it is on and onto that one.
+#[test]
+fn a_session_an_agent_ran_resumes_on_its_route_from_another_route() -> Result<(), Failed> {
+    let tree = Tree::new("external-resume-from-route")?;
+    let id = recorded_on(&tree, "home", "before")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean(), claude::clean()]))?;
+
+    let outcome = resuming_at(&tree, &mut outside.conversation, TWO_ENTRIES, id.clone())?;
+    let (turned, _) = turn(&mut outside, "after", false)?;
+
+    assert!(
+        matches!(outcome, Outcome::Resumed(ResumeOutcome::Picked { .. })),
+        "{outcome:?}"
+    );
+    assert!(turned.is_ok(), "{turned:?}");
+    let session = outside.conversation.session();
+    assert_eq!(session.id(), Some(&id));
+    assert_eq!(session.route().map(RouteBinding::instance), Some("home"));
+    assert!(
+        resumed_as(&outside.peer, EARLIER),
+        "{:?}",
+        fake_peer::argued(&outside.peer)
+    );
+    assert_eq!(users(outside.settled()), ["before", "after"]);
+    Ok(())
+}
+
+/// `/resume` of a session a provider's model ran, on a route the run moved
+/// onto from a provider's model, goes back to the runner it started on, which
+/// is sent its earlier turns.
+#[test]
+fn a_session_a_provider_ran_resumes_on_the_kept_runner_of_a_run_that_started_native()
+-> Result<(), Failed> {
+    let tree = Tree::new("external-resume-inside")?;
+    let script = Script::new(vec![saying("first"), saying("back")]);
+    let sent = Arc::clone(&script.sent);
+    let mut native = started_native(&tree, script)?;
+    let id = native.session().id().cloned().ok_or("an id")?;
+    let (first, _) = super::turn(&mut native, "one")?;
+    assert!(matches!(first, Turned::Ran(_)), "{first:?}");
+    let routed = Arc::new(Session::start_routed(
+        &tree.sessions(),
+        &tree.workspace()?,
+        None,
+        &binding()?,
+    )?);
+    let (mut outside, left) =
+        Outside::onto(&tree, &connected([]), native, routed, Transcript::new())?;
+    drop(left);
+
+    let outcome = resuming_at(&tree, &mut outside.conversation, INSTALLED, id.clone())?;
+    let (turned, said) = super::turn(&mut outside.conversation, "two")?;
+
+    assert!(
+        matches!(outcome, Outcome::Resumed(ResumeOutcome::Picked { .. })),
+        "{outcome:?}"
+    );
+    assert!(matches!(turned, Turned::Ran(_)), "{turned:?}");
+    assert_eq!(said, "back");
+    assert_eq!(outside.conversation.session().id(), Some(&id));
+    let sent = sent.lock().map_err(|_| "the record")?.clone();
+    assert_eq!(sent.last(), Some(&vec!["one".to_owned(), "two".to_owned()]));
+    Ok(())
+}
+
+/// `/resume` of a session a provider's model ran, on a run that started on an
+/// agent's route, says it goes on at the next launch, and opens nothing.
+#[test]
+fn a_session_a_provider_ran_waits_for_the_next_launch_on_a_run_that_started_on_a_route()
+-> Result<(), Failed> {
+    let tree = Tree::new("external-resume-next-launch")?;
+    let workspace = tree.workspace()?;
+    let native = Session::start(&tree.sessions(), &workspace, None)?;
+    let id = native.id().cloned().ok_or("an id")?;
+    native.append(&Message::User {
+        text: "before".into(),
+        attachments: Box::new([]),
+    });
+    let path = native.path().to_owned();
+    drop(native);
+    let before = std::fs::read(&path)?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+    let current = outside.conversation.session().id().cloned();
+
+    let outcome = resuming_at(&tree, &mut outside.conversation, INSTALLED, id.clone())?;
+
+    assert_eq!(outcome, Outcome::Resumed(ResumeOutcome::NextLaunch));
+    assert_eq!(outside.conversation.session().id(), current.as_ref());
+    assert_eq!(std::fs::read(&path)?, before);
+    let reopened = Session::reopen(&tree.sessions(), &workspace, &id);
+    assert!(reopened.is_ok(), "{:?}", reopened.err());
+    Ok(())
+}
+
+/// `/resume` of a session an agent ran under an entry the configuration no
+/// longer has, or has disconnected, is refused saying so, and nothing is
+/// started or opened.
+#[test]
+fn a_session_whose_agent_is_gone_or_disconnected_is_refused_and_nothing_starts()
+-> Result<(), Failed> {
+    const DISCONNECTED: &str = r#"{
+  "externalAgents": {"home": {"driver": "claude", "executable": "claude", "enabled": false}}
+}
+"#;
+    let tree = Tree::new("external-resume-gone")?;
+    let id = recorded_on(&tree, "home", "before")?;
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let current = native.session().id().cloned();
+    let (mut conversation, peer) = stepped(&tree, native, &connected([]))?;
+    let started = fake_peer::played(&peer);
+
+    for (file, says) in [
+        (INSTALLED, "run by the installed agent home"),
+        (DISCONNECTED, "home cannot be started"),
+    ] {
+        let outcome = resuming_at(&tree, &mut conversation, file, id.clone())?;
+        let told = match &outcome {
+            Outcome::Resumed(ResumeOutcome::Failed(problem)) => problem.message.as_str().to_owned(),
+            other => format!("{other:?}"),
+        };
+        assert!(told.contains(says), "{told}");
+    }
+
+    assert_eq!(conversation.session().id(), current.as_ref());
+    assert_eq!(
+        fake_peer::played(&peer),
+        started,
+        "the agent's program was started"
+    );
+    let reopened = Session::reopen_routed(
+        &tree.sessions(),
+        &tree.workspace()?,
+        &id,
+        &RouteBinding::new("claude", "home", None)?,
+    );
+    assert!(reopened.is_ok(), "{:?}", reopened.err());
     Ok(())
 }

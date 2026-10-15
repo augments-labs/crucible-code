@@ -283,7 +283,12 @@ pub enum ResumeOutcome {
     },
     /// No session of this workspace answers to that identity.
     Unknown,
-    /// Its log could not be read; the session in hand is untouched.
+    /// A provider's model ran it, and the conversation is on an installed
+    /// agent's route it started on, so no provider was set up to ask: it can
+    /// be picked up on the next launch that reaches a provider directly.
+    /// Nothing was opened, and the session in hand is untouched.
+    NextLaunch,
+    /// It could not be picked up; the session in hand is untouched.
     Failed(Problem),
 }
 

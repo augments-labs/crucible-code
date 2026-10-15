@@ -121,8 +121,11 @@ connected. Where it no longer does, they refuse the session, naming the
 agent's configured name, and its history is kept as it was, with nothing cut
 from or appended to its log; start a new session to carry on. An agent whose
 program cannot be found, or that has no launch in the run's mode, is refused
-the way a new session on it is. `/resume` on a
-provider's model refuses it the same way. A log whose line naming the agent is
+the way a new session on it is. `/resume` of such a session moves the run onto
+that agent, from a provider's model or from another agent's route, under the
+same conditions, and refuses it the same way where they do not hold; the agent
+is asked for its own session, so it carries on with what it held. A log whose
+line naming the agent is
 damaged or cut short is refused as a log that cannot be read, and
 `crucible sessions list` counts it among the logs it could not read, rather
 than taking it for a session a provider's model ran.
@@ -130,8 +133,11 @@ than taking it for a session a provider's model ran.
 The other way round, a run whose provider's access names an installed agent
 does not continue a session a provider's model ran: `--continue` and
 `--resume` refuse it and say it resumes on the next launch that reaches a
-provider directly, and `/resume` refuses it, or one another agent ran, with a
-sentence saying so. Its log is left as it was.
+provider directly. `/resume` of it goes back to the provider's model a run that
+started on one moved off, with the session's earlier turns; a run that started
+on an agent's route has no provider's model set up, so `/resume` says the
+session resumes on the next launch that reaches a provider directly. Either
+refusal leaves its log as it was.
 
 A log name in the sessions directory that is a symbolic link or a pipe rather
 than a file is refused as a log that cannot be read is: `--continue` stops with
