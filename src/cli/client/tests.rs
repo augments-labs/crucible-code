@@ -48,7 +48,7 @@ pub(crate) enum Noted {
         /// What the application answered.
         outcome: Outcome,
         /// Where the conversation stood once it had.
-        standing: Snapshot,
+        standing: Box<Snapshot>,
     },
     /// A turn stopped on this, and the front end was put it.
     Put(Pending),
@@ -89,7 +89,7 @@ impl Witness for Journal {
         self.note(Noted::Answered {
             asked: request.command().clone(),
             outcome,
-            standing: snapshot(conversation),
+            standing: Box::new(snapshot(conversation)),
         });
     }
 
@@ -391,7 +391,7 @@ impl<'a> Driving<'a> {
         self.journal.note(Noted::Answered {
             asked: request.command().clone(),
             outcome: received(&request, outcome),
-            standing: standing(conversation),
+            standing: Box::new(standing(conversation)),
         });
     }
 }
@@ -421,10 +421,10 @@ fn unnamed(noted: Vec<Noted>, stood_in: &SessionId) -> Vec<Noted> {
                     other => other,
                 },
                 outcome,
-                standing: Snapshot {
+                standing: Box::new(Snapshot {
                     session: None,
-                    ..standing
-                },
+                    ..*standing
+                }),
             },
             other => other,
         })

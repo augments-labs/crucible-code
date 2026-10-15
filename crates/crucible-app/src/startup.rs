@@ -355,6 +355,7 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
     let permission = settings.permission(startup.mode);
     let serving = native.map(|one| one.name);
     let run_policy = policy(settings);
+    let source = native.and_then(|one| providers::credential_source(one, auth));
     let mut conversation = Conversation::recording(Arc::new(session), serving, |session| {
         let runner = if chosen.is_empty() {
             Runner::new(provider, offering, asking, context, session)
@@ -426,6 +427,7 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
     Ok(conversation
         .consenting(startup.services.consent().clone())
         .registry(agents)
+        .credited(source)
         .following(following))
 }
 

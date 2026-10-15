@@ -223,6 +223,7 @@ impl Conversation {
             self.runner.serve(set.provider);
             self.clearings_recorded().await;
             self.serving = Some(provider);
+            self.source = Some(set.source);
             retained
         };
 
@@ -310,6 +311,7 @@ impl Conversation {
         self.runner.serve(set.provider);
         self.clearings_recorded().await;
         self.serving = Some(named.name);
+        self.source = Some(set.source);
 
         let unwritten = remember::asking(with.choosing, named.name).err();
         if changed {
@@ -357,6 +359,7 @@ impl Conversation {
         if let Ok(remaining) = (with.serving)(named, &stored) {
             self.runner.serve(remaining.provider);
             self.clearings_recorded().await;
+            self.source = Some(remaining.source.clone());
             self.reach(named, with);
             self.hastened_as_kept(with.choosing);
             return LoggedOut::StillServed {
@@ -376,6 +379,7 @@ impl Conversation {
         self.runner.serve(Box::new(Unavailable::new(warning)));
         self.clearings_recorded().await;
         self.serving = None;
+        self.source = None;
         self.reachable = reachable;
         self.web.stop();
         LoggedOut::SignedOut { retained }

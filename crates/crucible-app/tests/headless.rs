@@ -1047,6 +1047,52 @@ fn a_credential_given_to_a_session_asking_nobody_is_who_it_asks_next() -> Result
     Ok(())
 }
 
+/// A snapshot says who is paid by the credential serving the conversation:
+/// nobody before one does, a key once a key does, a plan once an account
+/// does, and nobody again once the last is signed out.
+#[test]
+fn a_snapshot_says_who_the_credential_serving_it_bills() -> Result<(), Failed> {
+    use crucible_client_api::{Billing, Execution};
+
+    let tree = Tree::new("snapshot-billing")?;
+    let mut desk = Desk::new(&tree, &["anthropic", "google"])?;
+    let mut conversation = conversing(&tree, Script::named("none"), &Guard::Nothing, None)?;
+    let before = crucible_app::client::snapshot(&conversation);
+    assert_eq!(before.execution, Execution::Native);
+    assert_eq!(before.billing, Billing::Unknown);
+
+    runtime()?.block_on(conversation.logged_in(desk.one("anthropic")?, &desk.with()));
+    assert_eq!(
+        crucible_app::client::snapshot(&conversation).billing,
+        Billing::Key
+    );
+
+    desk.serving = Box::new(|one: Served, _: &StoredCredentials| {
+        Ok(Resolved {
+            provider: Box::new(Script::named(one.name)),
+            source: CredentialSource::Subscription,
+        })
+    });
+    runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+    assert_eq!(
+        crucible_app::client::snapshot(&conversation).billing,
+        Billing::Subscription,
+        "set up again from an account"
+    );
+
+    desk.serving = Box::new(|one: Served, _: &StoredCredentials| {
+        Err(AppError::Authentication {
+            provider: one.name.into(),
+        })
+    });
+    runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+    let after = crucible_app::client::snapshot(&conversation);
+    assert_eq!(conversation.serving(), None);
+    assert_eq!(after.billing, Billing::Unknown);
+    assert_eq!(after.execution, Execution::Native);
+    Ok(())
+}
+
 #[test]
 fn a_credential_for_another_provider_keeps_the_one_already_answering() -> Result<(), Failed> {
     let tree = Tree::new("login-second")?;

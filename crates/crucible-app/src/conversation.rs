@@ -92,6 +92,9 @@ pub struct Conversation {
     /// session log, and the registry names it for `/model`, the settings file
     /// and the credential store, which is the name every switch is decided by.
     pub(crate) serving: Option<&'static str>,
+    /// What kind of credential set up the provider [`Self::serving`] names:
+    /// set in the same step as it, and read only while it is `Some`.
+    pub(crate) source: Option<crate::providers::CredentialSource>,
     /// Whether some provider could be reached when nobody was chosen: set
     /// where the provider standing in for nobody is put in place, from the
     /// same credentials the sentence it refuses with was chosen from, read
@@ -135,6 +138,7 @@ impl Conversation {
             outside: None,
             session,
             serving,
+            source: None,
             reachable: false,
             consent: None,
             agents: &REGISTRY,
@@ -161,11 +165,19 @@ impl Conversation {
     }
 
     /// The same conversation, recording `agents` as the installed agents its
-    /// start was settled against. Only startup sets it, so what it records is
-    /// what the start was settled against.
+    /// start was settled against. Only startup sets it, and a test build's
+    /// [`proof::agents`](crate::proof), so what it records is what the start
+    /// was settled against.
     #[must_use]
     pub(crate) fn registry(self, agents: &'static Registry) -> Self {
         Self { agents, ..self }
+    }
+
+    /// The same conversation, the provider it is asking set up by a
+    /// credential of the kind `source` says, where one was.
+    #[must_use]
+    pub(crate) fn credited(self, source: Option<crate::providers::CredentialSource>) -> Self {
+        Self { source, ..self }
     }
 
     /// The installed agents this conversation's start was settled against.
@@ -337,6 +349,23 @@ impl Conversation {
     #[must_use]
     pub fn serving(&self) -> Option<&'static str> {
         self.serving.filter(|_| self.outside.is_none())
+    }
+
+    /// What kind of credential set up the provider being asked, where one is
+    /// being asked and the conversation is not on an installed agent's route.
+    #[must_use]
+    pub(crate) fn credential(&self) -> Option<&crate::providers::CredentialSource> {
+        self.serving()?;
+        self.source.as_ref()
+    }
+
+    /// The configured instance of the installed agent the conversation is on,
+    /// where it is on one.
+    #[must_use]
+    pub(crate) fn instance(&self) -> Option<&str> {
+        self.outside
+            .as_deref()
+            .map(|outside| outside.route().instance())
     }
 
     /// What a turn of this conversation would be missing, where nothing can

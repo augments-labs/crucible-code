@@ -22,8 +22,12 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 73] = [
+const KEYS: [&str; 77] = [
+    "agents",
     "ambiguous",
+    "billing",
+    "execution",
+    "instance",
     "answers",
     "summary_kind",
     "asks",
@@ -839,9 +843,18 @@ fn snapshots() -> Vec<Snapshot> {
         .map(Some)
         .into_iter()
         .chain([Some(questions()), Some(warning()), None])
-        .map(|pending| Snapshot {
+        .zip(Billing::EVERY.into_iter().cycle())
+        .zip(Agents::EVERY.into_iter().cycle())
+        .map(|((pending, billing), agents)| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
             provider: pending.as_ref().map(|_| name("anthropic")),
+            execution: if billing == Billing::External {
+                Execution::Instance(name("work"))
+            } else {
+                Execution::Native
+            },
+            billing,
+            agents,
             model: pending.as_ref().and_then(|_| Model::new(MARKER)),
             effort: pending.as_ref().map(|_| Rung::Max),
             speed: if pending.is_some() {
@@ -1856,6 +1869,9 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     let fullest = Snapshot {
         session: Some(SessionId::new()),
         provider: Some(name("anthropic")),
+        execution: Execution::Instance(Name::new(&"n".repeat(NAME_BYTES)).unwrap()),
+        billing: Billing::Subscription,
+        agents: Agents::Available,
         model: Model::new(MARKER),
         effort: Some(Rung::Max),
         speed: Pace::Standard,
@@ -2081,6 +2097,76 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
     }
 }
 
+/// Where a conversation runs, who is paid for it and whether an agent is
+/// offered each cross in every arm, in the words a client reads.
+#[test]
+fn a_snapshot_says_what_it_runs_on_who_is_paid_and_whether_agents_are_offered() {
+    let Some(base) = snapshots().pop() else {
+        panic!("no snapshot");
+    };
+    for execution in [Execution::Native, Execution::Instance(name("work"))] {
+        for billing in Billing::EVERY {
+            for agents in Agents::EVERY {
+                let snapshot = Snapshot {
+                    execution: execution.clone(),
+                    billing,
+                    agents,
+                    ..base.clone()
+                };
+                let frame = snapshot.encode().unwrap();
+                assert_eq!(Snapshot::decode(&frame).unwrap(), snapshot);
+            }
+        }
+    }
+
+    let on = Snapshot {
+        execution: Execution::Instance(name("work")),
+        billing: Billing::External,
+        agents: Agents::Available,
+        ..base.clone()
+    };
+    let written: Value = serde_json::from_slice(&on.encode().unwrap()).unwrap();
+    let at = |frame: &Value, field: &str| frame.pointer(&format!("/snapshot/{field}")).cloned();
+    assert_eq!(
+        at(&written, "execution"),
+        Some(json!({"kind": "instance", "instance": "work"}))
+    );
+    assert_eq!(at(&written, "billing"), Some(json!("external")));
+    assert_eq!(at(&written, "agents"), Some(json!("available")));
+    let native = Snapshot {
+        execution: Execution::Native,
+        ..on
+    };
+    let written: Value = serde_json::from_slice(&native.encode().unwrap()).unwrap();
+    assert_eq!(at(&written, "execution"), Some(json!({"kind": "native"})));
+
+    // Each is required, and a word it does not have is refused.
+    for (field, wrong) in [
+        ("execution", json!({"kind": "elsewhere"})),
+        ("billing", json!("free")),
+        ("agents", json!("some")),
+    ] {
+        let mut frame = written.clone();
+        *frame.pointer_mut(&format!("/snapshot/{field}")).unwrap() = wrong;
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        assert!(
+            Snapshot::decode(&bytes).is_err(),
+            "{field} misspelt was read"
+        );
+        let mut frame = written.clone();
+        frame
+            .pointer_mut("/snapshot")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove(field);
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        assert!(
+            Snapshot::decode(&bytes).is_err(),
+            "{field} left out was read"
+        );
+    }
+}
+
 #[test]
 fn a_snapshot_says_no_percentage_over_a_hundred_and_no_model_by_saying_none() {
     let standing = |snapshot: &Snapshot| -> Value {
@@ -2197,7 +2283,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 12_365_793_780_345_120_662),
+        (4, 12_677_098_495_514_578_800),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
