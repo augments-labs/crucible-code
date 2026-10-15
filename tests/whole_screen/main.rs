@@ -2733,6 +2733,38 @@ fn the_login_panel_says_what_starting_an_agent_runs_and_going_back_starts_nothin
     std::fs::remove_dir_all(&bin).expect("the program's directory removed");
 }
 
+#[test]
+fn the_logout_panel_lists_an_agent_instance_and_removes_its_settings() {
+    // A configured agent instance is something `/logout` can act on though
+    // no credential of Crucible's is stored for it: taking it offers what can
+    // be done with it, and removing it asks the application's own question
+    // before its settings leave the user's file.
+    let vendor = Vendor::answering("Not asked.");
+    let mut window = Watched::offering_agents_configured(
+        "logout-agent-remove",
+        (100, 30),
+        &vendor,
+        &[],
+        "  \"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}},\n",
+    );
+    let config = window.home().join("config.json");
+
+    window.types_until("/logout\r", "external agent instance");
+    takes(&mut window, "work");
+    window.types_until("", "Remove integration settings");
+    let chooser = window.picture();
+    assert!(chooser.contains("Disconnect from Crucible"), "{chooser}");
+    assert!(chooser.contains("Sign out of the agent"), "{chooser}");
+
+    takes(&mut window, "Remove integration settings");
+    window.types_until("", "Remove the settings for work from Crucible?");
+    takes(&mut window, "Remove integration settings");
+    window.types_until("", "Integration settings removed.");
+
+    let after = std::fs::read_to_string(&config).expect("the configuration file");
+    assert!(!after.contains("\"work\""), "{after}");
+}
+
 /// A store holding an Anthropic key and nothing else, fabricated.
 const KEY_HELD: &str =
     r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key"},"subscriptions":{}}"#;

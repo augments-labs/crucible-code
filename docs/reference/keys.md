@@ -370,8 +370,12 @@ today](../providers/providers.md#account-login-today) names the accounts.
 
 ### `/logout`
 
-A panel headed `Remove stored credential`, with the common keys and the
-footer `esc to cancel`.
+A panel headed `Remove stored credential`, or `Sign out or disconnect` where
+an installed agent is listed, with the common keys and the footer
+`esc to cancel`. Taking an agent stands a panel headed with its name, offering
+`Connect`, `Disconnect from Crucible`, `Sign out of the agent` and
+`Remove integration settings`, with the same keys; each then asks its own
+question, where <kbd>Esc</kbd> changes nothing.
 
 ### `/help`, and a command refused mid-turn
 

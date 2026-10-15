@@ -28,6 +28,14 @@ profile's hooks, MCP servers and plugins, and then asks whether the account
 the agent is signed in with will do. Escape changes nothing and goes back;
 apart from that one yes, nothing is written until the last answer.
 
+`/logout` lists each agent named under `externalAgents` after the stored
+credentials, as an external agent instance, and `/logout <name>` takes one
+directly. Taking one offers *Connect* (where a provider is being asked),
+*Disconnect from Crucible* (where it is enabled), *Sign out of the agent* and
+*Remove integration settings*; each then asks its own question, naming the
+agent, its profile and the work it has running, and Escape there changes
+nothing.
+
 Connecting the provider a conversation is asking through an agent moves that
 conversation onto the agent at once, in a new session bound to the agent with
 nothing carried over; the session it left stays listed and can be resumed.
