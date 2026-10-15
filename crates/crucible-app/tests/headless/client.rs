@@ -1567,6 +1567,7 @@ fn context_is_the_load_the_runner_counts_and_leaves_what_the_prompt_line_reads()
     );
     assert_eq!(context.left, before.left, "{context:?}");
     assert!(context.left.is_some(), "{context:?}");
+    assert_eq!(context.external, None, "{context:?}");
     assert_eq!(client::snapshot(&conversation), before);
     Ok(())
 }

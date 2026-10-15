@@ -1153,6 +1153,10 @@ struct Turn<'a, 'h> {
     /// Which provider is answering, by its name in the registry, as it stood
     /// when the turn began: the conversation that knows is on the worker.
     serving: Option<&'static str>,
+    /// What an installed agent said its last turn read, as it stood when the
+    /// turn began; `None` on a provider's model. The agent's tally keeps
+    /// that figure until the turn under way says its own.
+    external: Option<u64>,
 }
 
 impl Turn<'_, '_> {
@@ -1465,22 +1469,7 @@ impl Turn<'_, '_> {
         // once a pass. The keyboard is not the turn's here, which is why this
         // is `drain` rather than `step` — and why the hook is handed the
         // renderer rather than closing over it.
-        let counted = command::Counted {
-            usage: crucible_app::client::usage(
-                &self.says.model,
-                &self.turning.breakdown(),
-                &self.turning.totals(),
-                self.turning.limits().as_ref(),
-                self.serving,
-            ),
-            serving: self.serving,
-            mode: self.says.running_mode,
-            session: self
-                .held
-                .attachment_store
-                .as_ref()
-                .map(|(_, id)| id.clone()),
-        };
+        let counted = self.counted();
         let ran = command::live(renderer, self.terms, command, &counted, &mut |renderer| {
             self.drain(renderer);
             Ok(())
@@ -1488,6 +1477,28 @@ impl Turn<'_, '_> {
         // `/settings` may have changed which press sends.
         self.held.editor.send_with(self.terms.sending.get());
         ran
+    }
+
+    /// What the turn last reported, as the panels standing over it read it.
+    fn counted(&self) -> command::Counted {
+        let mut usage = crucible_app::client::usage(
+            &self.says.model,
+            &self.turning.breakdown(),
+            &self.turning.totals(),
+            self.turning.limits().as_ref(),
+            self.serving,
+        );
+        usage.context.external = self.external;
+        command::Counted {
+            usage,
+            serving: self.serving,
+            mode: self.says.running_mode,
+            session: self
+                .held
+                .attachment_store
+                .as_ref()
+                .map(|(_, id)| id.clone()),
+        }
     }
 
     /// Runs a command whose pick is held for the turn started next.
@@ -1573,6 +1584,7 @@ fn take<T: Terminal>(
     // turn they would change is the one running.
     let mut says = typing::under(conversation.settled()).naming(&terms.commands.snapshot());
     let serving = conversation.serving();
+    let external = conversation.settled().external();
 
     // And what ended while nothing was running goes into the aside rather than
     // into what is above, which is the one place a fact like this can be put
@@ -1663,6 +1675,7 @@ fn take<T: Terminal>(
         leaving: &mut leaving,
         terms,
         serving,
+        external,
     };
     while turn.step(renderer) {}
 

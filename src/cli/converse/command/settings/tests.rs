@@ -31,6 +31,7 @@ fn counted() -> Counted {
                 messages: 0,
                 reserve: 0,
                 free: 872_000,
+                external: None,
             },
             limits: Limits::default(),
         },

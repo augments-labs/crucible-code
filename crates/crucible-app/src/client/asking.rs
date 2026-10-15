@@ -240,13 +240,15 @@ pub fn asked(conversation: &mut Conversation, answered: Answered) -> Performed {
 /// them, asking nobody.
 pub(super) fn usage(conversation: &Conversation) -> Performed {
     let settled = conversation.settled();
-    Performed::Usage(Box::new(reading::usage(
+    let mut usage = reading::usage(
         settled.model(),
         &settled.breakdown(),
         &settled.totals(),
         settled.plan_limits().as_ref(),
         conversation.serving(),
-    )))
+    );
+    usage.context.external = settled.external();
+    Performed::Usage(Box::new(usage))
 }
 
 /// The credential `conversation` asks through, where it asks anybody.

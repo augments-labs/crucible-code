@@ -865,6 +865,17 @@ impl<'a> Settled<'a> {
         }
     }
 
+    /// The tokens an installed agent said its last turn read, which Crucible
+    /// cannot see into; `None` on a provider's model, whose request
+    /// [`Settled::breakdown`] counts.
+    #[must_use]
+    pub fn external(self) -> Option<u64> {
+        match self.0 {
+            Backed::Native(_) => None,
+            Backed::External(outside) => Some(outside.read()),
+        }
+    }
+
     /// What the session has used so far.
     #[must_use]
     pub fn totals(self) -> Totals {

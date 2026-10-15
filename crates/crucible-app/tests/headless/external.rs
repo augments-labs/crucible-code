@@ -566,6 +566,62 @@ fn a_snapshot_names_the_route_s_instance_and_its_billing() -> Result<(), Failed>
     Ok(())
 }
 
+/// What `command` is answered with on the route.
+fn answered(tree: &Tree, outside: &mut Outside, command: Command) -> Result<Outcome, Failed> {
+    let desk = super::Desk::new(tree, &[])?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let at = client::Desk {
+        switching: desk.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads: |_| false,
+        environment: super::unset,
+        notes: |_| Err(crucible_client_api::ErrorCode::InvalidArgument.into()),
+    };
+    let request = Request::new(Asking::every(), Correlation::new(1), command);
+    let performed = runtime()?.block_on(client::perform(&mut outside.conversation, &request, &at));
+    Ok(performed.response(&request).outcome)
+}
+
+/// What `/context` answers on the route.
+fn context(tree: &Tree, outside: &mut Outside) -> Result<crucible_client_api::Context, Failed> {
+    match answered(tree, outside, Command::Context)? {
+        Outcome::Context(context) => Ok(context),
+        other => Err(format!("/context was answered with {other:?}").into()),
+    }
+}
+
+/// On the route, `/context` counts nothing Crucible cannot see and carries
+/// what the agent said its last turn read: nothing before it said anything,
+/// and the last turn's alone after two. `/usage` carries the same figure.
+#[test]
+fn context_on_the_route_carries_what_the_agent_said_its_last_turn_read() -> Result<(), Failed> {
+    let tree = Tree::new("external-context")?;
+    let mut outside = Outside::new(&tree, &claude::two_priced())?;
+
+    let before = context(&tree, &mut outside)?;
+    assert_eq!(before.external, Some(0), "{before:?}");
+    let (first, _) = turn(&mut outside, "first", false)?;
+    assert!(matches!(first, Ok(Turned::Ran(_))), "{first:?}");
+    let read = outside.settled().totals().input();
+    assert!(read > 0, "the turn said it read nothing");
+    assert_eq!(context(&tree, &mut outside)?.external, Some(read));
+    let (second, _) = turn(&mut outside, "second", false)?;
+    assert!(matches!(second, Ok(Turned::Ran(_))), "{second:?}");
+
+    let after = context(&tree, &mut outside)?;
+    assert_eq!(outside.settled().totals().input(), read * 2);
+    assert_eq!(after.external, Some(read), "{after:?}");
+    let Outcome::Usage(usage) = answered(&tree, &mut outside, Command::Usage)? else {
+        return Err("/usage was not answered with a usage".into());
+    };
+    assert_eq!(usage.context, after);
+    assert_eq!(after.window, None, "{after:?}");
+    let counted = after.system + after.instructions + after.tools + after.mcp + after.messages;
+    assert_eq!(counted + after.reserve + after.free, 0, "{after:?}");
+    Ok(())
+}
+
 /// Whether an agent is offered is whether any row of the registry the
 /// conversation was built over ships.
 #[cfg(feature = "proof")]
