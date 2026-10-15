@@ -241,7 +241,15 @@ fn an_agent_whose_sign_in_cannot_be_read_says_so_in_one_reason() {
             ]),
             configured: "",
         },
-        |window| checked(window, "Check again"),
+        |window| {
+            checked(window, "Reason: The agent exited");
+            let picture = window.picture();
+            assert!(picture.contains("unavailable"), "{picture}");
+            assert!(
+                !picture.contains("[31m") && !picture.contains("]0;"),
+                "{picture}"
+            );
+        },
     );
 }
 

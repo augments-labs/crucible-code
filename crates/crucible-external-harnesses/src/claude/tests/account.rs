@@ -164,3 +164,37 @@ fn a_powershell_path_doubles_every_single_quote() {
         "'C:\\p\\o''k\u{2018}\u{2018}a\u{2019}\u{2019}b\u{201A}\u{201A}c\u{201B}\u{201B}d'"
     );
 }
+
+/// A status that could not be read says how the agent exited and the first
+/// thing it said, its standard error before its output.
+#[test]
+fn an_unread_status_says_how_the_agent_exited_and_what_it_said() {
+    let agent = Claude::default();
+    let reason = |ran: &Ran| match agent.read(Account::Status, ran) {
+        Reading::Unreadable(failure) => failure.reason().as_str().to_owned(),
+        other => panic!("read as {other:?}"),
+    };
+    let mut muttered = ran(Some(2), &["ignored"]);
+    muttered.muttered = "\n status unavailable \nretry later".to_owned();
+
+    assert_eq!(
+        reason(&muttered),
+        "The agent exited with status 2: status unavailable"
+    );
+    assert_eq!(
+        reason(&ran(Some(3), &["", "  not configured  "])),
+        "The agent exited with status 3: not configured"
+    );
+    assert_eq!(
+        reason(&ran(Some(4), &[])),
+        "The agent exited with status 4."
+    );
+    assert_eq!(
+        reason(&ran(Some(0), &["Logged in"])),
+        "The agent's sign-in status could not be read."
+    );
+    assert_eq!(
+        reason(&ran(None, &["stopped"])),
+        "The agent's sign-in status could not be read."
+    );
+}

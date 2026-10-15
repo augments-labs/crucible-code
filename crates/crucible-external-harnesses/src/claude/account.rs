@@ -54,7 +54,9 @@ pub(crate) fn read(step: Account, ran: &Ran) -> Reading {
 }
 
 /// What `auth status` reported: signed in where it printed so and exited
-/// zero, signed out where it printed so and exited one.
+/// zero, signed out where it printed so and exited one. Anything else is
+/// unread, saying how the agent exited and the first thing it said, which the
+/// run has already stripped of terminal control and withheld values.
 fn status(ran: &Ran) -> Reading {
     let printed: Option<Value> = serde_json::from_str(&ran.said.join("\n")).ok();
     let signed = printed
@@ -64,9 +66,26 @@ fn status(ran: &Ran) -> Reading {
     match (signed, ran.code) {
         (Some(true), Some(0)) => Reading::Signed(Authentication::SignedIn),
         (Some(false), Some(1)) => Reading::Signed(Authentication::SignedOut),
-        _ => Reading::Unreadable(Failure::new(
-            "The agent's sign-in status could not be read.",
-        )),
+        _ => Reading::Unreadable(Failure::new(&unread(ran))),
+    }
+}
+
+/// Why a status run that said nothing readable was not read.
+fn unread(ran: &Ran) -> String {
+    let first = |lines: &mut dyn Iterator<Item = &str>| {
+        lines
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(str::to_owned)
+    };
+    let said = first(&mut ran.muttered.lines())
+        .or_else(|| first(&mut ran.said.iter().map(String::as_str)));
+    match (ran.code, said) {
+        (Some(code), Some(said)) if code != 0 => {
+            format!("The agent exited with status {code}: {said}")
+        }
+        (Some(code), None) if code != 0 => format!("The agent exited with status {code}."),
+        _ => "The agent's sign-in status could not be read.".to_owned(),
     }
 }
 

@@ -25,8 +25,13 @@ agent can run and a provider is being asked: it connects that provider through
 an agent. It asks which agent, says where the agent's program cannot be found,
 asks once before the agent is first started, saying that starting it runs its
 profile's hooks, MCP servers and plugins, and then asks whether the account
-the agent is signed in with will do. Escape changes nothing and goes back;
-apart from that one yes, nothing is written until the last answer.
+the agent is signed in with will do. Where the agent's sign-in could not be
+read, *Could not verify sign-in* gives one reason, the agent's own where it
+said one: how it exited and the first line it printed, cut to 160 characters,
+with its control characters and the environment values it was started with
+taken out. *Check again* reads it again. Escape changes
+nothing and goes back; apart from that one yes, nothing is written until the
+last answer.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
