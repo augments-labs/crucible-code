@@ -18,6 +18,10 @@
 //! What is taken is written down, because the answer to "which model" is the
 //! same answer every time this directory is opened and asking it once a session
 //! is asking it for ever.
+//!
+//! A conversation on an installed agent's route is told so instead, at rest
+//! and mid-turn: the agent chooses its own model, so no provider's would be
+//! asked for.
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
@@ -41,7 +45,7 @@ use crucible_app::providers::{
 };
 use crucible_app::startup::served;
 
-use super::{Asked, Laid, Terms, about, relaid, say, say_at};
+use super::{Asked, Laid, Terms, about, chosen_by_agent, relaid, say, say_at};
 
 mod narrowing;
 
@@ -207,7 +211,8 @@ impl Selected {
 }
 
 /// Runs it: the model named, one taken off the panel, or what is being asked
-/// now and what else could be.
+/// now and what else could be. On an installed agent's route, which chooses
+/// its own model, it says so and does none of these.
 ///
 /// `keys` is whether there is a keyboard to walk a panel with. Down a pipe there
 /// is not, and a panel waiting for a key nobody can press is a session that
@@ -224,6 +229,10 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
+    let execution = crucible_app::client::execution(conversation);
+    if let Some(said) = chosen_by_agent(&execution, false) {
+        return say(renderer, &said);
+    }
     if !said.is_empty() {
         return named(said, renderer, conversation, terms, keys);
     }

@@ -56,7 +56,10 @@ conversation already on an agent stays on it.
 While a conversation runs on an agent, the row under the box says, where the
 provider and model would be, which agent runs its turns and who is paid for
 them, such as `execution: work · billing: external`: the agent's own account
-pays, and crucible does not know under which plan.
+pays, and crucible does not know under which plan. `/model` and `/effort` say
+that the agent chooses its own model and how hard it thinks, rather than
+offering a provider's models or rungs it would not be asked for; `/model` says
+so while a turn runs too.
 
 ## Claude Code
 

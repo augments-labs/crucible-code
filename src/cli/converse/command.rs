@@ -581,10 +581,19 @@ impl Pace {
 pub(super) fn deferred<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    current: Asked<'_>,
+    (current, execution): (Asked<'_>, &crucible_client_api::Execution),
     wanted: &Owned,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Option<Kept>, Fatal> {
+    if let Owned::Known {
+        command: Command::Model,
+        ..
+    } = wanted
+        && let Some(said) = chosen_by_agent(execution, false)
+    {
+        say(renderer, &said)?;
+        return Ok(None);
+    }
     match &wanted {
         // A loop rather than a sequence, because "go back" returns to the
         // picker, and a pick is only held once it has been confirmed.
@@ -1085,6 +1094,25 @@ fn relaid<T: Terminal>(
 /// [`HUNG`] columns too wide once it is.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
     say_at(renderer, Laid::Hung, said)
+}
+
+/// What `/model`, and `/effort` where `thinking`, say on an installed
+/// agent's route, in place of a shelf or a ladder: the agent is asked for
+/// neither, so taking any row either would hold is refused.
+/// Nothing on a provider's route.
+fn chosen_by_agent(execution: &crucible_client_api::Execution, thinking: bool) -> Option<String> {
+    let crucible_client_api::Execution::Instance(instance) = execution else {
+        return None;
+    };
+    let thinks = if thinking {
+        " and how hard it thinks"
+    } else {
+        ""
+    };
+    Some(format!(
+        "this conversation runs on the agent {}, which chooses its own model{thinks}",
+        instance.as_str()
+    ))
 }
 
 /// Says one thing back, quietly, folded to where it will stand.
