@@ -104,7 +104,7 @@ pub struct Conversation {
     /// run holds one: a turn on such a route with no yes is asked about
     /// before anything is sent.
     consent: Option<crate::content_use::Consent>,
-    /// The installed agents this conversation can be run on.
+    /// The installed agents this conversation's start was settled against.
     agents: &'static Registry,
     /// What the two web tools answer through: built for the provider and model
     /// being asked, and built again by each switch of either.
@@ -160,14 +160,15 @@ impl Conversation {
         }
     }
 
-    /// The same conversation, run on the agents `agents` lists rather than
-    /// the ones this release ships.
+    /// The same conversation, recording `agents` as the installed agents its
+    /// start was settled against. Only startup sets it, so what it records is
+    /// what the start was settled against.
     #[must_use]
-    pub fn registry(self, agents: &'static Registry) -> Self {
+    pub(crate) fn registry(self, agents: &'static Registry) -> Self {
         Self { agents, ..self }
     }
 
-    /// The installed agents this conversation can be run on.
+    /// The installed agents this conversation's start was settled against.
     #[must_use]
     pub fn agents(&self) -> &'static Registry {
         self.agents

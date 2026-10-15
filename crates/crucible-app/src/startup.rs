@@ -8,7 +8,9 @@
 //!
 //! Nothing in here reads the environment or the disk on its own account: the
 //! lookup is a parameter, which is what lets a startup be failed both ways it
-//! can fail without a key or a home directory anywhere near the test.
+//! can fail without a key or a home directory anywhere near the test. The one
+//! exception is a test build: under `proof`, [`assemble`] reads which agents
+//! it can start from the variable `crate::proof` names.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -221,8 +223,8 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
 }
 
 /// [`assemble`], with `agents` the installed agents the run can be started
-/// on: the ones its start is settled against, and the ones the conversation
-/// it returns holds, so the two cannot differ.
+/// on: the ones its start is settled against, which the conversation it
+/// returns records.
 fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Conversation, AppError> {
     let Startup {
         settings,
@@ -474,8 +476,8 @@ impl OnAgent {
 /// # Errors
 ///
 /// [`AppError::Unstartable`] where the agent is not among `agents`, is
-/// disconnected, has no launch in the run's mode, has no program that can be run, or names itself in a way a
-/// session cannot be bound to;
+/// disconnected, has no launch in the run's mode, has no program that can be
+/// run, or names itself in a way a session cannot be bound to;
 /// [`AppError::Unrouted`] where the session asked for was run on a provider's
 /// model; [`AppError::NoSession`] where none answers to the id; and
 /// [`AppError::Config`] where the run's confinement cannot be built.

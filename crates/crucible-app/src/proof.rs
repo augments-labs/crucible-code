@@ -5,8 +5,8 @@
 //! chooses the agents the binary it runs can start with one variable read here
 //! and nowhere else: `fake` lists every agent this build knows how to run as
 //! though this release shipped it, `empty` lists none, and with the variable
-//! unset the binary starts what ships. A test that builds its conversation
-//! itself hands it [`registry`] over whatever rows it needs.
+//! unset the binary starts what ships. A test that calls something taking a
+//! registry hands it [`registry`] over whatever rows it needs.
 
 use std::ffi::OsStr;
 

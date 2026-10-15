@@ -22,6 +22,14 @@ fn fake_lists_every_agent_this_build_can_run_as_shipping() {
 }
 
 #[test]
+fn fake_lists_every_agent_the_shipped_registry_knows() {
+    let fake: Vec<Driver> = FAKE_ROWS.iter().map(|row| row.driver).collect();
+    let known: Vec<Driver> = REGISTRY.all().map(|row| row.driver).collect();
+
+    assert_eq!(fake, known);
+}
+
+#[test]
 fn empty_lists_no_agent() {
     let chosen = registry_from(Some(OsStr::new("empty"))).expect("the empty registry");
 
