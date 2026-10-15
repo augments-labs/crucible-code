@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+80x40 cursor 37,4 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────╮ |
+|│                                                                             │ |
+|│ CRUCIBLE                                                                    │ |
+|│ /…/workspace                                                                │ |
+|│                                                                             │ |
+|│ Recent sessions                                                             │ |
+|│                                                                             │ |
+|│ No earlier session for this workspace                                       │ |
+|│                                                                             │ |
+|│ ─────────────────────────────────────────────────────────────────────────── │ |
+|│                                                                             │ |
+|│ Tips                                                                        │ |
+|│                                                                             │ |
+|│ · /          opens the command list                                         │ |
+|│ · \ enter    adds a line without sending                                    │ |
+|│ · shift+tab  steps the permission mode                                      │ |
+|│ · ctrl+c     clears the line typed so far                                   │ |
+|╰─────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                |
+|› /login                                                                        |
+|⎿ Connected. This conversation now runs on the agent, in a new session; the     |
+|  earlier one can be resumed.                                                   |
+|  execution: claude · billing: external                                         |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                                                |

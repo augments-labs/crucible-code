@@ -595,6 +595,10 @@ crucible-runtime = { workspace = true, features = ["proof"] }
 # the agents the binary can start from an environment variable. Dev-only for
 # the same reason as the two above.
 crucible-app = { workspace = true, features = ["proof"] }
+# The scripted stand-in for an installed agent, which the whole-screen captures
+# put on the program's `PATH` under an agent's name. Dev-only for the same
+# reason as the application above.
+crucible-external-harnesses = { workspace = true, features = ["proof"] }
 # The confinement the command line runs commands under, keeping its sandbox
 # state in a directory of this checkout's while the integration tests run it, so
 # another checkout's tests never lock, recover or change it. Named here as well

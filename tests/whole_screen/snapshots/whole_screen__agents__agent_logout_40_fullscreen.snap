@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 39,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /logout                               |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|work                                    |
+|                                        |
+|Choose what to do with this agent.      |
+|                                        |
+|› Connect                               |
+|  Reach the provider being asked throug…|
+|                                        |
+|  Disconnect from Crucible              |
+|  Crucible sends it no new work; its si…|
+|                                        |
+|  Sign out of the agent                 |
+|  Runs its own sign-out; every instance…|
+|                                        |
+|  Remove integration settings           |
+|  Crucible forgets its settings; its si…|
+|                                        |
+|esc to cancel                           |

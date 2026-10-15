@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+80x40 cursor 39,0 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────╮ |
+|│                                                                             │ |
+|│ CRUCIBLE                                                                    │ |
+|│ /…/workspace                                                                │ |
+|│                                                                             │ |
+|│ Recent sessions                                                             │ |
+|│                                                                             │ |
+|│ No earlier session for this workspace                                       │ |
+|│                                                                             │ |
+|│ ─────────────────────────────────────────────────────────────────────────── │ |
+|│                                                                             │ |
+|│ Tips                                                                        │ |
+|│                                                                             │ |
+|│ · /          opens the command list                                         │ |
+|│ · \ enter    adds a line without sending                                    │ |
+|│ · shift+tab  steps the permission mode                                      │ |
+|│ · ctrl+c     clears the line typed so far                                   │ |
+|╰─────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                |
+|› /login                                                                        |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Log in                                                                          |
+|                                                                                |
+|Not installed: no antigravity command on PATH and none at the configured        |
+|executable.                                                                     |
+|                                                                                |
+|Install Antigravity, then choose Check again.                                   |
+|Agent: antigravity, run as antigravity.                                         |
+|                                                                                |
+|› Check again                                                                   |
+|  Look for the agent's program again.                                           |
+|                                                                                |
+|  Go back                                                                       |
+|  Choose another agent.                                                         |
+|                                                                                |
+|esc to go back                                                                  |

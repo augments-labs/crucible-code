@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 39,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /login                                |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Which Claude Code should be used?       |
+|                                        |
+|Claude Code is configured 2 times.      |
+|                                        |
+|› home                                  |
+|  Run as claude; Profile: the agent's d…|
+|                                        |
+|  work                                  |
+|  Run as claude; Profile: the agent's d…|
+|                                        |
+|  Go back                               |
+|  Choose another agent.                 |
+|                                        |
+|esc to go back                          |

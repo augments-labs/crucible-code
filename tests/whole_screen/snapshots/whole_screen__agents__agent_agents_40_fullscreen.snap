@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 39,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /login                                |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Which agent should anthropic be reached |
+|through?                                |
+|                                        |
+|Crucible looks for the agent's program; |
+|nothing is started or written yet.      |
+|                                        |
+|› Claude Code                           |
+|  Reach anthropic through Claude Code.  |
+|                                        |
+|  Antigravity                           |
+|  Reach anthropic through Antigravity.  |
+|                                        |
+|  Cancel                                |
+|  Change nothing.                       |
+|                                        |
+|esc to go back                          |

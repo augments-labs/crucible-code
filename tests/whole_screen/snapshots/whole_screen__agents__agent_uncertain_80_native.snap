@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+80x40 cursor 33,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› /login                                                                        |
+|⎿ Connected. This conversation now runs on the agent, in a new session; the     |
+|  earlier one can be resumed.                                                   |
+|  execution: claude · billing: external                                         |
+|                                                                                |
+|› Change the file.                                                              |
+|                                                                                |
+|claude: the agent stopped before it finished the turn; it ended with exit       |
+|status: 9 What the agent was doing may or may not have happened.                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |

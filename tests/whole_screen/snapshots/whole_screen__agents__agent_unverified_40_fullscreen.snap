@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 39,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /login                                |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Could not verify sign-in                |
+|                                        |
+|Agent: claude, run as claude.           |
+|Profile: the agent's default.           |
+|Status: the agent did not say whether it|
+|is signed in.                           |
+|                                        |
+|› Check again                           |
+|  Read the agent's sign-in again.       |
+|                                        |
+|  Cancel                                |
+|  Change nothing.                       |
+|                                        |
+|esc to go back                          |

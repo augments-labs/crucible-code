@@ -38,6 +38,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
+use crucible_external_harnesses::fake_peer::{self, Script};
 use rustix::fs::{Mode, OFlags};
 use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
@@ -198,6 +199,12 @@ fn working(scratch: &Path) -> PathBuf {
         .join("workspace")
 }
 
+/// The directory an agent capture installs its agents' programs in, and the
+/// whole of the `PATH` it gives crucible.
+pub(crate) fn agents(case: &str) -> PathBuf {
+    working(&scratch(case)).join("agents")
+}
+
 /// What a case starts crucible with beyond what every case is given.
 #[derive(Debug, Default)]
 pub(crate) struct Launch<'a> {
@@ -353,6 +360,55 @@ impl Watched {
             },
             Some(&Launch {
                 env: &offered,
+                ..Launch::default()
+            }),
+        )
+    }
+
+    /// The same, as an installed agent's screens are captured: on the full
+    /// screen or, where `native`, the terminal's own, with every agent this
+    /// build can run offered, and the fake peer installed as `claude` playing
+    /// `script` (nothing at all where there is none) in the case's
+    /// `agents` directory, inside its workspace. That directory is the whole
+    /// of crucible's `PATH`, so no other agent's program can be reached
+    /// whatever this machine has installed. `configured`, members of the
+    /// configuration object each ending in a comma, is written first.
+    pub(crate) fn capturing_agents(
+        case: &str,
+        (columns, rows): (u16, u16),
+        native: bool,
+        vendor: &Vendor,
+        (script, configured): (Option<&Script>, &str),
+    ) -> Self {
+        let installed = agents(case);
+        fs::create_dir_all(&installed).expect("an agents directory");
+        if let Some(script) = script {
+            fake_peer::install(&installed, "claude", script).expect("the fake peer installs");
+        }
+        let path = installed.to_str().expect("a scratch path in UTF-8");
+        let screen = if native {
+            "  \"output\": {\"screen\": \"native\"},\n"
+        } else {
+            ""
+        };
+        let document = document(Some(vendor), None);
+        let rest = document
+            .strip_prefix("{\n")
+            .expect("a whole-screen configuration object");
+        Self::configured_with_terminal(
+            case,
+            &fixture_document(&format!("{{\n{screen}{configured}{rest}")),
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native,
+                profile: Profile::default(),
+                cooked: false,
+            },
+            Some(&Launch {
+                env: &[("CRUCIBLE_CODE_PROOF_REGISTRY", "fake"), ("PATH", path)],
                 ..Launch::default()
             }),
         )
@@ -1626,7 +1682,8 @@ fn pair(columns: u16, rows: u16, cooked: bool) -> (File, File) {
 /// `HOME` is inside the scratch directory as well: `CRUCIBLE_CODE_HOME` is what
 /// crucible reads, but a run that fell back for any reason must not fall back
 /// into the developer's own files. `PATH` is the one thing carried over, since
-/// it is how `setsid` is found.
+/// it is how `setsid` is found, and `setsid` is found here, in this
+/// process, so a case may give crucible a `PATH` of its own.
 ///
 /// `keyed` sets the variable a key is read from. It is not a key — the address
 /// beside it is a socket on this machine, and what answers there wants nothing
@@ -1644,7 +1701,7 @@ fn start(
     let second = inside.try_clone().expect("a second handle on the far side");
     let third = inside.try_clone().expect("a third handle on the far side");
 
-    Command::new("setsid")
+    Command::new(setsid())
         .arg("--ctty")
         .arg(env!("CARGO_BIN_EXE_crucible"))
         // Answering fixtures opt into their model exactly as a person does on
@@ -1671,6 +1728,17 @@ fn start(
         .stderr(Stdio::from(third))
         .spawn()
         .expect("setsid --ctty starts crucible; util-linux provides it")
+}
+
+/// Where `setsid` is on this process's `PATH`, so a case that hands crucible
+/// another `PATH` still starts it; the bare name where it is on none.
+fn setsid() -> PathBuf {
+    std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .map(|directory| directory.join("setsid"))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| PathBuf::from("setsid"))
 }
 
 /// Reads the terminal until it goes away, which is what killing crucible does.
