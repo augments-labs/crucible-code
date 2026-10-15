@@ -1181,6 +1181,52 @@ fn a_session_with_nothing_chosen_says_whether_a_provider_or_a_credential_is_miss
     }
 }
 
+/// A run's snapshot says who its credential bills from the start, as
+/// startup resolved it: a key here, and nobody where no provider is asked.
+#[test]
+fn a_run_s_snapshot_says_who_the_credential_it_started_with_bills() {
+    for (provider, billing) in [
+        (
+            Some(serving("anthropic")),
+            crucible_client_api::Billing::Key,
+        ),
+        (None, crucible_client_api::Billing::Unknown),
+    ] {
+        let sample = Sample::new("started-billing");
+        let (logs, workspace) = (sample.logs(), sample.workspace());
+        let from = |name: &str| (name == "ANTHROPIC_API_KEY").then(|| "a-key".to_owned());
+
+        let conversation = assemble(&Startup {
+            providers: &catalogue(),
+            provider,
+            unasked: NOTHING_TO_ASK,
+            model: None,
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &from,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        })
+        .expect("the run starts");
+
+        let standing = crate::client::snapshot(&conversation);
+        assert_eq!(standing.billing, billing);
+        assert_eq!(standing.execution, crucible_client_api::Execution::Native);
+    }
+}
+
 /// The specification one startup resolves to, for a model of `anthropic`.
 ///
 /// The startup is what `coding` reads its answer off, so the tests about the

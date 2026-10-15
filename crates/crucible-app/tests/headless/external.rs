@@ -522,6 +522,41 @@ fn a_turn_streams_and_is_counted_as_a_native_one_is() -> Result<(), Failed> {
     Ok(())
 }
 
+/// On the route, a snapshot names the instance its turns run on and says the
+/// agent's own account is what pays; whether any agent is offered is read
+/// from the registry the conversation was built over.
+#[test]
+fn a_snapshot_names_the_route_s_instance_and_its_billing() -> Result<(), Failed> {
+    use crucible_client_api::{Billing, Execution, Name};
+
+    let tree = Tree::new("external-standing")?;
+    let outside = Outside::new(&tree, &connected([]))?;
+
+    let standing = client::snapshot(&outside.conversation);
+    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
+    assert_eq!(standing.billing, Billing::External);
+    assert_eq!(standing.provider, None);
+    Ok(())
+}
+
+/// Whether an agent is offered is whether any row of the registry the
+/// conversation was built over ships.
+#[cfg(feature = "proof")]
+#[test]
+fn a_snapshot_offers_agents_only_where_its_registry_ships_one() -> Result<(), Failed> {
+    use crucible_app::proof;
+    use crucible_client_api::Agents;
+
+    let tree = Tree::new("external-agents")?;
+    let conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    let conversation = proof::agents(conversation, proof::registry(&proof::FAKE_ROWS));
+    assert_eq!(client::snapshot(&conversation).agents, Agents::Available);
+
+    let conversation = proof::agents(conversation, proof::registry(&[]));
+    assert_eq!(client::snapshot(&conversation).agents, Agents::None);
+    Ok(())
+}
+
 /// `/clear` starts a new session, the next turn launches a new run that
 /// starts the agent's own session afresh, and the name the agent gives it is
 /// kept in the new session's log; the session left behind reopens on its

@@ -96,7 +96,7 @@ pub use outcome::{
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
 pub use progress::{Progress, SummaryKind};
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
-pub use snapshot::{Model, Percent, Snapshot};
+pub use snapshot::{Agents, Billing, Execution, Model, Percent, Snapshot};
 pub use usage::{Cost, Limit, LimitGroup, Limits, Reading, Usage, Used, Window};
 
 #[cfg(test)]

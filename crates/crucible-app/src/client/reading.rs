@@ -20,6 +20,7 @@ use crucible_types::{
     CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
 };
 
+use crate::providers::CredentialSource;
 use crate::switching::Retained;
 use crate::{Conversation, providers};
 
@@ -40,6 +41,27 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
     Snapshot {
         session: conversation.session().id().cloned(),
         provider: conversation.serving().and_then(|name| Name::new(name).ok()),
+        execution: match conversation.instance() {
+            // Bound alike, so an instance a route was bound to is always one;
+            // `an_instance_a_route_binds_is_a_name_a_client_reads` holds them.
+            Some(instance) => {
+                Name::new(instance).map_or(api::Execution::Native, api::Execution::Instance)
+            }
+            None => api::Execution::Native,
+        },
+        billing: match (conversation.instance(), conversation.credential()) {
+            (Some(_), _) => api::Billing::External,
+            (None, Some(CredentialSource::Subscription)) => api::Billing::Subscription,
+            (None, Some(CredentialSource::StoredKey | CredentialSource::Environment(_))) => {
+                api::Billing::Key
+            }
+            (None, None) => api::Billing::Unknown,
+        },
+        agents: if conversation.agents().shipping().next().is_some() {
+            api::Agents::Available
+        } else {
+            api::Agents::None
+        },
         model: Model::new(settled.model()),
         effort: settled.effort().map(rung),
         speed: pace(settled.speed()),

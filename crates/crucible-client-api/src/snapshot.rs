@@ -3,8 +3,9 @@
 //! A [`Snapshot`] is read off the conversation itself, never assembled from
 //! the [`Progress`](crate::Progress) that went by, so a client that missed
 //! every report and one that saw them all read the same snapshot. It says
-//! where the conversation stands — which session, who is being asked, under
-//! what mode, how much has been said, what it is waiting on — and holds none
+//! where the conversation stands — which session, who is being asked and what
+//! it runs on, who is paid, under what mode, how much has been said, what it
+//! is waiting on — and holds none
 //! of what was said: the transcript is the runner's one growing value and a
 //! snapshot is not a second copy of it.
 //!
@@ -84,6 +85,116 @@ impl Model {
     }
 }
 
+/// What a conversation's turns run on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Execution {
+    /// This program's own runner, asking a provider.
+    Native,
+    /// An installed agent, by the name its configured instance goes by.
+    Instance(Name),
+}
+
+impl Execution {
+    fn written(&self) -> Value {
+        match self {
+            Self::Native => Writing::kind("native"),
+            Self::Instance(instance) => {
+                Writing::kind("instance").with("instance", instance.as_str())
+            }
+        }
+        .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let execution = match fields.kind()?.as_str() {
+            "native" => Self::Native,
+            "instance" => Self::Instance(fields.name("instance")?),
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(execution)
+    }
+}
+
+/// Who is paid for what a turn uses, as far as this program can tell.
+///
+/// Read for every route, so a client with no terminal can say it wherever it
+/// likes; the terminal draws it on an installed agent's route alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Billing {
+    /// A plan signed in to with an account.
+    Subscription,
+    /// An API key, stored or taken from the environment.
+    Key,
+    /// An installed agent, under whatever its own account pays.
+    External,
+    /// Nothing says: no provider is being asked.
+    Unknown,
+}
+
+impl Billing {
+    /// Every one, in no order a reader may rely on.
+    pub const EVERY: [Self; 4] = [Self::Subscription, Self::Key, Self::External, Self::Unknown];
+
+    /// The word this travels as.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Subscription => "subscription",
+            Self::Key => "key",
+            Self::External => "external",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl FromStr for Billing {
+    type Err = Refusal;
+
+    fn from_str(word: &str) -> Result<Self, Refusal> {
+        Self::EVERY
+            .into_iter()
+            .find(|billing| billing.as_str() == word)
+            .ok_or_else(|| ErrorCode::InvalidArgument.into())
+    }
+}
+
+/// Whether this build offers any installed agent to connect to, so a client
+/// knows before it draws the first `/login` choice whether to offer one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Agents {
+    /// None is offered.
+    None,
+    /// At least one is.
+    Available,
+}
+
+impl Agents {
+    /// Every one, in no order a reader may rely on.
+    pub const EVERY: [Self; 2] = [Self::None, Self::Available];
+
+    /// The word this travels as.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Available => "available",
+        }
+    }
+}
+
+impl FromStr for Agents {
+    type Err = Refusal;
+
+    fn from_str(word: &str) -> Result<Self, Refusal> {
+        Self::EVERY
+            .into_iter()
+            .find(|agents| agents.as_str() == word)
+            .ok_or_else(|| ErrorCode::InvalidArgument.into())
+    }
+}
+
 /// Where a conversation stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -91,6 +202,12 @@ pub struct Snapshot {
     pub session: Option<SessionId>,
     /// The provider being asked, by its registry name, where anybody is.
     pub provider: Option<Name>,
+    /// What its turns run on.
+    pub execution: Execution,
+    /// Who is paid for what they use.
+    pub billing: Billing,
+    /// Whether any installed agent is offered.
+    pub agents: Agents,
     /// The model in force, where one is.
     pub model: Option<Model>,
     /// The effort in force, where one was asked for.
@@ -120,6 +237,9 @@ impl Snapshot {
         let standing = Writing::new()
             .maybe("session", self.session.as_ref().map(SessionId::as_str))
             .maybe("provider", self.provider.as_ref().map(Name::as_str))
+            .with("execution", self.execution.written())
+            .with("billing", self.billing.as_str())
+            .with("agents", self.agents.as_str())
             .maybe(
                 "model",
                 self.model.as_ref().map(|model| written(model.text())),
@@ -177,6 +297,9 @@ impl Snapshot {
                 .maybe("provider")
                 .map(|value| Name::new(value.as_str().unwrap_or_default()))
                 .transpose()?,
+            execution: Execution::read(fields.take("execution")?)?,
+            billing: fields.string("billing")?.parse()?,
+            agents: fields.string("agents")?.parse()?,
             model: fields
                 .maybe("model")
                 .map(text)

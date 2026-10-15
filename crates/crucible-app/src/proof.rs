@@ -10,8 +10,8 @@
 
 use std::ffi::OsStr;
 
-use crate::AppError;
 use crate::backends::{self, REGISTRY, Registry, Row};
+use crate::{AppError, Conversation};
 
 /// The variable a test sets to choose the agents a test build can start.
 const VARIABLE: &str = "CRUCIBLE_CODE_PROOF_REGISTRY";
@@ -39,6 +39,13 @@ static EMPTY: Registry = Registry::new(&[]);
 #[must_use]
 pub fn registry(rows: &'static [Row]) -> &'static Registry {
     Box::leak(Box::new(Registry::new(rows)))
+}
+
+/// `conversation`, its installed agents those `agents` lists, as a run whose
+/// start was settled against them holds.
+#[must_use]
+pub fn agents(conversation: Conversation, agents: &'static Registry) -> Conversation {
+    conversation.registry(agents)
 }
 
 /// The registry `value` names, and the one that ships where there is none.
