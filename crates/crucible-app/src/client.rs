@@ -50,5 +50,7 @@ pub use deciding::{
     Asker, Confirmation, Deciding, Front, Shown, TRIES, confirmed, questions, warned,
 };
 pub use performing::{Cleared, Desk, Performed, Resumed, Setting, keep, perform};
-pub use reading::{context, execution, mode_out as mode, pace, progress, rung, snapshot, usage};
+pub use reading::{
+    billing, context, execution, mode_out as mode, pace, progress, rung, snapshot, usage,
+};
 pub use turning::{Ended, interrupt, turn};

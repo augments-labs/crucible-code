@@ -513,7 +513,7 @@ pub(crate) fn ask<T: Terminal>(
     // inside one.
     planning.moved();
 
-    let mut says = saying(conversation.settled()).naming(commands);
+    let mut says = routed(conversation).naming(commands);
     says.running = left.count();
 
     // A local, because where the mark was in it is not worth keeping: a list of
@@ -739,7 +739,7 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Cycle => {
                 terms.perform(conversation, Command::CycleMode);
 
-                says = saying(conversation.settled()).naming(commands);
+                says = routed(conversation).naming(commands);
                 true
             }
 
@@ -876,9 +876,22 @@ pub(super) struct Says {
     /// The commands a line may open with, by name, so the box can draw the one
     /// it opens with in the accent. Told once a prompt, by [`Says::naming`].
     pub(super) named: Vec<&'static str>,
+    /// Who runs the turns and who is paid for them, drawn where the provider
+    /// and model are, on an installed agent's route alone, which has neither:
+    /// `None` on this program's own runner, whose row is drawn as it always
+    /// was. In the contract's words, as [`Says::routing`] reads them.
+    pub(super) route: Option<[String; 2]>,
 }
 
 impl Says {
+    /// The same rows, saying on an installed agent's route who runs
+    /// `conversation`'s turns and who is paid for them, as any front end reads
+    /// them.
+    pub(super) fn routing(mut self, conversation: &Conversation) -> Self {
+        self.route = route(conversation);
+        self
+    }
+
     /// The same rows with one more thing said under them.
     ///
     /// A copy, because what it is made from belongs to the session and what is
@@ -1991,7 +2004,29 @@ pub(super) fn saying(settled: Settled<'_>) -> Says {
         // while nothing else on this row does.
         running: 0,
         named: Vec::new(),
+        route: None,
     }
+}
+
+/// Who runs `conversation`'s turns and who is paid for them, in the client
+/// contract's words, as the status row and a route switch's line both say it:
+/// nothing where no agent runs them.
+pub(super) fn route(conversation: &Conversation) -> Option<[String; 2]> {
+    let crucible_client_api::Execution::Instance(instance) =
+        crucible_app::client::execution(conversation)
+    else {
+        return None;
+    };
+    let billing = crucible_app::client::billing(conversation);
+    Some([
+        format!("execution: {}", instance.as_str()),
+        format!("billing: {}", billing.as_str()),
+    ])
+}
+
+/// The row for `conversation`: [`saying`]'s, [`Says::routing`] it.
+pub(super) fn routed(conversation: &Conversation) -> Says {
+    saying(conversation.settled()).routing(conversation)
 }
 
 /// The columns a command list keeps in front of its names for the mark: the

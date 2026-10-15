@@ -233,10 +233,20 @@ pub(super) fn writing<'a>(
         mode: says.mode.as_ref(),
         tone: says.tone,
         hint: &says.keys,
-        model: says.model.as_str(),
-        provider: says.provider,
-        effort: says.effort,
-        speed: says.pace.served.then_some("fast"),
+        model: says
+            .route
+            .as_ref()
+            .map_or(says.model.as_str(), |[_, billing]| billing),
+        provider: says
+            .route
+            .as_ref()
+            .map_or(says.provider, |[execution, _]| execution),
+        effort: says.effort.filter(|_| says.route.is_none()),
+        speed: says
+            .pace
+            .served
+            .then_some("fast")
+            .filter(|_| says.route.is_none()),
         asking: says.asking.as_deref(),
         commands: CommandCount::new(says.running, running_pointed),
         room,

@@ -86,7 +86,7 @@ use crucible_app::providers::{
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
-use crucible_client_api::{Agents, Command, Execution, LogoutOutcome, Name, Outcome};
+use crucible_client_api::{Agents, Command, LogoutOutcome, Name, Outcome};
 use crucible_tui::{
     Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
     characters, clip, fold, pressed,
@@ -95,9 +95,9 @@ use crucible_tui::{
 use crate::cli::Fatal;
 use crate::cli::client::{Question, Reply, astray};
 use crate::cli::converse::picking::{self, Picked};
-use crate::cli::converse::region;
 use crate::cli::converse::secret::{self, Asked};
 use crate::cli::converse::warning::{self, Answer, Put};
+use crate::cli::converse::{region, typing};
 use crate::cli::draw::flattened;
 use crate::cli::style::Style;
 
@@ -546,16 +546,10 @@ pub(super) fn executing<T: Terminal>(
     conversation: &Conversation,
     style: Style,
 ) -> Result<(), Fatal> {
-    let now = snapshot(conversation);
-    if let Execution::Instance(instance) = &now.execution {
+    if let Some([execution, billing]) = typing::route(conversation) {
         say(
             renderer,
-            &format!(
-                "execution: {} {} billing: {}",
-                instance.as_str(),
-                style.glyphs().dot(),
-                now.billing.as_str()
-            ),
+            &format!("{execution} {} {billing}", style.glyphs().dot()),
         )?;
     }
     Ok(())

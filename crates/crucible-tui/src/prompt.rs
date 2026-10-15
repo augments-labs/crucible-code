@@ -279,13 +279,15 @@ pub struct Prompt<'a> {
     /// What is said quietly after it — the keys that change the mode. Nothing
     /// is drawn in its place when there is none.
     pub hint: &'a str,
-    /// Which model the next turn goes to. On a framed prompt it stands against
-    /// the end of the status row away from the mode; on a bare prompt it fits
-    /// before the remaining-window reading. Empty where there is none to say,
-    /// and then nothing is drawn there.
+    /// Which model the next turn goes to, or whatever else the front end says
+    /// in its place, such as who pays for a turn an installed agent runs. On a
+    /// framed prompt it stands against the end of the status row away from the
+    /// mode; on a bare prompt it fits before the remaining-window reading.
+    /// Empty where there is none to say, and then nothing is drawn there.
     pub model: &'a str,
-    /// The vendor that model is asked of, drawn before it. Empty where nothing
-    /// has chosen one, and then nothing is drawn in its place.
+    /// The vendor that model is asked of, or what runs the turn in its place,
+    /// drawn before it. Empty where nothing has chosen one, and then nothing is
+    /// drawn in its place.
     pub provider: &'a str,
     /// How hard that model is being asked to think, after it. `None` where no
     /// rung is in force — the vendor's own default is not this program's to

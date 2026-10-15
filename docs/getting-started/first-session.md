@@ -340,8 +340,10 @@ The row under the box has two ends. At the left is the next key: the permission
 mode in force, the key that steps it, and how many commands are still running
 behind the box. At the right is what the session is talking to: the provider,
 the model, the rung it is being asked on where one has been chosen, and `fast`
-after an answer its vendor served fast. It sits beside the box because every
-key that changes it is typed into that box.
+after an answer its vendor served fast; on an installed agent's route it says
+instead which agent runs the turns and who is paid for them, as
+[Installed coding agents](../providers/agents.md) describes. It sits beside the
+box because every key that changes it is typed into that box.
 
 The three are joined by a dot, `anthropic · claude-sonnet-5 · high`, and read
 the same on the `/model` panel and in its answer. What you type keeps its own

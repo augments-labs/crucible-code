@@ -1585,7 +1585,9 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let mut says = typing::under(conversation.settled()).naming(&terms.commands.snapshot());
+    let mut says = typing::under(conversation.settled())
+        .routing(&conversation)
+        .naming(&terms.commands.snapshot());
     let serving = conversation.serving();
     let external = conversation.settled().external();
     let execution = crucible_app::client::execution(&conversation);
