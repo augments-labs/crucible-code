@@ -42,14 +42,7 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
         session: conversation.session().id().cloned(),
         provider: conversation.serving().and_then(|name| Name::new(name).ok()),
         execution: execution(conversation),
-        billing: match (conversation.instance(), conversation.credential()) {
-            (Some(_), _) => api::Billing::External,
-            (None, Some(CredentialSource::Subscription)) => api::Billing::Subscription,
-            (None, Some(CredentialSource::StoredKey | CredentialSource::Environment(_))) => {
-                api::Billing::Key
-            }
-            (None, None) => api::Billing::Unknown,
-        },
+        billing: billing(conversation),
         agents: if conversation.agents().shipping().next().is_some() {
             api::Agents::Available
         } else {
@@ -74,9 +67,9 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
 
 /// Who runs `conversation`'s turns: this program, or an installed agent.
 ///
-/// The one field of [`snapshot`] the terminal reads, for what `/usage` heads
-/// its figures with; it is read alone so that a turn starting builds nothing
-/// else.
+/// The field of [`snapshot`] the terminal reads, with [`billing`], for what
+/// `/usage` heads its figures with and what the status row says on an agent's
+/// route; it is read alone so that a turn starting builds nothing else.
 #[must_use]
 pub fn execution(conversation: &Conversation) -> api::Execution {
     match conversation.instance() {
@@ -86,6 +79,23 @@ pub fn execution(conversation: &Conversation) -> api::Execution {
             Name::new(instance).map_or(api::Execution::Native, api::Execution::Instance)
         }
         None => api::Execution::Native,
+    }
+}
+
+/// Who is paid for what `conversation`'s turns use, as far as this program
+/// can tell.
+///
+/// The field of [`snapshot`] the terminal's status row reads beside
+/// [`execution`] on an installed agent's route.
+#[must_use]
+pub fn billing(conversation: &Conversation) -> api::Billing {
+    match (conversation.instance(), conversation.credential()) {
+        (Some(_), _) => api::Billing::External,
+        (None, Some(CredentialSource::Subscription)) => api::Billing::Subscription,
+        (None, Some(CredentialSource::StoredKey | CredentialSource::Environment(_))) => {
+            api::Billing::Key
+        }
+        (None, None) => api::Billing::Unknown,
     }
 }
 

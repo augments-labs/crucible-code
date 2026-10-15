@@ -320,6 +320,54 @@ fn a_run_lost_mid_effect_says_its_work_is_uncertain() {
     );
 }
 
+/// Fails where the status row, once the conversation moves onto an agent, does
+/// not say who runs its turns and who is paid for them in place of the provider
+/// and model, between turns and under a running one.
+#[test]
+fn the_status_row_says_who_runs_the_turns_on_an_agent_route() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-status-route-{mode}");
+        let script = Script::of(signed_in([claude::held_open()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        let status = |window: &Watched| {
+            window
+                .picture()
+                .lines()
+                .rev()
+                .find(|row| row.contains("mode on"))
+                .unwrap_or_default()
+                .to_owned()
+        };
+        window.types_until("", "mode on");
+        let before = status(&window);
+        assert!(before.contains("anthropic · "), "{case}: {before}");
+        assert!(!before.contains("execution:"), "{case}: {before}");
+
+        connected(&mut window);
+        let after = status(&window);
+
+        assert!(
+            after.contains("execution: claude · billing: external"),
+            "{case}: {after}"
+        );
+        assert!(!after.contains("anthropic"), "{case}: {after}");
+
+        window.types_and_catches_where("Keep working.\r", "a turn under way", |picture| {
+            picture.contains("Working.") && picture.contains("esc to interrupt")
+        });
+        let running = status(&window);
+        window.types_until("\x1b", "! stopped");
+
+        assert!(
+            running.contains("execution: claude · billing: external"),
+            "{case}: {running}"
+        );
+    }
+}
+
 /// Fails where a move onto the agent's route does not name the route and say
 /// the conversation starts fresh there, or where a key stored while on it does
 /// not say this conversation stays on its agent: for the provider the agent

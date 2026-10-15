@@ -53,6 +53,11 @@ Where the agent cannot be started in the conversation's mode, the conversation
 stays on the provider's model and the next session starts on the agent. A
 conversation already on an agent stays on it.
 
+While a conversation runs on an agent, the row under the box says, where the
+provider and model would be, which agent runs its turns and who is paid for
+them, such as `execution: work · billing: external`: the agent's own account
+pays, and crucible does not know under which plan.
+
 ## Claude Code
 
 crucible speaks to Claude Code over its own stream protocol: the program is
