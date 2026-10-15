@@ -45,6 +45,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crucible_config::ExternalAgent;
 use crucible_context::Room;
 use crucible_execution::Failure;
 use crucible_models::{
@@ -64,6 +65,7 @@ use crucible_workspace::Workspace;
 
 use crate::backends::{REGISTRY, Registry};
 use crate::client::Asker;
+use crate::launching::Unresumable;
 use crate::outside::{self, Installed, Outside};
 
 /// What a conversation runs on.
@@ -595,31 +597,86 @@ impl Conversation {
         Ok(self.pick_up(session, Transcript::new()).await)
     }
 
-    /// Picks the session `id` names back up, with everything it already holds.
+    /// Picks the session `id` names back up, with everything it already holds,
+    /// on whatever it was run on.
+    ///
+    /// A session an installed agent ran goes on on that agent, from this
+    /// program's own models, another route or its own alike, while `entries`
+    /// still name the agent as the session was opened on: the agent's next
+    /// turn resumes the agent's own session by the name the log recorded. A
+    /// session a provider's model ran, picked up on an agent's route, goes on
+    /// on the kept runner where the run started on a provider; where it
+    /// started on the route, no provider was set up to ask.
     ///
     /// # Errors
     ///
-    /// [`SessionError`] where no session of this workspace answers to `id`, or
-    /// where its log could not be read; the session in hand is then untouched.
-    ///
-    /// On an installed agent's route only a session of the same route is
-    /// picked up, and the agent's next turn resumes the agent's own session
-    /// by the name the log recorded.
+    /// [`Unpicked`] where no session of this workspace answers to `id`, its
+    /// log could not be read, or it cannot go on on what it was run on; the
+    /// session in hand is then untouched.
     pub async fn resume(
         &mut self,
         sessions: &Path,
         workspace: &Workspace,
         id: &SessionId,
-    ) -> Result<Arc<Session>, SessionError> {
-        if let Some(outside) = self.outside.as_deref_mut() {
-            let (session, transcript) =
-                Session::reopen_routed(sessions, workspace, id, outside.route())?;
-            let named = session.external_ref().cloned();
-            outside.restart(transcript, named).await;
-            return Ok(std::mem::replace(&mut self.session, Arc::new(session)));
+        entries: &[ExternalAgent],
+    ) -> Result<Arc<Session>, Unpicked> {
+        let (_, opened) = crucible_session::pick_routed(sessions, workspace, Some(id))?;
+        let on = self.outside.as_deref().map(Outside::route);
+        let same = on
+            .zip(opened.as_ref())
+            .is_some_and(|(on, opened)| on.same_route(opened));
+        match (opened, on.is_some()) {
+            (Some(opened), true) if same => {
+                let (session, transcript) =
+                    Session::reopen_routed(sessions, workspace, id, &opened)?;
+                let named = session.external_ref().cloned();
+                if let Some(outside) = self.outside.as_deref_mut() {
+                    outside.restart(transcript, named).await;
+                }
+                Ok(std::mem::replace(&mut self.session, Arc::new(session)))
+            }
+            (Some(opened), _) => {
+                let instance: Box<str> = opened.instance().into();
+                let unstartable = |reason: &str| Unpicked::Unstartable {
+                    instance: instance.clone(),
+                    reason: reason.into(),
+                };
+                let Some(steps) = self.steps.as_ref() else {
+                    return Err(unstartable(
+                        "the sandbox policy its runs are confined by could not be built",
+                    ));
+                };
+                let (agent, route) = steps
+                    .reopening(entries, self.settled().mode(), &opened)
+                    .map_err(|refused| match refused {
+                        Unresumable::Rerouted => Unpicked::Session(SessionError::Rerouted {
+                            id: id.as_str().into(),
+                            route: Box::new(opened.clone()),
+                        }),
+                        Unresumable::Unstartable(reason) => unstartable(&reason),
+                    })?;
+                let relaunch = Box::new(steps.runs(agent, &instance));
+                let (session, transcript) =
+                    Session::reopen_routed(sessions, workspace, id, &opened)?;
+                let installed = Installed {
+                    backend: None,
+                    relaunch,
+                    route,
+                };
+                self.external(Arc::new(session), transcript, installed)
+                    .await
+                    .map_err(|refused| unstartable(refused.reason().as_str()))
+            }
+            (None, false) => {
+                let (session, transcript) = Session::reopen(sessions, workspace, id)?;
+                Ok(self.pick_up(Arc::new(session), transcript).await)
+            }
+            (None, true) if self.serving.is_some() => {
+                let (session, transcript) = Session::reopen(sessions, workspace, id)?;
+                Ok(self.inside(Arc::new(session), transcript).await)
+            }
+            (None, true) => Err(Unpicked::NextLaunch),
         }
-        let (session, transcript) = Session::reopen(sessions, workspace, id)?;
-        Ok(self.pick_up(Arc::new(session), transcript).await)
     }
 
     /// Records into `session` from here on, and returns the one left.
@@ -641,6 +698,32 @@ impl Conversation {
             runner.record_clearings().await;
         }
     }
+}
+
+/// Why a session was not picked back up; the session in hand is untouched.
+#[derive(Debug, thiserror::Error)]
+pub enum Unpicked {
+    /// No session of this workspace answers to the name, its log could not be
+    /// read, or the installed agent that ran it is no longer configured as it
+    /// was.
+    #[error(transparent)]
+    Session(#[from] SessionError),
+    /// A provider's model ran it, and the run started on an installed agent's
+    /// route, so no provider was set up to ask.
+    #[error(
+        "this session was run on a provider's model, and this run has none set up; \
+         resume it on the next launch that reaches a provider directly"
+    )]
+    NextLaunch,
+    /// The installed agent that ran it is configured as it was, and cannot be
+    /// started.
+    #[error("the agent {instance} cannot be started: {reason}")]
+    Unstartable {
+        /// The `externalAgents` entry it is.
+        instance: Box<str>,
+        /// Why.
+        reason: Box<str>,
+    },
 }
 
 /// A conversation's state between turns, to be read and never changed.

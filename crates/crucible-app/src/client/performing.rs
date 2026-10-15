@@ -18,11 +18,11 @@ use crucible_types::{PromptCacheResourceError, PromptCacheResourceRecord, Sessio
 use crucible_workspace::Workspace;
 
 use super::{asking, reading};
-use crate::Conversation;
 use crate::providers::{CredentialSource, Served, offered};
 use crate::remember::{self, RememberError};
 use crate::speed::Hastened;
 use crate::switching::{LoggedIn, LoggedOut, Rung, Switched, Switching};
+use crate::{Conversation, Unpicked};
 
 /// What the host lends a command: the registry generation and files a switch
 /// is decided from, where sessions are kept, the workspace they belong to,
@@ -87,8 +87,14 @@ pub enum Resumed {
     },
     /// No session of this workspace answers to the name.
     Unknown,
-    /// Its log could not be read; the session in hand is untouched.
-    Failed(SessionError),
+    /// A provider's model ran it, and the run is on an installed agent's route
+    /// it started on, so no provider was set up to ask: it goes on at the
+    /// next launch that reaches one directly.
+    NextLaunch,
+    /// Its log could not be read, or the agent that ran it is no longer
+    /// configured as it was or cannot be started; the session in hand is
+    /// untouched.
+    Failed(Unpicked),
 }
 
 /// What came of `/settings` changing one row.
@@ -382,11 +388,16 @@ async fn resume(conversation: &mut Conversation, desk: &Desk<'_>, id: &SessionId
         return Resumed::Same;
     }
 
-    match conversation.resume(desk.sessions, desk.workspace, id).await {
+    let entries = desk.switching.settings.external_agents();
+    match conversation
+        .resume(desk.sessions, desk.workspace, id, &entries)
+        .await
+    {
         Ok(left) => Resumed::Picked {
             unclosed: closed(&left),
         },
-        Err(SessionError::Unknown { .. }) => Resumed::Unknown,
+        Err(Unpicked::Session(SessionError::Unknown { .. })) => Resumed::Unknown,
+        Err(Unpicked::NextLaunch) => Resumed::NextLaunch,
         Err(problem) => Resumed::Failed(problem),
     }
 }
@@ -425,6 +436,7 @@ impl Performed {
                     unclosed: unclosed.as_ref().map(|said| Problem::failed(said)),
                 },
                 Resumed::Unknown => ResumeOutcome::Unknown,
+                Resumed::NextLaunch => ResumeOutcome::NextLaunch,
                 Resumed::Failed(problem) => ResumeOutcome::Failed(Problem::failed(problem)),
             }),
             Self::Model(switched) => Outcome::Model(model(switched)),

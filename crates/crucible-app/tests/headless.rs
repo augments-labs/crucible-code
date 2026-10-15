@@ -598,7 +598,7 @@ fn resuming_picks_a_session_back_up_with_what_it_held() -> Result<(), Failed> {
 
     let id = id.expect("a started session has an id");
     let left =
-        runtime()?.block_on(conversation.resume(&tree.sessions(), &tree.workspace()?, &id))?;
+        runtime()?.block_on(conversation.resume(&tree.sessions(), &tree.workspace()?, &id, &[]))?;
 
     assert_eq!(
         left.path(),
@@ -626,6 +626,7 @@ fn a_session_nobody_recorded_is_refused_and_the_one_in_hand_is_kept() -> Result<
         &tree.sessions(),
         &tree.workspace()?,
         &SessionId::new(),
+        &[],
     ));
 
     assert!(refused.is_err(), "{refused:?}");

@@ -25,7 +25,6 @@ use crucible_builtins::{
 use crucible_config::{Home, Settings};
 use crucible_context::{ContextInputs, SystemPrompt};
 use crucible_credentials::{ApiKey, Credential, Header, HeaderKey};
-use crucible_external_harnesses::Discovery;
 use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
@@ -46,7 +45,7 @@ use crate::access::{self, AccessError, KeySource, Route, Settled};
 use crate::backends::Registry;
 use crate::content_use::{self, Consent, Serving};
 use crate::following::Following;
-use crate::launching::{self, Launcher, Runs, Steps};
+use crate::launching::{self, Launcher, Runs, Steps, Unresumable};
 use crate::outside::Installed;
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
@@ -592,38 +591,21 @@ fn reopened_on(
     id: &SessionId,
     opened: &RouteBinding,
 ) -> Result<OnAgent, AppError> {
-    let gone = || {
-        AppError::Session(crucible_session::SessionError::Rerouted {
+    let instance = opened.instance();
+    let (agent, route) = launching::reopening(
+        &startup.settings.external_agents(),
+        agents,
+        |name| (startup.from)(name).map(OsString::from),
+        startup.mode,
+        opened,
+    )
+    .map_err(|refused| match refused {
+        Unresumable::Rerouted => AppError::Session(crucible_session::SessionError::Rerouted {
             id: id.as_str().into(),
             route: Box::new(opened.clone()),
-        })
-    };
-    let entry = startup
-        .settings
-        .external_agents()
-        .into_iter()
-        .find(|entry| entry.name() == opened.instance())
-        .ok_or_else(gone)?;
-    let route = RouteBinding::new(entry.driver().name(), entry.name(), entry.profile())
-        .ok()
-        .filter(|route| route.same_route(opened))
-        .ok_or_else(gone)?;
-    let instance = entry.name();
-    if !entry.enabled() {
-        return Err(unstartable(
-            instance,
-            "it is disconnected; connect it again".to_owned(),
-        ));
-    }
-    let Some(agent) = launching::Agent::configured(&entry, agents, |name| {
-        (startup.from)(name).map(OsString::from)
-    }) else {
-        return Err(unstartable(
-            instance,
-            "this release has no launch for its driver".to_owned(),
-        ));
-    };
-    startable(startup, &agent, instance)?;
+        }),
+        Unresumable::Unstartable(reason) => unstartable(instance, reason),
+    })?;
     Ok(OnAgent {
         agent,
         instance: instance.into(),
@@ -643,24 +625,9 @@ fn startable(
     agent: &launching::Agent,
     instance: &str,
 ) -> Result<(), AppError> {
-    let dialect = (agent.row().dialect)(startup.mode)
-        .map_err(|refused| unstartable(instance, refused.to_string()))?;
-    // Found now, where a turn would find it only once a log had been written
-    // that no agent ever ran.
-    match agent.discovery() {
-        Discovery::Found(_) => Ok(()),
-        Discovery::Missing => Err(unstartable(
-            instance,
-            format!(
-                "no {} command on PATH and none at externalAgents.{instance}.executable",
-                dialect.program()
-            ),
-        )),
-        Discovery::NotExecutable(path) => Err(unstartable(
-            instance,
-            format!("{} is not executable", path.display()),
-        )),
-    }
+    agent
+        .startable(startup.mode, instance)
+        .map_err(|reason| unstartable(instance, reason))
 }
 
 /// The agent `instance` cannot be started on this run, for `reason`.

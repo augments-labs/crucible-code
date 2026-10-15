@@ -198,6 +198,13 @@ fn picking<T: Terminal>(
             return offered(renderer, conversation, held, terms);
         }
 
+        // Nothing was opened: the session goes on where a provider is asked
+        // directly, which this run, started on an agent's route, has none of.
+        Performed::Resumed(Resumed::NextLaunch) => {
+            renderer.commit(&format!("! {}", crucible_app::Unpicked::NextLaunch))?;
+            return Ok(None);
+        }
+
         // A path is in every one of these, so it is committed rather than
         // presented. Nothing else changes: the session in hand is still
         // being recorded, and the loop carries on with it.

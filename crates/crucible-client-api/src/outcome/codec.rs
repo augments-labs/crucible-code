@@ -142,6 +142,7 @@ impl ResumeOutcome {
                 noting(Writing::kind("picked"), "unclosed", unclosed.as_ref())
             }
             Self::Unknown => Writing::kind("unknown"),
+            Self::NextLaunch => Writing::kind("next_launch"),
             Self::Failed(problem) => failed("failed", problem),
         }
         .finish()
@@ -155,6 +156,7 @@ impl ResumeOutcome {
                 unclosed: maybe_problem(&mut fields, "unclosed")?,
             },
             "unknown" => Self::Unknown,
+            "next_launch" => Self::NextLaunch,
             "failed" => Self::Failed(problem(&mut fields)?),
             _ => return Err(ErrorCode::Malformed.into()),
         };
