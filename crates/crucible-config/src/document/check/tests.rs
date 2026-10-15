@@ -551,6 +551,8 @@ fn an_agent_model_is_a_name_and_never_an_option() {
         "opus sonnet",
         "",
         "op\nus",
+        "opüs",
+        &"o".repeat(129),
     ] {
         let err = mine(&format!(
             r#"{{"externalAgents": {{"mine": {{"driver": "claude", "executable": "claude", "model": {}}}}}}}"#,
@@ -572,6 +574,7 @@ fn an_agent_model_is_a_name_and_never_an_option() {
         "claude-opus-5-5",
         "claude-opus-5-5[1m]",
         "us.anthropic/claude:v1@x",
+        &"o".repeat(128),
     ] {
         assert!(
             mine(&format!(

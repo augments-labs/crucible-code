@@ -1597,8 +1597,7 @@ fn take<T: Terminal>(
     let serving = conversation.serving();
     let external = conversation.settled().external();
     let execution = crucible_app::client::execution(&conversation);
-    let model = crucible_app::client::model(&conversation)
-        .filter(|_| matches!(execution, crucible_client_api::Execution::Instance(_)));
+    let model = crucible_app::client::model(&conversation);
 
     // And what ended while nothing was running goes into the aside rather than
     // into what is above, which is the one place a fact like this can be put

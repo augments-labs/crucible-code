@@ -256,3 +256,27 @@ fn antigravity_answers_yes_by_itself_to_what_each_mode_allows() {
     assert_eq!(antigravity_allowing(Mode::AllowEdits), Allowing::Edits);
     assert_eq!(antigravity_allowing(Mode::FullAccess), Allowing::Everything);
 }
+
+/// The configuration takes a model for exactly the drivers whose launch names
+/// it, so a model written for an agent is never one its launch drops, and no
+/// launch names one the configuration would refuse.
+#[test]
+fn a_model_is_taken_for_exactly_the_drivers_that_launch_with_it() {
+    for driver in Driver::ALL {
+        let row = REGISTRY.row(driver).expect("every driver has a row");
+        let mut dialect = (row.dialect)(Mode::Ask).expect("asking");
+        let arguments = dialect
+            .request(Shape {
+                model: Some("agreed-model"),
+                ..Shape::default()
+            })
+            .arguments;
+        assert_eq!(
+            arguments
+                .iter()
+                .any(|argument| argument.contains("agreed-model")),
+            driver.takes_model(),
+            "{driver:?}: {arguments:?}"
+        );
+    }
+}

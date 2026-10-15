@@ -661,3 +661,18 @@ fn an_agent_is_started_with_the_model_its_route_names() {
         assert_eq!(agent.shape(None, Path::new("/work")).model, given);
     }
 }
+
+/// An agent taken from its configuration entry, as a reopened session's is,
+/// is started with the model the entry names.
+#[test]
+fn an_agent_from_its_entry_is_started_with_the_model_it_names() {
+    let sample = Sample::new("launching-entry-model");
+    let settings = sample.user(
+        r#"{"externalAgents": {"work": {"driver": "claude", "executable": "/bin/claude", "model": "opus"}}}"#,
+    );
+    let entry = settings.external_agents().pop().expect("the entry");
+    let agent = Agent::configured(&entry, &Registry::new(&SHIPPED), |_| None).expect("its row");
+
+    assert_eq!(agent.model(), Some("opus"));
+    assert_eq!(agent.shape(None, Path::new("/work")).model, Some("opus"));
+}
