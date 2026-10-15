@@ -1470,23 +1470,25 @@ while IFS= read -r line; do
 done <<<"$probes"
 
 section "a request read from bytes is decided about first"
-# Five commands change what the session may do or whom it acts as: a permission
-# mode, the sandbox, and an account signed in or out. The application performs
+# Six commands change what the session may do or whom it acts as: a permission
+# mode, the sandbox, an account signed in or out, and an installed agent
+# disconnected. The application performs
 # them for whoever hands them in, which is safe while every request is built on
 # the host by the front end standing there. `Request::decode` is where one could
 # come from somewhere else, and nothing that ships calls it. A file that starts
-# to is written down here with what it does about each of the five, so that
+# to is written down here with what it does about each of the six, so that
 # reading requests from outside is a decision taken command by command and not
 # a line added. A row is `file command what-is-done-about-it`.
 request_owner=crates/crucible-client-api/src
 authority='cycle_mode
+disconnect
 login
 logout
 sandbox
 set_mode'
 decided=''
 kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep -oE '"[a-z_]+"' | tr -d '"' | sort)
-# The five were picked out of the eighteen commands there were. Asking for the
+# The first five were picked out of the eighteen commands there were. Asking for the
 # release notes, the nineteenth, changes nothing a session may do, and neither
 # does asking for a speed, the twentieth: it changes what a request costs, not
 # what the session may reach or whom it acts as. Asking how the window is spent,
@@ -1497,9 +1499,11 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # the sandbox or an account: the menu's own test refuses a row over a key that
 # loosens what crucible does unasked. Asking a plan for its limits, the
 # twenty-fourth, reads figures the vendor keeps about the credential already in
-# use and changes nothing either. One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 24)); then
-    printf '    FAIL the client contract no longer has the 24 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 24 in this check\n'
+# use and changes nothing either. Disconnecting an installed agent, the
+# twenty-fifth, takes an account out of the session's reach, so it joined the
+# five. One more is one nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 25)); then
+    printf '    FAIL the client contract no longer has the 25 commands the six were picked out of; decide whether the new one changes what a session may do, then move the 25 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -1547,13 +1551,15 @@ done <<<"$decided"
 # Reading bytes is one way a request arrives from somewhere else. The other is
 # an adapter that reads a format of its own and builds the command: the variants
 # are public, and no `decode` is named on that road. So the files that name one
-# of the five are written down too. They are the terminal, which builds them
+# of the six are written down too. They are the terminal, which builds them
 # from keys pressed on the host, and the application, which performs them, or,
-# at the door that asks a plan for its limits, refuses them unperformed. A
+# at the door that asks a plan for its limits and the door for an installed
+# agent's account, refuses those it does not own unperformed. A
 # file that joins them is one more place a session's mode, sandbox or account
 # can be changed from, and it is added here by somebody who looked at where its
 # commands come from.
-naming='crates/crucible-app/src/client/asking.rs
+naming='crates/crucible-app/src/client/accounts.rs
+crates/crucible-app/src/client/asking.rs
 crates/crucible-app/src/client/performing.rs
 crates/crucible-app/src/client/turning.rs
 src/cli/converse.rs
@@ -1583,13 +1589,13 @@ named=$(grep -rlE --include='*.rs' "(^|[^A-Za-z0-9_])Command::($variants)([^A-Za
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     if ! grep -Fxq "$file" <<<"$naming"; then
-        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the five if that is outside the host, then add the file here\n' "$file"
+        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the six if that is outside the host, then add the file here\n' "$file"
         failed=1
     fi
 done <<<"$named"
 while IFS= read -r file; do
     if ! grep -Fxq "$file" <<<"$named"; then
-        printf '    FAIL %s was not found naming one of the five; take it out, or the search measured nothing\n' "$file"
+        printf '    FAIL %s was not found naming one of the six; take it out, or the search measured nothing\n' "$file"
         failed=1
     fi
 done <<<"$naming"

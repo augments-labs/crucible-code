@@ -1067,3 +1067,203 @@ fn the_agent_s_tool_use_is_activity_and_a_stop_under_it_is_uncertain() -> Result
     );
     Ok(())
 }
+
+/// A client that answers an account question by the choice named, or goes
+/// back where none is.
+struct Choosing {
+    choice: Option<&'static str>,
+    put: Vec<Pending>,
+}
+
+impl Front for Choosing {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Ruled>> {
+        Box::pin(async move {
+            self.put.push(pending.clone());
+            Some(match self.choice {
+                Some(name) => Ruled::Picked {
+                    id: pending.id(),
+                    choice: crucible_client_api::Said::new(name).ok()?,
+                },
+                None => Ruled::Declined { id: pending.id() },
+            })
+        })
+    }
+
+    fn refused(&mut self, _refusal: crucible_client_api::Refusal) {}
+}
+
+/// The user file a disconnect is written to, naming the route's instance.
+const INSTALLED: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}},
+  "updates": {"check": "auto"}
+}
+"#;
+
+/// Asks to disconnect the route's instance, claiming `asking`, of a client
+/// that answers as `choosing` does, and answers what it was told and what
+/// the user file then held.
+fn disconnecting(
+    tree: &Tree,
+    outside: &mut Outside,
+    asking: Asking,
+    choosing: &mut Choosing,
+) -> Result<(Outcome, String), Failed> {
+    disconnecting_from(tree, outside, (INSTALLED, "work"), asking, choosing)
+}
+
+/// The same, the user file holding `installed.0` and the instance asked about
+/// named `installed.1`.
+fn disconnecting_from(
+    tree: &Tree,
+    outside: &mut Outside,
+    installed: (&str, &str),
+    asking: Asking,
+    choosing: &mut Choosing,
+) -> Result<(Outcome, String), Failed> {
+    use crucible_client_api::Name;
+
+    let mut desk = super::Desk::new(tree, &[])?;
+    if let Some(directory) = desk.choosing.parent() {
+        std::fs::create_dir_all(directory)?;
+    }
+    std::fs::write(&desk.choosing, installed.0)?;
+    desk.settings = super::written(tree)?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let at = client::Desk {
+        switching: desk.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads: |_| false,
+        environment: super::unset,
+        notes: |_| Err(crucible_client_api::ErrorCode::InvalidArgument.into()),
+    };
+    let request = Request::new(
+        asking,
+        Correlation::new(1),
+        Command::Disconnect {
+            instance: Name::new(installed.1)?,
+        },
+    );
+    let performed = runtime()?.block_on(client::account(
+        &mut outside.conversation,
+        &request,
+        &at,
+        choosing,
+    ));
+    let outcome = performed.response(&request).outcome;
+    Ok((outcome, std::fs::read_to_string(&desk.choosing)?))
+}
+
+/// A disconnect, once chosen, writes `enabled: false` into the instance and
+/// changes nothing else in the file, and the conversation's next turn on it
+/// is refused without launching the agent again.
+#[test]
+fn a_disconnect_writes_only_that_the_instance_is_off_and_no_turn_launches_it() -> Result<(), Failed>
+{
+    use crucible_client_api::LogoutOutcome;
+
+    let tree = Tree::new("external-disconnect")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let mut choosing = Choosing {
+        choice: Some(client::accounts::DISCONNECT),
+        put: Vec::new(),
+    };
+
+    let (outcome, file) = disconnecting(&tree, &mut outside, Asking::every(), &mut choosing)?;
+
+    assert!(
+        matches!(outcome, Outcome::Logout(LogoutOutcome::Disconnected { .. })),
+        "{outcome:?}"
+    );
+    assert_eq!(choosing.put.len(), 1, "{:?}", choosing.put);
+    assert_eq!(
+        file,
+        INSTALLED.replace(
+            r#""executable": "claude"}"#,
+            r#""executable": "claude", "enabled": false}"#
+        )
+    );
+    let launched = outside.launched().len();
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_err(), "a disconnected agent took a turn");
+    assert_eq!(
+        outside.launched().len(),
+        launched,
+        "the agent was launched again"
+    );
+    Ok(())
+}
+
+/// Cancelling, going back, and a client that never said it answers account
+/// questions each leave the file as it was and the agent connected.
+#[test]
+fn a_disconnect_not_chosen_changes_nothing() -> Result<(), Failed> {
+    use crucible_client_api::{Capability as Claimed, LogoutOutcome};
+
+    let lacking = Asking::none().with(Claimed::Permissions);
+    for (case, asking, choice) in [
+        ("cancel", Asking::every(), Some("Cancel")),
+        ("back", Asking::every(), None),
+        ("unclaimed", lacking, Some(client::accounts::DISCONNECT)),
+    ] {
+        let tree = Tree::new(&format!("external-kept-{case}"))?;
+        let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+        let mut choosing = Choosing {
+            choice,
+            put: Vec::new(),
+        };
+
+        let (outcome, file) = disconnecting(&tree, &mut outside, asking, &mut choosing)?;
+
+        assert_eq!(outcome, Outcome::Logout(LogoutOutcome::Undecided), "{case}");
+        assert_eq!(file, INSTALLED, "{case}");
+        assert_eq!(choosing.put.is_empty(), case == "unclaimed", "{case}");
+        let (turned, _events) = turn(&mut outside, "again", false)?;
+        assert!(turned.is_ok(), "{case}: {turned:?}");
+    }
+    Ok(())
+}
+
+/// An instance the file does not name, or names as already disabled, is
+/// refused before anything is asked, and the file is left as it was.
+#[test]
+fn a_disconnect_of_an_instance_not_in_use_is_refused_unasked() -> Result<(), Failed> {
+    use crucible_client_api::ErrorCode;
+
+    let disabled = INSTALLED.replace(
+        r#""executable": "claude"}"#,
+        r#""executable": "claude", "enabled": false}"#,
+    );
+    for (case, file, instance) in [
+        ("unknown", INSTALLED.to_owned(), "elsewhere"),
+        ("disabled", disabled, "work"),
+    ] {
+        let tree = Tree::new(&format!("external-refused-{case}"))?;
+        let mut outside = Outside::new(&tree, &connected([]))?;
+        let mut choosing = Choosing {
+            choice: Some(client::accounts::DISCONNECT),
+            put: Vec::new(),
+        };
+
+        let (outcome, kept) = disconnecting_from(
+            &tree,
+            &mut outside,
+            (&file, instance),
+            Asking::every(),
+            &mut choosing,
+        )?;
+
+        assert_eq!(
+            outcome,
+            Outcome::Refused(ErrorCode::InvalidArgument.into()),
+            "{case}"
+        );
+        assert!(choosing.put.is_empty(), "{case}: {:?}", choosing.put);
+        assert_eq!(kept, file, "{case}");
+    }
+    Ok(())
+}

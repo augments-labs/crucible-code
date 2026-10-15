@@ -808,3 +808,60 @@ fn a_settings_row_already_saying_the_answer_leaves_the_file_as_it_was() {
         text
     );
 }
+
+#[test]
+fn disabling_an_agent_writes_its_enabled_false_and_nothing_else() {
+    let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\"\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
+    let written = disabling(text, FILE, "work").unwrap();
+    assert_eq!(
+        written,
+        text.replace(
+            "\"executable\": \"claude\"\n    },",
+            "\"executable\": \"claude\",\n      \"enabled\": false\n    },"
+        )
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let mut enabled: Vec<(String, bool)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.enabled()))
+        .collect();
+    enabled.sort();
+    assert_eq!(
+        enabled,
+        [("home".to_owned(), true), ("work".to_owned(), false)]
+    );
+    // Written again, it is already so.
+    assert_eq!(disabling(&written, FILE, "work").unwrap(), written);
+}
+
+#[test]
+fn disabling_an_enabled_agent_turns_its_word_over_in_place() {
+    let text = r#"{"externalAgents": {"work": {"enabled": true, "driver": "claude", "executable": "claude"}}}"#;
+    assert_eq!(
+        disabling(text, FILE, "work").unwrap(),
+        text.replace("\"enabled\": true", "\"enabled\": false")
+    );
+}
+
+#[test]
+fn disabling_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
+    for text in [
+        "",
+        "{}",
+        r#"{"externalAgents": {}}"#,
+        r#"{"externalAgents": {"home": {"driver": "claude", "executable": "claude"}}}"#,
+    ] {
+        assert!(
+            matches!(
+                disabling(text, FILE, "work"),
+                Err(ConfigError::Unspliceable { .. })
+            ),
+            "{text}"
+        );
+    }
+    assert!(matches!(
+        disabling("{", FILE, "work"),
+        Err(ConfigError::Malformed { .. })
+    ));
+}

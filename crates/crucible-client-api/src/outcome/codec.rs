@@ -324,6 +324,14 @@ impl LogoutOutcome {
                 .onto(Writing::kind("still_served"))
                 .with("standing", standing.written()),
             Self::SignedOut { retained } => retained.onto(Writing::kind("signed_out")),
+            Self::Disconnected { said } => Writing::kind("disconnected").text("said", said),
+            Self::NewWorkDisabledWorkNotConfirmedStopped { said } => {
+                Writing::kind("new_work_disabled_work_not_confirmed_stopped").text("said", said)
+            }
+            Self::StoppedForThisRunOnly { said, problem } => {
+                failed("stopped_for_this_run_only", problem).text("said", said)
+            }
+            Self::Undecided => Writing::kind("undecided"),
         }
         .finish()
     }
@@ -344,6 +352,19 @@ impl LogoutOutcome {
             "signed_out" => Self::SignedOut {
                 retained: Retained::from(&mut fields)?,
             },
+            "disconnected" => Self::Disconnected {
+                said: fields.text("said")?,
+            },
+            "new_work_disabled_work_not_confirmed_stopped" => {
+                Self::NewWorkDisabledWorkNotConfirmedStopped {
+                    said: fields.text("said")?,
+                }
+            }
+            "stopped_for_this_run_only" => Self::StoppedForThisRunOnly {
+                said: fields.text("said")?,
+                problem: problem(&mut fields)?,
+            },
+            "undecided" => Self::Undecided,
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;

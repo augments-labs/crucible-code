@@ -279,6 +279,9 @@ pub(crate) struct Outside {
     /// Whether the run held takes no further turn: its last turn's caller
     /// stopped waiting for it, or the mode changed since it was launched.
     spent: bool,
+    /// Whether the agent was disconnected from Crucible, after which no turn
+    /// launches it again.
+    disconnected: bool,
 }
 
 impl std::fmt::Debug for Outside {
@@ -327,6 +330,7 @@ impl Outside {
             named,
             turn,
             spent: false,
+            disconnected: false,
         }
     }
 
@@ -384,6 +388,18 @@ impl Outside {
         self.named = named;
     }
 
+    /// Takes no further turn from here on, and closes the run held: `true`
+    /// where none is held or it closed, and `false` where it may still be
+    /// running.
+    pub(crate) async fn disconnect(&mut self) -> bool {
+        self.disconnected = true;
+        self.spent = false;
+        match self.backend.take() {
+            Some(backend) => backend.close().await.is_ok(),
+            None => true,
+        }
+    }
+
     /// Closes the run held, if any; the next turn launches another.
     ///
     /// A run that could not be confirmed stopped is dropped all the same: its
@@ -409,6 +425,12 @@ impl Outside {
         run: &RunContext<'_>,
         session: &Session,
     ) -> Result<Turned, TurnError> {
+        if self.disconnected {
+            return Err(transport(
+                self.driver,
+                "this agent was disconnected from Crucible; connect it again to continue".into(),
+            ));
+        }
         if self.spent {
             self.retire().await;
         }

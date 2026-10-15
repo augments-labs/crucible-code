@@ -420,6 +420,49 @@ pub fn sandboxing(text: &str, file: &str, enabled: bool) -> Result<String, Confi
     Ok(splice::over(text, was, written))
 }
 
+/// The text of a configuration file where the installed agent `instance`
+/// takes no new work: its block's `enabled` is `false`, and every other byte
+/// is where it was.
+///
+/// Only the user file names installed agents, so `text` is that file's. An
+/// instance already disabled leaves it as it was.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, and [`ConfigError::Unspliceable`]
+/// where `externalAgents.<instance>` is not an object the file holds.
+pub fn disabling(text: &str, file: &str, instance: &str) -> Result<String, ConfigError> {
+    let at = format!("externalAgents.{instance}.enabled");
+    let refused = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: at.clone().into(),
+        written: "false".into(),
+    };
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let Some(block) = document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .filter(|block| block.is_object())
+    else {
+        return Err(refused());
+    };
+    if block.get("enabled").and_then(Value::as_bool) == Some(false) {
+        return Ok(text.to_owned());
+    }
+    let root = splice::root(text).ok_or_else(refused)?;
+    let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
+    let at = splice::member(text, agents, instance).ok_or_else(refused)?;
+    if block.get("enabled").is_none() {
+        return Ok(splice::insert(text, at, |_| {
+            "\"enabled\": false".to_owned()
+        }));
+    }
+    let was = splice::member(text, at, "enabled").ok_or_else(refused)?;
+    Ok(splice::over(text, was, "false"))
+}
+
 /// The text of a configuration file that reads fenced code in `theme`.
 ///
 /// The same splice as [`drawing`], one key over. See it for what is preserved.

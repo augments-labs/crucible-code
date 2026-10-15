@@ -69,6 +69,14 @@ pub enum Command {
         /// The provider, by the name its registry gives it.
         provider: Name,
     },
+    /// Stop using an installed agent's instance from Crucible, leaving the
+    /// agent's own sign-in as it is. Asked for through a pending account
+    /// confirmation first, and only of a client that claimed
+    /// [`Capability::Account`](crate::Capability::Account).
+    Disconnect {
+        /// The instance, by the name the configuration gives it.
+        instance: Name,
+    },
     /// List the persistent prompt-cache resources this conversation holds.
     InspectCache,
     /// Delete them.
@@ -119,7 +127,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 24] = [
+    pub const KINDS: [&'static str; 25] = [
         "prompt",
         "compact",
         "cancel",
@@ -133,6 +141,7 @@ impl Command {
         "cycle_mode",
         "login",
         "logout",
+        "disconnect",
         "inspect_cache",
         "clean_cache",
         "sandbox",
@@ -163,6 +172,7 @@ impl Command {
             Self::CycleMode => "cycle_mode",
             Self::Login { .. } => "login",
             Self::Logout { .. } => "logout",
+            Self::Disconnect { .. } => "disconnect",
             Self::InspectCache => "inspect_cache",
             Self::CleanCache => "clean_cache",
             Self::Sandbox { .. } => "sandbox",
@@ -197,6 +207,7 @@ impl Command {
             Self::Login { provider } | Self::Logout { provider } => {
                 object.with("provider", provider.as_str())
             }
+            Self::Disconnect { instance } => object.with("instance", instance.as_str()),
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
             Self::Setting { name, value } => object
@@ -244,6 +255,9 @@ impl Command {
             },
             "logout" => Self::Logout {
                 provider: fields.name("provider")?,
+            },
+            "disconnect" => Self::Disconnect {
+                instance: fields.name("instance")?,
             },
             "inspect_cache" => Self::InspectCache,
             "clean_cache" => Self::CleanCache,

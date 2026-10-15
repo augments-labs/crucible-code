@@ -393,6 +393,29 @@ pub enum LogoutOutcome {
         /// What retiring the cache left behind.
         retained: Retained,
     },
+    /// The instance is out of use from Crucible, durably, and the work it had
+    /// running has stopped. The agent's own sign-in was not touched.
+    Disconnected {
+        /// What the person is told, which says what is known of that sign-in.
+        said: Text,
+    },
+    /// The instance takes no new work and that is written down, but the work
+    /// it had running could not be confirmed stopped.
+    NewWorkDisabledWorkNotConfirmedStopped {
+        /// What the person is told.
+        said: Text,
+    },
+    /// The instance takes no new work in this run, and that could not be
+    /// written down, so the next run may use it again.
+    StoppedForThisRunOnly {
+        /// What the person is told.
+        said: Text,
+        /// Why it could not be written down.
+        problem: Problem,
+    },
+    /// Nobody chose a way to go on, so nothing changed: the client could not
+    /// be asked, or it cancelled.
+    Undecided,
 }
 
 /// One persistent prompt-cache resource, as a listing shows it.

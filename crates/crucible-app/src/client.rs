@@ -18,7 +18,9 @@
 //! conversation is away. [`asking`](fn@asking) and [`asked`] are one command
 //! split around the question it puts to a vendor's plan, so the conversation is
 //! not held while the question is out; [`perform`] answers the same command
-//! whole.
+//! whole. [`account`] is the door for an account operation on an installed
+//! agent: it asks a [`Front`] which way to go before anything changes, so
+//! [`perform`] refuses those commands.
 //!
 //! What comes back is the application's own value — [`Performed`], [`Ended`] —
 //! and not yet the contract's. A terminal draws from the first, because a
@@ -33,6 +35,7 @@
 //! permission engine acts on is made here from the engine's own type — see
 //! [`deciding`].
 
+pub mod accounts;
 pub(crate) mod asking;
 pub mod deciding;
 mod performing;
@@ -41,8 +44,11 @@ mod reading;
 mod tests;
 mod turning;
 
+pub use accounts::{Account, account};
 pub use asking::{Answered, Asking, FLOOR, KEPT, asked, asking};
-pub use deciding::{Asker, Deciding, Front, Shown, TRIES, questions, warned};
+pub use deciding::{
+    Asker, Confirmation, Deciding, Front, Shown, TRIES, confirmed, questions, warned,
+};
 pub use performing::{Cleared, Desk, Performed, Resumed, Setting, keep, perform};
 pub use reading::{context, mode_out as mode, pace, progress, rung, snapshot, usage};
 pub use turning::{Ended, interrupt, turn};

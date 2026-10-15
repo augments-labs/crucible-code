@@ -115,6 +115,20 @@ pub enum Shown<'a> {
     Warning(&'a Warned),
     /// What an installed agent asked leave to do.
     External(&'a crucible_execution::Pending),
+    /// Which way an account operation on an installed agent goes on.
+    Account(&'a Confirmation),
+}
+
+/// An account operation's question, as the host holds it, whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confirmation {
+    /// What is being asked.
+    pub asks: String,
+    /// What the operation would affect, a sentence each.
+    pub facts: Vec<String>,
+    /// The ways it may go, each a name and what it does. The first is the one
+    /// recommended; the last leaves everything as it is.
+    pub choices: Vec<(String, String)>,
 }
 
 /// Whoever answers pending actions: a terminal, or a consumer with none.
@@ -176,6 +190,8 @@ pub(crate) enum Settled {
     Declined,
     /// Send anyway.
     Accepted,
+    /// The choice of this name.
+    Picked(Said),
 }
 
 /// Holds `decision` against `pending`, the one action it may settle.
@@ -198,18 +214,40 @@ pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, R
                 Err(ErrorCode::InvalidArgument.into())
             }
         }
-        (Pending::Questions { .. } | Pending::Warning { .. }, Decision::Declined { .. }) => {
-            Ok(Settled::Declined)
-        }
+        (
+            Pending::Questions { .. } | Pending::Warning { .. } | Pending::Account { .. },
+            Decision::Declined { .. },
+        ) => Ok(Settled::Declined),
         (Pending::Warning { .. }, Decision::Accepted { .. }) => Ok(Settled::Accepted),
+        (Pending::Account { choices, .. }, Decision::Picked { choice, .. }) => {
+            if choices
+                .iter()
+                .any(|one| one.name.as_str() == choice.as_str())
+            {
+                Ok(Settled::Picked(choice))
+            } else {
+                Err(ErrorCode::InvalidArgument.into())
+            }
+        }
         (
             Pending::Permission { .. },
-            Decision::Answered { .. } | Decision::Declined { .. } | Decision::Accepted { .. },
+            Decision::Answered { .. }
+            | Decision::Declined { .. }
+            | Decision::Accepted { .. }
+            | Decision::Picked { .. },
         )
-        | (Pending::Questions { .. }, Decision::Ruled { .. } | Decision::Accepted { .. })
-        | (Pending::Warning { .. }, Decision::Ruled { .. } | Decision::Answered { .. }) => {
-            Err(ErrorCode::WrongDecision.into())
-        }
+        | (
+            Pending::Questions { .. },
+            Decision::Ruled { .. } | Decision::Accepted { .. } | Decision::Picked { .. },
+        )
+        | (
+            Pending::Warning { .. },
+            Decision::Ruled { .. } | Decision::Answered { .. } | Decision::Picked { .. },
+        )
+        | (
+            Pending::Account { .. },
+            Decision::Ruled { .. } | Decision::Answered { .. } | Decision::Accepted { .. },
+        ) => Err(ErrorCode::WrongDecision.into()),
     }
 }
 
@@ -399,9 +437,9 @@ async fn ruled(
             Ok(Settled::Ruled(ruling, lasting)) => return Some((ruling, lasting)),
             // `settle` gives a permission nothing else; refused the same way
             // all the same, so that a new arm cannot become a yes.
-            Ok(Settled::Answered(_) | Settled::Declined | Settled::Accepted) => {
-                ErrorCode::WrongDecision.into()
-            }
+            Ok(
+                Settled::Answered(_) | Settled::Declined | Settled::Accepted | Settled::Picked(_),
+            ) => ErrorCode::WrongDecision.into(),
             Err(refusal) => refusal,
         };
         if turned_away(front, refusal, &mut tries) {
@@ -461,7 +499,9 @@ pub async fn questions(
                 );
             }
             Ok(Settled::Declined) => return None,
-            Ok(Settled::Ruled(..) | Settled::Accepted) => ErrorCode::WrongDecision.into(),
+            Ok(Settled::Ruled(..) | Settled::Accepted | Settled::Picked(_)) => {
+                ErrorCode::WrongDecision.into()
+            }
             Err(refusal) => refusal,
         };
         if turned_away(front, refusal, &mut tries) {
@@ -507,11 +547,81 @@ pub async fn warned(capabilities: Capabilities, front: &mut dyn Front, warned: &
         let refusal = match settle(&pending, decision) {
             Ok(Settled::Accepted) => return true,
             Ok(Settled::Declined) => return false,
-            Ok(Settled::Ruled(..) | Settled::Answered(_)) => ErrorCode::WrongDecision.into(),
+            Ok(Settled::Ruled(..) | Settled::Answered(_) | Settled::Picked(_)) => {
+                ErrorCode::WrongDecision.into()
+            }
             Err(refusal) => refusal,
         };
         if turned_away(front, refusal, &mut tries) {
             return false;
+        }
+    }
+}
+
+/// Puts an account operation's `confirmation` through `front`, and answers
+/// with the place in its choices of the one picked, or `None` where nobody
+/// picked one: the client did not say it answers account questions, it
+/// declined, it answered nothing, or it was turned away [`TRIES`] times.
+///
+/// Put whole or not at all, as a permission question is: a sentence about
+/// what would change, cut short, is not what the person agreed to.
+pub async fn confirmed(
+    capabilities: Capabilities,
+    front: &mut dyn Front,
+    confirmation: &Confirmation,
+) -> Option<usize> {
+    if !capabilities.has(Capability::Account) || confirmation.choices.len() > ITEMS {
+        return None;
+    }
+    let asks = Text::cut(&confirmation.asks);
+    let facts: Vec<Text> = confirmation
+        .facts
+        .iter()
+        .map(|fact| Text::cut(fact))
+        .collect();
+    let choices: Vec<Choice> = confirmation
+        .choices
+        .iter()
+        .enumerate()
+        .map(|(at, (name, says))| Choice {
+            name: Text::cut(name),
+            says: Text::cut(says),
+            recommended: at == 0,
+        })
+        .collect();
+    let cut = asks.truncated()
+        || facts.iter().any(Text::truncated)
+        || choices
+            .iter()
+            .any(|choice| choice.name.truncated() || choice.says.truncated());
+    if facts.len() > ITEMS || (cut && !front.draws_whole()) {
+        return None;
+    }
+    let pending = Pending::Account {
+        id: mint(),
+        asks,
+        facts,
+        choices,
+    };
+
+    let mut tries = 0;
+    loop {
+        let decision = front.put(&pending, Shown::Account(confirmation)).await?;
+        let refusal = match settle(&pending, decision) {
+            Ok(Settled::Picked(choice)) => {
+                return confirmation
+                    .choices
+                    .iter()
+                    .position(|(name, _)| name == choice.as_str());
+            }
+            Ok(Settled::Declined) => return None,
+            Ok(Settled::Ruled(..) | Settled::Answered(_) | Settled::Accepted) => {
+                ErrorCode::WrongDecision.into()
+            }
+            Err(refusal) => refusal,
+        };
+        if turned_away(front, refusal, &mut tries) {
+            return None;
         }
     }
 }

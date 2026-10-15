@@ -103,7 +103,7 @@ const KEYS: [&str; 77] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 52] = [
+const MORE_KEYS: [&str; 55] = [
     "added",
     "api_ms",
     "cache_read",
@@ -156,6 +156,9 @@ const MORE_KEYS: [&str; 52] = [
     "asked",
     "sent",
     "left_running",
+    "facts",
+    "said",
+    "choice",
 ];
 
 /// The field names of the inspection document, kept apart for the same reason.
@@ -346,6 +349,26 @@ fn warning() -> Pending {
     }
 }
 
+fn account() -> Pending {
+    Pending::Account {
+        id: PendingId::new(10),
+        asks: marked(),
+        facts: vec![marked(), marked()],
+        choices: vec![
+            Choice {
+                name: marked(),
+                says: marked(),
+                recommended: true,
+            },
+            Choice {
+                name: marked(),
+                says: marked(),
+                recommended: false,
+            },
+        ],
+    }
+}
+
 fn decisions() -> Vec<Decision> {
     vec![
         Decision::Ruled {
@@ -370,6 +393,10 @@ fn decisions() -> Vec<Decision> {
         },
         Decision::Accepted {
             id: PendingId::new(9),
+        },
+        Decision::Picked {
+            id: PendingId::new(10),
+            choice: Said::new(MARKER).unwrap(),
         },
     ]
 }
@@ -397,6 +424,9 @@ fn commands() -> Vec<Command> {
         },
         Command::Logout {
             provider: name("anthropic"),
+        },
+        Command::Disconnect {
+            instance: name("work"),
         },
         Command::InspectCache,
         Command::CleanCache,
@@ -494,6 +524,13 @@ fn login_outcomes() -> Vec<Outcome> {
         Outcome::Logout(LogoutOutcome::SignedOut {
             retained: retained(),
         }),
+        Outcome::Logout(LogoutOutcome::Disconnected { said: marked() }),
+        Outcome::Logout(LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { said: marked() }),
+        Outcome::Logout(LogoutOutcome::StoppedForThisRunOnly {
+            said: marked(),
+            problem: problem(),
+        }),
+        Outcome::Logout(LogoutOutcome::Undecided),
     ]
 }
 
@@ -842,7 +879,7 @@ fn snapshots() -> Vec<Snapshot> {
     permissions()
         .map(Some)
         .into_iter()
-        .chain([Some(questions()), Some(warning()), None])
+        .chain([Some(questions()), Some(warning()), Some(account()), None])
         .zip(Billing::EVERY.into_iter().cycle())
         .zip(Agents::EVERY.into_iter().cycle())
         .map(|((pending, billing), agents)| Snapshot {
@@ -985,22 +1022,24 @@ const fn decision_arm(one: &Decision) -> (usize, usize) {
         Decision::Ruled {
             ruling: Ruling::Allow,
             ..
-        } => (0, 5),
+        } => (0, 6),
         Decision::Ruled {
             ruling: Ruling::Deny,
             ..
-        } => (1, 5),
-        Decision::Answered { .. } => (2, 5),
-        Decision::Declined { .. } => (3, 5),
-        Decision::Accepted { .. } => (4, 5),
+        } => (1, 6),
+        Decision::Answered { .. } => (2, 6),
+        Decision::Declined { .. } => (3, 6),
+        Decision::Accepted { .. } => (4, 6),
+        Decision::Picked { .. } => (5, 6),
     }
 }
 
 const fn pending_arm(one: &Pending) -> (usize, usize) {
     match one {
-        Pending::Permission { .. } => (0, 3),
-        Pending::Questions { .. } => (1, 3),
-        Pending::Warning { .. } => (2, 3),
+        Pending::Permission { .. } => (0, 4),
+        Pending::Questions { .. } => (1, 4),
+        Pending::Warning { .. } => (2, 4),
+        Pending::Account { .. } => (3, 4),
     }
 }
 
@@ -1027,57 +1066,62 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 28),
-        Command::Compact => (1, 28),
-        Command::Cancel => (2, 28),
-        Command::Decide(_) => (3, 28),
-        Command::Clear => (4, 28),
-        Command::Resume(_) => (5, 28),
+        Command::Prompt(_) => (0, 29),
+        Command::Compact => (1, 29),
+        Command::Cancel => (2, 29),
+        Command::Decide(_) => (3, 29),
+        Command::Clear => (4, 29),
+        Command::Resume(_) => (5, 29),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 28),
-        Command::SelectModel { effort: None, .. } => (7, 28),
-        Command::SetEffort(_) => (8, 28),
-        Command::SetMode(_) => (9, 28),
-        Command::CycleMode => (10, 28),
-        Command::Login { .. } => (11, 28),
-        Command::Logout { .. } => (12, 28),
-        Command::InspectCache => (13, 28),
-        Command::CleanCache => (14, 28),
-        Command::Sandbox { enabled: true } => (15, 28),
-        Command::Sandbox { enabled: false } => (16, 28),
-        Command::Theme(Theme::Drawing(_)) => (17, 28),
-        Command::Theme(Theme::Syntax(_)) => (18, 28),
-        Command::Help => (19, 28),
-        Command::ReleaseNotes { version: None } => (20, 28),
-        Command::ReleaseNotes { version: Some(_) } => (21, 28),
-        Command::Exit => (22, 28),
-        Command::SetSpeed(_) => (23, 28),
-        Command::Context => (24, 28),
-        Command::Usage => (25, 28),
-        Command::Setting { .. } => (26, 28),
-        Command::AskLimits => (27, 28),
+        } => (6, 29),
+        Command::SelectModel { effort: None, .. } => (7, 29),
+        Command::SetEffort(_) => (8, 29),
+        Command::SetMode(_) => (9, 29),
+        Command::CycleMode => (10, 29),
+        Command::Login { .. } => (11, 29),
+        Command::Logout { .. } => (12, 29),
+        Command::InspectCache => (13, 29),
+        Command::CleanCache => (14, 29),
+        Command::Sandbox { enabled: true } => (15, 29),
+        Command::Sandbox { enabled: false } => (16, 29),
+        Command::Theme(Theme::Drawing(_)) => (17, 29),
+        Command::Theme(Theme::Syntax(_)) => (18, 29),
+        Command::Help => (19, 29),
+        Command::ReleaseNotes { version: None } => (20, 29),
+        Command::ReleaseNotes { version: Some(_) } => (21, 29),
+        Command::Exit => (22, 29),
+        Command::SetSpeed(_) => (23, 29),
+        Command::Context => (24, 29),
+        Command::Usage => (25, 29),
+        Command::Setting { .. } => (26, 29),
+        Command::AskLimits => (27, 29),
+        Command::Disconnect { .. } => (28, 29),
     }
 }
 
 const fn logout_arm(one: &LogoutOutcome) -> (usize, usize) {
     match one {
-        LogoutOutcome::CacheHeld(_) => (0, 7),
-        LogoutOutcome::Unforgotten { .. } => (1, 7),
-        LogoutOutcome::Kept => (2, 7),
+        LogoutOutcome::CacheHeld(_) => (0, 11),
+        LogoutOutcome::Unforgotten { .. } => (1, 11),
+        LogoutOutcome::Kept => (2, 11),
         LogoutOutcome::StillServed {
             standing: Standing::Environment(_),
             ..
-        } => (3, 7),
+        } => (3, 11),
         LogoutOutcome::StillServed {
             standing: Standing::StoredKey,
             ..
-        } => (4, 7),
+        } => (4, 11),
         LogoutOutcome::StillServed {
             standing: Standing::Subscription,
             ..
-        } => (5, 7),
-        LogoutOutcome::SignedOut { .. } => (6, 7),
+        } => (5, 11),
+        LogoutOutcome::SignedOut { .. } => (6, 11),
+        LogoutOutcome::Disconnected { .. } => (7, 11),
+        LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { .. } => (8, 11),
+        LogoutOutcome::StoppedForThisRunOnly { .. } => (9, 11),
+        LogoutOutcome::Undecided => (10, 11),
     }
 }
 
@@ -2283,7 +2327,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 12_677_098_495_514_578_800),
+        (4, 12_825_275_648_767_290_379),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
