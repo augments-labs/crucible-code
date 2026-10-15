@@ -2642,6 +2642,97 @@ fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own()
     }
 }
 
+#[test]
+fn the_login_panel_offers_an_installed_agent_and_its_question_goes_back_unanswered() {
+    // Where an installed agent is offered, the first panel has a third row.
+    // Taking it puts the application's own question of which agent to reach
+    // the provider through; Escape there goes back to the first panel, and
+    // Escape on that cancels. Nothing is written on the way.
+    let vendor = Vendor::answering("Not asked.");
+    let mut window = Watched::offering_agents("login-agent-back", (80, 24), &vendor, &[]);
+    let config = window.home().join("config.json");
+    let before = std::fs::read_to_string(&config).expect("the configuration file");
+
+    window.types_until("/login\r", "Provide your own API key");
+    let first = window.picture();
+    assert!(first.contains("Use an installed coding agent"), "{first}");
+    assert!(
+        first.contains("Sign in through an official harness"),
+        "{first}"
+    );
+
+    takes(&mut window, "Use an installed coding agent");
+    window.types_until("", "Which agent should anthropic be reached through?");
+    let asked = window.picture();
+    assert!(
+        asked.contains("nothing is started or written yet"),
+        "{asked}"
+    );
+    assert!(asked.contains("Cancel"), "{asked}");
+
+    window.types_until("\x1b", "Choose how usage is paid for.");
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    let after = std::fs::read_to_string(&config).expect("the configuration file");
+    assert_eq!(after, before);
+}
+
+#[test]
+fn the_login_panel_says_what_starting_an_agent_runs_and_going_back_starts_nothing() {
+    // An agent whose program is on the path, never started: going back from
+    // the question put before it first starts ends the connect, and the
+    // first panel stands again.
+    let bin = watched::scratch("login-agent-launch-bin");
+    std::fs::create_dir_all(&bin).expect("a directory for the program");
+    let program = bin.join("claude");
+    let ran = bin.join("ran");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\ntouch '{}'\nexit 1\n", ran.display()),
+    )
+    .expect("the program");
+    let mut permissions = std::fs::metadata(&program)
+        .expect("its metadata")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&program, permissions).expect("an executable program");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let vendor = Vendor::answering("Not asked.");
+    let mut window =
+        Watched::offering_agents("login-agent-launch", (100, 30), &vendor, &[("PATH", &path)]);
+    let config = window.home().join("config.json");
+    let before = std::fs::read_to_string(&config).expect("the configuration file");
+
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Use an installed coding agent");
+    window.types_until("", "Which agent should anthropic be reached through?");
+    takes(&mut window, "Claude Code");
+    window.types_until("", "Nothing starts");
+    let launch = window.picture();
+    assert!(
+        launch.contains("runs this profile's hooks, MCP servers and plugins"),
+        "{launch}"
+    );
+    assert!(
+        launch.contains("Starts Claude Code to check the account"),
+        "{launch}"
+    );
+
+    takes(&mut window, "Go back");
+    window.types_until("", "Choose how usage is paid for.");
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    let after = std::fs::read_to_string(&config).expect("the configuration file");
+    assert_eq!(after, before);
+    assert!(!ran.exists(), "the agent's program was run");
+    std::fs::remove_dir_all(&bin).expect("the program's directory removed");
+}
+
 /// A store holding an Anthropic key and nothing else, fabricated.
 const KEY_HELD: &str =
     r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key"},"subscriptions":{}}"#;

@@ -20,6 +20,14 @@ the next session still runs on the agent. `/login` for another provider only
 stores the credential, and `/logout` for the provider the agent reaches removes
 the stored credential and says the agent still reaches it.
 
+`/login` offers a third choice, *Use an installed coding agent*, where an
+agent can run and a provider is being asked: it connects that provider through
+an agent. It asks which agent, says where the agent's program cannot be found,
+asks once before the agent is first started, saying that starting it runs its
+profile's hooks, MCP servers and plugins, and then asks whether the account
+the agent is signed in with will do. Escape changes nothing and goes back;
+apart from that one yes, nothing is written until the last answer.
+
 Connecting the provider a conversation is asking through an agent moves that
 conversation onto the agent at once, in a new session bound to the agent with
 nothing carried over; the session it left stays listed and can be resumed.

@@ -53,14 +53,29 @@
 //!
 //! A window with no room to stand a panel in, and a run with no keyboard, are
 //! given each row as the whole line to type: `/login` and the words that leave
-//! that row alone. Every row comes off the registry, so a way in this build
-//! offers and cannot be typed is not a state that exists.
+//! that row alone. Every provider's row comes off the registry, so a provider
+//! this build offers and cannot be typed is not a state that exists.
+//!
+//! Where an installed agent is offered and a provider is being asked, the
+//! first panel has a third row: the provider this conversation asks reached
+//! through the agent's own sign-in.
+//! It is the application's connect, asked for as any front end asks for it,
+//! and every question it stops on — which agent, whether its program was
+//! found, the hold before it is first started, whether its account will do —
+//! is the application's, drawn here whole. Escape answers the way that
+//! leaves everything as it is, which the application takes back up a level
+//! or ends; one that ends unconnected stands the first panel again. Keys
+//! pressed while the application worked between questions are dropped, so
+//! none answers a question its reader never saw. Only that row is not given
+//! a line to type: a connect is answered in panels, and a window with no
+//! room for one does not offer it.
 
 use std::borrow::Cow;
 use std::time::Duration;
 
 use crucible_app::Conversation;
-use crucible_app::client::Performed;
+use crucible_app::client::accounts::{CONNECT_UNSAVED, CONNECTED, HOLD_UNKEPT, MOVED, UNMOVED};
+use crucible_app::client::{Account, Performed, snapshot};
 use crucible_app::content_use;
 use crucible_app::providers::{
     List, Misfit, Providers, Row as Way, Rows, Served, key_variables, offered,
@@ -68,17 +83,19 @@ use crucible_app::providers::{
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
-use crucible_client_api::Command;
+use crucible_client_api::{Agents, Command, Execution, Name};
 use crucible_tui::{
     Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
     characters, clip, fold, pressed,
 };
 
 use crate::cli::Fatal;
-use crate::cli::client::astray;
+use crate::cli::client::{Question, Reply, astray};
 use crate::cli::converse::picking::{self, Picked};
+use crate::cli::converse::region;
 use crate::cli::converse::secret::{self, Asked};
 use crate::cli::converse::warning::{self, Answer, Put};
+use crate::cli::style::Style;
 
 use super::{Terms, about, say};
 
@@ -93,8 +110,13 @@ const ACCOUNT_ROUTE_SAYS: &str = "Usage included in your paid plan";
 pub(super) const KEY_ROUTE_SHOWN: &str = "Provide your own API key";
 pub(super) const KEY_ROUTE_SAYS: &str = "API usage billing";
 
-/// The first panel: two ways to pay, whatever the store holds.
-const FIRST: [Offered<'static>; 2] = [
+/// The row that leads to an installed agent, and what it says.
+const AGENT_ROUTE_SHOWN: &str = "Use an installed coding agent";
+const AGENT_ROUTE_SAYS: &str = "Sign in through an official harness";
+
+/// The first panel: two ways to pay, whatever the store holds, and an
+/// installed agent's account third, where one is offered.
+const FIRST: [Offered<'static>; 3] = [
     Offered {
         name: ACCOUNT_ROUTE_SHOWN,
         says: ACCOUNT_ROUTE_SAYS,
@@ -103,7 +125,14 @@ const FIRST: [Offered<'static>; 2] = [
         name: KEY_ROUTE_SHOWN,
         says: KEY_ROUTE_SAYS,
     },
+    Offered {
+        name: AGENT_ROUTE_SHOWN,
+        says: AGENT_ROUTE_SAYS,
+    },
 ];
+
+/// How many of [`FIRST`] stand where no installed agent is offered.
+const PAID: usize = 2;
 
 /// The sentence under the first panel.
 const HOW: &str = "Choose how usage is paid for.";
@@ -145,6 +174,10 @@ const STOPPING: &str = "stopping; waiting for anything being stored…";
 
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
+
+/// What a connect whose question had no room to stand says.
+const CRAMPED_CONNECT: &str =
+    "! connecting needs an answer first; make the window taller and try /login again";
 
 /// What the box's absence leaves behind, when the window had no room for it.
 ///
@@ -372,6 +405,13 @@ fn reaching(way: &Way, rows: &Rows) -> String {
 /// The first panel, the list of the kind chosen on it, and the screen of the
 /// row chosen from that, until one of them is done.
 fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fatal> {
+    let offered = snapshot(walk.conversation).agents == Agents::Available
+        && walk.conversation.serving().is_some();
+    let shown = if offered {
+        &FIRST[..]
+    } else {
+        FIRST.get(..PAID).unwrap_or_default()
+    };
     let mut first = 0;
     loop {
         let panel = Panel {
@@ -379,20 +419,27 @@ fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fa
             title: TITLE,
             said: Some(HOW),
             told: &[],
-            shown: &FIRST,
+            shown,
             chosen: first,
             footer: CANCEL,
         };
-        let (list, said) = match picking::pick(walk.renderer, walk.terms.style(), panel)? {
+        let picked = picking::pick(walk.renderer, walk.terms.style(), panel)?;
+        if let Picked::Took(at) = picked {
+            first = at;
+        }
+        let (list, said) = match picked {
             Picked::Took(0) => (List::Subscription, ACCOUNTS),
-            Picked::Took(_) => (List::Key, SAID),
+            Picked::Took(1) => (List::Key, SAID),
+            Picked::Took(_) => match connected(walk)? {
+                Closed::Back => continue,
+                closed => return Ok(closed),
+            },
             Picked::Left => {
                 say(walk.renderer, LEFT)?;
                 return Ok(Closed::Done);
             }
             Picked::Cramped => return Ok(Closed::Cramped),
         };
-        first = usize::from(list == List::Key);
 
         let listed = listed(rows, list);
         let listing = Listing {
@@ -406,6 +453,118 @@ fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fa
             closed => return Ok(closed),
         }
     }
+}
+
+/// The third row: the provider this conversation asks, reached through an
+/// installed agent by the application's connect, each of its questions drawn
+/// here. Back where it ended unconnected, so the first panel stands again.
+fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
+    // Offered only where a provider is being asked.
+    let Some(provider) = walk.conversation.serving() else {
+        return Ok(Closed::Back);
+    };
+    let provider = match Name::new(provider) {
+        Ok(provider) => provider,
+        Err(refusal) => {
+            say(walk.renderer, &astray(&Performed::Refused(refusal)))?;
+            return Ok(Closed::Done);
+        }
+    };
+    let style = walk.terms.style();
+    let renderer = &mut *walk.renderer;
+    let mut cramped = false;
+    let performed = walk.terms.account(
+        walk.conversation,
+        Command::Connect {
+            provider,
+            instance: None,
+        },
+        |question| {
+            let replied = answered(renderer, style, question)?;
+            cramped |= replied.is_none();
+            Ok::<_, Fatal>(replied)
+        },
+    )?;
+    if cramped {
+        say(walk.renderer, CRAMPED_CONNECT)?;
+        return Ok(Closed::Done);
+    }
+
+    let (line, connected) = match &performed {
+        Performed::Account(Account::Unconnected | Account::Undecided) => return Ok(Closed::Back),
+        Performed::Account(Account::Connected) => (CONNECTED.to_owned(), true),
+        Performed::Account(Account::Moved(_)) => (MOVED.to_owned(), true),
+        Performed::Account(Account::Unmoved(reason)) => (format!("{UNMOVED} ({reason})"), true),
+        Performed::Account(Account::ConnectUnsaved(problem)) => {
+            (format!("! {CONNECT_UNSAVED} {problem}"), false)
+        }
+        Performed::Account(Account::HoldUnkept(problem)) => {
+            (format!("! {HOLD_UNKEPT} {problem}"), false)
+        }
+        Performed::Account(Account::Contended(contended)) => (format!("! {contended}"), false),
+        other => (astray(other), false),
+    };
+    say(walk.renderer, &line)?;
+    if !connected {
+        return Ok(Closed::Done);
+    }
+
+    // Who runs this conversation's turns now, and who is paid for them, as
+    // any front end reads it.
+    let now = snapshot(walk.conversation);
+    if let Execution::Instance(instance) = &now.execution {
+        say(
+            walk.renderer,
+            &format!(
+                "execution: {} {} billing: {}",
+                instance.as_str(),
+                style.glyphs().dot(),
+                now.billing.as_str()
+            ),
+        )?;
+    }
+    Ok(Closed::Done)
+}
+
+/// Draws `question` as a panel and reads keys until it is answered: nothing
+/// where it had no room to stand. Escape answers the way that leaves
+/// everything as it is, which a question puts last.
+fn answered<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    question: &Question,
+) -> Result<Option<Reply>, Fatal> {
+    Ok(match question {
+        Question::Account(confirmation) => {
+            // Keys pressed while the application worked answer nothing.
+            region::unheard(renderer)?;
+            let told: Vec<&str> = confirmation.facts.iter().map(String::as_str).collect();
+            let shown: Vec<Offered<'_>> = confirmation
+                .choices
+                .iter()
+                .map(|(name, says)| Offered { name, says })
+                .collect();
+            let panel = Panel {
+                title: TITLE,
+                said: Some(&confirmation.asks),
+                source: None,
+                told: &told,
+                shown: &shown,
+                chosen: 0,
+                footer: BACK,
+            };
+            match picking::pick(renderer, style, panel)? {
+                Picked::Took(at) => Some(Reply::Took(at)),
+                Picked::Left => Some(Reply::Took(shown.len().saturating_sub(1))),
+                Picked::Cramped => None,
+            }
+        }
+        Question::Warning(warned) => match warning::ask(renderer, style, warned, Put::Launch)? {
+            Answer::Yes => Some(Reply::Yes),
+            Answer::Back => Some(Reply::No),
+            Answer::Cramped => None,
+        },
+    })
 }
 
 /// The rows of one list, in the order the registry gives them.

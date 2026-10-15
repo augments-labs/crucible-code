@@ -2,7 +2,11 @@
 //! uses what is sent to it.
 //!
 //! Asked on the drawing thread, before the work is handed to a worker, so
-//! the message is still this side's to give back. What stands is a panel with
+//! the message is still this side's to give back. Put before an installed
+//! agent is first started, it is the application's question, answered on
+//! the drawing thread while the operation that asked it waits: it says what
+//! starting the agent runs, and the application writes down its yes. What
+//! stands is a panel with
 //! the vendor's sentence and the page it comes from; `Use it anyway` writes
 //! the yes into the user's own file and lets the work go, and anything else
 //! sends nothing. Behind it, every client the run sends through holds the
@@ -31,12 +35,14 @@ pub(super) enum Put {
     Send,
     /// A row or a model about to be chosen.
     Choice,
+    /// An installed agent about to be started for the first time.
+    Launch,
 }
 
 /// How the question was answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Answer {
-    /// `Use it anyway`.
+    /// `Use it anyway`, or `Continue` before a launch.
     Yes,
     /// `Go back`, or escape.
     Back,
@@ -119,9 +125,27 @@ pub(super) fn ask_while<T: Terminal>(
     put: Put,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Answer, Fatal> {
-    let shown: &[Offered<'_>] = match put {
-        Put::Send => &SENDING,
-        Put::Choice => &CHOOSING,
+    let agent = warned.shown;
+    let starts = format!("Starts {agent} to check the account; this route is not asked again");
+    let launching = [
+        Offered {
+            name: "Continue",
+            says: &starts,
+        },
+        Offered {
+            name: "Go back",
+            says: "Nothing starts",
+        },
+    ];
+    let runs = format!(
+        "Starting {agent} runs this profile's hooks, MCP servers and plugins, which may send \
+         content on their own."
+    );
+    let launched = [runs.as_str()];
+    let (shown, told): (&[Offered<'_>], &[&str]) = match put {
+        Put::Send => (&SENDING, &[]),
+        Put::Choice => (&CHOOSING, &[]),
+        Put::Launch => (&launching, &launched),
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());
@@ -137,7 +161,7 @@ pub(super) fn ask_while<T: Terminal>(
                 title: warned.shown,
                 said: Some(warned.warning.sentence),
                 source: Some(&cited),
-                told: &[],
+                told,
                 shown,
                 chosen: *marked,
                 footer: &footer,
