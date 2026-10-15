@@ -1234,6 +1234,9 @@ written down for, and nothing else. `/logout <provider>` forgets that one
 directly, and a name with no key here says so and lists the ones that have. It
 reaches `~/.crucible/auth.json` and only that (a key exported into your shell is
 untouched and goes on winning), which is what the line under the answer says.
+An installed agent your settings name is listed after the keys; taking it
+offers to connect, disconnect, sign it out or remove its settings, each asked
+before anything changes.
 
 `/clear` starts a new session with nothing said in it: the next prompt is the
 first one the model sees, and the turns before it are neither sent nor paid for

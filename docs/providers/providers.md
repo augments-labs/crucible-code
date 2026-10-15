@@ -577,7 +577,9 @@ Where no variable above is set and that file names nobody, the warning under the
 welcome names this command, and the prompt is there underneath it as usual.
 
 `/logout <provider>` removes that provider's stored account or API key, and
-`/logout` on its own offers every stored credential crucible can remove.
+`/logout` on its own offers every stored credential crucible can remove, then
+each installed agent the settings name, as
+[agents](agents.md) describes.
 Editing the file by hand works too: crucible only reads what is there, and a
 name under `keys` that this build does not serve is left alone rather than
 offered for removal.

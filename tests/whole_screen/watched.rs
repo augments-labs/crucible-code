@@ -317,15 +317,31 @@ impl Watched {
     /// offered as though this release shipped it, and `env` set besides.
     pub(crate) fn offering_agents(
         case: &str,
-        (columns, rows): (u16, u16),
+        size: (u16, u16),
         vendor: &Vendor,
         env: &[(&str, &str)],
     ) -> Self {
+        Self::offering_agents_configured(case, size, vendor, env, "")
+    }
+
+    /// The same, with `configured`, members of the configuration object
+    /// each ending in a comma, written into the user file first.
+    pub(crate) fn offering_agents_configured(
+        case: &str,
+        (columns, rows): (u16, u16),
+        vendor: &Vendor,
+        env: &[(&str, &str)],
+        configured: &str,
+    ) -> Self {
         let mut offered = vec![("CRUCIBLE_CODE_PROOF_REGISTRY", "fake")];
         offered.extend_from_slice(env);
+        let document = document(Some(vendor), None);
+        let rest = document
+            .strip_prefix("{\n")
+            .expect("a whole-screen configuration object");
         Self::configured_with_terminal(
             case,
-            &fixture_document(&document(Some(vendor), None)),
+            &fixture_document(&format!("{{\n{configured}{rest}")),
             true,
             &TerminalFixture {
                 columns,

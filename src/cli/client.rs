@@ -185,7 +185,7 @@ struct Put {
     reply: oneshot::Sender<Option<Reply>>,
 }
 
-/// What [`Terms::account`] is waiting for next.
+/// What [`Terms::operate`] is waiting for next.
 enum Step {
     /// The operation is over.
     Done(Performed),
@@ -262,7 +262,7 @@ impl Terms {
     /// # Errors
     ///
     /// Whatever `answer` fails with; the operation is dropped where it stood.
-    pub(crate) fn account<E>(
+    pub(crate) fn operate<E>(
         &self,
         conversation: &mut Conversation,
         command: Command,

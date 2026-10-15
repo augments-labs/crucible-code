@@ -74,7 +74,10 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use crucible_app::Conversation;
-use crucible_app::client::accounts::{CONNECT_UNSAVED, CONNECTED, HOLD_UNKEPT, MOVED, UNMOVED};
+use crucible_app::client::accounts::{
+    CONNECT_UNSAVED, CONNECTED, DISCONNECTED, HOLD_UNKEPT, MOVED, NOT_CONFIRMED_STOPPED, REMOVED,
+    STILL_REFERENCED, THIS_RUN_ONLY, UNMOVED,
+};
 use crucible_app::client::{Account, Performed, snapshot};
 use crucible_app::content_use;
 use crucible_app::providers::{
@@ -83,7 +86,7 @@ use crucible_app::providers::{
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
-use crucible_client_api::{Agents, Command, Execution, Name};
+use crucible_client_api::{Agents, Command, Execution, LogoutOutcome, Name, Outcome};
 use crucible_tui::{
     Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
     characters, clip, fold, pressed,
@@ -473,7 +476,7 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     let style = walk.terms.style();
     let renderer = &mut *walk.renderer;
     let mut cramped = false;
-    let performed = walk.terms.account(
+    let performed = walk.terms.operate(
         walk.conversation,
         Command::Connect {
             provider,
@@ -490,31 +493,62 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
         return Ok(Closed::Done);
     }
 
-    let (line, connected) = match &performed {
-        Performed::Account(Account::Unconnected | Account::Undecided) => return Ok(Closed::Back),
-        Performed::Account(Account::Connected) => (CONNECTED.to_owned(), true),
-        Performed::Account(Account::Moved(_)) => (MOVED.to_owned(), true),
-        Performed::Account(Account::Unmoved(reason)) => (format!("{UNMOVED} ({reason})"), true),
-        Performed::Account(Account::ConnectUnsaved(problem)) => {
-            (format!("! {CONNECT_UNSAVED} {problem}"), false)
-        }
-        Performed::Account(Account::HoldUnkept(problem)) => {
-            (format!("! {HOLD_UNKEPT} {problem}"), false)
-        }
-        Performed::Account(Account::Contended(contended)) => (format!("! {contended}"), false),
-        other => (astray(other), false),
+    let Some((line, connected)) = ended(&performed) else {
+        return Ok(Closed::Back);
     };
     say(walk.renderer, &line)?;
-    if !connected {
-        return Ok(Closed::Done);
+    if connected {
+        executing(walk.renderer, walk.conversation, style)?;
     }
+    Ok(Closed::Done)
+}
 
-    // Who runs this conversation's turns now, and who is paid for them, as
-    // any front end reads it.
-    let now = snapshot(walk.conversation);
+/// The line an account operation ends on, and whether a provider is now
+/// reached through an agent: nothing where nobody went on with it.
+pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
+    let Performed::Account(account) = performed else {
+        return Some((astray(performed), false));
+    };
+    Some(match account {
+        Account::Undecided | Account::Unconnected => return None,
+        Account::Connected => (CONNECTED.to_owned(), true),
+        Account::Moved(_) => (MOVED.to_owned(), true),
+        Account::Unmoved(reason) => (format!("{UNMOVED} ({reason})"), true),
+        Account::ConnectUnsaved(problem) => (format!("! {CONNECT_UNSAVED} {problem}"), false),
+        Account::HoldUnkept(problem) => (format!("! {HOLD_UNKEPT} {problem}"), false),
+        Account::Disconnected { stopped: true } => (DISCONNECTED.to_owned(), false),
+        Account::Disconnected { stopped: false } => (format!("! {NOT_CONFIRMED_STOPPED}"), false),
+        Account::ThisRunOnly(problem) => (format!("! {THIS_RUN_ONLY} {problem}"), false),
+        Account::Removed => (REMOVED.to_owned(), false),
+        Account::StillReferenced(provider) => (format!("! {provider} {STILL_REFERENCED}"), false),
+        Account::Unremoved(problem) => (format!("! {problem}"), false),
+        // The sentence alone: what the agent's program printed is not drawn.
+        Account::SignedOut | Account::SignOutUnverified(_) => {
+            let said = match account.outcome() {
+                Outcome::Logout(
+                    LogoutOutcome::AgentSignedOut { said }
+                    | LogoutOutcome::SignOutUnverified { said },
+                ) => said.as_str().to_owned(),
+                other => format!("! the application answered {}", other.kind()),
+            };
+            let warned = matches!(account, Account::SignOutUnverified(_));
+            (if warned { format!("! {said}") } else { said }, false)
+        }
+        Account::Contended(contended) => (format!("! {contended}"), false),
+    })
+}
+
+/// Who runs this conversation's turns now, and who is paid for them, as any
+/// front end reads it: nothing where no agent runs them.
+pub(super) fn executing<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    conversation: &Conversation,
+    style: Style,
+) -> Result<(), Fatal> {
+    let now = snapshot(conversation);
     if let Execution::Instance(instance) = &now.execution {
         say(
-            walk.renderer,
+            renderer,
             &format!(
                 "execution: {} {} billing: {}",
                 instance.as_str(),
@@ -523,13 +557,13 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
             ),
         )?;
     }
-    Ok(Closed::Done)
+    Ok(())
 }
 
 /// Draws `question` as a panel and reads keys until it is answered: nothing
 /// where it had no room to stand. Escape answers the way that leaves
 /// everything as it is, which a question puts last.
-fn answered<T: Terminal>(
+pub(super) fn answered<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     question: &Question,
