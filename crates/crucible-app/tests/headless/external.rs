@@ -1760,10 +1760,13 @@ fn a_sign_out_not_chosen_signs_nothing_out() -> Result<(), Failed> {
 
 /// A client that answers each account question with the next choice named,
 /// accepts a warning where any is named, and goes back where none is, or once
-/// the choices run out.
+/// the choices run out. Where it is `reading` a file, it reads it as each
+/// question is put.
 struct Picking {
     choices: std::collections::VecDeque<Option<&'static str>>,
     put: Vec<Pending>,
+    reading: Option<std::path::PathBuf>,
+    read: Vec<String>,
 }
 
 impl Picking {
@@ -1771,6 +1774,8 @@ impl Picking {
         Self {
             choices: choices.into_iter().collect(),
             put: Vec::new(),
+            reading: None,
+            read: Vec::new(),
         }
     }
 }
@@ -1783,6 +1788,10 @@ impl Front for Picking {
     ) -> BoxFuture<'a, Option<Ruled>> {
         Box::pin(async move {
             self.put.push(pending.clone());
+            if let Some(file) = &self.reading {
+                self.read
+                    .push(std::fs::read_to_string(file).unwrap_or_default());
+            }
             Some(match self.choices.pop_front().flatten() {
                 Some(_) if matches!(pending, Pending::Warning { .. }) => {
                     Ruled::Accepted { id: pending.id() }
@@ -1837,7 +1846,7 @@ fn connecting(
 fn connecting_counted(
     tree: &Tree,
     outside: &mut Outside,
-    file: &'static str,
+    file: &str,
     (provider, instance): (&str, Option<&str>),
     picking: &mut Picking,
 ) -> Result<((Outcome, String), usize), Failed> {
@@ -1890,6 +1899,27 @@ fn a_connect_writes_the_route_and_enables_the_instance() -> Result<(), Failed> {
         })
     );
     assert_eq!(picking.put.len(), 2, "{:?}", picking.put);
+    assert_eq!(file, CONNECTED_FILE);
+    Ok(())
+}
+
+/// A connect writes nothing while it asks: the file read as each question is
+/// put holds what it held before, and the route and the instance's enabling
+/// are there once the route is confirmed.
+#[test]
+fn a_connect_writes_nothing_while_it_asks() -> Result<(), Failed> {
+    let tree = Tree::new("external-connect-asking")?;
+    let script = connected([claude::clean(), claude::signed_in()]);
+    let mut outside = Outside::new(&tree, &script)?;
+    let mut picking = Picking::of([
+        Some(client::accounts::USE_ACCOUNT),
+        Some(client::accounts::CONNECT),
+    ]);
+    picking.reading = Some(crucible_config::user(&tree.home()?));
+
+    let (_, file) = connecting(&tree, &mut outside, "anthropic", Some("work"), &mut picking)?;
+
+    assert_eq!(picking.read, [UNCONNECTED, UNCONNECTED]);
     assert_eq!(file, CONNECTED_FILE);
     Ok(())
 }
@@ -2310,6 +2340,61 @@ fn a_connect_to_an_agent_not_installed_says_so_and_writes_nothing() -> Result<()
     assert!(told, "{:?}", picking.put.get(1));
     assert_eq!(started, 0, "the agent's program was started");
     assert_eq!(file, UNINSTALLED);
+    Ok(())
+}
+
+/// A connect to an agent whose program is there but cannot be run says so,
+/// with what to do, may look again or go back, and starts and writes nothing.
+#[cfg(unix)]
+#[test]
+fn a_connect_to_an_agent_whose_program_cannot_run_says_so_and_writes_nothing() -> Result<(), Failed>
+{
+    use client::accounts::CHECK_AGAIN;
+    use crucible_client_api::LoginOutcome;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tree = Tree::new("external-connect-not-executable")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let program = tree.0.join("claude");
+    std::fs::write(&program, "")?;
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o644))?;
+    let installed = format!(
+        r#"{{"externalAgents": {{"work": {{"driver": "claude", "executable": {}}}}}}}"#,
+        serde_json::Value::from(program.to_string_lossy()),
+    );
+    let mut picking = Picking::of([
+        Some("Claude Code"),
+        Some(CHECK_AGAIN),
+        Some("Go back"),
+        Some("Cancel"),
+    ]);
+
+    let ((outcome, file), started) = connecting_counted(
+        &tree,
+        &mut outside,
+        &installed,
+        ("anthropic", None),
+        &mut picking,
+    )?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    let put = offered(&picking.put);
+    let refused = vec![CHECK_AGAIN, "Go back"];
+    let agents = vec!["Claude Code", "Antigravity", "Cancel"];
+    assert_eq!(put, [agents.clone(), refused.clone(), refused, agents]);
+    let said = format!("Found {} but it is not executable.", program.display());
+    let told = picking.put.get(1).is_some_and(|put| match put {
+        Pending::Account { asks, facts, .. } => {
+            asks.as_str() == said
+                && facts
+                    .iter()
+                    .any(|fact| fact.as_str() == "Make it executable, then choose Check again.")
+        }
+        _ => false,
+    });
+    assert!(told, "{:?}", picking.put.get(1));
+    assert_eq!(started, 0, "the agent's program was started");
+    assert_eq!(file, installed);
     Ok(())
 }
 
