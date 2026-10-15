@@ -2035,7 +2035,6 @@ fn breaks(one: &Seen) -> bool {
             | Event::Sandbox { .. }
             | Event::Used { .. }
             | Event::PlanLimits { .. }
-            | Event::Reported { .. }
             | Event::Retrying => false,
 
             // Everything else is a row, or is about to be one. The model
@@ -2058,6 +2057,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Steered { .. }
+            | Event::Reported { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::FastRefused { .. }

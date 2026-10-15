@@ -613,6 +613,12 @@ each was given rather than as a paragraph. The colour is the row's rather than
 the text's, so it costs no column, and it is there whether the line is still
 waiting above the box or has already been written out.
 
+On an installed agent's route the agent runs its own tools and crucible runs
+none of them. What the agent reports doing is one toned down row with no mark,
+worded as the agent's, such as `the agent used Edit · src/lib.rs`, with the
+tool's name as the agent gave it and its control characters taken out, cut to
+the window's width.
+
 Where the model asked for one tool and nothing about it moves, the line is
 written the moment the call goes out. `WebSearch` and `WebFetch` are the two
 that matter here: they print nothing while they run, no key points at them, and
