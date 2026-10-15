@@ -184,7 +184,8 @@ pub async fn perform(
         | Command::Cancel
         | Command::Disconnect { .. }
         | Command::RemoveIntegration { .. }
-        | Command::SignOut { .. } => Performed::Refused(ErrorCode::Busy.into()),
+        | Command::SignOut { .. }
+        | Command::Connect { .. } => Performed::Refused(ErrorCode::Busy.into()),
         // No turn is stopped here, so there is no action this could be about.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
         Command::Clear => Performed::Cleared(clear(conversation, desk).await),
@@ -313,6 +314,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::Disconnect { .. }
         | Command::RemoveIntegration { .. }
         | Command::SignOut { .. }
+        | Command::Connect { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }

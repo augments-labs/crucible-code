@@ -133,6 +133,22 @@ pub fn disabling_every(file: &Path, instances: &[&str]) -> Result<(), RememberEr
     })
 }
 
+/// Writes into `file` that `provider` is reached through the installed agent
+/// `instance`, and that the instance takes new work, the second last, in one
+/// update; and changes nothing else in it.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration
+/// or names no such instance.
+pub fn connecting(file: &Path, provider: &str, instance: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::connecting(text, named, provider, instance)
+    })
+}
+
 /// Takes the installed agent `instance` out of `file`, and changes nothing
 /// else in it.
 ///

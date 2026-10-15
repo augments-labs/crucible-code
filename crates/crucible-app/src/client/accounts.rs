@@ -34,6 +34,11 @@
 //! | sign out, the file not written | sign out | [`LogoutOutcome::StoppedForThisRunOnly`] |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
+//! | connect, signed in | use it, then connect | [`LoginOutcome::AgentConnected`] |
+//! | connect, signed in | use it, then connect; the file not written | [`LoginOutcome::ConnectUnsaved`] |
+//! | connect | the agent's route accepted; the yes not written | [`LoginOutcome::ConnectUnsaved`] |
+//! | connect | cancel, back, or nobody | [`LoginOutcome::Undecided`] |
+//! | connect, an instance not named | nothing | [`ErrorCode::InvalidArgument`] |
 //!
 //! A removal whose write fails after its run was stopped is told only that it
 //! failed: the settings are still there, so the next run starts the agent as
@@ -48,13 +53,23 @@
 //! unverified. Once the write has landed, a journal that cannot be kept is
 //! reported as unverified too, since the instances are already out of use; a
 //! stage the journal refused is not taken.
+//!
+//! A connect starts nothing of the agent's before its content-use route has a
+//! yes, and then reads only whether the agent is signed in. Signed in, the
+//! client is asked to use that account and then to confirm the route; not
+//! signed in, or not read either way, it is told so, with the command that
+//! signs the agent in where it has one, and may check again, [`CHECKS`] times
+//! in all. Nothing is written before the route is confirmed: then the
+//! provider's `access` names the instance and the instance is enabled, in one
+//! update of the user file, under the scope's journal.
 
 use std::path::Path;
 
 use crucible_client_api::{
-    Command, ErrorCode, LogoutOutcome, Outcome, Problem, Refusal, Request, Text,
+    Command, ErrorCode, LoginOutcome, LogoutOutcome, Outcome, Problem, Refusal, Request, Text,
 };
 use crucible_config::{ConfigError, ExternalAgent};
+use crucible_execution::Authentication;
 use crucible_execution::{Admission, Ending, Failure};
 use crucible_external_harnesses::{
     Account as Step, Contended, Coordinator, Ended, Journal, Reading, Stage, Work,
@@ -97,6 +112,17 @@ pub enum Account {
     SignOutUnverified(Failure),
     /// Nobody chose a way to go on, so nothing changed.
     Undecided,
+    /// The provider named here is reached through the instance, which takes
+    /// new work, and that is written down.
+    Connected,
+    /// The agent read signed in, and the route through it could not be
+    /// written down, so nothing changed.
+    ConnectUnsaved(RememberError),
+    /// The yes to the agent's content-use route could not be written down,
+    /// so nothing of the agent's was started and nothing changed.
+    HoldUnkept(RememberError),
+    /// Nobody went on with a connect, so nothing changed.
+    Unconnected,
     /// It did not begin, or could not be kept as it went.
     Contended(Contended),
 }
@@ -131,6 +157,24 @@ impl Account {
                 said: Text::cut(Ended::SignOutUnverified(failure.clone()).says()),
             },
             Self::Undecided => LogoutOutcome::Undecided,
+            Self::Connected => {
+                return Outcome::Login(LoginOutcome::AgentConnected {
+                    said: Text::cut(CONNECTED),
+                });
+            }
+            Self::ConnectUnsaved(problem) => {
+                return Outcome::Login(LoginOutcome::ConnectUnsaved {
+                    said: Text::cut(CONNECT_UNSAVED),
+                    problem: Problem::failed(problem),
+                });
+            }
+            Self::HoldUnkept(problem) => {
+                return Outcome::Login(LoginOutcome::ConnectUnsaved {
+                    said: Text::cut(HOLD_UNKEPT),
+                    problem: Problem::failed(problem),
+                });
+            }
+            Self::Unconnected => return Outcome::Login(LoginOutcome::Undecided),
             Self::Contended(Contended::Busy) => {
                 return Outcome::Refused(ErrorCode::Busy.into());
             }
@@ -176,6 +220,32 @@ pub const SIGN_OUT: &str = "Sign out of the agent";
 
 /// The choice a sign-out offers instead, by its name.
 pub const DISCONNECT_INSTEAD: &str = "Disconnect from Crucible instead";
+
+/// What a person is told once a provider is reached through an agent.
+pub const CONNECTED: &str = "Connected. The provider is reached through this agent.";
+
+/// What a person is told where the agent is signed in and the route through
+/// it could not be written down.
+pub const CONNECT_UNSAVED: &str =
+    "The agent signed in, but Crucible could not activate the integration.";
+
+/// What a person is told where the yes to an agent's route could not be
+/// written down.
+pub const HOLD_UNKEPT: &str =
+    "Crucible could not write down the yes to this agent's route, so nothing was changed.";
+
+/// The choice that goes on with the account an agent is signed in with.
+pub const USE_ACCOUNT: &str = "Use this account";
+
+/// The choice that reads an agent's sign-in again.
+pub const CHECK_AGAIN: &str = "Check again";
+
+/// The choice that writes a connect down.
+pub const CONNECT: &str = "Connect";
+
+/// How many times a connect reads whether the agent is signed in, the first
+/// time and each check again together, before it is given up as undecided.
+pub const CHECKS: usize = 5;
 
 /// Carries out `request` where it is an account operation, asking `front`
 /// which way to go before anything changes.
@@ -259,6 +329,33 @@ pub async fn account(
                 Some(1) => Performed::Account(disconnect(conversation, desk, &agent).await),
                 _ => Performed::Account(Account::Undecided),
             }
+        }
+        Command::Connect { provider, instance } => {
+            let Some(served) = crate::providers::offered(desk.switching.providers)
+                .find(|served| served.name == provider.as_str())
+            else {
+                return Performed::Refused(ErrorCode::UnknownProvider.into());
+            };
+            // Which agent to ask about, where none is named, is a question
+            // this door does not put yet.
+            let Some(agent) = instance.as_ref().and_then(|instance| {
+                desk.switching
+                    .settings
+                    .external_agents()
+                    .into_iter()
+                    .find(|agent| agent.name() == instance.as_str())
+            }) else {
+                return Performed::Refused(ErrorCode::InvalidArgument.into());
+            };
+            let Some(row) = crate::backends::REGISTRY.row(agent.driver()) else {
+                return Performed::Refused(ErrorCode::InvalidArgument.into());
+            };
+            let asked = Connecting {
+                provider: served.name,
+                agent: &agent,
+                row,
+            };
+            Performed::Account(connect(conversation, request, desk, front, &asked).await)
         }
         Command::Prompt(_)
         | Command::Compact
@@ -456,6 +553,200 @@ async fn sign_out(
     match slot.finish(ending) {
         Ok(_) => account,
         Err(_) => unkept(),
+    }
+}
+
+/// A connect asked for: the provider to reach, the instance to reach it
+/// through, and the row of that instance's agent.
+struct Connecting<'a> {
+    provider: &'static str,
+    agent: &'a ExternalAgent,
+    row: &'static crate::backends::Row,
+}
+
+/// Reaches the provider asked for through its instance once the agent reads
+/// signed in and the client has confirmed the route, asking `front` each way
+/// to go on.
+async fn connect(
+    conversation: &mut Conversation,
+    request: &Request,
+    desk: &Desk<'_>,
+    front: &mut dyn Front,
+    asked: &Connecting<'_>,
+) -> Account {
+    let Connecting {
+        provider,
+        agent,
+        row,
+    } = *asked;
+    let capabilities = request.capabilities();
+    // Nothing of the agent's is started before its route has a yes, and a yes
+    // is written down before anything is.
+    if let Some(consent) = conversation.consent()
+        && let Some(warned) = consent.asks(row.route).copied()
+    {
+        if !super::deciding::warned(capabilities, front, &warned).await {
+            return Account::Unconnected;
+        }
+        if let Err(problem) = consent.accept(&warned) {
+            return Account::HoldUnkept(problem);
+        }
+    }
+    let unstepped = || Reading::Unreadable(Failure::new("this run takes no agent steps"));
+    let keyed = desk.switching.logins.read().has_key(provider);
+    for _ in 0..CHECKS {
+        let status = match conversation.steps() {
+            Some(steps) => steps.account(agent, Step::Status).await,
+            None => unstepped(),
+        };
+        let question = match &status {
+            Reading::Signed(Authentication::SignedIn) => signed_in(agent),
+            Reading::Signed(Authentication::SignedOut) => signed_out(agent, row),
+            Reading::Signed(
+                Authentication::Unknown | Authentication::Expired | Authentication::Unverifiable,
+            )
+            | Reading::Version(_)
+            | Reading::Unreadable(_) => unverified(agent),
+        };
+        let signed = matches!(status, Reading::Signed(Authentication::SignedIn));
+        match confirmed(capabilities, front, &question).await {
+            Some(0) if signed => {
+                match confirmed(capabilities, front, &routing(agent, provider, keyed)).await {
+                    Some(0) => return commit(desk, provider, agent),
+                    // Going back is one level up: the sign-in is read again.
+                    Some(_) => {}
+                    None => return Account::Unconnected,
+                }
+            }
+            // Checking again.
+            Some(0) => {}
+            _ => return Account::Unconnected,
+        }
+    }
+    Account::Unconnected
+}
+
+/// Writes down that `provider` is reached through `agent`, and that `agent`
+/// takes new work, under its scope's journal.
+fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent) -> Account {
+    let mut coordinator = match coordinating(desk.switching.choosing, agent) {
+        Ok(coordinator) => coordinator,
+        Err(contended) => return Account::Contended(contended),
+    };
+    let mut slot = match coordinator.begin(Work::Connect, agent.profile(), 0) {
+        Ok(slot) => slot,
+        Err(contended) => return Account::Contended(contended),
+    };
+    if let Err(contended) = slot.advance(Stage::Committing) {
+        return Account::Contended(contended);
+    }
+    if let Err(problem) = remember::connecting(desk.switching.choosing, provider, agent.name()) {
+        let _ = slot.finish(Ending::Failed);
+        return Account::ConnectUnsaved(problem);
+    }
+    // The route is written and in force whether or not the journal takes its
+    // end; an open record is replaced by the next connect of the scope.
+    let _ = slot.finish(Ending::Succeeded);
+    Account::Connected
+}
+
+/// What the person is asked where `agent` reads signed in.
+fn signed_in(agent: &ExternalAgent) -> Confirmation {
+    let name = agent.name();
+    Confirmation {
+        asks: format!("Use the account {name} is signed in with?"),
+        facts: vec![
+            format!("Agent: {name}, run as {}.", agent.executable()),
+            profiled(agent),
+            "Account: signed in; the agent does not tell Crucible which.".to_owned(),
+        ],
+        choices: vec![
+            (
+                USE_ACCOUNT.to_owned(),
+                "Go on to confirm the route through this agent.".to_owned(),
+            ),
+            ("Cancel".to_owned(), "Change nothing.".to_owned()),
+        ],
+    }
+}
+
+/// What the person is told where `agent`, of the row `row`, reads signed out.
+fn signed_out(agent: &ExternalAgent, row: &crate::backends::Row) -> Confirmation {
+    let name = agent.name();
+    let how = match (row.sign_in)(agent.profile().map(Path::new)) {
+        Some(command) => {
+            format!("Sign in: run `{command}` in a terminal, then choose Check again.")
+        }
+        None => "Sign in: open the agent and sign in there, then choose Check again.".to_owned(),
+    };
+    Confirmation {
+        asks: format!("{name} is not signed in."),
+        facts: vec![
+            format!("Agent: {name}, run as {}.", agent.executable()),
+            profiled(agent),
+            how,
+        ],
+        choices: vec![
+            (
+                CHECK_AGAIN.to_owned(),
+                "Read the agent's sign-in again.".to_owned(),
+            ),
+            ("Cancel".to_owned(), "Change nothing.".to_owned()),
+        ],
+    }
+}
+
+/// What the person is told where `agent`'s sign-in could not be read.
+fn unverified(agent: &ExternalAgent) -> Confirmation {
+    let name = agent.name();
+    Confirmation {
+        asks: Ended::Unverified(Failure::new("")).says().to_owned(),
+        facts: vec![
+            format!("Agent: {name}, run as {}.", agent.executable()),
+            profiled(agent),
+            "Status: the agent did not say whether it is signed in.".to_owned(),
+        ],
+        choices: vec![
+            (
+                CHECK_AGAIN.to_owned(),
+                "Read the agent's sign-in again.".to_owned(),
+            ),
+            ("Cancel".to_owned(), "Change nothing.".to_owned()),
+        ],
+    }
+}
+
+/// The route a connect of `provider` through `agent` would write, `keyed`
+/// where a key is stored for the provider.
+fn routing(agent: &ExternalAgent, provider: &str, keyed: bool) -> Confirmation {
+    let name = agent.name();
+    let mut facts = vec![
+        format!("Provider: {provider} is reached through {name} from now on."),
+        format!("Agent: {name}, run as {}.", agent.executable()),
+    ];
+    if keyed {
+        facts.push(format!(
+            "Provider {provider} switches from a stored API key to this agent; the key is kept."
+        ));
+    }
+    Confirmation {
+        asks: format!("Connect {provider} through {name}?"),
+        facts,
+        choices: vec![
+            (
+                CONNECT.to_owned(),
+                "Crucible writes the route down and uses this agent for the provider.".to_owned(),
+            ),
+            ("Go back".to_owned(), "Change nothing.".to_owned()),
+        ],
+    }
+}
+
+/// The profile line of a question about `agent`.
+fn profiled(agent: &ExternalAgent) -> String {
+    match agent.profile() {
+        Some(profile) => format!("Profile: {profile}."),
+        None => "Profile: the agent's default.".to_owned(),
     }
 }
 

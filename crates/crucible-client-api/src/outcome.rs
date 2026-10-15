@@ -352,6 +352,23 @@ pub enum LoginOutcome {
         /// Why the choice will not outlive the host process, where it will not.
         unwritten: Option<Problem>,
     },
+    /// The provider is reached through an installed agent's instance from
+    /// now on, which is written down, the agent read signed in first.
+    AgentConnected {
+        /// What the person is told.
+        said: Text,
+    },
+    /// The agent read signed in, and the configuration that would reach the
+    /// provider through it could not be written, so nothing changed.
+    ConnectUnsaved {
+        /// What the person is told.
+        said: Text,
+        /// Why it could not be written.
+        problem: Problem,
+    },
+    /// Nobody chose a way to go on, so nothing changed: the client could not
+    /// be asked, or it cancelled or went back.
+    Undecided,
 }
 
 /// What still authenticates a provider once its stored credential is gone.

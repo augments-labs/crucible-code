@@ -58,7 +58,7 @@ pub enum Access {
 /// Its own type so the spellings the shape declares and the ones [`Access`]
 /// is read from are one list.
 #[derive(Clone, Copy)]
-enum Kind {
+pub(crate) enum Kind {
     Subscription,
     ApiKey,
     ExternalAgent,
@@ -67,7 +67,7 @@ enum Kind {
 impl Kind {
     const ALL: [Self; 3] = [Self::Subscription, Self::ApiKey, Self::ExternalAgent];
 
-    const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Subscription => "subscription",
             Self::ApiKey => "apiKey",

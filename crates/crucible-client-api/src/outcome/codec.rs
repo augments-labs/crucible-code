@@ -268,6 +268,11 @@ impl LoginOutcome {
                 "unwritten",
                 unwritten.as_ref(),
             ),
+            Self::AgentConnected { said } => Writing::kind("agent_connected").text("said", said),
+            Self::ConnectUnsaved { said, problem } => {
+                failed("connect_unsaved", problem).text("said", said)
+            }
+            Self::Undecided => Writing::kind("undecided"),
         }
         .finish()
     }
@@ -282,6 +287,14 @@ impl LoginOutcome {
                 retained: Retained::from(&mut fields)?,
                 unwritten: maybe_problem(&mut fields, "unwritten")?,
             },
+            "agent_connected" => Self::AgentConnected {
+                said: fields.text("said")?,
+            },
+            "connect_unsaved" => Self::ConnectUnsaved {
+                said: fields.text("said")?,
+                problem: problem(&mut fields)?,
+            },
+            "undecided" => Self::Undecided,
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;

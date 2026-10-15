@@ -5,7 +5,8 @@
 //! wire is spoken in each mode a conversation runs in, or why it is not run
 //! in one, which key names its profile directory, the content-use
 //! route it is held under, the section of `docs/providers/agents.md` that
-//! documents it, the hosts it must reach, and whether this release ships it.
+//! documents it, the hosts it must reach, the command a person signs it in
+//! with where it has one, and whether this release ships it.
 //! The chooser, the launch and every test read the [`Registry`] they were
 //! built over, and the shipped one is [`REGISTRY`]; a row that does not ship
 //! is listed nowhere and refused at launch with the sentence that names its
@@ -17,7 +18,7 @@
 //! the vendor's own terms.
 
 use crucible_config::Driver;
-use crucible_execution::Failure;
+use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
 use crucible_external_harnesses::antigravity::Antigravity;
 use crucible_external_harnesses::claude::Claude;
@@ -43,6 +44,10 @@ pub struct Row {
     pub docs_section: &'static str,
     /// The hosts it must reach, which its sandbox lets it.
     pub reaches: &'static [&'static str],
+    /// The command a person runs in a terminal to sign the profile directory
+    /// given in, or the agent's usual one; `None` for an agent that is signed
+    /// in from its own window and has no such command.
+    pub sign_in: fn(Option<&std::path::Path>) -> Option<Text>,
     /// Whether this release lets it run.
     pub shipping: bool,
 }
@@ -115,6 +120,7 @@ pub(crate) const CLAUDE: Row = Row {
         "claude.com",
         "platform.claude.com",
     ],
+    sign_in: |profile| Some(crucible_external_harnesses::claude::sign_in(profile)),
     shipping: true,
 };
 
@@ -135,6 +141,7 @@ pub(crate) const ANTIGRAVITY: Row = Row {
         "cloudcode-pa.googleapis.com",
         "daily-cloudcode-pa.googleapis.com",
     ],
+    sign_in: |_| None,
     shipping: true,
 };
 
