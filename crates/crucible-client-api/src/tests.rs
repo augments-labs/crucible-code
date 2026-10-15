@@ -2036,6 +2036,60 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     }
 }
 
+/// Every object in `value`, wherever it is nested, by its JSON pointer.
+fn objects(value: &Value, at: &str, found: &mut Vec<String>) {
+    match value {
+        Value::Object(fields) => {
+            found.push(at.to_owned());
+            for (key, inner) in fields {
+                objects(inner, &format!("{at}/{key}"), found);
+            }
+        }
+        Value::Array(items) => {
+            for (index, inner) in items.iter().enumerate() {
+                objects(inner, &format!("{at}/{index}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn a_field_nobody_asked_for_refuses_the_frame_wherever_it_is_nested() {
+    for specimen in specimens() {
+        let whole: Value = serde_json::from_slice(&specimen.frame).unwrap();
+        let kind = specimen.what.split(' ').next().unwrap_or_default();
+        let mut at = Vec::new();
+        objects(&whole, "", &mut at);
+        for pointer in at {
+            let mut odd = whole.clone();
+            odd.pointer_mut(&pointer)
+                .and_then(Value::as_object_mut)
+                .unwrap()
+                .insert("unasked".to_owned(), json!(true));
+            let frame = framed(&odd);
+            let refused = match kind {
+                "request" => Request::decode(&frame).err().map(|it| it.refusal.code()),
+                "response" => Response::decode(&frame).err().map(Refusal::code),
+                "progress" => Progress::decode(&frame).err().map(Refusal::code),
+                "snapshot" => Snapshot::decode(&frame).err().map(Refusal::code),
+                "inspection" => inspection::Inspection::decode(&frame)
+                    .err()
+                    .map(Refusal::code),
+                "doctor" => doctor::Report::decode(&frame).err().map(Refusal::code),
+                "sessions" => sessions::Report::decode(&frame).err().map(Refusal::code),
+                other => panic!("no reader for {other}"),
+            };
+            assert_eq!(
+                refused,
+                Some(ErrorCode::Malformed),
+                "{} with a field at {pointer:?}",
+                specimen.what
+            );
+        }
+    }
+}
+
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
