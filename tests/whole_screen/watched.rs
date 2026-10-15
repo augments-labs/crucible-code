@@ -313,6 +313,35 @@ impl Watched {
         Self::started(case, columns, rows, Some(vendor), true)
     }
 
+    /// The same, with every installed agent this build knows how to run
+    /// offered as though this release shipped it, and `env` set besides.
+    pub(crate) fn offering_agents(
+        case: &str,
+        (columns, rows): (u16, u16),
+        vendor: &Vendor,
+        env: &[(&str, &str)],
+    ) -> Self {
+        let mut offered = vec![("CRUCIBLE_CODE_PROOF_REGISTRY", "fake")];
+        offered.extend_from_slice(env);
+        Self::configured_with_terminal(
+            case,
+            &fixture_document(&document(Some(vendor), None)),
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: false,
+                profile: Profile::default(),
+                cooked: false,
+            },
+            Some(&Launch {
+                env: &offered,
+                ..Launch::default()
+            }),
+        )
+    }
+
     /// The same, on a terminal that counts columns as `profile` says rather
     /// than as most terminals now do.
     pub(crate) fn answering_on(
@@ -1614,6 +1643,10 @@ fn start(
         .envs(terminal.coloured().then_some(("COLORTERM", "truecolor")))
         .envs((!terminal.coloured()).then_some(("NO_COLOR", "1")))
         .env("CRUCIBLE_CODE_HOME", &home)
+        // No installed agent is offered unless the case asks for one, so a
+        // screen drawn before agents shipped is drawn the same whatever this
+        // release ships.
+        .env("CRUCIBLE_CODE_PROOF_REGISTRY", "empty")
         .envs(keyed.then_some(("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")))
         .envs(launch.map(|launch| launch.env).unwrap_or_default().iter().copied())
         .args(launch.map(|launch| launch.args).unwrap_or_default())

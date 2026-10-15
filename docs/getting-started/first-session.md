@@ -221,8 +221,11 @@ whose own key you type in, MiniMax on either of its sites and Qwen's Coding Plan
 and Token Plan on either of Alibaba Cloud's. The second
 lists the providers whose key you may hold, each with the variable it reads
 from, `set ANTHROPIC_API_KEY` and so on, for anyone who would rather export a
-key than store one. A row that holds your credential says `signed in`. Escape
-goes back one screen at a time and cancels from the first.
+key than store one. A row that holds your credential says `signed in`. Where
+this release can run an [installed coding agent](../providers/agents.md), a
+third choice, *Use an installed coding agent*, signs the provider you are
+asking in through that agent instead. Escape goes back one screen at a time and
+cancels from the first.
 
 ChatGPT offers a local browser callback and a device code for remote terminals;
 Kimi Code offers a device code. The live panel opens the authorization page,
@@ -1201,7 +1204,8 @@ A window too short for the box says so instead, and asks for a taller one.
 from which vendor: somebody paying for a ChatGPT plan and somebody holding an
 OpenAI console key are two people, and only one of them has a key to type. So
 the first panel has two rows, whatever is stored: *Your account with
-subscription* and *Provide your own API key*. The accounts connect: ChatGPT
+subscription* and *Provide your own API key*, and a third, *Use an installed
+coding agent*, where an installed agent can reach the provider being asked. The accounts connect: ChatGPT
 opens a browser authorization, or a device code from a terminal with no browser
 to reach, and Kimi Code a device code on the site your account belongs to;
 either writes a renewable credential to the same protected store a key goes to.

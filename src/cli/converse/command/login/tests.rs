@@ -417,17 +417,30 @@ fn the_paste_box_draws_its_mark_and_its_dots_out_of_the_glyph_set() {
 #[test]
 fn every_way_is_named_by_what_the_reader_holds_and_how_it_is_billed() {
     // Two ways to pay, whatever the store holds: an account whose plan
-    // includes the usage, or a key billed by what is sent. Neither row is a
-    // sentence about what pressing Enter does, and neither names a vendor:
-    // the vendors are the lists each leads to.
+    // includes the usage, or a key billed by what is sent; and an installed
+    // agent's own sign-in third, where one is offered. No row is a sentence
+    // about what pressing Enter does, and none names a vendor: the vendors
+    // are the lists each leads to.
     let shown: Vec<&str> = FIRST.iter().map(|way| way.name).collect();
     let says: Vec<&str> = FIRST.iter().map(|way| way.says).collect();
 
-    assert_eq!(shown, ["Your account with subscription", KEY_ROUTE_SHOWN]);
+    assert_eq!(
+        shown,
+        [
+            "Your account with subscription",
+            KEY_ROUTE_SHOWN,
+            "Use an installed coding agent"
+        ]
+    );
     assert_eq!(
         says,
-        ["Usage included in your paid plan", "API usage billing"]
+        [
+            "Usage included in your paid plan",
+            "API usage billing",
+            "Sign in through an official harness"
+        ]
     );
+    assert_eq!(FIRST.get(..PAID).map(<[_]>::len), Some(2));
     assert_eq!(HOW, "Choose how usage is paid for.");
 }
 
