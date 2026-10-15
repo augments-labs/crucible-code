@@ -25,14 +25,21 @@
 //! | disconnect | disconnect | [`LogoutOutcome::Disconnected`] |
 //! | disconnect, its run not confirmed stopped | disconnect | [`LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped`] |
 //! | disconnect, the file not written | disconnect | [`LogoutOutcome::StoppedForThisRunOnly`] |
-//! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
+//! | remove, a provider reached through it | nothing | [`LogoutOutcome::StillReferenced`] |
+//! | remove | remove | [`LogoutOutcome::IntegrationRemoved`] |
+//! | remove, the file not written | remove | [`ErrorCode::Failed`] |
+//! | remove, an instance the user file does not name | nothing | [`ErrorCode::InvalidArgument`] |
+//!
+//! A removal whose write fails after its run was stopped is told only that it
+//! failed: the settings are still there, so the next run starts the agent as
+//! before, and nothing is lasting about the stop to report.//! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
 
 use std::path::Path;
 
 use crucible_client_api::{
     Command, ErrorCode, LogoutOutcome, Outcome, Problem, Refusal, Request, Text,
 };
-use crucible_config::ExternalAgent;
+use crucible_config::{ConfigError, ExternalAgent};
 use crucible_execution::{Admission, Ending};
 use crucible_external_harnesses::{Contended, Coordinator, Journal, Stage, Work};
 
@@ -53,6 +60,15 @@ pub enum Account {
     /// The instance takes no new work in this conversation, and that could
     /// not be written down.
     ThisRunOnly(RememberError),
+    /// The instance's settings are gone from the user file, and its run in
+    /// this conversation was stopped first.
+    Removed,
+    /// Nothing was removed, because the provider named here is still reached
+    /// through the instance.
+    StillReferenced(String),
+    /// The instance's run was stopped, and its settings could not be taken out
+    /// of the file.
+    Unremoved(RememberError),
     /// Nobody chose a way to go on, so nothing changed.
     Undecided,
     /// It did not begin, or could not be kept as it went.
@@ -76,11 +92,18 @@ impl Account {
                 said: Text::cut(THIS_RUN_ONLY),
                 problem: Problem::failed(problem),
             },
+            Self::Removed => LogoutOutcome::IntegrationRemoved {
+                said: Text::cut(REMOVED),
+            },
+            Self::StillReferenced(provider) => LogoutOutcome::StillReferenced {
+                said: Text::cut(&format!("{provider} {STILL_REFERENCED}")),
+            },
             Self::Undecided => LogoutOutcome::Undecided,
             Self::Contended(Contended::Busy) => {
                 return Outcome::Refused(ErrorCode::Busy.into());
             }
-            Self::Contended(
+            Self::Unremoved(_)
+            | Self::Contended(
                 Contended::Unresolved(_)
                 | Contended::Refused(_)
                 | Contended::Order
@@ -103,6 +126,18 @@ pub const THIS_RUN_ONLY: &str = "Stopped for this run only; disconnect could not
 
 /// The choice that goes on with a disconnect, by its name.
 pub const DISCONNECT: &str = "Disconnect from Crucible";
+
+/// What a person is told once an instance's settings are removed.
+pub const REMOVED: &str =
+    "Integration settings removed. External credentials and conversation history were not deleted.";
+
+/// What a person is told after the provider's name where a provider is still
+/// reached through the instance.
+pub const STILL_REFERENCED: &str =
+    "is still reached through this agent; choose another way to reach it first.";
+
+/// The choice that goes on with a removal, by its name.
+pub const REMOVE: &str = "Remove integration settings";
 
 /// Carries out `request` where it is an account operation, asking `front`
 /// which way to go before anything changes.
@@ -131,6 +166,37 @@ pub async fn account(
             let confirmation = disconnecting(&agent, conversation.instance());
             match confirmed(request.capabilities(), front, &confirmation).await {
                 Some(0) => Performed::Account(disconnect(conversation, desk, &agent).await),
+                _ => Performed::Account(Account::Undecided),
+            }
+        }
+        Command::RemoveIntegration { instance } => {
+            let Some(agent) = desk
+                .switching
+                .settings
+                .external_agents()
+                .into_iter()
+                .find(|agent| agent.name() == instance.as_str())
+            else {
+                return Performed::Refused(ErrorCode::InvalidArgument.into());
+            };
+            if let Some(provider) = desk.switching.settings.referencing(agent.name()) {
+                return Performed::Account(Account::StillReferenced(provider));
+            }
+            // Only the user file is written, so an instance some other file
+            // names is refused here, before its run is stopped for nothing.
+            match remember::removable(desk.switching.choosing, agent.name()) {
+                Ok(()) => {}
+                Err(RememberError::Unusable(ConfigError::StillReferenced { provider, .. })) => {
+                    return Performed::Account(Account::StillReferenced(provider.into()));
+                }
+                Err(RememberError::Unusable(_)) => {
+                    return Performed::Refused(ErrorCode::InvalidArgument.into());
+                }
+                Err(problem) => return Performed::Account(Account::Unremoved(problem)),
+            }
+            let confirmation = removing(&agent, conversation.instance());
+            match confirmed(request.capabilities(), front, &confirmation).await {
+                Some(0) => Performed::Account(remove(conversation, desk, &agent).await),
                 _ => Performed::Account(Account::Undecided),
             }
         }
@@ -191,6 +257,79 @@ fn disconnecting(agent: &ExternalAgent, on: Option<&str>) -> Confirmation {
             ),
             ("Cancel".to_owned(), "Change nothing.".to_owned()),
         ],
+    }
+}
+
+/// The question a removal of `agent` puts, where the conversation is on the
+/// instance `on`.
+fn removing(agent: &ExternalAgent, on: Option<&str>) -> Confirmation {
+    let name = agent.name();
+    let working = if on == Some(name) {
+        "Active work: this conversation runs on it, and its run will be stopped."
+    } else {
+        "Active work: none in this conversation."
+    };
+    Confirmation {
+        asks: format!("Remove the settings for {name} from Crucible?"),
+        facts: vec![
+            format!("Agent: {name}, run as {}.", agent.executable()),
+            match agent.profile() {
+                Some(profile) => format!("Profile: {profile}."),
+                None => "Profile: the agent's default.".to_owned(),
+            },
+            "Kept: the agent's sign-in, its installed program and conversation history.".to_owned(),
+            working.to_owned(),
+        ],
+        choices: vec![
+            (
+                REMOVE.to_owned(),
+                "Crucible forgets this agent; adding it again needs its settings again.".to_owned(),
+            ),
+            ("Cancel".to_owned(), "Change nothing.".to_owned()),
+        ],
+    }
+}
+
+/// Takes `agent`'s settings out of the user file, once its run in this
+/// conversation is stopped and new work on it refused.
+async fn remove(
+    conversation: &mut Conversation,
+    desk: &Desk<'_>,
+    agent: &ExternalAgent,
+) -> Account {
+    let mut coordinator = match coordinating(desk.switching.choosing, agent) {
+        Ok(coordinator) => coordinator,
+        Err(contended) => return Account::Contended(contended),
+    };
+    let mut slot = match coordinator.begin(Work::Remove, agent.profile(), 0) {
+        Ok(slot) => slot,
+        Err(contended) => return Account::Contended(contended),
+    };
+    if let Err(contended) = slot.advance(Stage::Closed) {
+        return Account::Contended(contended);
+    }
+    // Whether the run stopped is not what a removal reports: once the settings
+    // are gone, nothing can start it again.
+    let _ = conversation.disconnect(agent.name()).await;
+    for stage in [Stage::Quiesced, Stage::Committing] {
+        if let Err(contended) = slot.advance(stage) {
+            return Account::Contended(contended);
+        }
+    }
+    match remember::removing(desk.switching.choosing, agent.name()) {
+        Ok(()) => match slot.finish(Ending::Succeeded) {
+            Ok(_) => Account::Removed,
+            Err(contended) => Account::Contended(contended),
+        },
+        Err(problem) => {
+            let _ = slot.finish(Ending::Failed);
+            match problem {
+                RememberError::Unusable(ConfigError::StillReferenced { provider, .. }) => {
+                    Account::StillReferenced(provider.into())
+                }
+                problem => Account::Unremoved(problem),
+            }
+        }
     }
 }
 

@@ -182,6 +182,7 @@ pub fn asking(
         | Command::Login { .. }
         | Command::Logout { .. }
         | Command::Disconnect { .. }
+        | Command::RemoveIntegration { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }

@@ -1124,14 +1124,46 @@ fn disconnecting_from(
     asking: Asking,
     choosing: &mut Choosing,
 ) -> Result<(Outcome, String), Failed> {
+    let asked = Asked {
+        installed,
+        command: |instance| Command::Disconnect { instance },
+        asking,
+        after: None,
+    };
+    accounting(tree, outside, &asked, choosing)
+}
+
+/// An account operation, asked of a user file holding `installed.0` about the
+/// instance named `installed.1`.
+struct Asked<'a> {
+    installed: (&'a str, &'a str),
+    command: fn(crucible_client_api::Name) -> Command,
+    asking: Asking,
+    /// What the user file holds once the settings were read from it, where
+    /// that is something else: as though another file named the instance.
+    after: Option<&'a str>,
+}
+
+/// Asks `asked` of a client that answers as `choosing` does, and answers what
+/// it was told and what the user file then held.
+fn accounting(
+    tree: &Tree,
+    outside: &mut Outside,
+    asked: &Asked<'_>,
+    choosing: &mut Choosing,
+) -> Result<(Outcome, String), Failed> {
     use crucible_client_api::Name;
 
+    let (installed, asking) = (asked.installed, asked.asking);
     let mut desk = super::Desk::new(tree, &[])?;
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
     }
     std::fs::write(&desk.choosing, installed.0)?;
     desk.settings = super::written(tree)?;
+    if let Some(after) = asked.after {
+        std::fs::write(&desk.choosing, after)?;
+    }
     let (workspace, sessions) = (tree.workspace()?, tree.sessions());
     let at = client::Desk {
         switching: desk.with(),
@@ -1144,9 +1176,7 @@ fn disconnecting_from(
     let request = Request::new(
         asking,
         Correlation::new(1),
-        Command::Disconnect {
-            instance: Name::new(installed.1)?,
-        },
+        (asked.command)(Name::new(installed.1)?),
     );
     let performed = runtime()?.block_on(client::account(
         &mut outside.conversation,
@@ -1265,5 +1295,173 @@ fn a_disconnect_of_an_instance_not_in_use_is_refused_unasked() -> Result<(), Fai
         assert!(choosing.put.is_empty(), "{case}: {:?}", choosing.put);
         assert_eq!(kept, file, "{case}");
     }
+    Ok(())
+}
+
+/// Asks to remove the instance `instance` of the user file `installed`, of a
+/// client that answers as `choosing` does.
+fn removing(
+    tree: &Tree,
+    outside: &mut Outside,
+    installed: (&str, &str),
+    choosing: &mut Choosing,
+) -> Result<(Outcome, String), Failed> {
+    let asked = Asked {
+        installed,
+        command: |instance| Command::RemoveIntegration { instance },
+        asking: Asking::every(),
+        after: None,
+    };
+    accounting(tree, outside, &asked, choosing)
+}
+
+/// A removal, once chosen, takes the instance's block out of the file and
+/// nothing else, and the conversation's next turn on it is refused without
+/// launching the agent again.
+#[test]
+fn a_removal_deletes_the_block_and_nothing_else() -> Result<(), Failed> {
+    use crucible_client_api::LogoutOutcome;
+
+    let tree = Tree::new("external-remove")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let mut choosing = Choosing {
+        choice: Some(client::accounts::REMOVE),
+        put: Vec::new(),
+    };
+
+    let (outcome, file) = removing(&tree, &mut outside, (INSTALLED, "work"), &mut choosing)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Logout(LogoutOutcome::IntegrationRemoved {
+            said: crucible_client_api::Text::cut(client::accounts::REMOVED)
+        })
+    );
+    assert_eq!(choosing.put.len(), 1, "{:?}", choosing.put);
+    assert_eq!(
+        file,
+        INSTALLED.replace(
+            r#""externalAgents": {"work": {"driver": "claude", "executable": "claude"}},"#,
+            r#""externalAgents": {},"#
+        )
+    );
+    let launched = outside.launched().len();
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_err(), "a removed agent took a turn");
+    assert_eq!(
+        outside.launched().len(),
+        launched,
+        "the agent was launched again"
+    );
+    Ok(())
+}
+
+/// While a provider is reached through the instance, the removal is refused
+/// before anything is asked, and the file is left as it was.
+#[test]
+fn a_removal_is_refused_while_a_provider_is_reached_through_the_instance() -> Result<(), Failed> {
+    use crucible_client_api::LogoutOutcome;
+
+    let referenced = INSTALLED.replace(
+        r#""updates""#,
+        r#""providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}},
+  "updates""#,
+    );
+    let tree = Tree::new("external-remove-referenced")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let mut choosing = Choosing {
+        choice: Some(client::accounts::REMOVE),
+        put: Vec::new(),
+    };
+
+    let (outcome, file) = removing(&tree, &mut outside, (&referenced, "work"), &mut choosing)?;
+
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Logout(LogoutOutcome::StillReferenced { .. })
+        ),
+        "{outcome:?}"
+    );
+    assert!(choosing.put.is_empty(), "{:?}", choosing.put);
+    assert_eq!(file, referenced);
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_ok(), "{turned:?}");
+    Ok(())
+}
+
+/// Cancelling or going back leaves the file byte for byte as it was, and the
+/// agent connected; an instance the file does not name is refused unasked.
+#[test]
+fn a_removal_not_chosen_changes_nothing() -> Result<(), Failed> {
+    use crucible_client_api::{ErrorCode, LogoutOutcome};
+
+    for (case, choice, instance, expected) in [
+        (
+            "cancel",
+            Some("Cancel"),
+            "work",
+            Outcome::Logout(LogoutOutcome::Undecided),
+        ),
+        (
+            "back",
+            None,
+            "work",
+            Outcome::Logout(LogoutOutcome::Undecided),
+        ),
+        (
+            "unknown",
+            Some(client::accounts::REMOVE),
+            "elsewhere",
+            Outcome::Refused(ErrorCode::InvalidArgument.into()),
+        ),
+    ] {
+        let tree = Tree::new(&format!("external-remove-kept-{case}"))?;
+        let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+        let mut choosing = Choosing {
+            choice,
+            put: Vec::new(),
+        };
+
+        let (outcome, file) = removing(&tree, &mut outside, (INSTALLED, instance), &mut choosing)?;
+
+        assert_eq!(outcome, expected, "{case}");
+        assert_eq!(file, INSTALLED, "{case}");
+        assert_eq!(choosing.put.is_empty(), case == "unknown", "{case}");
+        let (turned, _events) = turn(&mut outside, "again", false)?;
+        assert!(turned.is_ok(), "{case}: {turned:?}");
+    }
+    Ok(())
+}
+
+/// An instance the settings name from some file other than the user file is
+/// refused before anything is asked or stopped, since only the user file is
+/// written.
+#[test]
+fn a_removal_of_an_instance_the_user_file_does_not_hold_is_refused_unasked() -> Result<(), Failed> {
+    use crucible_client_api::ErrorCode;
+
+    let elsewhere = r#"{"updates": {"check": "auto"}}
+"#;
+    let tree = Tree::new("external-remove-elsewhere")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let mut choosing = Choosing {
+        choice: Some(client::accounts::REMOVE),
+        put: Vec::new(),
+    };
+    let asked = Asked {
+        installed: (INSTALLED, "work"),
+        command: |instance| Command::RemoveIntegration { instance },
+        asking: Asking::every(),
+        after: Some(elsewhere),
+    };
+
+    let (outcome, file) = accounting(&tree, &mut outside, &asked, &mut choosing)?;
+
+    assert_eq!(outcome, Outcome::Refused(ErrorCode::InvalidArgument.into()));
+    assert!(choosing.put.is_empty(), "{:?}", choosing.put);
+    assert_eq!(file, elsewhere);
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_ok(), "{turned:?}");
     Ok(())
 }

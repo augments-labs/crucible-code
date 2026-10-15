@@ -179,9 +179,11 @@ pub async fn perform(
     match request.command() {
         // A disconnect asks which way to go, and only `account` has a front
         // end to ask.
-        Command::Prompt(_) | Command::Compact | Command::Cancel | Command::Disconnect { .. } => {
-            Performed::Refused(ErrorCode::Busy.into())
-        }
+        Command::Prompt(_)
+        | Command::Compact
+        | Command::Cancel
+        | Command::Disconnect { .. }
+        | Command::RemoveIntegration { .. } => Performed::Refused(ErrorCode::Busy.into()),
         // No turn is stopped here, so there is no action this could be about.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
         Command::Clear => Performed::Cleared(clear(conversation, desk).await),
@@ -308,6 +310,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::Login { .. }
         | Command::Logout { .. }
         | Command::Disconnect { .. }
+        | Command::RemoveIntegration { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }

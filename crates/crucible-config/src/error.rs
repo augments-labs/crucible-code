@@ -484,6 +484,22 @@ pub enum ConfigError {
         written: Box<str>,
     },
 
+    /// An installed agent's settings were not removed, because a provider is
+    /// still reached through it: removing them would leave that provider's
+    /// `access` naming nothing.
+    #[error(
+        "{file}: {provider} is still reached through the agent {instance}. Choose another way \
+         to reach {provider} before removing it"
+    )]
+    StillReferenced {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The instance asked about.
+        instance: Box<str>,
+        /// The first provider whose `access` names it.
+        provider: Box<str>,
+    },
+
     /// A stale setting could not be removed without rewriting its document.
     #[error(
         "{file}: crucible could not remove {at} without rewriting what is already in the file. Remove it by hand"
