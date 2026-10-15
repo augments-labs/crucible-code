@@ -37,7 +37,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use crucible_app::Conversation;
-use crucible_app::client::{Performed, Setting};
+use crucible_app::client::{Performed, Setting, execution};
 use crucible_client_api::{self as api, Name};
 use crucible_config::{Forced, Row as Setting_, RowId, Values};
 use crucible_tools::Mode;
@@ -202,6 +202,8 @@ struct Panel {
     status: Vec<Fact>,
     heading: String,
     usage: api::Usage,
+    /// Who runs the turns the figures are from.
+    execution: api::Execution,
     clock: Clock,
     /// The question out to the plan, until it is answered.
     out: Option<Out>,
@@ -234,6 +236,7 @@ pub(super) fn run<T: Terminal>(
     let counted = Counted {
         usage,
         serving: conversation.serving(),
+        execution: execution(conversation),
         mode: conversation.settled().mode(),
         session: conversation.session().id().cloned(),
     };
@@ -632,11 +635,10 @@ impl Panel {
     fn new(terms: &Terms, counted: &Counted) -> Self {
         let glyphs = terms.style().glyphs();
         let serving = counted.serving;
-        let signed = serving.and_then(|name| usage::signed(terms, name));
-        let heading = serving.map_or_else(String::new, |name| match &signed {
-            Some(words) => format!("{name} {} {words}", glyphs.dot()),
-            None => name.to_owned(),
-        });
+        let signed = serving
+            .filter(|_| matches!(counted.execution, api::Execution::Native))
+            .and_then(|name| usage::signed(terms, name));
+        let heading = usage::heading(serving, signed.as_deref(), &counted.execution, glyphs);
         Self {
             tab: Tab::Config,
             lines: crucible_config::rows()
@@ -660,6 +662,7 @@ impl Panel {
             ),
             heading,
             usage: counted.usage.clone(),
+            execution: counted.execution.clone(),
             clock: Clock::system(),
             out: None,
             looked: None,
@@ -989,6 +992,7 @@ impl Panel {
             Tab::Usage => Body::counted(usage::body(
                 &self.heading,
                 &self.usage,
+                &self.execution,
                 self.out.as_ref().map(Out::provider),
                 columns,
                 glyphs,

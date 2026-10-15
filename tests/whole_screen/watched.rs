@@ -917,10 +917,23 @@ impl Watched {
     /// takes bytes off a stream a stopped process cannot add to, or waits
     /// [`QUIET`] for one, and [`CEILING`] bounds the wait either way.
     pub(crate) fn types_and_catches(&mut self, keys: &str, wanted: &str) {
+        self.types_and_catches_where(keys, &format!("{wanted:?}"), |picture| {
+            picture.contains(wanted)
+        });
+    }
+
+    /// The same, for a screen a piece of text cannot name, as
+    /// [`Self::catches_where`] reads one.
+    pub(crate) fn types_and_catches_where(
+        &mut self,
+        keys: &str,
+        named: &str,
+        drawn: impl Fn(&str) -> bool,
+    ) {
         self.terminal
             .write_all(keys.as_bytes())
             .expect("keys go to the terminal");
-        self.catches(&format!("{keys:?} was typed"), wanted);
+        self.catches_where(&format!("{keys:?} was typed"), named, drawn);
     }
 
     /// Watches a running turn cross more than one face, then proves a key is

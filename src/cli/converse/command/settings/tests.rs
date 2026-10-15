@@ -36,6 +36,7 @@ fn counted() -> Counted {
             limits: Limits::default(),
         },
         serving: None,
+        execution: api::Execution::Native,
         mode: Mode::Ask,
         session: None,
     }
@@ -728,6 +729,34 @@ fn usage_tab_asks_the_plan_when_turned_to_and_draws_its_answer() {
     panel.watched(&terms, &mut conversation);
     assert!(panel.out.is_none());
     assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+#[test]
+fn usage_tab_on_an_agents_route_heads_its_figures_as_the_agents_report() {
+    let terms = plain();
+    let mut counted = counted();
+    counted.serving = Some("anthropic");
+    counted.execution = api::Execution::Instance(api::Name::new("claude").unwrap());
+    let mut panel = Panel::new(&terms, &counted);
+    panel.turn(Tab::Usage);
+
+    let rows = drawn(&mut panel, 80, 40);
+    for wanted in [
+        "Usage · claude",
+        "Session · as claude reported it",
+        "  not reported by agents",
+    ] {
+        assert!(
+            rows.iter().any(|row| row.contains(wanted)),
+            "{wanted}: {rows:#?}"
+        );
+    }
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("API time") || row.contains("Lines changed")),
+        "{rows:#?}"
+    );
 }
 
 #[test]

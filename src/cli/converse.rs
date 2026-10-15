@@ -1157,6 +1157,8 @@ struct Turn<'a, 'h> {
     /// turn began; `None` on a provider's model. The agent's tally keeps
     /// that figure until the turn under way says its own.
     external: Option<u64>,
+    /// Who runs the turn, as it stood when the turn began.
+    execution: crucible_client_api::Execution,
 }
 
 impl Turn<'_, '_> {
@@ -1492,6 +1494,7 @@ impl Turn<'_, '_> {
         command::Counted {
             usage,
             serving: self.serving,
+            execution: self.execution.clone(),
             mode: self.says.running_mode,
             session: self
                 .held
@@ -1585,6 +1588,7 @@ fn take<T: Terminal>(
     let mut says = typing::under(conversation.settled()).naming(&terms.commands.snapshot());
     let serving = conversation.serving();
     let external = conversation.settled().external();
+    let execution = crucible_app::client::execution(&conversation);
 
     // And what ended while nothing was running goes into the aside rather than
     // into what is above, which is the one place a fact like this can be put
@@ -1676,6 +1680,7 @@ fn take<T: Terminal>(
         terms,
         serving,
         external,
+        execution,
     };
     while turn.step(renderer) {}
 

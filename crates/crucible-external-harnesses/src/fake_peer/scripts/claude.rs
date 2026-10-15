@@ -296,11 +296,16 @@ pub fn priced_then_interrupt() -> Script {
     connected(interrupt_turn(priced_turn(Reply::new(), PRICE)))
 }
 
-/// A connect, then a run of a priced turn and one held open until it is
-/// stopped.
+/// A run of a priced turn, then one held open until it is stopped.
+#[must_use]
+pub fn priced_and_held() -> Reply {
+    held_turn(priced_turn(Reply::new(), PRICE))
+}
+
+/// A connect, then [`priced_and_held`].
 #[must_use]
 pub fn priced_then_held() -> Script {
-    connected(held_turn(priced_turn(Reply::new(), PRICE)))
+    connected(priced_and_held())
 }
 
 /// A connect, then a run whose first turn is stopped.

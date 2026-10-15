@@ -1104,6 +1104,16 @@ clock reads `since passed`, as the window has started again since it was read.
 Where the plan reports more limits than the panel keeps, `more limits not
 reported` follows the last one drawn.
 
+On an installed agent's route the panel is headed with the agent's name, and
+the session's figures stand under `Session · as claude reported it`, or the
+name of whichever agent runs the turns: the cost the agent reported, never a
+price crucible's own tables would put on it, read as above, so `at least` after
+a turn that was stopped and `not priced` where it reported none; the time since
+the session started; and its tokens. The agent reports no
+time its requests were out, no lines changed and no plan limit, so the panel
+draws none, and its plan limits read `not reported by agents`. The Usage tab of
+`/settings` draws the same.
+
 The panel opens at once with what crucible already holds, from the last response
 or the last answer, and with the ChatGPT sign-in it then asks ChatGPT for every
 limit on the account, saying `asking openai…` as the block's last row until the
