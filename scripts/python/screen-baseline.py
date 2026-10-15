@@ -44,13 +44,17 @@ import sys
 MANIFEST = "scripts/screen-baseline.json"
 SUITE = "tests/whole_screen"
 CAPTURES = os.path.join(SUITE, "snapshots")
-CASES = [os.path.join(SUITE, "main.rs"), os.path.join(SUITE, "native.rs")]
+CASES = [
+    os.path.join(SUITE, "main.rs"),
+    os.path.join(SUITE, "native.rs"),
+    os.path.join(SUITE, "agents.rs"),
+]
 
-# The module a capture's name carries between the crate's and the case's own,
+# The modules a capture's name carries between the crate's and the case's own,
 # for the cases that live in a module of the suite rather than in `main.rs`.
-NATIVE = "native__"
+MODULES = ("native__", "agents__")
 
-# The harness, and not the cases. `main.rs` and `native.rs` hold every case
+# The harness, and not the cases. The files in `CASES` hold every case
 # body, so hashing them would put a new case in conflict with every accepted
 # picture for no reason a reader could act on; what a case asserts is already
 # bound one case at a time in `scripts/required-cases.json`. These three are the
@@ -191,8 +195,9 @@ def case_named(file):
     """
     name = file[: -len(".snap")]
     name = name.split("__", 1)[1] if "__" in name else name
-    if name.startswith(NATIVE):
-        name = name[len(NATIVE) :]
+    for module in MODULES:
+        if name.startswith(module):
+            return name[len(module) :]
     return name
 
 
@@ -218,7 +223,38 @@ def owner(name, cases):
                 matched.append((case, bodies[0]))
                 break
     if len(matched) == 1:
-        return matched[0]
+        return caller(stem, *matched[0], cases)
+    return None, None
+
+
+def caller(stem, helper, body, cases):
+    """The case that has `helper` draw the capture called `stem`.
+
+    A helper that takes every capture of a case names each one from a format
+    string whose first hole is filled by a literal the case passes it, so the
+    case calling `helper` with the literal `stem` carries after the format's
+    opening text is the one whose capture it is. A case nothing calls, naming
+    its own capture from a width, keeps it.
+    """
+    text = "\n".join(body)
+    built = re.search(r'assert_snapshot!\(\s*format!\("([^"{]*)\{', text)
+    if not built:
+        return helper, body
+    rest = stem[len(built.group(1)) :]
+    called = re.compile(r"(?<![\w.:])" + re.escape(helper) + r"\s*\(")
+    callers = []
+    for case, bodies in cases.items():
+        if case == helper or len(bodies) != 1:
+            continue
+        text = "\n".join(bodies[0])
+        if not called.search(text):
+            continue
+        if any(rest.startswith(quoted + "_") for quoted in re.findall(r'"([^"\\]+)"', text)):
+            callers.append((case, bodies[0]))
+    if not callers:
+        return helper, body
+    if len(callers) == 1:
+        return callers[0]
     return None, None
 
 
@@ -389,9 +425,30 @@ def self_test():
     named = [
         case_named("whole_screen__a_drawn_case.snap"),
         case_named("whole_screen__native__a_drawn_case.snap"),
+        case_named("whole_screen__agents__a_drawn_case.snap"),
     ]
-    if named != ["a_drawn_case", "a_drawn_case"]:
+    if named != ["a_drawn_case"] * 3:
         print(f"    FAIL the reader named the captures' cases {named}")
+        return 1
+    built = functions(
+        [
+            "fn taken(name: &str) {",
+            '    Watched::open(name, 80, 24, &Vendor::silent());',
+            '    insta::assert_snapshot!(format!("shot_{}_{}", name, 80), "");',
+            "}",
+            "",
+            "fn a_case() {",
+            '    taken("one");',
+            "}",
+            "",
+            "fn a_case_beside_it() {",
+            '    taken("one-more");',
+            "}",
+        ]
+    )
+    owners = [owner(stem, built)[0] for stem in ("shot_one_80", "shot_one-more_80")]
+    if owners != ["a_case", "a_case_beside_it"]:
+        print(f"    FAIL the reader gave captures a helper names to {owners}")
         return 1
     return 0
 
