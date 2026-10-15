@@ -162,16 +162,17 @@ const NO_MIDDLE: u64 = 100_000_000;
 /// 255 bytes one name may hold where the temporary directory is short.
 const SCRATCH_LENGTH: usize = 240;
 
+/// What every case's scratch directory is named first, so a picture still
+/// naming one can be found.
+pub(crate) const SCRATCH: &str = "crucible-whole-screen-";
+
 /// The directory `case` is given, which holds everything it makes.
 ///
 /// One flat directory per case, so the last thing a case does can take the
 /// whole of what it made with it.
 pub(crate) fn scratch(case: &str) -> PathBuf {
     let mut named = std::env::temp_dir()
-        .join(format!(
-            "crucible-whole-screen-{}-{case}-",
-            std::process::id()
-        ))
+        .join(format!("{SCRATCH}{}-{case}-", std::process::id()))
         .into_os_string();
     let length = named.len();
     assert!(
@@ -372,7 +373,10 @@ impl Watched {
     /// `agents` directory, inside its workspace. That directory is the whole
     /// of crucible's `PATH`, so no other agent's program can be reached
     /// whatever this machine has installed. `configured`, members of the
-    /// configuration object each ending in a comma, is written first.
+    /// configuration object each ending in a comma, is written first. The fake
+    /// peer is a binary of another package, which a run of this suite alone
+    /// does not build: the workspace's own test run does, and the error a
+    /// missing one gives names the command that builds it.
     pub(crate) fn capturing_agents(
         case: &str,
         (columns, rows): (u16, u16),

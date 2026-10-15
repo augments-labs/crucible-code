@@ -6050,8 +6050,10 @@ fn context_taller_than_half_the_window_stands_in_half_and_scrolls_in_native_mode
 /// is a picture of this program rather than of one run.
 ///
 /// The rows are read run together, inside their borders, so a path the screen
-/// wrapped is found whole; both names are ASCII and as long as each other, so
-/// every row keeps its length and is cut back out where it was.
+/// wrapped is found whole; the fixed name is ASCII and as many bytes as the
+/// scratch one, so every row keeps its length and is cut back out where it
+/// was. A scratch name still drawn after that, cut by a border the rows were
+/// not read through, fails the case rather than reaching its snapshot.
 fn scrubbed(picture: &str, case: &str) -> String {
     fn inner(row: &str) -> Option<&str> {
         row.strip_prefix('|').and_then(|it| it.strip_suffix('|'))
@@ -6062,6 +6064,10 @@ fn scrubbed(picture: &str, case: &str) -> String {
     let rows: Vec<&str> = picture.split('\n').collect();
     let joined: String = rows.iter().copied().filter_map(inner).collect();
     let mut rest = joined.replace(&scratch, &fixed);
+    assert!(
+        !rest.contains(watched::SCRATCH),
+        "{case} draws its scratch directory where it was not read whole:\n{picture}"
+    );
     rows.iter()
         .map(|row| match inner(row) {
             Some(drawn) => {

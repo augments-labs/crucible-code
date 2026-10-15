@@ -234,7 +234,8 @@ def caller(stem, helper, body, cases):
     string whose first hole is filled by a literal the case passes it, so the
     case calling `helper` with the literal `stem` carries after the format's
     opening text is the one whose capture it is. A case nothing calls, naming
-    its own capture from a width, keeps it.
+    its own capture from a width, keeps it; a helper that is called, but by no
+    case passing that literal, owns nothing.
     """
     text = "\n".join(body)
     built = re.search(r'assert_snapshot!\(\s*format!\("([^"{]*)\{', text)
@@ -243,15 +244,17 @@ def caller(stem, helper, body, cases):
     rest = stem[len(built.group(1)) :]
     called = re.compile(r"(?<![\w.:])" + re.escape(helper) + r"\s*\(")
     callers = []
+    calling = False
     for case, bodies in cases.items():
         if case == helper or len(bodies) != 1:
             continue
         text = "\n".join(bodies[0])
         if not called.search(text):
             continue
+        calling = True
         if any(rest.startswith(quoted + "_") for quoted in re.findall(r'"([^"\\]+)"', text)):
             callers.append((case, bodies[0]))
-    if not callers:
+    if not calling:
         return helper, body
     if len(callers) == 1:
         return callers[0]
