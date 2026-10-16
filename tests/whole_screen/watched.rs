@@ -392,10 +392,32 @@ impl Watched {
     /// opens.
     pub(crate) fn capturing_agents_asking(
         case: &str,
-        (columns, rows): (u16, u16),
+        size: (u16, u16),
         native: bool,
         vendor: Option<&Vendor>,
+        installed: (Option<&Script>, &str),
+    ) -> Self {
+        Self::capturing_agents_beside(case, (size, native), vendor, installed, &[])
+    }
+
+    /// [`Watched::capturing_agents`], with `env` set too, such as a key for
+    /// another provider the agent does not reach.
+    pub(crate) fn capturing_agents_keyed(
+        case: &str,
+        size: (u16, u16),
+        native: bool,
+        vendor: &Vendor,
+        (script, env): (Option<&Script>, &[(&str, &str)]),
+    ) -> Self {
+        Self::capturing_agents_beside(case, (size, native), Some(vendor), (script, ""), env)
+    }
+
+    fn capturing_agents_beside(
+        case: &str,
+        ((columns, rows), native): ((u16, u16), bool),
+        vendor: Option<&Vendor>,
         (script, configured): (Option<&Script>, &str),
+        env: &[(&str, &str)],
     ) -> Self {
         let installed = agents(case);
         fs::create_dir_all(&installed).expect("an agents directory");
@@ -425,7 +447,11 @@ impl Watched {
                 cooked: false,
             },
             Some(&Launch {
-                env: &[("CRUCIBLE_CODE_PROOF_REGISTRY", "fake"), ("PATH", path)],
+                env: &[
+                    &[("CRUCIBLE_CODE_PROOF_REGISTRY", "fake"), ("PATH", path)],
+                    env,
+                ]
+                .concat(),
                 ..Launch::default()
             }),
         )

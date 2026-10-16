@@ -180,6 +180,15 @@ impl ModelOutcome {
                 "unwritten",
                 unwritten.as_ref(),
             ),
+            Self::MovedOff {
+                provider,
+                retained,
+                unwritten,
+            } => noting(
+                retained.onto(Writing::kind("moved_off").text("provider", provider)),
+                "unwritten",
+                unwritten.as_ref(),
+            ),
         }
         .finish()
     }
@@ -191,6 +200,11 @@ impl ModelOutcome {
             "unreachable" => Self::Unreachable(problem(&mut fields)?),
             "cache_held" => Self::CacheHeld(problem(&mut fields)?),
             "taken" => Self::Taken {
+                retained: Retained::from(&mut fields)?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            "moved_off" => Self::MovedOff {
+                provider: fields.text("provider")?,
                 retained: Retained::from(&mut fields)?,
                 unwritten: maybe_problem(&mut fields, "unwritten")?,
             },

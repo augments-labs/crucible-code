@@ -18,6 +18,8 @@
 //! and rung where nothing names a model for it. One given there for
 //! another provider moves the conversation off the route onto it, in a new
 //! session, where that session can be started; otherwise it is only stored.
+//! A model taken there of a provider the agent does not reach moves it the
+//! same way, onto that model, where a credential reaches the provider.
 //!
 //! What an answer deliberately carries beside the outcome: what a cache
 //! retirement could not remove, and what could not be written down. Neither
@@ -109,6 +111,39 @@ pub enum Switched {
         /// Why the choice will not outlive this run, where it will not.
         unwritten: Option<RememberError>,
     },
+    /// The conversation was on an installed agent's route that does not reach
+    /// the provider, and moved off it onto the provider and the model, in a
+    /// new session; the session it left stays on the disk where a resume can
+    /// find it.
+    MovedOff {
+        /// The provider the model is asked of.
+        provider: &'static str,
+        /// What retiring the old identity's cache left behind.
+        retained: Retained,
+        /// Why the choice will not outlive this run, where it will not.
+        unwritten: Option<RememberError>,
+    },
+}
+
+/// Why a conversation stayed on the installed agent's route it was to move
+/// off.
+#[derive(Debug)]
+enum Unmoved {
+    /// The provider could not be set up from the credentials in hand.
+    Unusable(AppError),
+    /// The cache made under the identity being left could not be retired.
+    CacheHeld(PromptCacheResourceError),
+    /// The new session's log could not be started.
+    Unstarted(AppError),
+}
+
+/// What a move off the route was to ask the provider it moves onto.
+#[derive(Clone, Copy)]
+enum Onto<'a> {
+    /// What [`first_asked`] names, as a login asks it.
+    First,
+    /// This model, at the rung carried where it serves one.
+    Model(&'a str, Option<Effort>),
 }
 
 /// What came of asking for a rung.
@@ -278,6 +313,14 @@ fn first_asked(named: Served, with: &Switching<'_>) -> (String, Option<Effort>, 
     )
 }
 
+/// Whether this run's settings reach `named` through any installed agent.
+fn agented(settings: &Settings, named: Served) -> bool {
+    matches!(
+        settings.access(named.name),
+        Some(crucible_config::Access::ExternalAgent { .. })
+    )
+}
+
 /// Whether `named` is reached through the installed agent `instance`.
 fn routes(settings: &Settings, named: Served, instance: &str) -> bool {
     matches!(
@@ -376,6 +419,58 @@ impl Conversation {
         }
     }
 
+    /// [`Conversation::ask_for`], and where the conversation is on an
+    /// installed agent's route that does not reach `selected`, it moves off
+    /// the route onto `selected` and `name` instead, in a new session started
+    /// under `sessions`. The session left stays on the disk where a resume can
+    /// find it.
+    ///
+    /// The rung carried onto `name` is `rung`, else the one the agent was
+    /// started at, where `name` serves it. Only a provider this run's settings
+    /// reach through no installed agent moves, for the reason
+    /// [`Conversation::logged_in_moving`] gives.
+    pub async fn ask_for_moving(
+        &mut self,
+        selected: Served,
+        (name, rung): (&str, Option<Effort>),
+        with: &Switching<'_>,
+        (sessions, workspace): (&Path, &Workspace),
+    ) -> Switched {
+        let reached = self
+            .agent_driver()
+            .is_some_and(|driver| driver.provider() == selected.name);
+        if self.instance().is_none() || reached || agented(with.settings, selected) {
+            return self.ask_for(selected, name, rung, with).await;
+        }
+        // Before anything is retired or started, so that a refusal leaves the
+        // route as it was.
+        if let Some(rung) = rung
+            && !serves(with.providers, selected.name, name, rung)
+        {
+            return Switched::Unsupported(rung);
+        }
+        let carried = rung.or_else(|| self.settled().effort());
+        match self
+            .off_the_route(
+                selected,
+                Onto::Model(name, carried),
+                with,
+                (sessions, workspace),
+            )
+            .await
+        {
+            Ok((retained, unwritten)) => Switched::MovedOff {
+                provider: selected.name,
+                retained,
+                unwritten,
+            },
+            Err(Unmoved::Unusable(problem) | Unmoved::Unstarted(problem)) => {
+                Switched::Unreachable(problem)
+            }
+            Err(Unmoved::CacheHeld(problem)) => Switched::CacheHeld(problem),
+        }
+    }
+
     /// Thinks at `effort` from the next turn on, and writes it down beside the
     /// model for the next run.
     ///
@@ -411,7 +506,7 @@ impl Conversation {
     ///
     /// Only an agent that is started with a model, and only on a model of the
     /// one provider it reaches: any other is a provider this route cannot
-    /// reach.
+    /// reach, which [`Conversation::ask_for_moving`] moves off the route for.
     fn ask_agent_for(
         &mut self,
         provider: &str,
@@ -481,21 +576,27 @@ impl Conversation {
     /// is named it is cleared rather than carried onto a model that may serve
     /// none.
     fn ask_first(&mut self, named: Served, with: &Switching<'_>) -> Option<RememberError> {
-        let provider = named.name;
         let (model, effort, taken) = first_asked(named, with);
+        self.ask_at(named, &model, effort, with);
+        taken
+            .then(|| remember::defaulting(with.choosing, named.name, &model, effort).err())
+            .flatten()
+    }
+
+    /// Asks `named` for `model` from the next turn on, at `effort` where
+    /// `model` serves it and at no rung otherwise.
+    fn ask_at(&mut self, named: Served, model: &str, effort: Option<Effort>, with: &Switching<'_>) {
+        let provider = named.name;
         self.runner.ask(
-            &model,
-            ceiling(with.providers, provider, &model),
-            Some(window(with.providers, named, &model, with.settings)),
-            accepts(with.providers, provider, &model),
+            model,
+            ceiling(with.providers, provider, model),
+            Some(window(with.providers, named, model, with.settings)),
+            accepts(with.providers, provider, model),
         );
-        match effort.filter(|effort| serves(with.providers, provider, &model, *effort)) {
+        match effort.filter(|effort| serves(with.providers, provider, model, *effort)) {
             Some(effort) => self.runner.think(effort),
             None => self.runner.unthink(),
         }
-        taken
-            .then(|| remember::defaulting(with.choosing, provider, &model, effort).err())
-            .flatten()
     }
 
     /// Hands this conversation the provider whose credential was just written
@@ -568,51 +669,59 @@ impl Conversation {
         sessions: &Path,
         workspace: &Workspace,
     ) -> LoggedIn {
-        let agented = matches!(
-            with.settings.access(named.name),
-            Some(crucible_config::Access::ExternalAgent { .. })
-        );
+        let agented = agented(with.settings, named);
         match self.logged_in(named, with).await {
-            LoggedIn::Stored { provider } if !agented => self
-                .off_the_route(named, with, sessions, workspace)
-                .await
-                .unwrap_or(LoggedIn::Stored { provider }),
+            LoggedIn::Stored { provider } if !agented => {
+                match self
+                    .off_the_route(named, Onto::First, with, (sessions, workspace))
+                    .await
+                {
+                    Ok((retained, unwritten)) => LoggedIn::MovedOff {
+                        provider,
+                        retained,
+                        unwritten,
+                    },
+                    Err(Unmoved::Unusable(problem)) => LoggedIn::Unusable(problem),
+                    Err(Unmoved::CacheHeld(problem)) => LoggedIn::CacheHeld(problem),
+                    Err(Unmoved::Unstarted(_)) => LoggedIn::Stored { provider },
+                }
+            }
             logged => logged,
         }
     }
 
     /// Moves the conversation off the installed agent's route it is on onto
-    /// `named`, asked as [`Conversation::logged_in`] asks a provider nobody
-    /// was being asked: nothing where the new
-    /// session's log could not be started, which leaves everything as it was.
+    /// `named`, asking it what `onto` says: [`Onto::First`] as
+    /// [`Conversation::logged_in`] asks a provider nobody was being asked, a
+    /// model as [`Conversation::ask_for`] asks it. Answers what retiring the
+    /// cache left behind and what could not be written down.
     ///
     /// The cache the kept runner made under the identity it last asked is
     /// retired first, as a switch retires it, and nothing moves where it
-    /// cannot be.
+    /// cannot be: a refusal, or a new session whose log could not be started,
+    /// leaves everything as it was.
     async fn off_the_route(
         &mut self,
         named: Served,
+        onto: Onto<'_>,
         with: &Switching<'_>,
-        sessions: &Path,
-        workspace: &Workspace,
-    ) -> Option<LoggedIn> {
-        let set = match (with.serving)(named, &with.logins.read()) {
-            Ok(set) => set,
-            Err(problem) => return Some(LoggedIn::Unusable(problem)),
-        };
+        (sessions, workspace): (&Path, &Workspace),
+    ) -> Result<(Retained, Option<RememberError>), Unmoved> {
+        let set = (with.serving)(named, &with.logins.read()).map_err(Unmoved::Unusable)?;
         let retained = if self.runner.prompt_cache_retirement_pending() {
             match self.runner.retire_prompt_cache(&Cancel::new()).await {
                 Ok(result) => Retained {
                     ambiguous: result.ambiguous,
                     orphaned: result.orphaned,
                 },
-                Err(problem) => return Some(LoggedIn::CacheHeld(problem)),
+                Err(problem) => return Err(Unmoved::CacheHeld(problem)),
             }
         } else {
             Retained::default()
         };
         let branch = crate::branching::current(workspace.root());
-        let session = Session::start(sessions, workspace, branch.as_deref()).ok()?;
+        let session = Session::start(sessions, workspace, branch.as_deref())
+            .map_err(|problem| Unmoved::Unstarted(problem.into()))?;
         let left = self.inside(Arc::new(session), Transcript::new()).await;
         // Nothing holds the session left after this; its log stays on the disk
         // where a resume can find it, and its own trouble is found again then.
@@ -624,19 +733,28 @@ impl Conversation {
         self.serving = Some(named.name);
         self.source = Some(set.source);
         let unwritten = remember::asking(with.choosing, named.name).err();
-        let defaulted = if changed {
-            self.ask_first(named, with)
-        } else {
-            None
+        let defaulted = match onto {
+            Onto::First if changed => self.ask_first(named, with),
+            Onto::First => None,
+            // The rung goes with the model, as `/model` writes the two, so
+            // that the next run asks what this one now does.
+            Onto::Model(model, effort) => {
+                self.ask_at(named, model, effort, with);
+                let effort =
+                    effort.filter(|effort| serves(with.providers, named.name, model, *effort));
+                remember::choosing(with.choosing, named.name, model)
+                    .and_then(|()| {
+                        effort.map_or(Ok(()), |effort| {
+                            remember::thinking(with.choosing, named.name, effort)
+                        })
+                    })
+                    .err()
+            }
         };
         self.reach(named, with);
         self.hastened_as_kept(with.choosing);
 
-        Some(LoggedIn::MovedOff {
-            provider: named.name,
-            retained,
-            unwritten: unwritten.or(defaulted),
-        })
+        Ok((retained, unwritten.or(defaulted)))
     }
 
     /// Forgets the credential stored for `named`, and sets the conversation up

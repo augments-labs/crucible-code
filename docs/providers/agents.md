@@ -68,11 +68,17 @@ While a conversation runs on an agent, the row under the box says, where the
 provider and model would be, which agent runs its turns and who is paid for
 them, and the model it is started on, such as `execution: work, model:
 claude-opus-5-5 · billing: external`: the agent's own account pays, and
-crucible does not know under which plan. `/model` offers the models of the
+crucible does not know under which plan. `/model` offers every model of the
 provider the agent reaches, from the same list crucible asks that provider
 from, each with its rungs, and `/effort` the rungs of the model in force; what
-is taken starts the agent's next run, and is written into its entry. An agent
-that chooses its own model has `/model` and `/effort` say so instead.
+is taken starts the agent's next run, and is written into its entry. Beside
+them `/model` offers the other providers' models as it does off an agent; one
+taken, where a credential for its provider is in hand and no agent reaches
+that provider, moves the conversation off the agent onto that provider and
+model at once, in a new session, as a login for it would, and is written down
+as the `provider`, model and rung asked; a rung that model does not serve is
+refused and nothing moves. An agent that chooses its own model has
+`/model` and `/effort` say so instead.
 
 The line above the box reads how much of the model's window the agent's
 context holds, such as `41k/1.0M · 95% window left`: the window is the one

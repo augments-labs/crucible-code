@@ -547,9 +547,9 @@ pub(super) struct Asked<'a> {
     /// The provider's name in the registry, where one is answering, or the
     /// one an installed agent's route reaches.
     pub(super) provider: Option<&'static str>,
-    /// The one provider whose models may be taken, on an installed agent's
-    /// route that is started on one: its sign-in is the agent's, so no
-    /// credential of this program narrows them either.
+    /// The one provider an installed agent's route that is started on a model
+    /// reaches: its sign-in is the agent's, so no credential of this program
+    /// narrows its models.
     pub(super) reaching: Option<&'static str>,
     /// The model in force, empty where none is.
     pub(super) model: &'a str,
