@@ -761,9 +761,9 @@ Wildcard paths and extra options keep a `sed` call individual. This classificati
 changes only display, never permissions. A failed lookup, a call that writes a
 file, or an unrecognized command ends the run and keeps its own result row.
 On an installed agent's route the agent's own lookups fold the same way: for
-Claude Code, `Read`, `Grep`, `Glob`, `WebSearch` and `WebFetch`, and for an
-agent over the Agent Client Protocol, a call it marks as reading, searching or
-fetching. An agent's `Bash` call always keeps its own row, since nothing the
+Claude Code, `Read`, `NotebookRead`, `Grep`, `Glob`, `LS`, `WebSearch` and
+`WebFetch`, and for an agent over the Agent Client Protocol, a call it marks as
+reading, searching or fetching. An agent's `Bash` call always keeps its own row, since nothing the
 agent reports says a command only read.
 The run also ends wherever the turn does something else worth
 reading: a paragraph of the answer, your next prompt, a stop.

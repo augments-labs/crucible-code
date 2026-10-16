@@ -666,15 +666,16 @@ impl Turning {
                 });
                 Vec::new()
             }
-            // A failed lookup has its own row, as a native one does.
-            Event::AgentAnswered { call, output, .. } => self
+            // A failed lookup has its own row, as a native one does, and so
+            // does one the agent says changed a file, so the change is drawn.
+            Event::AgentAnswered { call, output, diff } => self
                 .calling
                 .iter()
                 .position(|one| one.id == *call)
                 .and_then(|at| self.calling.remove(at))
                 .map_or_else(Vec::new, |calling| {
                     let mut returned = settled(calling);
-                    if output.is_failed() {
+                    if output.is_failed() || diff.is_some() {
                         returned.looking = None;
                     }
                     vec![returned]

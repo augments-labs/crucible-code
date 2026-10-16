@@ -10,7 +10,8 @@
 //! of its own tools is a [`RunEvent::AgentCalled`], and what it came back with
 //! a [`RunEvent::AgentAnswered`] under the same call, with the change it said
 //! the call made, drawn as a native call and its result are and never one of
-//! them. Only a call under an id of its
+//! them; one the agent says only looked around is counted into a run of
+//! lookups as a native one is. Only a call under an id of its
 //! own, not already out, and within as many as are held at once is drawn as
 //! one, and only an answer to one of those is drawn under it; any other call,
 //! and a file it changed, is a [`RunEvent::Reported`]. The leave it asks for goes to the turn's [`Asker`]
