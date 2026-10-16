@@ -11,21 +11,26 @@ starts. A disconnected agent, or one that cannot run in the conversation's
 mode, is refused before anything is recorded. The sections below say how each
 agent is run.
 
-`/login` in a conversation running on an agent leaves the agent answering. For
-the provider the agent reaches, it stores the subscription or key, then
-rewrites the provider's `access` from `externalAgent` to `subscription` or
-`apiKey` and makes it the `provider` asked, so the next session asks the
-provider directly; if that cannot be written, the file is left as it was and
-the next session still runs on the agent. `/login` for another provider only
-stores the credential; either way its line ends by saying this conversation
-stays on its agent. The provider the agent reaches includes the one a connect
-during this run moved the conversation off. `/logout` for the
+`/login` in a conversation running on an agent offers all three choices. For
+the provider the agent reaches, a subscription or key leaves the agent
+answering: it is stored, the provider's `access` is rewritten from
+`externalAgent` to `subscription` or `apiKey` and the provider is made the
+`provider` asked, so the next session asks it directly; if that cannot be
+written, the file is left as it was and the next session still runs on the
+agent. The provider the agent reaches includes the one a connect during this
+run moved the conversation off. A subscription or key for a provider no agent
+reaches moves the conversation off the agent onto that provider at once, in a
+new session in the same permission mode, with nothing carried over; its line
+says so, and the session it left stays listed and can be resumed. Where that
+provider cannot be set up, its line says why and the conversation stays on the
+agent; where the new session cannot be started, or another agent reaches the
+provider, the credential is only stored. `/logout` for the
 provider the agent reaches removes the stored credential and says the agent
 still reaches it.
 
 `/login` offers a third choice, *Use an installed coding agent*, where an
-agent can run and a provider is being asked: it connects that provider through
-an agent. It asks which agent, says where the agent's program cannot be found,
+agent can run and a provider is being asked or an agent reaches one: it
+connects that provider through an agent. It asks which agent, says where the agent's program cannot be found,
 asks once before the agent is first started, saying that starting it runs its
 profile's hooks, MCP servers and plugins, and then asks whether the account
 the agent is signed in with will do. Where the agent's sign-in could not be
@@ -38,7 +43,8 @@ last answer.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
-directly. Taking one offers *Connect* (where a provider is being asked),
+directly. Taking one offers *Connect* (where a provider is being asked or an
+agent reaches one),
 *Disconnect from Crucible* (where it is enabled), *Sign out of the agent* and
 *Remove integration settings*; each then asks its own question, naming the
 agent, its profile and the work it has running, and Escape there changes
@@ -46,14 +52,15 @@ nothing. Disconnecting, or signing out, writes the agent's `enabled: false`
 and takes away the `access` of every provider reached through it, in one
 update, so the next session asks that provider directly.
 
-Connecting the provider a conversation is asking through an agent moves that
-conversation onto the agent at once, in a new session bound to the agent with
-nothing carried over, and the line it ends on names the agent and says the
-conversation starts fresh there; the session it left stays listed and can be
-resumed. In `/resume`, a session an agent ran names the agent on its line.
-Where the agent cannot be started in the conversation's mode, the conversation
-stays on the provider's model and the next session starts on the agent. A
-conversation already on an agent stays on it.
+Connecting the provider a conversation is asking, or the one its agent
+reaches, through another agent moves that conversation onto the new agent at
+once, in a new session bound to it with nothing carried over, and the line it
+ends on names the agent and says the conversation starts fresh there; the
+session it left stays listed and can be resumed. In `/resume`, a session an
+agent ran names the agent on its line. Where the agent cannot be started in
+the conversation's mode, the conversation stays where it was and the next
+session starts on the agent. Connecting the agent a conversation is already on
+leaves it there.
 
 While a conversation runs on an agent, the row under the box says, where the
 provider and model would be, which agent runs its turns and who is paid for

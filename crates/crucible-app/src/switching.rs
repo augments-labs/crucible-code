@@ -12,10 +12,11 @@
 //! every sentence about it to whoever is showing it.
 //!
 //! A conversation on an installed agent's route keeps that route, its session
-//! and its run whatever credential is given or forgotten: the agent answers,
-//! and nothing here serves it. A credential given there for the provider the
-//! route reaches is written down as the way that provider is reached from the
-//! next run on; one for another provider is only stored.
+//! and its run whatever credential for the provider the route reaches is given
+//! or forgotten: the agent answers, and the credential is written down as the
+//! way that provider is reached from the next run on. One given there for
+//! another provider moves the conversation off the route onto it, in a new
+//! session, where that session can be started; otherwise it is only stored.
 //!
 //! What an answer deliberately carries beside the outcome: what a cache
 //! retirement could not remove, and what could not be written down. Neither
@@ -23,13 +24,16 @@
 //! that was only handed "done" would have nothing to tell them with.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use crucible_auth::{AuthError, Store, StoredCredentials};
 use crucible_config::Settings;
 use crucible_models::Effort;
 use crucible_provider::Unavailable;
 use crucible_runtime::Cancel;
-use crucible_types::PromptCacheResourceError;
+use crucible_session::Session;
+use crucible_types::{PromptCacheResourceError, Transcript};
+use crucible_workspace::Workspace;
 
 use crate::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Served, Serving, Sourcing,
@@ -138,7 +142,9 @@ pub enum LoggedIn {
         unwritten: Option<RememberError>,
     },
     /// The conversation keeps the installed agent's route it is on, and the
-    /// credential is stored for another provider: nothing else changed.
+    /// credential is stored for another provider: nothing else changed. A
+    /// provider this run reaches through another agent, or one whose new
+    /// session could not be started, comes to this.
     Stored {
         /// The provider the credential is for.
         provider: &'static str,
@@ -150,6 +156,17 @@ pub enum LoggedIn {
     CacheHeld(PromptCacheResourceError),
     /// The provider the credential is for is the one asked from here on.
     Serving {
+        /// What retiring the old identity's cache left behind.
+        retained: Retained,
+        /// Why the provider will not be the next run's, where it will not.
+        unwritten: Option<RememberError>,
+    },
+    /// The conversation was on an installed agent's route that does not reach
+    /// the provider, and moved off it onto the provider, in a new session; the
+    /// session it left stays on the disk where a resume can find it.
+    MovedOff {
+        /// The provider the credential is for.
+        provider: &'static str,
         /// What retiring the old identity's cache left behind.
         retained: Retained,
         /// Why the provider will not be the next run's, where it will not.
@@ -196,22 +213,15 @@ pub enum LoggedOut {
 }
 
 /// What a credential just stored for `named` comes to while the conversation
-/// is on the installed agent `instance`, which keeps answering either way.
+/// is on an installed agent's route, which keeps answering either way.
 ///
-/// The route's provider is the one the files read at launch reached through
-/// `instance`, or the one a connect during this run moved the conversation
-/// off onto `instance`, whose route those files do not have. The kind of
-/// credential stored decides how that provider is reached next: an account by
-/// its subscription, a key as a key.
-fn beside_the_route(
-    instance: &str,
-    moved_from: Option<&(&'static str, Box<str>)>,
-    named: Served,
-    with: &Switching<'_>,
-) -> LoggedIn {
-    let moved_off =
-        moved_from.is_some_and(|(provider, onto)| *provider == named.name && **onto == *instance);
-    if !moved_off && !routes(with.settings, named, instance) {
+/// `routed` says whether `named` is a provider the route stands in for: one
+/// the files read at launch reach through its instance, or the one
+/// [`Conversation::reached`] names. The kind of credential stored decides how
+/// that provider is reached next: an account by its subscription, a key as a
+/// key.
+fn beside_the_route(routed: bool, named: Served, with: &Switching<'_>) -> LoggedIn {
+    if !routed {
         return LoggedIn::Stored {
             provider: named.name,
         };
@@ -358,14 +368,17 @@ impl Conversation {
 
     /// Hands this conversation the provider whose credential was just written
     /// down — unless another is already answering, which keeps everything it
-    /// has.
+    /// has, or the conversation is on an installed agent's route, which keeps
+    /// answering; [`Conversation::logged_in_moving`] moves off that route.
     ///
     /// A credential never chooses a model or a rung. Where nobody was being
     /// asked, any model name left over from before is retired with the
     /// provider it belonged to, and the conversation is left asking for none.
     pub async fn logged_in(&mut self, named: Served, with: &Switching<'_>) -> LoggedIn {
         if let Some(instance) = self.instance() {
-            return beside_the_route(instance, self.moved_from.as_ref(), named, with);
+            let routed = routes(with.settings, named, instance)
+                || self.reached(with.settings).as_deref() == Some(named.name);
+            return beside_the_route(routed, named, with);
         }
         let set = match (with.serving)(named, &with.logins.read()) {
             Ok(set) => set,
@@ -402,6 +415,90 @@ impl Conversation {
             retained,
             unwritten,
         }
+    }
+
+    /// [`Conversation::logged_in`], and where that leaves the credential only
+    /// stored, beside an installed agent's route that does not reach `named`,
+    /// the conversation moves off the route onto `named`, in a new session
+    /// started under `sessions`. The session left stays on the disk where a
+    /// resume can find it.
+    ///
+    /// Only a provider this run's settings reach through no installed agent
+    /// moves: one they route through an agent cannot be set up until the next
+    /// launch reads the access its login rewrote, or one the user gives it.
+    pub async fn logged_in_moving(
+        &mut self,
+        named: Served,
+        with: &Switching<'_>,
+        sessions: &Path,
+        workspace: &Workspace,
+    ) -> LoggedIn {
+        let agented = matches!(
+            with.settings.access(named.name),
+            Some(crucible_config::Access::ExternalAgent { .. })
+        );
+        match self.logged_in(named, with).await {
+            LoggedIn::Stored { provider } if !agented => self
+                .off_the_route(named, with, sessions, workspace)
+                .await
+                .unwrap_or(LoggedIn::Stored { provider }),
+            logged => logged,
+        }
+    }
+
+    /// Moves the conversation off the installed agent's route it is on onto
+    /// `named`, which asks no model until one is chosen: nothing where the new
+    /// session's log could not be started, which leaves everything as it was.
+    ///
+    /// The cache the kept runner made under the identity it last asked is
+    /// retired first, as a switch retires it, and nothing moves where it
+    /// cannot be.
+    async fn off_the_route(
+        &mut self,
+        named: Served,
+        with: &Switching<'_>,
+        sessions: &Path,
+        workspace: &Workspace,
+    ) -> Option<LoggedIn> {
+        let set = match (with.serving)(named, &with.logins.read()) {
+            Ok(set) => set,
+            Err(problem) => return Some(LoggedIn::Unusable(problem)),
+        };
+        let retained = if self.runner.prompt_cache_retirement_pending() {
+            match self.runner.retire_prompt_cache(&Cancel::new()).await {
+                Ok(result) => Retained {
+                    ambiguous: result.ambiguous,
+                    orphaned: result.orphaned,
+                },
+                Err(problem) => return Some(LoggedIn::CacheHeld(problem)),
+            }
+        } else {
+            Retained::default()
+        };
+        let branch = crate::branching::current(workspace.root());
+        let session = Session::start(sessions, workspace, branch.as_deref()).ok()?;
+        let left = self.inside(Arc::new(session), Transcript::new()).await;
+        // Nothing holds the session left after this; its log stays on the disk
+        // where a resume can find it, and its own trouble is found again then.
+        let _unclosed = left.finish();
+
+        let changed = self.serving != Some(named.name);
+        self.runner.serve(set.provider);
+        self.clearings_recorded().await;
+        self.serving = Some(named.name);
+        self.source = Some(set.source);
+        let unwritten = remember::asking(with.choosing, named.name).err();
+        if changed {
+            self.runner.ask("", UNKNOWN_CEILING, None, None);
+        }
+        self.reach(named, with);
+        self.hastened_as_kept(with.choosing);
+
+        Some(LoggedIn::MovedOff {
+            provider: named.name,
+            retained,
+            unwritten,
+        })
     }
 
     /// Forgets the credential stored for `named`, and sets the conversation up

@@ -431,10 +431,23 @@ pub enum LoginOutcome {
         unwritten: Option<Problem>,
     },
     /// The conversation is on an installed agent's route, and the credential
-    /// is stored for another provider: nothing else changed.
+    /// is stored for another provider: nothing else changed. A provider this
+    /// run reaches through another agent, or one whose new session could not
+    /// be started, comes to this.
     Stored {
         /// The provider the credential is for.
         provider: Text,
+    },
+    /// The conversation was on an installed agent's route, and the credential
+    /// is for another provider, which is now the one answering, in a new
+    /// session; the session it left stays listed and can be resumed.
+    MovedOff {
+        /// The provider the credential is for.
+        provider: Text,
+        /// What retiring the cache left behind.
+        retained: Retained,
+        /// Why the provider will not be the next run's, where it will not.
+        unwritten: Option<Problem>,
     },
 }
 

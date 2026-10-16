@@ -300,11 +300,11 @@ fn acting<T: Terminal>(
         Ok(instance) => instance,
         Err(refusal) => return say(renderer, &astray(&Performed::Refused(refusal))),
     };
-    // A connect reaches the provider being asked, so it is offered only
-    // where there is one.
+    // A connect reaches the provider being asked, or the one the agent's
+    // route stands in for, so it is offered only where there is one.
     let provider = conversation
-        .serving()
-        .and_then(|provider| Name::new(provider).ok());
+        .reached(&terms.settings)
+        .and_then(|provider| Name::new(&provider).ok());
     let acts: Vec<(Act, &str, &str)> = [
         (
             Act::Connect,

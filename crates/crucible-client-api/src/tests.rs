@@ -548,6 +548,16 @@ fn login_outcomes() -> Vec<Outcome> {
             unwritten: None,
         }),
         Outcome::Login(LoginOutcome::Stored { provider: marked() }),
+        Outcome::Login(LoginOutcome::MovedOff {
+            provider: marked(),
+            retained: retained(),
+            unwritten: Some(problem()),
+        }),
+        Outcome::Login(LoginOutcome::MovedOff {
+            provider: marked(),
+            retained: retained(),
+            unwritten: None,
+        }),
         Outcome::Logout(LogoutOutcome::CacheHeld(problem())),
         Outcome::Logout(LogoutOutcome::Unforgotten {
             retained: retained(),
@@ -1316,26 +1326,32 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             SpeedOutcome::Taken { unwritten: None } => (4, 5),
         },
         Outcome::Login(login) => match login {
-            LoginOutcome::Unusable(_) => (0, 12),
-            LoginOutcome::Elsewhere => (1, 12),
-            LoginOutcome::CacheHeld(_) => (2, 12),
+            LoginOutcome::Unusable(_) => (0, 14),
+            LoginOutcome::Elsewhere => (1, 14),
+            LoginOutcome::CacheHeld(_) => (2, 14),
             LoginOutcome::Serving {
                 unwritten: Some(_), ..
-            } => (3, 12),
+            } => (3, 14),
             LoginOutcome::Serving {
                 unwritten: None, ..
-            } => (4, 12),
-            LoginOutcome::AgentConnected { onto: None, .. } => (5, 12),
-            LoginOutcome::AgentConnected { onto: Some(_), .. } => (6, 12),
-            LoginOutcome::ConnectUnsaved { .. } => (7, 12),
-            LoginOutcome::Undecided => (8, 12),
+            } => (4, 14),
+            LoginOutcome::AgentConnected { onto: None, .. } => (5, 14),
+            LoginOutcome::AgentConnected { onto: Some(_), .. } => (6, 14),
+            LoginOutcome::ConnectUnsaved { .. } => (7, 14),
+            LoginOutcome::Undecided => (8, 14),
             LoginOutcome::NextLaunch {
                 unwritten: Some(_), ..
-            } => (9, 12),
+            } => (9, 14),
             LoginOutcome::NextLaunch {
                 unwritten: None, ..
-            } => (10, 12),
-            LoginOutcome::Stored { .. } => (11, 12),
+            } => (10, 14),
+            LoginOutcome::Stored { .. } => (11, 14),
+            LoginOutcome::MovedOff {
+                unwritten: Some(_), ..
+            } => (12, 14),
+            LoginOutcome::MovedOff {
+                unwritten: None, ..
+            } => (13, 14),
         },
         Outcome::Logout(logout) => logout_arm(logout),
         Outcome::Cache(cache) => match cache {

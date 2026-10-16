@@ -35,7 +35,7 @@
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
 //! | connect, signed in | use it, then connect | [`LoginOutcome::AgentConnected`] |
-//! | connect, signed in, on the provider's model | use it, then connect | [`LoginOutcome::AgentConnected`], naming the instance moved onto |
+//! | connect, signed in, on the provider's model or another instance's route | use it, then connect | [`LoginOutcome::AgentConnected`], naming the instance moved onto |
 //! | connect, signed in, on the provider's model, the agent not startable | use it, then connect | [`LoginOutcome::AgentConnected`], naming none |
 //! | connect, signed in | use it, then connect; the file not written | [`LoginOutcome::ConnectUnsaved`] |
 //! | connect | the agent's route accepted; the yes not written | [`LoginOutcome::ConnectUnsaved`] |
@@ -77,12 +77,12 @@
 //! update of the user file, under the scope's journal, the instance's own
 //! settings first where they are new.
 //!
-//! A conversation asking the provider's model when the connect is written
-//! moves onto the instance in a new session, bound to its route, with nothing
-//! carried over; the session left stays listed and can be resumed. Where it
-//! cannot move, it stays where it was and the next run starts on the agent.
-//! A conversation on an agent's route, or asking another provider, stays
-//! where it is.
+//! A conversation reaching the provider when the connect is written, by its
+//! model or another instance's route, moves onto the instance in a new
+//! session, bound to its route, with nothing carried over; the session left
+//! stays listed and can be resumed. Where it cannot move, it stays where it
+//! was and the next run starts on the agent. A conversation already on the
+//! instance, or reaching another provider, stays where it is.
 
 use std::path::Path;
 
@@ -888,9 +888,10 @@ async fn connect(
     Account::Unconnected
 }
 
-/// [`commit`], then moves `conversation` onto `agent` where it was asking
-/// `provider`'s model, as [`Conversation::onto`] says. A conversation on an
-/// agent's route, or asking another provider, stays where it is.
+/// [`commit`], then moves `conversation` onto `agent` where it reaches
+/// `provider`, by its model or another agent's route, as
+/// [`Conversation::onto`] says. A conversation already on `agent`, or reaching
+/// another provider, stays where it is.
 async fn moved(
     conversation: &mut Conversation,
     desk: &Desk<'_>,
@@ -899,7 +900,11 @@ async fn moved(
     written: bool,
 ) -> Account {
     let committed = commit(desk, provider, agent, written);
-    if !matches!(committed, Account::Connected) || conversation.serving() != Some(provider) {
+    let reached = conversation.reached(desk.switching.settings);
+    if !matches!(committed, Account::Connected)
+        || reached.as_deref() != Some(provider)
+        || conversation.instance() == Some(agent.name())
+    {
         return committed;
     }
     let branch = crate::branching::current(desk.workspace.root());
@@ -913,6 +918,8 @@ async fn moved(
             // reported: the outcome says what the connect did, and the log's
             // own trouble is found again when it is resumed.
             let _unclosed = left.finish();
+            // The route the connect wrote is not in the files this run read.
+            conversation.moved_from = Some((provider.into(), agent.name().into()));
             Account::Moved(agent.name().into())
         }
         Err(reason) => Account::Unmoved(reason),
