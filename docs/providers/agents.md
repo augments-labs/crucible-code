@@ -60,10 +60,15 @@ provider and model would be, which agent runs its turns and who is paid for
 them, such as `execution: work · billing: external`: the agent's own account
 pays, and crucible does not know under which plan. Where the agent's entry
 names the model it is started on, the row names it too, as `execution: work,
-model: opus · billing: external`. `/model` says which model that is, or that
-the agent chooses its own, and `/effort` that the agent chooses how hard it
-thinks, rather than offering a provider's models or rungs it would not be
-asked for; `/model` says so while a turn runs too.
+model: opus · billing: external`. `/model` lists the models the agent says it
+can be started on, its own choice first and the one in use marked, rather
+than a provider's models it would not be asked for. One taken, or named as
+`/model opus` (`/model default` for the agent's own choice), starts the next
+turn's run on it, continuing the agent's session, and is written into the
+agent's entry as its `model`. A model the agent does not list is refused.
+Listing the models starts the agent's program, so while a turn runs `/model`
+says which model is in use and that one is chosen between turns. `/effort`
+says the agent chooses how hard it thinks.
 
 ## Claude Code
 
@@ -104,7 +109,8 @@ installation alone.
 **Its model.** `model` is optional: it names the model the agent is started
 on, as Claude Code names it, such as `opus`, `sonnet` or a full model id, and
 it is passed to the program as its `--model`. Without it the agent starts on
-its own default. Letters, digits and `. _ - : @ / [ ]` are accepted, up to 128
+its own default. `/model` lists the models Claude Code offers and writes the
+one taken here. Letters, digits and `. _ - : @ / [ ]` are accepted, up to 128
 of them, and never a leading `-`.
 
 **Signing in.** Whether it is signed in is read from its own
@@ -186,7 +192,8 @@ or its usual sign-in, is sent nothing more and refused with a sentence naming
 what differs.
 
 **Its model.** The agent chooses its own, and a `model` in its entry is
-refused, since nothing would read it.
+refused, since nothing would read it. `/model` says it does not list its
+models.
 
 **Its profile.** `profileDir` is required: it is the directory the agent keeps
 its sign-in, files and unpacked runtime under, and its usual home is the one

@@ -838,6 +838,23 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
         Some(crucible_config::ThemeChoice::Dark)
     );
 
+    // Off an installed agent's route there is no agent to ask or start.
+    let (_, outcome) = answered(&mut conversation, Command::ListAgentModels)?;
+    assert_eq!(
+        outcome,
+        Outcome::AgentModels(crucible_client_api::AgentModelsOutcome::Unsupported)
+    );
+    let (_, outcome) = answered(
+        &mut conversation,
+        Command::SelectAgentModel {
+            model: Some(crucible_client_api::Name::new("opus")?),
+        },
+    )?;
+    assert_eq!(
+        outcome,
+        Outcome::AgentModel(crucible_client_api::AgentModelOutcome::Unsupported)
+    );
+
     let (_, outcome) = answered(&mut conversation, Command::Help)?;
     assert_eq!(outcome, Outcome::help());
     let (performed, outcome) = answered(&mut conversation, Command::Exit)?;

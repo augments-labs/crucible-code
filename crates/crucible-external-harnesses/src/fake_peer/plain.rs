@@ -76,6 +76,7 @@ impl Dialect for Plain {
             Account::Status => "status",
             Account::SignIn => "login",
             Account::SignOut => "logout",
+            Account::Models => return None,
         };
         Some(Request {
             arguments: vec![argument.to_owned()],

@@ -380,10 +380,10 @@ on and is written to `~/.crucible/config.json` beside the model, so the next run
 here asks for the same. There is no way back to asking for nothing from inside
 a session: a rung you can see on the screen cannot be un-seen by being handed a
 default this program is never told the name of. Remove the key from the file
-for that. On an installed agent's route, `/model` and `/effort`, with a name or
-without, stand no shelf or ladder: `/model` names the model the agent's entry
-starts it on, or says the agent chooses its own, and `/effort` says the agent
-chooses how hard it thinks.
+for that. On an installed agent's route, `/model` lists the models the agent
+offers instead of the shelf, and the one taken starts the agent's next turn
+([Installed agents](agents.md) says how); `/effort` stands no ladder and says
+the agent chooses how hard it thinks.
 
 Where a vendor serves a model faster for a higher price, `/fast` asks for it,
 after saying what it costs. [Fast](fast.md) lists which models have a fast form,

@@ -117,6 +117,8 @@ pub async fn turn(
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }
+        | Command::ListAgentModels
+        | Command::SelectAgentModel { .. }
         | Command::SetEffort(_)
         | Command::SetSpeed(_)
         | Command::SetMode(_)
@@ -169,6 +171,8 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }
+        | Command::ListAgentModels
+        | Command::SelectAgentModel { .. }
         | Command::SetEffort(_)
         | Command::SetSpeed(_)
         | Command::SetMode(_)

@@ -102,6 +102,8 @@ pub enum Account {
     SignIn,
     /// Signing it out.
     SignOut,
+    /// Which models it can be launched on.
+    Models,
 }
 
 /// What a launch is shaped by besides its program.
@@ -138,8 +140,25 @@ pub enum Reading {
     Version(Text),
     /// The account state it reported.
     Signed(Authentication),
+    /// The models it offers, in its order: at most [`OFFERED`].
+    Models(Vec<Offered>),
     /// It said nothing the dialect could read.
     Unreadable(Failure),
+}
+
+/// The most models a [`Reading::Models`] keeps. An agent offering more is
+/// unread rather than cut, since a list cut short offers a choice it does not
+/// show.
+pub const OFFERED: usize = 32;
+
+/// One model an agent offers to be launched on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offered {
+    /// What the agent is launched with to run on it; `None` for the agent's
+    /// own choice, which it is launched without naming.
+    pub model: Option<Text>,
+    /// What the agent calls it.
+    pub shown: Text,
 }
 
 /// What a frame heard during a spoken account step means.
@@ -1095,7 +1114,7 @@ impl Host {
         dialect: &mut dyn Dialect,
         step: Account,
         frames: &[String],
-        shown: &dyn Fn(Text),
+        shown: &(dyn Fn(Text) + Sync),
         within: Duration,
     ) -> Reading {
         let reading = match self.say(frames).await {
@@ -1104,7 +1123,7 @@ impl Host {
         };
         let grace = match reading {
             Reading::Unreadable(_) => Duration::ZERO,
-            Reading::Version(_) | Reading::Signed(_) => STOP_GRACE,
+            Reading::Version(_) | Reading::Signed(_) | Reading::Models(_) => STOP_GRACE,
         };
         self.finish(grace).await;
         match reading {
@@ -1113,6 +1132,15 @@ impl Host {
                 Reading::Unreadable(Failure::new(self.shown(failure.reason()).as_str()))
             }
             signed @ Reading::Signed(_) => signed,
+            Reading::Models(offered) => Reading::Models(
+                offered
+                    .into_iter()
+                    .map(|row| Offered {
+                        model: row.model.map(|model| self.shown(&model)),
+                        shown: self.shown(&row.shown),
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -1121,7 +1149,7 @@ impl Host {
         &mut self,
         dialect: &mut dyn Dialect,
         step: Account,
-        shown: &dyn Fn(Text),
+        shown: &(dyn Fn(Text) + Sync),
         within: Duration,
     ) -> Reading {
         let unread = |why: &str| Reading::Unreadable(Failure::new(why));

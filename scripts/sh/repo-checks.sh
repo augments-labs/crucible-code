@@ -1594,9 +1594,13 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # out of reach and signs the agent's own program out, so it joined them as
 # well. Connecting a provider through an installed agent, the twenty-eighth,
 # changes whom the session acts as for that provider, so it joined them too.
+# Asking an installed agent which models it offers, the twenty-ninth, reads a
+# list and changes nothing, and choosing one of them, the thirtieth, changes
+# which model the agent's next turn runs on, as choosing a provider's model
+# does, and neither what it may reach nor whom it acts as.
 # One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 28)); then
-    printf '    FAIL the client contract no longer has the 28 commands the nine were picked out of; decide whether the new one changes what a session may do, then move the 28 in this check\n'
+if (($(grep -c . <<<"$kinds") != 30)); then
+    printf '    FAIL the client contract no longer has the 30 commands the nine were picked out of; decide whether the new one changes what a session may do, then move the 30 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do

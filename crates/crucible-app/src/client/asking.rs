@@ -175,6 +175,8 @@ pub fn asking(
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }
+        | Command::ListAgentModels
+        | Command::SelectAgentModel { .. }
         | Command::SetEffort(_)
         | Command::SetSpeed(_)
         | Command::SetMode(_)

@@ -209,7 +209,8 @@ pub struct Snapshot {
     /// Whether any installed agent is offered.
     pub agents: Agents,
     /// The model in force, where one is: on an installed agent's route, the
-    /// one its entry starts it on, and none where the agent chooses its own.
+    /// one it is started on, as its entry names it or as chosen since, and
+    /// none where the agent chooses its own.
     pub model: Option<Model>,
     /// The effort in force, where one was asked for.
     pub effort: Option<Rung>,

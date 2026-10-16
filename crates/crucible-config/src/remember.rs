@@ -469,6 +469,72 @@ pub fn disabling(text: &str, file: &str, instance: &str) -> Result<String, Confi
     unreached(disabled, file, instance)
 }
 
+/// The text of a configuration file where the installed agent `instance` is
+/// started on `model`, or on its own choice where that is `None`: its block's
+/// `model` written over, added or taken out, and every other byte where it
+/// was.
+///
+/// Only the user file names installed agents, so `text` is that file's. The
+/// text is read back before it is returned, so a model the agent's program
+/// could not be started on, or a driver that takes none, is refused rather
+/// than written.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, either as it is or as it would
+/// be; [`ConfigError::Unspliceable`] where `externalAgents.<instance>` is not
+/// an object the file holds, and [`ConfigError::Unremovable`] where its
+/// `model` cannot be taken out without rewriting.
+pub fn choosing_agent_model(
+    text: &str,
+    file: &str,
+    instance: &str,
+    model: Option<&str>,
+) -> Result<String, ConfigError> {
+    let at = format!("externalAgents.{instance}.model");
+    // As JSON reads it: the name is what the agent listed, and a quote
+    // written raw would end the document.
+    let written = model.map(|model| Value::String(model.to_owned()).to_string());
+    let refused = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: at.clone().into(),
+        written: written.clone().unwrap_or_default().into(),
+    };
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let Some(block) = document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .filter(|block| block.is_object())
+    else {
+        return Err(refused());
+    };
+    let named = block.get("model");
+    if named.and_then(Value::as_str) == model && named.is_some() == model.is_some() {
+        return Ok(text.to_owned());
+    }
+    let root = splice::root(text).ok_or_else(refused)?;
+    let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
+    let entry = splice::member(text, agents, instance).ok_or_else(refused)?;
+    let chosen = match (written.as_deref(), named.is_some()) {
+        (Some(written), false) => splice::insert(text, entry, |_| format!("\"model\": {written}")),
+        (Some(written), true) => {
+            let was = splice::member(text, entry, "model").ok_or_else(refused)?;
+            splice::over(text, was, written)
+        }
+        (None, true) => {
+            splice::remove(text, entry, "model").ok_or_else(|| ConfigError::Unremovable {
+                file: file.into(),
+                at: at.clone().into(),
+            })?
+        }
+        (None, false) => text.to_owned(),
+    };
+    crate::document::Document::parse(&chosen, file, crate::document::Origin::User)?;
+    Ok(chosen)
+}
+
 /// `text` without the `access` of any provider that reaches it through the
 /// installed agent `instance`.
 ///

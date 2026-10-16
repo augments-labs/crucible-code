@@ -156,11 +156,11 @@ impl Driver {
 pub(crate) const MODEL_CHARS: usize = 128;
 
 /// Whether `found` names a model an agent can be started with: letters,
-/// digits and `. _ - : @ / [ ]`, at most [`MODEL_CHARS`] of them, and never a
+/// digits and `. _ - : @ / [ ]`, at most 128 of them, and never a
 /// leading `-`, since it is handed to the agent's program as an argument of
 /// its own and must never be read there as an option.
 #[must_use]
-pub(crate) fn model_name(found: &str) -> bool {
+pub fn model_name(found: &str) -> bool {
     !found.is_empty()
         && found.len() <= MODEL_CHARS
         && !found.starts_with('-')
