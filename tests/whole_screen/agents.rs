@@ -679,6 +679,10 @@ fn model_and_effort_on_an_agent_route_offer_every_provider_s_models() {
                 .pointer("/provider")
                 .and_then(serde_json::Value::as_str);
             assert_eq!(provider, Some("openai"), "{case}: {written}");
+            let model = written
+                .pointer("/providers/openai/model")
+                .and_then(serde_json::Value::as_str);
+            assert_eq!(model, Some("gpt-5.6-sol"), "{case}: {written}");
         }
     }
 }

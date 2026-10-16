@@ -895,7 +895,7 @@ fn a_model_of_another_provider_is_refused_on_the_route() -> Result<(), Failed> {
 /// resumed.
 #[test]
 fn a_model_of_another_provider_with_a_key_moves_off_the_route() -> Result<(), Failed> {
-    use crucible_client_api::{Execution, ModelOutcome, Name, Retained, Text};
+    use crucible_client_api::{Execution, ModelOutcome, Name, Retained, Rung, Text};
 
     let tree = Tree::new("external-model-moved-off")?;
     let file = entered(&tree)?;
@@ -922,7 +922,7 @@ fn a_model_of_another_provider_with_a_key_moves_off_the_route() -> Result<(), Fa
         Command::SelectModel {
             provider: Name::new("openai")?,
             model: Name::new("gpt-5.6-sol")?,
-            effort: None,
+            effort: Some(Rung::High),
         },
     )?;
 
@@ -950,6 +950,10 @@ fn a_model_of_another_provider_with_a_key_moves_off_the_route() -> Result<(), Fa
         written.pointer("/providers/openai/model"),
         Some(&serde_json::json!("gpt-5.6-sol"))
     );
+    assert_eq!(
+        written.pointer("/providers/openai/effort"),
+        Some(&serde_json::json!("high"))
+    );
     let moved = outside.conversation.session();
     assert!(moved.route().is_none(), "{:?}", moved.route());
     assert!(
@@ -957,6 +961,48 @@ fn a_model_of_another_provider_with_a_key_moves_off_the_route() -> Result<(), Fa
         "no new session"
     );
     Session::reopen_routed(&tree.sessions(), &tree.workspace()?, &left, &route)?;
+    Ok(())
+}
+
+/// On the route, a model of another provider at a rung it does not serve is
+/// refused before anything moves: the conversation stays on the agent, in the
+/// session it was in, and nothing is written.
+#[test]
+fn a_model_of_another_provider_at_a_rung_it_does_not_serve_stays_on_the_route() -> Result<(), Failed>
+{
+    use crucible_client_api::{Execution, ModelOutcome, Name, Rung};
+
+    let tree = Tree::new("external-model-unserved-elsewhere")?;
+    let file = entered(&tree)?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+    let left = outside.conversation.session().id().cloned();
+    let desk = super::Desk::stored(&tree)?;
+    desk.logins.keep("google", "a-key-no-vendor-issued")?;
+    let before = std::fs::read_to_string(&file)?;
+
+    let refused = answered_by(
+        &desk,
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new("google")?,
+            model: Name::new("gemini-3.1-pro-preview")?,
+            effort: Some(Rung::Max),
+        },
+    )?;
+
+    assert!(
+        matches!(refused, Outcome::Model(ModelOutcome::Unsupported)),
+        "{refused:?}"
+    );
+    let standing = client::snapshot(&outside.conversation);
+    assert!(
+        matches!(standing.execution, Execution::Instance(_)),
+        "{:?}",
+        standing.execution
+    );
+    assert_eq!(outside.conversation.session().id().cloned(), left);
+    assert_eq!(std::fs::read_to_string(&file)?, before);
     Ok(())
 }
 

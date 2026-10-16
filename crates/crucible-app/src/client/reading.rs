@@ -66,8 +66,9 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
 }
 
 /// The one provider whose models the installed agent `conversation` is on
-/// can be started on, where it is on one that is started on a model: what
-/// `/model` offers there, in place of every provider's.
+/// can be started on, where it is on one that is started on a model: the
+/// provider whose models `/model` offers there unnarrowed by any credential
+/// of this program, since the agent's own sign-in serves them.
 #[must_use]
 pub fn reaching(conversation: &Conversation) -> Option<&'static str> {
     conversation

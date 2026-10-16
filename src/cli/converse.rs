@@ -1153,8 +1153,8 @@ struct Turn<'a, 'h> {
     /// Which provider is answering, by its name in the registry, as it stood
     /// when the turn began: the conversation that knows is on the worker.
     serving: Option<&'static str>,
-    /// The one provider whose models `/model` offers on an installed agent's
-    /// route, as it stood when the turn began.
+    /// The one provider an installed agent's route reaches, whose models
+    /// `/model` offers unnarrowed, as it stood when the turn began.
     reaching: Option<&'static str>,
     /// What an installed agent last said its context holds, as it stood when
     /// the turn began; `None` on a provider's model. It stands until the turn

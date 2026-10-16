@@ -736,9 +736,19 @@ impl Conversation {
         let defaulted = match onto {
             Onto::First if changed => self.ask_first(named, with),
             Onto::First => None,
+            // The rung goes with the model, as `/model` writes the two, so
+            // that the next run asks what this one now does.
             Onto::Model(model, effort) => {
                 self.ask_at(named, model, effort, with);
-                remember::choosing(with.choosing, named.name, model).err()
+                let effort =
+                    effort.filter(|effort| serves(with.providers, named.name, model, *effort));
+                remember::choosing(with.choosing, named.name, model)
+                    .and_then(|()| {
+                        effort.map_or(Ok(()), |effort| {
+                            remember::thinking(with.choosing, named.name, effort)
+                        })
+                    })
+                    .err()
             }
         };
         self.reach(named, with);
