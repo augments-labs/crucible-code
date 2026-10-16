@@ -1097,7 +1097,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "9b4c71c48dd8db4d376a39130e52fd0827380e583dcdb41ad612fedaa2004924"
+      "sha256": "f88fdd4537980aa6dfc4a9fd4259b85372b271cf79975a248e837d3cc7ce93ae"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",
@@ -1153,7 +1153,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
       ],
-      "sha256": "eb7acc34cafccdf168f9a78a3ece1dfa348e93213a9afca833bd18caee97d158"
+      "sha256": "9f61080be7f63ff1e52f09ecb46476040d53496f209a2daf777dc6c0daee1bf1"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_trains_80.snap",
@@ -1162,7 +1162,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"model-trains\", 80, 24, &vendor)"
       ],
-      "sha256": "efdc0e31738207489d0c2746d9815668752b122fe714744c716fb48551d068d0"
+      "sha256": "fc10203f46c358c3980cca117cb7fbca85ac424cf3b6af0707aa529d1a9f7e83"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_one_row_reply_carries_its_mark_in_native_mode.snap",
@@ -1325,7 +1325,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "88d99c7f628b779414ec634b39928afb253d340d38fc392cbec6fe0b33008ba2"
+      "sha256": "d6cce7e43d321919abb559a855ecaffa2b4cca70ea8981306e7153e690d00360"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_all_now_in_ascii_at_40.snap",
