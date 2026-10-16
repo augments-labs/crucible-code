@@ -245,6 +245,11 @@ pub struct Request {
     pub arguments: Vec<String>,
     /// The environment, which starts from nothing.
     pub environment: Vec<(String, String)>,
+    /// The variables of `environment` whose values may be shown where the
+    /// program's output is kept, since none of them says anything about an
+    /// account: every other value is withheld from it, as a credential would
+    /// be.
+    pub shown: Vec<&'static str>,
 }
 
 impl fmt::Debug for Request {
@@ -257,7 +262,25 @@ impl fmt::Debug for Request {
         f.debug_struct("Request")
             .field("arguments", &self.arguments)
             .field("environment", &names)
+            .field("shown", &self.shown)
             .finish()
+    }
+}
+
+impl Request {
+    /// The request starting `arguments` in `environment`, every value of which
+    /// may be shown: a dialect builds it from variables that say nothing about
+    /// an account.
+    #[must_use]
+    pub fn showing(arguments: Vec<String>, environment: Vec<(&'static str, String)>) -> Self {
+        Self {
+            arguments,
+            shown: environment.iter().map(|(name, _)| *name).collect(),
+            environment: environment
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect(),
+        }
     }
 }
 
@@ -300,6 +323,7 @@ impl Launch {
             request: Request {
                 arguments: Vec::new(),
                 environment: Vec::new(),
+                shown: Vec::new(),
             },
             policy,
             resume: None,

@@ -16,7 +16,7 @@ use std::path::Path;
 
 /// The variables taken from the shell, which say where programs and the
 /// user's own files are and how text is written, and nothing about any
-/// account.
+/// account, so their values may be shown where what the agent says is kept.
 const PASSED: [&str; 15] = [
     "PATH",
     "HOME",
@@ -36,7 +36,8 @@ const PASSED: [&str; 15] = [
 ];
 
 /// The environment for a launch whose configuration directory is `profile`,
-/// where there is one, from the `ambient` one.
+/// where there is one, from the `ambient` one. None of its variables says
+/// anything about an account, so each value may be shown.
 ///
 /// On Windows a variable is matched whatever its case, as Windows matches it;
 /// one whose name or value is not text is left out, since none of those named
@@ -44,13 +45,13 @@ const PASSED: [&str; 15] = [
 pub(crate) fn environment(
     ambient: impl IntoIterator<Item = (OsString, OsString)>,
     profile: Option<&Path>,
-) -> Vec<(String, String)> {
-    let mut environment: Vec<(String, String)> = ambient
+) -> Vec<(&'static str, String)> {
+    let mut environment: Vec<(&'static str, String)> = ambient
         .into_iter()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
         .filter_map(|(name, value)| {
             let passed = PASSED.iter().find(|passed| named(&name, passed))?;
-            Some(((*passed).to_owned(), value))
+            Some((*passed, value))
         })
         .collect();
     environment.extend(
@@ -58,13 +59,10 @@ pub(crate) fn environment(
             ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"),
             ("DISABLE_AUTOUPDATER", "1"),
         ]
-        .map(|(name, value)| (name.to_owned(), value.to_owned())),
+        .map(|(name, value)| (name, value.to_owned())),
     );
     if let Some(profile) = profile {
-        environment.push((
-            "CLAUDE_CONFIG_DIR".to_owned(),
-            profile.display().to_string(),
-        ));
+        environment.push(("CLAUDE_CONFIG_DIR", profile.display().to_string()));
     }
     environment
 }

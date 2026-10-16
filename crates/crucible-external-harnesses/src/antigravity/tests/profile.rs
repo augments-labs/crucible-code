@@ -66,14 +66,14 @@ fn no_ambient_google_credential_reaches_the_agent() {
             "{name} carried the shell's value"
         );
         assert!(
-            !STRIPPED.contains(&name.to_uppercase().as_str()) || SET.contains(&name.as_str()),
+            !STRIPPED.contains(&name.to_uppercase().as_str()) || SET.contains(name),
             "{name} reached the agent"
         );
     }
     let value = |wanted: &str| {
         environment
             .iter()
-            .find(|(name, _)| name == wanted)
+            .find(|(name, _)| *name == wanted)
             .map(|(_, value)| value.as_str())
     };
     assert_eq!(value("GEMINI_HOME"), Some("/profiles/work"));

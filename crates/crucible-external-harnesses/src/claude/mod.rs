@@ -286,10 +286,10 @@ impl Claude {
 
     /// The request a step or a run starts with, given `arguments`.
     fn request(arguments: Vec<String>, shape: Shape<'_>) -> Request {
-        Request {
+        Request::showing(
             arguments,
-            environment: profile::environment(std::env::vars_os(), shape.profile),
-        }
+            profile::environment(std::env::vars_os(), shape.profile),
+        )
     }
 }
 

@@ -58,6 +58,7 @@ fn a_launch_printed_for_debugging_shows_no_environment_value() {
             "PLAIN_TOKEN".to_owned(),
             "sentinel-c0ffee-5ec7e7".to_owned(),
         )],
+        shown: Vec::new(),
     };
 
     let printed = format!("{request:?} {:?}", launch().asking(request.clone()));

@@ -41,8 +41,8 @@ fn ambient() -> Vec<(OsString, OsString)> {
 }
 
 /// The value `name` holds in `environment`, where it is set once.
-fn value<'a>(environment: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    let mut held = environment.iter().filter(|(set, _)| set == name);
+fn value<'a>(environment: &'a [(&str, String)], name: &str) -> Option<&'a str> {
+    let mut held = environment.iter().filter(|(set, _)| *set == name);
     let first = held.next().map(|(_, value)| value.as_str());
     assert!(held.next().is_none(), "{name} is set twice");
     first
