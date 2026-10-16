@@ -173,3 +173,26 @@ fn a_call_and_its_end_are_reported_under_the_call_s_id() {
         "{failed:?}"
     );
 }
+
+/// Fails where a call announced already over is left without its end: the
+/// one message that began it is the only one that says what it came back
+/// with.
+#[test]
+fn a_call_announced_over_is_reported_with_its_end() {
+    let mut updates = Updates::fresh();
+    let heard = updates.heard(&json!({
+        "sessionUpdate": "tool_call", "toolCallId": "call_1", "title": "Read a file", "kind": "read", "status": "failed",
+        "content": [{"type": "content", "content": {"type": "text", "text": "not there"}}],
+    }));
+
+    assert!(
+        matches!(
+            heard.as_slice(),
+            [
+                Act::Say(Event::ToolActivity { call: began, .. }),
+                Act::Say(Event::ToolReport { call: ended, failed: true, report }),
+            ] if began.as_str() == "call_1" && ended.as_str() == "call_1" && report.as_str() == "not there"
+        ),
+        "{heard:?}"
+    );
+}

@@ -9,8 +9,10 @@
 //! Nothing the agent reports is an instruction here: a call it made with one
 //! of its own tools is a [`RunEvent::AgentCalled`], and what it came back with
 //! a [`RunEvent::AgentAnswered`] under the same call, drawn as a native call
-//! and its result are and never one of them; a file it changed is a
-//! [`RunEvent::Reported`]. The leave it asks for goes to the turn's [`Asker`]
+//! and its result are and never one of them. Only a call under an id of its
+//! own, not already out, and within as many as are held at once is drawn as
+//! one, and only an answer to one of those is drawn under it; any other call,
+//! and a file it changed, is a [`RunEvent::Reported`]. The leave it asks for goes to the turn's [`Asker`]
 //! and back to the agent as the contract's decision, never as anything the
 //! permission engine reads.
 //!
@@ -70,8 +72,8 @@ use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use crucible_execution::{
-    About, Backend, Cost, Decision, Error, Event, Failure, Outcome, PENDINGS, Pending, PendingRef,
-    Sink, Text, TurnRequest, Usage,
+    About, Backend, Cost, Decision, Error, Event, Failure, NAME_BYTES, Outcome, PENDINGS, Pending,
+    PendingRef, Sink, Text, TurnRequest, Usage,
 };
 use crucible_models::{Effort, ProviderError};
 use crucible_runner::{
@@ -166,6 +168,10 @@ const DOLLARS: PricingCurrency = PricingCurrency::new("USD");
 
 /// Femtocurrency in one millionth of a currency.
 const FEMTO: u128 = 1_000_000_000;
+
+/// As many of an agent's calls as are drawn as calls while they are out, as
+/// many as one native response may ask for at once.
+const CALLS_OUT: usize = 128;
 
 /// What ends the text of an agent's report that was longer than is kept.
 const CUT_REPORT: &str = "[the rest of what the agent reported was not kept]";
@@ -580,6 +586,7 @@ impl Outside {
                 began: false,
                 failed: None,
                 uncertain: None,
+                out: Vec::new(),
                 pending: VecDeque::new(),
                 waker: None,
             }),
@@ -771,6 +778,8 @@ struct Told<'t> {
     failed: Option<Failure>,
     /// What was under way when it was lost, where it was.
     uncertain: Option<Text>,
+    /// The agent's calls drawn as calls and not yet answered.
+    out: Vec<ToolId>,
     /// Leave asked for and not yet put.
     pending: VecDeque<(PendingRef, Pending)>,
     /// What to wake when leave is asked for.
@@ -847,24 +856,55 @@ impl Sink for Telling<'_> {
                 tool,
                 summary,
                 about,
-            } => Some(RunEvent::AgentCalled {
-                call: ToolId::new(call.as_str()),
-                tool: tool.as_str().into(),
-                summary: Summary::of(
-                    match about {
-                        About::Path => Argument::Path,
-                        About::Address => Argument::Address,
-                        About::Command => Argument::Command,
-                        About::Other => Argument::Other,
-                    },
-                    summary.as_str(),
-                ),
-            }),
+            } => {
+                let tool = match tool.as_str().trim() {
+                    "" => "tool",
+                    named => named,
+                };
+                let call = ToolId::new(Text::clipped(call.as_str(), NAME_BYTES).as_str());
+                // A call with no id of its own, one under an id already out,
+                // or one past as many as are held is said as something the
+                // agent did and not drawn as a call: a second row under the
+                // same id would take the first one's result, and a call row
+                // waits in the footing until its result arrives, which the
+                // agent may never send.
+                if call.as_str().is_empty()
+                    || told.out.contains(&call)
+                    || told.out.len() >= CALLS_OUT
+                {
+                    Some(RunEvent::Reported {
+                        tool: tool.into(),
+                        summary: summary.as_str().into(),
+                    })
+                } else {
+                    told.out.push(call.clone());
+                    Some(RunEvent::AgentCalled {
+                        call,
+                        tool: Text::clipped(tool, NAME_BYTES).as_str().into(),
+                        summary: Summary::of(
+                            match about {
+                                About::Path => Argument::Path,
+                                About::Address => Argument::Address,
+                                About::Command => Argument::Command,
+                                About::Other => Argument::Other,
+                            },
+                            summary.as_str(),
+                        ),
+                    })
+                }
+            }
             Event::ToolReport {
                 call,
                 failed,
                 report,
-            } => {
+            } => 'answer: {
+                // Only under a call drawn as one: an answer to a call never
+                // said, or said twice, has no row to hang under.
+                let call = ToolId::new(Text::clipped(call.as_str(), NAME_BYTES).as_str());
+                let Some(at) = told.out.iter().position(|out| *out == call) else {
+                    break 'answer None;
+                };
+                told.out.swap_remove(at);
                 // What was cut says so in the text, as a tool here that cut
                 // what it captured says so in its own: the row under the call
                 // is the only place a reader learns there was more.
@@ -874,7 +914,7 @@ impl Sink for Telling<'_> {
                     report.as_str().to_owned()
                 };
                 Some(RunEvent::AgentAnswered {
-                    call: ToolId::new(call.as_str()),
+                    call,
                     output: if failed {
                         RecordedToolOutput::failed(said)
                     } else {

@@ -618,3 +618,112 @@ fn attachments_and_unlaunchable_modes_are_refused() {
     assert_eq!(outside.cycle(), Mode::AllowEdits);
     assert_eq!(outside.cycle(), Mode::Ask);
 }
+
+/// The agent's call `call` with its own tool `Bash`.
+fn calling(call: &str) -> Event {
+    Event::ToolActivity {
+        call: Text::new(call),
+        tool: Text::new("Bash"),
+        summary: Text::new("ls"),
+        about: About::Command,
+    }
+}
+
+/// The agent's call `call` come back with `report`.
+fn answering(call: &str, report: Text) -> Event {
+    Event::ToolReport {
+        call: Text::new(call),
+        failed: false,
+        report,
+    }
+}
+
+/// A turn that posts `events` and is answered.
+fn telling(events: impl IntoIterator<Item = Event>) -> Told {
+    let mut told = vec![Event::Started {
+        turn: TurnId::FIRST,
+    }];
+    told.extend(events);
+    told.push(Event::Finished(Outcome::Answered));
+    (told, Ok(Outcome::Answered))
+}
+
+/// What of `posted` is about the agent's calls: a call drawn, an answer under
+/// one, or something it did said and not drawn.
+fn calls(posted: &[RunEvent]) -> Vec<String> {
+    posted
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::AgentCalled { call, .. } => Some(format!("called {}", call.as_str())),
+            RunEvent::AgentAnswered { call, .. } => Some(format!("answered {}", call.as_str())),
+            RunEvent::Reported { tool, .. } => Some(format!("said {tool}")),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Fails where a call that could take another's result is drawn as a call:
+/// one with no id of its own, or one under an id already out. And where an
+/// answer with no call drawn for it is drawn under nothing.
+#[tokio::test]
+async fn only_a_call_under_an_id_of_its_own_is_drawn_and_answered() {
+    let mut outside = scripted([telling([
+        calling("a"),
+        calling("a"),
+        calling(""),
+        answering("b", Text::new("no call")),
+        answering("a", Text::new("listed")),
+        answering("a", Text::new("again")),
+        calling("a"),
+    ])]);
+
+    let (_, posted) = turn(&mut outside).await;
+
+    assert_eq!(
+        calls(&posted),
+        [
+            "called a",
+            "said Bash",
+            "said Bash",
+            "answered a",
+            "called a"
+        ]
+    );
+}
+
+/// Fails where more of an agent's calls are held out than one native
+/// response may ask for, each waiting for an answer the agent may never send.
+#[tokio::test]
+async fn calls_past_as_many_as_are_held_are_said_and_not_drawn() {
+    let mut outside = scripted([telling(
+        (0..=CALLS_OUT).map(|at| calling(&format!("call-{at}"))),
+    )]);
+
+    let (_, posted) = turn(&mut outside).await;
+
+    let said = calls(&posted);
+    assert_eq!(said.len(), CALLS_OUT + 1);
+    assert!(
+        said.iter()
+            .take(CALLS_OUT)
+            .all(|one| one.starts_with("called "))
+    );
+    assert_eq!(said.last().map(String::as_str), Some("said Bash"));
+}
+
+/// Fails where a result the agent sent more of than is kept reads as whole.
+#[tokio::test]
+async fn a_cut_answer_says_it_was_cut() {
+    let mut outside = scripted([telling([
+        calling("a"),
+        answering("a", Text::clipped("listing", 4)),
+    ])]);
+
+    let (_, posted) = turn(&mut outside).await;
+
+    let answered = posted.iter().find_map(|event| match event {
+        RunEvent::AgentAnswered { output, .. } => Some(output.text().to_owned()),
+        _ => None,
+    });
+    assert_eq!(answered, Some(format!("list\n{CUT_REPORT}")));
+}

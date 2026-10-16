@@ -628,8 +628,11 @@ tool's name as the agent gave it, with what the call was about, waiting above
 the box until the agent says what it came back with, and then written out with
 that result under it, a failure marked as one and a long result offered whole
 on `ctrl+o`. The result is what the agent reported, given only once the call
-is over, so nothing streams under a command the agent is still running. Each file
-the agent says it changed is also one toned down row with no mark, worded as the agent's, such as `the agent used file ·
+is over, so nothing streams under a command the agent is still running, and a
+call the turn ends without an answer to is written out with none. A call with
+no id of its own, or past the 128 waiting at once, is one toned down row with
+no mark, worded as the agent's, such as `the agent used Bash · ls -la`, and so
+is each file the agent says it changed, such as `the agent used file ·
 src/lib.rs`. Control characters in anything the agent says are taken out.
 
 Where the model asked for one tool and nothing about it moves, the line is

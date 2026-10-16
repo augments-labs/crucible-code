@@ -1503,21 +1503,27 @@ fn the_agent_s_calls_and_their_ends_reach_a_client_under_the_call_s_id() -> Resu
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let watching = Watching {
         events,
-        stopping: Some(cancel.clone()),
+        stopping: None,
     };
-    {
+    let answered = {
         let run = outside
             .conversation
             .starting(&watching, &cancel, &steer, &aside);
-        let _ = runtime()?.block_on(client::turn(
+        runtime()?.block_on(client::turn(
             &mut outside.conversation,
             &request,
             Box::default(),
             &mut remote,
             &run,
-        ));
-    }
+        ))
+    };
     drop(watching);
+    assert_eq!(
+        answered.response(&request).outcome,
+        Outcome::Turn(TurnOutcome::Ran {
+            stop: Stop::Yielded
+        })
+    );
 
     let streamed: Vec<_> = posted(&reported)
         .iter()

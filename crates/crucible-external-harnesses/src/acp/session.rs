@@ -242,13 +242,15 @@ fn tool_call(update: &Value) -> Vec<Act> {
         .get("title")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    // A call can be announced already over, and then this is the one
+    // message that says what it came back with.
     let mut acts = vec![Act::Say(Event::ToolActivity {
         call: call(update),
         tool: tool(update),
         summary: Text::new(summary),
         about: About::Other,
     })];
-    acts.extend(changed(update));
+    acts.extend(tool_call_update(update));
     acts
 }
 
