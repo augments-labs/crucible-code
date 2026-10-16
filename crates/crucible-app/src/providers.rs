@@ -52,7 +52,8 @@ use crate::subscription::Subscriptions;
 /// says to choose another with `/model`; a model released since is typed, which
 /// is the path that was there before any of these were written down. The lists
 /// and the defaults are read again from the vendors' documentation as they
-/// release models.
+/// release models: a scheduled check reports what the models.dev database
+/// lists against them, and each entry says when its vendor was last read.
 const PROVIDERS: [Served; 11] = [
     Served {
         name: "anthropic",
@@ -65,6 +66,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Anthropic::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::shown("claude-fable-5-1", "Claude Fable 5.1", EVERY),
             Model::new("claude-fable-5", EVERY),
@@ -90,6 +92,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: DeepSeek::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("deepseek-flash", LOW_HIGH_MAX),
             Model::new("deepseek-v4-pro", LOW_HIGH_MAX),
@@ -104,6 +107,7 @@ const PROVIDERS: [Served; 11] = [
         reach: startup::google_web,
         fast: Google::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         window: 200_000,
         most: None,
         models: &[
@@ -124,6 +128,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Meta::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         // `max` on 1.3 is named by some of the vendor's pages and left out by
         // its parameter lists, so it is not offered until a source settles it.
         models: &[
@@ -144,6 +149,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Mimo::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-01",
         models: &[
             Model::new("mimo-v2.6-pro", NONE),
             Model::new("mimo-v2.6-flash", NONE),
@@ -160,8 +166,10 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: MiniMax::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("MiniMax-M3", NONE),
+            // Closed to new accounts by its vendor and retired on 2026-11-18.
             Model::new("MiniMax-M2.7", NONE),
         ],
     },
@@ -176,6 +184,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Moonshot::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         // Spelled the way the coding console spells them, that being the one
         // crucible asks. The open platform serves the same models under longer
         // names and does not serve the second of these at all, so a key from
@@ -207,6 +216,7 @@ const PROVIDERS: [Served; 11] = [
         most: Some(872_000),
         fast: OpenAi::fast_at_vendor,
         fast_signed_in: Some(OpenAi::fast_signed_in),
+        reviewed: "2026-10-16",
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
@@ -232,6 +242,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Qwen::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("qwen3.8-max", QWEN),
             Model::new("qwen3.8-flash", QWEN),
@@ -250,6 +261,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Xai::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("grok-4.7", UP_TO_XHIGH),
             Model::new("grok-4.6", UP_TO_XHIGH),
@@ -266,6 +278,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Zai::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("glm-5.3", LOW_HIGH_MAX),
             Model::new("glm-5.3-flash", LOW_HIGH_MAX),
@@ -931,6 +944,10 @@ pub struct Served {
     /// narrower supported effort set is checked for typed choices as well;
     /// other providers keep their existing vendor-validated typed path.
     pub models: &'static [Model],
+    /// The day the vendor's own pages were last read for [`Served::models`],
+    /// their rungs and [`Served::default`], as `YYYY-MM-DD`: how stale they may
+    /// be, for whoever refreshes them next.
+    pub reviewed: &'static str,
     /// Builds the provider from a resolved credential and address.
     ///
     /// The one place a name becomes a type. A fresh transport every call, and a

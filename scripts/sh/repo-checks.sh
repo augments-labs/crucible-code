@@ -1507,7 +1507,9 @@ fi
 # for a reason the probe cannot see. What each probe names is written down
 # whole, so a new import is a decision taken here. `generate-models` names
 # `crucible_types` for the modalities it reads, and again in the text of the
-# table it writes, which is compiled where the table is kept.
+# table it writes, which is compiled where the table is kept; its drift report
+# names `crucible_app` for the shipped provider lists and rungs it compares,
+# which are the composition itself, and `crucible_models` for the rung ladder.
 # `bench-grep` and `bench-tools` name `crucible_tools` for the tool worker they
 # lend the calls they time, so what they time includes handing the work to it,
 # `crucible_runtime` for the future their permission prompts answer with, and
@@ -1531,6 +1533,8 @@ src/bin/bench-tools.rs crucible_sandbox_local
 src/bin/bench-tools.rs crucible_tools
 src/bin/bench-tools.rs crucible_types
 src/bin/bench-tools.rs crucible_workspace
+src/bin/generate-models.rs crucible_app
+src/bin/generate-models.rs crucible_models
 src/bin/generate-models.rs crucible_types'
 probe_sources=(src/bin/*.rs)
 if ((${#probe_sources[@]} == 0)); then
