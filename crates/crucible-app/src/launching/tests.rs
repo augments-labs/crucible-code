@@ -668,7 +668,7 @@ fn an_agent_is_started_with_the_model_its_route_names() {
 fn an_agent_from_its_entry_is_started_with_the_model_it_names() {
     let sample = Sample::new("launching-entry-model");
     let settings = sample.user(
-        r#"{"externalAgents": {"work": {"driver": "claude", "executable": "/bin/claude", "model": "opus"}}}"#,
+        r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude", "model": "opus"}}}"#,
     );
     let entry = settings.external_agents().pop().expect("the entry");
     let agent = Agent::configured(&entry, &Registry::new(&SHIPPED), |_| None).expect("its row");
