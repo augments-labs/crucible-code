@@ -544,8 +544,13 @@ pub(super) enum Kept {
 /// runner is away is told instead of reading it.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Asked<'a> {
-    /// The provider's name in the registry, where one is answering.
+    /// The provider's name in the registry, where one is answering, or the
+    /// one an installed agent's route reaches.
     pub(super) provider: Option<&'static str>,
+    /// The one provider whose models may be taken, on an installed agent's
+    /// route that is started on one: its sign-in is the agent's, so no
+    /// credential of this program narrows them either.
+    pub(super) reaching: Option<&'static str>,
     /// The model in force, empty where none is.
     pub(super) model: &'a str,
     /// The rung it is asked on, where one is in force.
@@ -1100,10 +1105,11 @@ fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal>
     say_at(renderer, Laid::Hung, said)
 }
 
-/// What `/effort` where `thinking`, and `/model` mid-turn otherwise, say on
-/// an installed agent's route, in place of a ladder or a shelf: the agent
-/// chooses how hard it thinks, and its models are listed by starting its
-/// program, which waits for the turn to end. Nothing on a provider's route.
+/// What `/model`, and `/effort` where `thinking`, say on the route of an
+/// installed agent that chooses its own model, in place of a shelf or a
+/// ladder: the agent is asked for neither, so taking any row either would hold
+/// is refused. Nothing on a provider's route, nor on an agent's started on
+/// `model`, whose shelf and ladder are its provider's.
 fn chosen_by_agent(
     execution: &crucible_client_api::Execution,
     model: Option<&crucible_client_api::Model>,
@@ -1112,23 +1118,16 @@ fn chosen_by_agent(
     let crucible_client_api::Execution::Instance(instance) = execution else {
         return None;
     };
+    if model.is_some() {
+        return None;
+    }
     let instance = instance.as_str();
-    Some(match (model, thinking) {
-        (None, false) => format!(
-            "this conversation runs on the agent {instance}, which chooses its own model; /model chooses one between turns"
-        ),
-        (None, true) => format!(
+    Some(if thinking {
+        format!(
             "this conversation runs on the agent {instance}, which chooses its own model and how hard it thinks"
-        ),
-        (Some(model), false) => format!(
-            "this conversation runs on the agent {instance}, started on the model {}; /model chooses another between turns",
-            model.text().as_str()
-        ),
-        (Some(_), true) => {
-            format!(
-                "this conversation runs on the agent {instance}, which chooses how hard it thinks"
-            )
-        }
+        )
+    } else {
+        format!("this conversation runs on the agent {instance}, which chooses its own model")
     })
 }
 

@@ -11,8 +11,8 @@ expression: picture
 |  on the agent claude and starts fresh, |
 |  in a new session; the earlier one can |
 |  be resumed.                           |
-|  execution: claude · billing: external |
-|                                        |
+|  execution: claude, model:             |
+|  claude-opus-5-5 · billing: external   |
 |                                        |
 |                                        |
 |                                        |

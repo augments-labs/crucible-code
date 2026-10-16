@@ -20,19 +20,19 @@ use crucible_app::client::{self, Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::external::External;
 use crucible_app::launching::{Agent, Launcher, Steps};
-use crucible_app::outside::{Installed, Listing, Relaunch};
+use crucible_app::outside::{Installed, Relaunch};
 use crucible_app::{Conversation, Settled};
 use crucible_client_api::{
-    AgentModelOutcome, AgentModelsOutcome, Capabilities as Asking, Command, Correlation,
-    Decision as Ruled, Lasting as Lasts, Outcome, Pending, PendingId, Progress, Prompt, Request,
-    ResumeOutcome, Ruling, Stop, TurnOutcome,
+    Capabilities as Asking, Command, Correlation, Decision as Ruled, Lasting as Lasts, Outcome,
+    Pending, PendingId, Progress, Prompt, Request, ResumeOutcome, Ruling, Stop, TurnOutcome,
 };
 use crucible_config::Driver;
 use crucible_execution::{
     Backend, Capabilities, Capability, Decision, Failure, Lasting, SessionRef,
 };
 use crucible_external_harnesses::fake_peer::{self, Reply, Script as Peer, scripts::claude};
-use crucible_external_harnesses::{Account, Control, Reading};
+use crucible_external_harnesses::{Account, Control};
+use crucible_models::Effort;
 use crucible_runner::{Event, EventEnvelope, Post, SessionCost, Totals, TurnError, Turned};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_sandbox::{SandboxEnablement, SandboxPolicy, SandboxService};
@@ -119,37 +119,15 @@ impl Relaunch for Launching {
         self.agent.model()
     }
 
-    fn models(&self) -> BoxFuture<'_, Listing> {
-        Box::pin(async move {
-            let Ok(mut dialect) = (self.row.dialect)(Mode::default()) else {
-                return Listing::Unreachable(Failure::new("no dialect"));
-            };
-            let Some(control) = Control::new() else {
-                return Listing::Unreachable(Failure::new("no control"));
-            };
-            let read = self
-                .launcher()
-                .account(
-                    &self.agent,
-                    &control,
-                    dialect.as_mut(),
-                    Account::Models,
-                    &|_| {},
-                )
-                .await;
-            match read {
-                Ok(Reading::Models(offered)) => Listing::Listed(offered),
-                Ok(Reading::Unreadable(failure)) => Listing::Unreachable(failure),
-                Ok(_) => Listing::Unreachable(Failure::new("not the models")),
-                Err(refused) => Listing::Unreachable(Failure::new(&refused.to_string())),
-            }
-        })
+    fn effort(&self) -> Option<Effort> {
+        self.agent.effort()
     }
 
     fn launch<'a>(
         &'a self,
         mode: Mode,
         model: Option<&'a str>,
+        effort: Option<Effort>,
         resume: Option<&'a ExternalRef>,
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
         Box::pin(async move {
@@ -158,7 +136,7 @@ impl Relaunch for Launching {
             }
             let mut dialect = (self.row.dialect)(mode)?;
             let control = Control::new().ok_or_else(|| Failure::new("no control"))?;
-            let agent = self.agent.on(model);
+            let agent = self.agent.on(model, effort);
             let host = self
                 .launcher()
                 .launch(
@@ -211,6 +189,7 @@ fn launching_on(
         executable: program.to_string_lossy().into(),
         profile: None,
         model: model.map(Into::into),
+        effort: None,
         enabled: true,
     };
     let registry = Registry::new(std::slice::from_ref(row));
@@ -320,7 +299,12 @@ impl Outside {
         let route = binding()?;
         let left = runtime()?.block_on(async {
             let backend = launching
-                .launch(Mode::Ask, launching.agent.model(), None)
+                .launch(
+                    Mode::Ask,
+                    launching.agent.model(),
+                    launching.agent.effort(),
+                    None,
+                )
                 .await?;
             let installed = Installed {
                 backend: Some(backend),
@@ -633,8 +617,9 @@ fn a_snapshot_names_the_route_s_instance_and_its_billing() -> Result<(), Failed>
     assert_eq!(standing.billing, Billing::External);
     assert_eq!(standing.provider, None);
     assert_eq!(
-        standing.model, None,
-        "an agent left to choose names no model"
+        standing.model.as_ref().map(|model| model.text().as_str()),
+        Some("claude-opus-5-5"),
+        "an agent's route names the model it is started on"
     );
     Ok(())
 }
@@ -694,82 +679,78 @@ fn entered(tree: &Tree) -> Result<PathBuf, Failed> {
     Ok(file)
 }
 
-/// The rows `/model` lists on the route, as `(value, shown, current)`.
-fn listed(
-    tree: &Tree,
-    outside: &mut Outside,
-) -> Result<Vec<(Option<String>, String, bool)>, Failed> {
-    match answered(tree, outside, Command::ListAgentModels)? {
-        Outcome::AgentModels(AgentModelsOutcome::Listed(rows)) => Ok(rows
-            .iter()
-            .map(|row| {
-                (
-                    row.model.as_ref().map(|model| model.as_str().to_owned()),
-                    row.shown.as_str().to_owned(),
-                    row.current,
-                )
-            })
-            .collect()),
-        other => Err(format!("the models were answered with {other:?}").into()),
-    }
+/// Whether the last run the peer in `outside` was started as carries `flag`
+/// followed by `value`.
+fn started_with(outside: &Outside, flag: &str, value: &str) -> Result<bool, Failed> {
+    let started = fake_peer::argued(&outside.peer);
+    let run = started.last().ok_or("the run was never started")?;
+    Ok(run.windows(2).any(|pair| pair == [flag, value]))
 }
 
-/// On the route, `/model` lists what the agent's program says it offers when
-/// asked, its own choice first, with the model its runs start on marked.
+/// On a route whose entry names no model, the agent is started on its
+/// provider's default model at that model's default rung, and the snapshot
+/// names them.
 #[test]
-fn the_models_an_agent_offers_are_listed_with_its_own_marked() -> Result<(), Failed> {
-    let tree = Tree::new("external-models")?;
-    let mut outside = Outside::on(
-        &tree,
-        &connected([claude::clean(), claude::models()]),
-        Some("opus"),
-    )?;
-    let (first, _) = turn(&mut outside, "one", false)?;
-    assert!(first.is_ok(), "{first:?}");
+fn a_route_with_no_model_chosen_starts_on_the_provider_s_default_and_its_rung() -> Result<(), Failed>
+{
+    use crucible_client_api::Rung;
 
-    let rows = listed(&tree, &mut outside)?;
+    let tree = Tree::new("external-model-default")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
 
-    let expected: Vec<_> = claude::OFFERED
-        .iter()
-        .map(|(value, shown)| {
-            (
-                (*value != "default").then(|| (*value).to_owned()),
-                (*shown).to_owned(),
-                *value == "opus",
-            )
-        })
-        .collect();
-    assert_eq!(rows, expected);
-    assert_eq!(outside.launched().len(), 1, "a listing launched a run");
+    let standing = client::snapshot(&outside.conversation);
+    let (turned, _) = super::turn(&mut outside.conversation, "hello")?;
+
+    assert!(matches!(turned, Turned::Ran(_)), "{turned:?}");
+    assert_eq!(
+        standing.model.as_ref().map(|model| model.text().as_str()),
+        Some("claude-opus-5-5")
+    );
+    assert_eq!(standing.effort, Some(Rung::Medium));
+    assert!(started_with(&outside, "--model", "claude-opus-5-5")?);
+    assert!(started_with(&outside, "--effort", "medium")?);
     Ok(())
 }
 
-/// A model the agent listed is taken at the next turn's launch, which
-/// continues the agent's own session, and is written into its entry so the
-/// next start is on it too; its own choice takes the model back out.
+/// On the route, a model off the agent's provider's list is taken with its
+/// rung for the agent's next run, which continues the agent's own session,
+/// and both are written into its entry so the next start is on them too.
 #[test]
-fn a_listed_model_is_taken_at_the_next_launch_and_written_down() -> Result<(), Failed> {
-    let tree = Tree::new("external-model-chosen")?;
+fn a_model_off_the_provider_s_list_starts_the_agent_s_next_run_at_its_rung() -> Result<(), Failed> {
+    use crucible_client_api::{ModelOutcome, Name, Rung};
+
+    let tree = Tree::new("external-model-listed")?;
     let file = entered(&tree)?;
-    let mut outside = Outside::new(
-        &tree,
-        &connected([claude::clean(), claude::models(), claude::clean()]),
-    )?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean(), claude::clean()]))?;
     let (first, _) = turn(&mut outside, "one", false)?;
     assert!(first.is_ok(), "{first:?}");
 
     let chosen = answered(
         &tree,
         &mut outside,
-        Command::SelectAgentModel {
-            model: Some(crucible_client_api::Name::new("haiku")?),
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-sonnet-5-5")?,
+            effort: Some(Rung::High),
         },
     )?;
-    assert_eq!(
-        chosen,
-        Outcome::AgentModel(AgentModelOutcome::Taken { unwritten: None })
+    assert!(
+        matches!(
+            chosen,
+            Outcome::Model(ModelOutcome::Taken {
+                unwritten: None,
+                ..
+            })
+        ),
+        "{chosen:?}"
     );
     assert_eq!(outside.launched().len(), 1, "a choice launched a run");
+    let standing = client::snapshot(&outside.conversation);
+    assert_eq!(
+        standing.model.as_ref().map(|model| model.text().as_str()),
+        Some("claude-sonnet-5-5")
+    );
+    assert_eq!(standing.effort, Some(Rung::High));
     let (second, _) = turn(&mut outside, "two", false)?;
 
     assert!(second.is_ok(), "{second:?}");
@@ -777,60 +758,122 @@ fn a_listed_model_is_taken_at_the_next_launch_and_written_down() -> Result<(), F
         outside.launched().last(),
         Some(&(Mode::Ask, Some(claude::SESSION.to_owned())))
     );
-    let started = fake_peer::argued(&outside.peer);
-    let run = started.last().ok_or("the run was never started")?;
+    assert!(started_with(&outside, "--model", "claude-sonnet-5-5")?);
+    assert!(started_with(&outside, "--effort", "high")?);
+    let written = std::fs::read_to_string(&file)?;
     assert!(
-        run.windows(2).any(|pair| pair == ["--model", "haiku"]),
-        "{started:?}"
+        written.contains("\"model\": \"claude-sonnet-5-5\""),
+        "{written}"
     );
-    assert!(
-        std::fs::read_to_string(&file)?.contains("\"model\": \"haiku\""),
-        "the choice was not written down"
-    );
-    // Listed already, the agent's own choice is taken without asking again.
-    let unchosen = answered(
-        &tree,
-        &mut outside,
-        Command::SelectAgentModel { model: None },
-    )?;
-    assert_eq!(
-        unchosen,
-        Outcome::AgentModel(AgentModelOutcome::Taken { unwritten: None })
-    );
-    assert!(!std::fs::read_to_string(&file)?.contains("\"model\""));
+    assert!(written.contains("\"effort\": \"high\""), "{written}");
     Ok(())
 }
 
-/// A model the agent did not list is refused: nothing is launched on it and
-/// nothing is written.
+/// On the route, `/effort` takes a rung the model in force serves for the
+/// agent's next run, and writes it into the agent's entry.
 #[test]
-fn a_model_the_agent_did_not_list_is_refused() -> Result<(), Failed> {
-    let tree = Tree::new("external-model-unlisted")?;
+fn an_effort_on_the_route_starts_the_agent_s_next_run_at_it() -> Result<(), Failed> {
+    use crucible_client_api::{EffortOutcome, Rung};
+
+    let tree = Tree::new("external-effort")?;
     let file = entered(&tree)?;
-    let before = std::fs::read_to_string(&file)?;
-    let mut outside = Outside::new(&tree, &connected([claude::clean(), claude::models()]))?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean(), claude::clean()]))?;
     let (first, _) = turn(&mut outside, "one", false)?;
     assert!(first.is_ok(), "{first:?}");
 
-    for model in ["sonnet", "--dangerously-skip-permissions"] {
-        let refused = answered(
-            &tree,
-            &mut outside,
-            Command::SelectAgentModel {
-                model: Some(crucible_client_api::Name::new(model)?),
-            },
-        )?;
-        assert_eq!(
-            refused,
-            Outcome::AgentModel(AgentModelOutcome::Unlisted),
-            "{model}"
-        );
-    }
+    let taken = answered(&tree, &mut outside, Command::SetEffort(Rung::Max))?;
+    assert_eq!(
+        taken,
+        Outcome::Effort(EffortOutcome::Taken { unwritten: None })
+    );
+    let (second, _) = turn(&mut outside, "two", false)?;
+
+    assert!(second.is_ok(), "{second:?}");
+    assert!(started_with(&outside, "--effort", "max")?);
+    assert!(std::fs::read_to_string(&file)?.contains("\"effort\": \"max\""));
+    Ok(())
+}
+
+/// On the route, a rung the model in force does not serve is refused, with a
+/// model or alone, since the agent would refuse every run started at it; and
+/// nothing is taken or written.
+#[test]
+fn a_rung_the_route_s_model_does_not_serve_is_refused() -> Result<(), Failed> {
+    use crucible_client_api::{EffortOutcome, ModelOutcome, Name, Rung};
+
+    let tree = Tree::new("external-effort-unserved")?;
+    let file = entered(&tree)?;
+    let before = std::fs::read_to_string(&file)?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+
+    // A model with no rung at all.
+    let refused = answered(
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-haiku-4-5")?,
+            effort: Some(Rung::Max),
+        },
+    )?;
+    assert!(
+        matches!(refused, Outcome::Model(ModelOutcome::Unsupported)),
+        "{refused:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&file)?, before);
+
+    let taken = answered(
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-haiku-4-5")?,
+            effort: None,
+        },
+    )?;
+    assert!(
+        matches!(taken, Outcome::Model(ModelOutcome::Taken { .. })),
+        "{taken:?}"
+    );
+    let written = std::fs::read_to_string(&file)?;
+    let refused = answered(&tree, &mut outside, Command::SetEffort(Rung::Max))?;
+    assert_eq!(refused, Outcome::Effort(EffortOutcome::Unsupported));
+    assert_eq!(std::fs::read_to_string(&file)?, written);
+    Ok(())
+}
+
+/// On the route, a model of a provider the agent does not reach is refused,
+/// and nothing is taken or written.
+#[test]
+fn a_model_of_another_provider_is_refused_on_the_route() -> Result<(), Failed> {
+    use crucible_client_api::{ModelOutcome, Name};
+
+    let tree = Tree::new("external-model-foreign")?;
+    let file = entered(&tree)?;
+    let before = std::fs::read_to_string(&file)?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+
+    let refused = answered(
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new("openai")?,
+            model: Name::new("gpt-5.6-sol")?,
+            effort: None,
+        },
+    )?;
+
+    assert!(
+        matches!(refused, Outcome::Model(ModelOutcome::Unreachable(_))),
+        "{refused:?}"
+    );
     assert_eq!(std::fs::read_to_string(&file)?, before);
     assert_eq!(
-        client::snapshot(&outside.conversation).model,
-        None,
-        "a refused model was taken"
+        client::snapshot(&outside.conversation)
+            .model
+            .as_ref()
+            .map(|model| model.text().as_str()),
+        Some("claude-opus-5-5")
     );
     Ok(())
 }
@@ -1302,7 +1345,7 @@ fn a_conversation_in_full_access_is_moved_onto_the_route_in_it() -> Result<(), F
     )?);
 
     let moved = runtime()?.block_on(async {
-        let backend = launching.launch(Mode::Ask, None, None).await?;
+        let backend = launching.launch(Mode::Ask, None, None, None).await?;
         let installed = Installed {
             backend: Some(backend),
             relaunch: Box::new(launching),

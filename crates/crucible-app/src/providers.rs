@@ -1325,6 +1325,31 @@ pub fn model_shown(provider: &str, model: &str) -> Option<&'static str> {
         .map(|one| one.shown)
 }
 
+/// The model an installed agent reaching `provider` is started on, and the
+/// rung it is started at: `model` where its entry names one, else the
+/// provider's default; `effort` where that model serves it, else the model's
+/// default rung. Read off this build's table, as [`model_shown`] is, since an
+/// agent's launch is shaped before any provider of this program is set up.
+///
+/// Nothing where this build offers no `provider`.
+pub fn agent_started(
+    provider: &str,
+    model: Option<&str>,
+    effort: Option<Effort>,
+) -> Option<(Box<str>, Option<Effort>)> {
+    let served = PROVIDERS.iter().find(|served| served.name == provider)?;
+    let model = model.unwrap_or(served.default);
+    let rungs = served
+        .models
+        .iter()
+        .find(|one| one.name == model)
+        .map_or(EVERY, |one| one.rungs);
+    let effort = effort
+        .filter(|effort| rungs.contains(effort))
+        .or_else(|| default_rung(rungs));
+    Some((model.into(), effort))
+}
+
 /// How [`re_serving`] reads one environment variable by name, or learns it is
 /// not set.
 pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;

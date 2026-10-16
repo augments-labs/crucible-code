@@ -42,17 +42,6 @@ pub const EDITED: &str = "src/lib.rs";
 /// The id this side's interrupt is sent under.
 const INTERRUPT: &str = "crucible-interrupt";
 
-/// The id the models step's `initialize` is sent under: the dialect's own,
-/// written again so a change to it shows here as a step left unanswered.
-const MODELS: &str = "crucible-models";
-
-/// The models a run offers, as `(value, displayName)`: its own choice first.
-pub const OFFERED: [(&str, &str); 3] = [
-    ("default", "Default (recommended)"),
-    ("opus", "Opus"),
-    ("haiku", "Haiku"),
-];
-
 /// The frame that names the session as a turn begins.
 #[must_use]
 pub fn init() -> String {
@@ -235,30 +224,6 @@ pub fn signed_out() -> Reply {
     Reply::new()
         .say(json!({"loggedIn": false, "authMethod": "none"}).to_string())
         .exit(1)
-}
-
-/// A models step's reply: it hears the `initialize`, answers it with
-/// [`OFFERED`], and waits to be let go.
-#[must_use]
-pub fn models() -> Reply {
-    let models: Vec<Value> = OFFERED
-        .iter()
-        .map(|(value, shown)| json!({"value": value, "displayName": shown, "description": ""}))
-        .collect();
-    Reply::new()
-        .hear(1)
-        .say(
-            json!({
-                "type": "control_response",
-                "response": {
-                    "subtype": "success",
-                    "request_id": MODELS,
-                    "response": {"models": models},
-                },
-            })
-            .to_string(),
-        )
-        .hear_out()
 }
 
 /// A run of one clean turn, answered and priced.

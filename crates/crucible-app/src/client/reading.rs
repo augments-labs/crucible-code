@@ -65,6 +65,17 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
     }
 }
 
+/// The one provider whose models the installed agent `conversation` is on
+/// can be started on, where it is on one that is started on a model: what
+/// `/model` offers there, in place of every provider's.
+#[must_use]
+pub fn reaching(conversation: &Conversation) -> Option<&'static str> {
+    conversation
+        .agent_driver()
+        .filter(|driver| driver.takes_model())
+        .map(crucible_config::Driver::provider)
+}
+
 /// Who runs `conversation`'s turns: this program, or an installed agent.
 ///
 /// The field of [`snapshot`] the terminal reads, with [`billing`], for what
@@ -83,17 +94,15 @@ pub fn execution(conversation: &Conversation) -> api::Execution {
 }
 
 /// The model `conversation`'s turns are answered by, where one is named: the
-/// one chosen for the installed agent it is on, else the one in force here.
+/// one the installed agent it is on is started on, else the one in force
+/// here.
 ///
 /// The field of [`snapshot`] the terminal's status row reads beside
 /// [`execution`] on an installed agent's route, where an agent left to choose
 /// its own model names none.
 #[must_use]
 pub fn model(conversation: &Conversation) -> Option<Model> {
-    match conversation.instance() {
-        Some(_) => conversation.agent_model().and_then(Model::new),
-        None => Model::new(conversation.settled().model()),
-    }
+    Model::new(conversation.settled().model())
 }
 
 /// Who is paid for what `conversation`'s turns use, as far as this program

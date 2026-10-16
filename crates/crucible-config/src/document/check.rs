@@ -613,17 +613,19 @@ impl Reader<'_> {
                 }
             }
 
-            if !driver.takes_model() && record.get("model").is_some() {
-                return Err(ConfigError::Variant {
-                    file: self.file.into(),
-                    path: format!("externalAgents.{name}.model").into(),
-                    at: At::of("model", self.text),
-                    problem: format!(
-                        "an {} agent chooses its own model, so model is not read for it",
-                        driver.name()
-                    )
-                    .into(),
-                });
+            for key in ["model", "effort"] {
+                if !driver.takes_model() && record.get(key).is_some() {
+                    return Err(ConfigError::Variant {
+                        file: self.file.into(),
+                        path: format!("externalAgents.{name}.{key}").into(),
+                        at: At::of(key, self.text),
+                        problem: format!(
+                            "an {} agent chooses its own model, so {key} is not read for it",
+                            driver.name()
+                        )
+                        .into(),
+                    });
+                }
             }
             if let Some(found) = record.get("model").and_then(Value::as_str)
                 && !settings::access::model_name(found)

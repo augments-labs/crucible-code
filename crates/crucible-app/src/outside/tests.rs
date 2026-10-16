@@ -74,15 +74,7 @@ impl Backend for Scripted {
 struct Again {
     backends: Mutex<VecDeque<Result<Box<dyn Backend>, Failure>>>,
     resumed: Resumed,
-    /// What each ask for the models is answered, in order; none past the
-    /// last.
-    listing: Mutex<VecDeque<Listing>>,
-    /// The model each launch was started on, in order.
-    models_launched: Launched,
 }
-
-/// The model each launch was started on, in order.
-type Launched = Arc<Mutex<Vec<Option<String>>>>;
 
 /// The agent's own session each launch was asked to resume, in order.
 type Resumed = Arc<Mutex<Vec<Option<String>>>>;
@@ -95,26 +87,8 @@ impl Again {
         let again = Self {
             backends: Mutex::new(backends.into_iter().collect()),
             resumed: Arc::clone(&resumed),
-            listing: Mutex::default(),
-            models_launched: Arc::default(),
         };
         (Box::new(again), resumed)
-    }
-
-    /// [`Again::launching`], answering each ask for the models with the next
-    /// of `listings`; with the model each launch was started on.
-    fn listing(
-        backends: impl IntoIterator<Item = Result<Box<dyn Backend>, Failure>>,
-        listings: impl IntoIterator<Item = Listing>,
-    ) -> (Box<dyn Relaunch>, Launched) {
-        let models_launched = Arc::default();
-        let again = Self {
-            backends: Mutex::new(backends.into_iter().collect()),
-            resumed: Arc::default(),
-            listing: Mutex::new(listings.into_iter().collect()),
-            models_launched: Arc::clone(&models_launched),
-        };
-        (Box::new(again), models_launched)
     }
 }
 
@@ -130,21 +104,17 @@ impl Relaunch for Again {
         None
     }
 
-    fn models(&self) -> BoxFuture<'_, Listing> {
-        let listing = self.listing.lock().expect("the listings").pop_front();
-        Box::pin(async move { listing.unwrap_or(Listing::Unoffered) })
+    fn effort(&self) -> Option<Effort> {
+        None
     }
 
     fn launch<'a>(
         &'a self,
         _: Mode,
-        model: Option<&'a str>,
+        _: Option<&'a str>,
+        _: Option<Effort>,
         resume: Option<&'a ExternalRef>,
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
-        self.models_launched
-            .lock()
-            .expect("the record")
-            .push(model.map(Into::into));
         self.resumed
             .lock()
             .expect("the record")
@@ -586,105 +556,4 @@ fn attachments_and_unlaunchable_modes_are_refused() {
     assert_eq!(outside.switch(Mode::FullAccess), Mode::Ask);
     assert_eq!(outside.cycle(), Mode::AllowEdits);
     assert_eq!(outside.cycle(), Mode::Ask);
-}
-
-/// What an agent lists: each model's value, `None` for its own choice.
-fn offering(models: &[Option<&str>]) -> Listing {
-    Listing::Listed(
-        models
-            .iter()
-            .map(|model| Offered {
-                model: model.map(Text::new),
-                shown: Text::new(model.unwrap_or("Default")),
-            })
-            .collect(),
-    )
-}
-
-/// A model is chosen only from what the agent listed, asked once, and is
-/// what the next turn's run is started on; a listed value its program would
-/// read as an option is refused like one never listed.
-#[tokio::test]
-async fn a_model_is_chosen_from_what_the_agent_lists_for_the_next_launch() {
-    let second = Scripted::playing([priced(TurnId::FIRST.next())]);
-    let (again, started) = Again::listing(
-        [Ok(second)],
-        [offering(&[None, Some("opus"), Some("--resume")])],
-    );
-    let mut outside = outside(Scripted::playing([priced(TurnId::FIRST)]), again);
-    let _first = turn(&mut outside).await;
-
-    assert_eq!(
-        outside.choose(Some("sonnet")).await,
-        Err(Unchosen::Unlisted)
-    );
-    assert_eq!(
-        outside.choose(Some("--resume")).await,
-        Err(Unchosen::Unlisted)
-    );
-    assert_eq!(outside.model(), None);
-    assert_eq!(outside.choose(Some("opus")).await, Ok(()));
-    assert_eq!(outside.model(), Some("opus"));
-    let (second, _) = turn(&mut outside).await;
-
-    assert!(second.is_ok(), "{second:?}");
-    assert_eq!(
-        *started.lock().expect("the record"),
-        [Some("opus".to_owned())]
-    );
-    // Asked once: the agent's own choice is found in what it already said.
-    assert_eq!(outside.choose(None).await, Ok(()));
-    assert_eq!(outside.model(), None);
-}
-
-/// An agent with no way to list its models has none chosen for it, and its
-/// run goes on as it was.
-#[tokio::test]
-async fn an_agent_that_lists_no_models_has_none_chosen() {
-    let (again, started) = Again::listing([], [Listing::Unoffered]);
-    let mut outside = outside(Scripted::playing([priced(TurnId::FIRST)]), again);
-
-    assert_eq!(outside.choose(Some("opus")).await, Err(Unchosen::Unoffered));
-    let (first, _) = turn(&mut outside).await;
-
-    assert!(first.is_ok(), "{first:?}");
-    assert!(started.lock().expect("the record").is_empty());
-}
-
-/// A listed value its program would read as an option, or that is no model's
-/// name, is not offered, so neither front end shows a row it cannot take.
-#[tokio::test]
-async fn a_listed_value_that_is_no_model_s_name_is_not_offered() {
-    let (again, _) = Again::listing(
-        [],
-        [offering(&[
-            None,
-            Some("opus"),
-            Some("--resume"),
-            Some("a b"),
-        ])],
-    );
-    let mut outside = outside(Scripted::playing([priced(TurnId::FIRST)]), again);
-
-    let listing = outside.models().await;
-    let models: Vec<Option<&str>> = match &listing {
-        Listing::Listed(offered) => offered
-            .iter()
-            .map(|offered| offered.model.as_ref().map(Text::as_str))
-            .collect(),
-        _ => Vec::new(),
-    };
-    assert_eq!(models, [None, Some("opus")], "{listing:?}");
-}
-
-/// The agent's own choice adds nothing to its program's arguments, so it is
-/// taken whether or not the agent lists a row for it.
-#[tokio::test]
-async fn the_agent_s_own_choice_is_taken_where_it_lists_no_row_for_it() {
-    let (again, _) = Again::listing([], [offering(&[Some("opus")])]);
-    let mut outside = outside(Scripted::playing([priced(TurnId::FIRST)]), again);
-
-    assert_eq!(outside.choose(Some("opus")).await, Ok(()));
-    assert_eq!(outside.choose(None).await, Ok(()));
-    assert_eq!(outside.model(), None);
 }

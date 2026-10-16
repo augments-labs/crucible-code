@@ -1482,11 +1482,23 @@ const EXTERNAL_AGENT: Shape = Shape::Fields(&[
     },
     Field {
         name: "model",
-        about: "For a claude agent: the model it is started with, as the agent names it, such as opus or sonnet. Left off, the agent's own default. Letters, digits and . _ - : @ / [ ] only, not starting with -. Read only from the configuration file in your home directory",
+        about: "For a claude agent: the model it is started with, as its provider names it, chosen with /model from that provider's list. Left off, the provider's default model. Letters, digits and . _ - : @ / [ ] only, not starting with -. Read only from the configuration file in your home directory",
         shape: Shape::Text,
-        examples: &["opus"],
-        // Nothing. Which model the agent's account offers is the agent's to
-        // say, and its own default is what it was set up to use.
+        // No example. It would have to name a real model, and a model id in a
+        // file served to every editor outlives the model.
+        examples: &[],
+        // Nothing. The provider's default is what is asked when nothing is
+        // written, and writing it here would pin a model that later retires.
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "effort",
+        about: "For a claude agent: how hard it thinks before answering, chosen with /effort. Left off, the default rung of the model it is started with. Read only from the configuration file in your home directory",
+        shape: Shape::Choice(EFFORT),
+        // A `Choice` lists its own answers.
+        examples: &[],
         usual: None,
         needed: false,
         widens: false,

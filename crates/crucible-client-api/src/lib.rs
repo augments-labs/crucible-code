@@ -88,10 +88,10 @@ pub use command::{Command, Mode, Pace, Palette, Prompt, Rung, Theme};
 pub use context::{Category, Context};
 pub use error::{ErrorCode, Refusal};
 pub use outcome::{
-    AgentModel, AgentModelOutcome, AgentModelsOutcome, CacheOutcome, CleanOutcome, ClearOutcome,
-    EffortOutcome, Forced, Group, LoginOutcome, LogoutOutcome, Missing, ModelOutcome, NotesOutcome,
-    Outcome, Problem, Release, Resource, Response, ResumeOutcome, Retained, RoomOutcome,
-    SandboxOutcome, SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
+    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced, Group, LoginOutcome,
+    LogoutOutcome, Missing, ModelOutcome, NotesOutcome, Outcome, Problem, Release, Resource,
+    Response, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome,
+    Standing, Stop, ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
 pub use progress::{Progress, SummaryKind};

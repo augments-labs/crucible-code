@@ -49,10 +49,9 @@ pub use asking::{Answered, Asking, FLOOR, KEPT, asked, asking};
 pub use deciding::{
     Acting, Asker, Confirmation, Deciding, Front, Leave, Shown, TRIES, confirmed, questions, warned,
 };
-pub use performing::{
-    AgentModel, AgentModels, Cleared, Desk, Performed, Resumed, Setting, keep, perform,
-};
+pub use performing::{Cleared, Desk, Performed, Resumed, Setting, keep, perform};
 pub use reading::{
-    billing, context, execution, mode_out as mode, model, pace, progress, rung, snapshot, usage,
+    billing, context, execution, mode_out as mode, model, pace, progress, reaching, rung, snapshot,
+    usage,
 };
 pub use turning::{Ended, interrupt, turn};

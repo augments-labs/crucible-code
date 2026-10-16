@@ -73,7 +73,7 @@ pub use home::{HOME, Home};
 pub use remember::{
     accepting, allowing, asking, choosing, choosing_agent_model, chosen, connecting, defaulting,
     disabling, drawing, forgetting, hastened, hastening, installing, reaching, reading, removing,
-    sandboxing, setting, slowing, thinking, unasked,
+    sandboxing, setting, slowing, thinking, thinking_agent, unasked,
 };
 pub use settings::access::model_name as agent_model;
 pub use settings::{

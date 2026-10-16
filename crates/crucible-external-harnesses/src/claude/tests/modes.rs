@@ -39,6 +39,7 @@ fn only_full_access_launches_the_agent_with_its_prompts_skipped() {
                 profile: Some(Path::new("/profiles/work")),
                 workspace: Some(Path::new("/work")),
                 model: None,
+                effort: None,
             });
             let named = Modes::permission(mode).name();
             assert!(
@@ -113,6 +114,29 @@ fn the_model_chosen_is_the_one_the_agent_is_started_with() {
                 .arguments
                 .iter()
                 .any(|argument| argument.starts_with("--model=")),
+            "{:?}",
+            request.arguments
+        );
+    }
+}
+
+/// An effort chosen is named on the command line by its own argument, and
+/// none chosen leaves the agent's own default, with no effort named at all.
+#[test]
+fn the_effort_chosen_is_the_one_the_agent_is_started_at() {
+    for (effort, named) in [(Some("high"), Some("high")), (None, None)] {
+        let request = Claude::in_mode(Mode::Ask).request(Shape {
+            effort,
+            ..Shape::default()
+        });
+        let at = request
+            .arguments
+            .iter()
+            .position(|argument| argument == "--effort");
+        assert_eq!(
+            at.and_then(|at| request.arguments.get(at + 1))
+                .map(String::as_str),
+            named,
             "{:?}",
             request.arguments
         );

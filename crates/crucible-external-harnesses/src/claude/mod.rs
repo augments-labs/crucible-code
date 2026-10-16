@@ -4,9 +4,9 @@
 //! [`Claude`] starts the installed program once for a run, printing frames
 //! and reading them, in its `default` permission mode unless it was made for
 //! a conversation's mode through the [`Modes`] table, with its permission
-//! prompts sent to this side as questions, and with the model chosen for it
-//! where one was, else its own default. Each turn is a user
-//! frame on the same input, and ends at the `result` frame that answers it; a
+//! prompts sent to this side as questions, and with the model and effort
+//! it is handed, as `--model` and `--effort`, else its own defaults. Each turn
+//! is a user frame on the same input, and ends at the `result` frame that answers it; a
 //! run for a session the program kept starts by resuming it. The program is
 //! started with only the environment its profile builds, so no key or cloud
 //! account the shell holds reaches it, and whether it is signed in is read
@@ -321,6 +321,9 @@ impl Dialect for Claude {
         if let Some(model) = shape.model {
             arguments.extend(["--model".to_owned(), model.to_owned()]);
         }
+        if let Some(effort) = shape.effort {
+            arguments.extend(["--effort".to_owned(), effort.to_owned()]);
+        }
         if let Some(resume) = shape.resume {
             arguments.extend(["--resume".to_owned(), resume.to_owned()]);
         }
@@ -397,12 +400,6 @@ impl Dialect for Claude {
     }
 
     fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request> {
-        if step == Account::Models {
-            return Some(Self::request(
-                account::STREAM.map(str::to_owned).to_vec(),
-                shape,
-            ));
-        }
         let arguments = account::arguments(step)?;
         Some(Self::request(
             arguments
@@ -417,17 +414,12 @@ impl Dialect for Claude {
         account::read(step, ran)
     }
 
-    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
-        (step == Account::Models).then(|| vec![account::initialize()])
+    fn spoken(&mut self, _step: Account) -> Option<Vec<String>> {
+        None
     }
 
-    fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
-        match step {
-            Account::Models => account::told(frame),
-            Account::Version | Account::Status | Account::SignIn | Account::SignOut => {
-                Err(Failure::new("This agent speaks no such account step."))
-            }
-        }
+    fn told(&mut self, _step: Account, _frame: &str) -> Result<Told, Failure> {
+        Err(Failure::new("This agent speaks no account step."))
     }
 }
 

@@ -424,6 +424,7 @@ fn an_agent_access_resolves_to_its_instance_as_written() {
                 executable: "claude".into(),
                 profile: None,
                 model: None,
+                effort: None,
                 enabled,
             }
         );

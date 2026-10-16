@@ -586,18 +586,24 @@ fn an_agent_model_is_a_name_and_never_an_option() {
     }
 }
 
-/// A model written for an agent that chooses its own would be one nothing
-/// reads, so it is refused rather than left to look as if it were in force.
+/// A model or an effort written for an agent that chooses its own model
+/// would be one nothing reads, so it is refused rather than left to look as
+/// if it were in force.
 #[test]
-fn a_model_for_an_agent_that_chooses_its_own_is_refused() {
-    let err = mine(
-        r#"{"externalAgents": {"mine": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy", "model": "opus"}}}"#,
-    )
-    .unwrap_err();
-    let said = err.to_string();
-    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
-    assert!(said.contains("externalAgents.mine.model"), "got {said}");
-    assert!(said.contains("antigravity"), "got {said}");
+fn a_model_or_effort_for_an_agent_that_chooses_its_own_is_refused() {
+    for (key, value) in [("model", "opus"), ("effort", "high")] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy", "{key}": "{value}"}}}}}}"#
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+        assert!(
+            said.contains(&format!("externalAgents.mine.{key}")),
+            "got {said}"
+        );
+        assert!(said.contains("antigravity"), "got {said}");
+    }
 }
 
 #[test]
