@@ -167,7 +167,7 @@ This build serves eleven providers. The name in the first column is what
 
 | Provider | Vendor | Models and their rungs | Variable |
 | --- | --- | --- | --- |
-| `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
+| `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-5-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
 | `deepseek` | DeepSeek | `deepseek-flash`, `deepseek-v4-pro`: low, high, max | `DEEPSEEK_API_KEY` |
 | `google` | Google | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
 | `meta` | Meta | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
@@ -451,14 +451,15 @@ current effort first. Nothing is silently mapped to a different rung.
 | Anthropic | `claude-fable-5-1` | low, medium, high, xhigh, max |
 | Anthropic | `claude-opus-5-5` | low, medium, high, xhigh, max |
 | Anthropic | `claude-sonnet-5-5` | low, medium, high, xhigh, max |
+| Anthropic | `claude-haiku-5-5` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-astra` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6.1-sol` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-sol` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-luna` | low, medium, high, xhigh, max |
 
-No configured effort means no effort field. Opus 5.5 and Sonnet 5.5 are
-asked, and their thinking kept and replayed, as Fable 5.1's is. Fable 5.1 still
-uses adaptive thinking, including the documented preserved-thinking and per-message effort
+No configured effort means no effort field. Opus 5.5, Sonnet 5.5 and Haiku 5.5
+are asked, and their thinking kept and replayed, as Fable 5.1's is. Fable 5.1
+still uses adaptive thinking, including the documented preserved-thinking and per-message effort
 controls. Preserved thinking requires a compatible Anthropic workspace data
 retention setting; consult [Anthropic's preserved-thinking guide](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
 Crucible does not change workspace retention on your behalf.
@@ -531,8 +532,8 @@ time or broke off after the bound had filled ends in
 ` [cut: crucible stopped reading here]`, because whether that one had more to
 come usually cannot be told. Either way the end of what was kept is dropped
 wherever that end begins a key, since a cut can land in the middle of one.
-Google, Fable 5.1, Opus 5.5, Sonnet 5.5 and Astra answer every refusal with a
-sentence of crucible's own instead.
+Google, Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and Astra answer every
+refusal with a sentence of crucible's own instead.
 
 The exact key crucible sent is removed from a log line, an error message, a
 session file and anything crucible prints. That is the value crucible knows it

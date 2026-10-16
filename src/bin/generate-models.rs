@@ -90,6 +90,12 @@ const OFFERED: &[Offer] = &[
     ),
     (
         "anthropic",
+        "claude-haiku-5-5",
+        Some("claude-haiku-5-5"),
+        None,
+    ),
+    (
+        "anthropic",
         "claude-haiku-4-5",
         Some("claude-haiku-4-5"),
         None,

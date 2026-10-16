@@ -127,7 +127,12 @@ fn only_the_models_the_vendor_serves_fast_have_a_fast_form() {
         "",
     );
     assert!(matches!(api.fast("claude-opus-5"), FastForm::Field(_)));
-    for model in ["claude-sonnet-5", "claude-fable-5-1", "claude-haiku-4-5"] {
+    for model in [
+        "claude-sonnet-5",
+        "claude-fable-5-1",
+        "claude-haiku-5-5",
+        "claude-haiku-4-5",
+    ] {
         assert_eq!(api.fast(model), FastForm::None, "{model}");
     }
     assert_eq!(gateway.fast("claude-opus-5"), FastForm::None);

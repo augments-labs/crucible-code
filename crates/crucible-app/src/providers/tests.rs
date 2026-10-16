@@ -1545,6 +1545,7 @@ fn openai_and_anthropic_list_their_current_models_before_the_ones_they_replace()
             "claude-opus-5",
             "claude-sonnet-5-5",
             "claude-sonnet-5",
+            "claude-haiku-5-5",
             "claude-haiku-4-5",
         ]
     );
@@ -1560,6 +1561,7 @@ fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
         ("openai", "gpt-6-luna", &Effort::LADDER[..]),
         ("anthropic", "claude-opus-5-5", &Effort::LADDER[..]),
         ("anthropic", "claude-sonnet-5-5", &Effort::LADDER[..]),
+        ("anthropic", "claude-haiku-5-5", &Effort::LADDER[..]),
         // `max` on 1.3 is named by some of Meta's pages and left out by its
         // parameter lists, so it is not offered until a source settles it.
         ("meta", "muse-spark-1.3", up_to_xhigh),

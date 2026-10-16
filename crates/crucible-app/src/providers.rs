@@ -74,10 +74,10 @@ const PROVIDERS: [Served; 11] = [
             Model::new("claude-opus-5", EVERY),
             Model::new("claude-sonnet-5-5", EVERY),
             Model::new("claude-sonnet-5", EVERY),
-            // The one model of this vendor's current three generations that
-            // takes no rung: it reasons against a token budget rather than
-            // against a word, and the field the other three read is one it has
-            // never been served.
+            Model::new("claude-haiku-5-5", EVERY),
+            // The one model here that takes no rung: it reasons against a
+            // token budget rather than against a word, and the field every
+            // model above it reads is one it has never been served.
             Model::new("claude-haiku-4-5", NONE),
         ],
     },

@@ -8,7 +8,7 @@ here is whatever that table said when this build was made.
 
 | Provider | Model | Reads |
 | --- | --- | --- |
-| `anthropic` | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-4-5` | text, pictures, PDFs |
+| `anthropic` | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-5-5`, `claude-haiku-4-5` | text, pictures, PDFs |
 | `deepseek` | `deepseek-flash` | text, pictures |
 | `deepseek` | `deepseek-v4-pro` | text |
 | `google` | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | text, pictures, PDFs, audio, video |

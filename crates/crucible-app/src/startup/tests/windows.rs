@@ -10,6 +10,7 @@ fn a_model_this_build_knows_starts_at_its_native_window() {
     for (provider, model, held) in [
         ("anthropic", "claude-fable-5-1", 1_000_000),
         ("anthropic", "claude-sonnet-5", 1_000_000),
+        ("anthropic", "claude-haiku-5-5", 1_000_000),
         ("anthropic", "claude-haiku-4-5", 200_000),
         ("deepseek", "deepseek-v4-pro", 1_000_000),
         ("google", "gemini-3.1-pro-preview", 1_048_576),

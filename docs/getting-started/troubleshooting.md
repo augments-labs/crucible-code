@@ -207,10 +207,10 @@ again.
 ### `anthropic: HTTP 401: check the Anthropic API key and its model access`
 
 The provider refused the request with that status. For Anthropic's
-`claude-fable-5-1`, `claude-opus-5-5` and `claude-sonnet-5-5`, OpenAI's
-`gpt-6-astra` and every Google model the message is a sentence of crucible's
-own, chosen by status; for any other model, and for every other provider, it is
-the service's own words, read for at most 8 KiB and
+`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5` and
+`claude-haiku-5-5`, OpenAI's `gpt-6-astra` and every Google model the message
+is a sentence of crucible's own, chosen by status; for any other model, and for
+every other provider, it is the service's own words, read for at most 8 KiB and
 ending in ` [cut: the reply was longer than crucible reads]` or
 ` [cut: crucible stopped reading here]` where it was cut.
 
@@ -245,9 +245,9 @@ sites](../providers/providers.md#rows-and-sites).
 
 The request was accepted and the failure arrived inside the answer:
 `overloaded_error`, `api_error`, `timeout_error` or `rate_limit_error`. The
-sentence is crucible's own for `claude-fable-5-1`, `claude-opus-5-5` and
-`claude-sonnet-5-5`; any other Anthropic model shows the service's words after
-the kind, as in `anthropic: overloaded_error: Overloaded`. It is about the
+sentence is crucible's own for `claude-fable-5-1`, `claude-opus-5-5`,
+`claude-sonnet-5-5` and `claude-haiku-5-5`; any other Anthropic model shows the
+service's words after the kind, as in `anthropic: overloaded_error: Overloaded`. It is about the
 moment, not the request, so crucible asked again twice, a quarter and then half a second later, with `retrying` in the row above
 the box, before reporting it. Ask again; nothing about the prompt needs to
 change. See [when a response goes
@@ -255,9 +255,9 @@ away](../providers/providers.md#when-a-response-goes-away).
 
 ### `anthropic: unexpected response: Anthropic reported a message failure; private details omitted`
 
-The other failure `claude-fable-5-1`, `claude-opus-5-5` and `claude-sonnet-5-5`
-report from inside an answer: Anthropic put an error in the stream whose kind
-is none of the four above. crucible keeps neither the kind nor the words,
+The other failure `claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`
+and `claude-haiku-5-5` report from inside an answer: Anthropic put an error in
+the stream whose kind is none of the four above. crucible keeps neither the kind nor the words,
 because a response from one of these can carry the model's private history, and it does not ask again: a kind outside those four
 is read as being about the request rather than the moment, so the same
 request would get the same answer. Any other Anthropic model shows every
