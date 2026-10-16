@@ -74,6 +74,7 @@ use crate::access::Route;
 use crate::backends::{Registry, Row};
 use crate::content_use::{self, Consent, Unheld, Warned};
 use crate::external::External;
+use crate::installing;
 use crate::outside::Relaunch;
 use crate::providers;
 
@@ -615,10 +616,12 @@ impl<'a> Launcher<'a> {
                 // every row runs in.
                 let command = (row.dialect)(crucible_tools::Mode::default())
                     .map_or(row.driver.name(), |dialect| dialect.program());
-                return Err(missing.refusal(shown, command).map_or_else(
-                    || Unlaunched::Unknown(row.route.to_owned()),
-                    Unlaunched::NotInstalled,
-                ));
+                return Err(
+                    installing::refusal(row, missing, shown, command).map_or_else(
+                        || Unlaunched::Unknown(row.route.to_owned()),
+                        Unlaunched::NotInstalled,
+                    ),
+                );
             }
         };
         let held = content_use::held(self.consent, row.route).map_err(|unheld| match unheld {

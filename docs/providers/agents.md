@@ -199,7 +199,7 @@ crucible speaks to Antigravity's agent server over the Agent Client Protocol.
   "externalAgents": {
     "agy": {
       "driver": "antigravity",
-      "executable": "/opt/antigravity/agy_acp_server.par",
+      "executable": "/home/me/.crucible/programs/antigravity/1.3.0/agy_acp_server.par",
       "profileDir": "/home/me/.crucible-antigravity"
     }
   }
@@ -208,8 +208,16 @@ crucible speaks to Antigravity's agent server over the Agent Client Protocol.
 
 **Which release.** Only release 1.3.0 of the agent server, which calls itself
 `antigravity-acp`, is run, on macOS, Linux and Windows for `x86_64` and
-`aarch64`. Name its executable, `agy_acp_server.par`, or `agy_acp_server.exe`
-on Windows, with an absolute path. A release that describes itself otherwise
+`aarch64`. [`crucible agents install
+antigravity`](../reference/cli.md#agents-install-driver) downloads it for your
+platform, checks it is that release and puts it under `programs/antigravity/1.3.0`
+in crucible's home. Where no entry names Antigravity, `/login` sets one up run
+as that release, unless an `antigravity` command is on your `PATH`, and where
+the release is not there yet it says to run that command and choose *Check
+again*. An entry you write yourself names its executable,
+`agy_acp_server.par`, or `agy_acp_server.exe` on Windows, with an absolute
+path. When a later crucible runs another release, run the command again and
+change the entry's `executable` to the path it prints. A release that describes itself otherwise
 when it starts, or no longer offers loading and resuming a session, signing out
 or its usual sign-in, is sent nothing more and refused with a sentence naming
 what differs.

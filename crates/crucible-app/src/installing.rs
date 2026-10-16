@@ -8,7 +8,8 @@
 //! pinned. Its request goes through the release owner's client, under the
 //! application's hold, as every request a run makes does; it carries nothing
 //! from a session. A release already in place is kept, and nothing is asked
-//! for it. Like [`crate::update`], this is a local command rather than a
+//! for it, and an agent's entry `/login` writes names it as its executable.
+//! Like [`crate::update`], this is a local command rather than a
 //! request of the client contract, and it reads no configuration.
 
 use std::fs::File;
@@ -18,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crucible_external_harnesses::Discovery;
 use crucible_external_harnesses::release::{Pin, Unpacked, unpack};
 use crucible_http::{Chunk, Chunks, Http, Lookups, Poison};
 use tokio::runtime::Handle;
@@ -87,6 +89,28 @@ pub fn root(home: &Path, row: &Row) -> PathBuf {
 #[must_use]
 pub fn executable(home: &Path, row: &Row) -> Option<PathBuf> {
     (row.pinned)().map(|pin| pin.executable(&root(home, row)))
+}
+
+/// What a refusal over `discovery` says, as the sentence and what to do next,
+/// for `row`'s agent called `agent` whose command is `command`: for an agent
+/// this build installs, that what to do is to run the command that installs
+/// it. Nothing for a program that was found.
+#[must_use]
+pub fn refusal(
+    row: &Row,
+    discovery: &Discovery,
+    agent: &str,
+    command: &str,
+) -> Option<[String; 2]> {
+    let [said, next] = discovery.refusal(agent, command)?;
+    let next = match discovery {
+        Discovery::Missing if (row.pinned)().is_some() => format!(
+            "Run `crucible agents install {}` in a terminal, then choose Check again.",
+            row.driver.name()
+        ),
+        Discovery::Missing | Discovery::NotExecutable(_) | Discovery::Found(_) => next,
+    };
+    Some([said, next])
 }
 
 /// Installs `row`'s agent under crucible's `home`, telling `progress` how many

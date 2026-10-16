@@ -2985,8 +2985,8 @@ fn a_connect_naming_no_instance_asks_the_agent_and_then_its_instance() -> Result
     Ok(())
 }
 
-/// An agent whose program is not installed is said to be so, with what to
-/// install; looked for again it is still not there; going back offers the
+/// An agent whose program is not installed is said to be so, with the
+/// command that installs the release crucible runs it as; looked for again it is still not there; going back offers the
 /// agents again; and cancelling starts nothing and writes nothing.
 #[test]
 fn a_connect_to_an_agent_not_installed_says_so_and_writes_nothing() -> Result<(), Failed> {
@@ -3016,13 +3016,53 @@ fn a_connect_to_an_agent_not_installed_says_so_and_writes_nothing() -> Result<()
                 && facts
                     .first()
                     .is_some_and(|fact| fact.as_str().starts_with("Not installed"))
-                && facts
-                    .iter()
-                    .any(|fact| fact.as_str() == "Install Antigravity, then choose Check again.")
+                && facts.iter().any(|fact| {
+                    fact.as_str()
+                        == "Run `crucible agents install antigravity` in a terminal, \
+                            then choose Check again."
+                })
+                && facts.iter().any(|fact| {
+                    let sep = std::path::MAIN_SEPARATOR;
+                    fact.as_str().starts_with("Agent: antigravity, run as ")
+                        && fact
+                            .as_str()
+                            .contains(&format!("{sep}programs{sep}antigravity{sep}1.3.0{sep}"))
+                })
         }
         _ => false,
     });
     assert!(told, "{:?}", picking.put.get(1));
+    assert_eq!(started, 0, "the agent's program was started");
+    assert_eq!(file, UNINSTALLED);
+    Ok(())
+}
+
+/// An agent installed by hand, found on the `PATH`, is run from there and not
+/// from the release crucible would install: a connect naming no instance does
+/// not say it cannot be started, and cancelling writes nothing.
+#[cfg(unix)]
+#[test]
+fn a_connect_to_an_agent_found_on_path_does_not_ask_for_an_install() -> Result<(), Failed> {
+    use crucible_client_api::LoginOutcome;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tree = Tree::new("external-connect-on-path")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let program = outside.peer.join("antigravity");
+    std::fs::write(&program, "")?;
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))?;
+    let mut picking = Picking::of([Some("Antigravity"), None]);
+
+    let ((outcome, file), started) =
+        connecting_counted(&tree, &mut outside, UNINSTALLED, None, &mut picking)?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    let refused = picking.put.get(1).is_some_and(|put| match put {
+        Pending::Account { asks, .. } => asks.as_str() == "Antigravity cannot be started.",
+        _ => false,
+    });
+    assert!(!refused, "{:?}", picking.put.get(1));
+    assert!(picking.put.get(1).is_some(), "{:?}", picking.put);
     assert_eq!(started, 0, "the agent's program was started");
     assert_eq!(file, UNINSTALLED);
     Ok(())

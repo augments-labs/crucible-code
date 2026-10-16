@@ -139,8 +139,9 @@ middle-tier model at medium effort or the nearest rung it serves, and writes
 it to your configuration; `/model` changes the provider, model and reasoning
 effort. While it asks for a provider, `/login` also offers to run
 the conversation through a coding agent installed on this machine, such as
-Claude Code or Antigravity, on the agent's own sign-in; see [installed coding
-agents](docs/providers/agents.md).
+Claude Code or Antigravity, on the agent's own sign-in; `crucible agents
+install antigravity` downloads the Antigravity release it runs. See [installed
+coding agents](docs/providers/agents.md).
 
 Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
 accept API keys only, not product subscription logins. The other providers read

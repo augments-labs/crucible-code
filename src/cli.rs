@@ -12,6 +12,7 @@
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
 
+mod agents;
 mod auth;
 mod browser;
 mod choice;
@@ -55,7 +56,7 @@ use crucible_app::startup::{self, Startup, assemble, served};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_config::{Home, Settings};
+use crucible_config::{Driver, Home, Settings};
 use crucible_models::Effort;
 use crucible_runtime::Cancel;
 use crucible_tools::Revealed;
@@ -187,6 +188,12 @@ completion SHELL writes a completion script for bash, zsh, fish, powershell \
 or elvish, made from this command line as it is, and stops. It reads no \
 configuration and opens no terminal.
 
+agents install DRIVER downloads the release of an installed coding agent \
+this build pins, antigravity's agent server, checks its size and SHA-256 \
+against the pin, unpacks it under crucible's home and stops; a release \
+already there is kept. /login then runs that release for an agent it sets \
+up.
+
 update says whether a release later than this one is out and, where \
 install.sh installed crucible, downloads it, checks it against the release's \
 SHA256SUMS, makes it the active release and stops; a release that does not \
@@ -300,10 +307,27 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Install a coding agent crucible can run, where this build downloads
+    /// its release for you, and stop.
+    Agents {
+        #[command(subcommand)]
+        action: AgentsAction,
+    },
     /// Write a completion script for a shell to standard output, and stop.
     Completion {
         /// The shell to write the script for.
         shell: Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentsAction {
+    /// Download the release of an agent this build pins, check it is that
+    /// release and put it where crucible runs it from, and stop.
+    Install {
+        /// The agent, as externalAgents names its driver.
+        #[arg(value_parser = agents::driver)]
+        driver: Driver,
     },
 }
 
@@ -546,6 +570,13 @@ pub(crate) fn start() -> ExitCode {
         (Some(Command::Update { check, dry_run }), _, _) => {
             return update::updated(*check, *dry_run);
         }
+        (
+            Some(Command::Agents {
+                action: AgentsAction::Install { driver },
+            }),
+            _,
+            _,
+        ) => return agents::install(*driver),
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {
