@@ -908,7 +908,7 @@ fn a_resumed_agent_session_draws_the_agent_s_calls_as_they_were_drawn() {
             first.picture()
         );
         first.ends_on("TERM");
-        let id = crate::native::recorded_id(&first);
+        let id = crate::native::recorded_holding(&first, "Do it all.");
 
         let again = Script::of(signed_in([]));
         let mut window =
