@@ -66,18 +66,13 @@ leaves it there.
 
 While a conversation runs on an agent, the row under the box says, where the
 provider and model would be, which agent runs its turns and who is paid for
-them, such as `execution: work · billing: external`: the agent's own account
-pays, and crucible does not know under which plan. Where the agent's entry
-names the model it is started on, the row names it too, as `execution: work,
-model: opus · billing: external`. `/model` lists the models the agent says it
-can be started on, its own choice first and the one in use marked, rather
-than a provider's models it would not be asked for. One taken, or named as
-`/model opus` (`/model default` for the agent's own choice), starts the next
-turn's run on it, continuing the agent's session, and is written into the
-agent's entry as its `model`. A model the agent does not list is refused.
-Listing the models starts the agent's program, so while a turn runs `/model`
-says which model is in use and that one is chosen between turns. `/effort`
-says the agent chooses how hard it thinks.
+them, and the model it is started on, such as `execution: work, model:
+claude-opus-5-5 · billing: external`: the agent's own account pays, and
+crucible does not know under which plan. `/model` offers the models of the
+provider the agent reaches, from the same list crucible asks that provider
+from, each with its rungs, and `/effort` the rungs of the model in force; what
+is taken starts the agent's next run, and is written into its entry. An agent
+that chooses its own model has `/model` and `/effort` say so instead.
 
 ## Claude Code
 
@@ -116,11 +111,12 @@ is also told to send nothing it does not need to answer and to leave its own
 installation alone.
 
 **Its model.** `model` is optional: it names the model the agent is started
-on, as Claude Code names it, such as `opus`, `sonnet` or a full model id, and
-it is passed to the program as its `--model`. Without it the agent starts on
-its own default. `/model` lists the models Claude Code offers and writes the
-one taken here. Letters, digits and `. _ - : @ / [ ]` are accepted, up to 128
-of them, and never a leading `-`.
+on, such as `claude-opus-5-5`, and it is passed to the program as its
+`--model`. Without it the agent starts on Anthropic's default model in
+crucible's list. Letters, digits and `. _ - : @ / [ ]` are accepted, up to 128
+of them, and never a leading `-`. `effort` is optional too: `low`, `medium`,
+`high`, `xhigh` or `max`, passed as its `--effort`, and without it the model's
+default rung. `/model` and `/effort` write both.
 
 **Signing in.** Whether it is signed in is read from its own
 `claude auth status` in its profile. Signing in happens in the agent's own
@@ -200,9 +196,8 @@ when it starts, or no longer offers loading and resuming a session, signing out
 or its usual sign-in, is sent nothing more and refused with a sentence naming
 what differs.
 
-**Its model.** The agent chooses its own, and a `model` in its entry is
-refused, since nothing would read it. `/model` says it does not list its
-models.
+**Its model.** The agent chooses its own, and a `model` or an `effort` in its
+entry is refused, since nothing would read it.
 
 **Its profile.** `profileDir` is required: it is the directory the agent keeps
 its sign-in, files and unpacked runtime under, and its usual home is the one

@@ -1153,6 +1153,9 @@ struct Turn<'a, 'h> {
     /// Which provider is answering, by its name in the registry, as it stood
     /// when the turn began: the conversation that knows is on the worker.
     serving: Option<&'static str>,
+    /// The one provider whose models `/model` offers on an installed agent's
+    /// route, as it stood when the turn began.
+    reaching: Option<&'static str>,
     /// What an installed agent said its last turn read, as it stood when the
     /// turn began; `None` on a provider's model. The agent's tally keeps
     /// that figure until the turn under way says its own.
@@ -1538,7 +1541,8 @@ impl Turn<'_, '_> {
 
         let model = self.says.model.clone();
         let current = command::Asked {
-            provider: self.serving,
+            provider: self.serving.or(self.reaching),
+            reaching: self.reaching,
             model: &model,
             effort: self.says.effort,
             pace: self.says.pace,
@@ -1595,6 +1599,7 @@ fn take<T: Terminal>(
         .routing(&conversation)
         .naming(&terms.commands.snapshot());
     let serving = conversation.serving();
+    let reaching = crucible_app::client::reaching(&conversation);
     let external = conversation.settled().external();
     let execution = crucible_app::client::execution(&conversation);
     let model = crucible_app::client::model(&conversation);
@@ -1688,6 +1693,7 @@ fn take<T: Terminal>(
         leaving: &mut leaving,
         terms,
         serving,
+        reaching,
         external,
         execution,
         model,

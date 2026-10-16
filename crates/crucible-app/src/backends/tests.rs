@@ -122,6 +122,7 @@ async fn the_claude_code_row_held_back_is_refused_by_its_section_and_starts_noth
         executable: peer.to_string_lossy().into(),
         profile: None,
         model: None,
+        effort: None,
         enabled: true,
     };
     let agent = Agent::routed(&route, &registry, |_| None).expect("a row");

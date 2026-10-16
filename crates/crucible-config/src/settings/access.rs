@@ -12,6 +12,7 @@
 //! that met anything else would be reading a document that was never checked,
 //! and answers as if the key were absent.
 
+use crucible_models::Effort;
 use serde_json::Value;
 
 use super::Settings;
@@ -192,6 +193,7 @@ pub struct ExternalAgent {
     executable: Box<str>,
     profile: Option<Box<str>>,
     model: Option<Box<str>>,
+    effort: Option<Effort>,
 }
 
 impl ExternalAgent {
@@ -225,11 +227,18 @@ impl ExternalAgent {
         self.profile.as_deref()
     }
 
-    /// The model it is started with, as the agent names it, where one is
-    /// written; otherwise the agent's own default.
+    /// The model it is started with, as its provider names it, where one is
+    /// written; otherwise the provider's default.
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
+    }
+
+    /// The effort it is started at, where one is written; otherwise the
+    /// model's default rung.
+    #[must_use]
+    pub const fn effort(&self) -> Option<Effort> {
+        self.effort
     }
 
     /// An instance named `name` of `driver`, run as `executable` with its
@@ -244,6 +253,7 @@ impl ExternalAgent {
             executable: executable.into(),
             profile: profile.map(Into::into),
             model: None,
+            effort: None,
         }
     }
 
@@ -262,6 +272,10 @@ impl ExternalAgent {
                 .and_then(Value::as_str)
                 .map(Into::into),
             model: record.get("model").and_then(Value::as_str).map(Into::into),
+            effort: record
+                .get("effort")
+                .and_then(Value::as_str)
+                .and_then(|effort| effort.parse().ok()),
         })
     }
 }

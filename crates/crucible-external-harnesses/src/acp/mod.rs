@@ -607,7 +607,6 @@ impl Acp {
             Account::SignOut => {
                 unreadable("The agent offers no sign-out, so signing out is unverified.")
             }
-            Account::Models => unreadable("The agent's models are not read as an account step."),
         }
     }
 }
@@ -707,8 +706,6 @@ impl Dialect for Acp {
             Account::Version | Account::Status | Account::SignIn | Account::SignOut => {
                 Some(self.request(shape))
             }
-            // The models a session offers are not read as an account step.
-            Account::Models => None,
         }
     }
 

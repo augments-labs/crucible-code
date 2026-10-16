@@ -117,8 +117,8 @@ pub fn disabling(file: &Path, instance: &str) -> Result<(), RememberError> {
     })
 }
 
-/// Writes down that the installed agent `instance` is started on `model`, or
-/// on its own choice where that is `None`, and changes nothing else in `file`.
+/// Writes down that the installed agent `instance` is started on `model` at
+/// `effort`, in one update of `file`, and changes nothing else in it.
 ///
 /// # Errors
 ///
@@ -126,13 +126,27 @@ pub fn disabling(file: &Path, instance: &str) -> Result<(), RememberError> {
 /// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
 /// [`RememberError::Unusable`] when what it already says is not configuration,
 /// names no such instance, or would not be with the model written.
-pub fn choosing_agent_model(
+pub fn choosing_agent(
     file: &Path,
     instance: &str,
-    model: Option<&str>,
+    model: &str,
+    effort: Option<Effort>,
 ) -> Result<(), RememberError> {
     answering(file, |text, named| {
-        crucible_config::choosing_agent_model(text, named, instance, model)
+        crucible_config::choosing_agent_model(text, named, instance, Some(model))
+            .and_then(|text| crucible_config::thinking_agent(&text, named, instance, effort))
+    })
+}
+
+/// Writes down that the installed agent `instance` is started at `effort`,
+/// and changes nothing else in `file`.
+///
+/// # Errors
+///
+/// As [`choosing_agent`].
+pub fn thinking_agent(file: &Path, instance: &str, effort: Effort) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::thinking_agent(text, named, instance, Some(effort))
     })
 }
 

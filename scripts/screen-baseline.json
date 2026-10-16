@@ -288,7 +288,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "2f66ed10c993f323b47610725890e77cabf90ca7ca639cac245d55bf2f575b75"
+      "sha256": "24c794b51b6c5659366fac9cdadbbbd1e78e9eec801d569da8ab0d32f53852cd"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_connected_40_native.snap",
@@ -297,7 +297,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "0b46b4f7b2c99abea85630af85d121a8c42954e5db350e6e3546f96b7cdb0cf6"
+      "sha256": "bc03e727ebd42a099049c70cb609b5859ae75aeab7a6c056c5ebe801e044ddea"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_connected_80_fullscreen.snap",
@@ -306,7 +306,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "f93f7b0fd7077ec3a11e87569a36b4debda4714d69a871f299d39f9aeab130da"
+      "sha256": "023d5a9f17bbc28b516722da852b8a3c45a68269b085d644a5a52980c67e363f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_connected_80_native.snap",
@@ -315,7 +315,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "654d25f50c758dcaf0ddf161bdfec8246ef0dcea0a0779ec4d6895aead39f522"
+      "sha256": "e3bc8118c0167bf1007a045e0a40e8c62a077bd6272e9da70c68e48255c1cbad"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_first_40_fullscreen.snap",
@@ -540,7 +540,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "c9753229443ba4df94f37d86c51f1af5ea8f121258e1aecbbf3e3438ea1750cc"
+      "sha256": "6aed95fbf068693be20996a58bd370dfb08465994f6bc669cebb29c44fdded70"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_permission_40_native.snap",
@@ -549,7 +549,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "ab32f1dc2e544cf127bd2d15ec92b8c1a9eb6a6390747f79aa9f9aca909045a9"
+      "sha256": "07631b53e24da92ba6524dfabe4c61b18ff2e6395b803f9ab7022f0fedd5aa4b"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_permission_80_fullscreen.snap",
@@ -558,7 +558,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "3632f6ae99b7fe029d471497013678af84d84a2151f11c7baa913a2f99b1b4a3"
+      "sha256": "b2e15b73dde1bd0d7a14c33b5d2b3da6a806cc62f6f4f0e9feec1c9d587f407f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_permission_80_native.snap",
@@ -567,7 +567,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "692315e449a842645d13fa4771eafb962dd80984f2fdde29c1c6bc6a1c847df4"
+      "sha256": "114af9ca94b052e15b65fbc0763d2c28a4d8bef66400438fec8154baebbdc81f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_signed-out_40_fullscreen.snap",
@@ -612,7 +612,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "8c01e5d4ab3917a5919b63d3c9555bf6176c8e5db8311a5cc11e89db9a822c84"
+      "sha256": "80c9607e9ecb4faacd74359d4dfb9cfbcb79044eb8eb4f4a2dc81b3e0db93c08"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_uncertain_40_native.snap",
@@ -621,7 +621,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "7b3c65a461873a0f2242393c679e5d359b58ba07b8bd3ad9e6b794abf955f4d3"
+      "sha256": "586bc4900a3c4bb4888655a867e29d26bbd26b6e54a613dcbae657254800056c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_uncertain_80_fullscreen.snap",
@@ -630,7 +630,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "020d56abb0a7f28d31d0fb4cae8df36e3fa34746a448f451526426db972d9417"
+      "sha256": "1c4fea5e5f332b26c06e9d98f9fd6c41db0d6e1551e52aa93b70e8f9ff007a79"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_uncertain_80_native.snap",
@@ -639,7 +639,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
-      "sha256": "c268965ffc96ff468bd28442889cbfc9f24fb8a0feac80c09424887ed18928c9"
+      "sha256": "5fe47e5f1f1cec4853a3eb5d43d237b7d0c595515ad7eb87e2d7114a593362aa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_unverified_40_fullscreen.snap",

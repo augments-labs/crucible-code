@@ -51,16 +51,6 @@ pub enum Command {
         /// How hard to think, where the choice is made with the model.
         effort: Option<Rung>,
     },
-    /// Name the models the installed agent this conversation is on offers,
-    /// marking the one in force. Changes nothing.
-    ListAgentModels,
-    /// Start the installed agent this conversation is on with this model
-    /// from the next turn on, by the value the agent listed it under; `None`
-    /// leaves the agent its own.
-    SelectAgentModel {
-        /// The model, as the agent's listing names it.
-        model: Option<Name>,
-    },
     /// Think this hard from the next turn on.
     SetEffort(Rung),
     /// Ask the model in force to answer at this speed from the next turn on.
@@ -162,7 +152,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 30] = [
+    pub const KINDS: [&'static str; 28] = [
         "prompt",
         "compact",
         "cancel",
@@ -170,8 +160,6 @@ impl Command {
         "clear",
         "resume",
         "select_model",
-        "list_agent_models",
-        "select_agent_model",
         "set_effort",
         "set_speed",
         "set_mode",
@@ -206,8 +194,6 @@ impl Command {
             Self::Clear => "clear",
             Self::Resume(_) => "resume",
             Self::SelectModel { .. } => "select_model",
-            Self::ListAgentModels => "list_agent_models",
-            Self::SelectAgentModel { .. } => "select_agent_model",
             Self::SetEffort(_) => "set_effort",
             Self::SetSpeed(_) => "set_speed",
             Self::SetMode(_) => "set_mode",
@@ -246,9 +232,6 @@ impl Command {
                 .with("provider", provider.as_str())
                 .with("model", model.as_str())
                 .maybe("effort", effort.map(Rung::as_str)),
-            Self::SelectAgentModel { model } => {
-                object.maybe("model", model.as_ref().map(Name::as_str))
-            }
             Self::SetEffort(rung) => object.with("effort", rung.as_str()),
             Self::SetSpeed(pace) => object.with("speed", pace.as_str()),
             Self::SetMode(mode) => object.with("mode", mode.as_str()),
@@ -273,7 +256,6 @@ impl Command {
             | Self::Cancel
             | Self::Clear
             | Self::CycleMode
-            | Self::ListAgentModels
             | Self::InspectCache
             | Self::CleanCache
             | Self::Help
@@ -299,13 +281,6 @@ impl Command {
                 provider: fields.name("provider")?,
                 model: fields.name("model")?,
                 effort: fields.maybe("effort").as_ref().map(word).transpose()?,
-            },
-            "list_agent_models" => Self::ListAgentModels,
-            "select_agent_model" => Self::SelectAgentModel {
-                model: fields
-                    .maybe("model")
-                    .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
-                    .transpose()?,
             },
             "set_effort" => Self::SetEffort(word(&fields.take("effort")?)?),
             "set_speed" => Self::SetSpeed(word(&fields.take("speed")?)?),

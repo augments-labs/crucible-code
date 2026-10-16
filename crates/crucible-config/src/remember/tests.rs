@@ -1232,3 +1232,23 @@ fn an_agents_model_its_program_could_not_take_is_not_written() {
         Err(ConfigError::Unspliceable { .. })
     ));
 }
+
+#[test]
+fn an_agents_effort_is_written_beside_its_model_or_taken_out() {
+    let text = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude", "model": "claude-opus-5-5"}}}"#;
+    let written = thinking_agent(text, FILE, "work", Some(Effort::High)).unwrap();
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let efforts: Vec<_> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.model().map(str::to_owned), agent.effort()))
+        .collect();
+    assert_eq!(
+        efforts,
+        [(Some("claude-opus-5-5".to_owned()), Some(Effort::High))]
+    );
+    assert_eq!(thinking_agent(&written, FILE, "work", None).unwrap(), text);
+    // An agent that chooses its own model takes no effort either.
+    let chooses = r#"{"externalAgents": {"work": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy"}}}"#;
+    assert!(thinking_agent(chooses, FILE, "work", Some(Effort::High)).is_err());
+}

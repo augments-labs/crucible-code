@@ -43,12 +43,13 @@
 //! mid-turn. A mode the agent has no launch for is never taken: neither by a
 //! change nor by a conversation moved onto the route in it.
 //!
-//! **Its model is chosen between turns.** The model in force starts as the
-//! one the agent's entry names, or none, which leaves the agent its own.
-//! Choosing another marks the run held spent, as a mode change does, so the
-//! next turn launches the agent on it, resuming its session. Only a model the
-//! agent listed is taken, from the last listing it gave, and the agent's own
-//! choice always is.
+//! **Its model is chosen between turns.** The model and effort in force start
+//! as the ones its launch was shaped with: for an agent that takes a model,
+//! its entry's or its provider's defaults; for one that chooses its own,
+//! none. Choosing another of either marks the run held spent, as a mode
+//! change does, so the next turn launches the agent on it, resuming its
+//! session. Which models and rungs may be chosen is decided where the choice
+//! is asked, from this program's own list for the agent's provider.
 //!
 //! **Launched by its first turn.** A conversation moved onto the route with
 //! no run in hand launches one at its first turn, the same way a spent run is
@@ -65,8 +66,7 @@ use crucible_execution::{
     Backend, Cost, Decision, Error, Event, Failure, Outcome, PENDINGS, Pending, PendingRef, Sink,
     Text, TurnRequest, Usage,
 };
-use crucible_external_harnesses::Offered;
-use crucible_models::ProviderError;
+use crucible_models::{Effort, ProviderError};
 use crucible_runner::{
     Event as RunEvent, ReportedTokens, Reporter, RunContext, RunResult, SessionCost, Totals,
     TurnError, Turned,
@@ -96,45 +96,24 @@ pub trait Relaunch: Send + Sync {
     /// [`Failure`] saying why the agent has no launch under `mode`.
     fn admits(&self, mode: Mode) -> Result<(), Failure>;
 
-    /// The model the agent's entry names, as the agent names it, where one
-    /// was chosen; `None` leaves the agent its own.
+    /// The model the agent is first started on, as its provider names it;
+    /// `None` leaves the agent its own.
     fn model(&self) -> Option<&str>;
 
-    /// The models the agent offers to be started on, asked of the agent.
-    fn models(&self) -> BoxFuture<'_, Listing>;
+    /// The effort the agent is first started at; `None` leaves the agent its
+    /// own.
+    fn effort(&self) -> Option<Effort>;
 
-    /// A new run of the agent under `mode` on `model`, or on its own choice
-    /// where that is `None`, resuming the agent's own session `resume` names,
-    /// or starting one where it is `None`.
+    /// A new run of the agent under `mode` on `model` at `effort`, each the
+    /// agent's own where it is `None`, resuming the agent's own session
+    /// `resume` names, or starting one where it is `None`.
     fn launch<'a>(
         &'a self,
         mode: Mode,
         model: Option<&'a str>,
+        effort: Option<Effort>,
         resume: Option<&'a ExternalRef>,
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>>;
-}
-
-/// What asking an installed agent for the models it offers came to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Listing {
-    /// Its dialect has no way to ask it.
-    Unoffered,
-    /// It could not be asked, or its answer could not be read.
-    Unreachable(Failure),
-    /// What it offers, in its order: at most
-    /// [`OFFERED`](crucible_external_harnesses::OFFERED).
-    Listed(Vec<Offered>),
-}
-
-/// Why a model was not taken for an installed agent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Unchosen {
-    /// Its dialect has no way to ask it for its models.
-    Unoffered,
-    /// It does not list the model.
-    Unlisted,
-    /// It could not be asked for its models.
-    Unreachable(Failure),
 }
 
 /// The installed agent a conversation moves onto: its first run where one
@@ -330,8 +309,8 @@ pub(crate) struct Outside {
     mode: Mode,
     /// The model the agent is launched on; `None` leaves it its own.
     model: Option<Box<str>>,
-    /// What the agent last listed of its models, where it was asked.
-    listed: Option<Vec<Offered>>,
+    /// The effort the agent is launched at; `None` leaves it its own.
+    effort: Option<Effort>,
     /// The agent's own name for its session, as last given.
     named: Option<ExternalRef>,
     /// The next turn.
@@ -380,6 +359,7 @@ impl Outside {
             .filter(|message| matches!(message, Message::User { .. }))
             .fold(TurnId::FIRST, |turn, _| turn.next());
         let model = relaunch.model().map(Into::into);
+        let effort = relaunch.effort();
         Self {
             backend,
             relaunch,
@@ -389,7 +369,7 @@ impl Outside {
             tally: Tally::new(),
             mode,
             model,
-            listed: None,
+            effort,
             named,
             turn,
             spent: false,
@@ -428,60 +408,31 @@ impl Outside {
         &self.route
     }
 
-    /// The model the agent's runs are started with, where one was chosen.
+    /// The model the agent's runs are started on, where it takes one.
     pub(crate) fn model(&self) -> Option<&str> {
         self.model.as_deref()
     }
 
-    /// The models the agent offers, asked of it now: each row it lists whose
-    /// value could be handed to its program as a model's name. The listing is
-    /// the agent's word, and the value becomes an argument of the program it
-    /// names, so a row that could be read as anything else is dropped here,
-    /// once, for every front end.
-    pub(crate) async fn models(&mut self) -> Listing {
-        let mut listing = self.relaunch.models().await;
-        if let Listing::Listed(offered) = &mut listing {
-            offered.retain(|offered| {
-                offered
-                    .model
-                    .as_ref()
-                    .is_none_or(|model| crucible_config::agent_model(model.as_str()))
-            });
-            self.listed = Some(offered.clone());
-        }
-        listing
+    /// The effort the agent's runs are started at, where it takes one.
+    pub(crate) const fn effort(&self) -> Option<Effort> {
+        self.effort
     }
 
-    /// Launches the agent on `model` from the next turn, where the agent
-    /// listed it, or on its own choice where that is `None`; asked for its
-    /// listing first where it has given none.
-    ///
-    /// # Errors
-    ///
-    /// [`Unchosen`] where the agent lists no such model, or none at all.
-    pub(crate) async fn choose(&mut self, model: Option<&str>) -> Result<(), Unchosen> {
-        if self.listed.is_none() {
-            match self.models().await {
-                Listing::Listed(_) => {}
-                Listing::Unoffered => return Err(Unchosen::Unoffered),
-                Listing::Unreachable(failure) => return Err(Unchosen::Unreachable(failure)),
-            }
-        }
-        let listed = self.listed.as_deref().unwrap_or_default();
-        // The agent's own choice adds no argument, so it needs no row; a model
-        // is taken only as one of the rows `models` kept.
-        if model.is_some_and(|model| {
-            !listed
-                .iter()
-                .any(|offered| offered.model.as_ref().map(Text::as_str) == Some(model))
-        }) {
-            return Err(Unchosen::Unlisted);
-        }
-        if self.model.as_deref() != model {
-            self.model = model.map(Into::into);
+    /// Launches the agent on `model` at `effort` from the next turn.
+    pub(crate) fn choose(&mut self, model: &str, effort: Option<Effort>) {
+        if self.model.as_deref() != Some(model) || self.effort != effort {
+            self.model = Some(model.into());
+            self.effort = effort;
             self.spent = true;
         }
-        Ok(())
+    }
+
+    /// Launches the agent at `effort` from the next turn.
+    pub(crate) fn think(&mut self, effort: Effort) {
+        if self.effort != Some(effort) {
+            self.effort = Some(effort);
+            self.spent = true;
+        }
     }
 
     /// Launches the agent under `mode` from the next turn, where it can be;
@@ -562,7 +513,12 @@ impl Outside {
         if self.backend.is_none() {
             let launched = self
                 .relaunch
-                .launch(self.mode, self.model.as_deref(), self.named.as_ref())
+                .launch(
+                    self.mode,
+                    self.model.as_deref(),
+                    self.effort,
+                    self.named.as_ref(),
+                )
                 .await;
             self.backend = Some(
                 launched

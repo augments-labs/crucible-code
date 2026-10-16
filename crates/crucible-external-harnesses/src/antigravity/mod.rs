@@ -120,8 +120,6 @@ impl Dialect for Antigravity {
             Account::Version | Account::Status | Account::SignIn | Account::SignOut => {
                 Some(self.request(shape))
             }
-            // The models a session offers are not read as an account step.
-            Account::Models => None,
         }
     }
 
@@ -140,11 +138,9 @@ impl Dialect for Antigravity {
                 Account::Status => Told::Done(Reading::Signed(Authentication::SignedOut)),
                 // Asking to be signed in says nothing of whether a sign-out
                 // took or what version is running.
-                Account::SignOut | Account::Version | Account::Models => {
-                    Told::Done(Reading::Unreadable(Failure::new(
-                        "The agent asked to be signed in instead of answering.",
-                    )))
-                }
+                Account::SignOut | Account::Version => Told::Done(Reading::Unreadable(
+                    Failure::new("The agent asked to be signed in instead of answering."),
+                )),
             }),
             Some(Err(failure)) => Err(failure),
             None => self.acp.told(step, frame),

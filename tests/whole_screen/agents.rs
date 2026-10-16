@@ -450,8 +450,8 @@ fn a_run_lost_mid_effect_says_its_work_is_uncertain() {
 }
 
 /// Fails where the status row, once the conversation moves onto an agent, does
-/// not say who runs its turns and who is paid for them in place of the provider
-/// and model, between turns and under a running one.
+/// not say who runs its turns, on which model, and who is paid for them in
+/// place of the provider, between turns and under a running one.
 #[test]
 fn the_status_row_says_who_runs_the_turns_on_an_agent_route() {
     for native in [false, true] {
@@ -479,7 +479,7 @@ fn the_status_row_says_who_runs_the_turns_on_an_agent_route() {
         let after = status(&window);
 
         assert!(
-            after.contains("execution: claude · billing: external"),
+            after.contains("execution: claude, model: claude-opus-5-5 · billing: external"),
             "{case}: {after}"
         );
         assert!(!after.contains("anthropic"), "{case}: {after}");
@@ -491,7 +491,7 @@ fn the_status_row_says_who_runs_the_turns_on_an_agent_route() {
         window.types_until("\x1b", "! stopped");
 
         assert!(
-            running.contains("execution: claude · billing: external"),
+            running.contains("execution: claude, model: claude-opus-5-5 · billing: external"),
             "{case}: {running}"
         );
     }
@@ -576,17 +576,16 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
     }
 }
 
-/// Fails where `/model` on an agent's route opens a shelf of the providers'
-/// models rather than the models the agent lists, where one taken is not the
-/// one named while the next turn runs, or where `/effort` opens a ladder of
-/// rungs the agent is never asked for rather than saying it chooses.
+/// Fails where `/model` on a Claude agent's route offers another provider's
+/// models, or says the agent chooses its own, or where the model and rung
+/// taken there do not stand over the ladder `/effort` opens next.
 #[test]
-fn model_on_an_agent_route_lists_the_agent_s_and_effort_says_it_chooses() {
+fn model_and_effort_on_an_agent_route_offer_its_provider_s_models() {
     for native in [false, true] {
         for columns in [80, 40] {
             let mode = if native { "native" } else { "fullscreen" };
             let case = format!("agent-model-{columns}-{mode}");
-            let script = Script::of(signed_in([claude::models(), claude::held_open()]));
+            let script = Script::of(signed_in([claude::held_open()]));
             let vendor = Vendor::answering("Not asked.");
             let mut window = Watched::capturing_agents(
                 &case,
@@ -599,53 +598,59 @@ fn model_on_an_agent_route_lists_the_agent_s_and_effort_says_it_chooses() {
             let joined = |picture: &str| {
                 picture
                     .replace("|\n|", " ")
-                    // The full screen's scroll bar, and its thumb, stand
-                    // between a folded line's halves.
-                    .replace(['┃', '●'], " ")
+                    // The full screen's scroll bar stands between a folded
+                    // line's halves.
+                    .replace('┃', " ")
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ")
             };
             let said = |window: &Watched| joined(&window.picture());
-            let thinks = "runs on the agent claude, which chooses how hard it thinks";
+            let others = ["OpenAI", "Google", "DeepSeek"];
+            window.types_until("/model\r", "Model");
+            let shelf = said(&window);
+            assert!(shelf.contains("claude-opus-5-5"), "{case}: {shelf}");
+            assert!(!shelf.contains("chooses its own model"), "{case}: {shelf}");
+            for other in others {
+                assert!(!shelf.contains(other), "{case}: {other} in {shelf}");
+            }
+            window.types_until("\x1b", "no model taken");
 
-            window.types_until("/model\r", "Haiku");
-            let model = said(&window);
-            assert!(model.contains("Model of claude"), "{case}: {model}");
-            assert!(model.contains("Opus"), "{case}: {model}");
-            assert!(!model.contains("a model, or a vendor"), "{case}: {model}");
-            window.types_until("\x1b", "cancelled");
+            window.types_until("/model claude-sonnet-5-5\r", "claude-sonnet-5-5 ·");
+            let file = std::fs::read_to_string(window.home().join("config.json"))
+                .expect("the configuration file");
+            let written: serde_json::Value =
+                serde_json::from_str(&file).expect("a configuration in its format");
+            let model = written
+                .pointer("/externalAgents/claude/model")
+                .and_then(serde_json::Value::as_str);
+            assert_eq!(model, Some("claude-sonnet-5-5"), "{case}: {written}");
 
-            window.types("/model opus\r");
-            let named = said(&window);
-            assert!(
-                named.contains("the agent claude starts on opus from the next message"),
-                "{case}: {named}"
-            );
+            // Too narrow a window for the ladder has it listed instead.
+            if columns == 80 {
+                window.types_until("/effort\r", "Effort · claude-sonnet-5-5");
+                let ladder = said(&window);
+                assert!(ladder.contains("Smarter"), "{case}: {ladder}");
+                window.types_until("\x1b", "no rung taken");
+            } else {
+                window.types_until("/effort\r", "/effort max");
+            }
 
-            window.types("/effort\r");
-            let effort = said(&window);
-            assert!(effort.contains(thinks), "{case}: {effort}");
-            assert!(!effort.contains("Smarter"), "{case}: {effort}");
-
-            window.types("/effort high\r");
-            let rung = said(&window);
-            assert_eq!(rung.matches(thinks).count(), 2, "{case}: {rung}");
-
-            // Mid-turn the listing would start the agent's program beside the
-            // running turn, so the model in use is named instead.
+            // Mid-turn the same shelf stands over the running turn, its pick
+            // held for the agent's next run.
             window.types_and_catches_where("Keep working.\r", "a turn under way", |picture| {
                 picture.contains("esc to interrupt")
             });
-            window.types_and_catches_where("/model\r", "said over the turn", |picture| {
-                joined(picture).contains("started on the model opus; /model chooses another")
-            });
+            window.types_until("/model\r", "Search");
             let running = said(&window);
+            assert!(running.contains("claude-sonnet-5-5"), "{case}: {running}");
+            for other in others {
+                assert!(!running.contains(other), "{case}: {other} in {running}");
+            }
+            window.types_and_catches_where("\x1b", "the shelf left", |picture| {
+                !picture.contains("a model, or a vendor")
+            });
             window.types_until("\x1b", "! stopped");
-            assert!(
-                !running.contains("a model, or a vendor"),
-                "{case}: {running}"
-            );
         }
     }
 }

@@ -211,6 +211,17 @@
             ],
             "type": "string"
           },
+          "effort": {
+            "description": "For a claude agent: how hard it thinks before answering, chosen with /effort. Left off, the default rung of the model it is started with. Read only from the configuration file in your home directory",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "type": "string"
+          },
           "enabled": {
             "default": true,
             "description": "Whether new work may be sent through this agent. false keeps the entry and the providers that name it, and sends them nothing. Read only from the configuration file in your home directory",
@@ -224,10 +235,7 @@
             "type": "string"
           },
           "model": {
-            "description": "For a claude agent: the model it is started with, as the agent names it, such as opus or sonnet. Left off, the agent's own default. Letters, digits and . _ - : @ / [ ] only, not starting with -. Read only from the configuration file in your home directory",
-            "examples": [
-              "opus"
-            ],
+            "description": "For a claude agent: the model it is started with, as its provider names it, chosen with /model from that provider's list. Left off, the provider's default model. Letters, digits and . _ - : @ / [ ] only, not starting with -. Read only from the configuration file in your home directory",
             "type": "string"
           },
           "profileDir": {

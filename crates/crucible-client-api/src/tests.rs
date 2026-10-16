@@ -103,7 +103,7 @@ const KEYS: [&str; 77] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 59] = [
+const MORE_KEYS: [&str; 57] = [
     "added",
     "api_ms",
     "cache_read",
@@ -161,8 +161,6 @@ const MORE_KEYS: [&str; 59] = [
     "choice",
     "external",
     "onto",
-    "models",
-    "current",
 ];
 
 /// The field names of the inspection document, kept apart for the same reason.
@@ -422,11 +420,6 @@ fn commands() -> Vec<Command> {
             model: name("acme-large-5"),
             effort: None,
         },
-        Command::ListAgentModels,
-        Command::SelectAgentModel {
-            model: Some(name("opus")),
-        },
-        Command::SelectAgentModel { model: None },
         Command::CycleMode,
         Command::Login {
             provider: name("acme"),
@@ -795,29 +788,6 @@ fn outcomes() -> Vec<Outcome> {
             retained: retained(),
             unwritten: Some(problem()),
         }),
-        Outcome::AgentModels(AgentModelsOutcome::Unsupported),
-        Outcome::AgentModels(AgentModelsOutcome::Unoffered),
-        Outcome::AgentModels(AgentModelsOutcome::Unreachable(problem())),
-        Outcome::AgentModels(AgentModelsOutcome::Listed(vec![
-            AgentModel {
-                model: None,
-                shown: marked(),
-                current: false,
-            },
-            AgentModel {
-                model: Some(name("opus")),
-                shown: marked(),
-                current: true,
-            },
-        ])),
-        Outcome::AgentModel(AgentModelOutcome::Unsupported),
-        Outcome::AgentModel(AgentModelOutcome::Unoffered),
-        Outcome::AgentModel(AgentModelOutcome::Unlisted),
-        Outcome::AgentModel(AgentModelOutcome::Unreachable(problem())),
-        Outcome::AgentModel(AgentModelOutcome::Taken {
-            unwritten: Some(problem()),
-        }),
-        Outcome::AgentModel(AgentModelOutcome::Taken { unwritten: None }),
         Outcome::Effort(EffortOutcome::Unasked),
         Outcome::Effort(EffortOutcome::Unsupported),
         Outcome::Effort(EffortOutcome::Taken {
@@ -1166,44 +1136,41 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 36),
-        Command::Compact => (1, 36),
-        Command::Cancel => (2, 36),
-        Command::Decide(_) => (3, 36),
-        Command::Clear => (4, 36),
-        Command::Resume(_) => (5, 36),
+        Command::Prompt(_) => (0, 33),
+        Command::Compact => (1, 33),
+        Command::Cancel => (2, 33),
+        Command::Decide(_) => (3, 33),
+        Command::Clear => (4, 33),
+        Command::Resume(_) => (5, 33),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 36),
-        Command::SelectModel { effort: None, .. } => (7, 36),
-        Command::SetEffort(_) => (8, 36),
-        Command::SetMode(_) => (9, 36),
-        Command::CycleMode => (10, 36),
-        Command::Login { .. } => (11, 36),
-        Command::Logout { .. } => (12, 36),
-        Command::InspectCache => (13, 36),
-        Command::CleanCache => (14, 36),
-        Command::Sandbox { enabled: true } => (15, 36),
-        Command::Sandbox { enabled: false } => (16, 36),
-        Command::Theme(Theme::Drawing(_)) => (17, 36),
-        Command::Theme(Theme::Syntax(_)) => (18, 36),
-        Command::Help => (19, 36),
-        Command::ReleaseNotes { version: None } => (20, 36),
-        Command::ReleaseNotes { version: Some(_) } => (21, 36),
-        Command::Exit => (22, 36),
-        Command::SetSpeed(_) => (23, 36),
-        Command::Context => (24, 36),
-        Command::Usage => (25, 36),
-        Command::Setting { .. } => (26, 36),
-        Command::AskLimits => (27, 36),
-        Command::Disconnect { .. } => (28, 36),
-        Command::RemoveIntegration { .. } => (29, 36),
-        Command::SignOut { .. } => (30, 36),
-        Command::Connect { instance: Some(_) } => (31, 36),
-        Command::Connect { instance: None } => (32, 36),
-        Command::ListAgentModels => (33, 36),
-        Command::SelectAgentModel { model: Some(_) } => (34, 36),
-        Command::SelectAgentModel { model: None } => (35, 36),
+        } => (6, 33),
+        Command::SelectModel { effort: None, .. } => (7, 33),
+        Command::SetEffort(_) => (8, 33),
+        Command::SetMode(_) => (9, 33),
+        Command::CycleMode => (10, 33),
+        Command::Login { .. } => (11, 33),
+        Command::Logout { .. } => (12, 33),
+        Command::InspectCache => (13, 33),
+        Command::CleanCache => (14, 33),
+        Command::Sandbox { enabled: true } => (15, 33),
+        Command::Sandbox { enabled: false } => (16, 33),
+        Command::Theme(Theme::Drawing(_)) => (17, 33),
+        Command::Theme(Theme::Syntax(_)) => (18, 33),
+        Command::Help => (19, 33),
+        Command::ReleaseNotes { version: None } => (20, 33),
+        Command::ReleaseNotes { version: Some(_) } => (21, 33),
+        Command::Exit => (22, 33),
+        Command::SetSpeed(_) => (23, 33),
+        Command::Context => (24, 33),
+        Command::Usage => (25, 33),
+        Command::Setting { .. } => (26, 33),
+        Command::AskLimits => (27, 33),
+        Command::Disconnect { .. } => (28, 33),
+        Command::RemoveIntegration { .. } => (29, 33),
+        Command::SignOut { .. } => (30, 33),
+        Command::Connect { instance: Some(_) } => (31, 33),
+        Command::Connect { instance: None } => (32, 33),
     }
 }
 
@@ -1291,20 +1258,6 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             ModelOutcome::Taken {
                 unwritten: None, ..
             } => (4, 5),
-        },
-        Outcome::AgentModels(models) => match models {
-            AgentModelsOutcome::Unsupported => (0, 4),
-            AgentModelsOutcome::Unoffered => (1, 4),
-            AgentModelsOutcome::Unreachable(_) => (2, 4),
-            AgentModelsOutcome::Listed(_) => (3, 4),
-        },
-        Outcome::AgentModel(model) => match model {
-            AgentModelOutcome::Unsupported => (0, 6),
-            AgentModelOutcome::Unoffered => (1, 6),
-            AgentModelOutcome::Unlisted => (2, 6),
-            AgentModelOutcome::Unreachable(_) => (3, 6),
-            AgentModelOutcome::Taken { unwritten: Some(_) } => (4, 6),
-            AgentModelOutcome::Taken { unwritten: None } => (5, 6),
         },
         Outcome::Effort(effort) => match effort {
             EffortOutcome::Unasked => (0, 4),
@@ -2530,7 +2483,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 1_971_099_936_443_508_167),
+        (4, 7_780_093_700_871_764_596),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

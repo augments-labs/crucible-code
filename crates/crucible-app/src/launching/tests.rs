@@ -85,6 +85,7 @@ fn route(executable: &Path, profile: Option<&Path>) -> Route {
         executable: executable.to_string_lossy().into(),
         profile: profile.map(|profile| profile.to_string_lossy().into()),
         model: None,
+        effort: None,
         enabled: true,
     }
 }
@@ -648,17 +649,22 @@ fn a_bare_name_is_found_on_path_and_an_absolute_one_where_it_is_written() {
 }
 
 /// The model a route names is the one every start of its agent is given, and
-/// a route naming none leaves the agent its own.
+/// a route naming none starts it on its provider's default, each at the
+/// model's default rung.
 #[test]
 fn an_agent_is_started_with_the_model_its_route_names() {
-    for (model, given) in [(Some("opus"), Some("opus")), (None, None)] {
+    for (model, given) in [
+        (Some("opus"), Some("opus")),
+        (None, Some("claude-opus-5-5")),
+    ] {
         let mut named = route(Path::new("/bin/claude"), None);
         if let Route::External { model: at, .. } = &mut named {
             *at = model.map(Into::into);
         }
         let agent =
             Agent::routed(&named, &Registry::new(&SHIPPED), |_| None).expect("Claude Code's row");
-        assert_eq!(agent.shape(None, Path::new("/work")).model, given);
+        let shape = agent.shape(None, Path::new("/work"));
+        assert_eq!((shape.model, shape.effort), (given, Some("medium")));
     }
 }
 

@@ -470,9 +470,9 @@ pub fn disabling(text: &str, file: &str, instance: &str) -> Result<String, Confi
 }
 
 /// The text of a configuration file where the installed agent `instance` is
-/// started on `model`, or on its own choice where that is `None`: its block's
-/// `model` written over, added or taken out, and every other byte where it
-/// was.
+/// started on `model`, or on its provider's default where that is `None`: its
+/// block's `model` written over, added or taken out, and every other byte
+/// where it was.
 ///
 /// Only the user file names installed agents, so `text` is that file's. The
 /// text is read back before it is returned, so a model the agent's program
@@ -491,10 +491,37 @@ pub fn choosing_agent_model(
     instance: &str,
     model: Option<&str>,
 ) -> Result<String, ConfigError> {
-    let at = format!("externalAgents.{instance}.model");
-    // As JSON reads it: the name is what the agent listed, and a quote
-    // written raw would end the document.
-    let written = model.map(|model| Value::String(model.to_owned()).to_string());
+    agent_member(text, file, instance, "model", model)
+}
+
+/// The text of a configuration file where the installed agent `instance` is
+/// started at `effort`, or at its model's default rung where that is `None`:
+/// the same splice as [`choosing_agent_model`], into the key beside it.
+///
+/// # Errors
+///
+/// As [`choosing_agent_model`].
+pub fn thinking_agent(
+    text: &str,
+    file: &str,
+    instance: &str,
+    effort: Option<Effort>,
+) -> Result<String, ConfigError> {
+    agent_member(text, file, instance, "effort", effort.map(Effort::as_str))
+}
+
+/// `text` with `externalAgents.<instance>.<key>` written as `value`, or taken
+/// out where that is `None`, and read back before it is returned.
+fn agent_member(
+    text: &str,
+    file: &str,
+    instance: &str,
+    key: &str,
+    value: Option<&str>,
+) -> Result<String, ConfigError> {
+    let at = format!("externalAgents.{instance}.{key}");
+    // As JSON reads it: a quote written raw would end the document.
+    let written = value.map(|value| Value::String(value.to_owned()).to_string());
     let refused = || ConfigError::Unspliceable {
         file: file.into(),
         at: at.clone().into(),
@@ -510,21 +537,21 @@ pub fn choosing_agent_model(
     else {
         return Err(refused());
     };
-    let named = block.get("model");
-    if named.and_then(Value::as_str) == model && named.is_some() == model.is_some() {
+    let named = block.get(key);
+    if named.and_then(Value::as_str) == value && named.is_some() == value.is_some() {
         return Ok(text.to_owned());
     }
     let root = splice::root(text).ok_or_else(refused)?;
     let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
     let entry = splice::member(text, agents, instance).ok_or_else(refused)?;
     let chosen = match (written.as_deref(), named.is_some()) {
-        (Some(written), false) => splice::insert(text, entry, |_| format!("\"model\": {written}")),
+        (Some(written), false) => splice::insert(text, entry, |_| format!("\"{key}\": {written}")),
         (Some(written), true) => {
-            let was = splice::member(text, entry, "model").ok_or_else(refused)?;
+            let was = splice::member(text, entry, key).ok_or_else(refused)?;
             splice::over(text, was, written)
         }
         (None, true) => {
-            splice::remove(text, entry, "model").ok_or_else(|| ConfigError::Unremovable {
+            splice::remove(text, entry, key).ok_or_else(|| ConfigError::Unremovable {
                 file: file.into(),
                 at: at.clone().into(),
             })?

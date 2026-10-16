@@ -28,6 +28,7 @@
 use crucible_auth::{Held, Kind};
 use crucible_config::{Access, Driver, Settings};
 use crucible_credentials::{ApiKey, CredentialError};
+use crucible_models::Effort;
 
 use crate::providers::Served;
 use crate::startup::ProviderAuth;
@@ -67,6 +68,8 @@ pub enum Route {
         profile: Option<Box<str>>,
         /// The model it is started with, where its entry names one.
         model: Option<Box<str>>,
+        /// The effort it is started at, where its entry names one.
+        effort: Option<Effort>,
         /// Whether new work may be sent through it. Carried rather than
         /// refused here, because a disabled agent is still the route the user
         /// chose: what to say about it belongs to whoever would have started it.
@@ -405,6 +408,7 @@ fn settled(
                 executable: agent.executable().into(),
                 profile: agent.profile().map(Into::into),
                 model: agent.model().map(Into::into),
+                effort: agent.effort(),
                 enabled: agent.enabled(),
             }))
         }

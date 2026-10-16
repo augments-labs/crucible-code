@@ -19,10 +19,11 @@
 //! same answer every time this directory is opened and asking it once a session
 //! is asking it for ever.
 //!
-//! A conversation on an installed agent's route is shown the models the agent
-//! lists instead, and one taken starts the agent's next run: no provider's
-//! would be asked for. Mid-turn it is told the agent's model is chosen
-//! between turns, since listing them starts the agent's program.
+//! On an installed agent's route the shelf holds only the models of the one
+//! provider the agent reaches, every one of them, since the agent's own
+//! sign-in serves them rather than a credential of this program; one taken
+//! starts the agent's next run on it. An agent that chooses its own model is
+//! told so instead, at rest and mid-turn.
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
@@ -46,9 +47,8 @@ use crucible_app::providers::{
 };
 use crucible_app::startup::served;
 
-use super::{Asked, Laid, Terms, about, relaid, say, say_at};
+use super::{Asked, Laid, Terms, about, chosen_by_agent, relaid, say, say_at};
 
-mod agent;
 mod narrowing;
 
 /// What escape leaves behind, in place of the listing it used to write.
@@ -142,6 +142,15 @@ fn narrowed(all: Vec<Selected>, using: &BTreeMap<&str, InUse>) -> Vec<Selected> 
         .collect()
 }
 
+/// The models of `all` an installed agent reaching `reaching` can be started
+/// on: its provider's alone, and every model of all of them off one.
+fn reached(mut all: Vec<Selected>, reaching: Option<&str>) -> Vec<Selected> {
+    if let Some(reaching) = reaching {
+        all.retain(|one| one.provider.name == reaching);
+    }
+    all
+}
+
 /// What heads the pane narrowed to `provider`: the provider and the words of
 /// the credential its models are served by, or nothing where it has none.
 fn headed(provider: &str, using: &BTreeMap<&str, InUse>, glyphs: Glyphs) -> Option<String> {
@@ -213,8 +222,9 @@ impl Selected {
 }
 
 /// Runs it: the model named, one taken off the panel, or what is being asked
-/// now and what else could be. On an installed agent's route, the same of
-/// the models the agent lists.
+/// now and what else could be, of the one provider an installed agent's route
+/// reaches. On the route of an agent that chooses its own model, it says so
+/// and does none of these.
 ///
 /// `keys` is whether there is a keyboard to walk a panel with. Down a pipe there
 /// is not, and a panel waiting for a key nobody can press is a session that
@@ -231,8 +241,10 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
-    if let Some(done) = agent::run(said, renderer, conversation, terms, keys) {
-        return done;
+    let execution = crucible_app::client::execution(conversation);
+    let model = crucible_app::client::model(conversation);
+    if let Some(said) = chosen_by_agent(&execution, model.as_ref(), false) {
+        return say(renderer, &said);
     }
     if !said.is_empty() {
         return named(said, renderer, conversation, terms, keys);
@@ -241,8 +253,10 @@ pub(super) fn run<T: Terminal>(
     if keys {
         let settled = conversation.settled();
         let track = Track::Offered(settled.effort());
+        let reaching = crucible_app::client::reaching(conversation);
         let current = Asked {
-            provider: conversation.serving(),
+            provider: conversation.serving().or(reaching),
+            reaching,
             model: settled.model(),
             effort: settled.effort().map(Effort::as_str),
             pace: super::Pace::of(settled),
@@ -367,7 +381,10 @@ fn named<T: Terminal>(
             Ok(provider) => provider,
             Err(problem) => return say(renderer, &format!("! {problem}")),
         }
-    } else if let Some(provider) = conversation.serving() {
+    } else if let Some(provider) = conversation
+        .serving()
+        .or_else(|| crucible_app::client::reaching(conversation))
+    {
         match served(&providers, provider) {
             Ok(provider) => provider,
             Err(problem) => return say(renderer, &format!("! {problem}")),
@@ -462,8 +479,14 @@ fn stood<T: Terminal>(
     // sign-in serves decides the fast form a row's model has, and which of
     // its models each provider's credential in use serves decides its list.
     let stored = terms.logins.read();
-    let using = in_use(terms, &providers, &stored);
-    let all = narrowed(narrowing::every(&providers), &using);
+    let using = match current.reaching {
+        Some(_) => BTreeMap::new(),
+        None => in_use(terms, &providers, &stored),
+    };
+    let all = reached(
+        narrowed(narrowing::every(&providers), &using),
+        current.reaching,
+    );
     let routes = terms.consent.routes();
 
     // Which model is in force goes on the title row rather than beside an
@@ -520,7 +543,12 @@ fn stood<T: Terminal>(
         terms.style(),
         &mut standing,
         |standing, columns, room| {
-            let counts = narrowing::counted(&providers, &all, standing.query.text());
+            let mut counts = narrowing::counted(&providers, &all, standing.query.text());
+            counts.retain(|(provider, _)| {
+                current
+                    .reaching
+                    .is_none_or(|reaching| provider.name == reaching)
+            });
             let only = standing
                 .provider
                 .checked_sub(1)
@@ -849,10 +877,11 @@ fn listed<T: Terminal>(
     // Read out of a configuration file or off the command line either way, so
     // it goes out the way arrived text goes out.
     let settled = conversation.settled();
+    let reaching = crucible_app::client::reaching(conversation);
     match settled.model() {
         "" => renderer.commit(NO_MODEL_CHOSEN)?,
         name => renderer.commit(&in_force(
-            conversation.serving(),
+            conversation.serving().or(reaching),
             name,
             settled.effort(),
             terms.style().glyphs(),
@@ -861,9 +890,13 @@ fn listed<T: Terminal>(
 
     let providers = terms.providers.snapshot();
     let stored = terms.logins.read();
+    let using = match reaching {
+        Some(_) => BTreeMap::new(),
+        None => in_use(terms, &providers, &stored),
+    };
     let lines = lines(
-        narrowing::every(&providers),
-        &in_use(terms, &providers, &stored),
+        reached(narrowing::every(&providers), reaching),
+        &using,
         terms.consent.routes(),
         terms.style().glyphs(),
     );

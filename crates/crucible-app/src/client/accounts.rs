@@ -435,8 +435,6 @@ pub async fn account(
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }
-        | Command::ListAgentModels
-        | Command::SelectAgentModel { .. }
         | Command::SetEffort(_)
         | Command::SetSpeed(_)
         | Command::SetMode(_)
@@ -869,8 +867,7 @@ async fn connect(
             )
             // The agent answered here, so it left no failure to give as the
             // reason.
-            | Reading::Version(_)
-            | Reading::Models(_) => unverified(agent, None),
+            | Reading::Version(_) => unverified(agent, None),
             Reading::Unreadable(failure) => unverified(agent, Some(failure)),
         };
         match confirmed(capabilities, front, &question).await {

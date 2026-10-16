@@ -56,6 +56,7 @@ pub(super) fn run<T: Terminal>(
     };
     let asked = Asked {
         provider: Some(provider),
+        reaching: None,
         model: settled.model(),
         effort: settled.effort().map(Effort::as_str),
         pace: super::Pace::of(settled),

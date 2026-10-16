@@ -209,10 +209,11 @@ pub struct Snapshot {
     /// Whether any installed agent is offered.
     pub agents: Agents,
     /// The model in force, where one is: on an installed agent's route, the
-    /// one it is started on, as its entry names it or as chosen since, and
+    /// one it is started on, as chosen or else its provider's default, and
     /// none where the agent chooses its own.
     pub model: Option<Model>,
-    /// The effort in force, where one was asked for.
+    /// The effort in force, where one was asked for: on an installed agent's
+    /// route, the one it is started at.
     pub effort: Option<Rung>,
     /// The speed the model in force is asked to answer at.
     pub speed: Pace,

@@ -325,6 +325,7 @@ fn every_place_the_model_is_drawn_names_it_the_same_way() {
                     );
                     let current = Asked {
                         provider: Some(served.name),
+                        reaching: None,
                         model: model.name,
                         effort: effort.map(Effort::as_str),
                         pace: super::super::Pace::default(),
@@ -464,6 +465,7 @@ fn the_shelf_stood_while_a_turn_runs_names_the_rung_in_force() {
     // and the row under the box says so: the title says the same.
     let current = Asked {
         provider: Some("anthropic"),
+        reaching: None,
         model: "claude-sonnet-5",
         effort: Some("high"),
         pace: super::super::Pace::default(),
@@ -490,6 +492,7 @@ fn a_model_with_no_provider_answering_is_named_on_its_own() {
     // says the model and the rung, and no word stands in for the vendor.
     let current = Asked {
         provider: None,
+        reaching: None,
         model: "claude-sonnet-5",
         effort: Some("high"),
         pace: super::super::Pace::default(),
@@ -537,6 +540,7 @@ fn a_row_says_no_rung_before_it_says_fast_and_fast_for_either_kind_of_form() {
 fn the_shelf_title_says_fast_only_after_an_answer_served_fast() {
     let asked = |served| Asked {
         provider: Some("openai"),
+        reaching: None,
         model: "gpt-6-astra",
         effort: Some("high"),
         pace: super::super::Pace {

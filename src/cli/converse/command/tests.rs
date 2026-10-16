@@ -649,30 +649,23 @@ fn an_answer_laid_out_again_at_each_width_is_laid_out_once_to_be_written() {
 }
 
 #[test]
-fn an_agent_s_model_is_named_where_its_entry_chose_one() {
-    // `/model` mid-turn names the model the agent starts on, rather than
-    // saying the agent chooses; `/effort` is still the agent's to choose.
+fn an_agent_started_on_a_model_is_offered_its_provider_s_shelf_and_ladder() {
+    // An agent started on a model has `/model` and `/effort` stand its
+    // provider's shelf and ladder, so nothing is said in their place; one that
+    // chooses its own model is told so for both.
     let work = crucible_client_api::Execution::Instance(
         crucible_client_api::Name::new("work").expect("a name"),
     );
     let opus = crucible_client_api::Model::new("opus");
 
-    let said = super::chosen_by_agent(&work, opus.as_ref(), false).expect("on a route");
-    assert!(said.contains("started on the model opus"), "{said}");
-    assert!(
-        said.ends_with("/model chooses another between turns"),
-        "{said}"
-    );
-    let said = super::chosen_by_agent(&work, opus.as_ref(), true).expect("on a route");
-    assert!(said.ends_with("which chooses how hard it thinks"), "{said}");
+    assert_eq!(super::chosen_by_agent(&work, opus.as_ref(), false), None);
+    assert_eq!(super::chosen_by_agent(&work, opus.as_ref(), true), None);
     let said = super::chosen_by_agent(&work, None, false).expect("on a route");
-    assert!(said.contains("which chooses its own model"), "{said}");
+    assert!(said.ends_with("which chooses its own model"), "{said}");
+    let said = super::chosen_by_agent(&work, None, true).expect("on a route");
+    assert!(said.ends_with("and how hard it thinks"), "{said}");
     assert_eq!(
-        super::chosen_by_agent(
-            &crucible_client_api::Execution::Native,
-            opus.as_ref(),
-            false
-        ),
+        super::chosen_by_agent(&crucible_client_api::Execution::Native, None, false),
         None
     );
 }

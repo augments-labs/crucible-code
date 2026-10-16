@@ -304,9 +304,7 @@ impl Conversation {
         with: &Switching<'_>,
     ) -> Switched {
         let Some(runner) = self.native() else {
-            return Switched::Unreachable(AppError::Installed {
-                driver: self.settled().serving(),
-            });
+            return self.ask_agent_for(selected.name, name, rung, with);
         };
         let provider = selected.name;
         // The model in force chosen again keeps its speed; any other goes back
@@ -383,6 +381,9 @@ impl Conversation {
     ///
     /// An installed agent is asked at no rung: it chooses how hard it thinks.
     pub fn think(&mut self, effort: Effort, with: &Switching<'_>) -> Rung {
+        if self.instance().is_some() {
+            return self.think_agent(effort, with);
+        }
         let serving = self.serving;
         let Some(runner) = self.native_mut() else {
             return Rung::Unasked;
@@ -398,6 +399,71 @@ impl Conversation {
 
         Rung::Taken {
             unwritten: remember::thinking(with.choosing, provider, effort).err(),
+        }
+    }
+
+    /// Starts the installed agent the conversation is on with `name` of
+    /// `provider` from its next run, at `rung` where one is named, else at
+    /// the rung in force where `name` serves it, else at `name`'s default; and
+    /// writes both into the agent's entry.
+    ///
+    /// Only an agent that is started with a model, and only on a model of the
+    /// one provider it reaches: any other is a provider this route cannot
+    /// reach.
+    fn ask_agent_for(
+        &mut self,
+        provider: &str,
+        name: &str,
+        rung: Option<Effort>,
+        with: &Switching<'_>,
+    ) -> Switched {
+        let reaches = self
+            .agent_driver()
+            .is_some_and(|driver| driver.takes_model() && driver.provider() == provider);
+        let Some(instance) = self.instance().filter(|_| reaches).map(Box::<str>::from) else {
+            return Switched::Unreachable(AppError::Installed {
+                driver: self.settled().serving(),
+            });
+        };
+        if let Some(rung) = rung
+            && !serves(with.providers, provider, name, rung)
+        {
+            return Switched::Unsupported(rung);
+        }
+        let served = rungs(with.providers, provider, name);
+        let effort = rung
+            .or_else(|| self.settled().effort().filter(|one| served.contains(one)))
+            .or_else(|| default_rung(&served));
+
+        self.choose_agent_model(name, effort);
+        Switched::Taken {
+            retained: Retained::default(),
+            unwritten: remember::choosing_agent(with.choosing, &instance, name, effort).err(),
+        }
+    }
+
+    /// Starts the installed agent the conversation is on at `effort` from its
+    /// next run, and writes it into the agent's entry: where the agent is
+    /// started on a model, and that model serves it.
+    fn think_agent(&mut self, effort: Effort, with: &Switching<'_>) -> Rung {
+        let Some(driver) = self.agent_driver().filter(|driver| driver.takes_model()) else {
+            return Rung::Unasked;
+        };
+        let settled = self.settled();
+        let model = settled.model();
+        if model.is_empty() {
+            return Rung::Unasked;
+        }
+        if !serves(with.providers, driver.provider(), model, effort) {
+            return Rung::Unsupported;
+        }
+        let Some(instance) = self.instance().map(Box::<str>::from) else {
+            return Rung::Unasked;
+        };
+
+        self.agent_effort(effort);
+        Rung::Taken {
+            unwritten: remember::thinking_agent(with.choosing, &instance, effort).err(),
         }
     }
 

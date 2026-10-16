@@ -45,7 +45,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crucible_config::ExternalAgent;
+use crucible_config::{Driver, ExternalAgent};
 use crucible_context::Room;
 use crucible_execution::Failure;
 use crucible_models::{
@@ -419,28 +419,25 @@ impl Conversation {
             .map(|outside| outside.route().instance())
     }
 
-    /// The model the installed agent the conversation is on is started with,
-    /// where it is on one and a model was chosen for it; otherwise the agent
-    /// chooses its own.
-    #[must_use]
-    pub(crate) fn agent_model(&self) -> Option<&str> {
-        self.outside.as_deref().and_then(Outside::model)
+    /// The driver of the installed agent the conversation is on, where it is
+    /// on one.
+    pub(crate) fn agent_driver(&self) -> Option<Driver> {
+        let name = self.outside.as_deref()?.driver();
+        Driver::ALL.into_iter().find(|one| one.name() == name)
     }
 
-    /// The models the installed agent the conversation is on offers, asked of
-    /// it now; `None` where it is on no agent's route.
-    pub(crate) async fn agent_models(&mut self) -> Option<outside::Listing> {
-        Some(self.outside.as_deref_mut()?.models().await)
+    /// Starts the installed agent the conversation is on with `model` at
+    /// `effort` from the next turn; `None` where it is on no agent's route.
+    pub(crate) fn choose_agent_model(&mut self, model: &str, effort: Option<Effort>) -> Option<()> {
+        self.outside.as_deref_mut()?.choose(model, effort);
+        Some(())
     }
 
-    /// Starts the installed agent the conversation is on with `model` from
-    /// the next turn, or on its own choice where that is `None`, where the
-    /// agent lists it; `None` where it is on no agent's route.
-    pub(crate) async fn choose_agent_model(
-        &mut self,
-        model: Option<&str>,
-    ) -> Option<Result<(), outside::Unchosen>> {
-        Some(self.outside.as_deref_mut()?.choose(model).await)
+    /// Starts the installed agent the conversation is on at `effort` from the
+    /// next turn; `None` where it is on no agent's route.
+    pub(crate) fn agent_effort(&mut self, effort: Effort) -> Option<()> {
+        self.outside.as_deref_mut()?.think(effort);
+        Some(())
     }
 
     /// Stops the conversation's work on the installed agent `instance`, where
@@ -463,9 +460,9 @@ impl Conversation {
     /// would go out, or be refused by the provider standing in only after the
     /// prompt was written down as said to a model nobody asked.
     ///
-    /// An installed agent runs on the model its entry names, or else chooses
-    /// its own, and is never missing one:
-    /// what refuses its turn is its launch.
+    /// An installed agent runs on the model its entry names, else its
+    /// provider's default, or chooses its own, and is never missing one: what
+    /// refuses its turn is its launch.
     #[must_use]
     pub fn missing(&self) -> Option<crate::providers::Missing> {
         let runner = self.native()?;
@@ -835,12 +832,12 @@ impl<'a> From<&'a Runner> for Settled<'a> {
 
 impl<'a> Settled<'a> {
     /// The model asked, as its provider spells it, or nothing where none is
-    /// named, as on an installed agent's route, where the agent chooses.
+    /// named, as on the route of an installed agent that chooses its own.
     #[must_use]
     pub fn model(self) -> &'a str {
         match self.0 {
             Backed::Native(runner) => runner.model(),
-            Backed::External(_) => "",
+            Backed::External(outside) => outside.model().unwrap_or_default(),
         }
     }
 
@@ -849,7 +846,7 @@ impl<'a> Settled<'a> {
     pub fn effort(self) -> Option<Effort> {
         match self.0 {
             Backed::Native(runner) => runner.effort(),
-            Backed::External(_) => None,
+            Backed::External(outside) => outside.effort(),
         }
     }
 

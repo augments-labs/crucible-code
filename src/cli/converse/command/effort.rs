@@ -27,8 +27,10 @@
 //! the same reason: how hard to think is the same answer every time this
 //! machine is used, and asking it once a session is asking it for ever.
 //!
-//! An installed agent is asked at no rung, so on its route this says the agent
-//! chooses rather than standing a ladder.
+//! On an installed agent's route the ladder is the one its model serves, and
+//! the rung taken is written into the agent's entry and starts its next run.
+//! An agent that chooses its own model is asked at no rung, so on its route
+//! this says the agent chooses rather than standing a ladder.
 
 use crucible_app::Conversation;
 use crucible_app::Settled;
@@ -88,8 +90,8 @@ fn title(model: &str, glyphs: Glyphs) -> String {
 const OPENS_ON: Effort = Effort::High;
 
 /// Runs it: the rung named, one taken off the ladder, or the rung in force and
-/// the lines that ask for the others. On an installed agent's route, which
-/// chooses how hard it thinks, it says so and does none of these.
+/// the lines that ask for the others. On the route of an installed agent that
+/// chooses its own model, it says so and does none of these.
 ///
 /// `keys` is whether there is a keyboard to walk a ladder with. Down a pipe
 /// there is not, and a ladder waiting for a key nobody can press is a session
@@ -114,8 +116,11 @@ pub(super) fn run<T: Terminal>(
     // A rung is asked of a model, so the ladder is stood over one by name and
     // there has to be one. Without a provider there is nobody to write it under
     // either, and the two want different sentences: one says set a key, the
-    // other says the key is fine and pick a model.
-    let named = conversation.serving();
+    // other says the key is fine and pick a model. On an installed agent's
+    // route the provider is the one the agent reaches.
+    let named = conversation
+        .serving()
+        .or_else(|| crucible_app::client::reaching(conversation));
     let Some(provider) = named.filter(|_| !conversation.settled().model().is_empty()) else {
         return renderer.commit(terms.unasked(named)).map_err(Fatal::from);
     };

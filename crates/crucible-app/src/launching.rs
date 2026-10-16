@@ -48,11 +48,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crucible_config::ExternalAgent;
+use crucible_config::{Driver, ExternalAgent};
 use crucible_execution::{Backend, Capabilities, Capability, Failure, SessionRef, Text};
 use crucible_external_harnesses::{
     Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Reading, Refusal, Request, Shape,
 };
+use crucible_models::Effort;
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement, SandboxFilesystemAccess,
@@ -67,7 +68,8 @@ use crate::access::Route;
 use crate::backends::{Registry, Row};
 use crate::content_use::{self, Consent, Unheld, Warned};
 use crate::external::External;
-use crate::outside::{Listing, Relaunch};
+use crate::outside::Relaunch;
+use crate::providers;
 
 /// Why nothing was started.
 #[derive(Debug, thiserror::Error)]
@@ -110,8 +112,28 @@ pub struct Agent {
     discovery: Discovery,
     /// Its profile directory, where one is configured.
     profile: Option<PathBuf>,
-    /// The model it is started with, where its entry names one.
+    /// The model it is started with, where its driver takes one: its
+    /// entry's, else its provider's default.
     model: Option<Box<str>>,
+    /// The effort it is started at, where its model takes one: its entry's
+    /// where the model serves it, else the model's default rung.
+    effort: Option<Effort>,
+}
+
+/// The model and effort an agent of `driver` is started on, from what its
+/// entry names: none where the driver chooses its own model.
+fn started(
+    driver: Driver,
+    model: Option<&str>,
+    effort: Option<Effort>,
+) -> (Option<Box<str>>, Option<Effort>) {
+    if !driver.takes_model() {
+        return (None, None);
+    }
+    match providers::agent_started(driver.provider(), model, effort) {
+        Some((model, effort)) => (Some(model), effort),
+        None => (model.map(Into::into), effort),
+    }
 }
 
 impl Agent {
@@ -129,16 +151,19 @@ impl Agent {
             executable,
             profile,
             model,
+            effort,
             ..
         } = route
         else {
             return None;
         };
+        let (model, effort) = started(*driver, model.as_deref(), *effort);
         Some(Self {
             row: registry.row(*driver)?,
             discovery: discover(executable, lookup),
             profile: profile.as_deref().map(PathBuf::from),
-            model: model.clone(),
+            model,
+            effort,
         })
     }
 
@@ -151,11 +176,13 @@ impl Agent {
         registry: &Registry,
         lookup: impl Fn(&str) -> Option<OsString>,
     ) -> Option<Self> {
+        let (model, effort) = started(agent.driver(), agent.model(), agent.effort());
         Some(Self {
             row: registry.row(agent.driver())?,
             discovery: discover(agent.executable(), lookup),
             profile: agent.profile().map(PathBuf::from),
-            model: agent.model().map(Into::into),
+            model,
+            effort,
         })
     }
 
@@ -165,18 +192,24 @@ impl Agent {
         self.row
     }
 
-    /// The model it is started with, where its entry names one.
+    /// The model it is started with, where its driver takes one.
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
     }
 
-    /// The same agent started on `model`, or on its own choice where that is
-    /// `None`.
+    /// The effort it is started at, where its model takes one.
     #[must_use]
-    pub fn on(&self, model: Option<&str>) -> Self {
+    pub const fn effort(&self) -> Option<Effort> {
+        self.effort
+    }
+
+    /// The same agent started on `model` at `effort`.
+    #[must_use]
+    pub fn on(&self, model: Option<&str>, effort: Option<Effort>) -> Self {
         Self {
             model: model.map(Into::into),
+            effort,
             ..self.clone()
         }
     }
@@ -214,6 +247,7 @@ impl Agent {
             profile: self.profile.as_deref(),
             workspace: Some(workspace),
             model: self.model.as_deref(),
+            effort: self.effort.map(Effort::as_str),
         }
     }
 }
@@ -404,7 +438,7 @@ fn resolved(path: &Path) -> Result<PathBuf, SandboxPolicyError> {
 const fn within(step: Account) -> Duration {
     match step {
         Account::SignIn => SIGNING_IN,
-        Account::Version | Account::Status | Account::SignOut | Account::Models => PREPARING,
+        Account::Version | Account::Status | Account::SignOut => PREPARING,
     }
 }
 
@@ -651,48 +685,15 @@ impl Relaunch for Runs {
         self.agent.model()
     }
 
-    fn models(&self) -> BoxFuture<'_, Listing> {
-        Box::pin(async move {
-            let mut dialect = match (self.agent.row().dialect)(Mode::default()) {
-                Ok(dialect) => dialect,
-                Err(refused) => return Listing::Unreachable(refused),
-            };
-            if dialect.spoken(Account::Models).is_none() {
-                return Listing::Unoffered;
-            }
-            let Some(control) = Control::new() else {
-                return Listing::Unreachable(Failure::new("no control for the agent's program"));
-            };
-            let policy = self.policy.clone().with_enabled(self.enablement.enabled());
-            let read = Launcher::new(
-                Arc::clone(&self.service),
-                self.runtime.clone(),
-                &policy,
-                &self.consent,
-            )
-            .account(
-                &self.agent,
-                &control,
-                dialect.as_mut(),
-                Account::Models,
-                &|_| {},
-            )
-            .await;
-            match read {
-                Ok(Reading::Models(offered)) => Listing::Listed(offered),
-                Ok(Reading::Unreadable(failure)) => Listing::Unreachable(failure),
-                Ok(Reading::Version(_) | Reading::Signed(_)) => Listing::Unreachable(Failure::new(
-                    "the agent answered with something other than its models",
-                )),
-                Err(refused) => Listing::Unreachable(Failure::new(&refused.to_string())),
-            }
-        })
+    fn effort(&self) -> Option<Effort> {
+        self.agent.effort()
     }
 
     fn launch<'a>(
         &'a self,
         mode: Mode,
         model: Option<&'a str>,
+        effort: Option<Effort>,
         resume: Option<&'a ExternalRef>,
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
         Box::pin(async move {
@@ -702,7 +703,7 @@ impl Relaunch for Runs {
             let session = SessionRef::new(&self.instance)
                 .ok_or_else(|| Failure::new("the agent's entry has no name a run can carry"))?;
             let policy = self.policy.clone().with_enabled(self.enablement.enabled());
-            let agent = self.agent.on(model);
+            let agent = self.agent.on(model, effort);
             let host = Launcher::new(
                 Arc::clone(&self.service),
                 self.runtime.clone(),
