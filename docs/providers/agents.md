@@ -26,7 +26,8 @@ new session in the same permission mode, with nothing carried over; its line
 says so, and the session it left stays listed and can be resumed. Where that
 provider cannot be set up, its line says why and the conversation stays on the
 agent; where the new session cannot be started, or another agent reaches the
-provider, the credential is only stored. `/logout` for the
+provider, the credential is only stored. *Use it* on a row already holding its
+credential does the same with the one stored. `/logout` for the
 provider the agent reaches removes the stored credential and says the agent
 still reaches it.
 
