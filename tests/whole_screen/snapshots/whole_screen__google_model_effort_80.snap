@@ -3,7 +3,7 @@ source: tests/whole_screen/main.rs
 expression: models
 ---
 80x24 cursor 3,16 scrolled 0
-|Model                                                     now  nothing asked yet|
+|Model                                    now  google · gemini-3.8-flash · medium|
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ Search  gemini                                                               │|
@@ -12,7 +12,7 @@ expression: models
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
 |│  Providers          │  Models                                        4 of 42 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│ › All             4 │ › gemini-3.8-flash         Google        1.0M  fast    │|
+|│ › All             4 │ › gemini-3.8-flash         Google        1.0M  ← now   │|
 |│   Anthropic       · │   gemini-3.7-flash         Google        1.0M  fast    │|
 |│   DeepSeek        · │   gemini-3.6-flash         Google        1.0M  fast    │|
 |│   Google          4 │   gemini-3.1-pro-preview   Google        1.0M  fast    │|

@@ -83,7 +83,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"logged-in\", 80, 24, &vendor)"
       ],
-      "sha256": "30c3d8d09ed3311c27dd957cf3499c16f003e66b7f6a73a918496d75e964c0a6"
+      "sha256": "7ca1ff2b6f8ae6646d4c9e4d5ecf1029b0e4f043fce24a5ffffe0ba1d2fa7dc7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_key_that_cannot_be_written_down_is_said_without_a_path.snap",
@@ -1161,7 +1161,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "f7145434c227737c850fee44cbfd694a8dd6c325c42010d604d82c4ddc5bd11e"
+      "sha256": "24580b5e6ff0a801d984c982a52289d7afe125c8237d9c492204553d26186550"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_model_effort_80.snap",
@@ -1169,7 +1169,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "9974e302502387668331c8f09a8b529be20104fccbbe8a5b8f26d7af00513094"
+      "sha256": "9b4c71c48dd8db4d376a39130e52fd0827380e583dcdb41ad612fedaa2004924"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",
@@ -1898,7 +1898,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"effort-ladder\", 80, 24, &vendor)"
       ],
-      "sha256": "f98bc4d201a78026a35aabbe251e672a85172ba41d365bf46e0f1d69aa1075c9"
+      "sha256": "686b70f5915dc345165aa9beb83c8656518a99bb09a614d6c6bba78480646348"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_key_box_stands_empty_under_the_provider_it_is_for.snap",
@@ -1931,7 +1931,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"login-walked\", 80, 24, &vendor)"
       ],
-      "sha256": "afd7541047f2f9e7c151d06a70753b6664c60da2e3d36600067ad71df8e6d8a4"
+      "sha256": "4c22b46e944beb279fe9f9e94c342b8799c265001bc9ad783345d717140b6bc1"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_resume_picker_opens_on_this_directory.snap",

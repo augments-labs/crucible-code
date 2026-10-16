@@ -1041,10 +1041,11 @@ fn a_credential_given_to_a_session_asking_nobody_is_who_it_asks_next() -> Result
     assert_eq!(conversation.settled().serving(), "anthropic");
     assert_eq!(
         conversation.settled().model(),
-        "",
-        "a name left over from before belongs to no vendor"
+        "claude-opus-5-5",
+        "a name left over from before is retired for the provider's default"
     );
     assert_eq!(written(&tree)?.provider(), Some("anthropic"));
+    assert_eq!(written(&tree)?.model("anthropic"), Some("claude-opus-5-5"));
     Ok(())
 }
 
