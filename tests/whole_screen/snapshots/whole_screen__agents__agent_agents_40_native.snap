@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/agents.rs
+assertion_line: 65
 expression: picture
 ---
 40x40 cursor 23,0 scrollback 0
@@ -11,8 +12,8 @@ expression: picture
 |                                        |
 |Log in                                  |
 |                                        |
-|Which agent should anthropic be reached |
-|through?                                |
+|Which installed agent should Crucible   |
+|use?                                    |
 |                                        |
 |Crucible looks for the agent's program; |
 |nothing is started or written yet.      |
@@ -21,7 +22,7 @@ expression: picture
 |  Reach anthropic through Claude Code.  |
 |                                        |
 |  Antigravity                           |
-|  Reach anthropic through Antigravity.  |
+|  Reach google through Antigravity.     |
 |                                        |
 |  Cancel                                |
 |  Change nothing.                       |

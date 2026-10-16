@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/agents.rs
+assertion_line: 65
 expression: picture
 ---
 80x40 cursor 39,0 scrolled 0
@@ -31,7 +32,7 @@ expression: picture
 |Choose what to do with this agent.                                              |
 |                                                                                |
 |› Connect                                                                       |
-|  Reach the provider being asked through this agent                             |
+|  Reach its own provider through it, and move this conversation onto it         |
 |                                                                                |
 |  Disconnect from Crucible                                                      |
 |  Crucible sends it no new work; its sign-in is kept                            |

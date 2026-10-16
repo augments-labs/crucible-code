@@ -102,12 +102,10 @@ pub enum Command {
         /// The instance, by the name the configuration gives it.
         instance: Name,
     },
-    /// Reach a provider through an installed agent's instance from now on,
-    /// once the agent reads signed in and the client confirms the route.
+    /// Reach the provider an installed agent's instance signs in to through
+    /// it from now on, and ask that provider, once the agent reads signed in.
     /// Asked for as [`Command::Disconnect`] is.
     Connect {
-        /// The provider to reach, by the name `/login` gives it.
-        provider: Name,
         /// The instance, by the name the configuration gives it. A client
         /// that names none is asked which agent, and which of its instances
         /// where several are configured; one with none configured is given
@@ -260,9 +258,9 @@ impl Command {
             Self::Disconnect { instance }
             | Self::RemoveIntegration { instance }
             | Self::SignOut { instance } => object.with("instance", instance.as_str()),
-            Self::Connect { provider, instance } => object
-                .with("provider", provider.as_str())
-                .maybe("instance", instance.as_ref().map(Name::as_str)),
+            Self::Connect { instance } => {
+                object.maybe("instance", instance.as_ref().map(Name::as_str))
+            }
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
             Self::Setting { name, value } => object
@@ -329,7 +327,6 @@ impl Command {
                 instance: fields.name("instance")?,
             },
             "connect" => Self::Connect {
-                provider: fields.name("provider")?,
                 instance: fields
                     .maybe("instance")
                     .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))

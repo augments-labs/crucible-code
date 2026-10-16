@@ -10,12 +10,13 @@
 
 use crucible_client_api::{LoginOutcome, LogoutOutcome, Name, Outcome, Stop, Text, TurnOutcome};
 
-use crate::client::accounts::{CONNECT, DISCONNECT, DISCONNECTED, USE_ACCOUNT, moved_onto};
+use crate::client::accounts::{DISCONNECT, DISCONNECTED, moved_onto};
 
 /// The instance the chain connects, disconnects, and runs on between.
 pub const INSTANCE: &str = "work";
 
-/// The provider the chain connects through [`INSTANCE`].
+/// The provider the chain connects through [`INSTANCE`], the one its agent
+/// signs in to.
 pub const PROVIDER: &str = "anthropic";
 
 /// The agent the last connect asks for, whose program is not installed.
@@ -74,7 +75,7 @@ pub struct Expected {
 pub static ACCOUNTS: [Expected; 5] = [
     Expected {
         step: Step::Connect,
-        put: &[Put::Choose(USE_ACCOUNT), Put::Choose(CONNECT)],
+        put: &[],
         told: connected,
     },
     Expected {

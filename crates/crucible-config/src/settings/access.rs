@@ -147,6 +147,17 @@ impl Driver {
         }
     }
 
+    /// The one provider it reaches, by the name `providers` gives it: the
+    /// agent signs in to its own vendor and asks only that vendor, so no
+    /// other provider is reached through it.
+    #[must_use]
+    pub const fn provider(self) -> &'static str {
+        match self {
+            Self::Claude => "anthropic",
+            Self::Antigravity => "google",
+        }
+    }
+
     fn of(written: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|one| one.name() == written)
     }

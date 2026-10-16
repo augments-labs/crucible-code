@@ -1230,7 +1230,7 @@ from which vendor: somebody paying for a ChatGPT plan and somebody holding an
 OpenAI console key are two people, and only one of them has a key to type. So
 the first panel has two rows, whatever is stored: *Your account with
 subscription* and *Provide your own API key*, and a third, *Use an installed
-coding agent*, where an installed agent can reach the provider being asked. The accounts connect: ChatGPT
+coding agent*, whenever this release ships one. The accounts connect: ChatGPT
 opens a browser authorization, or a device code from a terminal with no browser
 to reach, and Kimi Code a device code on the site your account belongs to;
 either writes a renewable credential to the same protected store a key goes to.

@@ -220,7 +220,8 @@ impl From<AccessError> for AppError {
             | AccessError::NotSignedIn { .. }
             | AccessError::NoKey { .. }
             | AccessError::AgentConflict { .. }
-            | AccessError::UnknownInstance { .. }) => Self::Access(other),
+            | AccessError::UnknownInstance { .. }
+            | AccessError::ForeignAgent { .. }) => Self::Access(other),
         }
     }
 }

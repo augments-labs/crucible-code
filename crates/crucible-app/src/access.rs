@@ -2,7 +2,9 @@
 //! is answered through.
 //!
 //! A provider is reached by a subscription `/login` signed in, by an API key,
-//! or through an installed agent. `providers.<name>.access` may say which, and
+//! or through an installed agent, which reaches only the provider its driver
+//! names, since it signs in to that vendor and asks no other.
+//! `providers.<name>.access` may say which, and
 //! then nothing falls back from it: a key exported in the shell does not
 //! answer for a provider whose access says subscription, and an account held
 //! in the store does not answer for one whose access says apiKey. Left off, the
@@ -197,6 +199,21 @@ pub enum AccessError {
         /// The name it gave.
         instance: Box<str>,
     },
+
+    /// An agent access through an instance of an agent that signs in to
+    /// another vendor and asks only it.
+    #[error(
+        "providers.{provider}.access names the instance {instance}, whose agent reaches only \
+         {serves}; remove providers.{provider}.access, or write it under providers.{serves}"
+    )]
+    ForeignAgent {
+        /// The provider.
+        provider: Box<str>,
+        /// The name it gave.
+        instance: Box<str>,
+        /// The one provider that instance's agent reaches.
+        serves: &'static str,
+    },
 }
 
 /// The variable `one`'s key is read from: the one the configuration names, or
@@ -373,6 +390,14 @@ fn settled(
                     provider: provider.into(),
                     instance: instance.clone(),
                 })?;
+            let serves = agent.driver().provider();
+            if serves != provider {
+                return Err(AccessError::ForeignAgent {
+                    provider: provider.into(),
+                    instance,
+                    serves,
+                });
+            }
             Ok(routed(Route::External {
                 provider,
                 instance,

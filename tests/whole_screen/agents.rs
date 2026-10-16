@@ -72,7 +72,7 @@ fn first(window: &mut Watched) {
     window.types_until("/login\r", "Use an installed coding agent");
 }
 
-/// The list of agents the provider can be reached through.
+/// The list of installed agents, each reaching its own provider.
 fn agents(window: &mut Watched) {
     first(window);
     takes(window, "Use an installed coding agent");
@@ -94,18 +94,10 @@ fn checked(window: &mut Watched, wanted: &str) {
     window.types_until("", wanted);
 }
 
-/// The route asked about, once the account it is signed in with is taken.
-fn routed(window: &mut Watched) {
-    checked(window, "Use this account");
-    takes(window, "Use this account");
-    window.types_until("", "Connect");
-}
-
-/// The transcript once the route is written and the conversation is on it.
+/// The transcript once the signed-in agent is let start, its route written
+/// and the conversation on it, nothing more asked.
 fn connected(window: &mut Watched) {
-    routed(window);
-    takes(window, "Connect");
-    window.types_until("", "Connected.");
+    checked(window, "Connected.");
 }
 
 /// The box a key for the provider on `row` is typed into, at any width.
@@ -138,7 +130,7 @@ fn the_first_login_panel_offers_an_installed_agent() {
 }
 
 #[test]
-fn the_agents_a_provider_can_be_reached_through_are_listed() {
+fn the_installed_agents_are_listed_each_with_its_own_provider() {
     captured(
         &Capture {
             name: "agents",
@@ -215,18 +207,6 @@ fn the_question_before_an_agent_first_starts_says_what_it_runs() {
             configured: "",
         },
         held,
-    );
-}
-
-#[test]
-fn a_signed_in_agent_offers_its_account() {
-    captured(
-        &Capture {
-            name: "signed-in",
-            replies: Some(signed_in([])),
-            configured: "",
-        },
-        |window| checked(window, "Use this account"),
     );
 }
 
@@ -388,6 +368,26 @@ fn leaving_an_agent_chooser_with_nothing_taken_sends_nothing() {
     }
 }
 
+/// Fails where `/login`, with the provider chosen holding no credential and
+/// so none being asked, does not offer an installed agent, which reaches a
+/// provider of its own.
+#[test]
+fn login_with_no_provider_asked_still_offers_an_installed_agent() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-unasked-{mode}");
+        let chosen = "  \"provider\": \"openai\",\n";
+        let mut window =
+            Watched::capturing_agents_asking(&case, (80, 40), native, None, (None, chosen));
+        window.types_until("/login\r", "Provide your own API key");
+        let picture = window.picture();
+        assert!(
+            picture.contains("Use an installed coding agent"),
+            "{picture}"
+        );
+    }
+}
+
 /// Fails where `/login` with no agent's program installed stops offering an
 /// account or a key.
 #[test]
@@ -404,18 +404,6 @@ fn login_with_no_agent_installed_still_offers_an_account_and_a_key() {
             "{picture}"
         );
     }
-}
-
-#[test]
-fn the_route_is_confirmed_before_anything_is_written() {
-    captured(
-        &Capture {
-            name: "route",
-            replies: Some(signed_in([])),
-            configured: "",
-        },
-        routed,
-    );
 }
 
 #[test]

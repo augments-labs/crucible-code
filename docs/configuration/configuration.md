@@ -141,7 +141,7 @@ back from it:
 | --- | --- |
 | `subscription` | The account `/login` signed in. A key exported in the shell is not read. |
 | `apiKey` | The key in the provider's variable, then the one `/login` stored. A signed-in account is not used. |
-| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents). |
+| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents), whose driver must reach this provider. |
 
 What the chosen way is missing stops the start with a sentence naming the
 setting, and never suggests the other way: `subscription` with no account says
@@ -216,7 +216,7 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 
 | Key | Means |
 | --- | --- |
-| `driver` | Which agent it is: `claude` or `antigravity`. Required. |
+| `driver` | Which agent it is: `claude`, which reaches `anthropic`, or `antigravity`, which reaches `google`. Required. |
 | `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |

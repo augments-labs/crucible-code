@@ -444,13 +444,9 @@ fn commands() -> Vec<Command> {
             instance: name("work"),
         },
         Command::Connect {
-            provider: name("acme"),
             instance: Some(name("work")),
         },
-        Command::Connect {
-            provider: name("acme"),
-            instance: None,
-        },
+        Command::Connect { instance: None },
         Command::InspectCache,
         Command::CleanCache,
         Command::Sandbox { enabled: true },
@@ -1203,10 +1199,8 @@ const fn command_arm(one: &Command) -> (usize, usize) {
         Command::Disconnect { .. } => (28, 36),
         Command::RemoveIntegration { .. } => (29, 36),
         Command::SignOut { .. } => (30, 36),
-        Command::Connect {
-            instance: Some(_), ..
-        } => (31, 36),
-        Command::Connect { instance: None, .. } => (32, 36),
+        Command::Connect { instance: Some(_) } => (31, 36),
+        Command::Connect { instance: None } => (32, 36),
         Command::ListAgentModels => (33, 36),
         Command::SelectAgentModel { model: Some(_) } => (34, 36),
         Command::SelectAgentModel { model: None } => (35, 36),
@@ -2536,7 +2530,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 14_782_023_399_011_209_953),
+        (4, 1_971_099_936_443_508_167),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

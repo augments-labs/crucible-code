@@ -585,9 +585,16 @@ fn a_chosen_provider_with_nothing_found_is_told_only_the_way_its_access_chose() 
             "subscription",
         ),
         (
+            "anthropic",
+            r#"{"access": {"type": "externalAgent", "instance": "mine"}}"#,
+            "runs the conversation in place of anthropic's models",
+            "remove `providers.anthropic.access`",
+            "ANTHROPIC_API_KEY",
+        ),
+        (
             "openai",
             r#"{"access": {"type": "externalAgent", "instance": "mine"}}"#,
-            "runs the conversation in place of openai's models",
+            "whose agent reaches only anthropic",
             "remove `providers.openai.access`",
             "OPENAI_API_KEY",
         ),
