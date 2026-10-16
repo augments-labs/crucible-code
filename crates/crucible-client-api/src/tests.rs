@@ -798,6 +798,14 @@ fn outcomes() -> Vec<Outcome> {
             retained: retained(),
             unwritten: Some(problem()),
         }),
+        Outcome::Model(ModelOutcome::MovedOnto {
+            onto: Text::cut("work"),
+            unwritten: None,
+        }),
+        Outcome::Model(ModelOutcome::MovedOnto {
+            onto: Text::cut("work"),
+            unwritten: Some(problem()),
+        }),
         Outcome::Effort(EffortOutcome::Unasked),
         Outcome::Effort(EffortOutcome::Unsupported),
         Outcome::Effort(EffortOutcome::Taken {
@@ -1261,21 +1269,27 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             ResumeOutcome::Failed(_) => (5, 6),
         },
         Outcome::Model(model) => match model {
-            ModelOutcome::Unsupported => (0, 7),
-            ModelOutcome::Unreachable(_) => (1, 7),
-            ModelOutcome::CacheHeld(_) => (2, 7),
+            ModelOutcome::Unsupported => (0, 9),
+            ModelOutcome::Unreachable(_) => (1, 9),
+            ModelOutcome::CacheHeld(_) => (2, 9),
             ModelOutcome::Taken {
                 unwritten: Some(_), ..
-            } => (3, 7),
+            } => (3, 9),
             ModelOutcome::Taken {
                 unwritten: None, ..
-            } => (4, 7),
+            } => (4, 9),
             ModelOutcome::MovedOff {
                 unwritten: Some(_), ..
-            } => (5, 7),
+            } => (5, 9),
             ModelOutcome::MovedOff {
                 unwritten: None, ..
-            } => (6, 7),
+            } => (6, 9),
+            ModelOutcome::MovedOnto {
+                unwritten: Some(_), ..
+            } => (7, 9),
+            ModelOutcome::MovedOnto {
+                unwritten: None, ..
+            } => (8, 9),
         },
         Outcome::Effort(effort) => match effort {
             EffortOutcome::Unasked => (0, 4),
@@ -2501,7 +2515,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 8_422_716_116_316_905_680),
+        (4, 13_428_585_615_253_225_727),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

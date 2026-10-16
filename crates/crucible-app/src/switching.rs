@@ -21,6 +21,11 @@
 //! stored. One forgotten there leaves the route, its session and its run.
 //! A model taken there of a provider the agent does not reach moves it the
 //! same way, onto that model, where a credential reaches the provider.
+//! A model taken of a provider this run's settings route through an installed
+//! agent the conversation is not on moves it onto that agent instead, in a
+//! new session, the agent to be started on that model; it is refused before
+//! anything moves where the agent chooses its own model, is disconnected, or
+//! the model does not serve the rung asked.
 //!
 //! What an answer deliberately carries beside the outcome: what a cache
 //! retirement could not remove, and what could not be written down. Neither
@@ -125,6 +130,16 @@ pub enum Switched {
         provider: &'static str,
         /// What retiring the old identity's cache left behind.
         retained: Retained,
+        /// Why the choice will not outlive this run, where it will not.
+        unwritten: Option<RememberError>,
+    },
+    /// The provider is reached through an installed agent the conversation
+    /// was not on, and it moved onto that agent, to be started on the model,
+    /// in a new session; the session it left stays on the disk where a resume
+    /// can find it.
+    MovedOnto {
+        /// The configured instance of the agent moved onto.
+        instance: Box<str>,
         /// Why the choice will not outlive this run, where it will not.
         unwritten: Option<RememberError>,
     },
@@ -327,10 +342,16 @@ fn first_asked(named: Served, with: &Switching<'_>) -> (String, Option<Effort>, 
 
 /// Whether this run's settings reach `named` through any installed agent.
 fn agented(settings: &Settings, named: Served) -> bool {
-    matches!(
-        settings.access(named.name),
-        Some(crucible_config::Access::ExternalAgent { .. })
-    )
+    through(settings, named).is_some()
+}
+
+/// The installed agent this run's settings reach `named` through, where they
+/// name one.
+fn through(settings: &Settings, named: Served) -> Option<Box<str>> {
+    match settings.access(named.name) {
+        Some(crucible_config::Access::ExternalAgent { instance }) => Some(instance),
+        _ => None,
+    }
 }
 
 /// Whether `named` is reached through the installed agent `instance`.
@@ -438,9 +459,11 @@ impl Conversation {
     /// find it.
     ///
     /// The rung carried onto `name` is `rung`, else the one the agent was
-    /// started at, where `name` serves it. Only a provider this run's settings
-    /// reach through no installed agent moves, for the reason
-    /// [`Conversation::logged_in_moving`] gives.
+    /// started at, where `name` serves it. Where this run's settings reach
+    /// `selected` through an installed agent, and the conversation is on no
+    /// agent that reaches `selected`, it moves onto that agent instead, in a
+    /// new session, to be started on `name`: `selected` has no model to ask
+    /// but through it.
     pub async fn ask_for_moving(
         &mut self,
         selected: Served,
@@ -451,7 +474,17 @@ impl Conversation {
         let reached = self
             .agent_driver()
             .is_some_and(|driver| driver.provider() == selected.name);
-        if self.instance().is_none() || reached || agented(with.settings, selected) {
+        if !reached && let Some(instance) = through(with.settings, selected) {
+            return self
+                .onto_the_agent(
+                    (selected, instance),
+                    (name, rung),
+                    with,
+                    (sessions, workspace),
+                )
+                .await;
+        }
+        if self.instance().is_none() || reached {
             return self.ask_for(selected, name, rung, with).await;
         }
         // Before anything is retired or started, so that a refusal leaves the
@@ -480,6 +513,83 @@ impl Conversation {
                 Switched::Unreachable(problem)
             }
             Err(Unmoved::CacheHeld(problem)) => Switched::CacheHeld(problem),
+        }
+    }
+
+    /// Moves the conversation onto the installed agent `instance`, which this
+    /// run's settings reach `selected` through, in a new session started
+    /// under `sessions`, to be started on `name` from its first turn; and
+    /// writes the model and its rung into the agent's entry. The session left
+    /// stays on the disk where a resume can find it.
+    ///
+    /// The rung is `rung`, else the one in force where `name` serves it, else
+    /// `name`'s default, as [`Self::ask_agent_for`] takes it. Refused before
+    /// anything moves where the access is no route to `selected`, the agent
+    /// chooses its own model or is disconnected, `name` is not a model its
+    /// program can be started on, or `name` does not serve `rung`. Nothing is sent to the agent here: its first run waits for the
+    /// first turn, and for the yes its launch is held to.
+    async fn onto_the_agent(
+        &mut self,
+        (selected, instance): (Served, Box<str>),
+        (name, rung): (&str, Option<Effort>),
+        with: &Switching<'_>,
+        (sessions, workspace): (&Path, &Workspace),
+    ) -> Switched {
+        let provider = selected.name;
+        let entry = match crate::access::agent(provider, instance, with.settings) {
+            Ok(entry) => entry,
+            Err(refused) => return Switched::Unreachable(AppError::Access(refused)),
+        };
+        let unstartable = |reason: String| {
+            Switched::Unreachable(AppError::Unstartable {
+                instance: entry.name().into(),
+                reason: reason.into(),
+            })
+        };
+        if !entry.driver().takes_model() {
+            return Switched::Unreachable(AppError::ExternalAgent {
+                provider: provider.into(),
+                instance: entry.name().into(),
+            });
+        }
+        if !crucible_config::agent_model(name) {
+            return Switched::Unreachable(AppError::AgentModel {
+                instance: entry.name().into(),
+                model: name.into(),
+            });
+        }
+        if !entry.enabled() {
+            return unstartable(crate::launching::disconnected(entry.name(), provider));
+        }
+        // Held to the known ladder, for the reason `ask_agent_for` holds a
+        // rung to it.
+        let served = rungs(with.providers, provider, name);
+        if let Some(rung) = rung
+            && !served.contains(&rung)
+        {
+            return Switched::Unsupported(rung);
+        }
+        let effort = rung
+            .or_else(|| self.settled().effort().filter(|one| served.contains(one)))
+            .or_else(|| default_rung(&served));
+
+        let branch = crate::branching::current(workspace.root());
+        let left = match self
+            .onto(sessions, workspace, branch.as_deref(), &entry)
+            .await
+        {
+            Ok(left) => left,
+            Err(reason) => return unstartable(reason),
+        };
+        // Nothing holds the session left after this; its log stays on the
+        // disk where a resume can find it, and its own trouble is found again
+        // when it is resumed.
+        let _unclosed = left.finish();
+        self.choose_agent_model(name, effort);
+
+        Switched::MovedOnto {
+            instance: entry.name().into(),
+            unwritten: remember::choosing_agent(with.choosing, entry.name(), name, effort).err(),
         }
     }
 
@@ -518,7 +628,9 @@ impl Conversation {
     ///
     /// Only an agent that is started with a model, and only on a model of the
     /// one provider it reaches: any other is a provider this route cannot
-    /// reach, which [`Conversation::ask_for_moving`] moves off the route for.
+    /// reach, which [`Conversation::ask_for_moving`] moves off the route for,
+    /// or onto the agent this run reaches it through. A name the agent's
+    /// program could not be started on is refused before anything is taken.
     fn ask_agent_for(
         &mut self,
         provider: &str,
@@ -534,6 +646,12 @@ impl Conversation {
                 driver: self.settled().serving(),
             });
         };
+        if !crucible_config::agent_model(name) {
+            return Switched::Unreachable(AppError::AgentModel {
+                instance,
+                model: name.into(),
+            });
+        }
         // Held to the known ladder whatever the vendor, as `serves` is not:
         // the agent is started with the rung, and one its model refuses
         // would refuse every run started from the entry it is written into.

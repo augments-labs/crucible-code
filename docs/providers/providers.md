@@ -390,8 +390,11 @@ default this program is never told the name of. Remove the key from the file
 for that. On an installed agent's route, a model of the provider the agent
 reaches, and the rung taken with it, start the agent's next run and are
 written into its entry; a model of another provider with a credential in hand
-moves the conversation off the agent onto it, in a new session. For an agent
-that chooses its own model, `/model` and `/effort` say so instead.
+moves the conversation off the agent onto it, in a new session. A model of a
+provider whose `access` names an installed agent the conversation is not on
+moves it onto that agent, in a new session, as [installed
+agents](agents.md) describes. For an agent that chooses its own model,
+`/model` and `/effort` say so instead.
 
 Where a vendor serves a model faster for a higher price, `/fast` asks for it,
 after saying what it costs. [Fast](fast.md) lists which models have a fast form,
