@@ -26,11 +26,10 @@
 //! renamed, to say so.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crucible_auth::{Held, Kind};
-use crucible_config::{Access, Driver, ExternalAgent, Settings};
+use crucible_config::{Access, Driver, ExternalAgent, Routes, Settings};
 use crucible_credentials::{ApiKey, CredentialError};
 use crucible_models::Effort;
 
@@ -439,19 +438,21 @@ pub(crate) fn agent(
     Ok(agent)
 }
 
-/// How a login during this run rewrote providers' access, read in place of
-/// what the files read at launch say, which are not read again.
+/// What account writes during this run left the installed agents and
+/// providers' access as, read in place of what the files read at launch say,
+/// which are not read again.
 ///
-/// A login for the provider an installed agent reaches writes that provider
-/// down as reached by its own credential and moves the conversation onto it
-/// at once; everything that resolves a provider during the run — setting it
-/// up, its web sources, what the content-use hold reads and what a front end
-/// says of it — reads it through one of these, so none can still take it for
-/// the agent's. A connect writing a route for it again ends the rewrite.
-/// Shared by clone, and holds at most one entry per provider the registry
-/// serves.
+/// A login, a connect, a disconnect, a sign-out, a model or rung written for
+/// an agent, an instance installed or removed: each writes the user file and
+/// hands back both blocks as the file then states them, held here whole.
+/// Everything that resolves a provider or an agent during the run — setting
+/// it up, its web sources, what the content-use hold reads, what a front end
+/// says of it, and every account command after the write — reads them
+/// through one of these, so none can still take a provider as reached the way
+/// the launch read it, or miss an instance a connect installed. Shared by
+/// clone, and holds one copy of the two blocks, the last write's.
 #[derive(Clone, Default)]
-pub struct Rewritten(Arc<Mutex<BTreeMap<Box<str>, Access>>>);
+pub struct Rewritten(Arc<Mutex<Option<Routes>>>);
 
 impl std::fmt::Debug for Rewritten {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -460,38 +461,29 @@ impl std::fmt::Debug for Rewritten {
 }
 
 impl Rewritten {
-    /// None rewritten: a run's at launch.
+    /// Nothing written yet: a run's at launch.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Reads `provider` as reached by `access` from now on.
-    pub(crate) fn rewrite(&self, provider: &str, access: Access) {
-        self.held().insert(provider.into(), access);
+    /// Reads the installed agents and every provider's access as `routes`
+    /// states them from now on.
+    pub(crate) fn record(&self, routes: Routes) {
+        *self.held() = Some(routes);
     }
 
-    /// Reads `provider` as the files read at launch say again: a connect has
-    /// written its route, which the conversation holds as it moves onto it.
-    pub(crate) fn forget(&self, provider: &str) {
-        self.held().remove(provider);
-    }
-
-    /// `settings` with every access rewritten so far in place of its own.
+    /// `settings` with the installed agents and every provider's access as
+    /// the last write during the run left them, in place of their own.
     #[must_use]
     pub fn over<'s>(&self, settings: &'s Settings) -> Cow<'s, Settings> {
-        let held = self.held();
-        if held.is_empty() {
-            return Cow::Borrowed(settings);
+        match &*self.held() {
+            Some(routes) => Cow::Owned(settings.routed(routes)),
+            None => Cow::Borrowed(settings),
         }
-        let mut read = settings.clone();
-        for (provider, access) in held.iter() {
-            read = read.reaching(provider, access);
-        }
-        Cow::Owned(read)
     }
 
-    fn held(&self) -> std::sync::MutexGuard<'_, BTreeMap<Box<str>, Access>> {
+    fn held(&self) -> std::sync::MutexGuard<'_, Option<Routes>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }

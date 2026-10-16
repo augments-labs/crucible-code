@@ -1371,8 +1371,9 @@ pub type SharedLookup = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + S
 /// Everything is owned rather than borrowed, because the closure is kept for
 /// the length of the run and a borrow would put its lifetime into every
 /// signature the closure is passed through. The settings are the files this
-/// run already read, under what `rewritten` says a login during the run
-/// rewrote: nothing in them grows with the transcript. `from` is the
+/// run already read, under the installed agents and access `rewritten` holds
+/// from the account writes during the run: nothing in them grows with the
+/// transcript. `from` is the
 /// environment lookup, handed in like every other source this crate reads, so
 /// that a caller with no environment to offer can say so.
 ///

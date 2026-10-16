@@ -117,11 +117,6 @@ pub struct Conversation {
     /// What the two web tools answer through: built for the provider and model
     /// being asked, and built again by each switch of either.
     pub(crate) web: crate::following::Following,
-    /// The provider a connect during this run moved the conversation off, onto
-    /// the installed agent named beside it: the route that connect wrote is
-    /// not in the files this run read at launch. Cleared by every other move
-    /// between routes.
-    pub(crate) moved_from: Option<(Box<str>, Box<str>)>,
     /// When the plan behind each credential was last asked how much of its
     /// limits is used, and which credentials are not to be asked again.
     pub(crate) asks: crate::client::asking::Asks,
@@ -154,7 +149,6 @@ impl Conversation {
             agents: &REGISTRY,
             steps: None,
             web: crate::following::Following::default(),
-            moved_from: None,
             asks: crate::client::asking::Asks::default(),
         }
     }
@@ -334,7 +328,6 @@ impl Conversation {
         mode: Mode,
     ) -> Arc<Session> {
         let named = session.external_ref().cloned();
-        self.moved_from = None;
         self.runner
             .pick_up(Arc::new(Session::nowhere()), Transcript::new());
         self.outside = Some(Box::new(Outside::new(installed, transcript, mode, named)));
@@ -350,7 +343,6 @@ impl Conversation {
         if let Some(mut outside) = self.outside.take() {
             outside.retire().await;
         }
-        self.moved_from = None;
         self.runner.switch(mode);
         self.pick_up(session, transcript).await
     }
@@ -395,19 +387,15 @@ impl Conversation {
     }
 
     /// The provider this conversation reaches: the one being asked, or, on an
-    /// agent's route, the one the route stands in for. That is the one a
-    /// connect during this run moved the conversation onto the instance for,
-    /// and otherwise the first `settings` reach through that instance.
+    /// agent's route, the one the route stands in for, the first `settings`
+    /// reach through that instance. A front end hands in the settings as the
+    /// run reads them now, with every route written during it.
     #[must_use]
     pub fn reached(&self, settings: &crucible_config::Settings) -> Option<Box<str>> {
         if let Some(serving) = self.serving() {
             return Some(serving.into());
         }
-        let instance = self.instance()?;
-        match &self.moved_from {
-            Some((provider, onto)) if **onto == *instance => Some(provider.clone()),
-            _ => settings.referencing(instance).map(Into::into),
-        }
+        settings.referencing(self.instance()?).map(Into::into)
     }
 
     /// The configured instance of the installed agent the conversation is on,

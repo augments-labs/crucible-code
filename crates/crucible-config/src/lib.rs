@@ -77,9 +77,9 @@ pub use remember::{
 };
 pub use settings::access::{MODEL_NAMED as AGENT_MODEL_NAMED, model_name as agent_model};
 pub use settings::{
-    Access, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, McpServer, SandboxSettings,
-    ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail, TranscriptColours,
-    Updates, When, local, user,
+    Access, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, McpServer, Routes,
+    SandboxSettings, ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail,
+    TranscriptColours, Updates, When, local, user,
 };
 pub use shape::THEME;
 pub use shape::rows::{Row, RowId, Values, row, rows};

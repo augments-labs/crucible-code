@@ -6,7 +6,9 @@
 //! sent, which only that file may hold.
 //!
 //! The crate below decides what a file may say and what one more answer leaves
-//! it looking like. This opens it, and puts the answer back.
+//! it looking like. This opens it, and puts the answer back. A writer that
+//! changes the installed agents or how a provider is reached hands back both
+//! as the file then states them, which the run reads for the rest of it.
 
 use std::fs::{self, File, TryLockError};
 use std::io::{self, Read as _, Write as _};
@@ -111,8 +113,8 @@ pub fn sandboxing(file: &Path, enabled: bool) -> Result<(), RememberError> {
 /// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
 /// [`RememberError::Unusable`] when what it already says is not configuration
 /// or names no such instance.
-pub fn disabling(file: &Path, instance: &str) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+pub fn disabling(file: &Path, instance: &str) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         crucible_config::disabling(text, named, instance)
     })
 }
@@ -131,8 +133,8 @@ pub fn choosing_agent(
     instance: &str,
     model: &str,
     effort: Option<Effort>,
-) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         crucible_config::choosing_agent_model(text, named, instance, Some(model))
             .and_then(|text| crucible_config::thinking_agent(&text, named, instance, effort))
     })
@@ -144,8 +146,12 @@ pub fn choosing_agent(
 /// # Errors
 ///
 /// As [`choosing_agent`].
-pub fn thinking_agent(file: &Path, instance: &str, effort: Effort) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+pub fn thinking_agent(
+    file: &Path,
+    instance: &str,
+    effort: Effort,
+) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         crucible_config::thinking_agent(text, named, instance, Some(effort))
     })
 }
@@ -158,8 +164,11 @@ pub fn thinking_agent(file: &Path, instance: &str, effort: Effort) -> Result<(),
 ///
 /// As [`disabling`], where any of them would be refused, and then none is
 /// written.
-pub fn disabling_every(file: &Path, instances: &[&str]) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+pub fn disabling_every(
+    file: &Path,
+    instances: &[&str],
+) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         instances
             .iter()
             .try_fold(text.to_owned(), |text, instance| {
@@ -178,8 +187,12 @@ pub fn disabling_every(file: &Path, instances: &[&str]) -> Result<(), RememberEr
 /// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
 /// [`RememberError::Unusable`] when what it already says is not configuration
 /// or names no such instance.
-pub fn connecting(file: &Path, provider: &str, instance: &str) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+pub fn connecting(
+    file: &Path,
+    provider: &str,
+    instance: &str,
+) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         crucible_config::connecting(text, named, provider, instance)
     })
 }
@@ -195,8 +208,8 @@ pub fn reaching(
     file: &Path,
     provider: &str,
     access: &crucible_config::Access,
-) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         crucible_config::reaching(text, named, provider, access)
     })
 }
@@ -212,8 +225,8 @@ pub fn reaching_defaulted(
     provider: &str,
     access: &crucible_config::Access,
     default: Option<(&str, Option<Effort>)>,
-) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         let reached = crucible_config::reaching(text, named, provider, access)?;
         match default {
             Some((model, effort)) => {
@@ -263,8 +276,8 @@ pub fn installing(
     file: &Path,
     provider: &str,
     agent: &crucible_config::ExternalAgent,
-) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         crucible_config::installing(text, named, provider, agent)
     })
 }
@@ -278,8 +291,8 @@ pub fn installing(
 /// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
 /// [`RememberError::Unusable`] when what it already says is not configuration,
 /// names no such instance, or still reaches a provider through it.
-pub fn removing(file: &Path, instance: &str) -> Result<(), RememberError> {
-    answering(file, |text, named| {
+pub fn removing(file: &Path, instance: &str) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
         crucible_config::removing(text, named, instance)
     })
 }
@@ -431,14 +444,38 @@ pub fn slowing(file: &Path, provider: &str) -> Result<(), RememberError> {
 /// Reads the file, hands what it holds to `splice`, and puts back what comes
 /// out.
 ///
-/// The five above differ in that one call and in nothing else — which file is
-/// opened, what a missing one means, and what a half-written one would cost are
-/// one answer for all of them, and three copies of it would be three places to
-/// fix the day the answer changes.
+/// Every writer above differs in that one call and in nothing else — which
+/// file is opened, what a missing one means, and what a half-written one
+/// would cost are one answer for all of them, and a copy of it per writer
+/// would be that many places to fix the day the answer changes.
 fn answering(
     file: &Path,
     splice: impl FnOnce(&str, &str) -> Result<String, ConfigError>,
 ) -> Result<(), RememberError> {
+    answered(file, |text, named| Ok((splice(text, named)?, ())))
+}
+
+/// [`answering`], handing back the installed agents and how each provider is
+/// reached as the file states them with the answer in it: what a writer that
+/// changes either gives the run, which reads them for the rest of it in place
+/// of what its launch read.
+fn routing(
+    file: &Path,
+    splice: impl FnOnce(&str, &str) -> Result<String, ConfigError>,
+) -> Result<crucible_config::Routes, RememberError> {
+    answered(file, |text, named| {
+        let written = splice(text, named)?;
+        let routes = crucible_config::Routes::of(&written, named)?;
+        Ok((written, routes))
+    })
+}
+
+/// [`answering`], with what `splice` gives beside the text handed back once
+/// the text is in place.
+fn answered<T>(
+    file: &Path,
+    splice: impl FnOnce(&str, &str) -> Result<(String, T), ConfigError>,
+) -> Result<T, RememberError> {
     // Named the way the user would name it, because that is what a refusal
     // from below tells them to open.
     let named = file.display().to_string();
@@ -468,16 +505,17 @@ fn answering(
 
     let text = text_of(file, &named)?;
 
-    let written = splice(&text, &named)?;
+    let (written, answer) = splice(&text, &named)?;
     // An answer already written, or a yes taken out of a file that holds
     // none, changes nothing, and a file nothing changed is not written: one
     // that was not there would otherwise be left empty, which is not
     // configuration.
     if written == text {
-        return Ok(());
+        return Ok(answer);
     }
 
-    put(file, &written).map_err(unwritable)
+    put(file, &written).map_err(unwritable)?;
+    Ok(answer)
 }
 
 /// What `file`, named `named`, holds: the empty text where nothing is there

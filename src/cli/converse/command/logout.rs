@@ -96,7 +96,7 @@ pub(super) fn run<T: Terminal>(
         .filter(|name| stored.held(name).is_some())
         .collect();
     let held = held(&providers, &names);
-    let agents = terms.settings.external_agents();
+    let agents = terms.reading().external_agents();
 
     // Before anything is drawn: a panel of nothing has no entry to take and no
     // reason to be stood up, and the rows underneath would be none as well.

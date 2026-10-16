@@ -12,10 +12,14 @@
 //! that met anything else would be reading a document that was never checked,
 //! and answers as if the key were absent.
 
+use std::collections::BTreeMap;
+
 use crucible_models::Effort;
 use serde_json::Value;
 
 use super::Settings;
+use crate::ConfigError;
+use crate::document::{Document, Origin};
 
 /// The spellings `access.type` accepts, in the order a reader is told them.
 pub(crate) const KINDS: &[&str] = &[
@@ -285,6 +289,47 @@ impl ExternalAgent {
     }
 }
 
+/// What the user file says of the installed agents and of how each provider
+/// is reached: the two blocks only that file may write, which an account
+/// write during the run changes in it.
+///
+/// Held whole, as the file states them once a write is done, so that a run
+/// reading them in place of what its launch read sees every instance
+/// installed, enabled, disabled, given a model or removed, and every route
+/// written or taken away, and not only the last change.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Routes {
+    /// The `externalAgents` block, where the file has one.
+    agents: Option<Value>,
+    /// Each provider's `access`, by provider.
+    access: BTreeMap<String, Value>,
+}
+
+impl Routes {
+    /// The two blocks as `text`, the user file `file`, states them.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError`] where `text` is not configuration the user file may
+    /// hold.
+    pub fn of(text: &str, file: &str) -> Result<Self, ConfigError> {
+        let checked = if text.trim().is_empty() { "{}" } else { text };
+        let document = Document::parse(checked, file, Origin::User)?;
+        let value = document.value();
+        let access = value
+            .get("providers")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter_map(|(provider, block)| Some((provider.clone(), block.get("access")?.clone())))
+            .collect();
+        Ok(Self {
+            agents: value.get("externalAgents").cloned(),
+            access,
+        })
+    }
+}
+
 impl Settings {
     /// How `provider` is reached, or `None` where its block does not say —
     /// which is every configuration written before the key existed.
@@ -301,21 +346,41 @@ impl Settings {
         }
     }
 
-    /// These settings, with `provider` reached as `access` states: what a
-    /// login during the run rewrote the user file to, read in place of what
-    /// the launch read, since the files are not read again.
+    /// These settings, with the installed agents and how each provider is
+    /// reached as `routes` states them: what the account writes during the
+    /// run left in the user file, read in place of what the launch read,
+    /// since the files are not read again. Both blocks are read only from
+    /// that file, so what it states of them is all there is.
     #[must_use]
-    pub fn reaching(&self, provider: &str, access: &Access) -> Self {
-        let mut reaching = self.clone();
-        let block = object(&mut reaching.value)
-            .map(|document| document.entry("providers").or_insert(Value::Null))
-            .and_then(object)
-            .map(|providers| providers.entry(provider).or_insert(Value::Null))
-            .and_then(object);
-        if let Some(block) = block {
-            block.insert("access".into(), access.written());
+    pub fn routed(&self, routes: &Routes) -> Self {
+        let mut settings = self.clone();
+        let Some(document) = object(&mut settings.value) else {
+            return settings;
+        };
+        match &routes.agents {
+            Some(agents) => {
+                document.insert("externalAgents".into(), agents.clone());
+            }
+            None => {
+                document.remove("externalAgents");
+            }
         }
-        reaching
+        if let Some(providers) = document.get_mut("providers").and_then(Value::as_object_mut) {
+            for block in providers.values_mut().filter_map(Value::as_object_mut) {
+                block.remove("access");
+            }
+        }
+        if !routes.access.is_empty()
+            && let Some(providers) = object(document.entry("providers").or_insert(Value::Null))
+        {
+            for (provider, access) in &routes.access {
+                let block = providers.entry(provider.as_str()).or_insert(Value::Null);
+                if let Some(block) = object(block) {
+                    block.insert("access".into(), access.clone());
+                }
+            }
+        }
+        settings
     }
 
     /// The first provider whose `access` reaches it through the agent
