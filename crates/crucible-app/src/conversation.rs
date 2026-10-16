@@ -407,6 +407,22 @@ impl Conversation {
         self.outside.as_deref().and_then(Outside::model)
     }
 
+    /// The models the installed agent the conversation is on offers, asked of
+    /// it now; `None` where it is on no agent's route.
+    pub(crate) async fn agent_models(&mut self) -> Option<outside::Listing> {
+        Some(self.outside.as_deref_mut()?.models().await)
+    }
+
+    /// Starts the installed agent the conversation is on with `model` from
+    /// the next turn, or on its own choice where that is `None`, where the
+    /// agent lists it; `None` where it is on no agent's route.
+    pub(crate) async fn choose_agent_model(
+        &mut self,
+        model: Option<&str>,
+    ) -> Option<Result<(), outside::Unchosen>> {
+        Some(self.outside.as_deref_mut()?.choose(model).await)
+    }
+
     /// Stops the conversation's work on the installed agent `instance`, where
     /// it is on that one: no turn launches it again, and the run held is
     /// closed. `None` where the conversation is not on it, and otherwise

@@ -115,8 +115,14 @@ impl Dialect for Antigravity {
         self.acp.cancel()
     }
 
-    fn account(&mut self, _step: Account, shape: Shape<'_>) -> Option<Request> {
-        Some(self.request(shape))
+    fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request> {
+        match step {
+            Account::Version | Account::Status | Account::SignIn | Account::SignOut => {
+                Some(self.request(shape))
+            }
+            // The models a session offers are not read as an account step.
+            Account::Models => None,
+        }
     }
 
     fn read(&self, step: Account, ran: &Ran) -> Reading {
@@ -134,9 +140,11 @@ impl Dialect for Antigravity {
                 Account::Status => Told::Done(Reading::Signed(Authentication::SignedOut)),
                 // Asking to be signed in says nothing of whether a sign-out
                 // took or what version is running.
-                Account::SignOut | Account::Version => Told::Done(Reading::Unreadable(
-                    Failure::new("The agent asked to be signed in instead of answering."),
-                )),
+                Account::SignOut | Account::Version | Account::Models => {
+                    Told::Done(Reading::Unreadable(Failure::new(
+                        "The agent asked to be signed in instead of answering.",
+                    )))
+                }
             }),
             Some(Err(failure)) => Err(failure),
             None => self.acp.told(step, frame),

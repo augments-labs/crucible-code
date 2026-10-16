@@ -117,6 +117,25 @@ pub fn disabling(file: &Path, instance: &str) -> Result<(), RememberError> {
     })
 }
 
+/// Writes down that the installed agent `instance` is started on `model`, or
+/// on its own choice where that is `None`, and changes nothing else in `file`.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration,
+/// names no such instance, or would not be with the model written.
+pub fn choosing_agent_model(
+    file: &Path,
+    instance: &str,
+    model: Option<&str>,
+) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::choosing_agent_model(text, named, instance, model)
+    })
+}
+
 /// Writes down that every installed agent in `instances` takes no new work and
 /// reaches no provider, in one update of `file`, and changes nothing else in
 /// it.

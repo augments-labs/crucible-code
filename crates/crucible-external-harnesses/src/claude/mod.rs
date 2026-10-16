@@ -54,7 +54,7 @@ use crucible_transport::FRAME_BYTES;
 use crucible_types::TurnId;
 use serde_json::json;
 
-use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape};
+use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
 use control::Questions;
 use wire::{Assistant, Ended as Result_, Frame, Init, Subtype};
 
@@ -397,6 +397,12 @@ impl Dialect for Claude {
     }
 
     fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request> {
+        if step == Account::Models {
+            return Some(Self::request(
+                account::STREAM.map(str::to_owned).to_vec(),
+                shape,
+            ));
+        }
         let arguments = account::arguments(step)?;
         Some(Self::request(
             arguments
@@ -409,6 +415,19 @@ impl Dialect for Claude {
 
     fn read(&self, step: Account, ran: &Ran) -> Reading {
         account::read(step, ran)
+    }
+
+    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
+        (step == Account::Models).then(|| vec![account::initialize()])
+    }
+
+    fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
+        match step {
+            Account::Models => account::told(frame),
+            Account::Version | Account::Status | Account::SignIn | Account::SignOut => {
+                Err(Failure::new("This agent speaks no such account step."))
+            }
+        }
     }
 }
 

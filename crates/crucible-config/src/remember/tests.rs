@@ -1164,3 +1164,70 @@ fn removing_an_agent_the_file_does_not_name_is_refused() {
         );
     }
 }
+
+#[test]
+fn choosing_an_agents_model_writes_its_model_and_nothing_else() {
+    let text = "{\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\"\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\", \"model\": \"haiku\"}\n  }\n}\n";
+    let written = choosing_agent_model(text, FILE, "work", Some("opus")).unwrap();
+    assert_eq!(
+        written,
+        text.replace(
+            "\"executable\": \"claude\"\n    },",
+            "\"executable\": \"claude\",\n      \"model\": \"opus\"\n    },"
+        )
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let mut models: Vec<(String, Option<String>)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.model().map(Into::into)))
+        .collect();
+    models.sort();
+    assert_eq!(
+        models,
+        [
+            ("home".to_owned(), Some("haiku".to_owned())),
+            ("work".to_owned(), Some("opus".to_owned()))
+        ]
+    );
+    // Written again, it is already so.
+    assert_eq!(
+        choosing_agent_model(&written, FILE, "work", Some("opus")).unwrap(),
+        written
+    );
+}
+
+#[test]
+fn choosing_an_agents_model_writes_over_the_one_named_or_takes_it_out() {
+    let text = r#"{"externalAgents": {"work": {"driver": "claude", "model": "haiku", "executable": "claude"}}}"#;
+    assert_eq!(
+        choosing_agent_model(text, FILE, "work", Some("claude-opus-5-5[1m]")).unwrap(),
+        text.replace("\"haiku\"", "\"claude-opus-5-5[1m]\"")
+    );
+    // Left to the agent, the entry names no model at all. The space after the
+    // comma is a neighbour's, and stays.
+    assert_eq!(
+        choosing_agent_model(text, FILE, "work", None).unwrap(),
+        r#"{"externalAgents": {"work": {"driver": "claude",  "executable": "claude"}}}"#
+    );
+    let unnamed = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#;
+    assert_eq!(
+        choosing_agent_model(unnamed, FILE, "work", None).unwrap(),
+        unnamed
+    );
+}
+
+#[test]
+fn an_agents_model_its_program_could_not_take_is_not_written() {
+    let text = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#;
+    // Read as an option by the program it is handed to.
+    assert!(
+        choosing_agent_model(text, FILE, "work", Some("--dangerously-skip-permissions")).is_err()
+    );
+    assert!(choosing_agent_model(text, FILE, "work", Some("a \"quoted\" name")).is_err());
+    // An entry the file does not hold is not made up.
+    assert!(matches!(
+        choosing_agent_model(text, FILE, "home", Some("opus")),
+        Err(ConfigError::Unspliceable { .. })
+    ));
+}

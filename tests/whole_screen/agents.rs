@@ -575,16 +575,17 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
     }
 }
 
-/// Fails where `/model` or `/effort` on an agent's route opens a shelf of the
-/// providers' models or a ladder of rungs, none of which the agent is asked
-/// for, rather than saying the agent chooses its own.
+/// Fails where `/model` on an agent's route opens a shelf of the providers'
+/// models rather than the models the agent lists, where one taken is not the
+/// one named while the next turn runs, or where `/effort` opens a ladder of
+/// rungs the agent is never asked for rather than saying it chooses.
 #[test]
-fn model_and_effort_on_an_agent_route_say_the_agent_chooses() {
+fn model_on_an_agent_route_lists_the_agent_s_and_effort_says_it_chooses() {
     for native in [false, true] {
         for columns in [80, 40] {
             let mode = if native { "native" } else { "fullscreen" };
             let case = format!("agent-model-{columns}-{mode}");
-            let script = Script::of(signed_in([claude::held_open()]));
+            let script = Script::of(signed_in([claude::models(), claude::held_open()]));
             let vendor = Vendor::answering("Not asked.");
             let mut window = Watched::capturing_agents(
                 &case,
@@ -597,43 +598,46 @@ fn model_and_effort_on_an_agent_route_say_the_agent_chooses() {
             let joined = |picture: &str| {
                 picture
                     .replace("|\n|", " ")
-                    // The full screen's scroll bar stands between a folded
-                    // line's halves.
-                    .replace('┃', " ")
+                    // The full screen's scroll bar, and its thumb, stand
+                    // between a folded line's halves.
+                    .replace(['┃', '●'], " ")
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ")
             };
             let said = |window: &Watched| joined(&window.picture());
-            let chooses = "runs on the agent claude, which chooses its own model";
+            let thinks = "runs on the agent claude, which chooses how hard it thinks";
 
-            let thinks = format!("{chooses} and how hard it thinks");
-
-            window.types("/model\r");
+            window.types_until("/model\r", "Haiku");
             let model = said(&window);
-            assert!(model.contains(chooses), "{case}: {model}");
+            assert!(model.contains("Model of claude"), "{case}: {model}");
+            assert!(model.contains("Opus"), "{case}: {model}");
             assert!(!model.contains("a model, or a vendor"), "{case}: {model}");
+            window.types_until("\x1b", "cancelled");
 
-            window.types("/model claude-test-1\r");
+            window.types("/model opus\r");
             let named = said(&window);
-            assert_eq!(named.matches(chooses).count(), 2, "{case}: {named}");
+            assert!(
+                named.contains("the agent claude starts on opus from the next message"),
+                "{case}: {named}"
+            );
 
             window.types("/effort\r");
             let effort = said(&window);
-            assert!(effort.contains(&thinks), "{case}: {effort}");
+            assert!(effort.contains(thinks), "{case}: {effort}");
             assert!(!effort.contains("Smarter"), "{case}: {effort}");
 
             window.types("/effort high\r");
             let rung = said(&window);
-            assert_eq!(rung.matches(&thinks).count(), 2, "{case}: {rung}");
+            assert_eq!(rung.matches(thinks).count(), 2, "{case}: {rung}");
 
-            // Mid-turn the shelf would be stood over the running turn, and its
-            // pick held for a next turn the agent would answer anyway.
+            // Mid-turn the listing would start the agent's program beside the
+            // running turn, so the model in use is named instead.
             window.types_and_catches_where("Keep working.\r", "a turn under way", |picture| {
                 picture.contains("esc to interrupt")
             });
             window.types_and_catches_where("/model\r", "said over the turn", |picture| {
-                joined(picture).matches(chooses).count() == 5
+                joined(picture).contains("started on the model opus; /model chooses another")
             });
             let running = said(&window);
             window.types_until("\x1b", "! stopped");

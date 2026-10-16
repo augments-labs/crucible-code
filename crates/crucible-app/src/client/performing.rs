@@ -5,11 +5,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crucible_client_api::{
-    CacheOutcome, CleanOutcome, ClearOutcome, Command, EffortOutcome, ErrorCode, Forced,
-    LoginOutcome, LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Problem,
-    Refusal, Request, Resource, Response, ResumeOutcome, SandboxOutcome, SettingOutcome,
-    SpeedOutcome, Standing, Theme, ThemeOutcome, Usage,
+    AgentModelOutcome, AgentModelsOutcome, CacheOutcome, CleanOutcome, ClearOutcome, Command,
+    EffortOutcome, ErrorCode, Forced, LoginOutcome, LogoutOutcome, ModelOutcome, Name,
+    NotesOutcome, Outcome, Palette, Problem, Refusal, Request, Resource, Response, ResumeOutcome,
+    SandboxOutcome, SettingOutcome, SpeedOutcome, Standing, Theme, ThemeOutcome, Usage,
 };
+use crucible_execution::Failure;
+use crucible_external_harnesses::Offered;
 use crucible_runner::{Breakdown, PromptCacheCleanup};
 use crucible_runtime::Cancel;
 use crucible_session::{Session, SessionError};
@@ -18,6 +20,7 @@ use crucible_types::{PromptCacheResourceError, PromptCacheResourceRecord, Sessio
 use crucible_workspace::Workspace;
 
 use super::{asking, reading};
+use crate::outside::{Listing, Unchosen};
 use crate::providers::{CredentialSource, Served, offered};
 use crate::remember::{self, RememberError};
 use crate::speed::Hastened;
@@ -97,6 +100,41 @@ pub enum Resumed {
     Failed(Unpicked),
 }
 
+/// What came of asking the installed agent a conversation is on for the
+/// models it offers.
+#[derive(Debug)]
+pub enum AgentModels {
+    /// The conversation is on no installed agent's route.
+    Unsupported,
+    /// Its dialect has no way to ask it.
+    Unoffered,
+    /// It could not be asked, or its answer could not be read.
+    Unreachable(Failure),
+    /// What it offers, in its order.
+    Listed {
+        /// The rows, as the agent gave them.
+        offered: Vec<Offered>,
+        /// The model the agent is started with from the next turn, where one
+        /// was chosen; `None` is its own choice.
+        current: Option<Box<str>>,
+    },
+}
+
+/// What came of choosing a model for the installed agent a conversation is
+/// on.
+#[derive(Debug)]
+pub enum AgentModel {
+    /// The conversation is on no installed agent's route.
+    Unsupported,
+    /// Not taken, and why.
+    Unchosen(Unchosen),
+    /// Started with from the next turn on.
+    Taken {
+        /// Why the choice will not outlive this process, where it will not.
+        unwritten: Option<RememberError>,
+    },
+}
+
 /// What came of `/settings` changing one row.
 #[derive(Debug)]
 pub enum Setting {
@@ -121,6 +159,10 @@ pub enum Performed {
     Resumed(Resumed),
     /// `/model`.
     Model(Switched),
+    /// `/model` on an installed agent's route: what it offers.
+    AgentModels(AgentModels),
+    /// `/model` on an installed agent's route: one of what it offers chosen.
+    AgentModel(AgentModel),
     /// `/effort`.
     Effort(Rung),
     /// `/fast`.
@@ -215,6 +257,10 @@ pub async fn perform(
             ),
             Err(refused) => Performed::Refused(refused),
         },
+        Command::ListAgentModels => Performed::AgentModels(agent_models(conversation).await),
+        Command::SelectAgentModel { model } => Performed::AgentModel(
+            agent_model(conversation, desk, model.as_ref().map(Name::as_str)).await,
+        ),
         Command::SetEffort(rung) => {
             Performed::Effort(conversation.think(reading::effort(*rung), &desk.switching))
         }
@@ -314,6 +360,8 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }
+        | Command::ListAgentModels
+        | Command::SelectAgentModel { .. }
         | Command::SetEffort(_)
         | Command::SetSpeed(_)
         | Command::SetMode(_)
@@ -443,6 +491,18 @@ impl Performed {
                 Resumed::Failed(problem) => ResumeOutcome::Failed(Problem::failed(problem)),
             }),
             Self::Model(switched) => Outcome::Model(model(switched)),
+            Self::AgentModels(listed) => Outcome::AgentModels(agent_models_out(listed)),
+            Self::AgentModel(chosen) => Outcome::AgentModel(match chosen {
+                AgentModel::Unsupported => AgentModelOutcome::Unsupported,
+                AgentModel::Unchosen(Unchosen::Unoffered) => AgentModelOutcome::Unoffered,
+                AgentModel::Unchosen(Unchosen::Unlisted) => AgentModelOutcome::Unlisted,
+                AgentModel::Unchosen(Unchosen::Unreachable(failure)) => {
+                    AgentModelOutcome::Unreachable(Problem::failed(failure))
+                }
+                AgentModel::Taken { unwritten } => AgentModelOutcome::Taken {
+                    unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+                },
+            }),
             Self::Effort(rung) => Outcome::Effort(match rung {
                 Rung::Unasked => EffortOutcome::Unasked,
                 Rung::Unsupported => EffortOutcome::Unsupported,
@@ -503,6 +563,69 @@ impl Performed {
             Self::Usage(usage) => Outcome::Usage(usage.as_ref().clone()),
             Self::Leaving => Outcome::Leaving,
         }
+    }
+}
+
+async fn agent_models(conversation: &mut Conversation) -> AgentModels {
+    let Some(listing) = conversation.agent_models().await else {
+        return AgentModels::Unsupported;
+    };
+    match listing {
+        Listing::Unoffered => AgentModels::Unoffered,
+        Listing::Unreachable(failure) => AgentModels::Unreachable(failure),
+        Listing::Listed(offered) => AgentModels::Listed {
+            offered,
+            current: conversation.agent_model().map(Into::into),
+        },
+    }
+}
+
+/// Chooses `model` for the agent the conversation is on, and writes it into
+/// the agent's entry so the next start is on it too.
+async fn agent_model(
+    conversation: &mut Conversation,
+    desk: &Desk<'_>,
+    model: Option<&str>,
+) -> AgentModel {
+    match conversation.choose_agent_model(model).await {
+        None => AgentModel::Unsupported,
+        Some(Err(unchosen)) => AgentModel::Unchosen(unchosen),
+        Some(Ok(())) => AgentModel::Taken {
+            unwritten: conversation.instance().and_then(|instance| {
+                remember::choosing_agent_model(desk.switching.choosing, instance, model).err()
+            }),
+        },
+    }
+}
+
+fn agent_models_out(listed: &AgentModels) -> AgentModelsOutcome {
+    match listed {
+        AgentModels::Unsupported => AgentModelsOutcome::Unsupported,
+        AgentModels::Unoffered => AgentModelsOutcome::Unoffered,
+        AgentModels::Unreachable(failure) => {
+            AgentModelsOutcome::Unreachable(Problem::failed(failure))
+        }
+        AgentModels::Listed { offered, current } => AgentModelsOutcome::Listed(
+            offered
+                .iter()
+                // A row whose value a client could not send back is no
+                // choice it has.
+                .filter_map(|row| {
+                    let model = match &row.model {
+                        None => None,
+                        Some(model) => Some(Name::new(model.as_str()).ok()?),
+                    };
+                    Some(crucible_client_api::AgentModel {
+                        current: model.as_ref().map(Name::as_str) == current.as_deref(),
+                        model,
+                        shown: crucible_client_api::Text::cut_again(
+                            row.shown.as_str(),
+                            row.shown.incomplete(),
+                        ),
+                    })
+                })
+                .collect(),
+        ),
     }
 }
 

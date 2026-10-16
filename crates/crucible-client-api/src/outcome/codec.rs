@@ -6,10 +6,10 @@
 use serde_json::Value;
 
 use super::{
-    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced, Group, LoginOutcome,
-    LogoutOutcome, ModelOutcome, NotesOutcome, Problem, Release, Resource, ResumeOutcome, Retained,
-    RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome,
-    TurnOutcome, maybe_problem,
+    AgentModel, AgentModelOutcome, AgentModelsOutcome, CacheOutcome, CleanOutcome, ClearOutcome,
+    EffortOutcome, Forced, Group, LoginOutcome, LogoutOutcome, ModelOutcome, NotesOutcome, Problem,
+    Release, Resource, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SettingOutcome,
+    SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome, maybe_problem,
 };
 use crate::bounds::Name;
 use crate::error::{ErrorCode, Refusal};
@@ -192,6 +192,95 @@ impl ModelOutcome {
             "cache_held" => Self::CacheHeld(problem(&mut fields)?),
             "taken" => Self::Taken {
                 retained: Retained::from(&mut fields)?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(model)
+    }
+}
+
+impl AgentModel {
+    fn written(&self) -> Value {
+        Writing::new()
+            .maybe("model", self.model.as_ref().map(Name::as_str))
+            .text("shown", &self.shown)
+            .with("current", self.current)
+            .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let model = Self {
+            model: fields
+                .maybe("model")
+                .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
+                .transpose()?,
+            shown: fields.text("shown")?,
+            current: fields.flag("current")?,
+        };
+        fields.done()?;
+        Ok(model)
+    }
+}
+
+impl AgentModelsOutcome {
+    pub(super) fn written(&self) -> Value {
+        match self {
+            Self::Unsupported => Writing::kind("unsupported"),
+            Self::Unoffered => Writing::kind("unoffered"),
+            Self::Unreachable(problem) => failed("unreachable", problem),
+            Self::Listed(models) => Writing::kind("listed").with(
+                "models",
+                models.iter().map(AgentModel::written).collect::<Vec<_>>(),
+            ),
+        }
+        .finish()
+    }
+
+    pub(super) fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let models = match fields.kind()?.as_str() {
+            "unsupported" => Self::Unsupported,
+            "unoffered" => Self::Unoffered,
+            "unreachable" => Self::Unreachable(problem(&mut fields)?),
+            "listed" => Self::Listed(
+                fields
+                    .list("models")?
+                    .into_iter()
+                    .map(AgentModel::read)
+                    .collect::<Result<_, _>>()?,
+            ),
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(models)
+    }
+}
+
+impl AgentModelOutcome {
+    pub(super) fn written(&self) -> Value {
+        match self {
+            Self::Unsupported => Writing::kind("unsupported"),
+            Self::Unoffered => Writing::kind("unoffered"),
+            Self::Unlisted => Writing::kind("unlisted"),
+            Self::Unreachable(problem) => failed("unreachable", problem),
+            Self::Taken { unwritten } => {
+                noting(Writing::kind("taken"), "unwritten", unwritten.as_ref())
+            }
+        }
+        .finish()
+    }
+
+    pub(super) fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let model = match fields.kind()?.as_str() {
+            "unsupported" => Self::Unsupported,
+            "unoffered" => Self::Unoffered,
+            "unlisted" => Self::Unlisted,
+            "unreachable" => Self::Unreachable(problem(&mut fields)?),
+            "taken" => Self::Taken {
                 unwritten: maybe_problem(&mut fields, "unwritten")?,
             },
             _ => return Err(ErrorCode::Malformed.into()),

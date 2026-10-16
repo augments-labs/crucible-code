@@ -310,6 +310,48 @@ pub enum ModelOutcome {
     },
 }
 
+/// One model an installed agent offers, as its listing names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModel {
+    /// The value it is chosen by; `None` is the agent's own choice.
+    pub model: Option<Name>,
+    /// What the agent calls it.
+    pub shown: Text,
+    /// Whether the agent is started with it from the next turn on.
+    pub current: bool,
+}
+
+/// How asking an installed agent for its models ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentModelsOutcome {
+    /// The conversation is on no installed agent's route.
+    Unsupported,
+    /// The agent lists no models it can be started with.
+    Unoffered,
+    /// The agent could not be asked, or its answer could not be read.
+    Unreachable(Problem),
+    /// What the agent offers, in its order.
+    Listed(Vec<AgentModel>),
+}
+
+/// How choosing an installed agent's model ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentModelOutcome {
+    /// The conversation is on no installed agent's route.
+    Unsupported,
+    /// The agent lists no models it can be started with.
+    Unoffered,
+    /// The agent's listing has no model of that value.
+    Unlisted,
+    /// The agent could not be asked for its listing.
+    Unreachable(Problem),
+    /// The agent is started with it from the next turn on.
+    Taken {
+        /// Why the choice will not outlive the host process, where it will not.
+        unwritten: Option<Problem>,
+    },
+}
+
 /// How asking for an effort ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EffortOutcome {
@@ -655,6 +697,10 @@ pub enum Outcome {
     Resumed(ResumeOutcome),
     /// Asking for a model ended.
     Model(ModelOutcome),
+    /// Asking an installed agent for its models ended.
+    AgentModels(AgentModelsOutcome),
+    /// Choosing an installed agent's model ended.
+    AgentModel(AgentModelOutcome),
     /// Asking for an effort ended.
     Effort(EffortOutcome),
     /// Asking for a speed ended.
@@ -751,7 +797,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 23] = [
+    pub const KINDS: [&'static str; 25] = [
         "refused",
         "turn",
         "room",
@@ -760,6 +806,8 @@ impl Outcome {
         "cleared",
         "resumed",
         "model",
+        "agent_models",
+        "agent_model",
         "effort",
         "speed",
         "mode",
@@ -789,6 +837,8 @@ impl Outcome {
             Self::Cleared(_) => "cleared",
             Self::Resumed(_) => "resumed",
             Self::Model(_) => "model",
+            Self::AgentModels(_) => "agent_models",
+            Self::AgentModel(_) => "agent_model",
             Self::Effort(_) => "effort",
             Self::Speed(_) => "speed",
             Self::Mode(_) => "mode",
@@ -818,6 +868,8 @@ impl Outcome {
             Self::Cleared(cleared) => object.with("cleared", cleared.written()),
             Self::Resumed(resumed) => object.with("resumed", resumed.written()),
             Self::Model(model) => object.with("model", model.written()),
+            Self::AgentModels(models) => object.with("models", models.written()),
+            Self::AgentModel(model) => object.with("model", model.written()),
             Self::Effort(effort) => object.with("effort", effort.written()),
             Self::Speed(speed) => object.with("speed", speed.written()),
             Self::Mode(mode) => object.with("mode", mode.as_str()),
@@ -851,6 +903,8 @@ impl Outcome {
             "cleared" => Self::Cleared(ClearOutcome::read(fields.take("cleared")?)?),
             "resumed" => Self::Resumed(ResumeOutcome::read(fields.take("resumed")?)?),
             "model" => Self::Model(ModelOutcome::read(fields.take("model")?)?),
+            "agent_models" => Self::AgentModels(AgentModelsOutcome::read(fields.take("models")?)?),
+            "agent_model" => Self::AgentModel(AgentModelOutcome::read(fields.take("model")?)?),
             "effort" => Self::Effort(EffortOutcome::read(fields.take("effort")?)?),
             "speed" => Self::Speed(SpeedOutcome::read(fields.take("speed")?)?),
             "mode" => Self::Mode(fields.string("mode")?.parse()?),

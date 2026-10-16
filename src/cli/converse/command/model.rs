@@ -19,9 +19,10 @@
 //! same answer every time this directory is opened and asking it once a session
 //! is asking it for ever.
 //!
-//! A conversation on an installed agent's route is told so instead, at rest
-//! and mid-turn: the agent runs on the model its entry names, or else chooses
-//! its own, so no provider's would be asked for.
+//! A conversation on an installed agent's route is shown the models the agent
+//! lists instead, and one taken starts the agent's next run: no provider's
+//! would be asked for. Mid-turn it is told the agent's model is chosen
+//! between turns, since listing them starts the agent's program.
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
@@ -45,8 +46,9 @@ use crucible_app::providers::{
 };
 use crucible_app::startup::served;
 
-use super::{Asked, Laid, Terms, about, chosen_by_agent, relaid, say, say_at};
+use super::{Asked, Laid, Terms, about, relaid, say, say_at};
 
+mod agent;
 mod narrowing;
 
 /// What escape leaves behind, in place of the listing it used to write.
@@ -211,8 +213,8 @@ impl Selected {
 }
 
 /// Runs it: the model named, one taken off the panel, or what is being asked
-/// now and what else could be. On an installed agent's route, which chooses
-/// its own model, it says so and does none of these.
+/// now and what else could be. On an installed agent's route, the same of
+/// the models the agent lists.
 ///
 /// `keys` is whether there is a keyboard to walk a panel with. Down a pipe there
 /// is not, and a panel waiting for a key nobody can press is a session that
@@ -229,10 +231,8 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
-    let execution = crucible_app::client::execution(conversation);
-    let model = crucible_app::client::model(conversation);
-    if let Some(said) = chosen_by_agent(&execution, model.as_ref(), false) {
-        return say(renderer, &said);
+    if let Some(done) = agent::run(said, renderer, conversation, terms, keys) {
+        return done;
     }
     if !said.is_empty() {
         return named(said, renderer, conversation, terms, keys);

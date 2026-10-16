@@ -67,7 +67,7 @@ use crate::access::Route;
 use crate::backends::{Registry, Row};
 use crate::content_use::{self, Consent, Unheld, Warned};
 use crate::external::External;
-use crate::outside::Relaunch;
+use crate::outside::{Listing, Relaunch};
 
 /// Why nothing was started.
 #[derive(Debug, thiserror::Error)]
@@ -169,6 +169,16 @@ impl Agent {
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
+    }
+
+    /// The same agent started on `model`, or on its own choice where that is
+    /// `None`.
+    #[must_use]
+    pub fn on(&self, model: Option<&str>) -> Self {
+        Self {
+            model: model.map(Into::into),
+            ..self.clone()
+        }
     }
 
     /// What looking for its program found.
@@ -394,7 +404,7 @@ fn resolved(path: &Path) -> Result<PathBuf, SandboxPolicyError> {
 const fn within(step: Account) -> Duration {
     match step {
         Account::SignIn => SIGNING_IN,
-        Account::Version | Account::Status | Account::SignOut => PREPARING,
+        Account::Version | Account::Status | Account::SignOut | Account::Models => PREPARING,
     }
 }
 
@@ -488,7 +498,7 @@ impl<'a> Launcher<'a> {
         control: &Control,
         dialect: &mut dyn Dialect,
         step: Account,
-        shown: &dyn Fn(Text),
+        shown: &(dyn Fn(Text) + Sync),
     ) -> Result<Reading, Unlaunched> {
         let shape = agent.shape(None, self.conversation.working_directory());
         let Some(request) = dialect.account(step, shape) else {
@@ -641,9 +651,48 @@ impl Relaunch for Runs {
         self.agent.model()
     }
 
+    fn models(&self) -> BoxFuture<'_, Listing> {
+        Box::pin(async move {
+            let mut dialect = match (self.agent.row().dialect)(Mode::default()) {
+                Ok(dialect) => dialect,
+                Err(refused) => return Listing::Unreachable(refused),
+            };
+            if dialect.spoken(Account::Models).is_none() {
+                return Listing::Unoffered;
+            }
+            let Some(control) = Control::new() else {
+                return Listing::Unreachable(Failure::new("no control for the agent's program"));
+            };
+            let policy = self.policy.clone().with_enabled(self.enablement.enabled());
+            let read = Launcher::new(
+                Arc::clone(&self.service),
+                self.runtime.clone(),
+                &policy,
+                &self.consent,
+            )
+            .account(
+                &self.agent,
+                &control,
+                dialect.as_mut(),
+                Account::Models,
+                &|_| {},
+            )
+            .await;
+            match read {
+                Ok(Reading::Models(offered)) => Listing::Listed(offered),
+                Ok(Reading::Unreadable(failure)) => Listing::Unreachable(failure),
+                Ok(Reading::Version(_) | Reading::Signed(_)) => Listing::Unreachable(Failure::new(
+                    "the agent answered with something other than its models",
+                )),
+                Err(refused) => Listing::Unreachable(Failure::new(&refused.to_string())),
+            }
+        })
+    }
+
     fn launch<'a>(
         &'a self,
         mode: Mode,
+        model: Option<&'a str>,
         resume: Option<&'a ExternalRef>,
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
         Box::pin(async move {
@@ -653,6 +702,7 @@ impl Relaunch for Runs {
             let session = SessionRef::new(&self.instance)
                 .ok_or_else(|| Failure::new("the agent's entry has no name a run can carry"))?;
             let policy = self.policy.clone().with_enabled(self.enablement.enabled());
+            let agent = self.agent.on(model);
             let host = Launcher::new(
                 Arc::clone(&self.service),
                 self.runtime.clone(),
@@ -660,7 +710,7 @@ impl Relaunch for Runs {
                 &self.consent,
             )
             .launch(
-                &self.agent,
+                &agent,
                 &control,
                 dialect.as_mut(),
                 resume.map(ExternalRef::reference),

@@ -1100,10 +1100,10 @@ fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal>
     say_at(renderer, Laid::Hung, said)
 }
 
-/// What `/model`, and `/effort` where `thinking`, say on an installed
-/// agent's route, in place of a shelf or a ladder: the agent is asked for
-/// neither, so taking any row either would hold is refused.
-/// Nothing on a provider's route.
+/// What `/effort` where `thinking`, and `/model` mid-turn otherwise, say on
+/// an installed agent's route, in place of a ladder or a shelf: the agent
+/// chooses how hard it thinks, and its models are listed by starting its
+/// program, which waits for the turn to end. Nothing on a provider's route.
 fn chosen_by_agent(
     execution: &crucible_client_api::Execution,
     model: Option<&crucible_client_api::Model>,
@@ -1114,14 +1114,14 @@ fn chosen_by_agent(
     };
     let instance = instance.as_str();
     Some(match (model, thinking) {
-        (None, false) => {
-            format!("this conversation runs on the agent {instance}, which chooses its own model")
-        }
+        (None, false) => format!(
+            "this conversation runs on the agent {instance}, which chooses its own model; /model chooses one between turns"
+        ),
         (None, true) => format!(
             "this conversation runs on the agent {instance}, which chooses its own model and how hard it thinks"
         ),
         (Some(model), false) => format!(
-            "this conversation runs on the agent {instance}, started on the model {} its entry names",
+            "this conversation runs on the agent {instance}, started on the model {}; /model chooses another between turns",
             model.text().as_str()
         ),
         (Some(_), true) => {

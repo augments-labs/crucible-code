@@ -71,9 +71,9 @@ impl Ended {
         match status {
             Reading::Signed(Authentication::SignedIn) => Self::SignedIn,
             Reading::Unreadable(failure) => Self::Unverified(failure.clone()),
-            Reading::Signed(_) | Reading::Version(_) => Self::Unverified(Failure::new(
-                "The agent did not report a sign-in afterwards.",
-            )),
+            Reading::Signed(_) | Reading::Version(_) | Reading::Models(_) => Self::Unverified(
+                Failure::new("The agent did not report a sign-in afterwards."),
+            ),
         }
     }
 
@@ -90,9 +90,11 @@ impl Ended {
             | (Reading::Signed(Authentication::SignedOut), Reading::Unreadable(failure)) => {
                 Self::SignOutUnverified(failure.clone())
             }
-            (Reading::Signed(_) | Reading::Version(_), _) => Self::SignOutUnverified(Failure::new(
-                "The agent did not report being signed out afterwards.",
-            )),
+            (Reading::Signed(_) | Reading::Version(_) | Reading::Models(_), _) => {
+                Self::SignOutUnverified(Failure::new(
+                    "The agent did not report being signed out afterwards.",
+                ))
+            }
         }
     }
 
