@@ -391,6 +391,7 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
@@ -422,6 +423,7 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
@@ -447,6 +449,7 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
@@ -488,6 +491,7 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
@@ -519,6 +523,7 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
@@ -549,6 +554,7 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }

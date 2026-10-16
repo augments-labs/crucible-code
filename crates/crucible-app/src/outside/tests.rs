@@ -8,7 +8,7 @@ use crucible_execution::{
 use crucible_runner::EventEnvelope;
 use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_tools::{Remember, Sensitivity, Verdict};
-use crucible_types::ToolCall;
+use crucible_types::{Compacting, ToolCall};
 
 use super::*;
 
@@ -370,7 +370,7 @@ async fn a_sum_that_cannot_be_stated_is_not_priced() {
     );
 
     let euros = Cost::new(PRICE, Currency::new("EUR").expect("a currency"));
-    let mut tally = Tally::new();
+    let mut tally = Tally::new(None);
     tally.begin();
     tally.used(&Usage::of(TurnId::FIRST).cost(euros));
     tally.end(true);
@@ -380,35 +380,96 @@ async fn a_sum_that_cannot_be_stated_is_not_priced() {
     assert_eq!(tally.totals().cost(), SessionCost::NotPriced);
 }
 
-/// What a turn read stands until the next turn says its own, adds up within
-/// a turn that says it twice, and stays where a turn says nothing of it.
-#[test]
-fn what_a_turn_read_stands_until_the_next_says_its_own() {
-    let mut tally = Tally::new();
-    assert_eq!(tally.read, 0);
-    tally.begin();
-    tally.used(&Usage::of(TurnId::FIRST).input(125));
-    tally.used(&Usage::of(TurnId::FIRST).input(200));
-    tally.end(true);
-    assert_eq!(tally.read, 325);
+/// What the agent's context holds is nothing before it started, what it last
+/// said its request carried, and what it said was left once it made room:
+/// never what a turn's figures add up to, and not known where it said nothing
+/// of what was left.
+#[tokio::test]
+async fn the_context_holds_what_the_agent_last_said_it_does() {
+    let (first, second, third) = (
+        TurnId::FIRST,
+        TurnId::FIRST.next(),
+        TurnId::FIRST.next().next(),
+    );
+    let compacted = |turn, why, after| {
+        (
+            vec![
+                Event::Started { turn },
+                Event::Compacted {
+                    why,
+                    before: 41_293,
+                    after,
+                },
+                Event::Finished(Outcome::Answered),
+            ],
+            Ok(Outcome::Answered),
+        )
+    };
+    let (mut carried, ended) = answered(first, Some(PRICE));
+    carried.insert(2, Event::Carried(41_293));
+    let mut outside = scripted([
+        (carried, ended),
+        compacted(second, Compacting::Full, Some(9_000)),
+        compacted(third, Compacting::Asked, None),
+    ]);
+    assert_eq!(outside.held(), Some(0));
 
-    let second = TurnId::FIRST.next();
-    tally.begin();
-    assert_eq!(tally.read, 325, "the turn under way has said nothing");
-    tally.used(&Usage::of(second).output(40));
-    assert_eq!(tally.read, 325, "the turn said nothing of what it read");
-    tally.used(&Usage::of(second).input(300));
-    assert_eq!(tally.read, 300);
-    tally.used(&Usage::of(second).input(u64::MAX));
-    tally.end(true);
-    assert_eq!(tally.read, u64::MAX);
+    let (_, posted) = turn(&mut outside).await;
+    assert_eq!(outside.held(), Some(41_293));
+    let breakdowns: Vec<_> = posted
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::Carried { breakdown } => Some(breakdown.held()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(breakdowns, [Some(41_293)]);
+
+    let (_, posted) = turn(&mut outside).await;
+    assert_eq!(outside.held(), Some(9_000));
+    let told: Vec<_> = posted
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::AgentCompacted { why, before, after } => {
+                Some(format!("{why:?} {before} {after:?}"))
+            }
+            RunEvent::Carried { breakdown } => Some(format!("{:?}", breakdown.held())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(told, ["Full 41293 Some(9000)", "Some(9000)"]);
+
+    let _ = turn(&mut outside).await;
+    assert_eq!(
+        outside.held(),
+        None,
+        "the agent said nothing of what was left"
+    );
+}
+
+/// A conversation that resumes the agent's own session does not know what
+/// its context holds until the agent says.
+#[test]
+fn a_resumed_conversation_holds_nothing_known() {
+    let named = ExternalRef::new("work", "the-agent-s-own").expect("a name");
+    let outside = Outside::new(
+        Installed {
+            backend: None,
+            relaunch: Again::launching([]).0,
+            route: RouteBinding::new("claude", "work", None).expect("a route"),
+        },
+        Transcript::new(),
+        Mode::Ask,
+        Some(named),
+    );
+    assert_eq!(outside.held(), None);
 }
 
 /// The figures reported add up across turns, and a session that has begun
 /// no turn reads as having used nothing.
 #[tokio::test]
 async fn tokens_add_up_across_turns() {
-    assert_eq!(Tally::new().totals().cost(), SessionCost::Unspent);
+    assert_eq!(Tally::new(None).totals().cost(), SessionCost::Unspent);
     let mut outside = scripted([priced(TurnId::FIRST), priced_twice(TurnId::FIRST.next())]);
     let _first = turn(&mut outside).await;
     let _second = turn(&mut outside).await;

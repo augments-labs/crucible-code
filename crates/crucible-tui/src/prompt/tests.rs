@@ -282,6 +282,26 @@ fn a_plain_draft_snaps_a_cursor_inside_utf8_to_a_source_boundary() {
 }
 
 #[test]
+fn a_held_reading_says_what_is_held_of_the_window_and_gives_it_up_first() {
+    let held = Prompt {
+        left: Remaining::new(Some(95)).holding(41_293, 1_000_000),
+        ..typed("")
+    };
+    let framed = held.rows(80, Glyphs::Unicode);
+    assert!(
+        framed
+            .first()
+            .is_some_and(|row| row.text().ends_with("41k/1.0M · 95% window left")),
+        "{framed:#?}"
+    );
+    let narrow = row(&held, 1, 23, Glyphs::Unicode);
+    assert!(narrow.contains("95% window left"), "{narrow:?}");
+    assert!(!narrow.contains("41k"), "{narrow:?}");
+    assert!(row(&held, 1, 10, Glyphs::Unicode).ends_with("95%"));
+    assert!(tokens(999) == "999" && tokens(1_000) == "1k" && tokens(272_000) == "272k");
+}
+
+#[test]
 fn a_bare_prompt_keeps_the_window_fact_and_degrades_it_in_place() {
     let known = Prompt {
         left: Remaining::new(Some(75)),

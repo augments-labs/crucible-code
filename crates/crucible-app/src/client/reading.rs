@@ -171,6 +171,9 @@ pub fn progress(
         Event::Compacted { compacted } => Progress::Compacted {
             replaced: count(compacted.replaced),
         },
+        // An installed agent's own recap stands in place of messages it holds
+        // and this side never did, so none of this side's are replaced.
+        Event::AgentCompacted { .. } => Progress::Compacted { replaced: 0 },
         Event::Spent { spend } => Progress::Spent {
             tokens: spend.tokens(),
         },
@@ -439,7 +442,7 @@ fn counted(breakdown: &Breakdown) -> api::Context {
         messages: 0,
         reserve: 0,
         free: 0,
-        external: None,
+        external: breakdown.held(),
     };
     for category in Category::EVERY {
         let tokens = breakdown.tokens(category);

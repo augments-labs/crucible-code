@@ -925,13 +925,13 @@ impl<'a> Settled<'a> {
         }
     }
 
-    /// The tokens the next request would carry, which an installed agent
-    /// does not say.
+    /// The tokens the next request would carry; for an installed agent, what
+    /// it last said its context holds, 0 until it has.
     #[must_use]
     pub fn carrying(self) -> u64 {
         match self.0 {
             Backed::Native(runner) => runner.carrying(),
-            Backed::External(_) => 0,
+            Backed::External(outside) => outside.held().unwrap_or(0),
         }
     }
 
@@ -940,7 +940,7 @@ impl<'a> Settled<'a> {
     pub fn left(self) -> Option<u8> {
         match self.0 {
             Backed::Native(runner) => runner.left(),
-            Backed::External(_) => None,
+            Backed::External(_) => self.breakdown().left(),
         }
     }
 
@@ -949,18 +949,20 @@ impl<'a> Settled<'a> {
     pub fn breakdown(self) -> Breakdown {
         match self.0 {
             Backed::Native(runner) => runner.breakdown(),
-            Backed::External(_) => Breakdown::default(),
+            Backed::External(outside) => outside.held().map_or_else(Breakdown::default, |held| {
+                Breakdown::reported(outside.window(), held)
+            }),
         }
     }
 
-    /// The tokens an installed agent said its last turn read, which Crucible
-    /// cannot see into; `None` on a provider's model, whose request
-    /// [`Settled::breakdown`] counts.
+    /// The tokens an installed agent last said its context holds, which
+    /// Crucible cannot see into, 0 until it has; `None` on a provider's model,
+    /// whose request [`Settled::breakdown`] counts.
     #[must_use]
     pub fn external(self) -> Option<u64> {
         match self.0 {
             Backed::Native(_) => None,
-            Backed::External(outside) => Some(outside.read()),
+            Backed::External(outside) => Some(outside.held().unwrap_or(0)),
         }
     }
 

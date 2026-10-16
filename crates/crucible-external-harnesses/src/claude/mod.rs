@@ -20,6 +20,12 @@
 //! its first turn reports no cost and the turns after it do. A turn that
 //! reports its tokens and no cost leaves the total unknown in the same way.
 //!
+//! What its context holds is read off each message of its main loop, as the
+//! tokens that message's request carried, so it moves as the turn goes on; a
+//! subagent's messages and the program's own synthetic ones say nothing of
+//! it. When the program makes room in its context, the frame marking where it
+//! did says what it held before and, where it says, after.
+//!
 //! Each turn opens with a frame saying how the program runs it, and a turn
 //! it runs on a key its profile was not signed in with, in a permission mode
 //! that asks less than the one it was started in, or as a release nobody
@@ -168,6 +174,10 @@ impl Claude {
                 said.text
                     .iter()
                     .map(|text| Act::Say(Event::Delta(Text::new(text)))),
+            );
+            acts.extend(
+                said.carried
+                    .map(|carried| Act::Say(Event::Carried(carried))),
             );
         }
         for (call, tool, input) in said.calls {
@@ -357,6 +367,9 @@ impl Dialect for Claude {
             Frame::Assistant(said) => self.said(said),
             Frame::Reported(reported) => self.reported(reported),
             Frame::Result(ended) => self.ended(&ended),
+            Frame::Compacted { why, before, after } => {
+                vec![Act::Say(Event::Compacted { why, before, after })]
+            }
             Frame::Ask(ask) => {
                 let native = ask.request.clone();
                 let pending = self.questions.asked(ask, self.workspace.as_deref())?;

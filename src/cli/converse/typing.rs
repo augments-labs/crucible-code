@@ -43,8 +43,8 @@ use crucible_models::Effort;
 use crucible_runtime::{Aside, Cancel};
 use crucible_tools::Mode;
 use crucible_tui::{
-    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Recalled, Renderer, Row, Slot,
-    Terminal, Typed, characters, pressed,
+    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Recalled, Remaining, Renderer, Row,
+    Slot, Terminal, Typed, characters, pressed,
 };
 
 use crate::cli::Fatal;
@@ -864,8 +864,8 @@ pub(super) struct Says {
     /// because a command ending is neither a keystroke nor a turn.
     pub(super) running: usize,
     /// How much usable room remains before compaction at the latest reading.
-    /// `None` makes the prompt say that the reading is unknown.
-    pub(super) left: Option<u8>,
+    /// An unknown reading makes the prompt say nothing of it.
+    pub(super) left: Remaining,
     /// The mode in force, kept as a value so shift+tab can step off it while
     /// the runner that owns it is away.
     ///
@@ -1998,7 +1998,7 @@ pub(super) fn saying(settled: Settled<'_>) -> Says {
         pace: super::command::Pace::of(settled),
         tone: tone(mode),
         asking: None,
-        left: settled.left(),
+        left: crate::cli::draw::remaining(&settled.breakdown()),
         running_mode: mode,
         // Filled in by the frame rather than by the session, because it changes
         // while nothing else on this row does.

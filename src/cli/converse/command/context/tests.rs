@@ -23,7 +23,7 @@ fn spent() -> api::Context {
 }
 
 /// An installed agent's route: Crucible counts nothing of the request, and
-/// the agent said what its last turn read.
+/// the agent said what its context holds.
 fn held() -> api::Context {
     api::Context {
         model: None,

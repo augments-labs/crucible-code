@@ -1156,9 +1156,9 @@ struct Turn<'a, 'h> {
     /// The one provider whose models `/model` offers on an installed agent's
     /// route, as it stood when the turn began.
     reaching: Option<&'static str>,
-    /// What an installed agent said its last turn read, as it stood when the
-    /// turn began; `None` on a provider's model. The agent's tally keeps
-    /// that figure until the turn under way says its own.
+    /// What an installed agent last said its context holds, as it stood when
+    /// the turn began; `None` on a provider's model. It stands until the turn
+    /// under way hears the agent say what its context holds now.
     external: Option<u64>,
     /// Who runs the turn, as it stood when the turn began.
     execution: crucible_client_api::Execution,
@@ -1496,7 +1496,9 @@ impl Turn<'_, '_> {
             self.turning.limits().as_ref(),
             self.serving,
         );
-        usage.context.external = self.external;
+        // What the turn has heard of the agent stands; until it hears, what
+        // the agent held as the turn began.
+        usage.context.external = usage.context.external.or(self.external);
         command::Counted {
             usage,
             serving: self.serving,
@@ -2072,6 +2074,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Delta { .. }
             | Event::Compacting { .. }
             | Event::Compacted { .. }
+            | Event::AgentCompacted { .. }
             | Event::Steered { .. }
             | Event::Reported { .. }
             | Event::Aged { .. }

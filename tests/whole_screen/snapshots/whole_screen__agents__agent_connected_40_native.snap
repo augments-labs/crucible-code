@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/agents.rs
-assertion_line: 65
 expression: picture
 ---
 40x40 cursor 31,4 scrollback 0
@@ -33,7 +32,7 @@ expression: picture
 |                                        |
 |                                        |
 |                                        |
-|                                        |
+|               0/1.0M · 100% window left|
 |╭──────────────────────────────────────╮|
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|

@@ -291,8 +291,8 @@ window, and the footer then reads `esc to close · ↑↓ to see more`.
 <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
 runs, it stands over the turn with the figures that turn last reported, which
 include anything it has recorded since its last request. On an installed
-agent's route, its `held by the agent` row is what the last finished turn
-read, as the turn began.
+agent's route, its `held by the agent` row is what the agent last said its
+context holds, which moves as the turn goes on.
 
 ### `/usage`
 

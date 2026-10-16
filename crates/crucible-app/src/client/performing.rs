@@ -158,7 +158,7 @@ pub enum Performed {
         model: Box<str>,
         /// The runner's count of it.
         breakdown: Breakdown,
-        /// What an installed agent said its last turn read, on its route.
+        /// What an installed agent last said its context holds, on its route.
         external: Option<u64>,
     },
     /// `/usage`: what the session has used, and the plan's limits as the

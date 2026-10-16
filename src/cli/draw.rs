@@ -58,10 +58,10 @@ use std::path::Path;
 
 use crucible_builtins::Ended;
 use crucible_client_api::pending::Effect;
-use crucible_runner::{Event, TurnError, Turned};
+use crucible_runner::{Breakdown, Event, TurnError, Turned};
 use crucible_tools::{Argument, Sensitivity, Summary, ToolOutput};
 use crucible_tui::{
-    Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
+    Glyphs, Remaining, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
 use crucible_types::{
     Answer, Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
@@ -181,6 +181,18 @@ pub(crate) fn event<T: Terminal>(
         Event::Compacted { compacted } => {
             renderer.apart()?;
             renderer.present(&compacted_rows(compacted, columns, style.glyphs()))
+        }
+        // The same, for an installed agent that made room in its own context:
+        // only what it held either side is known here.
+        Event::AgentCompacted { why, before, after } => {
+            renderer.apart()?;
+            renderer.present(&agent_compacted_rows(
+                why,
+                before,
+                after,
+                columns,
+                style.glyphs(),
+            ))
         }
 
         // Kept and not drawn. What a running command prints stands under the
@@ -1762,12 +1774,7 @@ fn block(diff: &Diff, window: usize, glyphs: Glyphs) -> Vec<Row> {
 /// because the cause is the part a reader can do something about.
 pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
-    let why = match compacted.why {
-        Compacting::Asked => "you asked",
-        Compacting::Resumed => "you chose notes over carrying this session whole",
-        Compacting::Full => "the window was full",
-        Compacting::Refused => "the model would not take another request this size",
-    };
+    let why = asked_for(compacted.why);
     let turns = if compacted.kept == 1 { "turn" } else { "turns" };
     let result = if compacted.replaced == 0 {
         format!(
@@ -1795,6 +1802,49 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
         Row::new()
             .then(Slot::Plain, " compacted ")
             .then(Slot::Quiet, format!("{} {why}", glyphs.dot())),
+        Row::new().then(Slot::Quiet, result),
+        rule(),
+    ]
+}
+
+/// What asked for room to be made, as the compaction notice says it.
+const fn asked_for(why: Compacting) -> &'static str {
+    match why {
+        Compacting::Asked => "you asked",
+        Compacting::Resumed => "you chose notes over carrying this session whole",
+        Compacting::Full => "the window was full",
+        Compacting::Refused => "the model would not take another request this size",
+    }
+}
+
+/// The notice that the agent running the turn made room in its own context,
+/// for `why`, from `before` tokens to `after` where it said.
+pub(super) fn agent_compacted_rows(
+    why: Compacting,
+    before: u64,
+    after: Option<u64>,
+    columns: usize,
+    glyphs: Glyphs,
+) -> Vec<Row> {
+    let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
+    let result = match after {
+        Some(after) => format!(
+            " the agent made room {} {} → {} carried",
+            glyphs.dot(),
+            tokens(before),
+            tokens(after),
+        ),
+        None => format!(
+            " the agent made room {} {} carried before",
+            glyphs.dot(),
+            tokens(before),
+        ),
+    };
+    vec![
+        rule(),
+        Row::new()
+            .then(Slot::Plain, " compacted ")
+            .then(Slot::Quiet, format!("{} {}", glyphs.dot(), asked_for(why))),
         Row::new().then(Slot::Quiet, result),
         rule(),
     ]
@@ -1943,10 +1993,16 @@ pub(crate) fn refused<T: Terminal>(
 
 /// A token count, as a row says it.
 pub(crate) fn tokens(tokens: u64) -> String {
-    match tokens {
-        0..=999 => tokens.to_string(),
-        1_000..=999_999 => format!("{}k", tokens / 1_000),
-        _ => format!("{}.{}M", tokens / 1_000_000, (tokens % 1_000_000) / 100_000),
+    crucible_tui::tokens(tokens)
+}
+
+/// The usable-window reading the prompt draws from `breakdown`: beside the
+/// tokens held of the window where an installed agent said what it holds.
+pub(crate) fn remaining(breakdown: &Breakdown) -> Remaining {
+    let left = Remaining::new(breakdown.left());
+    match (breakdown.held(), breakdown.window()) {
+        (Some(held), Some(window)) => left.holding(held, u64::from(window)),
+        _ => left,
     }
 }
 

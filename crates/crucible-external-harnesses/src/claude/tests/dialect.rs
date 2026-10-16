@@ -5,7 +5,7 @@ use std::path::Path;
 use crucible_execution::{
     Cost, Decision, Detail, Event, Lasting, Outcome, Pending, TurnRequest, Usage,
 };
-use crucible_types::TurnId;
+use crucible_types::{Compacting, TurnId};
 use serde_json::{Value, json};
 
 use crate::claude::Claude;
@@ -188,6 +188,96 @@ fn only_the_main_loops_text_is_said() {
 
     assert!(matches!(main.as_slice(), [Act::Say(Event::Delta(text))] if text.as_str() == "hi"));
     assert!(task.is_empty(), "{task:?}");
+}
+
+/// What the context holds is read off each message the main loop's model
+/// answered: its whole request, cache included, and its answer; never a
+/// task's, nor one the program wrote itself, nor one whose usage does not
+/// say what its request read.
+#[test]
+fn the_context_is_what_the_main_loops_last_request_carried() {
+    let mut agent = turning(None);
+    let said = |parent: Value, model: &str| {
+        json!({
+            "type": "assistant",
+            "parent_tool_use_id": parent,
+            "message": {
+                "model": model,
+                "content": [],
+                "usage": {
+                    "input_tokens": 3,
+                    "cache_read_input_tokens": 40_000,
+                    "cache_creation_input_tokens": 1_200,
+                    "output_tokens": 90,
+                },
+            },
+        })
+        .to_string()
+    };
+
+    let main = agent.heard(&said(Value::Null, "claude-opus-5-5")).unwrap();
+    let task = agent
+        .heard(&said(json!("toolu_9"), "claude-opus-5-5"))
+        .unwrap();
+    let synthetic = agent.heard(&said(Value::Null, "<synthetic>")).unwrap();
+    let unsaid = agent
+        .heard(
+            &json!({
+                "type": "assistant",
+                "parent_tool_use_id": null,
+                "message": {"model": "claude-opus-5-5", "content": [], "usage": {"output_tokens": 90}},
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+    assert!(
+        matches!(main.as_slice(), [Act::Say(Event::Carried(41_293))]),
+        "{main:?}"
+    );
+    assert!(task.is_empty(), "{task:?}");
+    assert!(synthetic.is_empty(), "{synthetic:?}");
+    assert!(unsaid.is_empty(), "{unsaid:?}");
+}
+
+/// A compaction the agent made says what its context held before and after,
+/// and whether somebody asked for it.
+#[test]
+fn a_compaction_says_what_the_context_held_before_and_after() {
+    let mut agent = turning(None);
+    let compacted = |trigger: &str, after: Option<u64>| {
+        let metadata = match after {
+            Some(after) => json!({"trigger": trigger, "pre_tokens": 150_000, "post_tokens": after}),
+            None => json!({"trigger": trigger, "pre_tokens": 150_000}),
+        };
+        json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": metadata})
+            .to_string()
+    };
+
+    let full = agent.heard(&compacted("auto", Some(30_000))).unwrap();
+    let asked = agent.heard(&compacted("manual", None)).unwrap();
+
+    assert_eq!(
+        full,
+        [Act::Say(Event::Compacted {
+            why: Compacting::Full,
+            before: 150_000,
+            after: Some(30_000),
+        })]
+    );
+    assert_eq!(
+        asked,
+        [Act::Say(Event::Compacted {
+            why: Compacting::Asked,
+            before: 150_000,
+            after: None,
+        })]
+    );
+    assert!(
+        agent
+            .heard(&json!({"type": "system", "subtype": "compact_boundary"}).to_string())
+            .is_err()
+    );
 }
 
 /// An edit is reported changed once its call reports, and not when it

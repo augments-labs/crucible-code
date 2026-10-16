@@ -8,13 +8,14 @@
 //!
 //! On an installed agent's route the agent builds its requests, so Crucible
 //! counts none of them, and the one part that crosses is
-//! [`Category::External`]: what the agent said its last turn read. A frame
+//! [`Category::External`]: what the agent last said its context holds. A frame
 //! from a provider's model leaves that field out, so a reader shows it only
 //! where it is present.
 //!
 //! It also crosses inside a [`Usage`](crate::Usage), and as
-//! [`Progress::Context`](crate::Progress::Context) during a turn on a
-//! provider's model, with the model left out; an agent's route streams none.
+//! [`Progress::Context`](crate::Progress::Context) during a turn, with the
+//! model left out: on a provider's model as the runner counts, and on an
+//! agent's route each time the agent says what its context holds.
 //!
 //! What is left of the window is the same whole-number reading a
 //! [`Snapshot`](crate::Snapshot) carries, so a client showing both never shows
@@ -51,7 +52,7 @@ pub enum Category {
     /// What nothing holds yet.
     Free,
     /// What an installed agent holds, which Crucible cannot see into: the
-    /// tokens the agent said its last turn read, cache reads included.
+    /// tokens the agent last said its context holds, cache reads included.
     External,
 }
 
@@ -109,7 +110,7 @@ pub struct Context {
     pub reserve: u64,
     /// Tokens nothing holds; 0 where the window is not known.
     pub free: u64,
-    /// Tokens an installed agent said its last turn read, on its route
+    /// Tokens an installed agent last said its context holds, on its route
     /// alone: 0 until it says, and left out on a provider's model.
     pub external: Option<u64>,
 }

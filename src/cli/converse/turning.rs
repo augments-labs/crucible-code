@@ -75,7 +75,7 @@ use std::time::{Duration, Instant};
 
 use crucible_runner::{Breakdown, Event, Totals};
 use crucible_tools::Looking;
-use crucible_tui::{Row, Slot, Working};
+use crucible_tui::{Remaining, Row, Slot, Working};
 use crucible_types::{Compacting, PlanWindows, ToolId};
 
 use super::super::draw;
@@ -491,7 +491,7 @@ struct Drawn {
     /// value does not carry reaches the screen only when something else on the
     /// candidate happens to change with it — a stale number, arriving late, in
     /// the prompt somebody is reading to find out what is going on.
-    left: Option<u8>,
+    left: Remaining,
     /// The clock, and the face both marks are wearing, coarsened to the one
     /// number every unit of them divides.
     beat: u64,
@@ -674,6 +674,7 @@ impl Turning {
             | Event::Carried { .. }
             | Event::Compacting { .. }
             | Event::Compacted { .. }
+            | Event::AgentCompacted { .. }
             | Event::Wrote { .. }
             | Event::Steered { .. }
             | Event::Aged { .. }
@@ -732,6 +733,7 @@ impl Turning {
             | Event::Sandbox { .. }
             | Event::Spent { .. }
             | Event::Carried { .. }
+            | Event::AgentCompacted { .. }
             | Event::Steered { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
@@ -773,7 +775,7 @@ impl Turning {
     pub(super) fn moved(&mut self) -> bool {
         let now = Drawn {
             doing: self.shown_doing(),
-            left: self.breakdown.left(),
+            left: draw::remaining(&self.breakdown),
             spent: self.spent,
             beat: Working::beat(self.running()),
 
@@ -867,8 +869,8 @@ impl Turning {
 
     /// The usable room left before compaction, read off [`Turning::breakdown`]
     /// so the prompt line and `/context` cannot disagree.
-    pub(super) const fn left(&self) -> Option<u8> {
-        self.breakdown.left()
+    pub(super) fn left(&self) -> Remaining {
+        draw::remaining(&self.breakdown)
     }
 
     /// The last request divided by what holds the window: the one the turn

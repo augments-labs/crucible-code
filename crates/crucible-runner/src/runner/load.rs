@@ -235,7 +235,9 @@ impl Category {
 /// Counted by the arithmetic that counts the load: the five categories a
 /// request carries add up to exactly `Load::tokens`, and the reading of what
 /// is left is `Load::left`'s, so `/context` and the prompt line cannot
-/// disagree.
+/// disagree. An installed agent's reading is the one exception: its context
+/// is held whole by the agent, so none of it is in a category and all of it is
+/// [`Breakdown::held`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Breakdown {
     window: Option<u32>,
@@ -247,9 +249,37 @@ pub struct Breakdown {
     reserve: u64,
     free: u64,
     left: Option<u8>,
+    held: Option<u64>,
 }
 
 impl Breakdown {
+    /// What an installed agent said its context holds, `held` tokens, against
+    /// its model's `window` where that is known.
+    ///
+    /// Nothing is in a category: the agent builds its own requests, so all
+    /// this side knows is the whole. No room is set aside for the answer
+    /// either, since the agent decides when to make room.
+    #[must_use]
+    pub fn reported(window: Option<u32>, held: u64) -> Self {
+        let whole = window.map(u64::from);
+        Self {
+            window,
+            free: whole.map_or(0, |whole| whole.saturating_sub(held)),
+            left: whole
+                .filter(|whole| *whole > 0)
+                .and_then(|whole| u8::try_from((whole - held.min(whole)) * 100 / whole).ok()),
+            held: Some(held),
+            ..Self::default()
+        }
+    }
+
+    /// The tokens an installed agent said its context holds, where this is its
+    /// reading; none for one this side counted.
+    #[must_use]
+    pub const fn held(&self) -> Option<u64> {
+        self.held
+    }
+
     /// The window the load was measured against, where one is known.
     #[must_use]
     pub const fn window(&self) -> Option<u32> {
@@ -855,6 +885,7 @@ impl Load {
                     .saturating_sub(tokens)
             }),
             left: self.left(window, reserve),
+            held: None,
         }
     }
 

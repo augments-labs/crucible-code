@@ -687,6 +687,48 @@ fn usage_over_a_running_agent_turn_draws_what_the_agent_reported() {
     }
 }
 
+/// Fails where the prompt on an agent's route does not read what the agent
+/// said its context holds against its model's window, or where the agent
+/// making room is not written into the transcript with what it held either
+/// side and the reading does not drop to what was left.
+#[test]
+fn an_agent_route_reads_its_context_against_the_window_and_says_when_it_made_room() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-window-{mode}");
+        let script = Script::of(signed_in([claude::carrying_and_compacting()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        connected(&mut window);
+        window.types_until("First.\r", "Done.");
+        let picture = window.picture();
+        assert!(
+            picture
+                .lines()
+                .any(|line| line.contains("41k/") && line.contains("% window left")),
+            "the reading in {mode} holds what the agent carried\n{picture}"
+        );
+
+        window.types_until("Second.\r", "Made room.");
+        let picture = window.picture();
+        for said in [
+            "compacted",
+            "the window was full",
+            "the agent made room",
+            "41k → 9k carried",
+        ] {
+            assert!(picture.contains(said), "{mode} says {said:?}\n{picture}");
+        }
+        assert!(
+            picture
+                .lines()
+                .any(|line| line.contains("9k/") && line.contains("% window left")),
+            "the reading in {mode} drops to what was left\n{picture}"
+        );
+    }
+}
+
 /// Asserts `picture` shows the priced turn the agent reported, headed as its
 /// report, and nothing only a native route has.
 fn reported(picture: &str, drawn: &str) {

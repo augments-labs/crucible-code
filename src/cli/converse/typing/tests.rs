@@ -11,7 +11,7 @@ use crucible_runner::{Agent, Breakdown, Model, Runner, Tools};
 use crucible_runtime::Aside;
 use crucible_session::Session;
 use crucible_tools::{Mode, Permission, Rules};
-use crucible_tui::{Aimed, Key, Recording};
+use crucible_tui::{Aimed, Key, Recording, Remaining};
 use crucible_types::{AgentId, ToolArgs};
 
 use super::drawing::{over, writing};
@@ -103,7 +103,7 @@ fn the_top_border_says_where_the_arrow_reached_and_says_nothing_once_the_line_is
         &editor,
         &says,
         Bordering {
-            left: None,
+            left: Remaining::default(),
             history: recalling.place(),
         },
         Style::plain(),
@@ -125,7 +125,7 @@ fn the_top_border_says_where_the_arrow_reached_and_says_nothing_once_the_line_is
         &editor,
         &says,
         Bordering {
-            left: None,
+            left: Remaining::default(),
             history: recalling.place(),
         },
         Style::plain(),
@@ -169,7 +169,7 @@ fn a_line_the_arrow_put_in_the_box_leaves_the_border_when_it_is_sent() {
         &editor,
         &says,
         Bordering {
-            left: None,
+            left: Remaining::default(),
             history: recalling.place(),
         },
         Style::plain(),
@@ -314,7 +314,7 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
 fn the_window_reading_is_in_the_box_once_and_takes_no_row_of_its_own() {
     let mut renderer = roomy();
     let mut says = settled(Mode::Ask);
-    says.left = Some(73);
+    says.left = Remaining::new(Some(73));
 
     draw(
         &mut renderer,
@@ -1236,8 +1236,8 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     turning.saw(&crucible_runner::Event::Carried { breakdown: carried });
     let planning = nothing();
     let mut says = settled(Mode::Ask);
-    says.left = Some(1);
-    assert_ne!(says.left, carried.left());
+    says.left = Remaining::new(Some(1));
+    assert_ne!(says.left, Remaining::new(carried.left()));
     let shown = format!("{}% window left", carried.left().unwrap_or_default());
 
     let footed = working(
@@ -1277,7 +1277,7 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
     let planning = nothing();
     let started = crate::cli::converse::tests::measured();
     let mut says = settled(Mode::Ask);
-    says.left = started.left();
+    says.left = Remaining::new(started.left());
     let turning = Turning::started(started);
     let shown = format!("{}% window left", started.left().unwrap_or_default());
 

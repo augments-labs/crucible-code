@@ -14,9 +14,9 @@
 //! A window the model never stated has nothing to take a share of: the panel
 //! says so, and shows the tokens with no bar, no free row and no percent.
 //!
-//! On an installed agent's route, a last row gives what the agent said its
-//! last turn read, which Crucible cannot see into; a provider's model has no
-//! such row.
+//! On an installed agent's route, a last row gives what the agent last said
+//! its context holds, which Crucible cannot see into, and the bar gives it
+//! its part; a provider's model has no such row.
 //!
 //! The panel stands in the room the window gives it. Where it is taller, it
 //! shows as much of the body as the room leaves under the rule and over the
@@ -263,11 +263,20 @@ fn body(context: &api::Context, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         return rows;
     };
 
-    let parts = Category::EVERY.map(|category| Part {
-        slot: tone(category),
-        fill: fill(category),
-        size: context.tokens(category),
-    });
+    // What an installed agent holds is spent room as much as anything counted
+    // here, so it stands in the bar before what is free.
+    let held = context.external.map(|_| Category::External);
+    let parts: Vec<Part> = Category::EVERY
+        .into_iter()
+        .filter(|&category| category != Category::Free)
+        .chain(held)
+        .chain([Category::Free])
+        .map(|category| Part {
+            slot: tone(category),
+            fill: fill(category),
+            size: context.tokens(category),
+        })
+        .collect();
     rows.push(Bar { parts: &parts }.row(columns, glyphs));
     rows.push(Row::new());
     rows.extend(Category::EVERY.into_iter().map(|category| {

@@ -2091,8 +2091,9 @@ fn a_run_that_asked_not_to_be_kept_is_not_sent_anywhere() {
 mod research;
 
 /// A panel standing over a turn on an installed agent's route reads what the
-/// agent said its last turn read, as `/context` between turns does; on a
-/// provider's model it reads none.
+/// agent last said its context holds, as the line above the box does, and
+/// what it held as the turn began until the turn says; on a provider's model
+/// it reads none.
 #[test]
 fn a_panel_over_a_turn_reads_what_the_agent_holds_only_on_its_route() {
     let (_post, seen) = sync_channel(CAPACITY);
@@ -2108,7 +2109,6 @@ fn a_panel_over_a_turn_reads_what_the_agent_holds_only_on_its_route() {
         },
         &opening,
     );
-    let mut turning = Turning::started(crucible_runner::Breakdown::default());
     let mut says = typing::under(crucible_app::Settled::from(&scripted(
         Script::new(Vec::new()),
         Tools::new(),
@@ -2118,7 +2118,20 @@ fn a_panel_over_a_turn_reads_what_the_agent_holds_only_on_its_route() {
     let mut drawn = Ok(());
     let mut meanwhile = typing::Meanwhile::Nothing;
     let mut leaving = None;
-    for external in [None, Some(58_200)] {
+    for (breakdown, external, read) in [
+        (crucible_runner::Breakdown::default(), None, None),
+        (
+            crucible_runner::Breakdown::default(),
+            Some(58_200),
+            Some(58_200),
+        ),
+        (
+            crucible_runner::Breakdown::reported(Some(1_000_000), 80_000),
+            Some(10_000),
+            Some(80_000),
+        ),
+    ] {
+        let mut turning = Turning::started(breakdown);
         let turn = Turn {
             turning: &mut turning,
             held: &mut held,
@@ -2134,6 +2147,6 @@ fn a_panel_over_a_turn_reads_what_the_agent_holds_only_on_its_route() {
             execution: crucible_client_api::Execution::Native,
             model: None,
         };
-        assert_eq!(turn.counted().usage.context.external, external);
+        assert_eq!(turn.counted().usage.context.external, read);
     }
 }

@@ -2,7 +2,7 @@
 
 use crucible_runner::TurnError;
 use crucible_tools::{Summary, ToolOutput};
-use crucible_tui::{Editor, Glyphs, Key};
+use crucible_tui::{Editor, Glyphs, Key, Remaining};
 use crucible_types::{Spend, StopReason, ToolArgs, ToolCall, ToolId, TurnId};
 
 use super::*;
@@ -415,7 +415,7 @@ fn the_window_left_is_handed_to_the_prompt_and_takes_no_turn_row() {
     let texts: Vec<String> = rows.iter().map(Row::text).collect();
 
     assert!(carried.left().is_some(), "{carried:?}");
-    assert_eq!(turning.left(), carried.left());
+    assert_eq!(turning.left(), Remaining::new(carried.left()));
     assert!(
         texts.iter().all(|row| !row.contains("window left")),
         "{texts:?}"
@@ -450,7 +450,7 @@ fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
     turning.interrupting();
 
     turning.saw(&Event::Carried { breakdown: carried });
-    assert_eq!(turning.left(), carried.left());
+    assert_eq!(turning.left(), Remaining::new(carried.left()));
 
     turning.saw(&Event::Compacted {
         compacted: crucible_types::Compacted {
@@ -576,7 +576,7 @@ fn compacting_keeps_the_latest_window_reading_until_its_replacement_arrives() {
     });
 
     assert!(started.left().is_some(), "{started:?}");
-    assert_eq!(turning.left(), started.left());
+    assert_eq!(turning.left(), Remaining::new(started.left()));
 }
 
 #[test]

@@ -895,7 +895,7 @@ impl Host {
                 path: self.shown(&path),
             }),
             Event::Background(text) => Ok(Event::Background(self.shown(&text))),
-            Event::Usage(usage) => Ok(Event::Usage(usage)),
+            event @ (Event::Usage(_) | Event::Carried(_) | Event::Compacted { .. }) => Ok(event),
             Event::Opened(_)
             | Event::Started { .. }
             | Event::Pending(..)
