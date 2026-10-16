@@ -1273,18 +1273,22 @@ fn a_model_reached_through_an_agent_at_a_rung_it_does_not_serve_moves_nothing() 
 }
 
 /// The user file of a run on the installed agent `work` that reaches google
-/// through `space`, an agent that chooses its own model.
-const ROUTED_TO_ONE_OF_ITS_OWN: &str = r#"{
-  "externalAgents": {
-    "work": {"driver": "claude", "executable": "claude"},
-    "space": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy"}
-  },
-  "providers": {
-    "anthropic": {"access": {"type": "externalAgent", "instance": "work"}},
-    "google": {"access": {"type": "externalAgent", "instance": "space"}}
-  }
+/// through `space`, an agent that chooses its own model, with its profile
+/// under `home`: a profile is named by a rooted path, which on Windows starts
+/// with a drive.
+fn routed_to_one_of_its_own(home: &std::path::Path) -> String {
+    serde_json::json!({
+        "externalAgents": {
+            "work": {"driver": "claude", "executable": "claude"},
+            "space": {"driver": "antigravity", "executable": "agy", "profileDir": home.join("agy")}
+        },
+        "providers": {
+            "anthropic": {"access": {"type": "externalAgent", "instance": "work"}},
+            "google": {"access": {"type": "externalAgent", "instance": "space"}}
+        }
+    })
+    .to_string()
 }
-"#;
 
 /// On a route, a model of a provider reached through another agent, one that
 /// chooses its own model, is refused with what that agent is, and the
@@ -1301,7 +1305,7 @@ fn a_model_of_a_provider_reached_through_an_agent_choosing_its_own_is_refused() 
     let refused = answered_off(
         &tree,
         &mut outside.conversation,
-        ROUTED_TO_ONE_OF_ITS_OWN,
+        &routed_to_one_of_its_own(tree.home()?.path()),
         Command::SelectModel {
             provider: Name::new("google")?,
             model: Name::new("gemini-3.8-flash")?,
