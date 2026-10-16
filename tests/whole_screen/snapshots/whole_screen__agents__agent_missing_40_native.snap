@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 23,0 scrollback 0
+40x40 cursor 28,0 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -11,27 +11,27 @@ expression: picture
 |                                        |
 |Log in                                  |
 |                                        |
-|Antigravity cannot be started.          |
-|                                        |
 |Not installed: no antigravity command on|
 |PATH and none at the configured         |
 |executable.                             |
-|Install Antigravity, then choose Check  |
-|again.                                  |
-|Agent: antigravity, run as antigravity. |
+|Run `crucible agents install            |
+|antigravity` in a terminal, then choose |
+|Check again.                            |
+|Agent: antigravity, run as              |
+|/scratch--------------------------------|
+|----------------------------------------|
+|----------------------------------------|
+|----------------------------------------|
+|----------------------------------------|
+|----------------------------------------|
+|/home/programs/antigravity/1.3.0/agy_acp|
+|_server.par.                            |
 |                                        |
 |› Check again                           |
 |  Look for the agent's program again.   |
-|                                        |
-|  Go back                               |
-|  Choose another agent.                 |
+|  · 1 more                              |
 |                                        |
 |esc to go back                          |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |
