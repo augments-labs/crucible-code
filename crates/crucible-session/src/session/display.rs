@@ -5,7 +5,8 @@
 //!
 //! An installed agent's calls are kept as display-only steps, each written as
 //! the turn drew it and handed back with the answer it was said in. Model
-//! replay passes over them, as an older build passes over the whole kind.
+//! replay passes over them, as an older build passes over the whole kind and
+//! this one passes over a step in a shape it does not know.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -173,11 +174,15 @@ impl DisplayHistory {
                 .and_then(|body| body.get("kind"))
                 .and_then(Value::as_str);
             if kind == Some("agent_step") {
-                let step = value
+                // Only drawn, never sent: a step in a shape a later build
+                // wrote is passed over rather than costing the whole session.
+                let Some(step) = value
                     .get("run_item")
                     .and_then(|item| item.get("body"))
                     .and_then(read_step)
-                    .ok_or_else(invalid)?;
+                else {
+                    continue;
+                };
                 self.steps.push(step);
                 self.step_bytes = self.step_bytes.saturating_add(text.len());
                 // A turn may go on for longer than is worth holding: what it

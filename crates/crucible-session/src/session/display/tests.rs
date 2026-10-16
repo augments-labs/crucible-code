@@ -510,3 +510,39 @@ fn an_agent_s_steps_come_back_with_the_answer_they_were_taken_in() {
     assert_eq!(model.messages().len(), 4);
     assert!(!format!("{model:?}").contains("toolu_"));
 }
+
+#[test]
+fn a_step_this_build_cannot_read_is_passed_over() {
+    // A later build may keep what an agent did in a shape this one does not
+    // know; the turn is still drawn from the answer it was said in.
+    let sample = Sample::new("display-agent-step-unknown");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let path = session.path().to_owned();
+    session.append(&Message::said("look around"));
+    let kept = step(0, 0, called("toolu_1", None));
+    session.agent_step(&kept);
+    drop(session);
+    let answer = Message::Agent {
+        continuation: None,
+        text: "Done.".into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
+    };
+    let unknown = r#"{"run_item":{"version":2,"body":{"kind":"agent_step","at":0,"round":0,"did":{"pondered":{}}}}}"#;
+    let mut log = std::fs::read_to_string(&path).unwrap();
+    log.push_str(unknown);
+    log.push('\n');
+    log.push_str(&wire::line(&answer));
+    log.push('\n');
+    std::fs::write(&path, log).unwrap();
+
+    let (session, _) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    let display = items(&session);
+    assert!(
+        matches!(
+            display.last().unwrap(),
+            DisplayItem::Message { message, steps, .. } if *message == answer && *steps == [kept.clone()]
+        ),
+        "{display:?}"
+    );
+}
