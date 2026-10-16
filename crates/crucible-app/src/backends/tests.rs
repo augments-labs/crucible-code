@@ -85,6 +85,7 @@ fn a_row_that_does_not_ship_is_not_offered() {
         docs_section: "antigravity",
         reaches: &[],
         sign_in: |_| None,
+        pinned: || None,
         shipping: false,
     }];
     let registry = Registry::new(&HELD_BACK);

@@ -21,8 +21,9 @@ use crucible_config::Driver;
 use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
 use crucible_external_harnesses::acp::Allowing;
-use crucible_external_harnesses::antigravity::Antigravity;
+use crucible_external_harnesses::antigravity::{Antigravity, Manifest};
 use crucible_external_harnesses::claude::Claude;
+use crucible_external_harnesses::release::Pin;
 use crucible_tools::Mode;
 
 /// The most rows a registry holds, which is more agents than any release has
@@ -50,6 +51,10 @@ pub struct Row {
     /// given in, or the agent's usual one; `None` for an agent that is signed
     /// in from its own window and has no such command.
     pub sign_in: fn(Option<&std::path::Path>) -> Option<Text>,
+    /// The release of it crucible downloads for the user on the platform it
+    /// runs on, which `crucible agents install` puts in crucible's home; `None`
+    /// for an agent the user installs themselves.
+    pub pinned: fn() -> Option<&'static Pin>,
     /// Whether this release lets it run.
     pub shipping: bool,
 }
@@ -121,6 +126,8 @@ pub(crate) const CLAUDE: Row = Row {
         "platform.claude.com",
     ],
     sign_in: |profile| Some(crucible_external_harnesses::claude::sign_in(profile)),
+    // It installs and updates itself.
+    pinned: || None,
     shipping: true,
 };
 
@@ -142,6 +149,7 @@ pub(crate) const ANTIGRAVITY: Row = Row {
         "daily-cloudcode-pa.googleapis.com",
     ],
     sign_in: |_| None,
+    pinned: || Manifest::REVIEWED.here(),
     shipping: true,
 };
 
