@@ -13,6 +13,7 @@ mod journal;
 mod launch;
 mod lifecycle;
 mod pending;
+pub mod release;
 
 pub use antigravity::Ended;
 pub use host::{

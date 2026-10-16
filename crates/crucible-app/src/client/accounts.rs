@@ -660,7 +660,9 @@ type Chosen = (ExternalAgent, &'static crate::backends::Row, bool);
 /// or answered nothing.
 ///
 /// An agent with no configured instance is offered one named after it, run
-/// as its usual command, which is written only with the route. An agent whose
+/// as its usual command, or, for an agent whose release crucible installs and
+/// whose command is not on the `PATH`, as that release; it is written only
+/// with the route. An agent whose
 /// program is not found is said to be so, and may be looked for again or
 /// another picked, [`CHECKS`] times in all for each.
 async fn choose(
@@ -698,19 +700,18 @@ async fn choose(
             choices,
         };
         let row = *rows.get(confirmed(capabilities, front, &agents).await?)?;
-        let Some((agent, written)) = instance(desk, front, capabilities, row, shown(row)).await?
+        let Some((agent, written)) = instance(
+            desk,
+            front,
+            capabilities,
+            (row, shown(row)),
+            conversation.steps(),
+        )
+        .await?
         else {
             continue;
         };
-        if found(
-            conversation,
-            front,
-            capabilities,
-            &agent,
-            (shown(row), command(row)),
-        )
-        .await?
-        {
+        if found(conversation, front, capabilities, &agent, (row, shown(row))).await? {
             return Some((agent, row, written));
         }
     }
@@ -719,14 +720,15 @@ async fn choose(
 
 /// The instance of `row`'s agent, shown as `agent`, a connect goes through:
 /// the one configured, one asked for of several, or one named after the
-/// agent where none is; `Some(None)` where the client went back to the list
+/// agent where none is, its command looked for on the `PATH` of `steps`;
+/// `Some(None)` where the client went back to the list
 /// of agents, and nothing where it cancelled or answered nothing.
 async fn instance(
     desk: &Desk<'_>,
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
-    row: &crate::backends::Row,
-    agent: &str,
+    (row, agent): (&crate::backends::Row, &str),
+    steps: Option<&crate::launching::Steps>,
 ) -> Option<Option<(ExternalAgent, bool)>> {
     let mut configured: Vec<ExternalAgent> = desk
         .switching
@@ -758,16 +760,26 @@ async fn instance(
         return Some(Some((only, true)));
     }
     let name = row.driver.name();
+    let home = desk.switching.choosing.parent()?;
     // A driver whose agent shares its usual home with another program of its
     // vendor is given a directory of its own beside the user file.
     let profile = if row.driver.profile_needed() {
-        let home = desk.switching.choosing.parent()?;
         Some(home.join("agents").join(name).to_str()?.to_owned())
     } else {
         None
     };
+    // One whose release crucible installs is run as that release, installed
+    // or not yet, unless its command is on the `PATH`, as one installed by
+    // hand is.
+    let by_hand =
+        steps.is_some_and(|steps| matches!(steps.discover(command(row)), Discovery::Found(_)));
+    let managed = crate::installing::executable(home, row).filter(|_| !by_hand);
+    let executable = managed
+        .as_deref()
+        .and_then(std::path::Path::to_str)
+        .unwrap_or_else(|| command(row));
     Some(Some((
-        ExternalAgent::unwritten(name, row.driver, command(row), profile.as_deref()),
+        ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref()),
         false,
     )))
 }
@@ -779,8 +791,9 @@ fn command(row: &crate::backends::Row) -> &'static str {
         .map_or(row.driver.name(), |dialect| dialect.program())
 }
 
-/// Whether `agent`'s program, its agent shown and run as `named` says, is
-/// installed: told where it is not, the client may look again until it is or
+/// Whether `agent`'s program, of the row given and shown as named, is
+/// installed: told where it is not, with the command that installs it for an
+/// agent whose release crucible installs, the client may look again until it is or
 /// go back to the list of agents; nothing where it cancelled or answered
 /// nothing.
 async fn found(
@@ -788,13 +801,14 @@ async fn found(
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
     agent: &ExternalAgent,
-    (shown, command): (&str, &str),
+    (row, shown): (&crate::backends::Row, &str),
 ) -> Option<bool> {
     for _ in 0..CHECKS {
         let discovery = conversation.steps().map_or(Discovery::Missing, |steps| {
             steps.discover(agent.executable())
         });
-        let Some([said, next]) = discovery.refusal(shown, command) else {
+        let Some([said, next]) = crate::installing::refusal(row, &discovery, shown, command(row))
+        else {
             return Some(true);
         };
         // Why it cannot start is a fact, which the terminal keeps however short

@@ -35,6 +35,7 @@ static SHIPPED: [Row; 1] = [Row {
     docs_section: "claude-code",
     reaches: &[],
     sign_in: |_| None,
+    pinned: || None,
     shipping: true,
 }];
 

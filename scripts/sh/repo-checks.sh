@@ -1276,6 +1276,8 @@ removable=(
     crates/crucible-app/src/client/{accounts,performing,reading}.rs
     crates/crucible-app/src/proof/accounts.rs
     crates/crucible-app/src/doctor.rs crates/crucible-app/src/providers/tests.rs
+    # The install of an agent's pinned release and the command that runs it.
+    crates/crucible-app/src/installing.rs src/cli.rs src/cli/agents.rs
     crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
     crates/crucible-app/Cargo.toml
     # The configuration's access variant and block, their rows and checks.

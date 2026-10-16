@@ -100,7 +100,7 @@ pub static ACCOUNTS: [Expected; 5] = [
             Put::Missing {
                 asks: "Antigravity cannot be started.",
                 why: "Not installed",
-                install: "Install Antigravity, then choose Check again.",
+                install: "Run `crucible agents install antigravity` in a terminal, then choose Check again.",
                 answer: "Go back",
             },
             Put::Choose("Cancel"),

@@ -248,6 +248,13 @@ sha2 = { version = "=0.11.0", default-features = false }
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 tar = { version = "=0.4.46", default-features = false }
 
+# An agent's release that crucible downloads for the user is a zip archive,
+# which `std` does not read, and a hand-written reader of one is an archive
+# parser. Only its reader is used, over stored and deflated members, which
+# `flate2` above inflates in pure Rust; nothing is extracted by the crate's own
+# extraction, so each member is checked before a byte of it is written.
+zip = { version = "=9.0.4", default-features = false, features = ["deflate-flate2"] }
+
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
 # to do what rg does rather than to re-derive it: `ignore` reads .gitignore the

@@ -70,3 +70,33 @@ fn a_release_that_differs_from_the_reviewed_one_is_refused() {
     let elsewhere = Manifest::REVIEWED.admits(&Initialized::read(&reviewed()), "freebsd", "x86_64");
     assert!(elsewhere.is_err());
 }
+
+/// Each platform's archive is of the reviewed release, and named for it, so
+/// what is downloaded is what initializing is then checked against.
+#[test]
+fn each_published_archive_is_of_the_reviewed_release() {
+    for (os, arch, pin) in Manifest::REVIEWED.platforms {
+        assert!(
+            Manifest::REVIEWED.versions.contains(&pin.version),
+            "{os} {arch}"
+        );
+        assert!(
+            pin.url
+                .starts_with("https://dl.google.com/agy-extensions/releases/")
+                && pin.url.contains(&format!("-{}-", pin.version)),
+            "{os} {arch}: {}",
+            pin.url
+        );
+        assert_eq!(pin.sha256.len(), 64, "{os} {arch}");
+        let windows = *os == "windows";
+        assert_eq!(windowed(pin.executable.name), windows, "{os} {arch}");
+        assert_eq!(windowed(pin.companion.name), windows, "{os} {arch}");
+    }
+}
+
+/// Whether `name` is spelled as a Windows program is.
+fn windowed(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+}

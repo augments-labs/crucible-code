@@ -39,6 +39,8 @@ const COMMANDS: &[&[&str]] = &[
     &["sessions"],
     &["sessions", "list"],
     &["update"],
+    &["agents"],
+    &["agents", "install"],
     &["completion"],
 ];
 

@@ -1,8 +1,8 @@
 # Command line
 
 `crucible --help` prints the flags and the subcommands `sandbox`, `config`,
-`doctor`, `auth`, `mcp`, `extensions`, `sessions`, `update`, `completion` and
-`help`,
+`doctor`, `auth`, `mcp`, `extensions`, `sessions`, `update`, `agents`,
+`completion` and `help`,
 under a longer introduction; `crucible -h` prints the same under the one-line
 introduction. Each subcommand has its own help, such as `crucible
 config --help` and `crucible sandbox setup --help`, and `crucible help` and
@@ -571,6 +571,35 @@ well, rather than being treated as a copy put in place by hand. If the newest
 release GitHub names is not three plain numbers, as with a prerelease, nothing
 is installed, and the name GitHub gave is not printed.
 
+## Installing a coding agent
+
+### `agents install DRIVER`
+
+`crucible agents install antigravity` downloads the release of Antigravity's
+agent server this build of crucible runs, 1.3.0, for your platform, from the
+address Google publishes it at, and stops. `DRIVER` is the agent as an
+[`externalAgents`](../configuration/configuration.md#externalagents) entry
+names its `driver`; `claude` is refused, since Claude Code installs and updates
+itself. The configuration is not read, and nothing about your session or
+directory is sent.
+
+The archive is downloaded into a file only you can read under
+`programs/antigravity` in crucible's home directory, which is removed when the
+command ends. It is given up on if it is larger than the release, if it takes
+longer than 45 minutes, if nothing arrives for a whole minute, or if the
+address answers with anything but the archive itself; a redirect is not
+followed. It is unpacked only once its size and SHA-256 are the ones this build
+pins, and only if it holds the agent server and the harness beside it and
+nothing else, each of the size pinned. Both are put under
+`programs/antigravity/1.3.0`, which is there whole or not at all. A release
+already there is kept, and nothing is downloaded. While it downloads, a
+terminal is shown the percent that has arrived; any other standard error is
+told once that the download began. What was installed, and where, goes to
+standard output.
+
+[`/login`](../providers/agents.md#antigravity) then runs that release for an
+agent it sets up, and an Antigravity it cannot find says to run this command.
+
 ## Credentials from the command line
 
 `crucible auth` says, stores and removes the credentials a launch signs
@@ -781,8 +810,8 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, an `agents install` that installed a release or found it in place, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, and an `agents install` that put nothing in place, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
 | 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
 | 3 | An `update --check` that found a later release, with what it found on standard output. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, and the prompt `auth login` hides a key at, or a wait for a key between turns at the prompt or in a panel, is put away with the terminal handed back as it was found, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |

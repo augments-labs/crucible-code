@@ -14,15 +14,6 @@ expression: picture
 |                                        |
 |                                        |
 |                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
@@ -32,9 +23,18 @@ expression: picture
 |Not installed: no antigravity command on|
 |PATH and none at the configured         |
 |executable.                             |
-|Install Antigravity, then choose Check  |
-|again.                                  |
-|Agent: antigravity, run as antigravity. |
+|Run `crucible agents install            |
+|antigravity` in a terminal, then choose |
+|Check again.                            |
+|Agent: antigravity, run as              |
+|/scratch--------------------------------|
+|----------------------------------------|
+|----------------------------------------|
+|----------------------------------------|
+|----------------------------------------|
+|----------------------------------------|
+|/home/programs/antigravity/1.3.0/agy_acp|
+|_server.par.                            |
 |                                        |
 |› Check again                           |
 |  Look for the agent's program again.   |
