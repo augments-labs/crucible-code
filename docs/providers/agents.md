@@ -18,10 +18,13 @@ answering: it is stored, the provider's `access` is rewritten from
 `provider` asked, so the next session asks it directly; if that cannot be
 written, the file is left as it was and the next session still runs on the
 agent. The provider the agent reaches includes the one a connect during this
-run moved the conversation off. A subscription or key for another provider
-moves the conversation off the agent onto that provider at once, in a new
-session in the same permission mode, with nothing carried over; its line says
-so, and the session it left stays listed and can be resumed. `/logout` for the
+run moved the conversation off. A subscription or key for a provider no agent
+reaches moves the conversation off the agent onto that provider at once, in a
+new session in the same permission mode, with nothing carried over; its line
+says so, and the session it left stays listed and can be resumed. Where that
+provider cannot be set up, its line says why and the conversation stays on the
+agent; where the new session cannot be started, or another agent reaches the
+provider, the credential is only stored. `/logout` for the
 provider the agent reaches removes the stored credential and says the agent
 still reaches it.
 

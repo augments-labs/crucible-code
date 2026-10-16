@@ -431,7 +431,9 @@ pub enum LoginOutcome {
         unwritten: Option<Problem>,
     },
     /// The conversation is on an installed agent's route, and the credential
-    /// is stored for another provider: nothing else changed.
+    /// is stored for another provider: nothing else changed. A provider this
+    /// run reaches through another agent, or one whose new session could not
+    /// be started, comes to this.
     Stored {
         /// The provider the credential is for.
         provider: Text,

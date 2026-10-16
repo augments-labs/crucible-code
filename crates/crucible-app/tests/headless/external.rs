@@ -3101,6 +3101,71 @@ fn a_login_for_another_provider_on_the_route_moves_onto_it() -> Result<(), Faile
     Ok(())
 }
 
+/// The user file of a conversation on `work` with a second provider reached
+/// through it, and a third through another instance.
+const BESIDE: &str = r#"{
+  "externalAgents": {
+    "work": {"driver": "claude", "executable": "claude"},
+    "home": {"driver": "claude", "executable": "claude"}
+  },
+  "providers": {
+    "anthropic": {"access": {"type": "externalAgent", "instance": "work"}},
+    "openai": {"access": {"type": "externalAgent", "instance": "work"}},
+    "deepseek": {"access": {"type": "externalAgent", "instance": "home"}}
+  }
+}
+"#;
+
+/// A key for a second provider the route reaches is written down as the way
+/// it is reached from the next launch, as the first one's is.
+#[test]
+fn a_login_for_a_second_provider_the_route_reaches_waits_for_the_next_launch() -> Result<(), Failed>
+{
+    use crucible_client_api::{LoginOutcome, Text};
+
+    let tree = Tree::new("external-login-second-routed")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+
+    let (outcome, file) = crediting(&tree, &mut outside, BESIDE, "openai", login)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::NextLaunch {
+            provider: Text::cut("openai"),
+            unwritten: None,
+        })
+    );
+    let file: serde_json::Value = serde_json::from_str(&file)?;
+    assert_eq!(
+        file.pointer("/providers/openai/access/type"),
+        Some(&serde_json::json!("apiKey"))
+    );
+    assert!(outside.conversation.session().route().is_some());
+    Ok(())
+}
+
+/// A key for a provider another instance reaches is only stored: this run's
+/// settings route it through that agent, so the conversation does not move.
+#[test]
+fn a_login_for_a_provider_another_agent_reaches_is_only_stored() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Text};
+
+    let tree = Tree::new("external-login-other-routed")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+
+    let (outcome, file) = crediting(&tree, &mut outside, BESIDE, "deepseek", login)?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::Stored {
+            provider: Text::cut("deepseek"),
+        })
+    );
+    assert_eq!(file, BESIDE);
+    assert!(outside.conversation.session().route().is_some());
+    Ok(())
+}
+
 /// The permission mode the conversation was in on the route is the one it is
 /// in once a login moves it off.
 #[test]

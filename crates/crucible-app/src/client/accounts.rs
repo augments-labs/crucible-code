@@ -35,7 +35,7 @@
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
 //! | connect, signed in | use it, then connect | [`LoginOutcome::AgentConnected`] |
-//! | connect, signed in, on the provider's model | use it, then connect | [`LoginOutcome::AgentConnected`], naming the instance moved onto |
+//! | connect, signed in, on the provider's model or another instance's route | use it, then connect | [`LoginOutcome::AgentConnected`], naming the instance moved onto |
 //! | connect, signed in, on the provider's model, the agent not startable | use it, then connect | [`LoginOutcome::AgentConnected`], naming none |
 //! | connect, signed in | use it, then connect; the file not written | [`LoginOutcome::ConnectUnsaved`] |
 //! | connect | the agent's route accepted; the yes not written | [`LoginOutcome::ConnectUnsaved`] |
@@ -77,12 +77,12 @@
 //! update of the user file, under the scope's journal, the instance's own
 //! settings first where they are new.
 //!
-//! A conversation asking the provider's model when the connect is written
-//! moves onto the instance in a new session, bound to its route, with nothing
-//! carried over; the session left stays listed and can be resumed. Where it
-//! cannot move, it stays where it was and the next run starts on the agent.
-//! A conversation on an agent's route, or asking another provider, stays
-//! where it is.
+//! A conversation reaching the provider when the connect is written, by its
+//! model or another instance's route, moves onto the instance in a new
+//! session, bound to its route, with nothing carried over; the session left
+//! stays listed and can be resumed. Where it cannot move, it stays where it
+//! was and the next run starts on the agent. A conversation already on the
+//! instance, or reaching another provider, stays where it is.
 
 use std::path::Path;
 

@@ -142,7 +142,9 @@ pub enum LoggedIn {
         unwritten: Option<RememberError>,
     },
     /// The conversation keeps the installed agent's route it is on, and the
-    /// credential is stored for another provider: nothing else changed.
+    /// credential is stored for another provider: nothing else changed. A
+    /// provider this run reaches through another agent, or one whose new
+    /// session could not be started, comes to this.
     Stored {
         /// The provider the credential is for.
         provider: &'static str,
@@ -213,8 +215,9 @@ pub enum LoggedOut {
 /// What a credential just stored for `named` comes to while the conversation
 /// is on an installed agent's route, which keeps answering either way.
 ///
-/// `routed` says whether `named` is the provider the route stands in for, as
-/// [`Conversation::reached`] says. The kind of credential stored decides how
+/// `routed` says whether `named` is a provider the route stands in for: one
+/// the files read at launch reach through its instance, or the one
+/// [`Conversation::reached`] names. The kind of credential stored decides how
 /// that provider is reached next: an account by its subscription, a key as a
 /// key.
 fn beside_the_route(routed: bool, named: Served, with: &Switching<'_>) -> LoggedIn {
@@ -372,8 +375,9 @@ impl Conversation {
     /// asked, any model name left over from before is retired with the
     /// provider it belonged to, and the conversation is left asking for none.
     pub async fn logged_in(&mut self, named: Served, with: &Switching<'_>) -> LoggedIn {
-        if self.instance().is_some() {
-            let routed = self.reached(with.settings).as_deref() == Some(named.name);
+        if let Some(instance) = self.instance() {
+            let routed = routes(with.settings, named, instance)
+                || self.reached(with.settings).as_deref() == Some(named.name);
             return beside_the_route(routed, named, with);
         }
         let set = match (with.serving)(named, &with.logins.read()) {
@@ -419,9 +423,9 @@ impl Conversation {
     /// started under `sessions`. The session left stays on the disk where a
     /// resume can find it.
     ///
-    /// Only another provider moves: the files this run read route the
-    /// route's own provider through the agent, so that one cannot be set up
-    /// until the next launch reads the access its login rewrote.
+    /// Only a provider this run's settings reach through no installed agent
+    /// moves: one they route through an agent cannot be set up until the next
+    /// launch reads the access its login rewrote, or one the user gives it.
     pub async fn logged_in_moving(
         &mut self,
         named: Served,
@@ -429,8 +433,12 @@ impl Conversation {
         sessions: &Path,
         workspace: &Workspace,
     ) -> LoggedIn {
+        let agented = matches!(
+            with.settings.access(named.name),
+            Some(crucible_config::Access::ExternalAgent { .. })
+        );
         match self.logged_in(named, with).await {
-            LoggedIn::Stored { provider } => self
+            LoggedIn::Stored { provider } if !agented => self
                 .off_the_route(named, with, sessions, workspace)
                 .await
                 .unwrap_or(LoggedIn::Stored { provider }),
