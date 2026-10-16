@@ -80,7 +80,6 @@ mod atomic;
 mod bash;
 mod blocking;
 mod bound;
-mod changed;
 mod edit;
 mod glob;
 mod grep;

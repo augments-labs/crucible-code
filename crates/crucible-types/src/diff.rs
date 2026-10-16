@@ -249,5 +249,7 @@ impl Diff {
     }
 }
 
+mod between;
+
 #[cfg(test)]
 mod tests;
