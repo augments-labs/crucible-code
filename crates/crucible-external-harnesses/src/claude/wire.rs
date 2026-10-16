@@ -255,21 +255,22 @@ fn assistant(frame: &Value) -> Result<Assistant, Failure> {
 }
 
 /// The tokens the request `message` answers carried and the answer itself,
-/// where its usage says them all; nothing for one the program wrote rather
-/// than its model, which reports no request.
+/// where its usage says what the request read, a cache part it leaves out
+/// counting as none; nothing for one the program wrote rather than its
+/// model, which reports no request.
 fn carried(message: &Value) -> Option<u64> {
     if message.get("model").and_then(Value::as_str) == Some("<synthetic>") {
         return None;
     }
     let usage = message.get("usage")?;
+    let read = usage.get("input_tokens").and_then(Value::as_u64)?;
     [
-        "input_tokens",
         "cache_read_input_tokens",
         "cache_creation_input_tokens",
         "output_tokens",
     ]
     .into_iter()
-    .try_fold(0_u64, |sum, name| {
+    .try_fold(read, |sum, name| {
         sum.checked_add(usage.get(name).and_then(Value::as_u64).unwrap_or(0))
     })
 }

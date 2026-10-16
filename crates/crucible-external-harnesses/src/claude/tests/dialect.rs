@@ -192,7 +192,8 @@ fn only_the_main_loops_text_is_said() {
 
 /// What the context holds is read off each message the main loop's model
 /// answered: its whole request, cache included, and its answer; never a
-/// task's, nor one the program wrote itself.
+/// task's, nor one the program wrote itself, nor one whose usage does not
+/// say what its request read.
 #[test]
 fn the_context_is_what_the_main_loops_last_request_carried() {
     let mut agent = turning(None);
@@ -219,6 +220,16 @@ fn the_context_is_what_the_main_loops_last_request_carried() {
         .heard(&said(json!("toolu_9"), "claude-opus-5-5"))
         .unwrap();
     let synthetic = agent.heard(&said(Value::Null, "<synthetic>")).unwrap();
+    let unsaid = agent
+        .heard(
+            &json!({
+                "type": "assistant",
+                "parent_tool_use_id": null,
+                "message": {"model": "claude-opus-5-5", "content": [], "usage": {"output_tokens": 90}},
+            })
+            .to_string(),
+        )
+        .unwrap();
 
     assert!(
         matches!(main.as_slice(), [Act::Say(Event::Carried(41_293))]),
@@ -226,6 +237,7 @@ fn the_context_is_what_the_main_loops_last_request_carried() {
     );
     assert!(task.is_empty(), "{task:?}");
     assert!(synthetic.is_empty(), "{synthetic:?}");
+    assert!(unsaid.is_empty(), "{unsaid:?}");
 }
 
 /// A compaction the agent made says what its context held before and after,
