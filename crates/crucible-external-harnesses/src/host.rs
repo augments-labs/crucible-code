@@ -883,12 +883,24 @@ impl Host {
     fn reported(&self, event: Event) -> Result<Event, String> {
         match event {
             Event::Delta(text) => Ok(Event::Delta(self.shown(&text))),
-            Event::ToolActivity { tool, summary } => Ok(Event::ToolActivity {
+            Event::ToolActivity {
+                call,
+                tool,
+                summary,
+                about,
+            } => Ok(Event::ToolActivity {
+                call: self.shown(&call),
                 tool: self.shown(&tool),
                 summary: self.shown(&summary),
+                about,
             }),
-            Event::ToolReport { tool, report } => Ok(Event::ToolReport {
-                tool: self.shown(&tool),
+            Event::ToolReport {
+                call,
+                failed,
+                report,
+            } => Ok(Event::ToolReport {
+                call: self.shown(&call),
+                failed,
                 report: self.shown(&report),
             }),
             Event::FileChanged { path } => Ok(Event::FileChanged {

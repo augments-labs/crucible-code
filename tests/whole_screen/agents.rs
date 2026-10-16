@@ -729,6 +729,56 @@ fn an_agent_route_reads_its_context_against_the_window_and_says_when_it_made_roo
     }
 }
 
+/// Fails where the calls an agent made with its own tools are not drawn as a
+/// native call is, in either screen mode: the tool's name with what the call
+/// was about, and under it what the call came back with, a failure included,
+/// rather than a line saying the agent used a tool.
+#[test]
+fn an_agent_s_own_calls_are_drawn_as_call_rows_with_what_they_came_back_with() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-calls-{mode}");
+        let script = Script::of(signed_in([claude::tooled()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        connected(&mut window);
+        window.types_until("List them.\r", "Done.");
+        let picture = window.picture();
+
+        let listed = format!("Bash({})", claude::LISTED);
+        let read = format!("Read({})", claude::MISSING);
+        for called in [&listed, &read] {
+            assert!(
+                picture
+                    .lines()
+                    .any(|line| line.trim_start_matches('|').starts_with(&format!(
+                        "{} {called}",
+                        char::from_u32(0x25CF).unwrap_or('*')
+                    ))),
+                "{mode} draws {called:?} as a call row\n{picture}"
+            );
+        }
+        let came_back = |said: &str| {
+            picture
+                .lines()
+                .any(|line| line.contains('\u{23BF}') && line.contains(said))
+        };
+        assert!(
+            came_back(claude::LISTING[0]) && picture.contains("ctrl+o to expand"),
+            "{mode} draws the listing under its call\n{picture}"
+        );
+        assert!(
+            came_back(claude::NOT_THERE),
+            "{mode} draws the failed read under its call\n{picture}"
+        );
+        assert!(
+            !picture.contains("the agent used"),
+            "{mode} still draws the agent's calls as activity\n{picture}"
+        );
+    }
+}
+
 /// Asserts `picture` shows the priced turn the agent reported, headed as its
 /// report, and nothing only a native route has.
 fn reported(picture: &str, drawn: &str) {

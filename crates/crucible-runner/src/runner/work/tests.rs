@@ -171,6 +171,8 @@ fn what_a_tool_prints_while_it_runs_arrives_under_its_own_call() {
             | Event::Compacted { .. }
             | Event::AgentCompacted { .. }
             | Event::Retrying
+            | Event::AgentCalled { .. }
+            | Event::AgentAnswered { .. }
             | Event::Reported { .. }
             | Event::FastRefused { .. }
             | Event::Aged { .. }
@@ -1555,6 +1557,8 @@ fn every_call_reports_that_it_finished() {
             | Event::Compacted { .. }
             | Event::AgentCompacted { .. }
             | Event::Retrying
+            | Event::AgentCalled { .. }
+            | Event::AgentAnswered { .. }
             | Event::Reported { .. }
             | Event::FastRefused { .. }
             | Event::Aged { .. }

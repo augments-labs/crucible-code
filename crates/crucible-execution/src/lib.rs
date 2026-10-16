@@ -35,7 +35,7 @@ pub use backend::{
 pub use capability::{
     Capabilities, Capability, Claim, Confined, Confinement, Freshness, Observation, Scope,
 };
-pub use event::{Cost, Currency, Effects, Event, Fault, TEXT_BYTES, Text, Usage};
+pub use event::{About, Cost, Currency, Effects, Event, Fault, TEXT_BYTES, Text, Usage};
 pub use lifecycle::{
     Admission, Authentication, Ending, Lifecycle, Operation, Recheck, Refused, Running, Step,
 };

@@ -165,9 +165,26 @@ pub(crate) fn event<T: Terminal>(
         | Event::PlanLimits { .. }
         | Event::Compacting { .. } => Ok(()),
 
-        // Something the agent running this turn did with its own tools, over
-        // there: a block of its own, worded as the agent's and not as a call,
-        // because nothing ran here and nobody here was asked.
+        // A call the agent running this turn made with one of its own tools,
+        // over there. Drawn as a call made here is, live in the footing until
+        // the agent says what it came back with: the reader is asking the same
+        // question of it, what was run and what it said. Nothing ran here and
+        // nobody here was asked, which is the permission row's to say, and
+        // there is none.
+        Event::AgentCalled {
+            call,
+            tool,
+            summary,
+        } => {
+            kept.calling(call, called_as(&tool, &summary).text().to_owned());
+            renderer.settle()
+        }
+        Event::AgentAnswered { call, output } => {
+            came_back(renderer, kept, &call, Shown::reported(output), style)
+        }
+
+        // A file the agent said it changed, under no call of its: a block of
+        // its own, worded as the agent's.
         Event::Reported { tool, summary } => {
             renderer.settle()?;
             renderer.apart()?;
@@ -926,7 +943,16 @@ impl Called {
 /// the tool is out, and the footing draws the mark itself because the mark is
 /// the part that moves.
 pub(crate) fn called(call: &ToolCall, summary: &Summary) -> Called {
-    let name = pascal(&call.name);
+    called_as(&call.name, summary)
+}
+
+/// A call line's words for a tool by its name, whoever ran it.
+///
+/// What [`called`] reads off a call this program made, and what a call an
+/// installed agent made with its own tool is worded from, so a row reads the
+/// same whichever side of the wire the tool ran on.
+pub(crate) fn called_as(tool: &str, summary: &Summary) -> Called {
+    let name = pascal(tool);
 
     if summary.is_empty() {
         Called::new(name, Argument::Other)
@@ -1601,6 +1627,14 @@ impl Shown {
             diff: output.diff().cloned(),
             output: output.into_recorded(),
         }
+    }
+
+    /// What an installed agent said one of its own calls came back with.
+    ///
+    /// Its text alone: nothing here ran the call, so there is no change to
+    /// show beside it.
+    pub(crate) const fn reported(output: RecordedToolOutput) -> Self {
+        Self { output, diff: None }
     }
 
     /// A result read back from a session, with the preview its log kept.

@@ -393,6 +393,8 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
@@ -425,6 +427,8 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
@@ -451,6 +455,8 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
@@ -493,6 +499,8 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
@@ -525,6 +533,8 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
@@ -556,6 +566,8 @@ impl Scripted {
                 | Event::Compacted { .. }
                 | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }

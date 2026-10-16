@@ -1,6 +1,6 @@
 //! Every update kind is read, and a turn's cost is what it added.
 
-use crucible_execution::{Cost, Currency, Event};
+use crucible_execution::{About, Cost, Currency, Event};
 use crucible_types::TurnId;
 use serde_json::{Value, json};
 
@@ -125,4 +125,51 @@ fn an_update_of_a_kind_not_defined_is_dropped_and_counted() {
 
     assert!(unknown.is_empty() && unnamed.is_empty());
     assert_eq!(updates.unknown, 2);
+}
+
+/// A call is reported under the agent's id for it, and its end under the same
+/// id with whether it failed, even where it said nothing; a call still
+/// running reports no end.
+#[test]
+fn a_call_and_its_end_are_reported_under_the_call_s_id() {
+    let mut updates = Updates::fresh();
+    let begun = updates.heard(&json!({
+        "sessionUpdate": "tool_call", "toolCallId": "call_1", "title": "Run ls", "kind": "execute", "status": "pending",
+    }));
+    let running = updates.heard(&json!({
+        "sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "in_progress",
+    }));
+    let done = updates.heard(&json!({
+        "sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "completed",
+        "content": [{"type": "content", "content": {"type": "text", "text": "a\nb"}}],
+    }));
+    let failed = updates.heard(&json!({
+        "sessionUpdate": "tool_call_update", "toolCallId": "call_2", "status": "failed",
+    }));
+
+    assert!(
+        matches!(
+            begun.as_slice(),
+            [Act::Say(Event::ToolActivity { call, tool, summary, about: About::Other })]
+                if call.as_str() == "call_1" && tool.as_str() == "execute" && summary.as_str() == "Run ls"
+        ),
+        "{begun:?}"
+    );
+    assert!(running.is_empty(), "{running:?}");
+    assert!(
+        matches!(
+            done.as_slice(),
+            [Act::Say(Event::ToolReport { call, failed: false, report })]
+                if call.as_str() == "call_1" && report.as_str() == "a\nb"
+        ),
+        "{done:?}"
+    );
+    assert!(
+        matches!(
+            failed.as_slice(),
+            [Act::Say(Event::ToolReport { call, failed: true, report })]
+                if call.as_str() == "call_2" && report.as_str().is_empty()
+        ),
+        "{failed:?}"
+    );
 }

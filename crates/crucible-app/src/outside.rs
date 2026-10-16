@@ -6,10 +6,13 @@
 //! and hands on each event it reports as the runner event a native turn posts
 //! for the same thing, through the turn's own [`RunContext`], so the terminal
 //! and a headless client read one stream whichever backend ran the turn.
-//! Nothing the agent reports is an instruction here: a tool it used is a
-//! [`RunEvent::Reported`], something it did, and the leave it asks for goes to
-//! the turn's [`Asker`] and back to the agent as the contract's decision,
-//! never as anything the permission engine reads.
+//! Nothing the agent reports is an instruction here: a call it made with one
+//! of its own tools is a [`RunEvent::AgentCalled`], and what it came back with
+//! a [`RunEvent::AgentAnswered`] under the same call, drawn as a native call
+//! and its result are and never one of them; a file it changed is a
+//! [`RunEvent::Reported`]. The leave it asks for goes to the turn's [`Asker`]
+//! and back to the agent as the contract's decision, never as anything the
+//! permission engine reads.
 //!
 //! **One tally.** The figures an agent reports fold into the conversation's
 //! one `Tally`, and each change is posted whole as `Used`, so what a front
@@ -67,8 +70,8 @@ use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use crucible_execution::{
-    Backend, Cost, Decision, Error, Event, Failure, Outcome, PENDINGS, Pending, PendingRef, Sink,
-    Text, TurnRequest, Usage,
+    About, Backend, Cost, Decision, Error, Event, Failure, Outcome, PENDINGS, Pending, PendingRef,
+    Sink, Text, TurnRequest, Usage,
 };
 use crucible_models::{Effort, ProviderError};
 use crucible_runner::{
@@ -77,10 +80,10 @@ use crucible_runner::{
 };
 use crucible_runtime::BoxFuture;
 use crucible_session::{ExternalRef, RouteBinding, Session, Uncertain};
-use crucible_tools::Mode;
+use crucible_tools::{Argument, Mode, Summary};
 use crucible_types::{
-    Attachment, CONTINUATION_BYTES, CostAmount, Message, PricingCurrency, PricingUnit, Spend,
-    StopReason, Transcript, TurnId,
+    Attachment, CONTINUATION_BYTES, CostAmount, Message, PricingCurrency, PricingUnit,
+    RecordedToolOutput, Spend, StopReason, ToolId, Transcript, TurnId,
 };
 
 use crate::client::{Acting, Asker};
@@ -163,6 +166,9 @@ const DOLLARS: PricingCurrency = PricingCurrency::new("USD");
 
 /// Femtocurrency in one millionth of a currency.
 const FEMTO: u128 = 1_000_000_000;
+
+/// What ends the text of an agent's report that was longer than is kept.
+const CUT_REPORT: &str = "[the rest of what the agent reported was not kept]";
 
 /// The sentence a failure is ended with where what the agent was doing is not
 /// known to have happened or not.
@@ -836,14 +842,46 @@ impl Sink for Telling<'_> {
                     text: text.as_str().into(),
                 })
             }
-            Event::ToolActivity { tool, summary } => Some(RunEvent::Reported {
+            Event::ToolActivity {
+                call,
+                tool,
+                summary,
+                about,
+            } => Some(RunEvent::AgentCalled {
+                call: ToolId::new(call.as_str()),
                 tool: tool.as_str().into(),
-                summary: summary.as_str().into(),
+                summary: Summary::of(
+                    match about {
+                        About::Path => Argument::Path,
+                        About::Address => Argument::Address,
+                        About::Command => Argument::Command,
+                        About::Other => Argument::Other,
+                    },
+                    summary.as_str(),
+                ),
             }),
-            Event::ToolReport { tool, report } => Some(RunEvent::Reported {
-                tool: tool.as_str().into(),
-                summary: report.as_str().into(),
-            }),
+            Event::ToolReport {
+                call,
+                failed,
+                report,
+            } => {
+                // What was cut says so in the text, as a tool here that cut
+                // what it captured says so in its own: the row under the call
+                // is the only place a reader learns there was more.
+                let said = if report.incomplete() {
+                    format!("{report}\n{CUT_REPORT}")
+                } else {
+                    report.as_str().to_owned()
+                };
+                Some(RunEvent::AgentAnswered {
+                    call: ToolId::new(call.as_str()),
+                    output: if failed {
+                        RecordedToolOutput::failed(said)
+                    } else {
+                        RecordedToolOutput::ok(said)
+                    },
+                })
+            }
             Event::FileChanged { path } => Some(RunEvent::Reported {
                 tool: "file".into(),
                 summary: path.as_str().into(),

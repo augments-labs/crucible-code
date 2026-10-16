@@ -16,7 +16,7 @@ expression: picture
 |                                        |
 |› Change the file.                      |
 |                                        |
-|the agent used Edit · src/lib.rs        |
+|● Edit(src/lib.rs)                      |
 |                                        |
 |claude: the agent stopped before it     |
 |finished the turn; it ended with exit   |

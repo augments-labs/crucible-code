@@ -644,6 +644,33 @@ impl Turning {
                     Vec::new()
                 }
             }
+            // Always held in the footing, whatever it is: nothing says how
+            // many of the agent's calls are out at once, nor which of them
+            // only looked around, so a row written up front could take
+            // another call's result under it.
+            Event::AgentCalled {
+                call,
+                tool,
+                summary,
+            } => {
+                self.calling.push_back(Calling {
+                    id: call.clone(),
+                    asked: Instant::now(),
+                    said: draw::called_as(tool, summary),
+                    printing: Printing::default(),
+                    backgroundable: false,
+                    looking: None,
+                    name: draw::pascal(tool),
+                });
+                Vec::new()
+            }
+            // Never one that looked around, so nothing to take out of a run.
+            Event::AgentAnswered { call, .. } => self
+                .calling
+                .iter()
+                .position(|one| one.id == *call)
+                .and_then(|at| self.calling.remove(at))
+                .map_or_else(Vec::new, |calling| vec![settled(calling)]),
             Event::ToolFinished { call, output, .. } => self
                 .calling
                 .iter()
@@ -720,11 +747,19 @@ impl Turning {
 
         self.doing = match event {
             Event::Delta { .. } => Doing::Writing,
-            Event::ToolRequested { .. } | Event::Wrote { .. } => Doing::Running,
+            Event::ToolRequested { .. } | Event::AgentCalled { .. } | Event::Wrote { .. } => {
+                Doing::Running
+            }
             // Room having been made puts the turn back where a finished tool
             // does: waiting on the model, with the next request not yet asked.
-            Event::ToolFinished { .. } if !self.calling.is_empty() => Doing::Running,
-            Event::ToolFinished { .. } | Event::Compacted { .. } => Doing::Thinking,
+            Event::ToolFinished { .. } | Event::AgentAnswered { .. }
+                if !self.calling.is_empty() =>
+            {
+                Doing::Running
+            }
+            Event::ToolFinished { .. } | Event::AgentAnswered { .. } | Event::Compacted { .. } => {
+                Doing::Thinking
+            }
             // The same request going out again, this time at standard speed.
             Event::Retrying | Event::FastRefused { .. } => Doing::Retrying,
             Event::Compacting { .. } => Doing::Compacting,

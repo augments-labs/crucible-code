@@ -154,9 +154,26 @@ pub fn progress(
         },
         // An installed agent's use of its own tools, told after the fact and
         // never as a call anybody here is asked about.
+        Event::AgentCalled {
+            call,
+            tool,
+            summary,
+        } => Progress::ToolActivity {
+            call: Text::cut(call.as_str()),
+            tool: Text::cut(tool),
+            summary: Text::cut(summary.as_str()),
+            summary_kind: summary_kind(summary.argument()),
+        },
+        Event::AgentAnswered { call, output } => Progress::ToolFinished {
+            call: Text::cut(call.as_str()),
+            failed: output.is_failed(),
+        },
+        // A file it said it changed, under no call.
         Event::Reported { tool, summary } => Progress::ToolActivity {
+            call: Text::cut(""),
             tool: Text::cut(tool),
             summary: Text::cut(summary),
+            summary_kind: SummaryKind::Path,
         },
         Event::ToolFinished { call, output, .. } => Progress::ToolFinished {
             call: Text::cut(call.as_str()),

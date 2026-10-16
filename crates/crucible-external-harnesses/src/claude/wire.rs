@@ -71,9 +71,9 @@ pub(crate) enum Frame {
     Session(Init),
     /// A message from the model.
     Assistant(Assistant),
-    /// What the tools the model called reported, each a call's id and
-    /// whether it failed.
-    Reported(Vec<(String, bool)>),
+    /// What the tools the model called reported, each a call's id, whether
+    /// it failed and the text it came back with.
+    Reported(Vec<(String, bool, String)>),
     /// The turn ended.
     Result(Ended),
     /// The program asks whether a tool may run.
@@ -275,9 +275,14 @@ fn carried(message: &Value) -> Option<u64> {
     })
 }
 
-/// The tool results a user frame carries, each a call's id and whether it
-/// failed; a frame of anything else carries none.
-fn reported(frame: &Value) -> Vec<(String, bool)> {
+/// The tool results a user frame carries, each a call's id, whether it
+/// failed and its text; a frame of anything else carries none.
+///
+/// The text is a result's content where that is a string, and its text blocks
+/// one to a line where it is a list of blocks; an image or anything else in
+/// the list says nothing this side shows. As long as the frame it came in at
+/// most, which the transport bounds.
+fn reported(frame: &Value) -> Vec<(String, bool, String)> {
     frame
         .get("message")
         .map(blocks)
@@ -287,7 +292,19 @@ fn reported(frame: &Value) -> Vec<(String, bool)> {
         .filter_map(|block| {
             let call = block.get("tool_use_id")?.as_str()?.to_owned();
             let failed = block.get("is_error").and_then(Value::as_bool) == Some(true);
-            Some((call, failed))
+            let content = block.get("content");
+            let said = match content.and_then(Value::as_str) {
+                Some(said) => said.to_owned(),
+                None => content
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            };
+            Some((call, failed, said))
         })
         .collect()
 }

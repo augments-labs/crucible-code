@@ -24,7 +24,8 @@ use crucible_app::outside::{Installed, Relaunch};
 use crucible_app::{Conversation, Settled};
 use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, Decision as Ruled, Lasting as Lasts, Outcome,
-    Pending, PendingId, Progress, Prompt, Request, ResumeOutcome, Ruling, Stop, TurnOutcome,
+    Pending, PendingId, Progress, Prompt, Request, ResumeOutcome, Ruling, Stop, SummaryKind,
+    TurnOutcome,
 };
 use crucible_config::Driver;
 use crucible_execution::{
@@ -1477,6 +1478,93 @@ fn the_agent_s_tool_use_is_activity_and_a_stop_under_it_is_uncertain() -> Result
         Outcome::Turn(TurnOutcome::Ran {
             stop: Stop::Uncertain
         })
+    );
+    Ok(())
+}
+
+/// A headless client is told of each of the agent's own calls under the
+/// agent's id for it, with what kind of thing it names, and of each one
+/// ending under the same id, a failure as a failure: what the terminal draws
+/// as a call row and its result.
+#[test]
+fn the_agent_s_calls_and_their_ends_reach_a_client_under_the_call_s_id() -> Result<(), Failed> {
+    let tree = Tree::new("external-calls")?;
+    let mut outside = Outside::new(&tree, &connected([claude::tooled()]))?;
+    let request = Request::new(
+        Asking::every(),
+        Correlation::new(1),
+        Command::Prompt(Prompt::new("go")?),
+    );
+    let mut remote = Remote {
+        saying: None,
+        put: Vec::new(),
+    };
+    let (events, reported) = mpsc::channel::<EventEnvelope>();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let watching = Watching {
+        events,
+        stopping: Some(cancel.clone()),
+    };
+    {
+        let run = outside
+            .conversation
+            .starting(&watching, &cancel, &steer, &aside);
+        let _ = runtime()?.block_on(client::turn(
+            &mut outside.conversation,
+            &request,
+            Box::default(),
+            &mut remote,
+            &run,
+        ));
+    }
+    drop(watching);
+
+    let streamed: Vec<_> = posted(&reported)
+        .iter()
+        .filter_map(|event| client::progress(Asking::every(), event, None))
+        .collect();
+    let activity: Vec<_> = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::ToolActivity {
+                call,
+                tool,
+                summary,
+                summary_kind,
+            } => Some((
+                call.as_str(),
+                tool.as_str(),
+                summary.as_str(),
+                *summary_kind,
+            )),
+            _ => None,
+        })
+        .collect();
+    let ended: Vec<_> = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::ToolFinished { call, failed } => Some((call.as_str(), *failed)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        activity,
+        [
+            ("toolu_ls", "Bash", claude::LISTED, SummaryKind::Command),
+            ("toolu_read", "Read", claude::MISSING, SummaryKind::Path),
+        ],
+        "{streamed:?}"
+    );
+    assert_eq!(
+        ended,
+        [("toolu_ls", false), ("toolu_read", true)],
+        "{streamed:?}"
+    );
+    assert!(
+        !streamed
+            .iter()
+            .any(|progress| matches!(progress, Progress::ToolRequested { .. })),
+        "nothing the agent ran is a call this program was asked to run: {streamed:?}"
     );
     Ok(())
 }
