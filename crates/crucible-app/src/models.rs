@@ -62,6 +62,16 @@ pub(crate) const FACTS: &[Facts] = &[
     },
     Facts {
         provider: "anthropic",
+        model: "claude-haiku-5-5",
+        window: 1_000_000,
+        output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
+    },
+    Facts {
+        provider: "anthropic",
         model: "claude-opus-5",
         window: 1_000_000,
         output: 128_000,

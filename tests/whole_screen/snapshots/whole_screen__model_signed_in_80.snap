@@ -10,10 +10,10 @@ expression: picture
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
-|│  Providers          │  openai · ChatGPT sign-in                      7 of 41 │|
+|│  Providers          │  openai · ChatGPT sign-in                      7 of 42 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│   All            41 │ › gpt-6-astra                            872k  fast    │|
-|│   Anthropic       7 │   gpt-6.1-sol                            872k  fast    │|
+|│   All            42 │ › gpt-6-astra                            872k  fast    │|
+|│   Anthropic       8 │   gpt-6.1-sol                            872k  fast    │|
 |│   DeepSeek        2 │   gpt-6-sol                              872k  ← now   │|
 |│   Google          4 │   gpt-6-luna                             872k  fast    │|
 |│   Meta            4 │   gpt-5.6-sol                            872k  fast    │|

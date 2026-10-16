@@ -57,13 +57,14 @@ const VERSION: &str = "2023-06-01";
 pub(super) const FABLE_51: &str = "claude-fable-5-1";
 const OPUS_55: &str = "claude-opus-5-5";
 const SONNET_55: &str = "claude-sonnet-5-5";
+const HAIKU_55: &str = "claude-haiku-5-5";
 
-/// Whether `model`'s thinking is bound to the model and the conversation it
-/// was written in, and so is asked for with the binding controls, kept beside
-/// its answer and replayed to that model alone. Its vendor's pages say so of
-/// each of these three, in the same words.
+/// Whether `model`'s thinking is bound to the conversation it was written in,
+/// and so is asked for with the binding controls, kept beside its answer and
+/// replayed to that model alone. Its vendor's pages say so of each of these
+/// four, in the same words.
 pub(crate) fn bound(model: &str) -> bool {
-    matches!(model, FABLE_51 | OPUS_55 | SONNET_55)
+    matches!(model, FABLE_51 | OPUS_55 | SONNET_55 | HAIKU_55)
 }
 
 const ANTHROPIC_CACHE_CONTENT: &[PromptCacheContent] = &[
@@ -87,6 +88,10 @@ const USD: PricingCurrency = PricingCurrency::new("USD");
 const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
 const FABLE_51_REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 const NEWER_REVIEWED: PricingDate = PricingDate::new(2026, 10, 1);
+const HAIKU_55_REVIEWED: PricingDate = PricingDate::new(2026, 10, 16);
+/// The longest prompt Haiku 5.5 is priced short for, its cache reads and
+/// writes counted in; a longer one pays the model's long prices.
+const HAIKU_55_SHORT_PROMPT: u64 = 100_000;
 const PRICING_SOURCE: &str = "https://platform.claude.com/docs/en/about-claude/pricing";
 
 const fn anthropic_rates(input: u64, read: u64, write: u64, output: u64) -> PromptCacheRates {
@@ -198,6 +203,7 @@ impl Provider for Anthropic {
             FABLE_51 => (512, FABLE_51),
             OPUS_55 => (512, OPUS_55),
             SONNET_55 => (512, SONNET_55),
+            HAIKU_55 => (512, HAIKU_55),
             "claude-fable-5" => (512, "claude-fable-5"),
             "claude-opus-5" => (512, "claude-opus-5"),
             "claude-sonnet-5" => (1_024, "claude-sonnet-5"),
@@ -221,6 +227,7 @@ impl Provider for Anthropic {
         let (date, version) = match model {
             FABLE_51 => ("2026-09-06", "anthropic-prompt-cache-2026-09-06"),
             OPUS_55 | SONNET_55 => ("2026-10-01", "anthropic-prompt-cache-2026-10-01"),
+            HAIKU_55 => ("2026-10-16", "anthropic-prompt-cache-2026-10-16"),
             _ => ("2026-08-31", "anthropic-prompt-cache-2026-08-31"),
         };
         PromptCacheCapabilities::supported(
@@ -248,6 +255,7 @@ impl Provider for Anthropic {
         let reviewed = match model {
             FABLE_51 => FABLE_51_REVIEWED,
             OPUS_55 | SONNET_55 => NEWER_REVIEWED,
+            HAIKU_55 => HAIKU_55_REVIEWED,
             _ => PRICING_REVIEWED,
         };
         if self.endpoint != VENDOR || at < reviewed || input_tokens.is_none() {
@@ -261,6 +269,8 @@ impl Provider for Anthropic {
         ) {
             return Ok(None);
         }
+        let long_prompt =
+            model == HAIKU_55 && input_tokens.is_some_and(|tokens| tokens > HAIKU_55_SHORT_PROMPT);
         let (model, resolved_revision, input, read, short_write, extended_write, output) =
             match (model, revision) {
                 (FABLE_51, Some(FABLE_51)) => (
@@ -299,6 +309,24 @@ impl Provider for Anthropic {
                     4_000_000_000,
                     10_000_000_000,
                 ),
+                (HAIKU_55, Some(HAIKU_55)) if long_prompt => (
+                    HAIKU_55,
+                    HAIKU_55,
+                    500_000_000,
+                    50_000_000,
+                    625_000_000,
+                    1_000_000_000,
+                    2_500_000_000,
+                ),
+                (HAIKU_55, Some(HAIKU_55)) => (
+                    HAIKU_55,
+                    HAIKU_55,
+                    100_000_000,
+                    10_000_000,
+                    125_000_000,
+                    200_000_000,
+                    500_000_000,
+                ),
                 ("claude-opus-5", Some("claude-opus-5")) => (
                     "claude-opus-5",
                     "claude-opus-5",
@@ -334,6 +362,15 @@ impl Provider for Anthropic {
         } else {
             short_write
         };
+        // Haiku 5.5's records are split by the prompt's length; every other
+        // record here covers a prompt of any length.
+        let (shortest, longest) = if model != HAIKU_55 {
+            (0, None)
+        } else if long_prompt {
+            (HAIKU_55_SHORT_PROMPT + 1, None)
+        } else {
+            (0, Some(HAIKU_55_SHORT_PROMPT))
+        };
         Ok(Some(
             PromptCachePricing::new(
                 "anthropic-messages",
@@ -349,6 +386,14 @@ impl Provider for Anthropic {
                     "anthropic-direct-1h-2026-10-01"
                 } else if matches!(model, OPUS_55 | SONNET_55) {
                     "anthropic-direct-5m-2026-10-01"
+                } else if long_prompt && extended {
+                    "anthropic-direct-1h-long-2026-10-16"
+                } else if long_prompt {
+                    "anthropic-direct-5m-long-2026-10-16"
+                } else if model == HAIKU_55 && extended {
+                    "anthropic-direct-1h-short-2026-10-16"
+                } else if model == HAIKU_55 {
+                    "anthropic-direct-5m-short-2026-10-16"
                 } else if extended {
                     "anthropic-direct-1h-2026-08-31"
                 } else {
@@ -359,6 +404,7 @@ impl Provider for Anthropic {
                 PricingUnit::MillionTokens,
                 anthropic_rates(input, read, write, output),
             )
+            .with_input_band(shortest, longest)
             .with_retention(retention),
         ))
     }

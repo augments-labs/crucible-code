@@ -1,6 +1,7 @@
-//! Claude Opus 5.5 and Claude Sonnet 5.5: asked the way Fable 5.1 is, since
-//! their thinking is bound to the model and the conversation as its is, and
-//! cached and priced at their own reviewed figures.
+//! Claude Opus 5.5, Claude Sonnet 5.5 and Claude Haiku 5.5: asked the way
+//! Fable 5.1 is, since their thinking is bound to the conversation as its is,
+//! and cached and priced at their own reviewed figures, Haiku 5.5's at two,
+//! split by the length of the prompt.
 
 use super::*;
 use crate::transport::Replay;
@@ -11,7 +12,7 @@ use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-const NEWER: [&str; 2] = ["claude-opus-5-5", "claude-sonnet-5-5"];
+const NEWER: [&str; 3] = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 
 /// A signed answer with a call in it, as the stream sends one.
 fn answering() -> String {
@@ -68,7 +69,7 @@ fn request<'a>(model: &'a str, transcript: &'a Transcript) -> Request<'a> {
 }
 
 #[test]
-fn opus_and_sonnet_5_5_are_asked_with_the_binding_fable_5_1_is_asked_with() {
+fn the_5_5_models_are_asked_with_the_binding_fable_5_1_is_asked_with() {
     for model in NEWER {
         let (provider, replay) = provider(&answering());
         let mut history = Transcript::new();
@@ -99,53 +100,62 @@ fn opus_and_sonnet_5_5_are_asked_with_the_binding_fable_5_1_is_asked_with() {
 
 #[test]
 fn a_signed_answer_goes_back_to_the_model_that_signed_it_and_to_no_other() {
-    let (provider, replay) = provider(&answering());
-    let mut history = Transcript::new();
-    history.push(Message::said("read a")).unwrap();
-    let cancel = Cancel::new();
-    let mut stream =
-        crucible_runtime::answered!(provider.stream(request("claude-opus-5-5", &history), &cancel))
+    for signer in NEWER {
+        let (provider, replay) = provider(&answering());
+        let mut history = Transcript::new();
+        history.push(Message::said("read a")).unwrap();
+        let cancel = Cancel::new();
+        let mut stream =
+            crucible_runtime::answered!(provider.stream(request(signer, &history), &cancel))
+                .unwrap();
+        let mut kept = None;
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
+            if let Delta::Continuation(state) = delta.unwrap() {
+                kept = Some(state);
+            }
+        }
+        let state = kept
+            .unwrap_or_else(|| panic!("{signer}: a signed answer is kept"))
+            .finish("before", 1, Some(StopReason::WantsTools))
             .unwrap();
-    let mut kept = None;
-    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
-        if let Delta::Continuation(state) = delta.unwrap() {
-            kept = Some(state);
+        history
+            .push(Message::Agent {
+                text: "before".into(),
+                calls: vec![crucible_types::ToolCall {
+                    id: crucible_types::ToolId::new("call-1"),
+                    name: "read".into(),
+                    args: crucible_types::ToolArgs::new(r#"{"path":"a"}"#),
+                }],
+                stop: Some(StopReason::WantsTools),
+                continuation: Some(state),
+            })
+            .unwrap();
+        history
+            .push(Message::ToolResults(vec![crucible_types::ToolResult {
+                id: crucible_types::ToolId::new("call-1"),
+                output: crucible_types::RecordedToolOutput::ok("contents"),
+            }]))
+            .unwrap();
+
+        crucible_runtime::answered!(provider.stream(request(signer, &history), &cancel)).unwrap();
+        assert!(
+            replay.sent().body.contains("first-private-signature"),
+            "{signer}"
+        );
+
+        for other in NEWER.into_iter().filter(|other| *other != signer) {
+            crucible_runtime::answered!(provider.stream(request(other, &history), &cancel))
+                .unwrap();
+            assert!(
+                !replay.sent().body.contains("private"),
+                "{signer} to {other}"
+            );
         }
     }
-    let state = kept
-        .expect("a signed answer is kept")
-        .finish("before", 1, Some(StopReason::WantsTools))
-        .unwrap();
-    history
-        .push(Message::Agent {
-            text: "before".into(),
-            calls: vec![crucible_types::ToolCall {
-                id: crucible_types::ToolId::new("call-1"),
-                name: "read".into(),
-                args: crucible_types::ToolArgs::new(r#"{"path":"a"}"#),
-            }],
-            stop: Some(StopReason::WantsTools),
-            continuation: Some(state),
-        })
-        .unwrap();
-    history
-        .push(Message::ToolResults(vec![crucible_types::ToolResult {
-            id: crucible_types::ToolId::new("call-1"),
-            output: crucible_types::RecordedToolOutput::ok("contents"),
-        }]))
-        .unwrap();
-
-    crucible_runtime::answered!(provider.stream(request("claude-opus-5-5", &history), &cancel))
-        .unwrap();
-    assert!(replay.sent().body.contains("first-private-signature"));
-
-    crucible_runtime::answered!(provider.stream(request("claude-sonnet-5-5", &history), &cancel))
-        .unwrap();
-    assert!(!replay.sent().body.contains("private"));
 }
 
 #[test]
-fn opus_and_sonnet_5_5_cache_from_512_tokens_at_their_own_prices() {
+fn the_5_5_models_cache_from_512_tokens_at_their_own_prices() {
     let (provider, _) = provider("");
     for model in NEWER {
         let record = provider.prompt_cache_capabilities(model);
@@ -177,6 +187,65 @@ fn opus_and_sonnet_5_5_cache_from_512_tokens_at_their_own_prices() {
     assert_eq!(
         priced("claude-sonnet-5-5").rates(),
         anthropic_rates(2_000_000_000, 200_000_000, 2_500_000_000, 10_000_000_000)
+    );
+}
+
+#[test]
+fn haiku_5_5_pays_its_long_prices_once_its_prompt_is_over_100_000_tokens() {
+    // The vendor counts cache reads and writes into a prompt's length, which is
+    // the input total a usage report is priced with.
+    use PromptCacheRetentionClass::{Ephemeral, Extended};
+    let (provider, _) = provider("");
+    let haiku = "claude-haiku-5-5";
+    let priced = |tokens, retention, at| {
+        provider
+            .prompt_cache_pricing(haiku, Some(haiku), Some(tokens), retention, at)
+            .unwrap()
+            .map(|price| {
+                (
+                    price.minimum_input_tokens(),
+                    price.maximum_input_tokens(),
+                    price.rates(),
+                )
+            })
+    };
+    let reviewed = PricingDate::new(2026, 10, 16);
+
+    assert_eq!(
+        priced(100_000, Ephemeral, reviewed),
+        Some((
+            0,
+            Some(100_000),
+            anthropic_rates(100_000_000, 10_000_000, 125_000_000, 500_000_000)
+        ))
+    );
+    assert_eq!(
+        priced(100_000, Extended, reviewed),
+        Some((
+            0,
+            Some(100_000),
+            anthropic_rates(100_000_000, 10_000_000, 200_000_000, 500_000_000)
+        ))
+    );
+    assert_eq!(
+        priced(100_001, Ephemeral, reviewed),
+        Some((
+            100_001,
+            None,
+            anthropic_rates(500_000_000, 50_000_000, 625_000_000, 2_500_000_000)
+        ))
+    );
+    assert_eq!(
+        priced(100_001, Extended, reviewed),
+        Some((
+            100_001,
+            None,
+            anthropic_rates(500_000_000, 50_000_000, 1_000_000_000, 2_500_000_000)
+        ))
+    );
+    assert_eq!(
+        priced(64_000, Ephemeral, PricingDate::new(2026, 10, 15)),
+        None
     );
 }
 

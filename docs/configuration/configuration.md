@@ -185,7 +185,7 @@ there: the window read is the one crucible records for the model the agent is
 started on.
 
 Without either setting, a model crucible knows starts at its native context
-window: 1,000,000 tokens for Claude Fable, Opus and Sonnet, DeepSeek,
+window: 1,000,000 tokens for Claude Fable, Opus, Sonnet and Haiku 5.5, DeepSeek,
 MiniMax-M3, Qwen and Z.ai; 1,048,576 for Gemini, Muse Spark, MiMo and Kimi K3;
 500,000 for Grok; 262,144 for Kimi K3-256k and the Kimi coding models; 204,800
 for MiniMax-M2.7; and 200,000 for Claude Haiku 4.5. OpenAI's models start at
