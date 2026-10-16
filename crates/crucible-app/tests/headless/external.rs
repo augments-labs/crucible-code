@@ -1796,10 +1796,26 @@ fn accounting_on(
     asked: &Asked<'_>,
     choosing: &mut dyn Front,
 ) -> Result<(Outcome, String), Failed> {
+    accounting_at(
+        super::Desk::new(tree, &[])?,
+        tree,
+        conversation,
+        asked,
+        choosing,
+    )
+}
+
+/// What [`accounting_on`] does, at `desk`.
+fn accounting_at(
+    mut desk: super::Desk,
+    tree: &Tree,
+    conversation: &mut Conversation,
+    asked: &Asked<'_>,
+    choosing: &mut dyn Front,
+) -> Result<(Outcome, String), Failed> {
     use crucible_client_api::Name;
 
     let (installed, asking) = (asked.installed, asked.asking);
-    let mut desk = super::Desk::new(tree, &[])?;
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
     }
@@ -2633,10 +2649,11 @@ fn a_connect_moves_a_conversation_on_the_provider_s_model_onto_the_route() -> Re
 
 /// A key logged in, after a connect moved the conversation onto the agent,
 /// for the provider it was moved off is written down as how that provider is
-/// reached from the next run on, though the files read at launch had no route.
+/// reached, though the files read at launch had no route, and moves the
+/// conversation back onto it.
 #[test]
-fn a_key_for_the_provider_a_connect_moved_off_is_written_for_the_next_run() -> Result<(), Failed> {
-    use crucible_client_api::{LoginOutcome, Text};
+fn a_key_for_the_provider_a_connect_moved_off_moves_back_onto_it() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Retained, Text};
 
     let tree = Tree::new("external-connect-then-key")?;
     let native = started_native(&tree, Script::new(Vec::new()))?;
@@ -2665,11 +2682,13 @@ fn a_key_for_the_provider_a_connect_moved_off_is_written_for_the_next_run() -> R
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::NextLaunch {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("anthropic"),
+            retained: Retained::default(),
             unwritten: None,
         })
     );
+    assert!(conversation.session().route().is_none());
     assert_eq!(file, CONNECTED_FILE);
     let keyed: serde_json::Value = serde_json::from_str(&keyed)?;
     assert_eq!(
@@ -3133,7 +3152,18 @@ fn credited_on(
     provider: &str,
     command: fn(crucible_client_api::Name) -> Command,
 ) -> Result<(Outcome, String), Failed> {
-    let mut desk = super::Desk::stored(tree)?;
+    let desk = super::Desk::stored(tree)?;
+    credited_at(desk, tree, conversation, (file, provider), command)
+}
+
+/// What [`credited_on`] does, at `desk`.
+fn credited_at(
+    mut desk: super::Desk,
+    tree: &Tree,
+    conversation: &mut Conversation,
+    (file, provider): (&str, &str),
+    command: fn(crucible_client_api::Name) -> Command,
+) -> Result<(Outcome, String), Failed> {
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
     }
@@ -3167,21 +3197,28 @@ fn logout(provider: crucible_client_api::Name) -> Command {
 }
 
 /// A key logged in for the provider the route reaches is written down as how
-/// it is reached and asked from the next run on, and the conversation stays on
-/// the route meanwhile.
+/// it is reached, and the conversation moves off the route onto it at once,
+/// in a new session, as a login for a provider the route does not reach does.
 #[test]
-fn a_login_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Result<(), Failed> {
-    use crucible_client_api::{Execution, LoginOutcome, Name, Text};
+fn a_login_for_the_route_s_provider_moves_onto_it_directly() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name, Retained, Text};
 
     let tree = Tree::new("external-login-routed")?;
     let mut outside = Outside::new(&tree, &connected([]))?;
+    let left = outside
+        .conversation
+        .session()
+        .id()
+        .cloned()
+        .ok_or("an id")?;
 
     let (outcome, file) = crediting(&tree, &mut outside, ROUTED, "anthropic", login)?;
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::NextLaunch {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("anthropic"),
+            retained: Retained::default(),
             unwritten: None,
         })
     );
@@ -3195,19 +3232,103 @@ fn a_login_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Resul
         "the key logged in is no longer stored"
     );
     let standing = client::snapshot(&outside.conversation);
-    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
-    assert_eq!(standing.provider, None);
+    assert_eq!(standing.execution, Execution::Native);
+    assert_eq!(standing.provider, Some(Name::new("anthropic")?));
+    assert_eq!(
+        standing.model,
+        crucible_client_api::Model::new("claude-opus-5-5")
+    );
+    let moved = outside.conversation.session();
+    assert!(moved.route().is_none(), "{:?}", moved.route());
+    assert!(
+        moved.id().is_some_and(|moved| *moved != left),
+        "no new session"
+    );
+    Ok(())
+}
+
+/// A connect after a login moved the conversation off the route is how the
+/// provider is read for the rest of the run: the access the login rewrote no
+/// longer stands in for the route the connect wrote back.
+#[test]
+fn a_connect_after_a_login_moved_off_the_route_stands_over_the_login() -> Result<(), Failed> {
+    use crucible_app::access::Rewritten;
+    use crucible_client_api::LoginOutcome;
+    use crucible_config::Access;
+
+    let tree = Tree::new("external-login-then-connect")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean(), claude::signed_in()]))?;
+    let rewritten = Rewritten::new();
+    let shared = |desk: super::Desk| super::Desk {
+        rewritten: rewritten.clone(),
+        ..desk
+    };
+    let home = tree.home()?;
+    std::fs::create_dir_all(home.path())?;
+    std::fs::write(crucible_config::user(&home), ROUTED)?;
+    let launch = super::written(&tree)?;
+    let desk = shared(super::Desk::stored(&tree)?);
+    desk.logins.keep("anthropic", "a-key-no-vendor-issued")?;
+
+    let (logged, _) = credited_at(
+        desk,
+        &tree,
+        &mut outside.conversation,
+        (ROUTED, "anthropic"),
+        login,
+    )?;
+    assert!(
+        matches!(logged, Outcome::Login(LoginOutcome::MovedOff { .. })),
+        "{logged:?}"
+    );
+    assert_eq!(
+        rewritten.over(&launch).access("anthropic"),
+        Some(Access::ApiKey)
+    );
+
+    let command = |instance| Command::Connect {
+        instance: Some(instance),
+    };
+    let asked = Asked {
+        installed: (KEYED, "work"),
+        command: &command,
+        asking: Asking::every(),
+        after: None,
+    };
+    let (connected, file) = accounting_at(
+        shared(super::Desk::new(&tree, &[])?),
+        &tree,
+        &mut outside.conversation,
+        &asked,
+        &mut Picking::of([]),
+    )?;
+    assert!(
+        matches!(
+            connected,
+            Outcome::Login(LoginOutcome::AgentConnected { .. })
+        ),
+        "{connected:?}"
+    );
+    let file: serde_json::Value = serde_json::from_str(&file)?;
+    assert_eq!(
+        file.pointer("/providers/anthropic/access/type"),
+        Some(&serde_json::json!("externalAgent"))
+    );
+    assert_eq!(
+        rewritten.over(&launch).access("anthropic"),
+        Some(Access::ExternalAgent {
+            instance: "work".into()
+        })
+    );
     Ok(())
 }
 
 /// An account signed in for the provider the route reaches is written down as
-/// reached by its subscription from the next run on, and the conversation stays
-/// on the route meanwhile. OpenAI's, since its accounts are ones this program
-/// can sign in.
+/// reached by its subscription, and the conversation moves off the route onto
+/// it at once. OpenAI's, since its accounts are ones this program can sign in.
 #[test]
-fn a_subscription_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Result<(), Failed>
-{
-    use crucible_client_api::{Execution, LoginOutcome, Name, Text};
+fn a_subscription_for_the_route_s_provider_moves_onto_it_directly() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name, Retained, Text};
 
     let tree = Tree::new("external-login-subscribed")?;
     let mut outside = Outside::new(&tree, &connected([]))?;
@@ -3229,8 +3350,9 @@ fn a_subscription_for_the_route_s_provider_is_written_for_the_next_run_alone() -
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::NextLaunch {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("openai"),
+            retained: Retained::default(),
             unwritten: None,
         })
     );
@@ -3240,8 +3362,8 @@ fn a_subscription_for_the_route_s_provider_is_written_for_the_next_run_alone() -
         .replace(r#""apiKey""#, r#""subscription""#);
     assert_eq!(file, subscribed);
     let standing = client::snapshot(&outside.conversation);
-    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
-    assert_eq!(standing.provider, None);
+    assert_eq!(standing.execution, Execution::Native);
+    assert_eq!(standing.provider, Some(Name::new("openai")?));
     Ok(())
 }
 
@@ -3351,11 +3473,10 @@ const BESIDE: &str = r#"{
 "#;
 
 /// A key for a second provider the route reaches is written down as the way
-/// it is reached from the next launch, as the first one's is.
+/// it is reached, and moves the conversation onto it, as the first one's does.
 #[test]
-fn a_login_for_a_second_provider_the_route_reaches_waits_for_the_next_launch() -> Result<(), Failed>
-{
-    use crucible_client_api::{LoginOutcome, Text};
+fn a_login_for_a_second_provider_the_route_reaches_moves_onto_it() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Retained, Text};
 
     let tree = Tree::new("external-login-second-routed")?;
     let mut outside = Outside::new(&tree, &connected([]))?;
@@ -3364,8 +3485,9 @@ fn a_login_for_a_second_provider_the_route_reaches_waits_for_the_next_launch() -
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::NextLaunch {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("openai"),
+            retained: Retained::default(),
             unwritten: None,
         })
     );
@@ -3374,7 +3496,7 @@ fn a_login_for_a_second_provider_the_route_reaches_waits_for_the_next_launch() -
         file.pointer("/providers/openai/access/type"),
         Some(&serde_json::json!("apiKey"))
     );
-    assert!(outside.conversation.session().route().is_some());
+    assert!(outside.conversation.session().route().is_none());
     Ok(())
 }
 

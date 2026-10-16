@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use crucible_agents::{
     AgentBuilder, AgentContext, Decision, InputGuardrail, Model, OutputGuardrail, Undecided,
 };
-use crucible_app::access::AccessError;
+use crucible_app::access::{AccessError, Rewritten};
 use crucible_app::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Resolved, Served, Serving,
     Sourcing, providers,
@@ -391,6 +391,7 @@ struct Desk {
     logins: Store,
     choosing: PathBuf,
     reached: Arc<Mutex<Vec<&'static str>>>,
+    rewritten: Rewritten,
 }
 
 impl Desk {
@@ -398,10 +399,10 @@ impl Desk {
         Self::reaching(tree, move |one, _| reachable.contains(&one.name))
     }
 
-    /// One that reaches a provider only while a key for it is stored, the way
-    /// a machine with nothing in its environment does.
+    /// One that reaches a provider only while a key or an account for it is
+    /// stored, the way a machine with nothing in its environment does.
     fn stored(tree: &Tree) -> Result<Self, Failed> {
-        Self::reaching(tree, |one, stored| stored.get(one.name).is_some())
+        Self::reaching(tree, |one, stored| stored.has(one.name))
     }
 
     fn reaching(
@@ -435,6 +436,7 @@ impl Desk {
             logins: Store::in_home(home.path()),
             choosing: crucible_config::user(&home),
             reached,
+            rewritten: Rewritten::new(),
         })
     }
 
@@ -446,6 +448,7 @@ impl Desk {
             sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
+            rewritten: &self.rewritten,
         }
     }
 

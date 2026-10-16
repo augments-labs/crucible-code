@@ -77,6 +77,7 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
+        rewritten: crucible_app::access::Rewritten::new(),
         subscriptions: crucible_app::subscription::Subscriptions::production(
             &crucible_auth::Renewals::new(),
         ),

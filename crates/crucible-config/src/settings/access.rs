@@ -296,6 +296,23 @@ impl Settings {
         }
     }
 
+    /// These settings, with `provider` reached as `access` states: what a
+    /// login during the run rewrote the user file to, read in place of what
+    /// the launch read, since the files are not read again.
+    #[must_use]
+    pub fn reaching(&self, provider: &str, access: &Access) -> Self {
+        let mut reaching = self.clone();
+        let block = object(&mut reaching.value)
+            .map(|document| document.entry("providers").or_insert(Value::Null))
+            .and_then(object)
+            .map(|providers| providers.entry(provider).or_insert(Value::Null))
+            .and_then(object);
+        if let Some(block) = block {
+            block.insert("access".into(), access.written());
+        }
+        reaching
+    }
+
     /// The first provider whose `access` reaches it through the agent
     /// instance `instance`, in the order the document names providers.
     #[must_use]
@@ -316,6 +333,14 @@ impl Settings {
             .filter_map(|(name, record)| ExternalAgent::read(name, record))
             .collect()
     }
+}
+
+/// `value` as an object, made an empty one where it is anything else.
+fn object(value: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
+    if !value.is_object() {
+        *value = Value::Object(serde_json::Map::new());
+    }
+    value.as_object_mut()
 }
 
 #[cfg(test)]

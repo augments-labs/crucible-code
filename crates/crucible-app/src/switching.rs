@@ -11,13 +11,14 @@
 //! to supply, and answered with a value that says what happened and leaves
 //! every sentence about it to whoever is showing it.
 //!
-//! A conversation on an installed agent's route keeps that route, its session
-//! and its run whatever credential for the provider the route reaches is given
-//! or forgotten: the agent answers, and the credential is written down as the
-//! way that provider is reached from the next run on, with its default model
-//! and rung where nothing names a model for it. One given there for
-//! another provider moves the conversation off the route onto it, in a new
-//! session, where that session can be started; otherwise it is only stored.
+//! A credential given on an installed agent's route for the provider the route
+//! reaches is written down as the way that provider is reached, with its
+//! default model and rung where nothing names a model for it, and read so for
+//! the rest of the run through [`Rewritten`]; once written, the conversation
+//! moves off the route onto that provider, in a new session, as it does for a
+//! credential given there for another provider, where that session can be
+//! started. Otherwise the route keeps answering and the credential is only
+//! stored. One forgotten there leaves the route, its session and its run.
 //! A model taken there of a provider the agent does not reach moves it the
 //! same way, onto that model, where a credential reaches the provider.
 //!
@@ -38,6 +39,7 @@ use crucible_session::Session;
 use crucible_types::{PromptCacheResourceError, Transcript};
 use crucible_workspace::Workspace;
 
+use crate::access::Rewritten;
 use crate::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Served, Serving, Sourcing,
     default_rung, offered, rungs,
@@ -64,6 +66,9 @@ pub struct Switching<'a> {
     pub logins: &'a Store,
     /// The user configuration file a choice is written down in.
     pub choosing: &'a Path,
+    /// How a login during this run rewrote a provider's access, which
+    /// [`Switching::serving`] and [`Switching::sourcing`] read too.
+    pub rewritten: &'a Rewritten,
 }
 
 impl std::fmt::Debug for Switching<'_> {
@@ -169,7 +174,8 @@ pub enum LoggedIn {
     Unusable(AppError),
     /// The conversation keeps the installed agent's route it is on for the
     /// provider, which is reached directly with the credential from the next
-    /// run on.
+    /// run on: the move off the route could not be made, or the access could
+    /// not be written.
     NextLaunch {
         /// The provider.
         provider: &'static str,
@@ -249,7 +255,7 @@ pub enum LoggedOut {
 }
 
 /// What a credential just stored for `named` comes to while the conversation
-/// is on an installed agent's route, which keeps answering either way.
+/// is on an installed agent's route, before any move off it.
 ///
 /// `routed` says whether `named` is a provider the route stands in for: one
 /// the files read at launch reach through its instance, or the one
@@ -277,9 +283,15 @@ fn beside_the_route(routed: bool, named: Served, with: &Switching<'_>) -> Logged
     // finds both or neither, and a refusal leaves the route written as it was.
     let (model, effort, taken) = first_asked(named, with);
     let default = taken.then_some((model.as_str(), effort));
+    let unwritten = remember::reaching_defaulted(with.choosing, named.name, &access, default).err();
+    // Written down, it is how this run reaches the provider too, so that the
+    // move off the route sets it up as the next launch would.
+    if unwritten.is_none() {
+        with.rewritten.rewrite(named.name, access);
+    }
     LoggedIn::NextLaunch {
         provider: named.name,
-        unwritten: remember::reaching_defaulted(with.choosing, named.name, &access, default).err(),
+        unwritten,
     }
 }
 
@@ -655,13 +667,15 @@ impl Conversation {
 
     /// [`Conversation::logged_in`], and where that leaves the credential only
     /// stored, beside an installed agent's route that does not reach `named`,
-    /// the conversation moves off the route onto `named`, in a new session
-    /// started under `sessions`. The session left stays on the disk where a
-    /// resume can find it.
+    /// or written down as how `named` is reached in place of the route that
+    /// does, the conversation moves off the route onto `named`, in a new
+    /// session started under `sessions`. The session left stays on the disk
+    /// where a resume can find it.
     ///
-    /// Only a provider this run's settings reach through no installed agent
-    /// moves: one they route through an agent cannot be set up until the next
-    /// launch reads the access its login rewrote, or one the user gives it.
+    /// A provider this run's settings route through another installed agent
+    /// does not move: nothing rewrote how it is reached. Where the provider
+    /// the route reaches cannot be moved onto after all, it is still reached
+    /// directly from the next launch, as was written.
     pub async fn logged_in_moving(
         &mut self,
         named: Served,
@@ -670,23 +684,34 @@ impl Conversation {
         workspace: &Workspace,
     ) -> LoggedIn {
         let agented = agented(with.settings, named);
-        match self.logged_in(named, with).await {
-            LoggedIn::Stored { provider } if !agented => {
-                match self
-                    .off_the_route(named, Onto::First, with, (sessions, workspace))
-                    .await
-                {
-                    Ok((retained, unwritten)) => LoggedIn::MovedOff {
-                        provider,
-                        retained,
-                        unwritten,
-                    },
-                    Err(Unmoved::Unusable(problem)) => LoggedIn::Unusable(problem),
-                    Err(Unmoved::CacheHeld(problem)) => LoggedIn::CacheHeld(problem),
-                    Err(Unmoved::Unstarted(_)) => LoggedIn::Stored { provider },
-                }
-            }
-            logged => logged,
+        // What is said where the move cannot be made: what the login alone
+        // came to.
+        let (provider, unmoved) = match self.logged_in(named, with).await {
+            LoggedIn::Stored { provider } if !agented => (provider, LoggedIn::Stored { provider }),
+            LoggedIn::NextLaunch {
+                provider,
+                unwritten: None,
+            } => (
+                provider,
+                LoggedIn::NextLaunch {
+                    provider,
+                    unwritten: None,
+                },
+            ),
+            logged => return logged,
+        };
+        match self
+            .off_the_route(named, Onto::First, with, (sessions, workspace))
+            .await
+        {
+            Ok((retained, unwritten)) => LoggedIn::MovedOff {
+                provider,
+                retained,
+                unwritten,
+            },
+            Err(Unmoved::Unusable(problem)) => LoggedIn::Unusable(problem),
+            Err(Unmoved::CacheHeld(problem)) => LoggedIn::CacheHeld(problem),
+            Err(Unmoved::Unstarted(_)) => unmoved,
         }
     }
 

@@ -578,8 +578,8 @@ session keeps the provider and model it has and the line points at `/model`,
 where switching is chosen rather than implied. Authentication selects neither
 [model](#which-model) nor [effort](#how-hard-to-think); where neither was
 already chosen, `/model` is the next explicit step. A session running on an
-[installed agent](agents.md) keeps the agent instead; what `/login` writes
-there is said on that page.
+[installed agent](agents.md) moves off it instead; what `/login` writes and
+where the conversation goes are said on that page.
 
 Where the login is what set the session up, `provider` is written down for it
 too, because a credential says a vendor can be reached and never which to ask.

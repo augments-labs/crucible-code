@@ -1220,7 +1220,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
     let stored = StoredCredentials::default();
 
     let handed = re_serving(
-        settings.clone(),
+        (settings.clone(), crate::access::Rewritten::new()),
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|name| (name == "CRUCIBLE_FIXTURE_ONLY_KEY").then(|| "not-a-key".into())),
         HttpTurns::unavailable(),
@@ -1233,7 +1233,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
     );
 
     let empty = re_serving(
-        settings,
+        (settings, crate::access::Rewritten::new()),
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|_| None),
         HttpTurns::unavailable(),
@@ -1423,7 +1423,7 @@ fn serving_again_tells_the_consent_what_the_provider_is_served_on() {
     );
 
     let again = re_serving(
-        Settings::default(),
+        (Settings::default(), crate::access::Rewritten::new()),
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|_| None),
         HttpTurns::unavailable(),
@@ -1445,7 +1445,7 @@ fn a_provider_is_read_again_from_the_store_and_an_unreadable_store_settles_nothi
     let settings = sample.user("{}");
     let resolve = |store| {
         resolving(
-            settings.clone(),
+            (settings.clone(), crate::access::Rewritten::new()),
             Subscriptions::production(&crucible_auth::Renewals::new()),
             &catalogue(),
             std::sync::Arc::new(|_: &str| None),

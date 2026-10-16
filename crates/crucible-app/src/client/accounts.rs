@@ -936,6 +936,9 @@ fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent, written: bool)
         let _ = slot.finish(Ending::Failed);
         return Account::ConnectUnsaved(problem);
     }
+    // The route written now is how the provider is reached, over any access
+    // a login earlier in the run rewrote it to.
+    desk.switching.rewritten.forget(provider);
     // The route is written and in force whether or not the journal takes its
     // end; an open record is replaced by the next connect of the scope.
     let _ = slot.finish(Ending::Succeeded);

@@ -258,6 +258,9 @@ pub(crate) struct Terms {
     /// here and one built there pointing at different files would be a `/login`
     /// that wrote where nothing reads.
     pub(crate) logins: Store,
+    /// How a login during this run rewrote a provider's access, read by
+    /// `serving`, `sourcing` and the content-use hold in place of `settings`.
+    pub(crate) rewritten: crucible_app::access::Rewritten,
     /// Subscription implementations compiled into this binary.
     pub(crate) subscriptions: Subscriptions,
     /// The yes given to each route whose vendor uses what is sent, which the
@@ -324,22 +327,30 @@ impl Terms {
     }
 
     /// What a change of who is asked is decided from, read against one
-    /// generation of the providers.
+    /// generation of the providers and of [`Terms::reading`].
     ///
     /// The generation is the caller's, so that the rows it draws and the
     /// switch it asks for are read against the same one.
     pub(crate) fn switching<'a>(
         &'a self,
         providers: &'a crucible_app::providers::Providers,
+        settings: &'a crucible_config::Settings,
     ) -> crucible_app::switching::Switching<'a> {
         crucible_app::switching::Switching {
             providers,
-            settings: &self.settings,
+            settings,
             serving: &self.serving,
             sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
+            rewritten: &self.rewritten,
         }
+    }
+
+    /// The settings with the access a login during this run rewrote read in
+    /// place of what the launch read: what a provider is reached with now.
+    pub(crate) fn reading(&self) -> std::borrow::Cow<'_, crucible_config::Settings> {
+        self.rewritten.over(&self.settings)
     }
 
     /// What a session with no model says, read off what this machine holds now.
@@ -351,9 +362,9 @@ impl Terms {
         // With a provider chosen the missing piece is the model whatever else
         // is set up, so the credentials are read only when they decide it.
         let any = provider.is_none() && {
-            let stored = self.logins.read();
+            let (stored, settings) = (self.logins.read(), self.reading());
             let auth = ProviderAuth {
-                settings: &self.settings,
+                settings: &settings,
                 from: &*self.environment,
                 stored: &stored,
                 subscriptions: &self.subscriptions,

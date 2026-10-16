@@ -256,7 +256,7 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     // drawn and answered here while it waits.
     (
         "src/cli/client.rs",
-        ".block_on(perform(conversation, request, &self.desk(&providers)));",
+        "let performed = self.runtime.block_on(perform(conversation, request, &desk));",
         1,
     ),
     (

@@ -28,6 +28,26 @@ fn each_access_type_is_read_back_as_its_variant() {
 }
 
 #[test]
+fn a_rewritten_access_is_read_in_place_of_the_one_written_and_keeps_the_rest() {
+    let read = settings(
+        r#"{"providers": {
+            "anthropic": {"access": {"type": "externalAgent", "instance": "work"}, "model": "claude-opus-5-5"}
+        }}"#,
+    );
+    let reaching = read.reaching("anthropic", &Access::ApiKey);
+    assert_eq!(reaching.access("anthropic"), Some(Access::ApiKey));
+    assert_eq!(reaching.model("anthropic"), Some("claude-opus-5-5"));
+    assert_eq!(
+        read.access("anthropic"),
+        Some(Access::ExternalAgent {
+            instance: "work".into()
+        })
+    );
+    let fresh = settings("{}").reaching("openai", &Access::Subscription);
+    assert_eq!(fresh.access("openai"), Some(Access::Subscription));
+}
+
+#[test]
 fn a_provider_whose_block_says_nothing_has_no_access() {
     let read = settings(r#"{"providers": {"openai": {"model": "gpt-5"}}}"#);
     assert_eq!(read.access("openai"), None);

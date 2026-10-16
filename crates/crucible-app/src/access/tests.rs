@@ -432,6 +432,42 @@ fn an_agent_access_resolves_to_its_instance_as_written() {
 }
 
 #[test]
+fn an_access_a_login_rewrote_resolves_in_place_of_the_agent_the_launch_read() {
+    let sample = Sample::new("access-agent-rewritten");
+    let settings = agent_settings(&sample, "", true);
+    let rewritten = Rewritten::new();
+    assert!(matches!(rewritten.over(&settings), Cow::Borrowed(_)));
+
+    rewritten.rewrite("anthropic", Access::ApiKey);
+    let route = resolved(
+        serving("anthropic"),
+        &rewritten.over(&settings),
+        &lookup(Some("ANTHROPIC_API_KEY")),
+        None,
+        NO_SUBSCRIPTION,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(
+            route,
+            Route::ApiKey {
+                provider: "anthropic",
+                ..
+            }
+        ),
+        "{route:?}"
+    );
+    assert!(
+        matches!(
+            settings.access("anthropic"),
+            Some(Access::ExternalAgent { .. })
+        ),
+        "the launch's settings are left as read"
+    );
+}
+
+#[test]
 fn an_agent_access_beside_a_key_only_crucibles_requests_read_is_refused_naming_it() {
     let sample = Sample::new("access-agent-conflict");
     for (beside, key) in [

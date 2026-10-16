@@ -578,6 +578,7 @@ fn stood<T: Terminal>(
                 })
                 .collect();
 
+            let reading = terms.reading();
             let stocked: Vec<Stocked<'_>> = standing
                 .models
                 .iter()
@@ -590,7 +591,7 @@ fn stood<T: Terminal>(
                     let form = if now {
                         current.pace.form
                     } else {
-                        row_form(one.provider, one.model.name, &terms.settings, &stored)
+                        row_form(one.provider, one.model.name, &reading, &stored)
                     };
                     (one, window, now, form)
                 })
@@ -944,8 +945,9 @@ fn in_use<'a>(
     stored: &StoredCredentials,
     reaching: Option<&str>,
 ) -> BTreeMap<&'a str, InUse> {
+    let settings = terms.reading();
     let auth = crucible_app::startup::ProviderAuth {
-        settings: &terms.settings,
+        settings: &settings,
         from: &*terms.environment,
         stored,
         subscriptions: &terms.subscriptions,

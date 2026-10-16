@@ -145,10 +145,9 @@ impl Terms {
     /// Carries out `request` through the door that answers it whole, waiting
     /// for it, and tells whoever is listening what came of it.
     fn performed(&self, conversation: &mut Conversation, request: &Request) -> Performed {
-        let providers = self.providers.snapshot();
-        let performed =
-            self.runtime
-                .block_on(perform(conversation, request, &self.desk(&providers)));
+        let (providers, settings) = (self.providers.snapshot(), self.reading());
+        let desk = self.desk(&providers, &settings);
+        let performed = self.runtime.block_on(perform(conversation, request, &desk));
 
         self.client
             .answered(request, conversation, || performed.outcome());
@@ -269,8 +268,8 @@ impl Terms {
         mut answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
     ) -> Result<Performed, E> {
         let request = self.client.asking(command);
-        let providers = self.providers.snapshot();
-        let desk = self.desk(&providers);
+        let (providers, settings) = (self.providers.snapshot(), self.reading());
+        let desk = self.desk(&providers, &settings);
         // One question is out at a time: the operation awaits each answer.
         let (to, mut from) = mpsc::channel(1);
         let mut front = Answering {
@@ -413,8 +412,8 @@ impl Terms {
     /// conversation, which is what lets it be asked while a turn has it.
     pub(crate) fn keep(&self, command: Command) -> Performed {
         let request = self.client.asking(command);
-        let providers = self.providers.snapshot();
-        let kept = keep(&request, &self.desk(&providers));
+        let (providers, settings) = (self.providers.snapshot(), self.reading());
+        let kept = keep(&request, &self.desk(&providers, &settings));
 
         if let Some(witness) = &self.client.witness {
             witness.apart(&request, kept.outcome());
@@ -429,10 +428,15 @@ impl Terms {
         self.client.interrupt(cancel);
     }
 
-    /// What the host lends a command, from the providers in force.
-    fn desk<'a>(&'a self, providers: &'a Providers) -> Desk<'a> {
+    /// What the host lends a command, from the providers in force and the
+    /// settings as [`Terms::reading`] reads them.
+    fn desk<'a>(
+        &'a self,
+        providers: &'a Providers,
+        settings: &'a crucible_config::Settings,
+    ) -> Desk<'a> {
         Desk {
-            switching: self.switching(providers),
+            switching: self.switching(providers, settings),
             sessions: &self.sessions,
             workspace: &self.workspace,
             reads: |named| crucible_tui::syntax::colours(named).is_some(),

@@ -499,9 +499,9 @@ fn the_status_row_says_who_runs_the_turns_on_an_agent_route() {
 
 /// Fails where a move onto the agent's route does not name the route and say
 /// the conversation starts fresh there, where `/login` on it does not offer the
-/// installed agents, or where a key stored while on it does not say where the
-/// conversation is: for the provider the agent reaches, still on its agent
-/// until the next launch, and for another, moved off it onto that provider.
+/// installed agents, or where a key stored while on it for the provider the
+/// agent reaches does not move the conversation off the agent onto it and say
+/// so.
 #[test]
 fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_is() {
     for native in [false, true] {
@@ -544,14 +544,14 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
             window.types_until("\u{1b}", "cancelled, nothing signed in");
 
             keyed(&mut window, "Anthropic");
-            window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
-            let next = said(&window);
+            window.types_until("not-a-key-and-nothing-reads-it\r", "the one it left");
+            let moved_off = said(&window);
             assert!(
-                next.contains(
-                    "anthropic is asked directly from the next launch; \
-                     this conversation stays on its agent"
+                moved_off.contains(
+                    "this conversation left its agent for anthropic, in a new session; \
+                     /resume lists the one it left"
                 ),
-                "{case}: {next}"
+                "{case}: {moved_off}"
             );
             let file = std::fs::read_to_string(window.home().join("config.json"))
                 .expect("the configuration file");
@@ -561,17 +561,6 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
                 .pointer("/providers/anthropic/access/type")
                 .and_then(serde_json::Value::as_str);
             assert_eq!(access, Some("apiKey"), "{case}: {written}");
-
-            keyed(&mut window, "DeepSeek");
-            window.types_until("not-a-key-either\r", "the one it left");
-            let moved_off = said(&window);
-            assert!(
-                moved_off.contains(
-                    "this conversation left its agent for deepseek, in a new session; \
-                     /resume lists the one it left"
-                ),
-                "{case}: {moved_off}"
-            );
         }
     }
 }

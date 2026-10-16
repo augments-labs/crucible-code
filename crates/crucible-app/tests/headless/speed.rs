@@ -317,6 +317,7 @@ impl Moving {
             sourcing: &self.desk.sourcing,
             logins: &self.logins,
             choosing: &self.desk.choosing,
+            rewritten: &self.desk.rewritten,
         }
     }
 }
