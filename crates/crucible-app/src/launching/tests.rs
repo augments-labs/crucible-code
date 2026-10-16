@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use crucible_config::Driver;
 use crucible_execution::{
@@ -12,7 +13,8 @@ use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Ran, Reading, Request, Shape, Told,
 };
 use crucible_sandbox::{
-    SandboxFilesystemAccess, SandboxNetworkPolicy, SandboxPolicy, SandboxService,
+    SandboxFilesystemAccess, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
+    SandboxService,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_types::TurnId;
@@ -190,6 +192,110 @@ async fn a_clean_turn_through_a_launch_is_complete_and_speaks_the_dialects_argum
     assert_eq!(
         fake_peer::heard(peer.parent().expect("a directory")),
         vec!["turn go".to_owned()]
+    );
+}
+
+/// A conversation whose commands are held to `limits`, run unconfined as
+/// [`conversation`]'s are.
+fn limited(sample: &Sample, limits: SandboxResourceLimits) -> SandboxPolicy {
+    conversation(sample)
+        .with_limits(limits)
+        .expect("limits a policy holds")
+}
+
+/// A turn the peer answers, on an agent started under `policy`, after
+/// `waited`.
+async fn answered_after(sample: &Sample, policy: &SandboxPolicy, waited: Duration) -> Outcome {
+    let peer = installed(
+        sample,
+        &Script::of([Reply::new().hear(1).say("say hello").say("end")]),
+    );
+    let consent = granted();
+    let launcher = Launcher::new(local(), Handle::current(), policy, &consent);
+    let registry = Registry::new(&SHIPPED);
+    let control = Control::new().expect("a control");
+    let mut host = launcher
+        .launch(&agent(&registry, &peer), &control, &mut Plain, None)
+        .await
+        .expect("started");
+    tokio::time::sleep(waited).await;
+    let ended = host
+        .turn(
+            &mut Plain,
+            &SessionRef::new("one").expect("a name"),
+            &TurnRequest::new(TurnId::FIRST, "go"),
+            &Kept::default(),
+        )
+        .await;
+    let _ = host.stop(crucible_external_harnesses::STOP_GRACE).await;
+    ended.unwrap_or_else(|failure| panic!("the turn failed: {}", failure.reason().as_str()))
+}
+
+/// An agent lives as long as the conversation, so the time one command is
+/// allowed does not end it: an agent started under a one-second limit still
+/// answers a turn taken after the limit has passed.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_outlives_the_time_one_command_is_allowed() {
+    let sample = Sample::new("launch-command-time");
+    let policy = limited(
+        &sample,
+        SandboxResourceLimits {
+            command_time: Some(Duration::from_secs(1)),
+            ..SandboxResourceLimits::default()
+        },
+    );
+
+    let ended = answered_after(&sample, &policy, Duration::from_secs(2)).await;
+
+    assert_eq!(ended, Outcome::Answered);
+}
+
+/// What an agent prints is a protocol the host reads a message at a time, so
+/// the output one command may print does not end it either.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_outlives_the_output_one_command_may_print() {
+    let sample = Sample::new("launch-output-bytes");
+    let policy = limited(
+        &sample,
+        SandboxResourceLimits {
+            output_bytes: Some(1),
+            ..SandboxResourceLimits::default()
+        },
+    );
+
+    let ended = answered_after(&sample, &policy, Duration::ZERO).await;
+
+    assert_eq!(ended, Outcome::Answered);
+}
+
+/// The child keeps every ceiling of the conversation's but the two that
+/// measure one command's life, and the conversation keeps both.
+#[test]
+fn the_childs_policy_drops_only_the_ceilings_of_one_command() {
+    let sample = Sample::new("launch-ceilings");
+    let conversation = limited(
+        &sample,
+        SandboxResourceLimits {
+            command_time: Some(Duration::from_mins(20)),
+            output_bytes: Some(10 * 1024 * 1024),
+            concurrent_commands: Some(4),
+            ..SandboxResourceLimits::default()
+        },
+    );
+
+    let child = policy(&conversation, None, &[]).expect("a policy");
+
+    assert_eq!(
+        child.limits(),
+        SandboxResourceLimits {
+            command_time: None,
+            output_bytes: None,
+            ..conversation.limits()
+        }
+    );
+    assert_eq!(
+        conversation.limits().command_time,
+        Some(Duration::from_mins(20))
     );
 }
 

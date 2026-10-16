@@ -22,11 +22,13 @@
 //! it is not, before the process that keeps its sign-in there is started.
 //! Elsewhere it is created where it is missing and its access left as it is.
 //!
-//! The child's policy is the conversation's, widened in exactly two ways: its
-//! profile directory, where one is configured, is writable but for the
-//! metadata protected beneath any writable root, and the hosts its row names
-//! are reachable where the conversation's commands are confined, since an
-//! unconfined child reaches the host's network already. Every other rule, the
+//! The child's policy is the conversation's, widened in exactly three ways:
+//! its profile directory, where one is configured, is writable but for the
+//! metadata protected beneath any writable root; the hosts its row names are
+//! reachable where the conversation's commands are confined, since an
+//! unconfined child reaches the host's network already; and it is held to no
+//! ceiling on one command's time or output, since it runs for the whole
+//! conversation and the host bounds each message it reads. Every other rule, the
 //! protected metadata included, stays as the conversation has it, so a
 //! profile directory inside one, named directly or through a link, is refused
 //! rather than opened.
@@ -58,7 +60,8 @@ use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement, SandboxFilesystemAccess,
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxNetworkPolicy,
-    SandboxNetworkProvenance, SandboxPolicy, SandboxPolicyError, SandboxService,
+    SandboxNetworkProvenance, SandboxPolicy, SandboxPolicyError, SandboxResourceLimits,
+    SandboxService,
 };
 use crucible_session::{ExternalRef, RouteBinding};
 use crucible_tools::Mode;
@@ -334,8 +337,8 @@ pub fn discover(executable: &str, lookup: impl Fn(&str) -> Option<OsString>) -> 
 
 /// The policy an agent's child runs under: `conversation`'s, with `profile`,
 /// where its links lead, writable but for the metadata protected beneath any
-/// writable root, and the hosts in `reaches` reachable where the conversation
-/// confines its commands.
+/// writable root, the hosts in `reaches` reachable where the conversation
+/// confines its commands, and no ceiling on one command's time or output.
 ///
 /// # Errors
 ///
@@ -391,7 +394,15 @@ pub fn policy(
         filesystem,
         conversation.working_directory(),
         network,
-        conversation.limits(),
+        SandboxResourceLimits {
+            // The agent lives as long as the conversation and speaks a
+            // protocol the host reads a bounded message at a time, so the
+            // ceilings on one command's time and output would end it
+            // mid-conversation.
+            command_time: None,
+            output_bytes: None,
+            ..conversation.limits()
+        },
     )?
     .with_unreadable_patterns(conversation.unreadable_patterns().iter().cloned())
     .map(|policy| {
