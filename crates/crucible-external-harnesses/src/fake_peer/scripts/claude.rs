@@ -425,6 +425,22 @@ pub fn edited() -> Reply {
         .say(answered(Some(PRICE)))
 }
 
+/// A run of one turn that does all three: runs a command and fails a read,
+/// changes [`EDITED`], and looks around, hearing back from each before the
+/// next and answering once all are done.
+#[must_use]
+pub fn worked() -> Reply {
+    turn(Reply::new())
+        .say(used_tools())
+        .say(tools_answered())
+        .say(effect())
+        .say(edit_answered())
+        .say(looked_around())
+        .say(looked_answered())
+        .say(said("Done."))
+        .say(answered(Some(PRICE)))
+}
+
 /// A run of one turn whose `result` frame reports a cost.
 #[must_use]
 pub fn priced() -> Reply {

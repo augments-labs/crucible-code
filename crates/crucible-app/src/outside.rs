@@ -42,8 +42,12 @@
 //! **One transcript.** What a person sees of the conversation, their prompt
 //! and the agent's answer, is kept beside the backend and written to the
 //! session as a native turn's are, the answer bounded at the transcript's
-//! ceiling for one message and recorded as cut where it was. Nothing of the
-//! agent's own context is kept: that is the agent's.
+//! ceiling for one message and recorded as cut where it was. Each call it
+//! drew, each answer under one, and each report is written beside them as a
+//! step for the reader alone, marked with how much of the answer had been
+//! said and how many round trips made, so a session picked up again draws the
+//! turn as it was drawn. Nothing of the agent's own context is kept: that is
+//! the agent's.
 //!
 //! **A spent backend is replaced.** A turn that failed, one whose effects are
 //! uncertain and one whose caller stopped waiting leave a backend that takes
@@ -83,7 +87,7 @@ use crucible_runner::{
     Totals, TurnError, Turned,
 };
 use crucible_runtime::BoxFuture;
-use crucible_session::{ExternalRef, RouteBinding, Session, Uncertain};
+use crucible_session::{AgentDid, AgentStep, ExternalRef, RouteBinding, Session, Uncertain};
 use crucible_tools::{Argument, Looking, Mode, Summary};
 use crucible_types::{
     Attachment, CONTINUATION_BYTES, CostAmount, Message, PricingCurrency, PricingUnit,
@@ -589,6 +593,7 @@ impl Outside {
                 failed: None,
                 uncertain: None,
                 out: Vec::new(),
+                rounds: 0,
                 pending: VecDeque::new(),
                 waker: None,
             }),
@@ -782,6 +787,8 @@ struct Told<'t> {
     uncertain: Option<Text>,
     /// The agent's calls drawn as calls and not yet answered.
     out: Vec<ToolId>,
+    /// How many round trips the turn has made.
+    rounds: u32,
     /// Leave asked for and not yet put.
     pending: VecDeque<(PendingRef, Pending)>,
     /// What to wake when leave is asked for.
@@ -807,6 +814,32 @@ impl<'t> Telling<'t> {
 }
 
 impl Told<'_> {
+    /// A report of something the agent did under no call drawn as one,
+    /// written down and told.
+    fn reported(&self, session: &Session, tool: Box<str>, summary: Box<str>) -> RunEvent {
+        self.step(
+            session,
+            AgentDid::Reported {
+                tool: tool.clone(),
+                summary: summary.clone(),
+            },
+        );
+        RunEvent::Reported { tool, summary }
+    }
+
+    /// What the agent did, written down where the turn's answer will be, once
+    /// the turn has begun: a step of one that never began has no prompt in
+    /// the session to stand under.
+    fn step(&self, session: &Session, did: AgentDid) {
+        if self.began {
+            session.agent_step(&AgentStep {
+                at: self.answer.len(),
+                round: self.rounds,
+                did,
+            });
+        }
+    }
+
     /// `text` added to the answer, within the transcript's ceiling for one
     /// message.
     fn keep(&mut self, text: &Text) {
@@ -818,6 +851,19 @@ impl Told<'_> {
         self.answer
             .push_str(text.as_str().get(..end).unwrap_or_default());
         self.cut |= text.incomplete() || end < text.as_str().len();
+    }
+}
+
+/// What kind of looking-around the agent said a call was, in this program's
+/// words for it.
+const fn looking(looked: Lookup) -> Looking {
+    match looked {
+        Lookup::Pattern => Looking::Pattern,
+        Lookup::File => Looking::File,
+        Lookup::Directory => Looking::Directory,
+        Lookup::Command => Looking::Command,
+        Lookup::WebSearch => Looking::WebSearch,
+        Lookup::WebPage => Looking::WebPage,
     }
 }
 
@@ -875,32 +921,34 @@ impl Sink for Telling<'_> {
                     || told.out.contains(&call)
                     || told.out.len() >= CALLS_OUT
                 {
-                    Some(RunEvent::Reported {
-                        tool: tool.into(),
-                        summary: summary.as_str().into(),
-                    })
+                    Some(told.reported(self.session, tool.into(), summary.as_str().into()))
                 } else {
                     told.out.push(call.clone());
+                    let tool: Box<str> = Text::clipped(tool, NAME_BYTES).as_str().into();
+                    let summary = Summary::of(
+                        match about {
+                            About::Path => Argument::Path,
+                            About::Address => Argument::Address,
+                            About::Command => Argument::Command,
+                            About::Other => Argument::Other,
+                        },
+                        summary.as_str(),
+                    );
+                    let looking = looked.map(looking);
+                    told.step(
+                        self.session,
+                        AgentDid::Called {
+                            call: call.clone(),
+                            tool: tool.clone(),
+                            summary: summary.clone(),
+                            looking,
+                        },
+                    );
                     Some(RunEvent::AgentCalled {
                         call,
-                        tool: Text::clipped(tool, NAME_BYTES).as_str().into(),
-                        summary: Summary::of(
-                            match about {
-                                About::Path => Argument::Path,
-                                About::Address => Argument::Address,
-                                About::Command => Argument::Command,
-                                About::Other => Argument::Other,
-                            },
-                            summary.as_str(),
-                        ),
-                        looking: looked.map(|looked| match looked {
-                            Lookup::Pattern => Looking::Pattern,
-                            Lookup::File => Looking::File,
-                            Lookup::Directory => Looking::Directory,
-                            Lookup::Command => Looking::Command,
-                            Lookup::WebSearch => Looking::WebSearch,
-                            Lookup::WebPage => Looking::WebPage,
-                        }),
+                        tool,
+                        summary,
+                        looking,
                     })
                 }
             }
@@ -925,20 +973,24 @@ impl Sink for Telling<'_> {
                 } else {
                     report.as_str().to_owned()
                 };
-                Some(RunEvent::AgentAnswered {
-                    call,
-                    diff,
-                    output: if failed {
-                        RecordedToolOutput::failed(said)
-                    } else {
-                        RecordedToolOutput::ok(said)
+                let output = if failed {
+                    RecordedToolOutput::failed(said)
+                } else {
+                    RecordedToolOutput::ok(said)
+                };
+                told.step(
+                    self.session,
+                    AgentDid::Answered {
+                        call: call.clone(),
+                        output: output.clone(),
+                        diff: diff.clone(),
                     },
-                })
+                );
+                Some(RunEvent::AgentAnswered { call, diff, output })
             }
-            Event::FileChanged { path } => Some(RunEvent::Reported {
-                tool: "file".into(),
-                summary: path.as_str().into(),
-            }),
+            Event::FileChanged { path } => {
+                Some(told.reported(self.session, "file".into(), path.as_str().into()))
+            }
             Event::Pending(reference, pending) => {
                 if told.pending.len() >= PENDINGS {
                     drop(told);
@@ -985,12 +1037,14 @@ impl Sink for Telling<'_> {
             // what is told.
             Event::Background(_) | Event::Process(_) => None,
             Event::Carried(carried) => {
+                told.rounds = told.rounds.saturating_add(1);
                 told.tally.hold(Some(carried));
                 Some(RunEvent::Carried {
                     breakdown: Breakdown::reported(self.window, carried),
                 })
             }
             Event::Compacted { why, before, after } => {
+                told.rounds = told.rounds.saturating_add(1);
                 told.tally.hold(after);
                 drop(told);
                 self.reporter

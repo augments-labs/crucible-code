@@ -638,7 +638,11 @@ row with no mark, worded as the agent's, such as `the agent used Bash · ls
 each file it says it changed, such as `the agent used file · src/lib.rs`,
 since its calls need not name one. Control characters in anything the agent
 says are taken out, and a credential the agent was given is withheld from the
-changed lines as from the rest of what it says.
+changed lines as from the rest of what it says. The session keeps these rows
+for you alone, never for the agent, so a session picked up again with
+`/resume` or `--continue` draws the agent's calls, results, changes and counted
+lookups where the turn drew them; one recorded before this release, or picked
+up by an earlier one, comes back as its prompts and answers only.
 
 Where the model asked for one tool and nothing about it moves, the line is
 written the moment the call goes out. `WebSearch` and `WebFetch` are the two

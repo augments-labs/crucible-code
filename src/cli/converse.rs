@@ -1265,9 +1265,14 @@ impl Turn<'_, '_> {
                         // to: this call did something, and a line counting what
                         // was only looked at may not close over it.
                         *self.drawn = stop_if_failed(
-                            settling(renderer, self.held, self.terms.style())
-                                .and_then(|()| draw::returned(renderer, &said, self.terms.style()))
-                                .map_err(Fatal::from),
+                            settling(
+                                renderer,
+                                &mut self.held.gathering,
+                                &mut self.held.kept,
+                                self.terms.style(),
+                            )
+                            .and_then(|()| draw::returned(renderer, &said, self.terms.style()))
+                            .map_err(Fatal::from),
                             &self.terms.cancel,
                         );
                     }
@@ -1279,7 +1284,13 @@ impl Turn<'_, '_> {
                 // and the count of what was looked at belongs above it.
                 if breaks(&one) && self.drawn.is_ok() {
                     *self.drawn = stop_if_failed(
-                        settling(renderer, self.held, self.terms.style()).map_err(Fatal::from),
+                        settling(
+                            renderer,
+                            &mut self.held.gathering,
+                            &mut self.held.kept,
+                            self.terms.style(),
+                        )
+                        .map_err(Fatal::from),
                         &self.terms.cancel,
                     );
                 }
@@ -2097,19 +2108,23 @@ fn breaks(one: &Seen) -> bool {
 /// gathered enough to be worth folding. And the call's own row where it did
 /// not: a run of one is not folded, so the row it was always going to have is
 /// written now that it is known no second call was coming.
+///
+/// A replay of an installed agent's turn ends its runs here too, which is
+/// what keeps the two drawing the same rows.
 fn settling<T: Terminal>(
     renderer: &mut Renderer<T>,
-    held: &mut Held<'_>,
+    gathering: &mut Gathering,
+    kept: &mut Kept,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let mut gathering = held.gathering.taken();
+    let mut gathering = gathering.taken();
 
     if gathering.folds() {
         // Swept rather than pointed one at a time: what the turn gathered and
         // has not yet offered is exactly this run, because every other result
         // was pointed at its own row as it went down.
         let at = draw::gathered(renderer, &gathering.did(), style)?;
-        held.kept.onto(at);
+        kept.onto(at);
         return Ok(());
     }
 
@@ -2120,11 +2135,11 @@ fn settling<T: Terminal>(
     draw::returned(renderer, &alone.said, style)?;
 
     let Some(output) = alone.output else {
-        held.kept.abandoned(&alone.call);
+        kept.abandoned(&alone.call);
         return Ok(());
     };
 
-    draw::came_back(renderer, &mut held.kept, &alone.call, output, style)
+    draw::came_back(renderer, kept, &alone.call, output, style)
 }
 
 /// Refuses a pending action already off the channel: the drain cannot meet
