@@ -58,10 +58,12 @@ conversation already on an agent stays on it.
 While a conversation runs on an agent, the row under the box says, where the
 provider and model would be, which agent runs its turns and who is paid for
 them, such as `execution: work · billing: external`: the agent's own account
-pays, and crucible does not know under which plan. `/model` and `/effort` say
-that the agent chooses its own model and how hard it thinks, rather than
-offering a provider's models or rungs it would not be asked for; `/model` says
-so while a turn runs too.
+pays, and crucible does not know under which plan. Where the agent's entry
+names the model it is started on, the row names it too, as `execution: work,
+model: opus · billing: external`. `/model` says which model that is, or that
+the agent chooses its own, and `/effort` that the agent chooses how hard it
+thinks, rather than offering a provider's models or rungs it would not be
+asked for; `/model` says so while a turn runs too.
 
 ## Claude Code
 
@@ -98,6 +100,12 @@ Anthropic key or a cloud account your shell holds for another program never
 reaches it and the account it uses is the one its profile is signed in to. It
 is also told to send nothing it does not need to answer and to leave its own
 installation alone.
+
+**Its model.** `model` is optional: it names the model the agent is started
+on, as Claude Code names it, such as `opus`, `sonnet` or a full model id, and
+it is passed to the program as its `--model`. Without it the agent starts on
+its own default. Letters, digits and `. _ - : @ / [ ]` are accepted, up to 128
+of them, and never a leading `-`.
 
 **Signing in.** Whether it is signed in is read from its own
 `claude auth status` in its profile. Signing in happens in the agent's own
@@ -176,6 +184,9 @@ on Windows, with an absolute path. A release that describes itself otherwise
 when it starts, or no longer offers loading and resuming a session, signing out
 or its usual sign-in, is sent nothing more and refused with a sentence naming
 what differs.
+
+**Its model.** The agent chooses its own, and a `model` in its entry is
+refused, since nothing would read it.
 
 **Its profile.** `profileDir` is required: it is the directory the agent keeps
 its sign-in, files and unpacked runtime under, and its usual home is the one

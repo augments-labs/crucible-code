@@ -581,7 +581,11 @@ impl Pace {
 pub(super) fn deferred<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    (current, execution): (Asked<'_>, &crucible_client_api::Execution),
+    (current, execution, model): (
+        Asked<'_>,
+        &crucible_client_api::Execution,
+        Option<&crucible_client_api::Model>,
+    ),
     wanted: &Owned,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Option<Kept>, Fatal> {
@@ -589,7 +593,7 @@ pub(super) fn deferred<T: Terminal>(
         command: Command::Model,
         ..
     } = wanted
-        && let Some(said) = chosen_by_agent(execution, false)
+        && let Some(said) = chosen_by_agent(execution, model, false)
     {
         say(renderer, &said)?;
         return Ok(None);
@@ -1100,19 +1104,32 @@ fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal>
 /// agent's route, in place of a shelf or a ladder: the agent is asked for
 /// neither, so taking any row either would hold is refused.
 /// Nothing on a provider's route.
-fn chosen_by_agent(execution: &crucible_client_api::Execution, thinking: bool) -> Option<String> {
+fn chosen_by_agent(
+    execution: &crucible_client_api::Execution,
+    model: Option<&crucible_client_api::Model>,
+    thinking: bool,
+) -> Option<String> {
     let crucible_client_api::Execution::Instance(instance) = execution else {
         return None;
     };
-    let thinks = if thinking {
-        " and how hard it thinks"
-    } else {
-        ""
-    };
-    Some(format!(
-        "this conversation runs on the agent {}, which chooses its own model{thinks}",
-        instance.as_str()
-    ))
+    let instance = instance.as_str();
+    Some(match (model, thinking) {
+        (None, false) => {
+            format!("this conversation runs on the agent {instance}, which chooses its own model")
+        }
+        (None, true) => format!(
+            "this conversation runs on the agent {instance}, which chooses its own model and how hard it thinks"
+        ),
+        (Some(model), false) => format!(
+            "this conversation runs on the agent {instance}, started on the model {} its entry names",
+            model.text().as_str()
+        ),
+        (Some(_), true) => {
+            format!(
+                "this conversation runs on the agent {instance}, which chooses how hard it thinks"
+            )
+        }
+    })
 }
 
 /// Says one thing back, quietly, folded to where it will stand.

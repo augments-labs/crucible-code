@@ -107,7 +107,8 @@ pub(super) fn run<T: Terminal>(
     keys: bool,
 ) -> Result<(), Fatal> {
     let execution = crucible_app::client::execution(conversation);
-    if let Some(said) = chosen_by_agent(&execution, true) {
+    let model = crucible_app::client::model(conversation);
+    if let Some(said) = chosen_by_agent(&execution, model.as_ref(), true) {
         return say(renderer, &said);
     }
     // A rung is asked of a model, so the ladder is stood over one by name and

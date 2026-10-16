@@ -2008,9 +2008,10 @@ pub(super) fn saying(settled: Settled<'_>) -> Says {
     }
 }
 
-/// Who runs `conversation`'s turns and who is paid for them, in the client
-/// contract's words, as the status row and a route switch's line both say it:
-/// nothing where no agent runs them.
+/// Who runs `conversation`'s turns, on which model where one was chosen for
+/// it, and who is paid for them, in the client contract's words, as the status
+/// row and a route switch's line both say it: nothing where no agent runs
+/// them.
 pub(super) fn route(conversation: &Conversation) -> Option<[String; 2]> {
     let crucible_client_api::Execution::Instance(instance) =
         crucible_app::client::execution(conversation)
@@ -2018,10 +2019,23 @@ pub(super) fn route(conversation: &Conversation) -> Option<[String; 2]> {
         return None;
     };
     let billing = crucible_app::client::billing(conversation);
+    let model = crucible_app::client::model(conversation);
     Some([
-        format!("execution: {}", instance.as_str()),
+        execution(
+            instance.as_str(),
+            model.as_ref().map(|model| model.text().as_str()),
+        ),
         format!("billing: {}", billing.as_str()),
     ])
+}
+
+/// What runs the turns, as [`route`] says it: the agent's entry `instance`,
+/// and the model it was started on where one was chosen for it.
+fn execution(instance: &str, model: Option<&str>) -> String {
+    match model {
+        Some(model) => format!("execution: {instance}, model: {model}"),
+        None => format!("execution: {instance}"),
+    }
 }
 
 /// The row for `conversation`: [`saying`]'s, [`Says::routing`] it.

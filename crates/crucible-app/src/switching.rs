@@ -336,7 +336,7 @@ impl Conversation {
     /// Thinks at `effort` from the next turn on, and writes it down beside the
     /// model for the next run.
     ///
-    /// An installed agent chooses its own model, and is asked at no rung.
+    /// An installed agent is asked at no rung: it chooses how hard it thinks.
     pub fn think(&mut self, effort: Effort, with: &Switching<'_>) -> Rung {
         let serving = self.serving;
         let Some(runner) = self.native_mut() else {

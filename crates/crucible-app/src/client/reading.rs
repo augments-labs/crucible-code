@@ -48,7 +48,7 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
         } else {
             api::Agents::None
         },
-        model: Model::new(settled.model()),
+        model: model(conversation),
         effort: settled.effort().map(rung),
         speed: pace(settled.speed()),
         served: match settled.served() {
@@ -79,6 +79,20 @@ pub fn execution(conversation: &Conversation) -> api::Execution {
             Name::new(instance).map_or(api::Execution::Native, api::Execution::Instance)
         }
         None => api::Execution::Native,
+    }
+}
+
+/// The model `conversation`'s turns are answered by, where one is named: the
+/// one chosen for the installed agent it is on, else the one in force here.
+///
+/// The field of [`snapshot`] the terminal's status row reads beside
+/// [`execution`] on an installed agent's route, where an agent left to choose
+/// its own model names none.
+#[must_use]
+pub fn model(conversation: &Conversation) -> Option<Model> {
+    match conversation.instance() {
+        Some(_) => conversation.agent_model().and_then(Model::new),
+        None => Model::new(conversation.settled().model()),
     }
 }
 

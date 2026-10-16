@@ -2354,3 +2354,14 @@ fn an_open_list_with_no_room_keeps_a_queue_from_standing_taller() {
     let open = queued_under_a_turn(20, &listing("/"));
     assert!(open.over.is_empty(), "{:?}", open.over);
 }
+
+#[test]
+fn the_route_s_row_names_the_model_an_agent_was_started_on() {
+    // An agent left to choose its own model names none, and the row says
+    // only which entry runs the turns, as before.
+    assert_eq!(
+        super::execution("work", Some("opus")),
+        "execution: work, model: opus"
+    );
+    assert_eq!(super::execution("work", None), "execution: work");
+}

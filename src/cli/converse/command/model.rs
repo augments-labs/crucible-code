@@ -20,8 +20,8 @@
 //! is asking it for ever.
 //!
 //! A conversation on an installed agent's route is told so instead, at rest
-//! and mid-turn: the agent chooses its own model, so no provider's would be
-//! asked for.
+//! and mid-turn: the agent runs on the model its entry names, or else chooses
+//! its own, so no provider's would be asked for.
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
@@ -230,7 +230,8 @@ pub(super) fn run<T: Terminal>(
     keys: bool,
 ) -> Result<(), Fatal> {
     let execution = crucible_app::client::execution(conversation);
-    if let Some(said) = chosen_by_agent(&execution, false) {
+    let model = crucible_app::client::model(conversation);
+    if let Some(said) = chosen_by_agent(&execution, model.as_ref(), false) {
         return say(renderer, &said);
     }
     if !said.is_empty() {

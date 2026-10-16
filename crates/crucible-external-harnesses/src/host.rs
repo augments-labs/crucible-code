@@ -113,6 +113,9 @@ pub struct Shape<'a> {
     pub profile: Option<&'a Path>,
     /// The directory the conversation works in, where a wire names it.
     pub workspace: Option<&'a Path>,
+    /// The model the agent is started with, as it names it, where one was
+    /// chosen; otherwise its own default.
+    pub model: Option<&'a str>,
 }
 
 /// What an account step's run came to.

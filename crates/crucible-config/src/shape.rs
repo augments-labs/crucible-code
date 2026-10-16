@@ -1480,6 +1480,17 @@ const EXTERNAL_AGENT: Shape = Shape::Fields(&[
         needed: false,
         widens: true,
     },
+    Field {
+        name: "model",
+        about: "For a claude agent: the model it is started with, as the agent names it, such as opus or sonnet. Left off, the agent's own default. Letters, digits and . _ - : @ / [ ] only, not starting with -. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        examples: &["opus"],
+        // Nothing. Which model the agent's account offers is the agent's to
+        // say, and its own default is what it was set up to use.
+        usual: None,
+        needed: false,
+        widens: false,
+    },
 ]);
 
 /// What the `mcp` block may say.

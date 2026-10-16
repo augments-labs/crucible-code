@@ -613,6 +613,29 @@ impl Reader<'_> {
                 }
             }
 
+            if !driver.takes_model() && record.get("model").is_some() {
+                return Err(ConfigError::Variant {
+                    file: self.file.into(),
+                    path: format!("externalAgents.{name}.model").into(),
+                    at: At::of("model", self.text),
+                    problem: format!(
+                        "an {} agent chooses its own model, so model is not read for it",
+                        driver.name()
+                    )
+                    .into(),
+                });
+            }
+            if let Some(found) = record.get("model").and_then(Value::as_str)
+                && !settings::access::model_name(found)
+            {
+                return Err(ConfigError::Variant {
+                    file: self.file.into(),
+                    path: format!("externalAgents.{name}.model").into(),
+                    at: At::of("model", self.text),
+                    problem: "a model is named with letters, digits and . _ - : @ / [ ] only, at most 128 of them, and never starting with -, since it is handed to the agent's program as an argument".into(),
+                });
+            }
+
             let key = driver.profile_key();
             if driver.profile_needed() && record.get(key).is_none() {
                 return Err(ConfigError::Needed {

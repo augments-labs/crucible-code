@@ -114,6 +114,10 @@ impl Relaunch for Launching {
         (self.row.dialect)(mode).map(drop)
     }
 
+    fn model(&self) -> Option<&str> {
+        self.agent.model()
+    }
+
     fn launch<'a>(
         &'a self,
         mode: Mode,
@@ -152,6 +156,15 @@ fn binding() -> Result<RouteBinding, Failed> {
 /// `script`, once a connect's probe and status check have been played, and
 /// where the peer keeps what it heard.
 fn launching(tree: &Tree, script: &Peer) -> Result<(Launching, PathBuf), Failed> {
+    launching_on(tree, script, None)
+}
+
+/// [`launching`], with each run started on `model` where one is named.
+fn launching_on(
+    tree: &Tree,
+    script: &Peer,
+    model: Option<&str>,
+) -> Result<(Launching, PathBuf), Failed> {
     let peer = tree.0.join("peer");
     let program = fake_peer::install(&peer, "claude", script)?;
     let row = row()?;
@@ -167,6 +180,7 @@ fn launching(tree: &Tree, script: &Peer) -> Result<(Launching, PathBuf), Failed>
         driver: Driver::Claude,
         executable: program.to_string_lossy().into(),
         profile: None,
+        model: model.map(Into::into),
         enabled: true,
     };
     let registry = Registry::new(std::slice::from_ref(row));
@@ -224,6 +238,11 @@ impl Outside {
     /// A conversation on the route from its first turn, recording into a
     /// session started on it.
     fn new(tree: &Tree, script: &Peer) -> Result<Self, Failed> {
+        Self::on(tree, script, None)
+    }
+
+    /// [`Outside::new`], with each run started on `model` where one is named.
+    fn on(tree: &Tree, script: &Peer, model: Option<&str>) -> Result<Self, Failed> {
         let session = Arc::new(Session::start_routed(
             &tree.sessions(),
             &tree.workspace()?,
@@ -231,7 +250,13 @@ impl Outside {
             &binding()?,
         )?);
         let conversation = super::conversation(tree, Script::new(Vec::new()), false)?;
-        let (outside, _left) = Self::onto(tree, script, conversation, session, Transcript::new())?;
+        let (outside, _left) = Self::onto_on(
+            tree,
+            (script, model),
+            conversation,
+            session,
+            Transcript::new(),
+        )?;
         Ok(outside)
     }
 
@@ -240,11 +265,23 @@ impl Outside {
     fn onto(
         tree: &Tree,
         script: &Peer,
+        conversation: Conversation,
+        session: Arc<Session>,
+        transcript: Transcript,
+    ) -> Result<(Self, Arc<Session>), Failed> {
+        Self::onto_on(tree, (script, None), conversation, session, transcript)
+    }
+
+    /// [`Outside::onto`], with the agent playing `script` and each run
+    /// started on `model` where one is named.
+    fn onto_on(
+        tree: &Tree,
+        (script, model): (&Peer, Option<&str>),
         mut conversation: Conversation,
         session: Arc<Session>,
         transcript: Transcript,
     ) -> Result<(Self, Arc<Session>), Failed> {
-        let (launching, peer) = launching(tree, script)?;
+        let (launching, peer) = launching_on(tree, script, model)?;
         // The conversation holds its sends to the yeses the runs are launched
         // under, as one started by the application does.
         conversation = conversation.consenting(launching.consent.clone());
@@ -563,6 +600,34 @@ fn a_snapshot_names_the_route_s_instance_and_its_billing() -> Result<(), Failed>
     assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
     assert_eq!(standing.billing, Billing::External);
     assert_eq!(standing.provider, None);
+    assert_eq!(
+        standing.model, None,
+        "an agent left to choose names no model"
+    );
+    Ok(())
+}
+
+/// On the route, the model the agent's entry names is the snapshot's model,
+/// and the one the agent's program is started with.
+#[test]
+fn a_snapshot_on_the_route_names_the_model_the_agent_is_started_with() -> Result<(), Failed> {
+    let tree = Tree::new("external-model")?;
+    let mut outside = Outside::on(&tree, &connected([claude::clean()]), Some("opus"))?;
+
+    let standing = client::snapshot(&outside.conversation);
+    let (turned, _) = super::turn(&mut outside.conversation, "hello")?;
+
+    assert!(matches!(turned, Turned::Ran(_)), "{turned:?}");
+    assert_eq!(
+        standing.model.as_ref().map(|model| model.text().as_str()),
+        Some("opus")
+    );
+    let started = fake_peer::argued(&outside.peer);
+    let run = started.last().ok_or("the run was never started")?;
+    assert!(
+        run.windows(2).any(|pair| pair == ["--model", "opus"]),
+        "{started:?}"
+    );
     Ok(())
 }
 

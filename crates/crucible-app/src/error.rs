@@ -173,8 +173,8 @@ pub enum AppError {
     },
 
     /// The conversation is on an installed agent's route, and what was asked
-    /// is chosen by the agent: its model, and so the provider serving it.
-    #[error("this conversation is on {driver}, which chooses its own model")]
+    /// is not chosen here: its model, and so the provider serving it.
+    #[error("this conversation is on {driver}, whose model is not chosen from here")]
     Installed {
         /// The agent's program, as the agent registry names it.
         driver: &'static str,

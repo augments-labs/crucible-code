@@ -1159,6 +1159,9 @@ struct Turn<'a, 'h> {
     external: Option<u64>,
     /// Who runs the turn, as it stood when the turn began.
     execution: crucible_client_api::Execution,
+    /// The model the agent running the turn was started on, where one was
+    /// chosen for it, as it stood when the turn began.
+    model: Option<crucible_client_api::Model>,
 }
 
 impl Turn<'_, '_> {
@@ -1541,7 +1544,8 @@ impl Turn<'_, '_> {
             pace: self.says.pace,
         };
         let execution = self.execution.clone();
-        let asked = (current, &execution);
+        let model = self.model.clone();
+        let asked = (current, &execution, model.as_ref());
         let picked = command::deferred(renderer, self.terms, asked, command, &mut |renderer| {
             self.drain(renderer);
             Ok(())
@@ -1593,6 +1597,7 @@ fn take<T: Terminal>(
     let serving = conversation.serving();
     let external = conversation.settled().external();
     let execution = crucible_app::client::execution(&conversation);
+    let model = crucible_app::client::model(&conversation);
 
     // And what ended while nothing was running goes into the aside rather than
     // into what is above, which is the one place a fact like this can be put
@@ -1685,6 +1690,7 @@ fn take<T: Terminal>(
         serving,
         external,
         execution,
+        model,
     };
     while turn.step(renderer) {}
 
