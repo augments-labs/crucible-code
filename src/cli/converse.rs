@@ -2045,8 +2045,13 @@ fn breaks(one: &Seen) -> bool {
             // A result is here as well, and it has to be: the event that folded
             // a call into the run is the one before this, and breaking on the
             // result would end every run at one call.
+            //
+            // An installed agent's calls and their answers are the same, by
+            // the agent's account rather than a tool's.
             Event::ToolRequested { .. }
             | Event::ToolFinished { .. }
+            | Event::AgentCalled { .. }
+            | Event::AgentAnswered { .. }
             | Event::Wrote { .. }
             | Event::Spent { .. }
             | Event::PromptCache { .. }
@@ -2080,12 +2085,6 @@ fn breaks(one: &Seen) -> bool {
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::FastRefused { .. }
-            //
-            // An installed agent's calls are rows of their own as well, never
-            // counted into a run: nothing says which of them only looked
-            // around.
-            | Event::AgentCalled { .. }
-            | Event::AgentAnswered { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => true,
         },
@@ -2125,13 +2124,7 @@ fn settling<T: Terminal>(
         return Ok(());
     };
 
-    draw::came_back(
-        renderer,
-        &mut held.kept,
-        &alone.call,
-        draw::Shown::live(output),
-        style,
-    )
+    draw::came_back(renderer, &mut held.kept, &alone.call, output, style)
 }
 
 /// Refuses a pending action already off the channel: the drain cannot meet
@@ -2156,7 +2149,17 @@ fn shown<T: Terminal>(
         // count is its row — but what it came back with is kept either way,
         // because the line counting the run is the door to all of it.
         Seen::Turn(Event::ToolFinished { call, output, .. }) if held.gathering.holds(&call) => {
-            if let Some(output) = held.gathering.answered(&call, output) {
+            if let Some(output) = held.gathering.answered(&call, draw::Shown::live(output)) {
+                held.kept.gathered(&call, output.into_text(), None);
+            }
+        }
+        // And one of an installed agent's calls the run is counting, by the
+        // agent's account of what it came back with.
+        Seen::Turn(Event::AgentAnswered { call, output, diff }) if held.gathering.holds(&call) => {
+            if let Some(output) = held
+                .gathering
+                .answered(&call, draw::Shown::reported(output, diff))
+            {
                 held.kept.gathered(&call, output.into_text(), None);
             }
         }

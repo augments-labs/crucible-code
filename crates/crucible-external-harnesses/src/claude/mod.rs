@@ -54,7 +54,8 @@ pub use crate::antigravity::Ended;
 use std::path::PathBuf;
 
 use crucible_execution::{
-    About, Cost, Decision, Event, Failure, Observation, Outcome, Scope, Text, TurnRequest, Usage,
+    About, Cost, Decision, Event, Failure, Lookup, Observation, Outcome, Scope, Text, TurnRequest,
+    Usage,
 };
 use crucible_transport::FRAME_BYTES;
 use crucible_types::TurnId;
@@ -193,6 +194,7 @@ impl Claude {
                 tool: Text::new(&tool),
                 summary: Text::new(summary),
                 about,
+                looked: looked(&tool),
             }));
         }
         acts
@@ -420,6 +422,21 @@ impl Dialect for Claude {
 
     fn told(&mut self, _step: Account, _frame: &str) -> Result<Told, Failure> {
         Err(Failure::new("This agent speaks no account step."))
+    }
+}
+
+/// What a call to Claude Code's tool `named` only looks at, where looking is
+/// all that tool does: these are its tools that change nothing and run
+/// nothing. `Bash` is not among them whatever it runs, since nothing on the
+/// wire says a command only read.
+fn looked(named: &str) -> Option<Lookup> {
+    match named {
+        "Read" | "NotebookRead" => Some(Lookup::File),
+        "Grep" => Some(Lookup::Pattern),
+        "Glob" | "LS" => Some(Lookup::Directory),
+        "WebSearch" => Some(Lookup::WebSearch),
+        "WebFetch" => Some(Lookup::WebPage),
+        _ => None,
     }
 }
 

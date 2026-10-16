@@ -299,6 +299,29 @@ pub enum About {
     Other,
 }
 
+/// What a call only looked at, where looking is all it did.
+///
+/// Said by the backend that read the call, from the tool's own name for what
+/// it does, so whatever draws it can count the call with others like it
+/// rather than give it a row. A call no backend can vouch for as only looking
+/// has none. Closed for the reason a native call's kind of looking is: the
+/// line that counts them says these six and no others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lookup {
+    /// A search for a pattern.
+    Pattern,
+    /// A file read.
+    File,
+    /// What a directory holds.
+    Directory,
+    /// A command that only reported what it found.
+    Command,
+    /// A web search.
+    WebSearch,
+    /// A web page fetched.
+    WebPage,
+}
+
 /// One thing a backend reports while a turn runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -324,6 +347,9 @@ pub enum Event {
         /// What kind of thing the summary names, as the field it was read
         /// from says.
         about: About,
+        /// What the call only looked at, where the backend can say it did
+        /// nothing else.
+        looked: Option<Lookup>,
     },
     /// What a tool the other agent used reported once the call ended.
     ToolReport {

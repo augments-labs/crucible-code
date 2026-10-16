@@ -73,8 +73,8 @@ use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use crucible_execution::{
-    About, Backend, Cost, Decision, Error, Event, Failure, NAME_BYTES, Outcome, PENDINGS, Pending,
-    PendingRef, Sink, Text, TurnRequest, Usage,
+    About, Backend, Cost, Decision, Error, Event, Failure, Lookup, NAME_BYTES, Outcome, PENDINGS,
+    Pending, PendingRef, Sink, Text, TurnRequest, Usage,
 };
 use crucible_models::{Effort, ProviderError};
 use crucible_runner::{
@@ -83,7 +83,7 @@ use crucible_runner::{
 };
 use crucible_runtime::BoxFuture;
 use crucible_session::{ExternalRef, RouteBinding, Session, Uncertain};
-use crucible_tools::{Argument, Mode, Summary};
+use crucible_tools::{Argument, Looking, Mode, Summary};
 use crucible_types::{
     Attachment, CONTINUATION_BYTES, CostAmount, Message, PricingCurrency, PricingUnit,
     RecordedToolOutput, Spend, StopReason, ToolId, Transcript, TurnId,
@@ -857,6 +857,7 @@ impl Sink for Telling<'_> {
                 tool,
                 summary,
                 about,
+                looked,
             } => {
                 let tool = match tool.as_str().trim() {
                     "" => "tool",
@@ -891,6 +892,14 @@ impl Sink for Telling<'_> {
                             },
                             summary.as_str(),
                         ),
+                        looking: looked.map(|looked| match looked {
+                            Lookup::Pattern => Looking::Pattern,
+                            Lookup::File => Looking::File,
+                            Lookup::Directory => Looking::Directory,
+                            Lookup::Command => Looking::Command,
+                            Lookup::WebSearch => Looking::WebSearch,
+                            Lookup::WebPage => Looking::WebPage,
+                        }),
                     })
                 }
             }

@@ -827,6 +827,34 @@ fn an_agent_s_edit_is_drawn_as_the_change_it_made() {
     }
 }
 
+/// Calls the agent made that only looked around are counted on one line, as
+/// a native run of them is, in either screen mode.
+#[test]
+fn an_agent_s_lookups_are_counted_on_one_line() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-lookups-{mode}");
+        let script = Script::of(signed_in([claude::looking()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        connected(&mut window);
+        window.types_until("Look around.\r", "Done.");
+        let picture = window.picture();
+
+        assert!(
+            picture.contains("Searched for 1 pattern, read 2 files"),
+            "{mode} counts the lookups on one line\n{picture}"
+        );
+        for looked in claude::LOOKED_AT {
+            assert!(
+                !picture.contains(&format!("Read({looked})")),
+                "{mode} still draws {looked} as a row of its own\n{picture}"
+            );
+        }
+    }
+}
+
 /// Asserts `picture` shows the priced turn the agent reported, headed as its
 /// report, and nothing only a native route has.
 fn reported(picture: &str, drawn: &str) {

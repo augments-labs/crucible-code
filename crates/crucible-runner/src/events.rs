@@ -409,13 +409,16 @@ pub enum Event {
         /// What the call was about, and what kind of thing that is, as the
         /// backend that read the call says.
         summary: Summary,
+        /// What kind of looking-around the call is, where the backend says
+        /// that is all it is.
+        looking: Option<Looking>,
     },
 
     /// What one of the agent's own calls came back with, by its account.
     ///
     /// Recorded rather than live: nothing here ran it, so there is no live
-    /// result, no change and no receipt, only the agent's text and whether
-    /// it said the call failed.
+    /// result and no receipt, only the agent's text, whether it said the call
+    /// failed, and the change it said the call made.
     AgentAnswered {
         /// Which call this answers.
         call: ToolId,
@@ -651,11 +654,13 @@ impl std::fmt::Debug for Event {
                 call,
                 tool,
                 summary,
+                looking,
             } => f
                 .debug_struct("AgentCalled")
                 .field("call", call)
                 .field("tool", tool)
                 .field("summary", summary)
+                .field("looking", looking)
                 .finish(),
             Self::AgentAnswered { call, output, diff } => f
                 .debug_struct("AgentAnswered")

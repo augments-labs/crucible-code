@@ -626,6 +626,7 @@ fn calling(call: &str) -> Event {
         tool: Text::new("Bash"),
         summary: Text::new("ls"),
         about: About::Command,
+        looked: None,
     }
 }
 

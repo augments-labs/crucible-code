@@ -175,6 +175,7 @@ pub(crate) fn event<T: Terminal>(
             call,
             tool,
             summary,
+            ..
         } => {
             kept.calling(call, called_as(&tool, &summary).text().to_owned());
             renderer.settle()

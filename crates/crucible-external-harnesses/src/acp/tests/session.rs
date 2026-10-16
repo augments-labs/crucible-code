@@ -1,6 +1,6 @@
 //! Every update kind is read, and a turn's cost is what it added.
 
-use crucible_execution::{About, Cost, Currency, Event};
+use crucible_execution::{About, Cost, Currency, Event, Lookup};
 use crucible_types::{Change, Diff, TurnId};
 use serde_json::{Value, json};
 
@@ -150,7 +150,7 @@ fn a_call_and_its_end_are_reported_under_the_call_s_id() {
     assert!(
         matches!(
             begun.as_slice(),
-            [Act::Say(Event::ToolActivity { call, tool, summary, about: About::Other })]
+            [Act::Say(Event::ToolActivity { call, tool, summary, about: About::Other, looked: None })]
                 if call.as_str() == "call_1" && tool.as_str() == "execute" && summary.as_str() == "Run ls"
         ),
         "{begun:?}"
@@ -189,7 +189,7 @@ fn a_call_announced_over_is_reported_with_its_end() {
         matches!(
             heard.as_slice(),
             [
-                Act::Say(Event::ToolActivity { call: began, .. }),
+                Act::Say(Event::ToolActivity { call: began, looked: Some(Lookup::File), .. }),
                 Act::Say(Event::ToolReport { call: ended, failed: true, report, diff: None }),
             ] if began.as_str() == "call_1" && ended.as_str() == "call_1" && report.as_str() == "not there"
         ),
