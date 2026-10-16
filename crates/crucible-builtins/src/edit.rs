@@ -37,7 +37,6 @@ use std::sync::LazyLock;
 
 use crate::args::Args;
 use crate::atomic;
-
 use crate::ledger::{Fingerprint, Ledger, Shown};
 use crate::schema::{Field, Schema, Shape};
 use crate::summary;

@@ -34,9 +34,9 @@
 //! `edit` and `write` answer with one thing more, which the model is never sent:
 //! the change each of them made, for the reader to look at. Between them they
 //! are the only code that ever holds both versions of a file, and each holds
-//! them for the length of one call, so the private `changed` module reads the
-//! change off there rather than leaving anything downstream to work it out again
-//! from bytes it no longer has.
+//! them for the length of one call, so each reads the change off there with
+//! `crucible_types::Diff::between` rather than leaving anything downstream to
+//! work it out again from bytes it no longer has.
 //!
 //! They come by the two versions differently, and it shows in what each can
 //! promise. `edit` is handed the old one because it has to find text in it, so a
