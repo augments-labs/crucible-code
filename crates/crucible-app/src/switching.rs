@@ -379,7 +379,9 @@ impl Conversation {
     /// Thinks at `effort` from the next turn on, and writes it down beside the
     /// model for the next run.
     ///
-    /// An installed agent is asked at no rung: it chooses how hard it thinks.
+    /// On an installed agent's route it is the agent's next run that starts at
+    /// it, and its entry it is written into; an agent that chooses its own
+    /// model is asked at no rung.
     pub fn think(&mut self, effort: Effort, with: &Switching<'_>) -> Rung {
         if self.instance().is_some() {
             return self.think_agent(effort, with);
@@ -425,12 +427,15 @@ impl Conversation {
                 driver: self.settled().serving(),
             });
         };
+        // Held to the known ladder whatever the vendor, as `serves` is not:
+        // the agent is started with the rung, and one its model refuses
+        // would refuse every run started from the entry it is written into.
+        let served = rungs(with.providers, provider, name);
         if let Some(rung) = rung
-            && !serves(with.providers, provider, name, rung)
+            && !served.contains(&rung)
         {
             return Switched::Unsupported(rung);
         }
-        let served = rungs(with.providers, provider, name);
         let effort = rung
             .or_else(|| self.settled().effort().filter(|one| served.contains(one)))
             .or_else(|| default_rung(&served));
@@ -444,7 +449,8 @@ impl Conversation {
 
     /// Starts the installed agent the conversation is on at `effort` from its
     /// next run, and writes it into the agent's entry: where the agent is
-    /// started on a model, and that model serves it.
+    /// started on a model, and that model's known ladder holds it, for the
+    /// reason [`Self::ask_agent_for`] holds a rung to it.
     fn think_agent(&mut self, effort: Effort, with: &Switching<'_>) -> Rung {
         let Some(driver) = self.agent_driver().filter(|driver| driver.takes_model()) else {
             return Rung::Unasked;
@@ -454,7 +460,7 @@ impl Conversation {
         if model.is_empty() {
             return Rung::Unasked;
         }
-        if !serves(with.providers, driver.provider(), model, effort) {
+        if !rungs(with.providers, driver.provider(), model).contains(&effort) {
             return Rung::Unsupported;
         }
         let Some(instance) = self.instance().map(Box::<str>::from) else {

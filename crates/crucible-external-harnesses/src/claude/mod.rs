@@ -4,9 +4,9 @@
 //! [`Claude`] starts the installed program once for a run, printing frames
 //! and reading them, in its `default` permission mode unless it was made for
 //! a conversation's mode through the [`Modes`] table, with its permission
-//! prompts sent to this side as questions, and with the model chosen for it
-//! where one was, else its own default. Each turn is a user
-//! frame on the same input, and ends at the `result` frame that answers it; a
+//! prompts sent to this side as questions, and with the model and effort
+//! it is handed, as `--model` and `--effort`, else its own defaults. Each turn
+//! is a user frame on the same input, and ends at the `result` frame that answers it; a
 //! run for a session the program kept starts by resuming it. The program is
 //! started with only the environment its profile builds, so no key or cloud
 //! account the shell holds reaches it, and whether it is signed in is read

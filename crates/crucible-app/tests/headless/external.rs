@@ -794,6 +794,54 @@ fn an_effort_on_the_route_starts_the_agent_s_next_run_at_it() -> Result<(), Fail
     Ok(())
 }
 
+/// On the route, a rung the model in force does not serve is refused, with a
+/// model or alone, since the agent would refuse every run started at it; and
+/// nothing is taken or written.
+#[test]
+fn a_rung_the_route_s_model_does_not_serve_is_refused() -> Result<(), Failed> {
+    use crucible_client_api::{EffortOutcome, ModelOutcome, Name, Rung};
+
+    let tree = Tree::new("external-effort-unserved")?;
+    let file = entered(&tree)?;
+    let before = std::fs::read_to_string(&file)?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+
+    // A model with no rung at all.
+    let refused = answered(
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-haiku-4-5")?,
+            effort: Some(Rung::Max),
+        },
+    )?;
+    assert!(
+        matches!(refused, Outcome::Model(ModelOutcome::Unsupported)),
+        "{refused:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&file)?, before);
+
+    let taken = answered(
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-haiku-4-5")?,
+            effort: None,
+        },
+    )?;
+    assert!(
+        matches!(taken, Outcome::Model(ModelOutcome::Taken { .. })),
+        "{taken:?}"
+    );
+    let written = std::fs::read_to_string(&file)?;
+    let refused = answered(&tree, &mut outside, Command::SetEffort(Rung::Max))?;
+    assert_eq!(refused, Outcome::Effort(EffortOutcome::Unsupported));
+    assert_eq!(std::fs::read_to_string(&file)?, written);
+    Ok(())
+}
+
 /// On the route, a model of a provider the agent does not reach is refused,
 /// and nothing is taken or written.
 #[test]
