@@ -630,6 +630,7 @@ impl Dialect for Acp {
         Request {
             arguments: Vec::new(),
             environment: Vec::new(),
+            shown: Vec::new(),
         }
     }
 

@@ -31,6 +31,33 @@ fn the_agent_is_started_with_its_home_in_the_profile() {
     assert_eq!(request.arguments.is_empty(), !cfg!(target_os = "linux"));
 }
 
+/// Every variable the agent is started with, for a turn or a step, says
+/// nothing about an account, so its value may be shown where what the agent
+/// says is kept.
+#[test]
+fn every_variable_the_agent_is_started_with_may_be_shown() {
+    let shape = || Shape {
+        profile: Some(Path::new("/profiles/work")),
+        ..Shape::default()
+    };
+    let mut agent = Antigravity::default();
+    let requests = [
+        Some(agent.request(shape())),
+        agent.account(Account::Status, shape()),
+    ];
+
+    for request in requests {
+        let request = request.expect("a request");
+        let names = request
+            .environment
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"GEMINI_HOME"), "{names:?}");
+        assert_eq!(request.shown, names);
+    }
+}
+
 /// The agent printing its sign-in link during a turn means the profile is
 /// signed out, and the turn fails saying how to sign in.
 #[test]

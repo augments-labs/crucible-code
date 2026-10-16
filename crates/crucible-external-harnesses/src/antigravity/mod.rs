@@ -88,10 +88,10 @@ impl Dialect for Antigravity {
 
     fn request(&mut self, shape: Shape<'_>) -> Request {
         let _ = self.acp.request(shape);
-        Request {
-            arguments: arguments(),
-            environment: profile::environment(std::env::vars_os(), shape.profile),
-        }
+        Request::showing(
+            arguments(),
+            profile::environment(std::env::vars_os(), shape.profile),
+        )
     }
 
     fn open(&mut self, turn: &TurnRequest) -> Result<Vec<String>, Failure> {

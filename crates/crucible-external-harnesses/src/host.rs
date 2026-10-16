@@ -19,7 +19,8 @@
 //! dialect reporting what only the host reports all end the turn incomplete,
 //! never guessed into an answer. Terminal control sequences are stripped from
 //! every text before it reaches an event, and every value of the program's
-//! environment long enough to be a secret is hidden from what is kept.
+//! environment long enough to be a secret is hidden from what is kept, unless
+//! the launch names its variable as one whose value may be shown.
 //!
 //! A question the program asks is raised in the [`Control`]'s table under the
 //! generation of this run, so a decision for a run that has since been started
@@ -446,7 +447,8 @@ pub struct Host {
     control: Control,
     /// How far the sandbox holds it in.
     claim: Confinement,
-    /// Every value of its environment long enough to be a secret.
+    /// Every value of its environment long enough to be a secret, but those
+    /// of the variables its launch names as shown.
     withheld: Vec<Box<str>>,
     /// Its own name for the session, once it has said one.
     session: Option<Box<str>>,
@@ -585,6 +587,7 @@ impl Host {
         let Request {
             arguments,
             environment,
+            shown,
         } = launch.request();
         let pairs = environment
             .iter()
@@ -597,6 +600,7 @@ impl Host {
         .spoken_to();
         let withheld = environment
             .iter()
+            .filter(|(name, _)| !shown.iter().any(|shown| shown == name))
             .map(|(_, value)| value)
             .filter(|value| value.len() >= WITHHELD_BYTES)
             .map(|value| value.as_str().into())

@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::antigravity::profile::environment;
+use crate::antigravity::profile::{PASSED, environment};
 
 /// Every variable that would choose the agent's account, project or home over
 /// the profile's, as the published integration strips them.
@@ -66,18 +66,63 @@ fn no_ambient_google_credential_reaches_the_agent() {
             "{name} carried the shell's value"
         );
         assert!(
-            !STRIPPED.contains(&name.to_uppercase().as_str()) || SET.contains(&name.as_str()),
+            !STRIPPED.contains(&name.to_uppercase().as_str()) || SET.contains(name),
             "{name} reached the agent"
         );
     }
     let value = |wanted: &str| {
         environment
             .iter()
-            .find(|(name, _)| name == wanted)
+            .find(|(name, _)| *name == wanted)
             .map(|(_, value)| value.as_str())
     };
     assert_eq!(value("GEMINI_HOME"), Some("/profiles/work"));
     assert_eq!(value("AGY_ACP_FORCE_FILE_STORAGE"), Some("1"));
     assert_eq!(value("PATH"), Some("/usr/bin"));
     assert!(value("BROWSER").is_some());
+}
+
+/// Every variable a launch can carry, each value of which is shown where what
+/// the agent says is kept: a variable added to the launch is a value shown, so
+/// it is named here too, where a reviewer reads it as one.
+#[test]
+fn every_variable_a_launch_can_carry_is_one_named_here() {
+    let ambient = PASSED
+        .iter()
+        .chain(STRIPPED.iter())
+        .map(|name| (OsString::from(name), OsString::from("set")));
+    let mut names: Vec<&str> = environment(ambient, Some(Path::new("/profiles/work")))
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    names.sort_unstable();
+
+    assert_eq!(
+        names,
+        [
+            "AGY_ACP_FORCE_FILE_STORAGE",
+            "AGY_CLI_DISABLE_AUTO_UPDATE",
+            "BROWSER",
+            "COMSPEC",
+            "GEMINI_HOME",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "LOGNAME",
+            "NUMBER_OF_PROCESSORS",
+            "PATH",
+            "PATHEXT",
+            "PYTHONUNBUFFERED",
+            "SYSTEMDRIVE",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "TZ",
+            "USER",
+            "USERPROFILE",
+            "WINDIR",
+        ]
+    );
 }

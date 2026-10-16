@@ -25,6 +25,7 @@ impl Dialect for Plain {
         Request {
             arguments: vec!["--print".to_owned()],
             environment: Vec::new(),
+            shown: Vec::new(),
         }
     }
 
@@ -80,6 +81,7 @@ impl Dialect for Plain {
         Some(Request {
             arguments: vec![argument.to_owned()],
             environment: Vec::new(),
+            shown: Vec::new(),
         })
     }
 

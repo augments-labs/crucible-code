@@ -593,6 +593,7 @@ async fn a_secret_the_agent_echoes_reaches_no_event_and_no_failure() {
     let request = Request {
         arguments: Vec::new(),
         environment: vec![("PLAIN_TOKEN".to_owned(), SENTINEL.to_owned())],
+        shown: Vec::new(),
     };
     let mut host = Host::launch(
         local(),
@@ -629,6 +630,60 @@ async fn a_secret_the_agent_echoes_reaches_no_event_and_no_failure() {
         .join("\n");
     assert!(kept.contains("[withheld]"), "{kept}");
     assert!(!kept.contains(SENTINEL), "{kept}");
+}
+
+/// A value the launch names shown says nothing about an account, so what the
+/// agent says holding it is kept as the agent said it, a path under the home
+/// reading as that path; a value it does not name is still withheld.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_value_the_launch_names_shown_is_kept_as_the_agent_said_it() {
+    let at = Owned::new("shown");
+    let reply = Reply::new()
+        .hear(1)
+        .say(format!(
+            "say edited /home/someone/src/lib.rs with {SENTINEL}"
+        ))
+        .say("end");
+    let program = found(&at.0, "plain", &Script::of([reply]));
+    let control = Control::new().expect("a control");
+    let request = Request {
+        arguments: Vec::new(),
+        environment: vec![
+            ("HOME".to_owned(), "/home/someone".to_owned()),
+            ("PLAIN_TOKEN".to_owned(), SENTINEL.to_owned()),
+        ],
+        shown: vec!["HOME"],
+    };
+    let mut host = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, request),
+    )
+    .await
+    .expect("started");
+    let sink = Kept::default();
+
+    let ended = host
+        .turn(
+            &mut Plain,
+            &SessionRef::new("one").expect("a name"),
+            &TurnRequest::new(TurnId::FIRST, "go"),
+            &sink,
+        )
+        .await;
+    host.stop(STOP_GRACE).await.expect("stopped");
+
+    assert!(ended.is_ok(), "{ended:?}");
+    let said = sink
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            Event::Delta(text) => Some(text.as_str().to_owned()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(said, "edited /home/someone/src/lib.rs with [withheld]");
 }
 
 /// The peer is installed under the name discovery looks for, with the
@@ -816,6 +871,7 @@ async fn crashed_muttering(name: &str, flood: u64, value: &str) -> String {
     let request = Request {
         arguments: Vec::new(),
         environment: vec![("PLAIN_TOKEN".to_owned(), value.to_owned())],
+        shown: Vec::new(),
     };
     let mut host = Host::launch(
         local(),

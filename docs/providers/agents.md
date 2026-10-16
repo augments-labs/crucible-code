@@ -40,10 +40,9 @@ is asked: the agent's own provider is reached through it, made the `provider`
 asked, and the conversation moves onto it. Where the agent's sign-in could not be
 read, *Could not verify sign-in* gives one reason, the agent's own where it
 said one: how it exited and the first line it printed, cut to 160 characters,
-with its control characters and the environment values it was started with
-taken out. *Check again* reads it again. Escape changes
-nothing and goes back; apart from that one yes, nothing is written until the
-agent reads signed in.
+with its control characters taken out. *Check again* reads it again. Escape
+changes nothing and goes back; apart from that one yes, nothing is written
+until the agent reads signed in.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
@@ -137,9 +136,11 @@ Claude Code you run yourself. The agent is started with an environment of its
 own: `PATH`, your home, user name, locale and time zone, and on Windows the
 variables that locate the system, and nothing else from your shell, so an
 Anthropic key or a cloud account your shell holds for another program never
-reaches it and the account it uses is the one its profile is signed in to. It
-is also told to send nothing it does not need to answer and to leave its own
-installation alone.
+reaches it and the account it uses is the one its profile is signed in to.
+Since none of that environment says anything about an account, a path under
+your home the agent names, in what it says or in what it asks to run, is shown
+as that path. It is also told to send nothing it does not need to answer and
+to leave its own installation alone.
 
 **Its model.** `model` is optional: it names the model the agent is started
 on, such as `claude-opus-5-5`, and it is passed to the program as its
@@ -245,8 +246,9 @@ private to you, readable by your user alone, each time the agent starts. The
 agent is started with an environment of its own: `PATH`, your home, user name,
 locale and time zone, and on Windows the variables that locate the system, and
 nothing else from your shell, so a Google credential, project or key your
-shell holds for another program never reaches it. Its temporary files go in
-the profile too. Its sign-in token is kept as a file in the profile rather than
+shell holds for another program never reaches it, and a path under your home
+the agent names is shown as that path. Its temporary files go in the profile
+too. Its sign-in token is kept as a file in the profile rather than
 in the shared keyring, so a sign-in the Antigravity IDE or another Google
 product keeps is never read as the agent's.
 

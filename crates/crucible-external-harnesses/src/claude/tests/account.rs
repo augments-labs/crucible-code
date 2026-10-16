@@ -62,6 +62,34 @@ fn a_step_runs_in_the_profile() {
     );
 }
 
+/// Every variable a run or a step is given says nothing about an account, so
+/// its value may be shown where what the agent says is kept: a path under the
+/// home or the profile reads as the agent wrote it.
+#[test]
+fn every_variable_a_run_or_a_step_is_given_may_be_shown() {
+    let shape = || Shape {
+        profile: Some(Path::new("/profiles/work")),
+        ..Shape::default()
+    };
+    let mut agent = Claude::default();
+    let mut requests = [Account::Version, Account::Status, Account::SignOut]
+        .into_iter()
+        .filter_map(|step| agent.account(step, shape()))
+        .collect::<Vec<_>>();
+    requests.push(agent.request(shape()));
+
+    assert_eq!(requests.len(), 4);
+    for request in requests {
+        let names = request
+            .environment
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"CLAUDE_CONFIG_DIR"), "{names:?}");
+        assert_eq!(request.shown, names);
+    }
+}
+
 /// The status is read only where what it printed and how it exited agree.
 #[test]
 fn the_status_is_read_only_where_its_words_and_its_exit_agree() {
