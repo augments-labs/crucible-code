@@ -268,34 +268,95 @@ async fn an_agent_outlives_the_output_one_command_may_print() {
     assert_eq!(ended, Outcome::Answered);
 }
 
-/// The child keeps every ceiling of the conversation's but the two that
-/// measure one command's life, and the conversation keeps both.
+/// An account step is one command, so the time a command is allowed still
+/// ends one that does not: a version step held to one second comes back long
+/// before the peer would have answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_account_step_is_still_held_to_the_time_one_command_is_allowed() {
+    let sample = Sample::new("launch-step-time");
+    let peer = installed(
+        &sample,
+        &Script::of([Reply::new().pause(Duration::from_secs(30)).say("1.2.3")]),
+    );
+    let consent = granted();
+    let policy = limited(
+        &sample,
+        SandboxResourceLimits {
+            command_time: Some(Duration::from_secs(1)),
+            ..SandboxResourceLimits::default()
+        },
+    );
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let registry = Registry::new(&SHIPPED);
+    let control = Control::new().expect("a control");
+    let began = std::time::Instant::now();
+
+    let read = launcher
+        .account(
+            &agent(&registry, &peer),
+            &control,
+            &mut Plain,
+            Account::Version,
+            &|_| {},
+        )
+        .await
+        .expect("started");
+
+    assert!(
+        began.elapsed() < Duration::from_secs(15),
+        "{:?}",
+        began.elapsed()
+    );
+    assert!(
+        !matches!(&read, crucible_external_harnesses::Reading::Version(_)),
+        "the version was read"
+    );
+}
+
+/// A run that answers turns keeps every ceiling of the conversation's but
+/// the three that measure one command's life, and the conversation keeps all
+/// of them.
 #[test]
-fn the_childs_policy_drops_only_the_ceilings_of_one_command() {
+fn a_lasting_run_drops_only_the_ceilings_of_one_command() {
     let sample = Sample::new("launch-ceilings");
     let conversation = limited(
         &sample,
         SandboxResourceLimits {
             command_time: Some(Duration::from_mins(20)),
+            cpu_seconds: Some(3600),
             output_bytes: Some(10 * 1024 * 1024),
             concurrent_commands: Some(4),
             ..SandboxResourceLimits::default()
         },
     );
 
-    let child = policy(&conversation, None, &[]).expect("a policy");
+    let child = policy(
+        &conversation,
+        None,
+        &[],
+        Life::Conversation { resume: None }.limits(conversation.limits()),
+    )
+    .expect("a policy");
 
     assert_eq!(
         child.limits(),
         SandboxResourceLimits {
             command_time: None,
+            cpu_seconds: None,
             output_bytes: None,
             ..conversation.limits()
         }
     );
     assert_eq!(
-        conversation.limits().command_time,
-        Some(Duration::from_mins(20))
+        policy(
+            &conversation,
+            None,
+            &[],
+            Life::Step.limits(conversation.limits())
+        )
+        .expect("a policy")
+        .limits(),
+        conversation.limits()
     );
 }
 
@@ -312,7 +373,13 @@ fn the_childs_policy_opens_its_profile_and_keeps_protected_metadata() {
         .join("crucible-launch-policy-profile");
     let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
 
-    let child = policy(&conversation, Some(&profile), &["api.anthropic.com"]).expect("a policy");
+    let child = policy(
+        &conversation,
+        Some(&profile),
+        &["api.anthropic.com"],
+        conversation.limits(),
+    )
+    .expect("a policy");
 
     assert!(child.permits_path(
         &profile.join("auth.json"),
@@ -340,7 +407,13 @@ fn an_unconfined_conversation_grants_its_child_no_hosts_it_would_be_refused_for(
         .expect("a policy")
         .with_enabled(false);
 
-    let child = policy(&conversation, None, &["api.anthropic.com"]).expect("a policy");
+    let child = policy(
+        &conversation,
+        None,
+        &["api.anthropic.com"],
+        conversation.limits(),
+    )
+    .expect("a policy");
 
     assert!(!child.enabled());
     assert!(
@@ -362,7 +435,8 @@ fn the_metadata_inside_a_profile_stays_protected() {
     let profile = fs::canonicalize(profile).expect("resolved");
     let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
 
-    let child = policy(&conversation, Some(&profile), &[]).expect("a policy");
+    let child =
+        policy(&conversation, Some(&profile), &[], conversation.limits()).expect("a policy");
 
     assert!(child.permits_path(
         &profile.join("auth.json"),
@@ -388,7 +462,7 @@ fn a_profile_inside_protected_metadata_is_not_opened() {
     let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
     let inside = sample.root().join(".git").join("profile");
 
-    let child = policy(&conversation, Some(&inside), &[]);
+    let child = policy(&conversation, Some(&inside), &[], conversation.limits());
 
     assert!(
         child.map_or(true, |child| !child.permits_path(
@@ -414,7 +488,7 @@ fn a_profile_that_is_a_dangling_link_is_not_opened() {
         .join("profile");
     std::os::unix::fs::symlink(&target, &named).expect("a link");
 
-    let child = policy(&conversation, Some(&named), &[]);
+    let child = policy(&conversation, Some(&named), &[], conversation.limits());
 
     for path in [&named, &target] {
         assert!(
@@ -442,7 +516,7 @@ fn a_profile_reached_through_a_link_into_protected_metadata_is_not_opened() {
         .expect("resolved")
         .join("profile");
 
-    let child = policy(&conversation, Some(&named), &[]);
+    let child = policy(&conversation, Some(&named), &[], conversation.limits());
 
     for path in [&named, &real] {
         assert!(

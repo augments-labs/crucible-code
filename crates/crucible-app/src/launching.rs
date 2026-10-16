@@ -22,16 +22,19 @@
 //! it is not, before the process that keeps its sign-in there is started.
 //! Elsewhere it is created where it is missing and its access left as it is.
 //!
-//! The child's policy is the conversation's, widened in exactly three ways:
-//! its profile directory, where one is configured, is writable but for the
-//! metadata protected beneath any writable root; the hosts its row names are
-//! reachable where the conversation's commands are confined, since an
-//! unconfined child reaches the host's network already; and it is held to no
-//! ceiling on one command's time or output, since it runs for the whole
-//! conversation and the host bounds each message it reads. Every other rule, the
+//! The child's policy is the conversation's, widened in exactly two ways: its
+//! profile directory, where one is configured, is writable but for the
+//! metadata protected beneath any writable root, and the hosts its row names
+//! are reachable where the conversation's commands are confined, since an
+//! unconfined child reaches the host's network already. Every other rule, the
 //! protected metadata included, stays as the conversation has it, so a
 //! profile directory inside one, named directly or through a link, is refused
 //! rather than opened.
+//!
+//! A run that answers the conversation's turns is held to none of the ceilings
+//! that measure one command's life, its wall time, its processor time and its
+//! output, since it lives as long as the conversation and the host bounds each
+//! message it reads. An account step is one command and keeps all three.
 //!
 //! A conversation on an agent's route launches through [`Runs`]: each launch
 //! takes the policy the conversation's commands would run under at that
@@ -337,8 +340,8 @@ pub fn discover(executable: &str, lookup: impl Fn(&str) -> Option<OsString>) -> 
 
 /// The policy an agent's child runs under: `conversation`'s, with `profile`,
 /// where its links lead, writable but for the metadata protected beneath any
-/// writable root, the hosts in `reaches` reachable where the conversation
-/// confines its commands, and no ceiling on one command's time or output.
+/// writable root, and the hosts in `reaches` reachable where the conversation
+/// confines its commands, held to `limits`.
 ///
 /// # Errors
 ///
@@ -349,6 +352,7 @@ pub fn policy(
     conversation: &SandboxPolicy,
     profile: Option<&Path>,
     reaches: &[&str],
+    limits: SandboxResourceLimits,
 ) -> Result<SandboxPolicy, SandboxPolicyError> {
     let mut filesystem = conversation.filesystem().to_vec();
     if let Some(profile) = profile {
@@ -394,15 +398,7 @@ pub fn policy(
         filesystem,
         conversation.working_directory(),
         network,
-        SandboxResourceLimits {
-            // The agent lives as long as the conversation and speaks a
-            // protocol the host reads a bounded message at a time, so the
-            // ceilings on one command's time and output would end it
-            // mid-conversation.
-            command_time: None,
-            output_bytes: None,
-            ..conversation.limits()
-        },
+        limits,
     )?
     .with_unreadable_patterns(conversation.unreadable_patterns().iter().cloned())
     .map(|policy| {
@@ -410,6 +406,34 @@ pub fn policy(
             .with_command_policy(conversation.commands().clone())
             .with_session_state(conversation.persistent(), conversation.snapshots())
     })
+}
+
+/// How long a started agent is to live.
+#[derive(Clone, Copy)]
+enum Life<'a> {
+    /// As long as the conversation whose turns it answers, resuming the
+    /// agent's own session named, where one is.
+    Conversation { resume: Option<&'a str> },
+    /// As long as one account step.
+    Step,
+}
+
+impl Life<'_> {
+    /// The conversation's `limits` as a run of this life is held to them: a
+    /// run that lives as long as the conversation has no ceiling on one
+    /// command's wall time, processor time or output, each of which would end
+    /// it partway through.
+    const fn limits(self, limits: SandboxResourceLimits) -> SandboxResourceLimits {
+        match self {
+            Self::Conversation { .. } => SandboxResourceLimits {
+                command_time: None,
+                cpu_seconds: None,
+                output_bytes: None,
+                ..limits
+            },
+            Self::Step => limits,
+        }
+    }
 }
 
 /// `path` with every link in the part of it that exists followed, and the part
@@ -522,7 +546,8 @@ impl<'a> Launcher<'a> {
         resume: Option<&str>,
     ) -> Result<Host, Unlaunched> {
         let request = dialect.request(agent.shape(resume, self.conversation.working_directory()));
-        self.start(agent, control, request, resume).await
+        self.start(agent, control, request, Life::Conversation { resume })
+            .await
     }
 
     /// Runs the account step `step` of `agent` to its end, and reads what it
@@ -552,7 +577,7 @@ impl<'a> Launcher<'a> {
             )));
         };
         let spoken = dialect.spoken(step);
-        let host = self.start(agent, control, request, None).await?;
+        let host = self.start(agent, control, request, Life::Step).await?;
         if let Some(frames) = spoken {
             return Ok(host
                 .speak(dialect, step, &frames, shown, within(step))
@@ -562,14 +587,14 @@ impl<'a> Launcher<'a> {
         Ok(dialect.read(step, &ran))
     }
 
-    /// Starts `agent` with `request`, once every gate before a process has
-    /// passed.
+    /// Starts `agent` with `request` for `life`, once every gate before a
+    /// process has passed.
     async fn start(
         &self,
         agent: &Agent,
         control: &Control,
         request: Request,
-        resume: Option<&str>,
+        life: Life<'_>,
     ) -> Result<Host, Unlaunched> {
         let row = agent.row;
         let shown = self
@@ -600,7 +625,16 @@ impl<'a> Launcher<'a> {
             Unheld::Asks(warned) => Unlaunched::Asks(warned),
             Unheld::Unknown => Unlaunched::Unknown(row.route.to_owned()),
         })?;
-        let policy = policy(self.conversation, agent.profile.as_deref(), row.reaches)?;
+        let policy = policy(
+            self.conversation,
+            agent.profile.as_deref(),
+            row.reaches,
+            life.limits(self.conversation.limits()),
+        )?;
+        let resume = match life {
+            Life::Conversation { resume } => resume,
+            Life::Step => None,
+        };
         if let Some(profile) = &agent.profile {
             // Made only where the child may write it, so that a profile the
             // conversation protects is refused before anything is created.

@@ -499,7 +499,8 @@ The respective maximum values are 86400, 67108864 and 16; zero is invalid.
 Projects and individual command requests may lower limits but cannot raise an
 inherited ceiling. These guards apply even with OS confinement disabled. An
 installed coding agent runs for the whole conversation, so it is held to
-neither `commandSeconds` nor `outputBytes`.
+neither `commandSeconds`, `outputBytes` nor a command's processor-time ceiling;
+its sign-in and status checks still are.
 
 Use `/sandbox` during a conversation to inspect the effective boundary or
 switch enablement. The Dependencies tab reports the platform prerequisites;
