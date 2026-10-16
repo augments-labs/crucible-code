@@ -15,7 +15,15 @@
 //!
 //! ```text
 //! cat models.json | cargo run --quiet --bin generate-models
+//! cat models.json | cargo run --quiet --bin generate-models -- --drift
 //! ```
+//!
+//! The second writes nothing. It reports, as Markdown on standard output, what
+//! the database says against what this build offers: a newer model in a family
+//! crucible offers, an offered model gone or deprecated, and rungs listed
+//! apart from the ones offered. It exits 0 with nothing to report, 1 with
+//! something, and 2 when the input could not be read. A scheduled workflow runs
+//! it, and what it reports is settled by hand from the vendors' own pages.
 //!
 //! Every model crucible offers is named here, against the key the database
 //! spells it with. The two are not always the same word: one vendor is asked
@@ -24,16 +32,18 @@
 //! down once and reviewed in a diff — not a rule that strips or guesses at a
 //! name, which is the thing the lookup must never do.
 
-// This program's diagnostics are for whoever ran it at a terminal, so the lint
-// against printing is refusing the only way it has to say what went wrong. It
+// This program's diagnostics are for whoever ran it at a terminal, and its
+// drift report is for the workflow that reads it, so the lints against
+// printing are refusing the only ways it has to answer. It
 // ships in no release and is on no render path, which is what that lint
 // protects.
 #![allow(clippy::print_stderr)]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::io::Read;
+use std::io::{Read, Write as _};
 
+use crucible_models::Effort;
 use crucible_types::{Modalities, Modality};
 use serde_json::Value;
 
@@ -51,7 +61,7 @@ use serde_json::Value;
 /// program must never make. The output ceiling is otherwise left alone: it is a
 /// property of the model, and the same model answers at the same length
 /// whatever slice of its window a request may use, short of the window itself.
-const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
+const OFFERED: &[Offer] = &[
     (
         "anthropic",
         "claude-fable-5-1",
@@ -144,6 +154,48 @@ const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
     ("zai", "glm-5.2", Some("glm-5.2"), None),
 ];
 
+/// One model crucible offers: its provider, its name, the key the database
+/// lists it under and the divisor applied to the listed window.
+type Offer = (
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    Option<u32>,
+);
+
+/// Models the drift check has reported and that crucible chose not to offer,
+/// and why, so that a decision once made is not put again every fortnight.
+const PASSED: &[(&str, &str, &str)] = &[
+    (
+        "openai",
+        "gpt-daybreak-red-latest",
+        "an alias the vendor's models page does not list, naming no model a session could be told it asked",
+    ),
+    (
+        "meta",
+        "muse-wonder-1.0",
+        "a preview whose terms on what Meta does with what is sent have not been read",
+    ),
+    (
+        "zai",
+        "glm-5.3-flashx",
+        "the fast form of glm-5.3-flash, held back until it is known how Z.ai refuses it",
+    ),
+    (
+        "qwen",
+        "qwen3.8-omni-flash",
+        "the vendor's audio and video model; its coding models are the 3.8 max and flash already offered",
+    ),
+];
+
+/// Offered models whose rungs crucible keeps apart from the database's, and
+/// why: the vendor's own pages are the authority, and the database is not.
+const KEPT: &[(&str, &str, &str)] = &[(
+    "meta",
+    "muse-spark-1.3",
+    "Meta's parameter lists leave out the max some of its pages name, so it is not offered until a source settles it",
+)];
+
 /// The table this writes.
 const TABLE: &str = "crates/crucible-app/src/models.rs";
 
@@ -160,7 +212,29 @@ fn listed(provider: &'static str) -> &'static str {
     }
 }
 
+/// What a run was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+enum Mode {
+    /// Rewrite the model table.
+    Generate,
+    /// Report the shipped lists against the database, and write nothing.
+    Drift,
+}
+
+/// The mode the first argument names, or `None` for one this does not take.
+fn mode(first: Option<&str>) -> Option<Mode> {
+    match first {
+        None => Some(Mode::Generate),
+        Some("--drift") => Some(Mode::Drift),
+        Some(_) => None,
+    }
+}
+
 fn main() {
+    let Some(mode) = mode(std::env::args().nth(1).as_deref()) else {
+        eprintln!("generate-models: takes no argument, or --drift");
+        std::process::exit(2);
+    };
     let mut body = String::new();
     if std::io::stdin().read_to_string(&mut body).is_err() {
         eprintln!("generate-models: expected the model database JSON on stdin");
@@ -171,10 +245,37 @@ fn main() {
         std::process::exit(2);
     };
 
+    if mode == Mode::Drift {
+        std::process::exit(drifted(&database));
+    }
     if let Err(why) = generate(&database) {
         eprintln!("generate-models: {why}");
         std::process::exit(1);
     }
+}
+
+/// The drift check: the report on standard output, and whether it found
+/// anything as the exit status.
+fn drifted(database: &Value) -> i32 {
+    let Ok(providers) = crucible_app::providers::providers().map(|registry| registry.snapshot())
+    else {
+        eprintln!("generate-models: this build's providers could not be registered");
+        return 2;
+    };
+    let rungs =
+        |provider: &str, model: &str| crucible_app::providers::rungs(&providers, provider, model);
+    let found = drift(database, OFFERED, PASSED, KEPT, &rungs);
+    if found.is_empty() {
+        return 0;
+    }
+    if std::io::stdout()
+        .write_all(reported(&found).as_bytes())
+        .is_err()
+    {
+        eprintln!("generate-models: the report could not be written");
+        return 2;
+    }
+    1
 }
 
 /// The table, from one reading.
@@ -290,6 +391,220 @@ fn rows<'a>(found: &[Found<'a>]) -> Result<BTreeMap<(&'a str, &'a str), Row>, St
         );
     }
     Ok(rows)
+}
+
+/// What the drift check found the database to say against this build.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Finding {
+    /// A model released after every offered one of its family.
+    Newer {
+        provider: &'static str,
+        family: String,
+        key: String,
+        released: String,
+    },
+    /// An offered model the database no longer lists.
+    Gone {
+        provider: &'static str,
+        model: &'static str,
+    },
+    /// An offered model the database lists as deprecated.
+    Retired {
+        provider: &'static str,
+        model: &'static str,
+    },
+    /// An offered model whose listed rungs are not the ones offered.
+    Rungs {
+        provider: &'static str,
+        model: &'static str,
+        listed: Vec<Effort>,
+        offered: Vec<Effort>,
+    },
+}
+
+/// What the database says against what this build offers.
+///
+/// Read through [`OFFERED`] and [`listed`], so the providers it looks at and the
+/// keys it reads are the generator's own, and it never proposes a provider or a
+/// family crucible does not already offer: those are chosen by hand. A newer
+/// model is one released after every offered model of its family, that calls
+/// tools and answers in text, and that nobody has declined in `passed`. Rungs
+/// are compared only where the database lists effort at all, since one that
+/// lists none says nothing either way, only in the words crucible's ladder
+/// has, and not for a model whose difference is `kept`.
+fn drift(
+    database: &Value,
+    offered: &[Offer],
+    passed: &[(&str, &str, &str)],
+    kept: &[(&str, &str, &str)],
+    rungs: &dyn Fn(&str, &str) -> Vec<Effort>,
+) -> Vec<Finding> {
+    let mut found = Vec::new();
+    let mut newest: BTreeMap<(&'static str, &str), &str> = BTreeMap::new();
+    for (provider, model, key, _) in offered {
+        let Some(key) = key else { continue };
+        let models = database
+            .get(listed(provider))
+            .and_then(|provider| provider.get("models"));
+        let Some(entry) = models.and_then(|models| models.get(key)) else {
+            found.push(Finding::Gone { provider, model });
+            continue;
+        };
+        if entry.get("status").and_then(Value::as_str) == Some("deprecated") {
+            found.push(Finding::Retired { provider, model });
+        }
+        if let (Some(family), Some(released)) = (word(entry, "family"), word(entry, "release_date"))
+        {
+            let latest = newest.entry((provider, family)).or_insert(released);
+            *latest = (*latest).max(released);
+        }
+        let listed = efforts(entry);
+        let offered = rungs(provider, model);
+        let settled = kept
+            .iter()
+            .any(|(of, model, _)| of == provider && model == key);
+        if !listed.is_empty() && listed != offered && !settled {
+            found.push(Finding::Rungs {
+                provider,
+                model,
+                listed,
+                offered,
+            });
+        }
+    }
+
+    for ((provider, family), latest) in &newest {
+        let Some(models) = database
+            .get(listed(provider))
+            .and_then(|provider| provider.get("models"))
+            .and_then(Value::as_object)
+        else {
+            continue;
+        };
+        for (key, entry) in models {
+            let released = word(entry, "release_date").unwrap_or_default();
+            let known = offered
+                .iter()
+                .any(|(of, _, offered, _)| of == provider && *offered == Some(key.as_str()))
+                || passed
+                    .iter()
+                    .any(|(of, declined, _)| of == provider && declined == key);
+            if word(entry, "family") == Some(*family)
+                && released > *latest
+                && !known
+                && coding(entry)
+            {
+                found.push(Finding::Newer {
+                    provider,
+                    family: (*family).to_owned(),
+                    key: key.clone(),
+                    released: released.to_owned(),
+                });
+            }
+        }
+    }
+    found
+}
+
+/// One field of an entry, where it is a string.
+fn word<'a>(entry: &'a Value, field: &str) -> Option<&'a str> {
+    entry.get(field).and_then(Value::as_str)
+}
+
+/// Whether a model is one a coding session could be asked of: one that calls
+/// tools, answers in text alone, and is not retired.
+fn coding(entry: &Value) -> bool {
+    let text = entry
+        .get("modalities")
+        .and_then(|modalities| modalities.get("output"))
+        .and_then(Value::as_array)
+        .is_some_and(|output| output.iter().all(|one| one == "text") && !output.is_empty());
+    entry.get("tool_call") == Some(&Value::Bool(true))
+        && text
+        && word(entry, "status") != Some("deprecated")
+}
+
+/// The rungs of crucible's ladder the database lists for a model, in ladder
+/// order; a word the ladder does not have is left out.
+fn efforts(entry: &Value) -> Vec<Effort> {
+    let listed: Vec<&str> = entry
+        .get("reasoning_options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|option| word(option, "type") == Some("effort"))
+        .filter_map(|option| option.get("values").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    Effort::LADDER
+        .into_iter()
+        .filter(|rung| listed.contains(&rung.as_str()))
+        .collect()
+}
+
+/// The findings, as the Markdown an issue is opened with.
+/// A name read from the database as it may be shown in a code span: on one
+/// line, with no backtick to end the span and no control character, since the
+/// database is a third party's and the report is posted and logged as it is.
+fn shown(name: &str) -> String {
+    name.chars()
+        .filter(|one| *one != '`' && !one.is_control())
+        .collect()
+}
+
+fn reported(found: &[Finding]) -> String {
+    let spelled = |rungs: &[Effort]| {
+        if rungs.is_empty() {
+            return String::from("none");
+        }
+        rungs
+            .iter()
+            .map(|rung| rung.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut out = String::from(
+        "The model database at models.dev lists these against what crucible offers.\n\n",
+    );
+    for one in found {
+        let _ = match one {
+            Finding::Newer {
+                provider,
+                family,
+                key,
+                released,
+            } => writeln!(
+                out,
+                "- {provider}: `{}` is newer in the `{}` family ({}) and is not offered.",
+                shown(key),
+                shown(family),
+                shown(released)
+            ),
+            Finding::Gone { provider, model } => {
+                writeln!(out, "- {provider}: `{model}` is no longer listed.")
+            }
+            Finding::Retired { provider, model } => {
+                writeln!(out, "- {provider}: `{model}` is listed as deprecated.")
+            }
+            Finding::Rungs {
+                provider,
+                model,
+                listed,
+                offered,
+            } => writeln!(
+                out,
+                "- {provider}: `{model}` lists {}; crucible offers {}.",
+                spelled(listed),
+                spelled(offered)
+            ),
+        };
+    }
+    out.push_str(
+        "\nThe database is a lead, not the authority: check each against the vendor's \
+         own pages and settle it as the repository's `refresh-the-models` skill says.\n",
+    );
+    out
 }
 
 /// One model's answers, on the way to being written out.
@@ -541,5 +856,285 @@ mod tests {
             "Modalities::empty().insert(Modality::Text)\
              .insert(Modality::Image).insert(Modality::Pdf)",
         );
+    }
+
+    /// One offered model, asked for by the key the database lists it under.
+    const SHIPPED: &[Offer] = &[(
+        "anthropic",
+        "claude-opus-5-5",
+        Some("claude-opus-5-5"),
+        None,
+    )];
+
+    /// A coding model of the database, as the drift check reads one.
+    fn listing(family: &str, released: &str, efforts: &[&str]) -> Value {
+        json!({
+            "family": family,
+            "release_date": released,
+            "tool_call": true,
+            "modalities": { "input": ["text"], "output": ["text"] },
+            "reasoning_options": [{ "type": "effort", "values": efforts }],
+        })
+    }
+
+    /// The rungs offered for every model, as a shipped build would answer.
+    fn every(_: &str, _: &str) -> Vec<Effort> {
+        Effort::LADDER.to_vec()
+    }
+
+    fn database(models: &Value) -> Value {
+        json!({ "anthropic": { "models": models } })
+    }
+
+    /// An entry with one field of it set, a field of the top level or the
+    /// modalities.
+    fn with(mut entry: Value, field: &str, value: Value) -> Value {
+        if let Some(slot) = entry.pointer_mut(field) {
+            *slot = value;
+        } else if let Some(fields) = entry.as_object_mut() {
+            fields.insert(field.trim_start_matches('/').to_owned(), value);
+        }
+        entry
+    }
+
+    const RUNGS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+    #[test]
+    fn drift_reports_a_newer_coding_model_in_a_family_crucible_offers() {
+        let database = database(&json!({
+            "claude-opus-5-5": listing("claude-opus", "2026-09-01", RUNGS),
+            "claude-opus-5-6": listing("claude-opus", "2026-10-01", RUNGS),
+            "claude-opus-5-4": listing("claude-opus", "2026-08-01", RUNGS),
+        }));
+
+        assert_eq!(
+            drift(&database, SHIPPED, &[], &[], &every),
+            vec![Finding::Newer {
+                provider: "anthropic",
+                family: String::from("claude-opus"),
+                key: String::from("claude-opus-5-6"),
+                released: String::from("2026-10-01"),
+            }],
+            "an older model of the family is no news, and a newer one is"
+        );
+    }
+
+    #[test]
+    fn drift_leaves_out_what_no_coding_session_could_be_asked() {
+        let image = with(
+            listing("claude-opus", "2026-10-01", RUNGS),
+            "/modalities/output",
+            json!(["image"]),
+        );
+        let toolless = with(
+            listing("claude-opus", "2026-10-02", RUNGS),
+            "/tool_call",
+            json!(false),
+        );
+        let retired = with(
+            listing("claude-opus", "2026-10-03", RUNGS),
+            "/status",
+            json!("deprecated"),
+        );
+        let database = database(&json!({
+            "claude-opus-5-5": listing("claude-opus", "2026-09-01", RUNGS),
+            "claude-opus-image": image,
+            "claude-opus-toolless": toolless,
+            "claude-opus-retired": retired,
+            "claude-opus-declined": listing("claude-opus", "2026-10-04", RUNGS),
+            "claude-other-5": listing("claude-other", "2026-10-05", RUNGS),
+        }));
+        let passed = [("anthropic", "claude-opus-declined", "fabricated")];
+
+        assert_eq!(
+            drift(&database, SHIPPED, &passed, &[], &every),
+            Vec::new(),
+            "an image model, a model that calls no tools, a retired one, one \
+             already declined and a family crucible never offered are all quiet"
+        );
+    }
+
+    #[test]
+    fn drift_reports_a_shipped_model_gone_or_retired() {
+        let retired = with(
+            listing("claude-opus", "2026-09-01", RUNGS),
+            "/status",
+            json!("deprecated"),
+        );
+
+        assert_eq!(
+            drift(&database(&json!({})), SHIPPED, &[], &[], &every),
+            vec![Finding::Gone {
+                provider: "anthropic",
+                model: "claude-opus-5-5",
+            }]
+        );
+        assert_eq!(
+            drift(
+                &database(&json!({ "claude-opus-5-5": retired })),
+                SHIPPED,
+                &[],
+                &[],
+                &every
+            ),
+            vec![Finding::Retired {
+                provider: "anthropic",
+                model: "claude-opus-5-5",
+            }]
+        );
+    }
+
+    #[test]
+    fn drift_reports_rungs_the_database_lists_apart_from_the_ones_offered() {
+        let fewer = |_: &str, _: &str| vec![Effort::Low, Effort::Medium, Effort::High];
+        let database = database(&json!({
+            "claude-opus-5-5": listing("claude-opus", "2026-09-01", &["none", "minimal", "low", "medium", "high", "max"]),
+        }));
+
+        assert_eq!(
+            drift(&database, SHIPPED, &[], &[], &fewer),
+            vec![Finding::Rungs {
+                provider: "anthropic",
+                model: "claude-opus-5-5",
+                listed: vec![Effort::Low, Effort::Medium, Effort::High, Effort::Max],
+                offered: vec![Effort::Low, Effort::Medium, Effort::High],
+            }],
+            "words that are no rung here are not a difference, and a missing one is"
+        );
+    }
+
+    #[test]
+    fn drift_does_not_report_again_rungs_kept_apart_from_the_database_on_purpose() {
+        let fewer = |_: &str, _: &str| vec![Effort::Low, Effort::Medium, Effort::High];
+        let database = database(&json!({
+            "claude-opus-5-5": listing("claude-opus", "2026-09-01", &["low", "medium", "high", "max"]),
+        }));
+        let kept = [("anthropic", "claude-opus-5-5", "fabricated")];
+
+        assert_eq!(drift(&database, SHIPPED, &[], &kept, &fewer), vec![]);
+    }
+
+    #[test]
+    fn an_argument_other_than_drift_is_refused_rather_than_rewriting_the_table() {
+        assert_eq!(mode(None), Some(Mode::Generate));
+        assert_eq!(mode(Some("--drift")), Some(Mode::Drift));
+        assert_eq!(mode(Some("--drfit")), None);
+        assert_eq!(mode(Some("--help")), None);
+    }
+
+    #[test]
+    fn drift_writes_a_name_from_the_database_as_one_line_inside_its_code_span() {
+        let report = reported(&[Finding::Newer {
+            provider: "anthropic",
+            family: String::from("claude`\n::stop-commands::x"),
+            key: String::from("claude-opus-5-6` @org/team\r"),
+            released: String::from("2026-10-01\n- forged"),
+        }]);
+
+        assert_eq!(
+            report.lines().filter(|line| line.starts_with("- ")).count(),
+            1
+        );
+        assert!(report.contains("`claude-opus-5-6 @org/team`"), "{report}");
+        assert!(report.contains("`claude::stop-commands::x`"), "{report}");
+        assert!(!report.contains('\r'), "{report}");
+    }
+
+    #[test]
+    fn drift_takes_a_model_listing_no_rungs_as_saying_nothing_about_them() {
+        let mut unlisted = listing("claude-opus", "2026-09-01", RUNGS);
+        unlisted
+            .as_object_mut()
+            .map(|entry| entry.remove("reasoning_options"));
+
+        assert_eq!(
+            drift(
+                &database(&json!({ "claude-opus-5-5": unlisted })),
+                SHIPPED,
+                &[],
+                &[],
+                &every
+            ),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn drift_writes_one_line_per_finding_and_names_the_skill_that_settles_them() {
+        let found = [
+            Finding::Gone {
+                provider: "anthropic",
+                model: "claude-opus-5-5",
+            },
+            Finding::Rungs {
+                provider: "anthropic",
+                model: "claude-opus-5-5",
+                listed: vec![Effort::Low, Effort::Max],
+                offered: vec![Effort::Low],
+            },
+        ];
+        let report = reported(&found);
+
+        assert!(
+            report.contains("- anthropic: `claude-opus-5-5` is no longer listed"),
+            "{report}"
+        );
+        assert!(
+            report.contains("lists low, max; crucible offers low"),
+            "{report}"
+        );
+        assert!(report.contains("`refresh-the-models` skill"), "{report}");
+    }
+
+    #[test]
+    fn every_provider_says_on_which_day_its_vendor_was_last_read() {
+        let providers = crucible_app::providers::providers()
+            .expect("the built-in providers register")
+            .snapshot();
+        for one in crucible_app::providers::offered(&providers) {
+            let day = one.reviewed.parse::<jiff::civil::Date>();
+            assert!(
+                day.is_ok() && one.reviewed.len() == "YYYY-MM-DD".len(),
+                "{}: reviewed {:?} is not a day written as YYYY-MM-DD",
+                one.name,
+                one.reviewed
+            );
+        }
+    }
+
+    #[test]
+    fn every_rung_difference_kept_is_on_a_model_offered_and_says_why() {
+        for (provider, key, why) in KEPT {
+            assert!(
+                OFFERED
+                    .iter()
+                    .any(|(of, _, offered, _)| of == provider && *offered == Some(*key)),
+                "{provider}/{key} keeps its rungs but is not offered"
+            );
+            assert!(
+                !why.is_empty(),
+                "{provider}/{key} keeps its rungs for no reason"
+            );
+        }
+    }
+
+    #[test]
+    fn every_declined_model_is_an_offered_provider_s_left_unoffered_for_a_reason() {
+        for (provider, key, why) in PASSED {
+            assert!(
+                OFFERED.iter().any(|(offered, ..)| offered == provider),
+                "{provider} is no provider crucible offers"
+            );
+            assert!(
+                !OFFERED
+                    .iter()
+                    .any(|(_, _, offered, _)| *offered == Some(*key)),
+                "{provider}/{key} is offered and declined at once"
+            );
+            assert!(
+                !why.is_empty(),
+                "{provider}/{key} is declined for no reason"
+            );
+        }
     }
 }

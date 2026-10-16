@@ -32,6 +32,7 @@ and each macOS checks job runs that platform's rollback drill, through
 | `performance.yml` | Blocking startup, typed-tool, memory, search and rendering budgets with a JSON artifact |
 | `build-observations.yml` | Weekly/manual same-runner clean and incremental Cargo comparison; observational only |
 | `provider-canaries.yml` | Weekly/manual non-blocking multi-turn typed-tool and normalized usage/cache canaries |
+| `model-drift.yml` | Twice-monthly (1st and 15th)/manual comparison of the hand-written model lists with the models.dev database, reported in one `model-drift` issue; never a pull-request verdict |
 | `release-canary.yml` | Weekly/manual install, execute and uninstall check of the newest published release on Linux and Windows, and that the release container digest still resolves |
 | `task-campaign.yml` | Manual baseline/candidate coding-task campaign with independent fixture verification |
 | `audit.yml` | Advisories whose answer changes as databases are published |

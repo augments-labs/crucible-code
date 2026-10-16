@@ -87,9 +87,10 @@ no web tool, no fast form) and the docs say which fact was not settled.
    Responses. The shared wire modules name no vendor, and
    `scripts/sh/repo-checks.sh` fails one that does.
 2. Register it in `crates/crucible-app/src/providers.rs`: an entry in the
-   provider table, with its key variable, window, fast form and models, and
-   its `/login` rows. A row's stored name is the provider, `@` and its site,
-   and never changes once shipped.
+   provider table, with its key variable, window, fast form, models, default
+   model and the day its pages were read, and its `/login` rows. A row's
+   stored name is the provider, `@` and its site, and never changes once
+   shipped.
 3. Regenerate the model table with `src/bin/generate-models.rs`; the agreement
    tests beside the registry say every model offered has a row.
 4. Where its terms say what is sent may train or improve its models, add each
@@ -101,6 +102,12 @@ no web tool, no fast form) and the docs say which fact was not settled.
    pages that list the providers.
 6. Record where each recorded fixture came from, its link and the day it was
    read, in `crates/crucible-provider/src/<vendor>/fixtures/SOURCES.md`.
+
+Vendors release and retire models several times a year. The `model-drift`
+workflow puts the models.dev database against the shipped lists on the 1st and
+15th of each month and keeps one `model-drift` issue open while they differ;
+[refresh-the-models](.agents/skills/refresh-the-models/SKILL.md) says how to
+settle it.
 
 ### Adding a command
 
