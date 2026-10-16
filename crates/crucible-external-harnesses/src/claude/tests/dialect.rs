@@ -5,7 +5,7 @@ use std::path::Path;
 use crucible_execution::{
     About, Cost, Decision, Detail, Event, Lasting, Outcome, Pending, TurnRequest, Usage,
 };
-use crucible_types::{Compacting, TurnId};
+use crucible_types::{Change, Compacting, Diff, TurnId};
 use serde_json::{Value, json};
 
 use crate::claude::Claude;
@@ -280,47 +280,110 @@ fn a_compaction_says_what_the_context_held_before_and_after() {
     );
 }
 
-/// An edit is reported changed once its call reports, and not when it
-/// failed.
+/// What the change an edit's report carries came to, as a reader reads it:
+/// gutter number, mark, words.
+fn changed(acts: &[Act]) -> Vec<(usize, Change, String)> {
+    acts.iter()
+        .filter_map(|act| match act {
+            Act::Say(Event::ToolReport {
+                diff: Some(diff), ..
+            }) => Some(diff),
+            _ => None,
+        })
+        .flat_map(Diff::lines)
+        .map(|line| (line.number(), line.change(), line.text().to_owned()))
+        .collect()
+}
+
+/// An edit's report carries the change it made, at the lines the file has
+/// them at, a file put down new carries all of itself, and a failed one
+/// carries none. The call row already names the file, so no second row is
+/// asked for it.
 #[test]
-fn an_edit_that_reports_success_changes_its_file() {
+fn an_edit_s_report_carries_the_change_it_made() {
     let mut agent = turning(None);
-    let call = |id: &str| {
+    let call = |id: &str, tool: &str| {
         json!({
             "type": "assistant",
             "parent_tool_use_id": null,
-            "message": {"content": [{"type": "tool_use", "id": id, "name": "Edit", "input": {"file_path": "/work/a.rs"}}]},
+            "message": {"content": [{"type": "tool_use", "id": id, "name": tool, "input": {"file_path": "/work/a.rs"}}]},
         })
         .to_string()
     };
-    let report = |id: &str, failed: bool| {
+    let report = |id: &str, failed: bool, result: Value| {
         json!({
             "type": "user",
             "parent_tool_use_id": null,
-            "message": {"content": [{"type": "tool_result", "tool_use_id": id, "is_error": failed}]},
+            "message": {"content": [{"type": "tool_result", "tool_use_id": id, "is_error": failed, "content": "done"}]},
+            "tool_use_result": result,
         })
         .to_string()
     };
+    let patched = json!({
+        "filePath": "/work/a.rs",
+        "oldString": "b",
+        "newString": "c",
+        "structuredPatch": [{
+            "oldStart": 11, "oldLines": 3, "newStart": 11, "newLines": 4,
+            "lines": [" a", "-b", "+c", "+d", " e", "\\ No newline at end of file"],
+        }],
+    });
+    let created = json!({
+        "type": "create",
+        "filePath": "/work/b.rs",
+        "content": "one\ntwo\n",
+        "structuredPatch": [],
+        "originalFile": null,
+    });
 
-    let activity = agent.heard(&call("toolu_1")).unwrap();
-    let _ = agent.heard(&call("toolu_2")).unwrap();
-    let changed = agent.heard(&report("toolu_1", false)).unwrap();
-    let failed = agent.heard(&report("toolu_2", true)).unwrap();
+    for (id, tool) in [
+        ("toolu_1", "Edit"),
+        ("toolu_2", "Write"),
+        ("toolu_3", "Edit"),
+    ] {
+        let _ = agent.heard(&call(id, tool)).unwrap();
+    }
+    let edited = agent
+        .heard(&report("toolu_1", false, patched.clone()))
+        .unwrap();
+    let written = agent.heard(&report("toolu_2", false, created)).unwrap();
+    let failed = agent.heard(&report("toolu_3", true, patched)).unwrap();
 
-    assert!(matches!(
-        activity.as_slice(),
-        [Act::Say(Event::ToolActivity { tool, summary, about: About::Path, .. })] if tool.as_str() == "Edit" && summary.as_str() == "/work/a.rs"
-    ));
-    assert!(matches!(
-        changed.as_slice(),
-        [Act::Say(Event::ToolReport { .. }), Act::Say(Event::FileChanged { path })] if path.as_str() == "/work/a.rs"
-    ));
+    assert_eq!(
+        changed(&edited),
+        [
+            (11, Change::Kept, "a".to_owned()),
+            (12, Change::Removed, "b".to_owned()),
+            (12, Change::Added, "c".to_owned()),
+            (13, Change::Added, "d".to_owned()),
+            (14, Change::Kept, "e".to_owned()),
+        ],
+        "{edited:?}"
+    );
+    assert_eq!(
+        changed(&written),
+        [
+            (1, Change::Added, "one".to_owned()),
+            (2, Change::Added, "two".to_owned()),
+        ],
+        "{written:?}"
+    );
     assert!(
         matches!(
             failed.as_slice(),
-            [Act::Say(Event::ToolReport { failed: true, .. })]
+            [Act::Say(Event::ToolReport {
+                failed: true,
+                diff: None,
+                ..
+            })]
         ),
         "{failed:?}"
+    );
+    assert!(
+        [&edited, &written]
+            .iter()
+            .all(|acts| matches!(acts.as_slice(), [Act::Say(Event::ToolReport { .. })])),
+        "{edited:?} {written:?}"
     );
 }
 
@@ -373,8 +436,8 @@ fn a_call_and_its_result_are_reported_under_the_call_s_id() {
         matches!(
             results.as_slice(),
             [
-                Act::Say(Event::ToolReport { call: listed, failed: false, report: listing }),
-                Act::Say(Event::ToolReport { call: fetched, failed: true, report: refusal }),
+                Act::Say(Event::ToolReport { call: listed, failed: false, report: listing, diff: None }),
+                Act::Say(Event::ToolReport { call: fetched, failed: true, report: refusal, diff: None }),
             ] if listed.as_str() == "toolu_ls"
                 && listing.as_str() == "a\nb"
                 && fetched.as_str() == "toolu_get"

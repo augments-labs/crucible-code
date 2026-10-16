@@ -5,7 +5,8 @@
 //! a file is the only thing that ever holds both, and it holds them for the
 //! length of one call; anything downstream would have to work the change out
 //! again from bytes it no longer has. So the tool says it once, here, on its way
-//! out.
+//! out. An installed agent runs its own tools, and its report of a call is the
+//! one place the change is said, so that report is read into one here too.
 //!
 //! Preview lines never enter provider requests. The live result a tool returns
 //! drops them on its way into the record kept for the transcript, which keeps

@@ -164,7 +164,8 @@ pub fn progress(
             summary: Text::cut(summary.as_str()),
             summary_kind: summary_kind(summary.argument()),
         },
-        Event::AgentAnswered { call, output } => Progress::ToolFinished {
+        // Its diff, like a native call's, is the terminal's alone.
+        Event::AgentAnswered { call, output, .. } => Progress::ToolFinished {
             call: Text::cut(call.as_str()),
             failed: output.is_failed(),
         },

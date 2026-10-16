@@ -8,8 +8,9 @@
 //! and a headless client read one stream whichever backend ran the turn.
 //! Nothing the agent reports is an instruction here: a call it made with one
 //! of its own tools is a [`RunEvent::AgentCalled`], and what it came back with
-//! a [`RunEvent::AgentAnswered`] under the same call, drawn as a native call
-//! and its result are and never one of them. Only a call under an id of its
+//! a [`RunEvent::AgentAnswered`] under the same call, with the change it said
+//! the call made, drawn as a native call and its result are and never one of
+//! them. Only a call under an id of its
 //! own, not already out, and within as many as are held at once is drawn as
 //! one, and only an answer to one of those is drawn under it; any other call,
 //! and a file it changed, is a [`RunEvent::Reported`]. The leave it asks for goes to the turn's [`Asker`]
@@ -897,6 +898,7 @@ impl Sink for Telling<'_> {
                 call,
                 failed,
                 report,
+                diff,
             } => 'answer: {
                 // Only under a call drawn as one: an answer to a call never
                 // said, or said twice, has no row to hang under.
@@ -915,6 +917,7 @@ impl Sink for Telling<'_> {
                 };
                 Some(RunEvent::AgentAnswered {
                     call,
+                    diff,
                     output: if failed {
                         RecordedToolOutput::failed(said)
                     } else {

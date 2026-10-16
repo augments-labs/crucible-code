@@ -8,7 +8,7 @@ use crucible_execution::{
 use crucible_runner::EventEnvelope;
 use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_tools::{Remember, Sensitivity, Verdict};
-use crucible_types::{Compacting, ToolCall};
+use crucible_types::{Change, Compacting, Diff, Line, ToolCall};
 
 use super::*;
 
@@ -635,6 +635,7 @@ fn answering(call: &str, report: Text) -> Event {
         call: Text::new(call),
         failed: false,
         report,
+        diff: None,
     }
 }
 
@@ -726,4 +727,28 @@ async fn a_cut_answer_says_it_was_cut() {
         _ => None,
     });
     assert_eq!(answered, Some(format!("list\n{CUT_REPORT}")));
+}
+
+/// Fails where the change an agent says its call made is lost on the way to
+/// the row that draws the call.
+#[tokio::test]
+async fn an_answer_s_change_reaches_the_call_it_answers() {
+    let diff = Diff::new([Line::new(4, Change::Added, "b")]);
+    let mut outside = scripted([telling([
+        calling("a"),
+        Event::ToolReport {
+            call: Text::new("a"),
+            failed: false,
+            report: Text::new("done"),
+            diff: Some(diff.clone()),
+        },
+    ])]);
+
+    let (_, posted) = turn(&mut outside).await;
+
+    let answered = posted.iter().find_map(|event| match event {
+        RunEvent::AgentAnswered { diff, .. } => Some(diff.clone()),
+        _ => None,
+    });
+    assert_eq!(answered, Some(Some(diff)));
 }

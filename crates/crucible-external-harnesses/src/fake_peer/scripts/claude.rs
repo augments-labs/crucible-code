@@ -153,6 +153,30 @@ pub fn tools_answered() -> String {
     .to_string()
 }
 
+/// The program saying the call [`effect`] made changed [`EDITED`]'s fourth
+/// line from `a` to `b`, with the patch it reports beside the result.
+#[must_use]
+pub fn edit_answered() -> String {
+    json!({
+        "type": "user",
+        "session_id": SESSION,
+        "parent_tool_use_id": null,
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_edit", "content": format!("The file {EDITED} has been updated.")},
+        ]},
+        "tool_use_result": {
+            "filePath": EDITED,
+            "oldString": "a",
+            "newString": "b",
+            "structuredPatch": [{
+                "oldStart": 3, "oldLines": 3, "newStart": 3, "newLines": 3,
+                "lines": [" fn main() {", "-    a", "+    b", " }"],
+            }],
+        },
+    })
+    .to_string()
+}
+
 /// The end of a turn answered, its figures those of a priced turn and the
 /// session's running cost `total` millionths, where it reports one.
 #[must_use]
@@ -345,6 +369,17 @@ pub fn tooled() -> Reply {
     turn(Reply::new())
         .say(used_tools())
         .say(tools_answered())
+        .say(said("Done."))
+        .say(answered(Some(PRICE)))
+}
+
+/// A run of one turn in which the model changes [`EDITED`] with [`effect`]
+/// and hears what the change was before it answers.
+#[must_use]
+pub fn edited() -> Reply {
+    turn(Reply::new())
+        .say(effect())
+        .say(edit_answered())
         .say(said("Done."))
         .say(answered(Some(PRICE)))
 }

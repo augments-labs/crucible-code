@@ -62,7 +62,7 @@ use serde_json::json;
 
 use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
 use control::Questions;
-use wire::{Assistant, Ended as Result_, Frame, Init, Subtype};
+use wire::{Answer, Assistant, Ended as Result_, Frame, Init, Subtype};
 
 /// The command it is looked up as.
 const PROGRAM: &str = "claude";
@@ -74,9 +74,6 @@ const INTERRUPT: &str = "crucible-interrupt";
 /// account its profile is signed in to; any other source, such as the
 /// environment a project's settings set or a helper command, is refused.
 const KEYS_SIGNED_IN: [&str; 2] = ["none", "/login managed key"];
-
-/// The most calls that change a file a turn remembers until they report.
-const EDITS: usize = 64;
 
 /// What the session is known to have cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,9 +99,6 @@ pub struct Claude {
     signed_out: bool,
     /// The questions the running turn has open.
     questions: Questions,
-    /// The running turn's calls that change a file, each its id and the file,
-    /// until they report.
-    edits: Vec<(Box<str>, Text)>,
     /// What the session had cost when the running turn began.
     spent: Spent,
 }
@@ -131,7 +125,6 @@ impl Claude {
             stopping: false,
             signed_out: false,
             questions: Questions::default(),
-            edits: Vec::new(),
             spent: Spent::Known(None),
         }
     }
@@ -182,16 +175,6 @@ impl Claude {
         }
         for (call, tool, input) in said.calls {
             let field = |name: &str| input.get(name).and_then(serde_json::Value::as_str);
-            let edited = match tool.as_str() {
-                "Edit" | "Write" | "MultiEdit" => field("file_path"),
-                "NotebookEdit" => field("notebook_path"),
-                _ => None,
-            };
-            if let Some(path) = edited
-                && self.edits.len() < EDITS
-            {
-                self.edits.push((call.as_str().into(), Text::new(path)));
-            }
             let (summary, about) = [
                 ("command", About::Command),
                 ("file_path", About::Path),
@@ -282,24 +265,21 @@ impl Claude {
         any.then(|| Event::Usage(Observation::live(usage, Scope::Session)))
     }
 
-    /// The acts the tool results `reported` come to: each call's report, and
-    /// a changed file for each call that changes one and did not fail.
-    fn reported(&mut self, reported: Vec<(String, bool, String)>) -> Vec<Act> {
-        let mut acts = Vec::new();
-        for (call, failed, report) in reported {
-            acts.push(Act::Say(Event::ToolReport {
-                call: Text::new(&call),
-                failed,
-                report: Text::new(&report),
-            }));
-            if let Some(place) = self.edits.iter().position(|(edit, _)| **edit == *call) {
-                let (_, path) = self.edits.remove(place);
-                if !failed {
-                    acts.push(Act::Say(Event::FileChanged { path }));
-                }
-            }
-        }
-        acts
+    /// The acts the tool results `reported` come to: each call's report,
+    /// with the change it made where it says. A changed file is not said on
+    /// its own: the call it changed under named it already.
+    fn reported(reported: Vec<Answer>) -> Vec<Act> {
+        reported
+            .into_iter()
+            .map(|answer| {
+                Act::Say(Event::ToolReport {
+                    call: Text::new(&answer.call),
+                    failed: answer.failed,
+                    report: Text::new(&answer.said),
+                    diff: answer.diff,
+                })
+            })
+            .collect()
     }
 
     /// The request a step or a run starts with, given `arguments`.
@@ -365,7 +345,6 @@ impl Dialect for Claude {
         self.stopping = false;
         self.signed_out = false;
         self.questions.clear();
-        self.edits.clear();
         Ok(vec![frame])
     }
 
@@ -373,7 +352,7 @@ impl Dialect for Claude {
         Ok(match wire::frame(frame)? {
             Frame::Session(init) => vec![Act::Session(self.opened(init)?)],
             Frame::Assistant(said) => self.said(said),
-            Frame::Reported(reported) => self.reported(reported),
+            Frame::Reported(reported) => Self::reported(reported),
             Frame::Result(ended) => self.ended(&ended),
             Frame::Compacted { why, before, after } => {
                 vec![Act::Say(Event::Compacted { why, before, after })]

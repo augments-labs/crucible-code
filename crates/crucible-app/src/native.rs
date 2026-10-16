@@ -461,6 +461,7 @@ impl<'n, 'r> Translating<'n, 'r> {
                 call: Text::clipped(call.as_str(), NAME_BYTES),
                 failed: output.is_failed(),
                 report: Text::new(output.text()),
+                diff: output.diff().cloned(),
             }),
             Reported::Used { totals } => {
                 *self.used.lock().unwrap_or_else(PoisonError::into_inner) = Some(*totals);

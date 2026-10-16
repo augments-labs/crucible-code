@@ -50,7 +50,7 @@ use crucible_sandbox::{
     SandboxFeature, SandboxManifest, SandboxOutput, SandboxProcess, SandboxRequest, SandboxService,
 };
 use crucible_transport::{FRAME_BYTES, Finish, Frames, Heard, Muttered, Pipes, Said, Written};
-use crucible_types::{Ancestry, SandboxId, ToolId};
+use crucible_types::{Ancestry, Diff, Line, SandboxId, ToolId};
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
@@ -898,10 +898,12 @@ impl Host {
                 call,
                 failed,
                 report,
+                diff,
             } => Ok(Event::ToolReport {
                 call: self.shown(&call),
                 failed,
                 report: self.shown(&report),
+                diff: diff.and_then(|diff| hidden_diff(&diff, &self.withheld)),
             }),
             Event::FileChanged { path } => Ok(Event::FileChanged {
                 path: self.shown(&path),
@@ -1215,6 +1217,33 @@ fn least(capabilities: &SandboxCapabilities) -> Confinement {
         SandboxCapability::Observed => Confinement::Observed,
         SandboxCapability::Unsupported => Confinement::Unsupported,
     }
+}
+
+/// `diff` with every withheld value hidden in each of its lines, or nothing
+/// where what is left could not be the same change.
+///
+/// A line as long as a line is kept may have been cut there, partway through
+/// a value, so it is hidden as clipped text is.
+pub(crate) fn hidden_diff(diff: &Diff, withheld: &[Box<str>]) -> Option<Diff> {
+    let lines = diff.lines().iter().map(|line| {
+        let said = line.text();
+        let text = if said.chars().count() >= Line::TEXT {
+            Text::clipped(&format!("{said} "), said.len())
+        } else {
+            Text::new(said)
+        };
+        Line::new(
+            line.number(),
+            line.change(),
+            hidden(&text, withheld).as_str(),
+        )
+    });
+    Diff::restored(
+        lines.collect(),
+        diff.added(),
+        diff.removed(),
+        diff.dropped(),
+    )
 }
 
 /// `text` as it may be kept: no terminal control sequence, and none of the

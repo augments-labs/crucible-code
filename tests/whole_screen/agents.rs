@@ -779,6 +779,54 @@ fn an_agent_s_own_calls_are_drawn_as_call_rows_with_what_they_came_back_with() {
     }
 }
 
+/// An edit the agent made is drawn as a native one is: the call, what it
+/// changed counted beneath it, and the changed lines, in either screen mode,
+/// with no quiet row naming the file a second time.
+#[test]
+fn an_agent_s_edit_is_drawn_as_the_change_it_made() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-edit-{mode}");
+        let script = Script::of(signed_in([claude::edited()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        connected(&mut window);
+        window.types_until("Change it.\r", "Done.");
+        let picture = window.picture();
+
+        let called = format!(
+            "{} Edit({})",
+            char::from_u32(0x25CF).unwrap_or('*'),
+            claude::EDITED
+        );
+        assert!(
+            picture
+                .lines()
+                .any(|line| line.trim_start_matches('|').starts_with(&called)),
+            "{mode} draws the edit as a call row\n{picture}"
+        );
+        assert!(
+            picture
+                .lines()
+                .any(|line| line.contains('\u{23BF}') && line.contains("Added 1 line")),
+            "{mode} counts the change under its call\n{picture}"
+        );
+        for (mark, changed) in [("4 -", 'a'), ("4 +", 'b')] {
+            assert!(
+                picture.lines().any(|line| line.contains(mark)
+                    && line.trim_end_matches([' ', '|']).ends_with(changed)),
+                "{mode} draws the changed line {mark} {changed}\n{picture}"
+            );
+        }
+        assert_eq!(
+            picture.matches(claude::EDITED).count(),
+            1,
+            "{mode} names the file once\n{picture}"
+        );
+    }
+}
+
 /// Asserts `picture` shows the priced turn the agent reported, headed as its
 /// report, and nothing only a native route has.
 fn reported(picture: &str, drawn: &str) {
