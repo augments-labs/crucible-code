@@ -634,7 +634,7 @@ impl Reader<'_> {
                     file: self.file.into(),
                     path: format!("externalAgents.{name}.model").into(),
                     at: At::of("model", self.text),
-                    problem: "a model is named with letters, digits and . _ - : @ / [ ] only, at most 128 of them, and never starting with -, since it is handed to the agent's program as an argument".into(),
+                    problem: settings::access::MODEL_NAMED.into(),
                 });
             }
 

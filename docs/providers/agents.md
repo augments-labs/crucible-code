@@ -72,7 +72,10 @@ claude-opus-5-5 · billing: external`: the agent's own account pays, and
 crucible does not know under which plan. `/model` offers every model of the
 provider the agent reaches, from the same list crucible asks that provider
 from, each with its rungs, and `/effort` the rungs of the model in force; what
-is taken starts the agent's next run, and is written into its entry. Beside
+is taken starts the agent's next run, and is written into its entry. A model
+typed in is taken only where it is named with letters, digits and
+`. _ - : @ / [ ]`, at most 128 of them and never starting with `-`, since the
+agent's program is handed it as an argument; any other is refused. Beside
 them `/model` offers the other providers' models as it does off an agent; one
 taken, where a credential for its provider is in hand and no agent reaches
 that provider, moves the conversation off the agent onto that provider and
@@ -88,7 +91,8 @@ started on that model on its first turn, with the rung asked, else the one in
 force where the model serves it, else the model's default; both are written
 into its entry. Its line says so, and the session it left stays listed and can
 be resumed. Where that agent chooses its own model or is disconnected, or the
-model does not serve the rung asked, its line says why and nothing moves.
+model is not named as above or does not serve the rung asked, its line says
+why and nothing moves.
 
 The line above the box reads how much of the model's window the agent's
 context holds, such as `41k/1.0M · 95% window left`: the window is the one

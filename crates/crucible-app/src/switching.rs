@@ -525,8 +525,8 @@ impl Conversation {
     /// The rung is `rung`, else the one in force where `name` serves it, else
     /// `name`'s default, as [`Self::ask_agent_for`] takes it. Refused before
     /// anything moves where the access is no route to `selected`, the agent
-    /// chooses its own model or is disconnected, or `name` does not serve
-    /// `rung`. Nothing is sent to the agent here: its first run waits for the
+    /// chooses its own model or is disconnected, `name` is not a model its
+    /// program can be started on, or `name` does not serve `rung`. Nothing is sent to the agent here: its first run waits for the
     /// first turn, and for the yes its launch is held to.
     async fn onto_the_agent(
         &mut self,
@@ -550,6 +550,12 @@ impl Conversation {
             return Switched::Unreachable(AppError::ExternalAgent {
                 provider: provider.into(),
                 instance: entry.name().into(),
+            });
+        }
+        if !crucible_config::agent_model(name) {
+            return Switched::Unreachable(AppError::AgentModel {
+                instance: entry.name().into(),
+                model: name.into(),
             });
         }
         if !entry.enabled() {
@@ -622,7 +628,9 @@ impl Conversation {
     ///
     /// Only an agent that is started with a model, and only on a model of the
     /// one provider it reaches: any other is a provider this route cannot
-    /// reach, which [`Conversation::ask_for_moving`] moves off the route for.
+    /// reach, which [`Conversation::ask_for_moving`] moves off the route for,
+    /// or onto the agent this run reaches it through. A name the agent's
+    /// program could not be started on is refused before anything is taken.
     fn ask_agent_for(
         &mut self,
         provider: &str,
@@ -638,6 +646,12 @@ impl Conversation {
                 driver: self.settled().serving(),
             });
         };
+        if !crucible_config::agent_model(name) {
+            return Switched::Unreachable(AppError::AgentModel {
+                instance,
+                model: name.into(),
+            });
+        }
         // Held to the known ladder whatever the vendor, as `serves` is not:
         // the agent is started with the rung, and one its model refuses
         // would refuse every run started from the entry it is written into.

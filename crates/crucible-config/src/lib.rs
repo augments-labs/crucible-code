@@ -75,7 +75,7 @@ pub use remember::{
     disabling, drawing, forgetting, hastened, hastening, installing, reaching, reading, removing,
     sandboxing, setting, slowing, thinking, thinking_agent, unasked,
 };
-pub use settings::access::model_name as agent_model;
+pub use settings::access::{MODEL_NAMED as AGENT_MODEL_NAMED, model_name as agent_model};
 pub use settings::{
     Access, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, McpServer, SandboxSettings,
     ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail, TranscriptColours,

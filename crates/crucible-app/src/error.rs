@@ -172,6 +172,19 @@ pub enum AppError {
         reason: Box<str>,
     },
 
+    /// An installed agent was asked to be started on a model its program
+    /// could not be started on, found before anything moved or was written.
+    #[error(
+        "the agent {instance} cannot be started on {model:?}: {}",
+        crucible_config::AGENT_MODEL_NAMED
+    )]
+    AgentModel {
+        /// The `externalAgents` entry it is.
+        instance: Box<str>,
+        /// The model, as it was asked for.
+        model: Box<str>,
+    },
+
     /// The conversation is on an installed agent's route, and what was asked
     /// is not chosen here: its model, and so the provider serving it.
     #[error("this conversation is on {driver}, whose model is not chosen from here")]

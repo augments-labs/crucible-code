@@ -167,6 +167,11 @@ impl Driver {
 /// The most characters a model an agent is started with is named in.
 pub(crate) const MODEL_CHARS: usize = 128;
 
+/// What [`model_name`] holds a model to, as a refusal says it.
+pub const MODEL_NAMED: &str = "a model is named with letters, digits and . _ - : @ / [ ] only, \
+     at most 128 of them, and never starting with -, since it is handed to the agent's program \
+     as an argument";
+
 /// Whether `found` names a model an agent can be started with: letters,
 /// digits and `. _ - : @ / [ ]`, at most 128 of them, and never a
 /// leading `-`, since it is handed to the agent's program as an argument of

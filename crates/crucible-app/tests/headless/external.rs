@@ -852,6 +852,44 @@ fn a_rung_the_route_s_model_does_not_serve_is_refused() -> Result<(), Failed> {
     Ok(())
 }
 
+/// On the route, a model named as the agent's program could not be started
+/// on, here as an option, is refused, and nothing is taken or written: the
+/// agent's next run is started on the model in force.
+#[test]
+fn a_model_the_route_s_agent_cannot_be_started_on_is_refused() -> Result<(), Failed> {
+    use crucible_client_api::{ModelOutcome, Name};
+
+    let tree = Tree::new("external-model-unnamed")?;
+    let file = entered(&tree)?;
+    let before = std::fs::read_to_string(&file)?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+
+    let refused = answered(
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("-p")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    assert_eq!(
+        problem.message.as_str(),
+        "the agent work cannot be started on \"-p\": a model is named with letters, digits and \
+         . _ - : @ / [ ] only, at most 128 of them, and never starting with -, since it is \
+         handed to the agent's program as an argument"
+    );
+    assert_eq!(std::fs::read_to_string(&file)?, before);
+    let (turned, _) = turn(&mut outside, "after", false)?;
+    assert!(turned.is_ok(), "{turned:?}");
+    assert!(started_with(&outside, "--model", "claude-opus-5-5")?);
+    Ok(())
+}
+
 /// On the route, a model of a provider the agent does not reach, with nothing
 /// held to reach that provider with, is refused, and nothing is taken or
 /// written.
@@ -1262,6 +1300,52 @@ fn a_model_reached_through_an_agent_at_a_rung_it_does_not_serve_moves_nothing() 
     assert!(
         matches!(refused, Outcome::Model(ModelOutcome::Unsupported)),
         "{refused:?}"
+    );
+    assert_eq!(client::snapshot(&conversation).execution, Execution::Native);
+    assert_eq!(conversation.session().id().cloned(), left);
+    assert_eq!(
+        std::fs::read_to_string(crucible_config::user(&tree.home()?))?,
+        ROUTED_ELSEWHERE
+    );
+    Ok(())
+}
+
+/// Off the route, a model of a provider reached through an agent, named as
+/// the agent's program could not be started on, is refused before anything
+/// moves or is written.
+#[test]
+fn a_model_reached_through_an_agent_it_cannot_be_started_on_moves_nothing() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, ModelOutcome, Name};
+
+    let tree = Tree::new("external-model-onto-unnamed")?;
+    let native = super::conversing(
+        &tree,
+        Script::new(Vec::new()),
+        &super::Guard::Nothing,
+        Some("openai"),
+    )?;
+    let left = native.session().id().cloned();
+    let (mut conversation, _peer) = stepped(&tree, native, &connected([]))?;
+
+    let refused = answered_off(
+        &tree,
+        &mut conversation,
+        ROUTED_ELSEWHERE,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude sonnet 5")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    assert_eq!(
+        problem.message.as_str(),
+        "the agent work cannot be started on \"claude sonnet 5\": a model is named with \
+         letters, digits and . _ - : @ / [ ] only, at most 128 of them, and never starting with \
+         -, since it is handed to the agent's program as an argument"
     );
     assert_eq!(client::snapshot(&conversation).execution, Execution::Native);
     assert_eq!(conversation.session().id().cloned(), left);
