@@ -559,13 +559,13 @@ needs nothing from your shell afterwards:
 
 `/login <provider>` inside a session is the direct API-key route. It writes
 from a labelled box that takes a paste and draws a dot per character rather
-than the key. `/login` on its own asks how usage is paid for: *Your account with
+than the key, after asking first where a key is already stored, as below. `/login` on its own asks how usage is paid for: *Your account with
 subscription* lists the accounts, and *Provide your own API key* lists the
 providers, each row naming the variable the provider reads from, and opens the
 same box. *Use an installed coding agent*, offered where this release ships one,
 connects an [installed agent](agents.md) to the provider it signs in to. A row that holds the credential its provider is served by says
 `signed in`, and taking it asks first: *Use it* reaches the provider with the
-credential already stored, with nothing typed or written, and *Replace it*
+credential already stored, with no credential typed or written, and *Replace it*
 opens the box or sign-in that gives another in its place.
 
 The command reports that the key was stored, not that it was verified. Provider

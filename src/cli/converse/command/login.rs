@@ -18,8 +18,8 @@
 //! its screen at once; none is said in one line naming the words.
 //!
 //! A row holding its provider's credential first asks whether that credential
-//! is used as it is stored, which reaches the provider with nothing typed or
-//! written, or replaced. Replacing it says on the next screen what will be
+//! is used as it is stored, which reaches the provider with no credential
+//! typed or written, or replaced. Replacing it says on the next screen what will be
 //! replaced. Nothing is replaced until the new one is stored, so a sign-in that
 //! fails, is refused or expires leaves the store as it was and says what is
 //! unchanged. A sign-in stopped by Escape while its credential is being written

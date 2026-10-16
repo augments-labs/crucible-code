@@ -2915,8 +2915,8 @@ fn a_key_for_a_provider_holding_a_credential_says_what_it_replaces_and_replaces_
 
 #[test]
 fn a_row_holding_its_providers_credential_is_used_as_held_or_replaced() {
-    // The row's own credential is taken as it is stored, with nothing typed
-    // and nothing written; or replaced, through the box it always opened.
+    // The row's own credential is taken as it is stored, with no credential
+    // typed or written; or replaced, through the box it always opened.
     for (kind, row) in [
         ("Provide your own API key", "Anthropic"),
         ("Your account with subscription", "OpenAI"),
@@ -2952,6 +2952,15 @@ fn a_row_holding_its_providers_credential_is_used_as_held_or_replaced() {
     window.types_until("/login\r", "Provide your own API key");
     takes(&mut window, "Provide your own API key");
     window.types_until("", "Anthropic");
+    takes(&mut window, "Anthropic");
+    window.types_until("", "Replace it");
+    // Escape stands the list again, the row still holding what it held.
+    window.types_until("\x1b", "GEMINI_API_KEY");
+    assert!(
+        !window.picture().contains("Replace it"),
+        "{}",
+        window.picture()
+    );
     takes(&mut window, "Anthropic");
     window.types_until("", "Replace it");
     takes(&mut window, "Replace it");
