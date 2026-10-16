@@ -576,43 +576,53 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
     }
 }
 
-/// Fails where `/model` on a Claude agent's route offers another provider's
-/// models, or says the agent chooses its own, or where the model and rung
-/// taken there do not stand over the ladder `/effort` opens next.
+/// Fails where `/model` on a Claude agent's route offers no other provider's
+/// models beside its own, or says the agent chooses its own, where the model
+/// and rung taken there do not stand over the ladder `/effort` opens next, or
+/// where a model of a provider with a key in hand does not move the
+/// conversation off the agent onto it.
 #[test]
-fn model_and_effort_on_an_agent_route_offer_its_provider_s_models() {
+fn model_and_effort_on_an_agent_route_offer_every_provider_s_models() {
     for native in [false, true] {
         for columns in [80, 40] {
             let mode = if native { "native" } else { "fullscreen" };
             let case = format!("agent-model-{columns}-{mode}");
             let script = Script::of(signed_in([claude::held_open()]));
             let vendor = Vendor::answering("Not asked.");
-            let mut window = Watched::capturing_agents(
+            let mut window = Watched::capturing_agents_keyed(
                 &case,
                 (columns, 40),
                 native,
                 &vendor,
-                (Some(&script), ""),
+                (
+                    Some(&script),
+                    &[("OPENAI_API_KEY", "not-a-key-and-nothing-reads-it")],
+                ),
             );
             connected(&mut window);
             let joined = |picture: &str| {
                 picture
                     .replace("|\n|", " ")
-                    // The full screen's scroll bar stands between a folded
-                    // line's halves.
-                    .replace('┃', " ")
+                    // The full screen's scroll bar, and its thumb, stand
+                    // between a folded line's halves.
+                    .replace(['┃', '●'], " ")
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ")
             };
             let said = |window: &Watched| joined(&window.picture());
-            let others = ["OpenAI", "Google", "DeepSeek"];
+            // A vendor's name, or one of its models where a narrow window
+            // clips the row of vendors.
+            let others = [("DeepSeek", "deepseek-flash")];
+            let offers = |picture: &str, (vendor, model): (&str, &str)| {
+                picture.contains(vendor) || picture.contains(model)
+            };
             window.types_until("/model\r", "Model");
             let shelf = said(&window);
             assert!(shelf.contains("claude-opus-5-5"), "{case}: {shelf}");
             assert!(!shelf.contains("chooses its own model"), "{case}: {shelf}");
             for other in others {
-                assert!(!shelf.contains(other), "{case}: {other} in {shelf}");
+                assert!(offers(&shelf, other), "{case}: no {other:?} in {shelf}");
             }
             window.types_until("\x1b", "no model taken");
 
@@ -645,12 +655,30 @@ fn model_and_effort_on_an_agent_route_offer_its_provider_s_models() {
             let running = said(&window);
             assert!(running.contains("claude-sonnet-5-5"), "{case}: {running}");
             for other in others {
-                assert!(!running.contains(other), "{case}: {other} in {running}");
+                assert!(offers(&running, other), "{case}: no {other:?} in {running}");
             }
             window.types_and_catches_where("\x1b", "the shelf left", |picture| {
                 !picture.contains("a model, or a vendor")
             });
             window.types_until("\x1b", "! stopped");
+
+            window.types_until("/model openai/gpt-5.6-sol\r", "the one it left");
+            let moved_off = said(&window);
+            assert!(
+                moved_off.contains(
+                    "this conversation left its agent for openai, in a new session; \
+                     /resume lists the one it left"
+                ),
+                "{case}: {moved_off}"
+            );
+            let file = std::fs::read_to_string(window.home().join("config.json"))
+                .expect("the configuration file");
+            let written: serde_json::Value =
+                serde_json::from_str(&file).expect("a configuration in its format");
+            let provider = written
+                .pointer("/provider")
+                .and_then(serde_json::Value::as_str);
+            assert_eq!(provider, Some("openai"), "{case}: {written}");
         }
     }
 }

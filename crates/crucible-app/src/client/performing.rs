@@ -205,11 +205,11 @@ pub async fn perform(
         } => match served(desk, provider.as_str()) {
             Ok(selected) => Performed::Model(
                 conversation
-                    .ask_for(
+                    .ask_for_moving(
                         selected,
-                        model.as_str(),
-                        effort.map(reading::effort),
+                        (model.as_str(), effort.map(reading::effort)),
                         &desk.switching,
+                        (desk.sessions, desk.workspace),
                     )
                     .await,
             ),
@@ -519,6 +519,15 @@ fn model(switched: &Switched) -> ModelOutcome {
             retained,
             unwritten,
         } => ModelOutcome::Taken {
+            retained: reading::retained(*retained),
+            unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+        },
+        Switched::MovedOff {
+            provider,
+            retained,
+            unwritten,
+        } => ModelOutcome::MovedOff {
+            provider: crucible_client_api::Text::cut(provider),
             retained: reading::retained(*retained),
             unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
         },

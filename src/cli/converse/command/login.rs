@@ -1593,8 +1593,8 @@ fn taken<T: Terminal>(
 }
 
 /// What a person is told where a login moved the conversation off its agent
-/// onto `provider`.
-fn moved_off(provider: &str) -> String {
+/// onto `provider`, or a model taken in `/model` did.
+pub(super) fn moved_off(provider: &str) -> String {
     format!(
         "this conversation left its agent for {provider}, in a new session; \
          /resume lists the one it left"

@@ -308,6 +308,17 @@ pub enum ModelOutcome {
         /// Why the choice will not outlive the host process, where it will not.
         unwritten: Option<Problem>,
     },
+    /// The conversation was on an installed agent's route, which does not
+    /// reach the provider, and moved off it onto the provider and this model,
+    /// in a new session; the session it left stays listed and can be resumed.
+    MovedOff {
+        /// The provider the model is asked of.
+        provider: Text,
+        /// What retiring the cache left behind.
+        retained: Retained,
+        /// Why the choice will not outlive the host process, where it will not.
+        unwritten: Option<Problem>,
+    },
 }
 
 /// How asking for an effort ended.

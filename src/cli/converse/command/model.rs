@@ -19,10 +19,12 @@
 //! same answer every time this directory is opened and asking it once a session
 //! is asking it for ever.
 //!
-//! On an installed agent's route the shelf holds only the models of the one
-//! provider the agent reaches, every one of them, since the agent's own
-//! sign-in serves them rather than a credential of this program; one taken
-//! starts the agent's next run on it. An agent that chooses its own model is
+//! On an installed agent's route the shelf holds every model of the one
+//! provider the agent reaches, since the agent's own sign-in serves them
+//! rather than a credential of this program, and one taken starts the agent's
+//! next run on it. The other providers stand beside it as they would off the
+//! route, and a model taken off one of them moves the conversation off the
+//! agent onto it, in a new session. An agent that chooses its own model is
 //! told so instead, at rest and mid-turn.
 
 use crucible_app::Conversation;
@@ -140,15 +142,6 @@ fn narrowed(all: Vec<Selected>, using: &BTreeMap<&str, InUse>) -> Vec<Selected> 
                 .is_none_or(|serves| serves.contains(&one.model.name))
         })
         .collect()
-}
-
-/// The models of `all` an installed agent reaching `reaching` can be started
-/// on: its provider's alone, and every model of all of them off one.
-fn reached(mut all: Vec<Selected>, reaching: Option<&str>) -> Vec<Selected> {
-    if let Some(reaching) = reaching {
-        all.retain(|one| one.provider.name == reaching);
-    }
-    all
 }
 
 /// What heads the pane narrowed to `provider`: the provider and the words of
@@ -479,14 +472,8 @@ fn stood<T: Terminal>(
     // sign-in serves decides the fast form a row's model has, and which of
     // its models each provider's credential in use serves decides its list.
     let stored = terms.logins.read();
-    let using = match current.reaching {
-        Some(_) => BTreeMap::new(),
-        None => in_use(terms, &providers, &stored),
-    };
-    let all = reached(
-        narrowed(narrowing::every(&providers), &using),
-        current.reaching,
-    );
+    let using = in_use(terms, &providers, &stored, current.reaching);
+    let all = narrowed(narrowing::every(&providers), &using);
     let routes = terms.consent.routes();
 
     // Which model is in force goes on the title row rather than beside an
@@ -543,12 +530,7 @@ fn stood<T: Terminal>(
         terms.style(),
         &mut standing,
         |standing, columns, room| {
-            let mut counts = narrowing::counted(&providers, &all, standing.query.text());
-            counts.retain(|(provider, _)| {
-                current
-                    .reaching
-                    .is_none_or(|reaching| provider.name == reaching)
-            });
+            let counts = narrowing::counted(&providers, &all, standing.query.text());
             let only = standing
                 .provider
                 .checked_sub(1)
@@ -815,6 +797,15 @@ fn taken<T: Terminal>(
             super::cache::retained(renderer, laid, retained)?;
             unwritten
         }
+        Switched::MovedOff {
+            provider,
+            retained,
+            unwritten,
+        } => {
+            super::cache::retained(renderer, laid, retained)?;
+            say_at(renderer, laid, &super::login::moved_off(provider))?;
+            unwritten
+        }
     };
 
     // The word may have come off the line and was never shape-checked — anything
@@ -890,12 +881,9 @@ fn listed<T: Terminal>(
 
     let providers = terms.providers.snapshot();
     let stored = terms.logins.read();
-    let using = match reaching {
-        Some(_) => BTreeMap::new(),
-        None => in_use(terms, &providers, &stored),
-    };
+    let using = in_use(terms, &providers, &stored, reaching);
     let lines = lines(
-        reached(narrowing::every(&providers), reaching),
+        narrowing::every(&providers),
         &using,
         terms.consent.routes(),
         terms.style().glyphs(),
@@ -947,11 +935,14 @@ fn lines(
 }
 
 /// The credential each offered provider is sent with, read off `stored`
-/// and the environment as a run would read it.
+/// and the environment as a run would read it. The provider an installed
+/// agent's route reaches, `reaching`, has none here: the agent's own sign-in
+/// serves every one of its models.
 fn in_use<'a>(
     terms: &Terms,
     providers: &'a Providers,
     stored: &StoredCredentials,
+    reaching: Option<&str>,
 ) -> BTreeMap<&'a str, InUse> {
     let auth = crucible_app::startup::ProviderAuth {
         settings: &terms.settings,
@@ -960,6 +951,7 @@ fn in_use<'a>(
         subscriptions: &terms.subscriptions,
     };
     offered(providers)
+        .filter(|provider| Some(provider.name) != reaching)
         .filter_map(|provider| {
             crucible_app::providers::in_use(provider, auth).map(|one| (provider.name, one))
         })
