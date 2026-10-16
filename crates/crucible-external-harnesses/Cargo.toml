@@ -72,3 +72,8 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"
 
 [lints]
 workspace = true
+
+# `flate2` is named for its pure-Rust backend, which `zip` inflates through and
+# has no feature of its own to choose, so no code here calls it.
+[package.metadata.cargo-machete]
+ignored = ["flate2"]
