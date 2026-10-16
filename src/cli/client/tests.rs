@@ -376,13 +376,14 @@ impl<'a> Driving<'a> {
             }
             _ => {
                 let providers = self.terms.providers.snapshot();
+                let settings = self.terms.reading();
 
                 self.terms
                     .runtime
                     .block_on(client::perform(
                         conversation,
                         &request,
-                        &self.terms.desk(&providers),
+                        &self.terms.desk(&providers, &settings),
                     ))
                     .outcome()
             }

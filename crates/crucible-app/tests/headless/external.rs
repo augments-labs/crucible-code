@@ -1796,10 +1796,26 @@ fn accounting_on(
     asked: &Asked<'_>,
     choosing: &mut dyn Front,
 ) -> Result<(Outcome, String), Failed> {
+    accounting_at(
+        super::Desk::new(tree, &[])?,
+        tree,
+        conversation,
+        asked,
+        choosing,
+    )
+}
+
+/// What [`accounting_on`] does, at `desk`.
+fn accounting_at(
+    mut desk: super::Desk,
+    tree: &Tree,
+    conversation: &mut Conversation,
+    asked: &Asked<'_>,
+    choosing: &mut dyn Front,
+) -> Result<(Outcome, String), Failed> {
     use crucible_client_api::Name;
 
     let (installed, asking) = (asked.installed, asked.asking);
-    let mut desk = super::Desk::new(tree, &[])?;
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
     }
@@ -3136,7 +3152,18 @@ fn credited_on(
     provider: &str,
     command: fn(crucible_client_api::Name) -> Command,
 ) -> Result<(Outcome, String), Failed> {
-    let mut desk = super::Desk::stored(tree)?;
+    let desk = super::Desk::stored(tree)?;
+    credited_at(desk, tree, conversation, (file, provider), command)
+}
+
+/// What [`credited_on`] does, at `desk`.
+fn credited_at(
+    mut desk: super::Desk,
+    tree: &Tree,
+    conversation: &mut Conversation,
+    (file, provider): (&str, &str),
+    command: fn(crucible_client_api::Name) -> Command,
+) -> Result<(Outcome, String), Failed> {
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
     }
@@ -3216,6 +3243,82 @@ fn a_login_for_the_route_s_provider_moves_onto_it_directly() -> Result<(), Faile
     assert!(
         moved.id().is_some_and(|moved| *moved != left),
         "no new session"
+    );
+    Ok(())
+}
+
+/// A connect after a login moved the conversation off the route is how the
+/// provider is read for the rest of the run: the access the login rewrote no
+/// longer stands in for the route the connect wrote back.
+#[test]
+fn a_connect_after_a_login_moved_off_the_route_stands_over_the_login() -> Result<(), Failed> {
+    use crucible_app::access::Rewritten;
+    use crucible_client_api::LoginOutcome;
+    use crucible_config::Access;
+
+    let tree = Tree::new("external-login-then-connect")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean(), claude::signed_in()]))?;
+    let rewritten = Rewritten::new();
+    let shared = |desk: super::Desk| super::Desk {
+        rewritten: rewritten.clone(),
+        ..desk
+    };
+    let home = tree.home()?;
+    std::fs::create_dir_all(home.path())?;
+    std::fs::write(crucible_config::user(&home), ROUTED)?;
+    let launch = super::written(&tree)?;
+    let desk = shared(super::Desk::stored(&tree)?);
+    desk.logins.keep("anthropic", "a-key-no-vendor-issued")?;
+
+    let (logged, _) = credited_at(
+        desk,
+        &tree,
+        &mut outside.conversation,
+        (ROUTED, "anthropic"),
+        login,
+    )?;
+    assert!(
+        matches!(logged, Outcome::Login(LoginOutcome::MovedOff { .. })),
+        "{logged:?}"
+    );
+    assert_eq!(
+        rewritten.over(&launch).access("anthropic"),
+        Some(Access::ApiKey)
+    );
+
+    let command = |instance| Command::Connect {
+        instance: Some(instance),
+    };
+    let asked = Asked {
+        installed: (KEYED, "work"),
+        command: &command,
+        asking: Asking::every(),
+        after: None,
+    };
+    let (connected, file) = accounting_at(
+        shared(super::Desk::new(&tree, &[])?),
+        &tree,
+        &mut outside.conversation,
+        &asked,
+        &mut Picking::of([]),
+    )?;
+    assert!(
+        matches!(
+            connected,
+            Outcome::Login(LoginOutcome::AgentConnected { .. })
+        ),
+        "{connected:?}"
+    );
+    let file: serde_json::Value = serde_json::from_str(&file)?;
+    assert_eq!(
+        file.pointer("/providers/anthropic/access/type"),
+        Some(&serde_json::json!("externalAgent"))
+    );
+    assert_eq!(
+        rewritten.over(&launch).access("anthropic"),
+        Some(Access::ExternalAgent {
+            instance: "work".into()
+        })
     );
     Ok(())
 }

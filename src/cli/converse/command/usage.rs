@@ -546,9 +546,9 @@ pub(super) fn heading(
 /// words it, where it answers with one.
 pub(super) fn signed(terms: &Terms, name: &str) -> Option<String> {
     let providers = terms.providers.snapshot();
-    let stored = terms.logins.read();
+    let (stored, settings) = (terms.logins.read(), terms.reading());
     let auth = ProviderAuth {
-        settings: &terms.settings,
+        settings: &settings,
         from: &*terms.environment,
         stored: &stored,
         subscriptions: &terms.subscriptions,

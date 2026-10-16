@@ -425,9 +425,11 @@ fn settled(
 /// A login for the provider an installed agent reaches writes that provider
 /// down as reached by its own credential and moves the conversation onto it
 /// at once; everything that resolves a provider during the run — setting it
-/// up, its web sources and what the content-use hold reads — reads it through
-/// one of these, so none can still take it for the agent's. Shared by clone,
-/// and holds at most one entry per provider the registry serves.
+/// up, its web sources, what the content-use hold reads and what a front end
+/// says of it — reads it through one of these, so none can still take it for
+/// the agent's. A connect writing a route for it again ends the rewrite.
+/// Shared by clone, and holds at most one entry per provider the registry
+/// serves.
 #[derive(Clone, Default)]
 pub struct Rewritten(Arc<Mutex<BTreeMap<Box<str>, Access>>>);
 
@@ -449,8 +451,15 @@ impl Rewritten {
         self.held().insert(provider.into(), access);
     }
 
+    /// Reads `provider` as the files read at launch say again: a connect has
+    /// written its route, which the conversation holds as it moves onto it.
+    pub(crate) fn forget(&self, provider: &str) {
+        self.held().remove(provider);
+    }
+
     /// `settings` with every access rewritten so far in place of its own.
-    pub(crate) fn over<'s>(&self, settings: &'s Settings) -> Cow<'s, Settings> {
+    #[must_use]
+    pub fn over<'s>(&self, settings: &'s Settings) -> Cow<'s, Settings> {
         let held = self.held();
         if held.is_empty() {
             return Cow::Borrowed(settings);
