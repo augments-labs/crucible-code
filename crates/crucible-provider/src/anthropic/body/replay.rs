@@ -20,9 +20,7 @@ pub(super) fn compatible(
 ) -> bool {
     // Signed blocks go back to the model that signed them and to no other: a
     // block is bound to its model, and another Claude name, older or newer,
-    // is not evidence that it can read them. The one exception the vendor
-    // names, Opus 5.5 and Sonnet 5.5 reading Haiku 5.5's, holds on only some
-    // of the platforms that serve them, so it is not relied on here.
+    // is not evidence that it can read them.
     state.protocol() == PROTOCOL
         && state.scope() == scope
         && state.model() == model

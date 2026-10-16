@@ -506,13 +506,14 @@ fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
 }
 
 #[test]
-fn six_requested_models_have_exact_limits_and_supported_effort_ladders() {
+fn seven_requested_models_have_exact_limits_and_supported_effort_ladders() {
     for (provider, model, window, output) in [
         ("google", "gemini-3.8-flash", 1_048_576, 65_536),
         ("google", "gemini-3.7-flash", 1_048_576, 65_536),
         ("google", "gemini-3.6-flash", 1_048_576, 65_536),
         ("google", "gemini-3.1-pro-preview", 1_048_576, 65_536),
         ("anthropic", "claude-fable-5-1", 1_000_000, 128_000),
+        ("anthropic", "claude-haiku-5-5", 1_000_000, 128_000),
         ("openai", "gpt-6-astra", 922_000, 128_000),
     ] {
         let served = serving(provider);

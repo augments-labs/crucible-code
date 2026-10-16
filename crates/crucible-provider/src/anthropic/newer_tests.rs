@@ -1,7 +1,7 @@
 //! Claude Opus 5.5, Claude Sonnet 5.5 and Claude Haiku 5.5: asked the way
-//! Fable 5.1 is, since their thinking is bound to the model and the
-//! conversation as its is, and cached and priced at their own reviewed figures,
-//! Haiku 5.5's at two, split by the length of the prompt.
+//! Fable 5.1 is, since their thinking is bound to the conversation as its is,
+//! and cached and priced at their own reviewed figures, Haiku 5.5's at two,
+//! split by the length of the prompt.
 
 use super::*;
 use crate::transport::Replay;
