@@ -249,8 +249,9 @@ Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can
 read. The session asks that provider from the next turn on; there is nothing to
 restart. Where no model was being asked, the login takes the one your
 configuration names for that provider, else the provider's default: its
-latest middle-tier model, at `medium` effort or the nearest rung above it that
-the model serves. A default taken is written to your configuration, so the
+latest middle-tier model, at `medium` effort, else the nearest rung above it
+that the model serves, else its strongest, and at none for a model that takes
+none. A default taken is written to your configuration, so the
 next start opens on it. A login for the provider already answering keeps the
 model and effort in force; `/model` and `/effort` change either.
 
@@ -1247,11 +1248,10 @@ one in) gets each row as the line to type instead: `/login` and the words that
 reach that row alone.
 
 A key that is written lands on the session that took it: the provider is set up
-there and then, from the next turn on. Logging in chooses neither a model nor a
-rung; `/model` is the explicit next step where nothing has chosen one. A run
-started with no key for anything is one command away from a turn, and the row
-under the box says which model it will be asking, or sends you to `/model` where
-the files name none.
+there and then, from the next turn on. Where nothing was being asked, the
+login also asks a model, as described above, so a run started with no key for
+anything is one command away from a turn, and the row under the box says which
+model it will be asking.
 
 `/logout` is the same panel over what is actually there: the providers a key was
 written down for, and nothing else. `/logout <provider>` forgets that one

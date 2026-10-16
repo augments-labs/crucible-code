@@ -14,7 +14,8 @@
 //! A conversation on an installed agent's route keeps that route, its session
 //! and its run whatever credential for the provider the route reaches is given
 //! or forgotten: the agent answers, and the credential is written down as the
-//! way that provider is reached from the next run on. One given there for
+//! way that provider is reached from the next run on, with its default model
+//! and rung where nothing names a model for it. One given there for
 //! another provider moves the conversation off the route onto it, in a new
 //! session, where that session can be started; otherwise it is only stored.
 //!
@@ -237,26 +238,44 @@ fn beside_the_route(routed: bool, named: Served, with: &Switching<'_>) -> Logged
             });
         }
     };
-    let unwritten = remember::reaching(with.choosing, named.name, &access)
-        .and_then(|()| defaulted(named, with))
-        .err();
+    // In the one update that rewrites the access, so that the next launch
+    // finds both or neither, and a refusal leaves the route written as it was.
+    let (model, effort, taken) = first_asked(named, with);
+    let default = taken.then_some((model.as_str(), effort));
     LoggedIn::NextLaunch {
         provider: named.name,
-        unwritten,
+        unwritten: remember::reaching_defaulted(with.choosing, named.name, &access, default).err(),
     }
 }
 
-/// Writes `named`'s default model and its rung down for the next run, where
-/// the configuration names no model for it.
-fn defaulted(named: Served, with: &Switching<'_>) -> Result<(), RememberError> {
-    if with.settings.model(named.name).is_some() {
-        return Ok(());
+/// What a login asks `named` for where nobody was being asked: the model the
+/// user file names for it as it stands now, else the one the files read at
+/// launch name, each at the rung beside it; else its default, at the rung
+/// configured where the default serves it, else at [`default_rung`]'s. Only
+/// the last is a default taken, answered `true` to be written down.
+///
+/// The user file is read again because `/model` writes to it during the run,
+/// and the files read at launch are not read again.
+fn first_asked(named: Served, with: &Switching<'_>) -> (String, Option<Effort>, bool) {
+    let provider = named.name;
+    let (filed, filed_rung) = remember::chosen(with.choosing, provider);
+    if let Some(model) = filed {
+        return (model, filed_rung, false);
     }
-    remember::choosing(with.choosing, named.name, named.default)?;
-    match default_rung(&rungs(with.providers, named.name, named.default)) {
-        Some(effort) => remember::thinking(with.choosing, named.name, effort),
-        None => Ok(()),
+    if let Some(model) = with.settings.model(provider).map(str::trim)
+        && !model.is_empty()
+    {
+        return (model.to_owned(), with.settings.effort(provider), false);
     }
+    let served = rungs(with.providers, provider, named.default);
+    let configured = filed_rung
+        .or_else(|| with.settings.effort(provider))
+        .filter(|rung| served.contains(rung));
+    (
+        named.default.to_owned(),
+        configured.or_else(|| default_rung(&served)),
+        true,
+    )
 }
 
 /// Whether `named` is reached through the installed agent `instance`.
@@ -382,31 +401,29 @@ impl Conversation {
         }
     }
 
-    /// Asks `named`, which nobody was being asked, for the model the
-    /// configuration names for it at the rung it names, else for its default
-    /// at [`default_rung`]'s rung, and writes a default taken down for the next
-    /// run: what could not be written, if anything.
+    /// Asks `named`, which nobody was being asked, for what [`first_asked`]
+    /// names, and writes a default taken down for the next run: what could not
+    /// be written, if anything.
+    ///
+    /// The rung left over was asked of the model asked before, so where none
+    /// is named it is cleared rather than carried onto a model that may serve
+    /// none.
     fn ask_first(&mut self, named: Served, with: &Switching<'_>) -> Option<RememberError> {
         let provider = named.name;
-        let (model, effort) = match with.settings.model(provider) {
-            Some(model) => (model, with.settings.effort(provider)),
-            None => (
-                named.default,
-                default_rung(&rungs(with.providers, provider, named.default)),
-            ),
-        };
+        let (model, effort, taken) = first_asked(named, with);
         self.runner.ask(
-            model,
-            ceiling(with.providers, provider, model),
-            Some(window(with.providers, named, model, with.settings)),
-            accepts(with.providers, provider, model),
+            &model,
+            ceiling(with.providers, provider, &model),
+            Some(window(with.providers, named, &model, with.settings)),
+            accepts(with.providers, provider, &model),
         );
-        if let Some(effort) =
-            effort.filter(|effort| serves(with.providers, provider, model, *effort))
-        {
-            self.runner.think(effort);
+        match effort.filter(|effort| serves(with.providers, provider, &model, *effort)) {
+            Some(effort) => self.runner.think(effort),
+            None => self.runner.unthink(),
         }
-        defaulted(named, with).err()
+        taken
+            .then(|| remember::defaulting(with.choosing, provider, &model, effort).err())
+            .flatten()
     }
 
     /// Hands this conversation the provider whose credential was just written

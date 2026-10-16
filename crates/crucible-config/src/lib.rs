@@ -71,9 +71,9 @@ pub use document::check::{
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{
-    accepting, allowing, asking, choosing, choosing_agent_model, connecting, disabling, drawing,
-    forgetting, hastened, hastening, installing, reaching, reading, removing, sandboxing, setting,
-    slowing, thinking, unasked,
+    accepting, allowing, asking, choosing, choosing_agent_model, chosen, connecting, defaulting,
+    disabling, drawing, forgetting, hastened, hastening, installing, reaching, reading, removing,
+    sandboxing, setting, slowing, thinking, unasked,
 };
 pub use settings::access::model_name as agent_model;
 pub use settings::{

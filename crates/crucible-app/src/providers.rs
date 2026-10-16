@@ -922,9 +922,8 @@ pub struct Served {
     ///
     /// An offer and not a rung: nothing here but [`Served::default`] is asked
     /// for unless somebody chose it, and a name that is not on the list is
-    /// typed the way it always was. Which is what keeps this from being the model built into the build —
-    /// the list is a shortcut past the vendor's documentation, and the vendor
-    /// remains the authority on what it serves.
+    /// typed the way it always was. The list is a shortcut past the vendor's
+    /// documentation, and the vendor remains the authority on what it serves.
     ///
     /// That last sentence binds the rungs beside each name too. They are read
     /// off the same documentation and go stale the same way, and what a stale

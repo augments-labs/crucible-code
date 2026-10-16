@@ -945,6 +945,46 @@ pub fn choosing(
     }
 }
 
+/// The text of a configuration file that asks `provider` for `model` at
+/// `effort`, a default taken where nothing named a model: `text` unchanged
+/// where it already names a model for `provider`, and otherwise [`choosing`]
+/// with the rung written beside it, or none where the model takes none.
+///
+/// # Errors
+///
+/// As [`choosing`] and [`thinking`].
+pub fn defaulting(
+    text: &str,
+    file: &str,
+    provider: &str,
+    model: &str,
+    effort: Option<Effort>,
+) -> Result<String, ConfigError> {
+    if named(text, provider).is_some_and(|named| !named.is_empty()) {
+        return Ok(text.to_owned());
+    }
+    let chosen = choosing(text, file, provider, model)?;
+    match effort {
+        Some(effort) => thinking(&chosen, file, provider, effort),
+        None => Ok(chosen),
+    }
+}
+
+/// The model and the rung `text` names for `provider`, each where it names
+/// one; neither where it is not configuration.
+#[must_use]
+pub fn chosen(text: &str, provider: &str) -> (Option<String>, Option<Effort>) {
+    let effort = serde_json::from_str::<Value>(text).ok().and_then(|value| {
+        answered(&value, provider, "effort")
+            .and_then(Value::as_str)
+            .and_then(|effort| effort.parse().ok())
+    });
+    (
+        named(text, provider).filter(|named| !named.is_empty()),
+        effort,
+    )
+}
+
 /// The model `text` names for `provider`, where it is a file that names one.
 fn named(text: &str, provider: &str) -> Option<String> {
     let value: Value = serde_json::from_str(text).ok()?;

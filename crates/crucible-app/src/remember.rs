@@ -187,6 +187,56 @@ pub fn reaching(
     })
 }
 
+/// [`reaching`], with `default`'s model and rung written in the same update
+/// where the file names no model for `provider`.
+///
+/// # Errors
+///
+/// As [`reaching`].
+pub fn reaching_defaulted(
+    file: &Path,
+    provider: &str,
+    access: &crucible_config::Access,
+    default: Option<(&str, Option<Effort>)>,
+) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        let reached = crucible_config::reaching(text, named, provider, access)?;
+        match default {
+            Some((model, effort)) => {
+                crucible_config::defaulting(&reached, named, provider, model, effort)
+            }
+            None => Ok(reached),
+        }
+    })
+}
+
+/// Writes `model` down as the one to ask `provider` for, at `effort`, where
+/// the file names no model for `provider`; and changes nothing else in it.
+///
+/// # Errors
+///
+/// As [`choosing`].
+pub fn defaulting(
+    file: &Path,
+    provider: &str,
+    model: &str,
+    effort: Option<Effort>,
+) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::defaulting(text, named, provider, model, effort)
+    })
+}
+
+/// The model and the rung `file` names for `provider` as it stands now; neither
+/// where it cannot be read.
+#[must_use]
+pub fn chosen(file: &Path, provider: &str) -> (Option<String>, Option<Effort>) {
+    let named = file.display().to_string();
+    text_of(file, &named).map_or((None, None), |text| {
+        crucible_config::chosen(&text, provider)
+    })
+}
+
 /// Writes into `file` the installed agent `agent`, that `provider` is
 /// reached through it, and that it takes new work, the last, in one update;
 /// and changes nothing else in it.

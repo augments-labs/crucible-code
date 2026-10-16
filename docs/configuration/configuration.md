@@ -164,10 +164,11 @@ not set.
 { "providers": { "openai": { "model": "gpt-5.6-terra" } } }
 ```
 
-There is no model built in, so this is where a bare `crucible` gets one. It is
+Startup builds in no model, so this is where a bare `crucible` gets one. It is
 read for the provider whose key this machine holds, and `/model <name>` writes
-it here for you. With nothing set here and nothing on the command line, crucible
-starts and asks rather than picking a model on your behalf. See
+it here for you, as `/login` writes the provider's default where nothing is set
+here. With nothing set here and nothing on the command line, crucible starts
+and asks rather than picking a model on your behalf. See
 [Providers and models](../providers/providers.md).
 
 `contextWindow` is keyed by model because a session changes which model it asks

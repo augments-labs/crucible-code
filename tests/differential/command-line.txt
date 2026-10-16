@@ -51,7 +51,7 @@ A key in DASHSCOPE_API_KEY, MINIMAX_API_KEY or ZAI_API_KEY is sent to the vendor
 
 --effort says how hard to think, as low, medium, high, xhigh or max, on every turn of the session. Left off, it is providers.<name>.effort, and where nothing says either, whatever the vendor's own default is for the model being asked. Not every model takes one, and a rung named for a model that does not is refused by its vendor rather than dropped.
 
-There is no model built in. Left off, or given as a provider and a bare slash, the model comes from your configuration; where nothing says, crucible starts and asks rather than picking one, and /model writes your answer down.
+Startup builds in no model. Left off, or given as a provider and a bare slash, the model comes from your configuration; where nothing says, crucible starts and asks rather than picking one, and /model writes your answer down, as /login writes its provider's default.
 
 crucible keeps its own files in ~/.crucible (or the directory CRUCIBLE_CODE_HOME names), and reads config.json there, then .crucible/config.json and .crucible/config.local.json in the directory it was started in. Nearer wins; the command line is nearer than all of them.
 

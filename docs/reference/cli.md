@@ -65,7 +65,8 @@ crucible: no session 019854c2 in this workspace
 
 ## Choosing the model
 
-There is no model built in, and no provider is chosen for you. Both flags sit
+Startup builds in no model, and no provider is chosen for you; a `/login`
+writes its provider's default model to your configuration where none is set. Both flags sit
 above your configuration: the command line is nearer than any of the three
 files, so what it names wins
 ([The files](../configuration/configuration.md#the-files)).
