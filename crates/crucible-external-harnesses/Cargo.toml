@@ -55,6 +55,11 @@ thiserror.workspace = true
 # be handed down and awaited on: nothing in this crate builds a runtime or
 # spawns a thread.
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+# The archive a pinned agent release comes in is a zip, read member by member
+# so that each is checked against the pin before it is written, and its
+# deflated members are inflated by `flate2`'s pure-Rust backend.
+zip.workspace = true
+flate2.workspace = true
 
 # `answered!`, the sandbox the tests launch the peer under, and a runtime with
 # workers for them. The sandbox keeps its state per checkout under test, so two
