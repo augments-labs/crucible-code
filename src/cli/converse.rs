@@ -2080,6 +2080,12 @@ fn breaks(one: &Seen) -> bool {
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::FastRefused { .. }
+            //
+            // An installed agent's calls are rows of their own as well, never
+            // counted into a run: nothing says which of them only looked
+            // around.
+            | Event::AgentCalled { .. }
+            | Event::AgentAnswered { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => true,
         },

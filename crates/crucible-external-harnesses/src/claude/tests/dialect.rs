@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crucible_execution::{
-    Cost, Decision, Detail, Event, Lasting, Outcome, Pending, TurnRequest, Usage,
+    About, Cost, Decision, Detail, Event, Lasting, Outcome, Pending, TurnRequest, Usage,
 };
 use crucible_types::{Compacting, TurnId};
 use serde_json::{Value, json};
@@ -309,13 +309,79 @@ fn an_edit_that_reports_success_changes_its_file() {
 
     assert!(matches!(
         activity.as_slice(),
-        [Act::Say(Event::ToolActivity { tool, summary })] if tool.as_str() == "Edit" && summary.as_str() == "/work/a.rs"
+        [Act::Say(Event::ToolActivity { tool, summary, about: About::Path, .. })] if tool.as_str() == "Edit" && summary.as_str() == "/work/a.rs"
     ));
     assert!(matches!(
         changed.as_slice(),
-        [Act::Say(Event::FileChanged { path })] if path.as_str() == "/work/a.rs"
+        [Act::Say(Event::ToolReport { .. }), Act::Say(Event::FileChanged { path })] if path.as_str() == "/work/a.rs"
     ));
-    assert!(failed.is_empty(), "{failed:?}");
+    assert!(
+        matches!(
+            failed.as_slice(),
+            [Act::Say(Event::ToolReport { failed: true, .. })]
+        ),
+        "{failed:?}"
+    );
+}
+
+/// A call is reported under the id its result names, with what kind of thing
+/// its summary is, and its result with whether it failed and its text, both
+/// as a string and as text blocks.
+#[test]
+fn a_call_and_its_result_are_reported_under_the_call_s_id() {
+    let mut agent = turning(None);
+    let called = json!({
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {"content": [
+            {"type": "tool_use", "id": "toolu_ls", "name": "Bash", "input": {"command": "ls -la", "description": "List"}},
+            {"type": "tool_use", "id": "toolu_get", "name": "WebFetch", "input": {"url": "https://example.com"}},
+        ]},
+    })
+    .to_string();
+    let answered = json!({
+        "type": "user",
+        "parent_tool_use_id": null,
+        "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "toolu_ls", "content": "a\nb"},
+            {"type": "tool_result", "tool_use_id": "toolu_get", "is_error": true, "content": [
+                {"type": "text", "text": "refused"},
+                {"type": "image", "source": {}},
+                {"type": "text", "text": "twice"},
+            ]},
+        ]},
+    })
+    .to_string();
+
+    let calls = agent.heard(&called).unwrap();
+    let results = agent.heard(&answered).unwrap();
+
+    assert!(
+        matches!(
+            calls.as_slice(),
+            [
+                Act::Say(Event::ToolActivity { call: listed, tool: bash, summary: command, about: About::Command }),
+                Act::Say(Event::ToolActivity { call: fetched, about: About::Address, .. }),
+            ] if listed.as_str() == "toolu_ls"
+                && bash.as_str() == "Bash"
+                && command.as_str() == "ls -la"
+                && fetched.as_str() == "toolu_get"
+        ),
+        "{calls:?}"
+    );
+    assert!(
+        matches!(
+            results.as_slice(),
+            [
+                Act::Say(Event::ToolReport { call: listed, failed: false, report: listing }),
+                Act::Say(Event::ToolReport { call: fetched, failed: true, report: refusal }),
+            ] if listed.as_str() == "toolu_ls"
+                && listing.as_str() == "a\nb"
+                && fetched.as_str() == "toolu_get"
+                && refusal.as_str() == "refused\ntwice"
+        ),
+        "{results:?}"
+    );
 }
 
 /// The turn's tokens are its own, the input summed from its parts, and its

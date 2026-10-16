@@ -28,23 +28,19 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crucible_execution::{
-    Backend, Capabilities, Capability, Confined, Confinement, Cost, Currency, Decision,
+    About, Backend, Capabilities, Capability, Confined, Confinement, Cost, Currency, Decision,
     Description, Detail, Error, Event, Failure, Lasting, NAME_BYTES, Observation, Outcome, Pending,
     PendingRef, Pendings, Scope, SessionRef, Sink, Stale, Text, TurnRequest, Unsupported, Usage,
 };
 use crucible_runner::{Event as Reported, EventEnvelope, Post, Runner, SessionCost, Totals};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_sandbox::SandboxCapability;
-use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
-use crucible_types::{CostAmount, StopReason, ToolCall, ToolId, TurnId};
+use crucible_tools::{Argument, Ask, Remember, Sensitivity, Verdict};
+use crucible_types::{CostAmount, StopReason, ToolCall, TurnId};
 use tokio::sync::oneshot;
 
 /// The driver name the runner is described under.
 pub const DRIVER: &str = "native";
-
-/// The most calls whose tool name a turn remembers between the call being
-/// requested and its report; a report past that names the call instead.
-const NAMED_CALLS: usize = 64;
 
 /// What is answered where nobody will: no, and only this once.
 const DENIED: (Verdict, Remember) = (Verdict::Deny, Remember::Never);
@@ -402,8 +398,6 @@ struct Translating<'n, 'r> {
     turn: Mutex<Option<TurnId>>,
     /// The session's totals as the turn last moved them.
     used: Mutex<Option<Totals>>,
-    /// The tool each call still running was requested for.
-    calls: Mutex<Vec<(ToolId, Text)>>,
 }
 
 impl<'n, 'r> Translating<'n, 'r> {
@@ -414,7 +408,6 @@ impl<'n, 'r> Translating<'n, 'r> {
             events,
             turn: Mutex::new(None),
             used: Mutex::new(None),
-            calls: Mutex::new(Vec::new()),
         }
     }
 
@@ -453,28 +446,22 @@ impl<'n, 'r> Translating<'n, 'r> {
                 Some(Event::Started { turn: *turn })
             }
             Reported::Delta { text } => Some(Event::Delta(Text::new(text))),
-            Reported::ToolRequested { call, summary, .. } => {
-                let tool = Text::clipped(&call.name, NAME_BYTES);
-                let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
-                if calls.len() < NAMED_CALLS {
-                    calls.push((call.id.clone(), tool.clone()));
-                }
-                Some(Event::ToolActivity {
-                    tool,
-                    summary: Text::new(summary.as_str()),
-                })
-            }
-            Reported::ToolFinished { call, output, .. } => {
-                let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
-                let tool = match calls.iter().position(|(id, _)| id == call) {
-                    Some(at) => calls.swap_remove(at).1,
-                    None => Text::clipped(call.as_str(), NAME_BYTES),
-                };
-                Some(Event::ToolReport {
-                    tool,
-                    report: Text::new(output.text()),
-                })
-            }
+            Reported::ToolRequested { call, summary, .. } => Some(Event::ToolActivity {
+                call: Text::clipped(call.id.as_str(), NAME_BYTES),
+                tool: Text::clipped(&call.name, NAME_BYTES),
+                summary: Text::new(summary.as_str()),
+                about: match summary.argument() {
+                    Argument::Path => About::Path,
+                    Argument::Address => About::Address,
+                    Argument::Command => About::Command,
+                    Argument::Other => About::Other,
+                },
+            }),
+            Reported::ToolFinished { call, output, .. } => Some(Event::ToolReport {
+                call: Text::clipped(call.as_str(), NAME_BYTES),
+                failed: output.is_failed(),
+                report: Text::new(output.text()),
+            }),
             Reported::Used { totals } => {
                 *self.used.lock().unwrap_or_else(PoisonError::into_inner) = Some(*totals);
                 None
@@ -486,6 +473,8 @@ impl<'n, 'r> Translating<'n, 'r> {
             // consumer of the contract has asked for none of it. Another
             // agent's report is never one this runner makes.
             Reported::TurnFinished { .. }
+            | Reported::AgentCalled { .. }
+            | Reported::AgentAnswered { .. }
             | Reported::Reported { .. }
             | Reported::Failed { .. }
             | Reported::PromptCache { .. }

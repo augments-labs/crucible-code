@@ -1,5 +1,5 @@
 use crucible_tools::{Command, Host, Target};
-use crucible_types::ToolArgs;
+use crucible_types::{ToolArgs, ToolId};
 
 use super::*;
 use crate::client::deciding::{effect, operation, outside};

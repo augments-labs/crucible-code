@@ -54,7 +54,7 @@ pub use crate::antigravity::Ended;
 use std::path::PathBuf;
 
 use crucible_execution::{
-    Cost, Decision, Event, Failure, Observation, Outcome, Scope, Text, TurnRequest, Usage,
+    About, Cost, Decision, Event, Failure, Observation, Outcome, Scope, Text, TurnRequest, Usage,
 };
 use crucible_transport::FRAME_BYTES;
 use crucible_types::TurnId;
@@ -190,23 +190,26 @@ impl Claude {
             if let Some(path) = edited
                 && self.edits.len() < EDITS
             {
-                self.edits.push((call.into(), Text::new(path)));
+                self.edits.push((call.as_str().into(), Text::new(path)));
             }
-            let summary = [
-                "command",
-                "file_path",
-                "notebook_path",
-                "path",
-                "pattern",
-                "url",
+            let (summary, about) = [
+                ("command", About::Command),
+                ("file_path", About::Path),
+                ("notebook_path", About::Path),
+                ("path", About::Path),
+                ("pattern", About::Command),
+                ("url", About::Address),
+                ("query", About::Other),
+                ("description", About::Other),
             ]
             .into_iter()
-            .chain(["query", "description"])
-            .find_map(field)
-            .unwrap_or_default();
+            .find_map(|(name, about)| Some((field(name)?, about)))
+            .unwrap_or(("", About::Other));
             acts.push(Act::Say(Event::ToolActivity {
+                call: Text::new(&call),
                 tool: Text::new(&tool),
                 summary: Text::new(summary),
+                about,
             }));
         }
         acts
@@ -279,11 +282,16 @@ impl Claude {
         any.then(|| Event::Usage(Observation::live(usage, Scope::Session)))
     }
 
-    /// The acts the tool results `reported` come to: a changed file for each
-    /// call that changes one and did not fail.
-    fn reported(&mut self, reported: Vec<(String, bool)>) -> Vec<Act> {
+    /// The acts the tool results `reported` come to: each call's report, and
+    /// a changed file for each call that changes one and did not fail.
+    fn reported(&mut self, reported: Vec<(String, bool, String)>) -> Vec<Act> {
         let mut acts = Vec::new();
-        for (call, failed) in reported {
+        for (call, failed, report) in reported {
+            acts.push(Act::Say(Event::ToolReport {
+                call: Text::new(&call),
+                failed,
+                report: Text::new(&report),
+            }));
             if let Some(place) = self.edits.iter().position(|(edit, _)| **edit == *call) {
                 let (_, path) = self.edits.remove(place);
                 if !failed {

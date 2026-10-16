@@ -252,6 +252,8 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             | Event::Compacted { .. }
             | Event::AgentCompacted { .. }
             | Event::Retrying
+            | Event::AgentCalled { .. }
+            | Event::AgentAnswered { .. }
             | Event::Reported { .. }
             | Event::FastRefused { .. }
             | Event::Aged { .. }
@@ -295,6 +297,8 @@ fn a_call_is_announced_with_its_execution_capabilities() {
         | Event::Compacted { .. }
         | Event::AgentCompacted { .. }
         | Event::Retrying
+        | Event::AgentCalled { .. }
+        | Event::AgentAnswered { .. }
         | Event::Reported { .. }
         | Event::FastRefused { .. }
         | Event::Aged { .. }
@@ -452,6 +456,8 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             | Event::Compacted { .. }
             | Event::AgentCompacted { .. }
             | Event::Retrying
+            | Event::AgentCalled { .. }
+            | Event::AgentAnswered { .. }
             | Event::Reported { .. }
             | Event::FastRefused { .. }
             | Event::Aged { .. }

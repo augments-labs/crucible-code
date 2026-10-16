@@ -46,6 +46,18 @@ pub const COMPACTED: u64 = 9_000;
 /// The file a turn's effect edits.
 pub const EDITED: &str = "src/lib.rs";
 
+/// The command a turn's tool use runs.
+pub const LISTED: &str = "ls -la";
+
+/// What that command printed, line by line.
+pub const LISTING: [&str; 6] = ["Cargo.toml", "README.md", "docs", "scripts", "src", "tests"];
+
+/// The file a turn's tool use fails to read.
+pub const MISSING: &str = "src/missing.rs";
+
+/// What the failed read said.
+pub const NOT_THERE: &str = "File does not exist.";
+
 /// The id this side's interrupt is sent under.
 const INTERRUPT: &str = "crucible-interrupt";
 
@@ -114,6 +126,31 @@ pub fn effect() -> String {
         "name": "Edit",
         "input": {"file_path": EDITED, "old_string": "a", "new_string": "b"},
     }]))
+}
+
+/// The model running [`LISTED`] and reading [`MISSING`], one call each.
+#[must_use]
+pub fn used_tools() -> String {
+    assistant(&json!([
+        {"type": "tool_use", "id": "toolu_ls", "name": "Bash", "input": {"command": LISTED, "description": "List the files"}},
+        {"type": "tool_use", "id": "toolu_read", "name": "Read", "input": {"file_path": MISSING}},
+    ]))
+}
+
+/// The program saying what the calls [`used_tools`] made came back with: the
+/// listing, and the read failing.
+#[must_use]
+pub fn tools_answered() -> String {
+    json!({
+        "type": "user",
+        "session_id": SESSION,
+        "parent_tool_use_id": null,
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_ls", "content": LISTING.join("\n")},
+            {"type": "tool_result", "tool_use_id": "toolu_read", "is_error": true, "content": [{"type": "text", "text": NOT_THERE}]},
+        ]},
+    })
+    .to_string()
 }
 
 /// The end of a turn answered, its figures those of a priced turn and the
@@ -299,6 +336,17 @@ pub fn held_open() -> Reply {
 #[must_use]
 pub fn crash() -> Reply {
     turn(Reply::new()).say(effect()).exit(9)
+}
+
+/// A run of one turn in which the model uses its tools, [`used_tools`], and
+/// hears back from them before it answers.
+#[must_use]
+pub fn tooled() -> Reply {
+    turn(Reply::new())
+        .say(used_tools())
+        .say(tools_answered())
+        .say(said("Done."))
+        .say(answered(Some(PRICE)))
 }
 
 /// A run of one turn whose `result` frame reports a cost.

@@ -623,10 +623,17 @@ the text's, so it costs no column, and it is there whether the line is still
 waiting above the box or has already been written out.
 
 On an installed agent's route the agent runs its own tools and crucible runs
-none of them. What the agent reports doing is one toned down row with no mark,
-worded as the agent's, such as `the agent used Edit · src/lib.rs`, with the
-tool's name as the agent gave it and its control characters taken out, cut to
-the window's width.
+none of them. Each call the agent reports is drawn as a call made here is: the
+tool's name as the agent gave it, with what the call was about, waiting above
+the box until the agent says what it came back with, and then written out with
+that result under it, a failure marked as one and a long result offered whole
+on `ctrl+o`. The result is what the agent reported, given only once the call
+is over, so nothing streams under a command the agent is still running, and a
+call the turn ends without an answer to is written out with none. A call with
+no id of its own, or past the 128 waiting at once, is one toned down row with
+no mark, worded as the agent's, such as `the agent used Bash · ls -la`, and so
+is each file the agent says it changed, such as `the agent used file ·
+src/lib.rs`. Control characters in anything the agent says are taken out.
 
 Where the model asked for one tool and nothing about it moves, the line is
 written the moment the call goes out. `WebSearch` and `WebFetch` are the two

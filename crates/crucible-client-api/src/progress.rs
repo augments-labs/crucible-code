@@ -55,16 +55,22 @@ pub enum Progress {
     /// An installed agent reported using one of its own tools.
     ///
     /// Not a request: the agent runs its tools itself, so nothing here was
-    /// asked for, allowed or run by this program, and no
-    /// [`ToolFinished`](Self::ToolFinished) follows it. Both texts are the
-    /// agent's.
+    /// asked for, allowed or run by this program. A
+    /// [`ToolFinished`](Self::ToolFinished) under the same call follows it
+    /// where the agent says the call ended. The texts are the agent's.
     ToolActivity {
+        /// The agent's identifier for the call, or nothing for a file it
+        /// said it changed outside any call.
+        call: Text,
         /// Which tool, as the agent named it.
         tool: Text,
         /// What it did with it, or the file it changed.
         summary: Text,
+        /// What kind of thing those words name.
+        summary_kind: SummaryKind,
     },
-    /// A tool call ended.
+    /// A tool call ended: one the model asked for, or one an installed agent
+    /// reported using.
     ToolFinished {
         /// The provider's identifier for the call.
         call: Text,
@@ -205,7 +211,15 @@ impl Progress {
         match self {
             Self::Started { turn } => object.with("turn", *turn),
             Self::Delta { text } => object.text("text", text),
+            // The same fields: what tells them apart is the kind written
+            // above, which says whether this program was asked to run it.
             Self::ToolRequested {
+                call,
+                tool,
+                summary,
+                summary_kind,
+            }
+            | Self::ToolActivity {
                 call,
                 tool,
                 summary,
@@ -215,9 +229,6 @@ impl Progress {
                 .text("tool", tool)
                 .text("summary", summary)
                 .with("summary_kind", summary_kind.as_str()),
-            Self::ToolActivity { tool, summary } => {
-                object.text("tool", tool).text("summary", summary)
-            }
             Self::ToolFinished { call, failed } => {
                 object.text("call", call).with("failed", *failed)
             }
@@ -271,8 +282,10 @@ impl Progress {
                 summary_kind: SummaryKind::named(&fields.string("summary_kind")?)?,
             },
             "tool_activity" => Self::ToolActivity {
+                call: fields.text("call")?,
                 tool: fields.text("tool")?,
                 summary: fields.text("summary")?,
+                summary_kind: SummaryKind::named(&fields.string("summary_kind")?)?,
             },
             "tool_finished" => Self::ToolFinished {
                 call: fields.text("call")?,

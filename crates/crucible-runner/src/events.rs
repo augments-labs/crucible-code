@@ -11,7 +11,8 @@
 use crucible_models::ProviderError;
 use crucible_tools::{Looking, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote};
 use crucible_types::{
-    Ancestry, Attachment, ContextError, RunId, StopReason, ToolCall, ToolId, TurnId,
+    Ancestry, Attachment, ContextError, RecordedToolOutput, RunId, StopReason, ToolCall, ToolId,
+    TurnId,
 };
 use crucible_types::{PlanWindows, Spend, Utc, Window};
 use std::time::SystemTime;
@@ -391,12 +392,42 @@ pub enum Event {
         receipt: Option<ToolReceipt>,
     },
 
-    /// Another agent, driving this run, used one of its own tools.
+    /// Another agent, driving this run, began one of its own tool calls.
     ///
     /// A report of something it did over there, never a call to run here:
     /// nothing that reads one runs anything, and no permission was asked of
-    /// this program for it. Both texts are the agent's, bounded by whoever
-    /// read them off its wire.
+    /// this program for it. Its own event rather than a
+    /// [`Event::ToolRequested`], so that nothing which acts on a requested
+    /// call can be handed one; it carries what that event's row is drawn
+    /// from, so the two are drawn alike. The texts are the agent's, bounded by
+    /// whoever read them off its wire.
+    AgentCalled {
+        /// The agent's identifier for the call.
+        call: ToolId,
+        /// Which tool, as the agent named it.
+        tool: Box<str>,
+        /// What the call was about, and what kind of thing that is, as the
+        /// backend that read the call says.
+        summary: Summary,
+    },
+
+    /// What one of the agent's own calls came back with, by its account.
+    ///
+    /// Recorded rather than live: nothing here ran it, so there is no live
+    /// result, no change and no receipt, only the agent's text and whether
+    /// it said the call failed.
+    AgentAnswered {
+        /// Which call this answers.
+        call: ToolId,
+        /// What the agent said it came back with.
+        output: RecordedToolOutput,
+    },
+
+    /// Another agent, driving this run, said it changed a file, or used a
+    /// tool it named no call for.
+    ///
+    /// The same kind of report as [`Event::AgentCalled`], with no call to
+    /// draw it under. Both texts are the agent's.
     Reported {
         /// Which tool, as the agent named it.
         tool: Box<str>,
@@ -612,6 +643,21 @@ impl std::fmt::Debug for Event {
                 .field("call", call)
                 .field("output", output)
                 .field("receipt", receipt)
+                .finish(),
+            Self::AgentCalled {
+                call,
+                tool,
+                summary,
+            } => f
+                .debug_struct("AgentCalled")
+                .field("call", call)
+                .field("tool", tool)
+                .field("summary", summary)
+                .finish(),
+            Self::AgentAnswered { call, output } => f
+                .debug_struct("AgentAnswered")
+                .field("call", call)
+                .field("output", output)
                 .finish(),
             Self::Reported { tool, summary } => f
                 .debug_struct("Reported")

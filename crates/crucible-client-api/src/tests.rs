@@ -913,8 +913,10 @@ fn progress() -> Vec<Progress> {
             summary_kind: SummaryKind::Other,
         },
         Progress::ToolActivity {
+            call: marked(),
             tool: marked(),
             summary: marked(),
+            summary_kind: SummaryKind::Path,
         },
         Progress::ToolFinished {
             call: marked(),
@@ -2483,7 +2485,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 7_780_093_700_871_764_596),
+        (4, 15_032_163_914_119_201_838),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

@@ -11,7 +11,7 @@
 //! nothing, but one resumed has cost an amount nobody said, so its first turn
 //! reports no figure and the turns after it do.
 
-use crucible_execution::{Cost, Currency, Event, Observation, Scope, Text, Usage};
+use crucible_execution::{About, Cost, Currency, Event, Observation, Scope, Text, Usage};
 use crucible_types::TurnId;
 use serde_json::Value;
 
@@ -223,41 +223,54 @@ fn tool(update: &Value) -> Text {
     Text::new(named)
 }
 
+/// The agent's name for the call an update is about.
+fn call(update: &Value) -> Text {
+    Text::new(
+        update
+            .get("toolCallId")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+}
+
 /// What a tool call that began means.
+///
+/// Its title is the agent's own words for it, so what kind of thing they name
+/// is not known here.
 fn tool_call(update: &Value) -> Vec<Act> {
     let summary = update
         .get("title")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    // A call can be announced already over, and then this is the one
+    // message that says what it came back with.
     let mut acts = vec![Act::Say(Event::ToolActivity {
+        call: call(update),
         tool: tool(update),
         summary: Text::new(summary),
+        about: About::Other,
     })];
-    acts.extend(changed(update));
+    acts.extend(tool_call_update(update));
     acts
 }
 
-/// What a tool call moving on means: what it reported once it ended, and the
-/// files it changed.
+/// What a tool call moving on means: what it reported once it ended, said
+/// whether or not it had any words for it, and the files it changed.
 fn tool_call_update(update: &Value) -> Vec<Act> {
-    let ended = matches!(
-        update.get("status").and_then(Value::as_str),
-        Some("completed" | "failed")
-    );
-    if !ended {
-        return Vec::new();
-    }
+    let failed = match update.get("status").and_then(Value::as_str) {
+        Some("completed") => false,
+        Some("failed") => true,
+        _ => return Vec::new(),
+    };
     let report: String = blocks(update)
         .filter_map(|block| text(block.get("content")))
         .collect::<Vec<_>>()
         .join("\n");
-    let mut acts = Vec::new();
-    if !report.is_empty() {
-        acts.push(Act::Say(Event::ToolReport {
-            tool: tool(update),
-            report: Text::new(&report),
-        }));
-    }
+    let mut acts = vec![Act::Say(Event::ToolReport {
+        call: call(update),
+        failed,
+        report: Text::new(&report),
+    })];
     acts.extend(changed(update));
     acts
 }

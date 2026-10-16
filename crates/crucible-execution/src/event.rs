@@ -7,8 +7,9 @@
 //! where it was clipped.
 //!
 //! What the other agent did is reported, never requested: a
-//! [`Event::ToolActivity`] says a tool ran over there, and nothing that reads
-//! one runs anything here.
+//! [`Event::ToolActivity`] says a tool ran over there, a [`Event::ToolReport`]
+//! under the same call says what it came back with, and nothing that reads
+//! either runs anything here.
 
 use std::fmt;
 
@@ -280,6 +281,24 @@ impl Fault {
     }
 }
 
+/// What kind of thing the summary of the other agent's tool use names.
+///
+/// Read off the field the summary came from, by the backend that parsed the
+/// call, so whatever draws the row never guesses it back out of the words.
+/// Closed for the reason a native call's kind is: a row tells these four apart
+/// and no others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum About {
+    /// A file or directory.
+    Path,
+    /// An address.
+    Address,
+    /// A command, or a pattern looked for.
+    Command,
+    /// Words that are none of those.
+    Other,
+}
+
 /// One thing a backend reports while a turn runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -295,16 +314,24 @@ pub enum Event {
     /// The other agent used a tool. Something it did, never an instruction to
     /// run one here.
     ToolActivity {
+        /// The agent's name for the call, which what the call reported once it
+        /// ended carries too.
+        call: Text,
         /// Which tool, as the agent named it.
         tool: Text,
         /// What it did with it.
         summary: Text,
+        /// What kind of thing the summary names, as the field it was read
+        /// from says.
+        about: About,
     },
-    /// What a tool the other agent used reported.
+    /// What a tool the other agent used reported once the call ended.
     ToolReport {
-        /// Which tool, as the agent named it.
-        tool: Text,
-        /// What it reported.
+        /// The agent's name for the call it ends.
+        call: Text,
+        /// Whether the agent said the call failed.
+        failed: bool,
+        /// What it reported, which may be nothing.
         report: Text,
     },
     /// A file changed.
