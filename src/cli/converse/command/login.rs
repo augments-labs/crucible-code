@@ -1499,9 +1499,10 @@ fn remedy(failed: &AuthError) -> &'static str {
 /// file written a line ago; what it buys is that somebody who has just stored a
 /// credential can type at the session in front of them.
 ///
-/// Authentication never chooses a model or effort, and never retires the pair
-/// in force. Where nothing names a model, the line says so; where a provider is
-/// already answering, the line points at `/model` instead — that is the other
+/// Authentication never retires the model and effort in force. Where nobody
+/// was being asked, the conversation asks for the model the configuration
+/// names, else the provider's default, and the line names it; where nothing is
+/// asked even then, the line points at `/model` instead — that is the other
 /// half of a first minute, and a session that stopped at "credential stored"
 /// would leave the reader to find that out from the next refusal.
 fn taken<T: Terminal>(

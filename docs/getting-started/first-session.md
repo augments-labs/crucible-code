@@ -247,8 +247,12 @@ labelled box, which takes a paste as readily as typing and draws a dot per
 character, never the key. Enter saves it; Enter on an empty box does nothing.
 Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can
 read. The session asks that provider from the next turn on; there is nothing to
-restart. Authentication never chooses a model or effort; both stay explicit
-choices, and `/model` is where they are asked together.
+restart. Where no model was being asked, the login takes the one your
+configuration names for that provider, else the provider's default: its
+latest middle-tier model, at `medium` effort or the nearest rung above it that
+the model serves. A default taken is written to your configuration, so the
+next start opens on it. A login for the provider already answering keeps the
+model and effort in force; `/model` and `/effort` change either.
 
 Some vendors say they may use what you send to train or improve their models:
 a ChatGPT plan, Kimi Code and the Kimi open platform, a Gemini key on unpaid

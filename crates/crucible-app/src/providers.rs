@@ -37,22 +37,26 @@ use crate::subscription::Subscriptions;
 /// [`startup::provider`] has one arm per entry, and adding a provider is an
 /// edit to both in the same commit.
 ///
-/// The models are what `/model` offers and not what anything asks for. No
-/// default is written here and none may be: a model chosen at compile time is
-/// chosen for somebody who never asked for it — it outlives the model, it is
-/// asked for with whichever key happens to be set, and the first anyone hears
-/// of the mismatch is a refusal from a vendor they did not mean to write to.
-/// What to ask for comes from the person running it, through `--model` or
-/// through `providers.<name>.model`, and where neither says, crucible asks
-/// rather than guesses. An offer is how it asks; it is still they who answer.
+/// The models are what `/model` offers, and each provider names one of them
+/// as its default: the one a login asks for where nobody was being asked and
+/// the configuration names no model, so that a sign-in ends on a session that
+/// can answer rather than one whose first turn is refused for want of a
+/// model. The default is the vendor's latest middle tier, and its rung is
+/// [`default_rung`]'s, so only the model is written here. What the person
+/// running it chose, through `--model`, `providers.<name>.model` or `/model`,
+/// always comes first, and a default is written down where it was taken so
+/// that the next run opens on what this one asked.
 ///
-/// So this list going stale costs a shortcut and nothing else. A model retired
-/// since the build is one nobody picked without the vendor refusing it by name,
-/// and a model released since is typed, which is the path that was there before
-/// any of these were written down.
+/// So this list going stale costs a shortcut and an old default. A model
+/// retired since the build is one the vendor refuses by name, and the refusal
+/// says to choose another with `/model`; a model released since is typed, which
+/// is the path that was there before any of these were written down. The lists
+/// and the defaults are read again from the vendors' documentation as they
+/// release models.
 const PROVIDERS: [Served; 11] = [
     Served {
         name: "anthropic",
+        default: "claude-opus-5-5",
         shown: "Anthropic",
         key: "ANTHROPIC_API_KEY",
         build: startup::anthropic,
@@ -77,6 +81,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "deepseek",
+        default: "deepseek-v4-pro",
         shown: "DeepSeek",
         key: "DEEPSEEK_API_KEY",
         build: startup::deepseek,
@@ -92,6 +97,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "google",
+        default: "gemini-3.8-flash",
         shown: "Google",
         key: "GEMINI_API_KEY",
         build: startup::google,
@@ -109,6 +115,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "meta",
+        default: "muse-spark-1.3",
         shown: "Meta",
         key: "META_API_KEY",
         build: startup::meta,
@@ -128,6 +135,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "mimo",
+        default: "mimo-v2.6-pro",
         shown: "MiMo",
         key: "MIMO_API_KEY",
         build: startup::mimo,
@@ -143,6 +151,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "minimax",
+        default: "MiniMax-M3",
         shown: "MiniMax",
         key: "MINIMAX_API_KEY",
         build: startup::minimax,
@@ -158,6 +167,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "moonshot",
+        default: "k3",
         shown: "MoonshotAI",
         key: "MOONSHOT_API_KEY",
         build: startup::moonshot,
@@ -184,6 +194,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "openai",
+        default: "gpt-6.1-sol",
         shown: "OpenAI",
         key: "OPENAI_API_KEY",
         build: startup::openai,
@@ -212,6 +223,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "qwen",
+        default: "qwen3.7-plus",
         shown: "Qwen",
         key: "DASHSCOPE_API_KEY",
         build: startup::qwen,
@@ -229,6 +241,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "xai",
+        default: "grok-4.7",
         shown: "xAI",
         key: "XAI_API_KEY",
         build: startup::xai,
@@ -244,6 +257,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "zai",
+        default: "glm-5.3",
         shown: "Z.ai",
         key: "ZAI_API_KEY",
         build: startup::zai,
@@ -900,11 +914,15 @@ pub struct Served {
     /// The *name* is what is written here; the value is read once, in
     /// [`startup::provider`], and goes no further than the header it signs.
     pub key: &'static str,
+    /// The model of [`Served::models`] a login asks for where nobody was being
+    /// asked and nothing configured names one: the vendor's latest middle
+    /// tier.
+    pub default: &'static str,
     /// The models `/model` offers for it, newest first, at most five.
     ///
-    /// An offer and not a rung: nothing here is ever asked for unless somebody
-    /// chose it, and a name that is not on the list is typed the way it always
-    /// was. Which is what keeps this from being the model built into the build —
+    /// An offer and not a rung: nothing here but [`Served::default`] is asked
+    /// for unless somebody chose it, and a name that is not on the list is
+    /// typed the way it always was. Which is what keeps this from being the model built into the build —
     /// the list is a shortcut past the vendor's documentation, and the vendor
     /// remains the authority on what it serves.
     ///
@@ -1236,6 +1254,19 @@ pub fn names(providers: &Providers) -> String {
         .map(|one| one.name)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The rung a default is asked at, of the rungs a model serves: medium, else
+/// the first above it, else the strongest below it, and none where it serves
+/// none.
+#[must_use]
+pub fn default_rung(rungs: &[Effort]) -> Option<Effort> {
+    rungs
+        .iter()
+        .copied()
+        .filter(|rung| *rung >= Effort::Medium)
+        .min()
+        .or_else(|| rungs.iter().copied().max())
 }
 
 /// The rungs `model` serves, as far as this build knows.

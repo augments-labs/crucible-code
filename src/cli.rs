@@ -1355,7 +1355,9 @@ fn launch(
 ///
 /// There is no bottom rung, and that is the point. A name written into this
 /// build would be asked for on behalf of somebody who never chose it, and it
-/// would be asked of whichever provider the key belongs to.
+/// would be asked of whichever provider the key belongs to. The default a
+/// login takes reaches here as the configuration's: the login names the
+/// provider it is for, and writes the model down.
 ///
 /// A key written into a file and left empty is a file that said nothing, not a
 /// request for a model called nothing. Sent as it stands it would reach a

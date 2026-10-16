@@ -12,7 +12,7 @@ expression: window.picture()
 |variable. Then use /model to select a model.                                   │|
 |                                                                               ┃|
 |› /login anthropic                                                             ┃|
-|⎿ login successful; choose a model with /model                                 ┃|
+|⎿ login successful; asking claude-test-1                                       ┃|
 |                                                                               ┃|
 |› /model claude-test-1                                                         ┃|
 |⎿ anthropic · claude-test-1                                                    ┃|
