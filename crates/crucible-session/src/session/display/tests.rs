@@ -91,6 +91,7 @@ fn full_history_and_private_preview_survive_without_changing_model_context() {
     let DisplayItem::Message {
         message: Message::ToolResults(results),
         previews,
+        ..
     } = display.get(2).unwrap()
     else {
         panic!("missing result")
@@ -176,6 +177,7 @@ fn old_logs_restore_original_messages_and_truthful_compaction_without_previews()
     let DisplayItem::Message {
         message: Message::ToolResults(_),
         previews,
+        ..
     } = display.get(2).unwrap()
     else {
         panic!("missing result")
@@ -285,6 +287,7 @@ fn a_full_live_batch_of_maximum_unicode_previews_remains_replayable() {
     let DisplayItem::Message {
         message: Message::ToolResults(results),
         previews,
+        ..
     } = display.last().unwrap()
     else {
         panic!("missing batch")
@@ -378,6 +381,7 @@ fn a_call_finished_before_its_result_line_comes_back_answered_with_its_preview()
     let Some(DisplayItem::Message {
         message: Message::ToolResults(_),
         previews,
+        ..
     }) = display.get(2)
     else {
         panic!("missing result: {display:?}")
@@ -411,4 +415,98 @@ fn a_finished_call_that_changed_no_line_comes_back_as_its_result_line_says() {
     assert_eq!(log.lines().last(), Some(wire::line(&answered).as_str()));
     let (_, again) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
     assert_eq!(first.messages(), again.messages());
+}
+
+fn step(at: usize, round: u32, did: AgentDid) -> AgentStep {
+    AgentStep { at, round, did }
+}
+
+fn called(id: &str, looking: Option<crucible_tools::Looking>) -> AgentDid {
+    AgentDid::Called {
+        call: ToolId::new(id),
+        tool: "Grep".into(),
+        summary: crucible_tools::Summary::of(crucible_tools::Argument::Command, "fn main"),
+        looking,
+    }
+}
+
+#[test]
+fn an_agent_s_steps_come_back_with_the_answer_they_were_taken_in() {
+    let sample = Sample::new("display-agent-steps");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let diff = Diff::new([Line::new(1, Change::Added, "private-step-canary")]);
+    let steps = vec![
+        step(
+            0,
+            0,
+            called("toolu_1", Some(crucible_tools::Looking::Pattern)),
+        ),
+        step(
+            0,
+            0,
+            AgentDid::Answered {
+                call: ToolId::new("toolu_1"),
+                output: RecordedToolOutput::failed("no match"),
+                diff: Some(diff),
+            },
+        ),
+        step(
+            7,
+            1,
+            AgentDid::Reported {
+                tool: "file".into(),
+                summary: "src/lib.rs".into(),
+            },
+        ),
+    ];
+    session.append(&Message::said("look around"));
+    for one in &steps {
+        session.agent_step(one);
+    }
+    session.append(&Message::Agent {
+        continuation: None,
+        text: "Looked. Done.".into(),
+        calls: Vec::new(),
+        stop: Some(StopReason::Yielded),
+    });
+    // A turn that ended with nothing said still hands back what it did, ahead
+    // of the prompt after it.
+    let unanswered = step(0, 0, called("toolu_2", None));
+    session.append(&Message::said("again"));
+    session.agent_step(&unanswered);
+    session.append(&Message::said("and again"));
+    session.agent_step(&unanswered);
+
+    let display = items(&session);
+    assert_eq!(display.len(), 6, "{display:?}");
+    assert!(matches!(
+        display.get(1).unwrap(),
+        DisplayItem::Message { message: Message::Agent { .. }, steps: kept, .. } if *kept == steps
+    ));
+    assert!(matches!(
+        display.get(2).unwrap(),
+        DisplayItem::Message { message: Message::User { .. }, steps: kept, .. } if kept.is_empty()
+    ));
+    assert!(matches!(
+        display.get(3).unwrap(),
+        DisplayItem::Agent(kept) if *kept == [unanswered.clone()]
+    ));
+    assert!(matches!(
+        display.get(4).unwrap(),
+        DisplayItem::Message {
+            message: Message::User { .. },
+            ..
+        }
+    ));
+    assert!(matches!(
+        display.get(5).unwrap(),
+        DisplayItem::Agent(kept) if *kept == [unanswered.clone()]
+    ));
+    assert!(!format!("{display:?}").contains("private-step-canary"));
+
+    // The model is sent the conversation, and nothing the agent did.
+    drop(session);
+    let (_, model) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(model.messages().len(), 4);
+    assert!(!format!("{model:?}").contains("toolu_"));
 }

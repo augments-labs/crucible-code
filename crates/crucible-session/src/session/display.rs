@@ -1,13 +1,21 @@
 //! Streaming the private conversation record for the reader, independently of
-//! the compacted transcript sent to a provider. Only one message and one tool
-//! batch's bounded previews are retained here; the renderer owns scrollback.
+//! the compacted transcript sent to a provider. Only one message, one tool
+//! batch's bounded previews and one agent turn's bounded steps are retained
+//! here; the renderer owns scrollback.
+//!
+//! An installed agent's calls are kept as display-only steps, each written as
+//! the turn drew it and handed back with the answer it was said in. Model
+//! replay passes over them, as an older build passes over the whole kind.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, Read as _, Take};
 
-use crucible_types::{Change, Compacted, Compacting, Diff, Line, Message, ToolId};
+use crucible_tools::{Argument, Looking, Summary};
+use crucible_types::{
+    Change, Compacted, Compacting, Diff, Line, Message, RecordedToolOutput, ToolId, ToolResult,
+};
 use serde_json::{Value, json};
 
 use super::{replay, wire};
@@ -27,7 +35,13 @@ pub enum DisplayItem {
         /// every message that is not a tool-result batch, and for a batch
         /// whose log kept no preview.
         previews: HashMap<ToolId, Diff>,
+        /// What an installed agent did while it said this, in the order it
+        /// did it. Empty for every message no agent's turn ended in.
+        steps: Vec<AgentStep>,
     },
+    /// What an installed agent did in a turn that ended with nothing said, or
+    /// in the part of a turn too long to hold until its answer was read.
+    Agent(Vec<AgentStep>),
     /// A completed compaction with the exact live measurements.
     Compacted(Compacted),
     /// A legacy compaction or pruning whose live measurements were not saved.
@@ -38,6 +52,10 @@ pub enum DisplayItem {
     /// A legacy model-context reset; existing terminal scrollback stayed visible.
     ContextReset,
 }
+
+/// A message read past a notice it has to wait behind, with its previews, its
+/// steps and where its record begins.
+type Queued = (Message, HashMap<ToolId, Diff>, Vec<AgentStep>, u64);
 
 /// A fixed, bounded-record view of a protected session log.
 ///
@@ -51,7 +69,13 @@ pub struct DisplayHistory {
     calls: Vec<ToolId>,
     notices: VecDeque<DisplayItem>,
     ready: bool,
-    queued: Option<(Message, HashMap<ToolId, Diff>, u64)>,
+    queued: Option<Queued>,
+    /// The steps of the agent turn being read, and the bytes they came from.
+    steps: Vec<AgentStep>,
+    step_bytes: usize,
+    /// Where the record that ended a turn of steps begins, read again once
+    /// those steps have been handed out.
+    again: Option<u64>,
     ended: bool,
     /// How many bytes of the log have been read, which is where the next
     /// record begins.
@@ -81,6 +105,9 @@ impl DisplayHistory {
             notices: VecDeque::new(),
             ready: false,
             queued: None,
+            steps: Vec::new(),
+            step_bytes: 0,
+            again: None,
             ended: false,
             read: 0,
             last: None,
@@ -97,24 +124,42 @@ impl DisplayHistory {
             }
             self.ready = false;
         }
-        if let Some((message, previews, at)) = self.queued.take() {
+        if let Some((message, previews, steps, at)) = self.queued.take() {
             self.last = Some(at);
-            return Ok(Some(DisplayItem::Message { message, previews }));
+            return Ok(Some(DisplayItem::Message {
+                message,
+                previews,
+                steps,
+            }));
         }
         if self.ended {
             return Ok(None);
         }
         loop {
-            self.raw.clear();
-            let at = self.read;
-            let read = replay::read_record(&mut self.log, &mut self.raw, replay::RECORD_BYTES)?;
-            self.read = self
-                .read
-                .saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
-            if read == 0 || !self.raw.ends_with(b"\n") {
-                self.ended = true;
-                return Ok(self.notices.pop_front());
-            }
+            // A record that ended a turn of steps is still in hand, and is
+            // read again now that the steps have gone out ahead of it.
+            let at = if let Some(at) = self.again.take() {
+                at
+            } else {
+                {
+                    self.raw.clear();
+                    let at = self.read;
+                    let read =
+                        replay::read_record(&mut self.log, &mut self.raw, replay::RECORD_BYTES)?;
+                    self.read = self
+                        .read
+                        .saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+                    if read == 0 || !self.raw.ends_with(b"\n") {
+                        self.ended = true;
+                        if !self.steps.is_empty() {
+                            let steps = self.stepped();
+                            self.notices.push_back(DisplayItem::Agent(steps));
+                        }
+                        return Ok(self.notices.pop_front());
+                    }
+                    at
+                }
+            };
             let text = std::str::from_utf8(&self.raw)
                 .map_err(|_| invalid())?
                 .trim_end();
@@ -122,8 +167,37 @@ impl DisplayHistory {
                 continue;
             }
             let value: Value = serde_json::from_str(text).map_err(|_| invalid())?;
+            let kind = value
+                .get("run_item")
+                .and_then(|item| item.get("body"))
+                .and_then(|body| body.get("kind"))
+                .and_then(Value::as_str);
+            if kind == Some("agent_step") {
+                let step = value
+                    .get("run_item")
+                    .and_then(|item| item.get("body"))
+                    .and_then(read_step)
+                    .ok_or_else(invalid)?;
+                self.steps.push(step);
+                self.step_bytes = self.step_bytes.saturating_add(text.len());
+                // A turn may go on for longer than is worth holding: what it
+                // did so far goes out on its own, ahead of what it said.
+                if self.step_bytes > crucible_storage::MAX_RUN_HISTORY_BYTES
+                    || self.steps.len() >= crucible_storage::MAX_RUN_ITEMS
+                {
+                    return Ok(Some(DisplayItem::Agent(self.stepped())));
+                }
+                continue;
+            }
+            // Anything a reader sees ends the turn the steps were taken in,
+            // except the answer they were taken while saying, which carries
+            // them. Context is the model's alone and ends nothing here.
+            if !self.steps.is_empty() && ends_steps(kind, text) {
+                self.again = Some(at);
+                return Ok(Some(DisplayItem::Agent(self.stepped())));
+            }
             if let Some(body) = value.get("run_item").and_then(|item| item.get("body")) {
-                if body.get("kind").and_then(Value::as_str) == Some("display_compaction") {
+                if kind == Some("display_compaction") {
                     let details = read_compacted(body).ok_or_else(invalid)?;
                     let pruned = match body.get("pruned") {
                         Some(value) => value.as_bool().ok_or_else(invalid)?,
@@ -225,8 +299,13 @@ impl DisplayHistory {
                 }
                 Message::User { .. } => {}
             }
+            let steps = if matches!(message, Message::Agent { .. }) {
+                self.stepped()
+            } else {
+                Vec::new()
+            };
             if let Some(notice) = self.notices.pop_front() {
-                self.queued = Some((message, shown, at));
+                self.queued = Some((message, shown, steps, at));
                 self.ready = true;
                 return Ok(Some(notice));
             }
@@ -234,8 +313,15 @@ impl DisplayHistory {
             return Ok(Some(DisplayItem::Message {
                 message,
                 previews: shown,
+                steps,
             }));
         }
+    }
+
+    /// The steps held so far, handed over.
+    fn stepped(&mut self) -> Vec<AgentStep> {
+        self.step_bytes = 0;
+        std::mem::take(&mut self.steps)
     }
 
     /// Where in the log the record the last message handed out came from
@@ -260,6 +346,24 @@ impl DisplayHistory {
             None
         }
     }
+}
+
+/// Whether this record is one a reader sees that is not an agent's answer,
+/// which is what ends a turn of steps before an answer came.
+fn ends_steps(kind: Option<&str>, text: &str) -> bool {
+    if kind == Some("display_compaction") {
+        return true;
+    }
+    if kind.is_some() {
+        return false;
+    }
+    if wire::made_room(text).is_some() || wire::cleared(text).is_some() || wire::forgets(text) {
+        return true;
+    }
+    matches!(
+        wire::message(text),
+        Some(Message::User { .. } | Message::ToolResults(_))
+    )
 }
 
 impl Iterator for DisplayHistory {
@@ -342,6 +446,180 @@ fn read_compacted(value: &Value) -> Option<Compacted> {
         before: value.get("before")?.as_u64()?,
         after: value.get("after")?.as_u64()?,
         kept: count(value, "kept")?,
+    })
+}
+
+/// One thing an installed agent did during a turn, kept so that a session
+/// picked up again draws it where the turn drew it.
+///
+/// For the reader alone, as a preview is: the model's transcript holds the
+/// turn's prompt and answer, and nothing here is ever sent anywhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentStep {
+    /// How many bytes of the turn's answer had been said when it happened,
+    /// which is where among the words it goes back.
+    pub at: usize,
+    /// How many round trips the turn had made by then. A run of lookups is
+    /// counted on one line within a round and no further, as it was live.
+    pub round: u32,
+    /// What it was.
+    pub did: AgentDid,
+}
+
+/// What an installed agent did, by its own account.
+///
+/// The three things the turn drew a row for. Every text is the agent's,
+/// bounded and redacted before the turn was told it.
+#[derive(Clone, PartialEq, Eq)]
+pub enum AgentDid {
+    /// It began one of its own calls.
+    Called {
+        /// The agent's identifier for the call.
+        call: ToolId,
+        /// Which tool, as the agent named it.
+        tool: Box<str>,
+        /// What the call was about.
+        summary: Summary,
+        /// What kind of looking-around it was, where that was all it was.
+        looking: Option<Looking>,
+    },
+    /// One of its calls came back.
+    Answered {
+        /// Which call.
+        call: ToolId,
+        /// What it said the call came back with.
+        output: RecordedToolOutput,
+        /// What it said the call did to a file.
+        diff: Option<Diff>,
+    },
+    /// It said it did something it named no call for.
+    Reported {
+        /// Which tool, as the agent named it.
+        tool: Box<str>,
+        /// What it did with it.
+        summary: Box<str>,
+    },
+}
+
+impl fmt::Debug for AgentDid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Called { call, looking, .. } => f
+                .debug_struct("Called")
+                .field("call", call)
+                .field("looking", looking)
+                .finish_non_exhaustive(),
+            Self::Answered { call, output, .. } => f
+                .debug_struct("Answered")
+                .field("call", call)
+                .field("output", output)
+                .finish_non_exhaustive(),
+            Self::Reported { .. } => f.debug_struct("Reported").finish_non_exhaustive(),
+        }
+    }
+}
+
+pub(super) fn agent_step(step: &AgentStep) -> String {
+    let did = match &step.did {
+        AgentDid::Called {
+            call,
+            tool,
+            summary,
+            looking,
+        } => {
+            let mut called = json!({
+                "id": call.as_str(), "tool": &**tool, "summary": summary.as_str(),
+                "about": match summary.argument() {
+                    Argument::Path => "path", Argument::Address => "address",
+                    Argument::Command => "command", Argument::Other => "other",
+                },
+            });
+            if let (Some(looking), Value::Object(called)) = (looking, &mut called) {
+                called.insert("looking".to_owned(), json!(looked(*looking)));
+            }
+            json!({ "called": called })
+        }
+        AgentDid::Answered { call, output, diff } => {
+            let mut answered = wire::answered(&ToolResult {
+                id: call.clone(),
+                output: output.clone(),
+            });
+            if let (Some(diff), Value::Object(answered)) = (diff, &mut answered) {
+                answered.insert("diff".to_owned(), preview(diff));
+            }
+            json!({ "answered": answered })
+        }
+        AgentDid::Reported { tool, summary } => {
+            json!({ "reported": { "tool": &**tool, "summary": &**summary } })
+        }
+    };
+    json!({ "run_item": { "version": 2, "body": {
+        "kind": "agent_step", "at": step.at, "round": step.round, "did": did,
+    }}})
+    .to_string()
+}
+
+const fn looked(looking: Looking) -> &'static str {
+    match looking {
+        Looking::Pattern => "pattern",
+        Looking::File => "file",
+        Looking::Directory => "directory",
+        Looking::Command => "command",
+        Looking::WebSearch => "web_search",
+        Looking::WebPage => "web_page",
+    }
+}
+
+fn read_step(body: &Value) -> Option<AgentStep> {
+    let did = body.get("did")?;
+    let did = if let Some(called) = did.get("called") {
+        AgentDid::Called {
+            call: ToolId::new(called.get("id")?.as_str()?),
+            tool: called.get("tool")?.as_str()?.into(),
+            summary: Summary::of(
+                match called.get("about")?.as_str()? {
+                    "path" => Argument::Path,
+                    "address" => Argument::Address,
+                    "command" => Argument::Command,
+                    "other" => Argument::Other,
+                    _ => return None,
+                },
+                called.get("summary")?.as_str()?,
+            ),
+            looking: match called.get("looking") {
+                Some(looking) => Some(match looking.as_str()? {
+                    "pattern" => Looking::Pattern,
+                    "file" => Looking::File,
+                    "directory" => Looking::Directory,
+                    "command" => Looking::Command,
+                    "web_search" => Looking::WebSearch,
+                    "web_page" => Looking::WebPage,
+                    _ => return None,
+                }),
+                None => None,
+            },
+        }
+    } else if let Some(answered) = did.get("answered") {
+        let result = wire::result(answered)?;
+        AgentDid::Answered {
+            call: result.id,
+            output: result.output,
+            diff: match answered.get("diff") {
+                Some(diff) => Some(read_preview(diff)?),
+                None => None,
+            },
+        }
+    } else {
+        let reported = did.get("reported")?;
+        AgentDid::Reported {
+            tool: reported.get("tool")?.as_str()?.into(),
+            summary: reported.get("summary")?.as_str()?.into(),
+        }
+    };
+    Some(AgentStep {
+        at: count(body, "at")?,
+        round: u32::try_from(body.get("round")?.as_u64()?).ok()?,
+        did,
     })
 }
 

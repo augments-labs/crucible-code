@@ -71,7 +71,7 @@ pub(crate) fn restored_output(
 }
 
 use claim::{Claim, Claimed, claim};
-pub use display::{DisplayHistory, DisplayItem};
+pub use display::{AgentDid, AgentStep, DisplayHistory, DisplayItem};
 pub use glimpse::{Glimpse, glimpse};
 use log::{Placed, Placing, Request as LogRequest, Trouble, make, open, shorten};
 pub use places::Place;
@@ -782,6 +782,20 @@ impl Session {
         drop(to.send(LogRequest::Line(
             display::compacted(compacted, pruned).into(),
         )));
+    }
+
+    /// Records one thing an installed agent did, for a resume to draw where
+    /// the turn drew it.
+    ///
+    /// For the reader alone, as a display preview is: model replay passes
+    /// over the line. One too large to be a record is not written, and the
+    /// resume draws the turn without it.
+    pub fn agent_step(&self, step: &AgentStep) {
+        let Some(to) = &self.to else { return };
+        let line = display::agent_step(step);
+        if line.len() <= crucible_storage::MAX_RUN_ITEM_BYTES {
+            drop(to.send(LogRequest::Line(line.into())));
+        }
     }
 
     /// Records that room was made, and what the notes stand in place of.

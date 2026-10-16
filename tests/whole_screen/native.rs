@@ -120,7 +120,7 @@ fn dividers(read: &str, rule: &str) -> usize {
 }
 
 /// The session the run in `window` recorded, by the id `/resume` takes.
-fn recorded_id(window: &Watched) -> String {
+pub(crate) fn recorded_id(window: &Watched) -> String {
     fn found(directory: &std::path::Path) -> Option<String> {
         for entry in std::fs::read_dir(directory).ok()?.flatten() {
             let path = entry.path();

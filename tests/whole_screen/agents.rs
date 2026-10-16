@@ -855,6 +855,64 @@ fn an_agent_s_lookups_are_counted_on_one_line() {
     }
 }
 
+/// A session the agent ran, opened again in a new window, draws the agent's
+/// calls as it drew them while they ran: the call rows and what they came
+/// back with, the change an edit made, and the lookups counted on one line,
+/// in either screen mode.
+#[test]
+fn a_resumed_agent_session_draws_the_agent_s_calls_as_they_were_drawn() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-resumed-{mode}");
+        let script = Script::of(signed_in([claude::worked()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut first =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        connected(&mut first);
+        first.types_until("Do it all.\r", "Done.");
+        assert!(
+            first.picture().contains("Searched for 1 pattern"),
+            "{mode} drew the turn as it ran\n{}",
+            first.picture()
+        );
+        first.ends_on("TERM");
+        let id = crate::native::recorded_id(&first);
+
+        let again = Script::of(signed_in([]));
+        let mut window =
+            Watched::capturing_agents(&case, (80, 60), native, &vendor, (Some(&again), ""));
+        connected(&mut window);
+        window.types_until(&format!("/resume {id}\r"), "Done.");
+        let picture = window.picture();
+
+        let row = |called: &str| {
+            picture.lines().any(|line| {
+                line.trim_start_matches('|').starts_with(&format!(
+                    "{} {called}",
+                    char::from_u32(0x25CF).unwrap_or('*')
+                ))
+            })
+        };
+        let came_back = |said: &str| {
+            picture
+                .lines()
+                .any(|line| line.contains('\u{23BF}') && line.contains(said))
+        };
+        assert!(
+            row(&format!("Bash({})", claude::LISTED)) && came_back(claude::LISTING[0]),
+            "{mode} draws the agent's command and what it printed again\n{picture}"
+        );
+        assert!(
+            row(&format!("Edit({})", claude::EDITED)) && came_back("Added 1 line"),
+            "{mode} draws the agent's edit and its change again\n{picture}"
+        );
+        assert!(
+            picture.contains("Searched for 1 pattern, read 2 files"),
+            "{mode} counts the agent's lookups on one line again\n{picture}"
+        );
+    }
+}
+
 /// Asserts `picture` shows the priced turn the agent reported, headed as its
 /// report, and nothing only a native route has.
 fn reported(picture: &str, drawn: &str) {
