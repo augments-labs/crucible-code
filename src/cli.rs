@@ -1023,11 +1023,15 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     let providers = providers()?;
     // What a provider is served on is read again, from the store as it is
     // then, once a credential taken out may have moved it: another may still
-    // serve it, and the write that took it out may have failed.
+    // serve it, and the write that took it out may have failed. It and the
+    // two the session is set up again through read the access a login during
+    // the run rewrote out of one record, so none takes a provider for an
+    // agent's once it reaches the provider directly.
+    let rewritten = crucible_app::access::Rewritten::new();
     services
         .consent()
         .resolves(crucible_app::providers::resolving(
-            settings.clone(),
+            (settings.clone(), rewritten.clone()),
             subscriptions.clone(),
             &providers.snapshot(),
             std::sync::Arc::new(|name: &str| std::env::var(name).ok()),
@@ -1135,7 +1139,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // the session asking what the next run here would ask, rather than what
         // a second reading of the same files happened to say.
         serving: re_serving(
-            settings.clone(),
+            (settings.clone(), rewritten.clone()),
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
             services.http().clone(),
@@ -1144,12 +1148,13 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // And the web sources a switch builds again, through the same files,
         // logins and environment, so a search names the model asked now.
         sourcing: re_sourcing(
-            settings.clone(),
+            (settings.clone(), rewritten.clone()),
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
             services.http().clone(),
             services.consent().clone(),
         ),
+        rewritten,
         environment: Box::new(|name| std::env::var(name).ok()),
 
         // The two `/resume` reads a directory of logs with. Both are settled

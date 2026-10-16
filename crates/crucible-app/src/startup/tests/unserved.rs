@@ -49,7 +49,7 @@ fn a_credential_whose_provider_cannot_be_built_still_leaves_a_provider_to_choose
     assert_eq!(conversation.missing(), Some(Missing::Provider));
 
     let set_up = re_serving(
-        settings.clone(),
+        (settings.clone(), crate::access::Rewritten::new()),
         subscriptions.clone(),
         Box::new(from),
         services.http().clone(),
@@ -64,6 +64,7 @@ fn a_credential_whose_provider_cannot_be_built_still_leaves_a_provider_to_choose
         sourcing: &sourcing,
         logins: &logins,
         choosing: &choosing,
+        rewritten: &crate::access::Rewritten::new(),
     };
     let left = services
         .runtime()

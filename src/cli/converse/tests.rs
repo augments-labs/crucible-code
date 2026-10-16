@@ -103,6 +103,7 @@ pub(crate) fn plain() -> Terms {
         // watched, and a loop these terms drive must not write a key into
         // whatever home the machine running the suite has.
         logins: Store::in_home(&unwritten),
+        rewritten: crucible_app::access::Rewritten::new(),
         subscriptions: crucible_app::subscription::Subscriptions::production(
             &crucible_auth::Renewals::new(),
         ),

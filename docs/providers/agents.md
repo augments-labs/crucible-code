@@ -14,19 +14,19 @@ run in the conversation's mode, is refused before anything is recorded. The sect
 agent is run.
 
 `/login` in a conversation running on an agent offers all three choices. For
-the provider the agent reaches, a subscription or key leaves the agent
-answering: it is stored, the provider's `access` is rewritten from
-`externalAgent` to `subscription` or `apiKey` and the provider is made the
-`provider` asked, so the next session asks it directly; if that cannot be
-written, the file is left as it was and the next session still runs on the
-agent. The provider the agent reaches includes the one a connect during this
-run moved the conversation off. A subscription or key for a provider no agent
-reaches moves the conversation off the agent onto that provider at once, in a
-new session in the same permission mode, with nothing carried over; its line
-says so, and the session it left stays listed and can be resumed. Where that
-provider cannot be set up, its line says why and the conversation stays on the
-agent; where the new session cannot be started, or another agent reaches the
-provider, the credential is only stored. `/logout` for the
+the provider the agent reaches, a subscription or key is stored, the
+provider's `access` is rewritten from `externalAgent` to `subscription` or
+`apiKey` and the provider is made the `provider` asked; if that cannot be
+written, the file is left as it was and the conversation stays on the agent.
+The provider the agent reaches includes the one a connect during this run
+moved the conversation off. Once written, and for a subscription or key for a
+provider no agent reaches, the conversation moves off the agent onto that
+provider at once, in a new session in the same permission mode, with nothing
+carried over; its line says so, and the session it left stays listed and can
+be resumed. Where that provider cannot be set up, its line says why and the
+conversation stays on the agent; where the new session cannot be started, or
+another agent reaches the provider, the credential is only stored, and a
+rewritten `access` is read from the next launch. `/logout` for the
 provider the agent reaches removes the stored credential and says the agent
 still reaches it.
 

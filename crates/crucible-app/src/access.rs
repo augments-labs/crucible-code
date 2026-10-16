@@ -25,6 +25,10 @@
 //! looked for, or nowhere. `/login` asks the configuration only whether one is
 //! renamed, to say so.
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, PoisonError};
+
 use crucible_auth::{Held, Kind};
 use crucible_config::{Access, Driver, Settings};
 use crucible_credentials::{ApiKey, CredentialError};
@@ -412,6 +416,54 @@ fn settled(
                 enabled: agent.enabled(),
             }))
         }
+    }
+}
+
+/// How a login during this run rewrote providers' access, read in place of
+/// what the files read at launch say, which are not read again.
+///
+/// A login for the provider an installed agent reaches writes that provider
+/// down as reached by its own credential and moves the conversation onto it
+/// at once; everything that resolves a provider during the run — setting it
+/// up, its web sources and what the content-use hold reads — reads it through
+/// one of these, so none can still take it for the agent's. Shared by clone,
+/// and holds at most one entry per provider the registry serves.
+#[derive(Clone, Default)]
+pub struct Rewritten(Arc<Mutex<BTreeMap<Box<str>, Access>>>);
+
+impl std::fmt::Debug for Rewritten {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_tuple("Rewritten").field(&*self.held()).finish()
+    }
+}
+
+impl Rewritten {
+    /// None rewritten: a run's at launch.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Reads `provider` as reached by `access` from now on.
+    pub(crate) fn rewrite(&self, provider: &str, access: Access) {
+        self.held().insert(provider.into(), access);
+    }
+
+    /// `settings` with every access rewritten so far in place of its own.
+    pub(crate) fn over<'s>(&self, settings: &'s Settings) -> Cow<'s, Settings> {
+        let held = self.held();
+        if held.is_empty() {
+            return Cow::Borrowed(settings);
+        }
+        let mut read = settings.clone();
+        for (provider, access) in held.iter() {
+            read = read.reaching(provider, access);
+        }
+        Cow::Owned(read)
+    }
+
+    fn held(&self) -> std::sync::MutexGuard<'_, BTreeMap<Box<str>, Access>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

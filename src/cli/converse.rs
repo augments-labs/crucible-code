@@ -258,6 +258,9 @@ pub(crate) struct Terms {
     /// here and one built there pointing at different files would be a `/login`
     /// that wrote where nothing reads.
     pub(crate) logins: Store,
+    /// How a login during this run rewrote a provider's access, read by
+    /// `serving`, `sourcing` and the content-use hold in place of `settings`.
+    pub(crate) rewritten: crucible_app::access::Rewritten,
     /// Subscription implementations compiled into this binary.
     pub(crate) subscriptions: Subscriptions,
     /// The yes given to each route whose vendor uses what is sent, which the
@@ -339,6 +342,7 @@ impl Terms {
             sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
+            rewritten: &self.rewritten,
         }
     }
 

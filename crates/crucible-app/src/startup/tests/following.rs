@@ -60,6 +60,7 @@ struct Run {
     sourcing: Sourcing,
     logins: crucible_auth::Store,
     choosing: std::path::PathBuf,
+    rewritten: crate::access::Rewritten,
     conversation: Conversation,
 }
 
@@ -119,16 +120,17 @@ impl Run {
         .expect("a start with a key");
 
         let switching = keys.switching;
+        let rewritten = crate::access::Rewritten::new();
         Self {
             serving: re_serving(
-                settings.clone(),
+                (settings.clone(), rewritten.clone()),
                 subscriptions.clone(),
                 Box::new(move |_| switching.map(str::to_owned)),
                 services.http().clone(),
                 services.consent().clone(),
             ),
             sourcing: re_sourcing(
-                settings.clone(),
+                (settings.clone(), rewritten.clone()),
                 subscriptions,
                 Box::new(move |_| switching.map(str::to_owned)),
                 services.http().clone(),
@@ -136,6 +138,7 @@ impl Run {
             ),
             logins,
             choosing: sample.user_file(),
+            rewritten,
             providers: catalogue(),
             settings,
             services,
@@ -157,6 +160,7 @@ impl Run {
             sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
+            rewritten: &self.rewritten,
         };
         runtime.block_on(switch(&mut self.conversation, &with))
     }

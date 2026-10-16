@@ -1371,20 +1371,22 @@ pub type SharedLookup = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + S
 /// Everything is owned rather than borrowed, because the closure is kept for
 /// the length of the run and a borrow would put its lifetime into every
 /// signature the closure is passed through. The settings are the files this
-/// run already read: nothing in them grows with the transcript. `from` is the
+/// run already read, under what `rewritten` says a login during the run
+/// rewrote: nothing in them grows with the transcript. `from` is the
 /// environment lookup, handed in like every other source this crate reads, so
 /// that a caller with no environment to offer can say so.
 ///
 /// `consent` is told what the provider is served on each time, before a
 /// request could go: a credential just stored or forgotten can move it.
 pub fn re_serving(
-    settings: Settings,
+    (settings, rewritten): (Settings, access::Rewritten),
     subscriptions: Subscriptions,
     from: Lookup,
     http: HttpTurns,
     consent: Consent,
 ) -> Serving {
     Box::new(move |named: Served, stored: &StoredCredentials| {
+        let settings = rewritten.over(&settings);
         let auth = startup::ProviderAuth {
             settings: &settings,
             from: &*from,
@@ -1427,7 +1429,7 @@ pub type Sourcing = Box<dyn Fn(Served, &str, &StoredCredentials) -> startup::Rea
 /// Owned for the reason [`re_serving`]'s values are. `consent` holds a source
 /// for a model whose route is warned until that route's yes.
 pub fn re_sourcing(
-    settings: Settings,
+    (settings, rewritten): (Settings, access::Rewritten),
     subscriptions: Subscriptions,
     from: Lookup,
     http: HttpTurns,
@@ -1435,6 +1437,7 @@ pub fn re_sourcing(
 ) -> Sourcing {
     Box::new(
         move |named: Served, model: &str, stored: &StoredCredentials| {
+            let settings = rewritten.over(&settings);
             startup::reached(
                 named,
                 model,
@@ -1457,7 +1460,7 @@ pub fn re_sourcing(
 ///
 /// `store` is read and never written, so it carries no hook of its own.
 pub fn resolving(
-    settings: Settings,
+    (settings, rewritten): (Settings, access::Rewritten),
     subscriptions: Subscriptions,
     providers: &Providers,
     from: SharedLookup,
@@ -1475,6 +1478,7 @@ pub fn resolving(
         if stored.unread() {
             return Reading::Unread;
         }
+        let settings = rewritten.over(&settings);
         Reading::Served(startup::served_on(
             one,
             startup::ProviderAuth {

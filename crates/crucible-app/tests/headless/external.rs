@@ -2633,10 +2633,11 @@ fn a_connect_moves_a_conversation_on_the_provider_s_model_onto_the_route() -> Re
 
 /// A key logged in, after a connect moved the conversation onto the agent,
 /// for the provider it was moved off is written down as how that provider is
-/// reached from the next run on, though the files read at launch had no route.
+/// reached, though the files read at launch had no route, and moves the
+/// conversation back onto it.
 #[test]
-fn a_key_for_the_provider_a_connect_moved_off_is_written_for_the_next_run() -> Result<(), Failed> {
-    use crucible_client_api::{LoginOutcome, Text};
+fn a_key_for_the_provider_a_connect_moved_off_moves_back_onto_it() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Retained, Text};
 
     let tree = Tree::new("external-connect-then-key")?;
     let native = started_native(&tree, Script::new(Vec::new()))?;
@@ -2665,11 +2666,13 @@ fn a_key_for_the_provider_a_connect_moved_off_is_written_for_the_next_run() -> R
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::NextLaunch {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("anthropic"),
+            retained: Retained::default(),
             unwritten: None,
         })
     );
+    assert!(conversation.session().route().is_none());
     assert_eq!(file, CONNECTED_FILE);
     let keyed: serde_json::Value = serde_json::from_str(&keyed)?;
     assert_eq!(
@@ -3167,21 +3170,28 @@ fn logout(provider: crucible_client_api::Name) -> Command {
 }
 
 /// A key logged in for the provider the route reaches is written down as how
-/// it is reached and asked from the next run on, and the conversation stays on
-/// the route meanwhile.
+/// it is reached, and the conversation moves off the route onto it at once,
+/// in a new session, as a login for a provider the route does not reach does.
 #[test]
-fn a_login_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Result<(), Failed> {
-    use crucible_client_api::{Execution, LoginOutcome, Name, Text};
+fn a_login_for_the_route_s_provider_moves_onto_it_directly() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name, Retained, Text};
 
     let tree = Tree::new("external-login-routed")?;
     let mut outside = Outside::new(&tree, &connected([]))?;
+    let left = outside
+        .conversation
+        .session()
+        .id()
+        .cloned()
+        .ok_or("an id")?;
 
     let (outcome, file) = crediting(&tree, &mut outside, ROUTED, "anthropic", login)?;
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::NextLaunch {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("anthropic"),
+            retained: Retained::default(),
             unwritten: None,
         })
     );
@@ -3195,19 +3205,27 @@ fn a_login_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Resul
         "the key logged in is no longer stored"
     );
     let standing = client::snapshot(&outside.conversation);
-    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
-    assert_eq!(standing.provider, None);
+    assert_eq!(standing.execution, Execution::Native);
+    assert_eq!(standing.provider, Some(Name::new("anthropic")?));
+    assert_eq!(
+        standing.model,
+        crucible_client_api::Model::new("claude-opus-5-5")
+    );
+    let moved = outside.conversation.session();
+    assert!(moved.route().is_none(), "{:?}", moved.route());
+    assert!(
+        moved.id().is_some_and(|moved| *moved != left),
+        "no new session"
+    );
     Ok(())
 }
 
 /// An account signed in for the provider the route reaches is written down as
-/// reached by its subscription from the next run on, and the conversation stays
-/// on the route meanwhile. OpenAI's, since its accounts are ones this program
-/// can sign in.
+/// reached by its subscription, and the conversation moves off the route onto
+/// it at once. OpenAI's, since its accounts are ones this program can sign in.
 #[test]
-fn a_subscription_for_the_route_s_provider_is_written_for_the_next_run_alone() -> Result<(), Failed>
-{
-    use crucible_client_api::{Execution, LoginOutcome, Name, Text};
+fn a_subscription_for_the_route_s_provider_moves_onto_it_directly() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name, Retained, Text};
 
     let tree = Tree::new("external-login-subscribed")?;
     let mut outside = Outside::new(&tree, &connected([]))?;
@@ -3229,8 +3247,9 @@ fn a_subscription_for_the_route_s_provider_is_written_for_the_next_run_alone() -
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::NextLaunch {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("openai"),
+            retained: Retained::default(),
             unwritten: None,
         })
     );
@@ -3240,8 +3259,8 @@ fn a_subscription_for_the_route_s_provider_is_written_for_the_next_run_alone() -
         .replace(r#""apiKey""#, r#""subscription""#);
     assert_eq!(file, subscribed);
     let standing = client::snapshot(&outside.conversation);
-    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
-    assert_eq!(standing.provider, None);
+    assert_eq!(standing.execution, Execution::Native);
+    assert_eq!(standing.provider, Some(Name::new("openai")?));
     Ok(())
 }
 
@@ -3351,11 +3370,10 @@ const BESIDE: &str = r#"{
 "#;
 
 /// A key for a second provider the route reaches is written down as the way
-/// it is reached from the next launch, as the first one's is.
+/// it is reached, and moves the conversation onto it, as the first one's does.
 #[test]
-fn a_login_for_a_second_provider_the_route_reaches_waits_for_the_next_launch() -> Result<(), Failed>
-{
-    use crucible_client_api::{LoginOutcome, Text};
+fn a_login_for_a_second_provider_the_route_reaches_moves_onto_it() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Retained, Text};
 
     let tree = Tree::new("external-login-second-routed")?;
     let mut outside = Outside::new(&tree, &connected([]))?;
@@ -3364,8 +3382,9 @@ fn a_login_for_a_second_provider_the_route_reaches_waits_for_the_next_launch() -
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::NextLaunch {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("openai"),
+            retained: Retained::default(),
             unwritten: None,
         })
     );
@@ -3374,7 +3393,7 @@ fn a_login_for_a_second_provider_the_route_reaches_waits_for_the_next_launch() -
         file.pointer("/providers/openai/access/type"),
         Some(&serde_json::json!("apiKey"))
     );
-    assert!(outside.conversation.session().route().is_some());
+    assert!(outside.conversation.session().route().is_none());
     Ok(())
 }
 
