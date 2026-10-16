@@ -2914,6 +2914,57 @@ fn a_key_for_a_provider_holding_a_credential_says_what_it_replaces_and_replaces_
 }
 
 #[test]
+fn a_row_holding_its_providers_credential_is_used_as_held_or_replaced() {
+    // The row's own credential is taken as it is stored, with nothing typed
+    // and nothing written; or replaced, through the box it always opened.
+    for (kind, row) in [
+        ("Provide your own API key", "Anthropic"),
+        ("Your account with subscription", "OpenAI"),
+    ] {
+        let mut window = Watched::open("login-held-used", 80, 30);
+        let store = window.home().join("auth.json");
+        std::fs::write(&store, HELD_THREE).expect("a store");
+
+        window.types_until("/login\r", "Provide your own API key");
+        takes(&mut window, kind);
+        window.types_until("", row);
+        takes(&mut window, row);
+        window.types_until("", "Use it");
+        if window.picture().contains("Use it anyway") {
+            window.types("\r");
+        }
+        window.types_until("", "Replace it");
+        let choice = window.picture();
+        assert!(choice.contains("Replace it"), "{row}: {choice}");
+        assert!(!choice.contains("It replaces"), "{row}: {choice}");
+
+        takes(&mut window, "Use it");
+        window.types_until("", "login successful");
+        assert_eq!(
+            std::fs::read_to_string(&store).expect("the store"),
+            HELD_THREE,
+            "{row}: nothing written to use what is held"
+        );
+    }
+
+    let mut window = Watched::open("login-held-replaced", 80, 30);
+    std::fs::write(window.home().join("auth.json"), HELD_THREE).expect("a store");
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Provide your own API key");
+    window.types_until("", "Anthropic");
+    takes(&mut window, "Anthropic");
+    window.types_until("", "Replace it");
+    takes(&mut window, "Replace it");
+    window.types_until("", "It replaces");
+    let picture = window.picture();
+    let sentence = picture.replace("|\n|", " ").replace("  ", " ");
+    assert!(
+        sentence.contains("It replaces the API key held for Anthropic"),
+        "{picture}"
+    );
+}
+
+#[test]
 fn words_after_login_narrow_the_rows_and_stand_them_under_their_kinds() {
     for columns in [80, 40] {
         let mut window = Watched::open(&format!("login-narrowed-{columns}"), columns, 30);

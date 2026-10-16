@@ -564,7 +564,9 @@ subscription* lists the accounts, and *Provide your own API key* lists the
 providers, each row naming the variable the provider reads from, and opens the
 same box. *Use an installed coding agent*, offered where this release ships one,
 connects an [installed agent](agents.md) to the provider it signs in to. A row that holds the credential its provider is served by says
-`signed in`.
+`signed in`, and taking it asks first: *Use it* reaches the provider with the
+credential already stored, with nothing typed or written, and *Replace it*
+opens the box or sign-in that gives another in its place.
 
 The command reports that the key was stored, not that it was verified. Provider
 authentication is established by the next request; a rejected key stays stored

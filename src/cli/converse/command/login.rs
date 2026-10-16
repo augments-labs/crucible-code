@@ -17,7 +17,9 @@
 //! name. Several rows left stand under the headings of their kinds; one opens
 //! its screen at once; none is said in one line naming the words.
 //!
-//! A row whose provider holds a credential says on its next screen what will be
+//! A row holding its provider's credential first asks whether that credential
+//! is used as it is stored, which reaches the provider with nothing typed or
+//! written, or replaced. Replacing it says on the next screen what will be
 //! replaced. Nothing is replaced until the new one is stored, so a sign-in that
 //! fails, is refused or expires leaves the store as it was and says what is
 //! unchanged. A sign-in stopped by Escape while its credential is being written
@@ -847,6 +849,19 @@ fn opening<T: Terminal>(
         )?;
         return Ok(Closed::Done);
     };
+    // A row holding its provider's credential is asked about first, so the
+    // credential already stored is taken without being given again.
+    if walk.held.contains(way) {
+        match holding_choice(way, opened, walk)? {
+            Holding::Use => {
+                warning::stored(walk.renderer, walk.terms, &content_use::row_route(way))?;
+                taken(named, walk.renderer, walk.conversation, walk.terms)?;
+                return Ok(Closed::Done);
+            }
+            Holding::Replace => {}
+            Holding::Closed(closed) => return Ok(closed),
+        }
+    }
     match way.kind {
         // The row a provider's key has always been read for, opened by the
         // command: the way `/login anthropic` comes in.
@@ -857,6 +872,62 @@ fn opening<T: Terminal>(
         Kind::Key => keyed(way, named, opened, walk),
         Kind::Account => signed(way, opened, walk),
     }
+}
+
+/// What is done with a row's credential already stored.
+enum Holding {
+    /// Taken as it is stored.
+    Use,
+    /// Given again, through the row's key box or sign-in.
+    Replace,
+    /// Neither: the screen closed as it says.
+    Closed(Closed),
+}
+
+/// Asks whether the credential `way` holds is used as it is or replaced.
+fn holding_choice<T: Terminal>(
+    way: &Way,
+    opened: Opened,
+    walk: &mut Walk<'_, T>,
+) -> Result<Holding, Fatal> {
+    let glyphs = walk.terms.style().glyphs();
+    let title = drawn(way.shown, glyphs);
+    let said = format!("A {} is stored for this row.", credential(way));
+    let replace = match way.kind {
+        Kind::Key => "give another key in its place",
+        Kind::Account => "sign in again in its place",
+    };
+    let shown = [
+        Offered {
+            name: "Use it",
+            says: "ask with what is stored, nothing typed",
+        },
+        Offered {
+            name: "Replace it",
+            says: replace,
+        },
+    ];
+    let panel = Panel {
+        source: None,
+        title: &title,
+        said: Some(&said),
+        told: &[],
+        shown: &shown,
+        chosen: 0,
+        footer: opened.leaves(),
+    };
+    Ok(
+        match picking::pick(walk.renderer, walk.terms.style(), panel)? {
+            Picked::Took(0) => Holding::Use,
+            Picked::Took(_) => Holding::Replace,
+            Picked::Left if opened == Opened::Below => Holding::Closed(Closed::Back),
+            Picked::Left => {
+                say(walk.renderer, LEFT)?;
+                Holding::Closed(Closed::Done)
+            }
+            Picked::Cramped => Holding::Closed(Closed::Cramped),
+        },
+    )
 }
 
 /// The key box for `way`, and the key written down under its name.
