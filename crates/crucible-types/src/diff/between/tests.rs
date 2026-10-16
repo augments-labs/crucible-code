@@ -1,8 +1,6 @@
 //! What the two versions of a file say happened between them.
 
-use crucible_types::{Change, Diff};
-
-use super::between;
+use crate::diff::{Change, Diff};
 
 /// A file of `lines`, each ended, the way one comes off a disk.
 fn file(lines: &[&str]) -> String {
@@ -53,7 +51,7 @@ fn a_replaced_comment_block_reads_the_way_it_sits_in_the_file() {
         "# what produced them, for whoever goes to the run to read the trend.",
     ]);
 
-    let diff = between(&before, &after);
+    let diff = Diff::between(&before, &after);
 
     assert_eq!((diff.added(), diff.removed()), (9, 3));
     assert_eq!(diff.dropped(), 0);
@@ -101,7 +99,7 @@ fn a_replaced_comment_block_reads_the_way_it_sits_in_the_file() {
 fn a_call_that_left_the_file_alone_has_nothing_to_show() {
     let text = file(&["one", "two", "three"]);
 
-    let diff = between(&text, &text);
+    let diff = Diff::between(&text, &text);
 
     assert!(diff.is_empty());
     assert_eq!(diff.lines(), []);
@@ -112,7 +110,7 @@ fn lines_put_in_are_shown_against_the_ones_they_landed_between() {
     let before = file(&["one", "two", "three", "four", "five"]);
     let after = file(&["one", "two", "three", "new", "four", "five"]);
 
-    let diff = between(&before, &after);
+    let diff = Diff::between(&before, &after);
 
     assert_eq!((diff.added(), diff.removed()), (1, 0));
     assert_eq!(
@@ -133,7 +131,7 @@ fn lines_taken_out_keep_the_numbers_they_had_before_they_went() {
     let before = file(&["one", "two", "three", "four", "five"]);
     let after = file(&["one", "two", "five"]);
 
-    let diff = between(&before, &after);
+    let diff = Diff::between(&before, &after);
 
     assert_eq!((diff.added(), diff.removed()), (0, 2));
     assert_eq!(
@@ -150,7 +148,7 @@ fn lines_taken_out_keep_the_numbers_they_had_before_they_went() {
 
 #[test]
 fn a_change_at_either_end_of_a_file_has_context_on_one_side_only() {
-    let top = between(
+    let top = Diff::between(
         &file(&["one", "two", "three"]),
         &file(&["ONE", "two", "three"]),
     );
@@ -164,7 +162,7 @@ fn a_change_at_either_end_of_a_file_has_context_on_one_side_only() {
         ]
     );
 
-    let bottom = between(
+    let bottom = Diff::between(
         &file(&["one", "two", "three"]),
         &file(&["one", "two", "THREE"]),
     );
@@ -188,7 +186,7 @@ fn a_file_of_repeated_lines_is_never_counted_from_both_ends_at_once() {
     let before = file(&["same", "same", "same", "same"]);
     let after = file(&["same", "same"]);
 
-    let diff = between(&before, &after);
+    let diff = Diff::between(&before, &after);
 
     assert_eq!((diff.added(), diff.removed()), (0, 2));
     assert_eq!(
@@ -207,7 +205,7 @@ fn a_change_to_every_line_is_counted_whole_and_shown_as_far_as_it_is_allowed() {
     let before = run("old", 100);
     let after = run("new", 100);
 
-    let diff = between(&before, &after);
+    let diff = Diff::between(&before, &after);
 
     // The counts are of the call. What the block stops short of is said in the
     // same place rather than left for the reader to notice.

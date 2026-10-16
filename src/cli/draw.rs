@@ -179,8 +179,8 @@ pub(crate) fn event<T: Terminal>(
             kept.calling(call, called_as(&tool, &summary).text().to_owned());
             renderer.settle()
         }
-        Event::AgentAnswered { call, output } => {
-            came_back(renderer, kept, &call, Shown::reported(output), style)
+        Event::AgentAnswered { call, output, diff } => {
+            came_back(renderer, kept, &call, Shown::reported(output, diff), style)
         }
 
         // A file the agent said it changed, under no call of its: a block of
@@ -1629,12 +1629,11 @@ impl Shown {
         }
     }
 
-    /// What an installed agent said one of its own calls came back with.
-    ///
-    /// Its text alone: nothing here ran the call, so there is no change to
-    /// show beside it.
-    pub(crate) const fn reported(output: RecordedToolOutput) -> Self {
-        Self { output, diff: None }
+    /// What an installed agent said one of its own calls came back with, and
+    /// the change it said the call made, which is its word and not a change
+    /// anything here watched happen.
+    pub(crate) const fn reported(output: RecordedToolOutput, diff: Option<Diff>) -> Self {
+        Self { output, diff }
     }
 
     /// A result read back from a session, with the preview its log kept.

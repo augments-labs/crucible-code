@@ -13,7 +13,7 @@
 
 use std::fmt;
 
-use crucible_types::{Compacting, TurnId};
+use crucible_types::{Compacting, Diff, TurnId};
 
 use crate::backend::{Failure, Outcome, SessionRef};
 use crate::capability::Observation;
@@ -333,6 +333,9 @@ pub enum Event {
         failed: bool,
         /// What it reported, which may be nothing.
         report: Text,
+        /// What the call did to a file, line by line, where the agent said;
+        /// bounded as every diff is, and for the reader alone.
+        diff: Option<Diff>,
     },
     /// A file changed.
     FileChanged {

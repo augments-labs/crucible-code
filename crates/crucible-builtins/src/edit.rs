@@ -30,14 +30,13 @@ use crucible_tools::{
     Approved, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolContext, ToolError,
     ToolOutput,
 };
-use crucible_types::ToolArgs;
+use crucible_types::{Diff, ToolArgs};
 use crucible_workspace::{PathError, Workspace};
 
 use std::sync::LazyLock;
 
 use crate::args::Args;
 use crate::atomic;
-use crate::changed;
 use crate::ledger::{Fingerprint, Ledger, Shown};
 use crate::schema::{Field, Schema, Shape};
 use crate::summary;
@@ -357,7 +356,7 @@ fn edited(
     }
 
     let output = ToolOutput::ok(format!("changed {requested}, {replaced} replacements"))
-        .showing(changed::between(&before, &after));
+        .showing(Diff::between(&before, &after));
 
     // The file is now held to what this edit made, so the next change needs
     // no read first. That holds for a file the session never read too: what

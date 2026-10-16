@@ -8,7 +8,7 @@
 //! if it had said something known.
 
 use crucible_execution::{Cost, Currency, Failure};
-use crucible_types::Compacting;
+use crucible_types::{Change, Compacting, Diff, Line};
 use serde_json::Value;
 
 /// The largest amount a cost may report, in dollars: far beyond any session,
@@ -64,6 +64,19 @@ const SYSTEM_PASSED_OVER: [&str; 29] = [
     "post_turn_summary",
 ];
 
+/// What one tool the model called came back with.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Answer {
+    /// The call's id.
+    pub(crate) call: String,
+    /// Whether it failed.
+    pub(crate) failed: bool,
+    /// The text it came back with.
+    pub(crate) said: String,
+    /// What it did to a file, where it says.
+    pub(crate) diff: Option<Diff>,
+}
+
 /// One frame, as far as a turn is concerned.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Frame {
@@ -71,9 +84,8 @@ pub(crate) enum Frame {
     Session(Init),
     /// A message from the model.
     Assistant(Assistant),
-    /// What the tools the model called reported, each a call's id, whether
-    /// it failed and the text it came back with.
-    Reported(Vec<(String, bool, String)>),
+    /// What the tools the model called reported.
+    Reported(Vec<Answer>),
     /// The turn ended.
     Result(Ended),
     /// The program asks whether a tool may run.
@@ -275,15 +287,19 @@ fn carried(message: &Value) -> Option<u64> {
     })
 }
 
-/// The tool results a user frame carries, each a call's id, whether it
-/// failed and its text; a frame of anything else carries none.
+/// The tool results a user frame carries; a frame of anything else carries
+/// none.
 ///
 /// The text is a result's content where that is a string, and its text blocks
 /// one to a line where it is a list of blocks; an image or anything else in
 /// the list says nothing this side shows. As long as the frame it came in at
 /// most, which the transport bounds.
-fn reported(frame: &Value) -> Vec<(String, bool, String)> {
-    frame
+///
+/// The frame says what a call did to a file beside its message, once for the
+/// frame, so a change is read off it only where the frame answers one call,
+/// and only where that call did not fail.
+fn reported(frame: &Value) -> Vec<Answer> {
+    let mut answers: Vec<Answer> = frame
         .get("message")
         .map(blocks)
         .into_iter()
@@ -304,9 +320,73 @@ fn reported(frame: &Value) -> Vec<(String, bool, String)> {
                     .collect::<Vec<_>>()
                     .join("\n"),
             };
-            Some((call, failed, said))
+            Some(Answer {
+                call,
+                failed,
+                said,
+                diff: None,
+            })
         })
-        .collect()
+        .collect();
+    if let [answer] = answers.as_mut_slice()
+        && !answer.failed
+    {
+        answer.diff = frame
+            .get("tool_use_result")
+            .and_then(changed)
+            .filter(|diff| !diff.is_empty());
+    }
+    answers
+}
+
+/// The change a call's own result says it made: its patch, a hunk at a
+/// time, or, for a file put down new, the whole of what was put down.
+fn changed(result: &Value) -> Option<Diff> {
+    let hunks = result.get("structuredPatch")?.as_array()?;
+    if hunks.is_empty() {
+        return (result.get("type").and_then(Value::as_str) == Some("create"))
+            .then(|| result.get("content")?.as_str())
+            .flatten()
+            .map(|content| Diff::between("", content));
+    }
+    Some(Diff::new(hunks.iter().flat_map(hunk)))
+}
+
+/// One hunk of a patch as lines, each at its number in the file: a removed
+/// line at the one it had, and every other at the one it has now. A line
+/// that is no change, such as the patch saying a file has no last newline,
+/// is passed over.
+fn hunk(hunk: &Value) -> impl Iterator<Item = Line> + '_ {
+    let start = |name: &str| {
+        hunk.get(name)
+            .and_then(Value::as_u64)
+            .and_then(|start| usize::try_from(start).ok())
+            .unwrap_or(1)
+    };
+    let (mut was, mut now) = (start("oldStart"), start("newStart"));
+    hunk.get("lines")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(move |line| {
+            let mut chars = line.chars();
+            let mark = chars.next()?;
+            let text = chars.as_str();
+            let line = match mark {
+                ' ' => Line::new(now, Change::Kept, text),
+                '-' => Line::new(was, Change::Removed, text),
+                '+' => Line::new(now, Change::Added, text),
+                _ => return None,
+            };
+            if mark != '+' {
+                was = was.saturating_add(1);
+            }
+            if mark != '-' {
+                now = now.saturating_add(1);
+            }
+            Some(line)
+        })
 }
 
 /// The end a `result` frame reports.

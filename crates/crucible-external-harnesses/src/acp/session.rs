@@ -12,7 +12,7 @@
 //! reports no figure and the turns after it do.
 
 use crucible_execution::{About, Cost, Currency, Event, Observation, Scope, Text, Usage};
-use crucible_types::TurnId;
+use crucible_types::{Diff, TurnId};
 use serde_json::Value;
 
 use crate::Act;
@@ -255,7 +255,8 @@ fn tool_call(update: &Value) -> Vec<Act> {
 }
 
 /// What a tool call moving on means: what it reported once it ended, said
-/// whether or not it had any words for it, and the files it changed.
+/// whether or not it had any words for it, with the change it made where it
+/// changed one file, and the files it changed.
 fn tool_call_update(update: &Value) -> Vec<Act> {
     let failed = match update.get("status").and_then(Value::as_str) {
         Some("completed") => false,
@@ -270,6 +271,7 @@ fn tool_call_update(update: &Value) -> Vec<Act> {
         call: call(update),
         failed,
         report: Text::new(&report),
+        diff: diff(update).filter(|_| !failed),
     })];
     acts.extend(changed(update));
     acts
@@ -289,6 +291,24 @@ fn changed(update: &Value) -> Vec<Act> {
             })
         })
         .collect()
+}
+
+/// The change a call that changed one file says it made, from both texts of
+/// it; a file it made had nothing before. A call that changed several says
+/// each file on its own and no change under the call, since one block of
+/// lines cannot be read as several files.
+fn diff(update: &Value) -> Option<Diff> {
+    let mut diffs =
+        blocks(update).filter(|block| block.get("type").and_then(Value::as_str) == Some("diff"));
+    let (Some(only), None) = (diffs.next(), diffs.next()) else {
+        return None;
+    };
+    let after = only.get("newText")?.as_str()?;
+    let before = only
+        .get("oldText")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Some(Diff::between(before, after)).filter(|diff| !diff.is_empty())
 }
 
 /// A call's content blocks.

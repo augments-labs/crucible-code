@@ -1,7 +1,7 @@
 //! Every update kind is read, and a turn's cost is what it added.
 
 use crucible_execution::{About, Cost, Currency, Event};
-use crucible_types::TurnId;
+use crucible_types::{Change, Diff, TurnId};
 use serde_json::{Value, json};
 
 use crate::Act;
@@ -159,7 +159,7 @@ fn a_call_and_its_end_are_reported_under_the_call_s_id() {
     assert!(
         matches!(
             done.as_slice(),
-            [Act::Say(Event::ToolReport { call, failed: false, report })]
+            [Act::Say(Event::ToolReport { call, failed: false, report, diff: None })]
                 if call.as_str() == "call_1" && report.as_str() == "a\nb"
         ),
         "{done:?}"
@@ -167,7 +167,7 @@ fn a_call_and_its_end_are_reported_under_the_call_s_id() {
     assert!(
         matches!(
             failed.as_slice(),
-            [Act::Say(Event::ToolReport { call, failed: true, report })]
+            [Act::Say(Event::ToolReport { call, failed: true, report, diff: None })]
                 if call.as_str() == "call_2" && report.as_str().is_empty()
         ),
         "{failed:?}"
@@ -190,9 +190,65 @@ fn a_call_announced_over_is_reported_with_its_end() {
             heard.as_slice(),
             [
                 Act::Say(Event::ToolActivity { call: began, .. }),
-                Act::Say(Event::ToolReport { call: ended, failed: true, report }),
+                Act::Say(Event::ToolReport { call: ended, failed: true, report, diff: None }),
             ] if began.as_str() == "call_1" && ended.as_str() == "call_1" && report.as_str() == "not there"
         ),
         "{heard:?}"
+    );
+}
+
+/// What the change a call's report carries came to: gutter number, mark,
+/// words.
+fn changed(acts: &[Act]) -> Vec<(usize, Change, String)> {
+    acts.iter()
+        .filter_map(|act| match act {
+            Act::Say(Event::ToolReport {
+                diff: Some(diff), ..
+            }) => Some(diff),
+            _ => None,
+        })
+        .flat_map(Diff::lines)
+        .map(|line| (line.number(), line.change(), line.text().to_owned()))
+        .collect()
+}
+
+/// A call that ended with the one file it changed, both texts of it, reports
+/// the change at the lines the file has them at; a file it made has all of
+/// itself added. The file is still said on its own, since a call's title is
+/// the agent's words and need not name it.
+#[test]
+fn a_call_that_ended_with_its_diff_reports_the_change() {
+    let mut updates = Updates::fresh();
+    let edited = updates.heard(&json!({
+        "sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "completed",
+        "content": [{"type": "diff", "path": "/w/a.rs", "oldText": "a\nb\nc\n", "newText": "a\nB\nc\n"}],
+    }));
+    let made = updates.heard(&json!({
+        "sessionUpdate": "tool_call_update", "toolCallId": "call_2", "status": "completed",
+        "content": [{"type": "diff", "path": "/w/b.rs", "oldText": null, "newText": "one\n"}],
+    }));
+
+    assert_eq!(
+        changed(&edited),
+        [
+            (1, Change::Kept, "a".to_owned()),
+            (2, Change::Removed, "b".to_owned()),
+            (2, Change::Added, "B".to_owned()),
+            (3, Change::Kept, "c".to_owned()),
+        ],
+        "{edited:?}"
+    );
+    assert_eq!(
+        changed(&made),
+        [(1, Change::Added, "one".to_owned())],
+        "{made:?}"
+    );
+    assert!(
+        matches!(
+            edited.as_slice(),
+            [Act::Say(Event::ToolReport { .. }), Act::Say(Event::FileChanged { path })]
+                if path.as_str() == "/w/a.rs"
+        ),
+        "{edited:?}"
     );
 }

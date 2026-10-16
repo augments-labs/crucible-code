@@ -629,11 +629,16 @@ the box until the agent says what it came back with, and then written out with
 that result under it, a failure marked as one and a long result offered whole
 on `ctrl+o`. The result is what the agent reported, given only once the call
 is over, so nothing streams under a command the agent is still running, and a
-call the turn ends without an answer to is written out with none. A call with
-no id of its own, or past the 128 waiting at once, is one toned down row with
-no mark, worded as the agent's, such as `the agent used Bash · ls -la`, and so
-is each file the agent says it changed, such as `the agent used file ·
-src/lib.rs`. Control characters in anything the agent says are taken out.
+call the turn ends without an answer to is written out with none. An edit the
+agent says it made to one file is drawn as an edit made here is: the lines
+added and removed counted under the call, and the changed lines beneath. A
+call with no id of its own, or past the 128 waiting at once, is one toned down
+row with no mark, worded as the agent's, such as `the agent used Bash · ls
+-la`. An agent spoken to over the Agent Client Protocol also has a row for
+each file it says it changed, such as `the agent used file · src/lib.rs`,
+since its calls need not name one. Control characters in anything the agent
+says are taken out, and a credential the agent was given is withheld from the
+changed lines as from the rest of what it says.
 
 Where the model asked for one tool and nothing about it moves, the line is
 written the moment the call goes out. `WebSearch` and `WebFetch` are the two

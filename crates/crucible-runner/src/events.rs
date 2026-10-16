@@ -14,7 +14,7 @@ use crucible_types::{
     Ancestry, Attachment, ContextError, RecordedToolOutput, RunId, StopReason, ToolCall, ToolId,
     TurnId,
 };
-use crucible_types::{PlanWindows, Spend, Utc, Window};
+use crucible_types::{Diff, PlanWindows, Spend, Utc, Window};
 use std::time::SystemTime;
 
 use crate::{Breakdown, Totals};
@@ -421,6 +421,9 @@ pub enum Event {
         call: ToolId,
         /// What the agent said it came back with.
         output: RecordedToolOutput,
+        /// What the agent said the call did to a file, for the reader alone:
+        /// it never reaches a request, as no diff does.
+        diff: Option<Diff>,
     },
 
     /// Another agent, driving this run, said it changed a file, or used a
@@ -654,10 +657,11 @@ impl std::fmt::Debug for Event {
                 .field("tool", tool)
                 .field("summary", summary)
                 .finish(),
-            Self::AgentAnswered { call, output } => f
+            Self::AgentAnswered { call, output, diff } => f
                 .debug_struct("AgentAnswered")
                 .field("call", call)
                 .field("output", output)
+                .field("diff", diff)
                 .finish(),
             Self::Reported { tool, summary } => f
                 .debug_struct("Reported")
