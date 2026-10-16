@@ -16,10 +16,10 @@
 //! how many rows a reader scrolls past, and never about what they can still
 //! reach.
 
-use crucible_tools::{Looking, ToolOutput};
+use crucible_tools::Looking;
 use crucible_types::ToolId;
 
-use crate::cli::draw::Called;
+use crate::cli::draw::{Called, Shown};
 
 /// How the counters are said, in the order they are said in.
 ///
@@ -93,7 +93,6 @@ struct Counter {
 /// One at most, whatever the run comes to. The second call settles the
 /// question, and everything after it goes straight to
 /// [`Kept`](super::kept::Kept) where results are already bounded.
-#[derive(Debug)]
 pub(crate) struct Alone {
     /// Which call it was.
     pub(crate) call: ToolId,
@@ -102,7 +101,19 @@ pub(crate) struct Alone {
     /// What it came back with, where it has come back at all. `None` is a call
     /// the turn ended underneath, which has a row to write and no result to
     /// hang under it.
-    pub(crate) output: Option<ToolOutput>,
+    pub(crate) output: Option<Shown>,
+}
+
+// By hand, because what the call came back with is the file text it read and
+// is not for a log: whether it has come back is.
+impl std::fmt::Debug for Alone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Alone")
+            .field("call", &self.call)
+            .field("said", &self.said)
+            .field("answered", &self.output.is_some())
+            .finish()
+    }
 }
 
 /// The calls in one run, and what they were looking at.
@@ -161,7 +172,7 @@ impl Gathering {
     /// Hands it back where it was not kept, which is every other call in the
     /// run: its result belongs in [`Kept`](super::kept::Kept) at once, since
     /// there is no longer a row it might be written under on its own.
-    pub(crate) fn answered(&mut self, call: &ToolId, output: ToolOutput) -> Option<ToolOutput> {
+    pub(crate) fn answered(&mut self, call: &ToolId, output: Shown) -> Option<Shown> {
         match self.alone.as_mut().filter(|alone| alone.call == *call) {
             Some(alone) => {
                 alone.output = Some(output);

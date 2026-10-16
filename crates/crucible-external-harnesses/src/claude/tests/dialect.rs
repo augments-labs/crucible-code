@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crucible_execution::{
-    About, Cost, Decision, Detail, Event, Lasting, Outcome, Pending, TurnRequest, Usage,
+    About, Cost, Decision, Detail, Event, Lasting, Lookup, Outcome, Pending, TurnRequest, Usage,
 };
 use crucible_types::{Change, Compacting, Diff, TurnId};
 use serde_json::{Value, json};
@@ -423,8 +423,8 @@ fn a_call_and_its_result_are_reported_under_the_call_s_id() {
         matches!(
             calls.as_slice(),
             [
-                Act::Say(Event::ToolActivity { call: listed, tool: bash, summary: command, about: About::Command }),
-                Act::Say(Event::ToolActivity { call: fetched, about: About::Address, .. }),
+                Act::Say(Event::ToolActivity { call: listed, tool: bash, summary: command, about: About::Command, looked: None }),
+                Act::Say(Event::ToolActivity { call: fetched, about: About::Address, looked: Some(Lookup::WebPage), .. }),
             ] if listed.as_str() == "toolu_ls"
                 && bash.as_str() == "Bash"
                 && command.as_str() == "ls -la"

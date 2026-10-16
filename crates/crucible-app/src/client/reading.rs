@@ -158,6 +158,7 @@ pub fn progress(
             call,
             tool,
             summary,
+            ..
         } => Progress::ToolActivity {
             call: Text::cut(call.as_str()),
             tool: Text::cut(tool),

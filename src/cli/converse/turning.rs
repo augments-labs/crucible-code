@@ -645,13 +645,15 @@ impl Turning {
                 }
             }
             // Always held in the footing, whatever it is: nothing says how
-            // many of the agent's calls are out at once, nor which of them
-            // only looked around, so a row written up front could take
-            // another call's result under it.
+            // many of the agent's calls are out at once, so a row written up
+            // front could take another call's result under it. One the agent
+            // only looked around with is owed to the run being counted, as a
+            // native one is.
             Event::AgentCalled {
                 call,
                 tool,
                 summary,
+                looking,
             } => {
                 self.calling.push_back(Calling {
                     id: call.clone(),
@@ -659,18 +661,25 @@ impl Turning {
                     said: draw::called_as(tool, summary),
                     printing: Printing::default(),
                     backgroundable: false,
-                    looking: None,
+                    looking: *looking,
                     name: draw::pascal(tool),
                 });
                 Vec::new()
             }
-            // Never one that looked around, so nothing to take out of a run.
-            Event::AgentAnswered { call, .. } => self
+            // A failed lookup has its own row, as a native one does, and so
+            // does one the agent says changed a file, so the change is drawn.
+            Event::AgentAnswered { call, output, diff } => self
                 .calling
                 .iter()
                 .position(|one| one.id == *call)
                 .and_then(|at| self.calling.remove(at))
-                .map_or_else(Vec::new, |calling| vec![settled(calling)]),
+                .map_or_else(Vec::new, |calling| {
+                    let mut returned = settled(calling);
+                    if output.is_failed() || diff.is_some() {
+                        returned.looking = None;
+                    }
+                    vec![returned]
+                }),
             Event::ToolFinished { call, output, .. } => self
                 .calling
                 .iter()

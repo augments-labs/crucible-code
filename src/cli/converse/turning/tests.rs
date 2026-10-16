@@ -1618,6 +1618,48 @@ fn a_failed_lookup_settles_as_an_individual_call() {
     assert!(returned.first().unwrap().looking.is_none());
 }
 
+/// What an agent's read came back with, under call `a`, with the change it
+/// said the read made where it said one.
+fn agent_answered(output: ToolOutput, diff: Option<crucible_types::Diff>) -> Event {
+    Event::AgentAnswered {
+        call: ToolId::new("a"),
+        output: output.into_recorded(),
+        diff,
+    }
+}
+
+#[test]
+fn an_agent_s_lookup_settles_into_a_run_unless_it_failed_or_changed_a_file() {
+    let settled = |answered: Event| {
+        let mut turning = Turning::started(Breakdown::default());
+        turning.saw(&Event::AgentCalled {
+            call: ToolId::new("a"),
+            tool: "Read".into(),
+            summary: Summary::new("src/main.rs"),
+            looking: Some(Looking::File),
+        });
+        turning
+            .saw(&answered)
+            .into_iter()
+            .map(|settled| settled.looking)
+            .collect::<Vec<_>>()
+    };
+    let changed = crucible_types::Diff::between("a\n", "b\n");
+
+    assert_eq!(
+        settled(agent_answered(ToolOutput::ok("fn main() {}"), None)),
+        [Some(Looking::File)]
+    );
+    assert_eq!(
+        settled(agent_answered(ToolOutput::failed("file missing"), None)),
+        [None]
+    );
+    assert_eq!(
+        settled(agent_answered(ToolOutput::ok("done"), Some(changed))),
+        [None]
+    );
+}
+
 #[test]
 fn usage_a_turn_keeps_what_it_last_reported_for_the_panel_over_it() {
     // `/usage` stands over a running turn while the runner is away on it, so

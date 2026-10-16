@@ -29,13 +29,14 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crucible_execution::{
     About, Backend, Capabilities, Capability, Confined, Confinement, Cost, Currency, Decision,
-    Description, Detail, Error, Event, Failure, Lasting, NAME_BYTES, Observation, Outcome, Pending,
-    PendingRef, Pendings, Scope, SessionRef, Sink, Stale, Text, TurnRequest, Unsupported, Usage,
+    Description, Detail, Error, Event, Failure, Lasting, Lookup, NAME_BYTES, Observation, Outcome,
+    Pending, PendingRef, Pendings, Scope, SessionRef, Sink, Stale, Text, TurnRequest, Unsupported,
+    Usage,
 };
 use crucible_runner::{Event as Reported, EventEnvelope, Post, Runner, SessionCost, Totals};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_sandbox::SandboxCapability;
-use crucible_tools::{Argument, Ask, Remember, Sensitivity, Verdict};
+use crucible_tools::{Argument, Ask, Looking, Remember, Sensitivity, Verdict};
 use crucible_types::{CostAmount, StopReason, ToolCall, TurnId};
 use tokio::sync::oneshot;
 
@@ -446,7 +447,12 @@ impl<'n, 'r> Translating<'n, 'r> {
                 Some(Event::Started { turn: *turn })
             }
             Reported::Delta { text } => Some(Event::Delta(Text::new(text))),
-            Reported::ToolRequested { call, summary, .. } => Some(Event::ToolActivity {
+            Reported::ToolRequested {
+                call,
+                summary,
+                looking,
+                ..
+            } => Some(Event::ToolActivity {
                 call: Text::clipped(call.id.as_str(), NAME_BYTES),
                 tool: Text::clipped(&call.name, NAME_BYTES),
                 summary: Text::new(summary.as_str()),
@@ -456,6 +462,14 @@ impl<'n, 'r> Translating<'n, 'r> {
                     Argument::Command => About::Command,
                     Argument::Other => About::Other,
                 },
+                looked: looking.map(|looking| match looking {
+                    Looking::Pattern => Lookup::Pattern,
+                    Looking::File => Lookup::File,
+                    Looking::Directory => Lookup::Directory,
+                    Looking::Command => Lookup::Command,
+                    Looking::WebSearch => Lookup::WebSearch,
+                    Looking::WebPage => Lookup::WebPage,
+                }),
             }),
             Reported::ToolFinished { call, output, .. } => Some(Event::ToolReport {
                 call: Text::clipped(call.as_str(), NAME_BYTES),

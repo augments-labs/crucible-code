@@ -888,11 +888,13 @@ impl Host {
                 tool,
                 summary,
                 about,
+                looked,
             } => Ok(Event::ToolActivity {
                 call: self.shown(&call),
                 tool: self.shown(&tool),
                 summary: self.shown(&summary),
                 about,
+                looked,
             }),
             Event::ToolReport {
                 call,

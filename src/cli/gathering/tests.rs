@@ -1,7 +1,7 @@
 //! What a run of calls that only looked around says it did.
 
 use super::Gathering;
-use crate::cli::draw::Called;
+use crate::cli::draw::{Called, Shown};
 use crucible_tools::{Argument, Looking, ToolOutput};
 use crucible_types::ToolId;
 
@@ -133,12 +133,12 @@ fn only_the_held_call_keeps_its_result_here() {
 
     assert!(
         gathering
-            .answered(&ToolId::new("a"), ToolOutput::ok("one"))
+            .answered(&ToolId::new("a"), Shown::live(ToolOutput::ok("one")))
             .is_none()
     );
     assert!(
         gathering
-            .answered(&ToolId::new("b"), ToolOutput::ok("two"))
+            .answered(&ToolId::new("b"), Shown::live(ToolOutput::ok("two")))
             .is_some_and(|given| given.text() == "two")
     );
 

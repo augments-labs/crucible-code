@@ -10,7 +10,8 @@
 //! of its own tools is a [`RunEvent::AgentCalled`], and what it came back with
 //! a [`RunEvent::AgentAnswered`] under the same call, with the change it said
 //! the call made, drawn as a native call and its result are and never one of
-//! them. Only a call under an id of its
+//! them; one the agent says only looked around is counted into a run of
+//! lookups as a native one is. Only a call under an id of its
 //! own, not already out, and within as many as are held at once is drawn as
 //! one, and only an answer to one of those is drawn under it; any other call,
 //! and a file it changed, is a [`RunEvent::Reported`]. The leave it asks for goes to the turn's [`Asker`]
@@ -73,8 +74,8 @@ use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use crucible_execution::{
-    About, Backend, Cost, Decision, Error, Event, Failure, NAME_BYTES, Outcome, PENDINGS, Pending,
-    PendingRef, Sink, Text, TurnRequest, Usage,
+    About, Backend, Cost, Decision, Error, Event, Failure, Lookup, NAME_BYTES, Outcome, PENDINGS,
+    Pending, PendingRef, Sink, Text, TurnRequest, Usage,
 };
 use crucible_models::{Effort, ProviderError};
 use crucible_runner::{
@@ -83,7 +84,7 @@ use crucible_runner::{
 };
 use crucible_runtime::BoxFuture;
 use crucible_session::{ExternalRef, RouteBinding, Session, Uncertain};
-use crucible_tools::{Argument, Mode, Summary};
+use crucible_tools::{Argument, Looking, Mode, Summary};
 use crucible_types::{
     Attachment, CONTINUATION_BYTES, CostAmount, Message, PricingCurrency, PricingUnit,
     RecordedToolOutput, Spend, StopReason, ToolId, Transcript, TurnId,
@@ -857,6 +858,7 @@ impl Sink for Telling<'_> {
                 tool,
                 summary,
                 about,
+                looked,
             } => {
                 let tool = match tool.as_str().trim() {
                     "" => "tool",
@@ -891,6 +893,14 @@ impl Sink for Telling<'_> {
                             },
                             summary.as_str(),
                         ),
+                        looking: looked.map(|looked| match looked {
+                            Lookup::Pattern => Looking::Pattern,
+                            Lookup::File => Looking::File,
+                            Lookup::Directory => Looking::Directory,
+                            Lookup::Command => Looking::Command,
+                            Lookup::WebSearch => Looking::WebSearch,
+                            Lookup::WebPage => Looking::WebPage,
+                        }),
                     })
                 }
             }

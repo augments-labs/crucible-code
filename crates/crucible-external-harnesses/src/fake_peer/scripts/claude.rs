@@ -137,6 +137,36 @@ pub fn used_tools() -> String {
     ]))
 }
 
+/// The files [`looked_around`] reads.
+pub const LOOKED_AT: [&str; 2] = ["src/lib.rs", "src/main.rs"];
+
+/// The model reading [`LOOKED_AT`] and searching for a pattern, which only
+/// looks around.
+#[must_use]
+pub fn looked_around() -> String {
+    assistant(&json!([
+        {"type": "tool_use", "id": "toolu_one", "name": "Read", "input": {"file_path": LOOKED_AT[0]}},
+        {"type": "tool_use", "id": "toolu_two", "name": "Read", "input": {"file_path": LOOKED_AT[1]}},
+        {"type": "tool_use", "id": "toolu_grep", "name": "Grep", "input": {"pattern": "fn main"}},
+    ]))
+}
+
+/// The program saying what the calls [`looked_around`] made came back with.
+#[must_use]
+pub fn looked_answered() -> String {
+    json!({
+        "type": "user",
+        "session_id": SESSION,
+        "parent_tool_use_id": null,
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_one", "content": "pub fn one() {}"},
+            {"type": "tool_result", "tool_use_id": "toolu_two", "content": "fn main() {}"},
+            {"type": "tool_result", "tool_use_id": "toolu_grep", "content": "src/main.rs"},
+        ]},
+    })
+    .to_string()
+}
+
 /// The program saying what the calls [`used_tools`] made came back with: the
 /// listing, and the read failing.
 #[must_use]
@@ -369,6 +399,17 @@ pub fn tooled() -> Reply {
     turn(Reply::new())
         .say(used_tools())
         .say(tools_answered())
+        .say(said("Done."))
+        .say(answered(Some(PRICE)))
+}
+
+/// A run of one turn in which the model only looks around,
+/// [`looked_around`], and hears back before it answers.
+#[must_use]
+pub fn looking() -> Reply {
+    turn(Reply::new())
+        .say(looked_around())
+        .say(looked_answered())
         .say(said("Done."))
         .say(answered(Some(PRICE)))
 }

@@ -11,7 +11,7 @@
 //! nothing, but one resumed has cost an amount nobody said, so its first turn
 //! reports no figure and the turns after it do.
 
-use crucible_execution::{About, Cost, Currency, Event, Observation, Scope, Text, Usage};
+use crucible_execution::{About, Cost, Currency, Event, Lookup, Observation, Scope, Text, Usage};
 use crucible_types::{Diff, TurnId};
 use serde_json::Value;
 
@@ -223,6 +223,18 @@ fn tool(update: &Value) -> Text {
     Text::new(named)
 }
 
+/// What a call only looks at, where the kind the agent gave it is one of the
+/// protocol's kinds that only look: reading, searching and fetching. A call
+/// of any other kind, or of none, may have done more.
+fn looked(update: &Value) -> Option<Lookup> {
+    match update.get("kind").and_then(Value::as_str)? {
+        "read" => Some(Lookup::File),
+        "search" => Some(Lookup::Pattern),
+        "fetch" => Some(Lookup::WebPage),
+        _ => None,
+    }
+}
+
 /// The agent's name for the call an update is about.
 fn call(update: &Value) -> Text {
     Text::new(
@@ -249,6 +261,7 @@ fn tool_call(update: &Value) -> Vec<Act> {
         tool: tool(update),
         summary: Text::new(summary),
         about: About::Other,
+        looked: looked(update),
     })];
     acts.extend(tool_call_update(update));
     acts
