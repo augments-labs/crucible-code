@@ -76,7 +76,8 @@ them `/model` offers the other providers' models as it does off an agent; one
 taken, where a credential for its provider is in hand and no agent reaches
 that provider, moves the conversation off the agent onto that provider and
 model at once, in a new session, as a login for it would, and is written down
-as the `provider` and model asked. An agent that chooses its own model has
+as the `provider`, model and rung asked; a rung that model does not serve is
+refused and nothing moves. An agent that chooses its own model has
 `/model` and `/effort` say so instead.
 
 The line above the box reads how much of the model's window the agent's
