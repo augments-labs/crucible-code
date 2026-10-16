@@ -561,14 +561,14 @@ fn unreached(mut text: String, file: &str, instance: &str) -> Result<String, Con
 }
 
 /// The text of a configuration file that reaches `provider` through the
-/// installed agent `instance`, and lets that instance take new work.
+/// installed agent `instance`, asks it, and lets that instance take new work.
 ///
-/// `providers.<provider>.access` is written first and the instance's
-/// `enabled: true` last, both in the one text handed back, so no file is ever
-/// written that admits work through an instance no provider was meant to
-/// reach. An instance that says nothing of `enabled` is already enabled and is
-/// left saying nothing; one already reached and enabled leaves the text as it
-/// was.
+/// `providers.<provider>.access` is written first, the top-level `provider`
+/// next and the instance's `enabled: true` last, all in the one text handed
+/// back, so no file is ever written that admits work through an instance no
+/// provider was meant to reach. An instance that says nothing of `enabled` is
+/// already enabled and is left saying nothing; what is already so leaves the
+/// text as it was.
 ///
 /// # Errors
 ///
@@ -603,6 +603,7 @@ pub fn connecting(
         "instance": instance,
     });
     let reached = beside(text, file, provider, "access", &access)?;
+    let reached = asking(&reached, file, provider)?;
     let written = if block.get("enabled").and_then(Value::as_bool) == Some(false) {
         let root = splice::root(&reached).ok_or_else(refused)?;
         let agents = splice::member(&reached, root, "externalAgents").ok_or_else(refused)?;

@@ -56,12 +56,12 @@
 //! that row alone. Every provider's row comes off the registry, so a provider
 //! this build offers and cannot be typed is not a state that exists.
 //!
-//! Where an installed agent is offered and a provider is being asked, the
-//! first panel has a third row: the provider this conversation asks reached
-//! through the agent's own sign-in.
+//! Where this build offers an installed agent, the first panel has a third
+//! row, whatever provider is being asked or none: the provider an agent signs
+//! in to, reached through that sign-in, and this conversation moved onto it.
 //! It is the application's connect, asked for as any front end asks for it,
 //! and every question it stops on — which agent, whether its program was
-//! found, the hold before it is first started, whether its account will do —
+//! found, the hold before it is first started, whether it is signed in —
 //! is the application's, drawn here whole. Escape answers the way that
 //! leaves everything as it is, which the application takes back up a level
 //! or ends; one that ends unconnected stands the first panel again. Keys
@@ -86,7 +86,7 @@ use crucible_app::providers::{
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
-use crucible_client_api::{Agents, Command, LogoutOutcome, Name, Outcome};
+use crucible_client_api::{Agents, Command, LogoutOutcome, Outcome};
 use crucible_tui::{
     Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
     characters, clip, fold, pressed,
@@ -409,8 +409,7 @@ fn reaching(way: &Way, rows: &Rows) -> String {
 /// The first panel, the list of the kind chosen on it, and the screen of the
 /// row chosen from that, until one of them is done.
 fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fatal> {
-    let offered = snapshot(walk.conversation).agents == Agents::Available
-        && walk.conversation.reached(&walk.terms.settings).is_some();
+    let offered = snapshot(walk.conversation).agents == Agents::Available;
     let shown = if offered {
         &FIRST[..]
     } else {
@@ -459,31 +458,17 @@ fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fa
     }
 }
 
-/// The third row: the provider this conversation reaches, the one it asks or
-/// the one its agent's route stands in for, reached through an installed agent
-/// by the application's connect, each of its questions drawn here. Back where
-/// it ended unconnected, so the first panel stands again.
+/// The third row: an installed agent connected by the application's connect,
+/// which reaches the provider the agent signs in to, each of its questions
+/// drawn here. Back where it ended unconnected, so the first panel stands
+/// again.
 fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
-    // Offered only where a provider is reached.
-    let Some(provider) = walk.conversation.reached(&walk.terms.settings) else {
-        return Ok(Closed::Back);
-    };
-    let provider = match Name::new(&provider) {
-        Ok(provider) => provider,
-        Err(refusal) => {
-            say(walk.renderer, &astray(&Performed::Refused(refusal)))?;
-            return Ok(Closed::Done);
-        }
-    };
     let style = walk.terms.style();
     let renderer = &mut *walk.renderer;
     let mut cramped = false;
     let performed = walk.terms.operate(
         walk.conversation,
-        Command::Connect {
-            provider,
-            instance: None,
-        },
+        Command::Connect { instance: None },
         |question| {
             let replied = answered(renderer, style, question)?;
             cramped |= replied.is_none();

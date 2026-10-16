@@ -1,8 +1,9 @@
 ---
 source: tests/whole_screen/agents.rs
+assertion_line: 65
 expression: picture
 ---
-40x40 cursor 27,0 scrollback 0
+40x40 cursor 32,0 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -14,6 +15,11 @@ expression: picture
 |  execution: claude · billing: external |
 |                                        |
 |› List them.                            |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
 |                                        |
 |╭──────────────────────────────────────╮|
 |│  Bash command                        │|
@@ -31,11 +37,6 @@ expression: picture
 |│    3. No                             │|
 |╰──────────────────────────────────────╯|
 |  esc to cancel                         |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

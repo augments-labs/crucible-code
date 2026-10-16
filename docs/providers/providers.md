@@ -561,8 +561,8 @@ from a labelled box that takes a paste and draws a dot per character rather
 than the key. `/login` on its own asks how usage is paid for: *Your account with
 subscription* lists the accounts, and *Provide your own API key* lists the
 providers, each row naming the variable the provider reads from, and opens the
-same box. *Use an installed coding agent*, offered where one can run, connects
-the provider being asked through an [installed agent](agents.md). A row that holds the credential its provider is served by says
+same box. *Use an installed coding agent*, offered where this release ships one,
+connects an [installed agent](agents.md) to the provider it signs in to. A row that holds the credential its provider is served by says
 `signed in`.
 
 The command reports that the key was stored, not that it was verified. Provider
@@ -691,7 +691,7 @@ crucible is not one, and the other two are not offered in this release. Google a
 key only; Gemini product subscriptions are not an authentication route here.
 
 An installed coding agent stores nothing here: *Use an installed coding agent*
-connects the provider being asked to an agent, which then runs the
+connects an agent to the provider it signs in to, and the agent then runs the
 conversation's turns on the account its own profile is signed in to, and
 crucible never reads its credentials. See [installed coding agents](agents.md).
 

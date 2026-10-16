@@ -463,6 +463,36 @@ fn an_agent_access_beside_a_key_only_crucibles_requests_read_is_refused_naming_i
     }
 }
 
+/// An installed agent signs in to its own vendor and asks only it, so a route
+/// to another provider through it is refused, naming the provider it serves.
+#[test]
+fn an_agent_access_through_another_vendor_s_agent_is_refused() {
+    let sample = Sample::new("access-agent-foreign");
+    let settings = sample.user(
+        r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}},
+  "providers": {"openai": {"access": {"type": "externalAgent", "instance": "work"}}}
+}"#,
+    );
+
+    let refused = resolved(
+        serving("openai"),
+        &settings,
+        &lookup(None),
+        None,
+        NO_SUBSCRIPTION,
+    )
+    .unwrap_err();
+
+    let said = refused.to_string();
+    assert!(
+        matches!(refused, AccessError::ForeignAgent { .. }),
+        "{refused:?}"
+    );
+    assert!(said.contains("providers.openai.access"), "{said}");
+    assert!(said.contains("anthropic"), "{said}");
+}
+
 #[test]
 fn an_agent_access_naming_no_instance_written_is_refused() {
     let sample = Sample::new("access-agent-unknown");

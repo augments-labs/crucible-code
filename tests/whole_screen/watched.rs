@@ -379,9 +379,22 @@ impl Watched {
     /// missing one gives names the command that builds it.
     pub(crate) fn capturing_agents(
         case: &str,
-        (columns, rows): (u16, u16),
+        size: (u16, u16),
         native: bool,
         vendor: &Vendor,
+        installed: (Option<&Script>, &str),
+    ) -> Self {
+        Self::capturing_agents_asking(case, size, native, Some(vendor), installed)
+    }
+
+    /// The same, with no provider configured and no key in the environment
+    /// where there is no `vendor`, so none is being asked when the window
+    /// opens.
+    pub(crate) fn capturing_agents_asking(
+        case: &str,
+        (columns, rows): (u16, u16),
+        native: bool,
+        vendor: Option<&Vendor>,
         (script, configured): (Option<&Script>, &str),
     ) -> Self {
         let installed = agents(case);
@@ -395,14 +408,14 @@ impl Watched {
         } else {
             ""
         };
-        let document = document(Some(vendor), None);
+        let document = document(vendor, None);
         let rest = document
             .strip_prefix("{\n")
             .expect("a whole-screen configuration object");
         Self::configured_with_terminal(
             case,
             &fixture_document(&format!("{{\n{screen}{configured}{rest}")),
-            true,
+            vendor.is_some(),
             &TerminalFixture {
                 columns,
                 rows,

@@ -7,8 +7,10 @@ never reads or copies its credentials: the agent signs in and sends for itself.
 A provider whose access names an agent has its conversations run by that agent
 in place of its own models: no key for the provider is looked for, and the
 agent is started by the conversation's first turn rather than when crucible
-starts. A disconnected agent, or one that cannot run in the conversation's
-mode, is refused before anything is recorded. The sections below say how each
+starts. An agent reaches only the provider it signs in to: Claude Code reaches
+`anthropic` and Antigravity `google`, and an `access` that names an agent under
+any other provider is refused at start. A disconnected agent, or one that cannot
+run in the conversation's mode, is refused before anything is recorded. The sections below say how each
 agent is run.
 
 `/login` in a conversation running on an agent offers all three choices. For
@@ -28,23 +30,24 @@ provider, the credential is only stored. `/logout` for the
 provider the agent reaches removes the stored credential and says the agent
 still reaches it.
 
-`/login` offers a third choice, *Use an installed coding agent*, where an
-agent can run and a provider is being asked or an agent reaches one: it
-connects that provider through an agent. It asks which agent, says where the agent's program cannot be found,
-asks once before the agent is first started, saying that starting it runs its
-profile's hooks, MCP servers and plugins, and then asks whether the account
-the agent is signed in with will do. Where the agent's sign-in could not be
+`/login` always offers a third choice, *Use an installed coding agent*, where
+this release ships an agent, whatever provider is being asked or none. It asks
+which agent, says where the agent's program cannot be found, and asks once
+before the agent is first started, saying that starting it runs its profile's
+hooks, MCP servers and plugins. Where the agent reads signed in, nothing more
+is asked: the agent's own provider is reached through it, made the `provider`
+asked, and the conversation moves onto it. Where the agent's sign-in could not be
 read, *Could not verify sign-in* gives one reason, the agent's own where it
 said one: how it exited and the first line it printed, cut to 160 characters,
 with its control characters and the environment values it was started with
 taken out. *Check again* reads it again. Escape changes
 nothing and goes back; apart from that one yes, nothing is written until the
-last answer.
+agent reads signed in.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
-directly. Taking one offers *Connect* (where a provider is being asked or an
-agent reaches one),
+directly. Taking one offers *Connect*, which reaches the agent's own provider
+through it and moves the conversation onto it,
 *Disconnect from Crucible* (where it is enabled), *Sign out of the agent* and
 *Remove integration settings*; each then asks its own question, naming the
 agent, its profile and the work it has running, and Escape there changes
@@ -52,9 +55,8 @@ nothing. Disconnecting, or signing out, writes the agent's `enabled: false`
 and takes away the `access` of every provider reached through it, in one
 update, so the next session asks that provider directly.
 
-Connecting the provider a conversation is asking, or the one its agent
-reaches, through another agent moves that conversation onto the new agent at
-once, in a new session bound to it with nothing carried over, and the line it
+Connecting an agent moves the conversation onto it at once, whatever provider
+it was asking, in a new session bound to it with nothing carried over, and the line it
 ends on names the agent and says the conversation starts fresh there; the
 session it left stays listed and can be resumed. In `/resume`, a session an
 agent ran names the agent on its line. Where the agent cannot be started in

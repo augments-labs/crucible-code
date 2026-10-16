@@ -21,7 +21,7 @@
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
-use crucible_app::client::accounts::{CONNECT, DISCONNECT, REMOVE, SIGN_OUT};
+use crucible_app::client::accounts::{DISCONNECT, REMOVE, SIGN_OUT};
 use crucible_app::switching::{LoggedOut, Retained};
 use crucible_client_api::{Command, Name};
 use crucible_config::ExternalAgent;
@@ -279,6 +279,9 @@ fn chosen<'a, T: Terminal>(
     Ok(picking::pick(renderer, terms.style(), panel)?.of(targets))
 }
 
+/// The choice that connects an agent.
+const CONNECT: &str = "Connect";
+
 /// What can be done with an agent, as its panel offers it.
 #[derive(Clone, Copy)]
 enum Act {
@@ -300,16 +303,11 @@ fn acting<T: Terminal>(
         Ok(instance) => instance,
         Err(refusal) => return say(renderer, &astray(&Performed::Refused(refusal))),
     };
-    // A connect reaches the provider being asked, or the one the agent's
-    // route stands in for, so it is offered only where there is one.
-    let provider = conversation
-        .reached(&terms.settings)
-        .and_then(|provider| Name::new(&provider).ok());
     let acts: Vec<(Act, &str, &str)> = [
         (
             Act::Connect,
             CONNECT,
-            "Reach the provider being asked through this agent",
+            "Reach its own provider through it, and move this conversation onto it",
         ),
         (
             Act::Disconnect,
@@ -328,12 +326,10 @@ fn acting<T: Terminal>(
         ),
     ]
     .into_iter()
-    // A connect reaches a provider, and only an enabled agent takes work
-    // a disconnect could stop.
+    // Only an enabled agent takes work a disconnect could stop.
     .filter(|(act, _, _)| match act {
-        Act::Connect => provider.is_some(),
         Act::Disconnect => agent.enabled(),
-        Act::SignOut | Act::Remove => true,
+        Act::Connect | Act::SignOut | Act::Remove => true,
     })
     .collect();
     let shown: Vec<Offered<'_>> = acts
@@ -354,16 +350,14 @@ fn acting<T: Terminal>(
         Picked::Left => return say(renderer, LEFT),
         Picked::Cramped => None,
     };
-    let command = match (act, provider) {
-        (None, _) => return say(renderer, UNROOMED),
-        (Some(Act::Connect), Some(provider)) => Command::Connect {
-            provider,
+    let command = match act {
+        None => return say(renderer, UNROOMED),
+        Some(Act::Connect) => Command::Connect {
             instance: Some(instance),
         },
-        (Some(Act::Connect), None) => return say(renderer, LEFT),
-        (Some(Act::Disconnect), _) => Command::Disconnect { instance },
-        (Some(Act::SignOut), _) => Command::SignOut { instance },
-        (Some(Act::Remove), _) => Command::RemoveIntegration { instance },
+        Some(Act::Disconnect) => Command::Disconnect { instance },
+        Some(Act::SignOut) => Command::SignOut { instance },
+        Some(Act::Remove) => Command::RemoveIntegration { instance },
     };
 
     let style = terms.style();

@@ -912,8 +912,8 @@ fn disabling_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
 }
 
 #[test]
-fn connecting_an_agent_writes_the_provider_s_access_then_enables_it_and_nothing_else() {
-    let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\",\n      \"enabled\": false\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}\n  }\n}\n";
+fn connecting_an_agent_writes_the_provider_s_access_asks_it_then_enables_it_and_nothing_else() {
+    let text = "{\n  \"provider\": \"openai\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\",\n      \"enabled\": false\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}\n  }\n}\n";
     let written = connecting(text, FILE, "anthropic", "work").unwrap();
     assert_eq!(
         written,
@@ -936,6 +936,7 @@ fn connecting_an_agent_writes_the_provider_s_access_then_enables_it_and_nothing_
         enabled,
         [("home".to_owned(), false), ("work".to_owned(), true)]
     );
+    assert_eq!(settings.provider(), Some("anthropic"));
     // Written again, it is already so.
     assert_eq!(
         connecting(&written, FILE, "anthropic", "work").unwrap(),
@@ -949,8 +950,8 @@ fn connecting_an_agent_that_says_nothing_of_enabled_leaves_it_saying_nothing() {
     assert_eq!(
         connecting(text, FILE, "anthropic", "work").unwrap(),
         text.replace(
-            r#"{"type": "subscription"}"#,
-            r#"{"instance":"work","type":"externalAgent"}"#
+            r#"{"type": "subscription"}}}}"#,
+            r#"{"instance":"work","type":"externalAgent"}}}, "provider": "anthropic"}"#
         )
     );
 }

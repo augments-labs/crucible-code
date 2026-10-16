@@ -2646,8 +2646,8 @@ fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own()
 #[test]
 fn the_login_panel_offers_an_installed_agent_and_its_question_goes_back_unanswered() {
     // Where an installed agent is offered, the first panel has a third row.
-    // Taking it puts the application's own question of which agent to reach
-    // the provider through; Escape there goes back to the first panel, and
+    // Taking it puts the application's own question of which installed agent
+    // to use; Escape there goes back to the first panel, and
     // Escape on that cancels. Nothing is written on the way.
     let vendor = Vendor::answering("Not asked.");
     let mut window = Watched::offering_agents("login-agent-back", (80, 24), &vendor, &[]);
@@ -2663,7 +2663,7 @@ fn the_login_panel_offers_an_installed_agent_and_its_question_goes_back_unanswer
     );
 
     takes(&mut window, "Use an installed coding agent");
-    window.types_until("", "Which agent should anthropic be reached through?");
+    window.types_until("", "Which installed agent should Crucible use?");
     let asked = window.picture();
     assert!(
         asked.contains("nothing is started or written yet"),
@@ -2711,7 +2711,7 @@ fn the_login_panel_says_what_starting_an_agent_runs_and_going_back_starts_nothin
 
     window.types_until("/login\r", "Provide your own API key");
     takes(&mut window, "Use an installed coding agent");
-    window.types_until("", "Which agent should anthropic be reached through?");
+    window.types_until("", "Which installed agent should Crucible use?");
     takes(&mut window, "Claude Code");
     window.types_until("", "Nothing starts");
     let launch = window.picture();

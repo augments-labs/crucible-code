@@ -280,3 +280,21 @@ fn a_model_is_taken_for_exactly_the_drivers_that_launch_with_it() {
         );
     }
 }
+
+/// Every driver reaches a provider this build offers, so connecting an agent
+/// never puts a conversation on a provider nothing here can name.
+#[test]
+fn every_driver_s_provider_is_one_this_build_offers() {
+    let providers = crate::providers::providers()
+        .expect("the built-in providers register")
+        .snapshot();
+    let offered: BTreeSet<&str> = crate::providers::offered(&providers)
+        .map(|one| one.name)
+        .collect();
+    for driver in Driver::ALL {
+        assert!(
+            offered.contains(driver.provider()),
+            "{driver:?}: {offered:?}"
+        );
+    }
+}

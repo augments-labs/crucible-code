@@ -394,9 +394,8 @@ impl Conversation {
         self.source.as_ref()
     }
 
-    /// The provider a connect through an installed agent reaches for this
-    /// conversation: the one being asked, or, on an agent's route, the one the
-    /// route stands in for. That is the one a connect during this run moved
+    /// The provider this conversation reaches: the one being asked, or, on an
+    /// agent's route, the one the route stands in for. That is the one a connect during this run moved
     /// the conversation off onto the instance it is on, and otherwise the first
     /// `settings` reach through that instance.
     #[must_use]

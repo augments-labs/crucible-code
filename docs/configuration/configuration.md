@@ -216,7 +216,7 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 
 | Key | Means |
 | --- | --- |
-| `driver` | Which agent it is: `claude` or `antigravity`. Required. |
+| `driver` | Which agent it is: `claude`, which reaches `anthropic`, or `antigravity`, which reaches `google`. Required. |
 | `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
