@@ -17,7 +17,7 @@ use std::path::Path;
 /// The variables taken from the shell, which say where programs and the
 /// user's own files are and how text is written, and nothing about any
 /// account, so their values may be shown where what the agent says is kept.
-const PASSED: [&str; 15] = [
+pub(crate) const PASSED: [&str; 15] = [
     "PATH",
     "HOME",
     "USERPROFILE",

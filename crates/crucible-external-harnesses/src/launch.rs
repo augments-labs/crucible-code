@@ -247,8 +247,8 @@ pub struct Request {
     pub environment: Vec<(String, String)>,
     /// The variables of `environment` whose values may be shown where the
     /// program's output is kept, since none of them says anything about an
-    /// account: every other value is withheld from it, as a credential would
-    /// be.
+    /// account: every other value of [`crate::WITHHELD_BYTES`] or more is
+    /// withheld from it, as a credential would be.
     pub shown: Vec<&'static str>,
 }
 

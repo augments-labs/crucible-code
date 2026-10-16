@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::claude::profile::environment;
+use crate::claude::profile::{PASSED, environment};
 
 /// Every variable that would choose the agent's account, endpoint or
 /// configuration over the profile's.
@@ -91,4 +91,44 @@ fn without_a_profile_the_configuration_directory_is_the_agents_own() {
 
     assert_eq!(value(&environment, "CLAUDE_CONFIG_DIR"), None);
     assert_eq!(value(&environment, "HOME"), Some("/home/user"));
+}
+
+/// Every variable a launch can carry, each value of which is shown where what
+/// the agent says is kept: a variable added to the launch is a value shown, so
+/// it is named here too, where a reviewer reads it as one.
+#[test]
+fn every_variable_a_launch_can_carry_is_one_named_here() {
+    let ambient = PASSED
+        .iter()
+        .chain(STRIPPED.iter())
+        .map(|name| (OsString::from(name), OsString::from("set")));
+    let mut names: Vec<&str> = environment(ambient, Some(Path::new("/profiles/work")))
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    names.sort_unstable();
+
+    assert_eq!(
+        names,
+        [
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+            "CLAUDE_CONFIG_DIR",
+            "COMSPEC",
+            "DISABLE_AUTOUPDATER",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "LOGNAME",
+            "NUMBER_OF_PROCESSORS",
+            "PATH",
+            "PATHEXT",
+            "SYSTEMDRIVE",
+            "SYSTEMROOT",
+            "TZ",
+            "USER",
+            "USERPROFILE",
+            "WINDIR",
+        ]
+    );
 }
