@@ -141,7 +141,7 @@ back from it:
 | --- | --- |
 | `subscription` | The account `/login` signed in. A key exported in the shell is not read. |
 | `apiKey` | The key in the provider's variable, then the one `/login` stored. A signed-in account is not used. |
-| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents). |
+| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents), whose driver must reach this provider. |
 
 What the chosen way is missing stops the start with a sentence naming the
 setting, and never suggests the other way: `subscription` with no account says

@@ -135,16 +135,15 @@ pub enum Account {
     SignOutUnverified(Failure),
     /// Nobody chose a way to go on, so nothing changed.
     Undecided,
-    /// The provider named here is reached through the instance, which takes
+    /// The agent's own provider is reached through the instance, which takes
     /// new work, and that is written down; the conversation stayed where it
-    /// was, since it was not on that provider's model.
+    /// was, since it was already on that instance.
     Connected,
-    /// As [`Account::Connected`], and the conversation, which was on that
-    /// provider's model, moved onto the instance named here in a new session.
+    /// As [`Account::Connected`], and the conversation moved onto the
+    /// instance named here in a new session.
     Moved(Box<str>),
-    /// As [`Account::Connected`], and the conversation, which was on that
-    /// provider's model, stayed on it for this reason; the next run starts on
-    /// the instance.
+    /// As [`Account::Connected`], and the conversation stayed where it was
+    /// for this reason; the next run starts on the instance.
     Unmoved(String),
     /// The agent read signed in, and the route through it could not be
     /// written down, so nothing changed.
@@ -269,8 +268,8 @@ pub const DISCONNECT_INSTEAD: &str = "Disconnect from Crucible instead";
 pub const CONNECTED: &str = "Connected. The provider is reached through this agent.";
 
 /// What a person is told once a provider is reached through an agent and the
-/// conversation, which was on that provider's model, moved onto `instance`:
-/// the route it is on now, and that nothing came with it.
+/// conversation moved onto `instance`: the route it is on now, and that
+/// nothing came with it.
 #[must_use]
 pub fn moved_onto(instance: &str) -> String {
     format!(
@@ -280,8 +279,8 @@ pub fn moved_onto(instance: &str) -> String {
 }
 
 /// What a person is told once a provider is reached through an agent and the
-/// conversation, which was on that provider's model, could not move onto it.
-pub const UNMOVED: &str = "Connected. This conversation stays on the provider's model; \
+/// conversation could not move onto it.
+pub const UNMOVED: &str = "Connected. This conversation stays where it is; \
      the next run starts on the agent.";
 
 /// What a person is told where the agent is signed in and the route through
