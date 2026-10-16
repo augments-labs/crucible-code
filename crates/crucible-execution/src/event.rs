@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use crucible_types::TurnId;
+use crucible_types::{Compacting, TurnId};
 
 use crate::backend::{Failure, Outcome, SessionRef};
 use crate::capability::Observation;
@@ -316,6 +316,18 @@ pub enum Event {
     Pending(PendingRef, Pending),
     /// What the turn used.
     Usage(Observation<Usage>),
+    /// How many tokens the agent's context held at its latest request to its
+    /// model, that request's answer included.
+    Carried(u64),
+    /// The agent made room in its own context.
+    Compacted {
+        /// What asked for it.
+        why: Compacting,
+        /// The tokens its context held before.
+        before: u64,
+        /// And after, where the agent said.
+        after: Option<u64>,
+    },
     /// Something the agent is doing outside the turn.
     Background(Text),
     /// The turn ended.

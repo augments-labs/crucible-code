@@ -186,7 +186,7 @@ pub(super) struct Boxed {
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct Bordering {
     /// How much of the window is left, where the turn has said.
-    pub(super) left: Option<u8>,
+    pub(super) left: Remaining,
     /// Where in the retained prompts the line came from, where an arrow is what
     /// put it there.
     pub(super) history: Recalled,
@@ -228,7 +228,7 @@ pub(super) fn writing<'a>(
 ) -> Prompt<'a> {
     Prompt {
         draft: Draft::projected(editor.projection()),
-        left: Remaining::new(bordering.left),
+        left: bordering.left,
         history: bordering.history,
         mode: says.mode.as_ref(),
         tone: says.tone,

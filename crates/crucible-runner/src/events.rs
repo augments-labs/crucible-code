@@ -464,6 +464,18 @@ pub enum Event {
         compacted: crucible_types::Compacted,
     },
 
+    /// An installed agent made room in its own context, and what that context
+    /// held either side, as the agent said: nothing here wrote the notes, so
+    /// there is no recap to count.
+    AgentCompacted {
+        /// What asked for it.
+        why: crucible_types::Compacting,
+        /// The tokens the context held before.
+        before: u64,
+        /// And after, where the agent said.
+        after: Option<u64>,
+    },
+
     /// What the turn has spent so far, every response of it added up.
     Spent {
         /// The running total, not the reading that moved it.
@@ -629,6 +641,12 @@ impl std::fmt::Debug for Event {
             Self::Compacted { compacted } => f
                 .debug_struct("Compacted")
                 .field("compacted", compacted)
+                .finish(),
+            Self::AgentCompacted { why, before, after } => f
+                .debug_struct("AgentCompacted")
+                .field("why", why)
+                .field("before", before)
+                .field("after", after)
                 .finish(),
             Self::Spent { spend } => f.debug_struct("Spent").field("spend", spend).finish(),
             Self::Used { totals } => f.debug_struct("Used").field("totals", totals).finish(),

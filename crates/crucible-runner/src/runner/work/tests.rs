@@ -169,6 +169,7 @@ fn what_a_tool_prints_while_it_runs_arrives_under_its_own_call() {
             | Event::Carried { .. }
             | Event::Compacting { .. }
             | Event::Compacted { .. }
+            | Event::AgentCompacted { .. }
             | Event::Retrying
             | Event::Reported { .. }
             | Event::FastRefused { .. }
@@ -1552,6 +1553,7 @@ fn every_call_reports_that_it_finished() {
             | Event::Carried { .. }
             | Event::Compacting { .. }
             | Event::Compacted { .. }
+            | Event::AgentCompacted { .. }
             | Event::Retrying
             | Event::Reported { .. }
             | Event::FastRefused { .. }

@@ -8,6 +8,7 @@
 //! if it had said something known.
 
 use crucible_execution::{Cost, Currency, Failure};
+use crucible_types::Compacting;
 use serde_json::Value;
 
 /// The largest amount a cost may report, in dollars: far beyond any session,
@@ -31,9 +32,8 @@ const PASSED_OVER: [&str; 11] = [
 ];
 
 /// The system frames that report nothing a turn carries.
-const SYSTEM_PASSED_OVER: [&str; 30] = [
+const SYSTEM_PASSED_OVER: [&str; 29] = [
     "api_retry",
-    "compact_boundary",
     "status",
     "hook_started",
     "hook_progress",
@@ -84,6 +84,15 @@ pub(crate) enum Frame {
     Answered(String),
     /// The program withdrew the question with this id.
     Withdrawn(String),
+    /// The program made room in the session's context.
+    Compacted {
+        /// What asked for it.
+        why: Compacting,
+        /// The tokens the context held before.
+        before: u64,
+        /// And after, where it says.
+        after: Option<u64>,
+    },
     /// Nothing a turn reports.
     Nothing,
 }
@@ -113,6 +122,10 @@ pub(crate) struct Assistant {
     pub(crate) calls: Vec<(String, String, Value)>,
     /// Whether it is the program saying the account is not signed in.
     pub(crate) signed_out: bool,
+    /// The tokens the request it answers carried, cache included, and its
+    /// answer: where the model said, and not for a message the program wrote
+    /// itself.
+    pub(crate) carried: Option<u64>,
 }
 
 /// How a turn ended, as its `result` frame says.
@@ -195,6 +208,22 @@ fn system(frame: &Value) -> Result<Frame, Failure> {
             mode: text(frame, "permissionMode")?.to_owned(),
             version: text(frame, "claude_code_version")?.to_owned(),
         })),
+        "compact_boundary" => {
+            let metadata = frame.get("compact_metadata").ok_or_else(missing)?;
+            let why = match text(metadata, "trigger")? {
+                "manual" => Compacting::Asked,
+                "auto" => Compacting::Full,
+                _ => return Err(unreviewed()),
+            };
+            Ok(Frame::Compacted {
+                why,
+                before: metadata
+                    .get("pre_tokens")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(missing)?,
+                after: metadata.get("post_tokens").and_then(Value::as_u64),
+            })
+        }
         subtype if SYSTEM_PASSED_OVER.contains(&subtype) => Ok(Frame::Nothing),
         _ => Err(unreviewed()),
     }
@@ -206,6 +235,7 @@ fn assistant(frame: &Value) -> Result<Assistant, Failure> {
     let mut said = Assistant {
         main: frame.get("parent_tool_use_id").is_none_or(Value::is_null),
         signed_out: frame.get("error").and_then(Value::as_str) == Some("authentication_failed"),
+        carried: carried(message),
         ..Assistant::default()
     };
     for block in blocks(message) {
@@ -222,6 +252,26 @@ fn assistant(frame: &Value) -> Result<Assistant, Failure> {
         }
     }
     Ok(said)
+}
+
+/// The tokens the request `message` answers carried and the answer itself,
+/// where its usage says them all; nothing for one the program wrote rather
+/// than its model, which reports no request.
+fn carried(message: &Value) -> Option<u64> {
+    if message.get("model").and_then(Value::as_str) == Some("<synthetic>") {
+        return None;
+    }
+    let usage = message.get("usage")?;
+    [
+        "input_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "output_tokens",
+    ]
+    .into_iter()
+    .try_fold(0_u64, |sum, name| {
+        sum.checked_add(usage.get(name).and_then(Value::as_u64).unwrap_or(0))
+    })
 }
 
 /// The tool results a user frame carries, each a call's id and whether it

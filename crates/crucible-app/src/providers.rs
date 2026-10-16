@@ -1350,6 +1350,12 @@ pub fn agent_started(
     Some((model.into(), effort))
 }
 
+/// The window of `model` as `provider` serves it, where this build records
+/// one: the most an installed agent started on it holds.
+pub(crate) fn agent_window(provider: &str, model: &str) -> Option<u32> {
+    facts(provider, model).map(|facts| facts.window)
+}
+
 /// How [`re_serving`] reads one environment variable by name, or learns it is
 /// not set.
 pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;

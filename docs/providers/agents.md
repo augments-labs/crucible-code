@@ -74,6 +74,17 @@ from, each with its rungs, and `/effort` the rungs of the model in force; what
 is taken starts the agent's next run, and is written into its entry. An agent
 that chooses its own model has `/model` and `/effort` say so instead.
 
+The line above the box reads how much of the model's window the agent's
+context holds, such as `41k/1.0M · 95% window left`: the window is the one
+crucible records for the model the agent is started on, which nobody chooses
+and `contextWindow` does not change, and what is held is what the agent last
+said its own request carried, its answer included. A session just started
+holds nothing; one resumed reads nothing until the agent's first answer. When
+the agent makes room in its own context, the transcript says so with what it
+held before and after, such as `the agent made room · 150k → 30k carried`, and
+the reading drops to what was left. `/context` gives the same figure in its
+`held by the agent` row.
+
 ## Claude Code
 
 crucible speaks to Claude Code over its own stream protocol: the program is

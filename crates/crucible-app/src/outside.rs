@@ -20,8 +20,12 @@
 //! that ended after it began with no cost reported, stopped, cut short,
 //! failed, or left by its caller, leaves the sum so far as a floor, since it
 //! may have spent and did not say. Beside them the tally keeps what the
-//! last turn said it read, which a turn under way replaces only once it says
-//! its own. A turn begins when the agent's host says
+//! agent last said its context holds: what its last request carried, read
+//! off each message of its main loop, or what was left once it made room.
+//! It is nothing for a conversation that has not started, and not known on
+//! one resumed until the agent says. It is measured against the window this
+//! program records for the model the agent is started on, which nobody
+//! chooses. A turn begins when the agent's host says
 //! it has, before anything is written to the agent, so a turn whose request
 //! may never have left still counts as one that may have spent: the figures
 //! never read lower than what was spent. A launch refused before that
@@ -68,8 +72,8 @@ use crucible_execution::{
 };
 use crucible_models::{Effort, ProviderError};
 use crucible_runner::{
-    Event as RunEvent, ReportedTokens, Reporter, RunContext, RunResult, SessionCost, Totals,
-    TurnError, Turned,
+    Breakdown, Event as RunEvent, ReportedTokens, Reporter, RunContext, RunResult, SessionCost,
+    Totals, TurnError, Turned,
 };
 use crucible_runtime::BoxFuture;
 use crucible_session::{ExternalRef, RouteBinding, Session, Uncertain};
@@ -80,6 +84,7 @@ use crucible_types::{
 };
 
 use crate::client::{Acting, Asker};
+use crate::providers;
 
 /// What launches an installed agent again, for a conversation whose backend is
 /// spent, cleared, or wanted under another mode.
@@ -174,17 +179,14 @@ pub(crate) struct Tally {
     started: Option<Instant>,
     /// The turn under way, and whether it reported a cost.
     open: Option<bool>,
-    /// The tokens the last turn that said so read: kept through the next
-    /// until it says its own, then that turn's, summed where it says more
-    /// than once.
-    read: u64,
-    /// Whether the turn under way has said what it read.
-    reread: bool,
+    /// The tokens the agent last said its context holds, where it has said
+    /// or the conversation has not started.
+    held: Option<u64>,
 }
 
 impl Tally {
-    /// Nothing reported yet.
-    pub(crate) const fn new() -> Self {
+    /// Nothing reported yet, by a conversation whose context holds `held`.
+    pub(crate) const fn new(held: Option<u64>) -> Self {
         Self {
             tokens: ReportedTokens {
                 input: 0,
@@ -195,8 +197,7 @@ impl Tally {
             cost: SessionCost::Unspent,
             started: None,
             open: None,
-            read: 0,
-            reread: false,
+            held,
         }
     }
 
@@ -213,7 +214,6 @@ impl Tally {
         let changed = self.end(false);
         self.started.get_or_insert_with(Instant::now);
         self.open = Some(false);
-        self.reread = false;
         changed
     }
 
@@ -222,11 +222,6 @@ impl Tally {
         let add = |sum: u64, more: Option<u64>| sum.saturating_add(more.unwrap_or(0));
         let tokens = &mut self.tokens;
         tokens.input = add(tokens.input, usage.input_tokens());
-        if let Some(read) = usage.input_tokens() {
-            let before = if self.reread { self.read } else { 0 };
-            self.read = before.saturating_add(read);
-            self.reread = true;
-        }
         tokens.output = add(tokens.output, usage.output_tokens());
         tokens.cache_read = add(tokens.cache_read, usage.cache_read_tokens());
         tokens.cache_write = add(tokens.cache_write, usage.cache_write_tokens());
@@ -236,6 +231,12 @@ impl Tally {
                 *open = true;
             }
         }
+    }
+
+    /// The agent said its context holds `held` tokens, or that it is not
+    /// known.
+    pub(crate) const fn hold(&mut self, held: Option<u64>) {
+        self.held = held;
     }
 
     /// The turn under way ended, `answered` or not. Whether the figures
@@ -255,6 +256,13 @@ impl Tally {
         };
         before != self.cost
     }
+}
+
+/// What the context of a conversation on `transcript`, its agent's session
+/// `named`, holds before the agent says: nothing where it has not started, and
+/// not known where the agent has a session to resume.
+fn fresh(transcript: &Transcript, named: Option<&ExternalRef>) -> Option<u64> {
+    (named.is_none() && transcript.messages().is_empty()).then_some(0)
 }
 
 /// `cost` with `spent` added: a sum in dollars stays a sum, or a floor where
@@ -365,8 +373,8 @@ impl Outside {
             relaunch,
             route,
             driver,
+            tally: Tally::new(fresh(&transcript, named.as_ref())),
             transcript,
-            tally: Tally::new(),
             mode,
             model,
             effort,
@@ -392,10 +400,22 @@ impl Outside {
         self.tally.totals()
     }
 
-    /// The tokens the agent said its last turn read, cache reads included,
-    /// until the turn under way says its own; 0 before any turn said.
-    pub(crate) const fn read(&self) -> u64 {
-        self.tally.read
+    /// The tokens the agent last said its context holds: nothing before the
+    /// conversation started, and not known on one resumed until it says.
+    pub(crate) const fn held(&self) -> Option<u64> {
+        self.tally.held
+    }
+
+    /// How many tokens the agent's context holds at most, where this program
+    /// records a window for the model the agent is started on.
+    pub(crate) fn window(&self) -> Option<u32> {
+        let driver = crucible_config::Driver::ALL
+            .iter()
+            .find(|driver| driver.name() == self.driver)?;
+        if !driver.takes_model() {
+            return None;
+        }
+        providers::agent_window(driver.provider(), self.model()?)
     }
 
     /// The permission mode the agent is launched in.
@@ -460,6 +480,7 @@ impl Outside {
     /// where `named` is `None`.
     pub(crate) async fn restart(&mut self, transcript: Transcript, named: Option<ExternalRef>) {
         self.retire().await;
+        self.tally.hold(fresh(&transcript, named.as_ref()));
         self.transcript = transcript;
         self.named = named;
     }
@@ -534,9 +555,11 @@ impl Outside {
         // the run mid-turn.
         self.spent = true;
 
+        let window = self.window();
         let telling = Telling {
             reporter: run.reporting(),
             turn,
+            window,
             backend,
             session,
             instance: self.route.instance(),
@@ -708,6 +731,8 @@ struct Telling<'t> {
     reporter: Reporter<'t>,
     /// The turn.
     turn: TurnId,
+    /// The window of the model the agent was started on, where it is known.
+    window: Option<u32>,
     /// The agent, for leave refused while too many are open.
     backend: &'t dyn Backend,
     /// What the turn is recorded into.
@@ -868,6 +893,23 @@ impl Sink for Telling<'_> {
             // Always followed by the failure that ends the turn, which is
             // what is told.
             Event::Background(_) | Event::Process(_) => None,
+            Event::Carried(carried) => {
+                told.tally.hold(Some(carried));
+                Some(RunEvent::Carried {
+                    breakdown: Breakdown::reported(self.window, carried),
+                })
+            }
+            Event::Compacted { why, before, after } => {
+                told.tally.hold(after);
+                drop(told);
+                self.reporter
+                    .post(RunEvent::AgentCompacted { why, before, after });
+                Some(RunEvent::Carried {
+                    breakdown: after.map_or_else(Breakdown::default, |after| {
+                        Breakdown::reported(self.window, after)
+                    }),
+                })
+            }
         };
         if let Some(posted) = posted {
             self.reporter.post(posted);

@@ -179,6 +179,11 @@ describe the model you had just left:
 { "providers": { "openai": { "contextWindow": { "gpt-5.6-sol": 272000 } } } }
 ```
 
+On an [installed agent's](../providers/agents.md) route the agent builds its
+own requests and keeps its own context, so `contextWindow` does not apply
+there: the window read is the one crucible records for the model the agent is
+started on.
+
 Without either setting, a model crucible knows starts at its native context
 window: 1,000,000 tokens for Claude Fable, Opus and Sonnet, DeepSeek,
 MiniMax-M3, Qwen and Z.ai; 1,048,576 for Gemini, Muse Spark, MiMo and Kimi K3;

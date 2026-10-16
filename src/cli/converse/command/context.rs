@@ -263,11 +263,20 @@ fn body(context: &api::Context, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         return rows;
     };
 
-    let parts = Category::EVERY.map(|category| Part {
-        slot: tone(category),
-        fill: fill(category),
-        size: context.tokens(category),
-    });
+    // What an installed agent holds is spent room as much as anything counted
+    // here, so it stands in the bar before what is free.
+    let held = context.external.map(|_| Category::External);
+    let parts: Vec<Part> = Category::EVERY
+        .into_iter()
+        .filter(|&category| category != Category::Free)
+        .chain(held)
+        .chain([Category::Free])
+        .map(|category| Part {
+            slot: tone(category),
+            fill: fill(category),
+            size: context.tokens(category),
+        })
+        .collect();
     rows.push(Bar { parts: &parts }.row(columns, glyphs));
     rows.push(Row::new());
     rows.extend(Category::EVERY.into_iter().map(|category| {

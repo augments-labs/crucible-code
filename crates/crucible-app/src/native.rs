@@ -496,6 +496,7 @@ impl<'n, 'r> Translating<'n, 'r> {
             | Reported::Carried { .. }
             | Reported::Compacting { .. }
             | Reported::Compacted { .. }
+            | Reported::AgentCompacted { .. }
             | Reported::Spent { .. }
             | Reported::PlanLimits { .. }
             | Reported::Aged { .. }

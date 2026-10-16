@@ -2072,6 +2072,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Delta { .. }
             | Event::Compacting { .. }
             | Event::Compacted { .. }
+            | Event::AgentCompacted { .. }
             | Event::Steered { .. }
             | Event::Reported { .. }
             | Event::Aged { .. }

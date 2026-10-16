@@ -109,7 +109,7 @@ pub struct Context {
     pub reserve: u64,
     /// Tokens nothing holds; 0 where the window is not known.
     pub free: u64,
-    /// Tokens an installed agent said its last turn read, on its route
+    /// Tokens an installed agent last said its context holds, on its route
     /// alone: 0 until it says, and left out on a provider's model.
     pub external: Option<u64>,
 }

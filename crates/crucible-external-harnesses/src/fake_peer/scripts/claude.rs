@@ -36,6 +36,13 @@ pub const OUTPUT: u64 = 40;
 /// What one priced turn costs, in millionths of a dollar.
 pub const PRICE: u64 = 250_000;
 
+/// What the context held when the agent said it was carrying it: a request's
+/// input, cache and answer together.
+pub const CARRIED: u64 = 41_293;
+
+/// What the context held once the agent made room in it.
+pub const COMPACTED: u64 = 9_000;
+
 /// The file a turn's effect edits.
 pub const EDITED: &str = "src/lib.rs";
 
@@ -60,6 +67,42 @@ pub fn init() -> String {
 #[must_use]
 pub fn said(text: &str) -> String {
     assistant(&json!([{"type": "text", "text": text}]))
+}
+
+/// The model saying `text` in answer to a request of [`CARRIED`] tokens with
+/// its answer.
+#[must_use]
+pub fn said_carrying(text: &str) -> String {
+    json!({
+        "type": "assistant",
+        "session_id": SESSION,
+        "parent_tool_use_id": null,
+        "message": {
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [{"type": "text", "text": text}],
+            "usage": {
+                "input_tokens": 3,
+                "cache_read_input_tokens": 40_000,
+                "cache_creation_input_tokens": 1_200,
+                "output_tokens": CARRIED - 41_203,
+            },
+        },
+    })
+    .to_string()
+}
+
+/// The program saying it made room in the context on its own, from
+/// [`CARRIED`] tokens down to [`COMPACTED`].
+#[must_use]
+pub fn compacted() -> String {
+    json!({
+        "type": "system",
+        "subtype": "compact_boundary",
+        "session_id": SESSION,
+        "compact_metadata": {"trigger": "auto", "pre_tokens": CARRIED, "post_tokens": COMPACTED},
+    })
+    .to_string()
 }
 
 /// The model calling for [`EDITED`] to be changed: an effect under way.
@@ -288,6 +331,25 @@ pub fn priced_then_unreported() -> Script {
 #[must_use]
 pub fn two_priced() -> Script {
     connected(priced_turn(priced_turn(Reply::new(), PRICE), 2 * PRICE))
+}
+
+/// A run of a turn whose answer says what its request carried, and one in
+/// which the program makes room before it answers.
+#[must_use]
+pub fn carrying_and_compacting() -> Reply {
+    let first = turn(Reply::new())
+        .say(said_carrying("Done."))
+        .say(answered(Some(PRICE)));
+    turn(first)
+        .say(compacted())
+        .say(said("Made room."))
+        .say(answered(Some(2 * PRICE)))
+}
+
+/// A connect, then [`carrying_and_compacting`].
+#[must_use]
+pub fn carried_then_compacted() -> Script {
+    connected(carrying_and_compacting())
 }
 
 /// A connect, then a run of a priced turn and one that is stopped.

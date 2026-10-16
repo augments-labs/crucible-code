@@ -166,19 +166,48 @@ impl<'a> Draft<'a> {
     }
 }
 
-/// A usable-window reading, unknown or bounded to a percentage.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Remaining(Option<u8>);
+/// A usable-window reading, unknown or bounded to a percentage, and the
+/// tokens held of how many where those are what the reading is read off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Remaining {
+    left: Option<u8>,
+    held: Option<(u64, u64)>,
+}
 
 impl Remaining {
     /// A reading supplied by the runner, capping defensive external input.
     #[must_use]
     pub fn new(left: Option<u8>) -> Self {
-        Self(left.map(|left| left.min(100)))
+        Self {
+            left: left.map(|left| left.min(100)),
+            held: None,
+        }
     }
 
-    fn get(self) -> Option<u8> {
-        self.0
+    /// The same reading, said beside the `used` tokens of `window` it was
+    /// read off: what an installed agent says its context holds, where this
+    /// program can count none of it.
+    #[must_use]
+    pub const fn holding(self, used: u64, window: u64) -> Self {
+        Self {
+            held: Some((used, window)),
+            ..self
+        }
+    }
+
+    const fn get(self) -> Option<u8> {
+        self.left
+    }
+}
+
+/// `tokens` as a reading says them: whole below a thousand, then in
+/// thousands, then in millions to one place.
+#[must_use]
+pub fn tokens(tokens: u64) -> String {
+    match tokens {
+        0..=999 => tokens.to_string(),
+        1_000..=999_999 => format!("{}k", tokens / 1_000),
+        _ => format!("{}.{}M", tokens / 1_000_000, (tokens % 1_000_000) / 100_000),
     }
 }
 
@@ -431,7 +460,7 @@ impl Prompt<'_> {
             // known the row says nothing, and keeps its place and its edge:
             // the box does not move the moment a reading arrives, and every
             // framed row ends at the last column.
-            let reading = self.reading().unwrap_or_default();
+            let reading = self.bare_reading(columns, glyphs).unwrap_or_default();
             let reading = Row::new().then(Slot::Quiet, format!("{reading:>columns$}"));
 
             let mut rows = vec![
@@ -832,7 +861,7 @@ impl Prompt<'_> {
             return self.session_status(columns, glyphs);
         }
 
-        let Some(reading) = self.bare_reading(columns) else {
+        let Some(reading) = self.bare_reading(columns, glyphs) else {
             return self.session_status(columns, glyphs);
         };
         let wide = width::columns(&reading);
@@ -914,17 +943,24 @@ impl Prompt<'_> {
         label(self.provider, self.model, self.effort, self.speed, glyphs)
     }
 
-    /// The usable-window fact in its full spelling, or nothing while no
-    /// window is known: a reading that says only that carries no fact.
-    fn reading(&self) -> Option<String> {
-        self.left.get().map(|left| format!("{left}% window left"))
-    }
-
-    /// The longest usable-window spelling a bare row can hold, or nothing
-    /// while no window is known.
-    fn bare_reading(&self, columns: usize) -> Option<String> {
+    /// The longest usable-window spelling `columns` can hold, or nothing
+    /// while no window is known: a reading that says only that carries no
+    /// fact. The tokens held of the window lead it where they are known, and
+    /// are the first thing given up.
+    fn bare_reading(&self, columns: usize, glyphs: Glyphs) -> Option<String> {
         let left = self.left.get()?;
         let full = format!("{left}% window left");
+        if let Some((used, window)) = self.left.held {
+            let held = format!(
+                "{}/{} {} {full}",
+                tokens(used),
+                tokens(window),
+                glyphs.dot()
+            );
+            if width::columns(&held) <= columns {
+                return Some(held);
+            }
+        }
         if width::columns(&full) <= columns {
             return Some(full);
         }

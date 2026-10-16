@@ -887,33 +887,46 @@ fn context(tree: &Tree, outside: &mut Outside) -> Result<crucible_client_api::Co
 }
 
 /// On the route, `/context` counts nothing Crucible cannot see and carries
-/// what the agent said its last turn read: nothing before it said anything,
-/// and the last turn's alone after two. `/usage` carries the same figure.
+/// what the agent's context holds against its model's window: nothing before
+/// it said anything, what its last request carried once it has, and what is
+/// left once it made room. `/usage` carries the same figures.
 #[test]
-fn context_on_the_route_carries_what_the_agent_said_its_last_turn_read() -> Result<(), Failed> {
+fn context_on_the_route_holds_what_the_agent_carried_against_its_window() -> Result<(), Failed> {
     let tree = Tree::new("external-context")?;
-    let mut outside = Outside::new(&tree, &claude::two_priced())?;
+    let mut outside = Outside::new(&tree, &claude::carried_then_compacted())?;
 
     let before = context(&tree, &mut outside)?;
+    let window = before.window.ok_or("the route's model has no window")?;
     assert_eq!(before.external, Some(0), "{before:?}");
+    assert_eq!(before.free, window, "{before:?}");
     let (first, _) = turn(&mut outside, "first", false)?;
     assert!(matches!(first, Ok(Turned::Ran(_))), "{first:?}");
-    let read = outside.settled().totals().input();
-    assert!(read > 0, "the turn said it read nothing");
-    assert_eq!(context(&tree, &mut outside)?.external, Some(read));
-    let (second, _) = turn(&mut outside, "second", false)?;
-    assert!(matches!(second, Ok(Turned::Ran(_))), "{second:?}");
+    let carried = context(&tree, &mut outside)?;
+    assert_eq!(carried.external, Some(claude::CARRIED), "{carried:?}");
+    assert_eq!(carried.free, window - claude::CARRIED, "{carried:?}");
+    let left = (window - claude::CARRIED) * 100 / window;
+    assert_eq!(
+        carried.left.map(|left| u64::from(left.get())),
+        Some(left),
+        "{carried:?}"
+    );
 
+    let (second, events) = turn(&mut outside, "second", false)?;
+    assert!(matches!(second, Ok(Turned::Ran(_))), "{second:?}");
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::AgentCompacted { .. })),
+        "{events:?}"
+    );
     let after = context(&tree, &mut outside)?;
-    assert_eq!(outside.settled().totals().input(), read * 2);
-    assert_eq!(after.external, Some(read), "{after:?}");
+    assert_eq!(after.external, Some(claude::COMPACTED), "{after:?}");
     let Outcome::Usage(usage) = answered(&tree, &mut outside, Command::Usage)? else {
         return Err("/usage was not answered with a usage".into());
     };
     assert_eq!(usage.context, after);
-    assert_eq!(after.window, None, "{after:?}");
     let counted = after.system + after.instructions + after.tools + after.mcp + after.messages;
-    assert_eq!(counted + after.reserve + after.free, 0, "{after:?}");
+    assert_eq!(counted + after.reserve, 0, "{after:?}");
     Ok(())
 }
 
