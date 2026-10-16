@@ -25,7 +25,9 @@
 //! next run on it. The other providers stand beside it as they would off the
 //! route, and a model taken off one of them moves the conversation off the
 //! agent onto it, in a new session. An agent that chooses its own model is
-//! told so instead, at rest and mid-turn.
+//! told so instead, at rest and mid-turn. Off such a route, a model of a
+//! provider the configuration reaches through an installed agent moves the
+//! conversation onto that agent, in a new session, to be started on it.
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
@@ -805,6 +807,20 @@ fn taken<T: Terminal>(
         } => {
             super::cache::retained(renderer, laid, retained)?;
             say_at(renderer, laid, &super::login::moved_off(provider))?;
+            unwritten
+        }
+        Switched::MovedOnto {
+            instance,
+            unwritten,
+        } => {
+            say_at(
+                renderer,
+                laid,
+                &format!(
+                    "{provider} is reached through the agent {instance}, so this conversation \
+                     moved onto it, in a new session; /resume lists the one it left"
+                ),
+            )?;
             unwritten
         }
     };

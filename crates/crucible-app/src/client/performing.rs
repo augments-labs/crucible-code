@@ -531,6 +531,13 @@ fn model(switched: &Switched) -> ModelOutcome {
             retained: reading::retained(*retained),
             unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
         },
+        Switched::MovedOnto {
+            instance,
+            unwritten,
+        } => ModelOutcome::MovedOnto {
+            onto: crucible_client_api::Text::cut(instance),
+            unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+        },
     }
 }
 

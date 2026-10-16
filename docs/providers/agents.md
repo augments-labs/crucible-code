@@ -81,6 +81,15 @@ as the `provider`, model and rung asked; a rung that model does not serve is
 refused and nothing moves. An agent that chooses its own model has
 `/model` and `/effort` say so instead.
 
+A model taken of a provider whose `access` names an installed agent, while the
+conversation runs on no agent that reaches that provider, moves the
+conversation onto that agent at once, in a new session, the agent to be
+started on that model on its first turn, with the rung asked, else the one in
+force where the model serves it, else the model's default; both are written
+into its entry. Its line says so, and the session it left stays listed and can
+be resumed. Where that agent chooses its own model or is disconnected, or the
+model does not serve the rung asked, its line says why and nothing moves.
+
 The line above the box reads how much of the model's window the agent's
 context holds, such as `41k/1.0M · 95% window left`: the window is the one
 crucible records for the model the agent is started on, which nobody chooses

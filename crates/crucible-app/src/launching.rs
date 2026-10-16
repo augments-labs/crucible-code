@@ -305,6 +305,16 @@ pub fn reopening(
     Ok((agent, route))
 }
 
+/// Why the installed agent `instance`, which `provider` is reached through,
+/// is not started: it is disconnected, and the two ways back.
+pub(crate) fn disconnected(instance: &str, provider: &str) -> String {
+    format!(
+        "it is disconnected: set externalAgents.{instance}.enabled to true in the user \
+         configuration file, or remove providers.{provider}.access there to reach \
+         {provider} directly"
+    )
+}
+
 /// The agent the configuration's `entry` is, as `registry` knows its driver,
 /// its program looked for through `lookup`, where it can be started in `mode`.
 ///

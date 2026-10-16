@@ -319,6 +319,16 @@ pub enum ModelOutcome {
         /// Why the choice will not outlive the host process, where it will not.
         unwritten: Option<Problem>,
     },
+    /// The provider is reached through an installed agent's instance the
+    /// conversation was not on, and it moved onto that instance, which is
+    /// started on this model, in a new session; the session it left stays
+    /// listed and can be resumed.
+    MovedOnto {
+        /// The instance the conversation moved onto.
+        onto: Text,
+        /// Why the choice will not outlive the host process, where it will not.
+        unwritten: Option<Problem>,
+    },
 }
 
 /// How asking for an effort ended.

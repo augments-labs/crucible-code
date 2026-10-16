@@ -1006,6 +1006,325 @@ fn a_model_of_another_provider_at_a_rung_it_does_not_serve_stays_on_the_route() 
     Ok(())
 }
 
+/// The user file of a run that reaches anthropic through the installed
+/// agent `work` and asks openai.
+const ROUTED_ELSEWHERE: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}},
+  "providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}},
+  "provider": "openai"
+}
+"#;
+
+/// What `command` is answered with, the user file holding `file` and this
+/// run's settings read from it.
+fn answered_off(
+    tree: &Tree,
+    conversation: &mut Conversation,
+    file: &str,
+    command: Command,
+) -> Result<Outcome, Failed> {
+    let mut desk = super::Desk::new(tree, &[])?;
+    if let Some(directory) = desk.choosing.parent() {
+        std::fs::create_dir_all(directory)?;
+    }
+    std::fs::write(&desk.choosing, file)?;
+    desk.settings = super::written(tree)?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let at = client::Desk {
+        switching: desk.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads: |_| false,
+        environment: super::unset,
+        notes: |_| Err(crucible_client_api::ErrorCode::InvalidArgument.into()),
+    };
+    let request = Request::new(Asking::every(), Correlation::new(1), command);
+    let performed = runtime()?.block_on(client::perform(conversation, &request, &at));
+    Ok(performed.response(&request).outcome)
+}
+
+/// Off the route, a model of a provider this run reaches through an installed
+/// agent moves the conversation onto that agent, on that model, in a new
+/// session, and writes the model into the agent's entry; the agent's first
+/// run is started on it, and the session left can be resumed.
+#[test]
+fn a_model_of_a_provider_reached_through_an_agent_moves_onto_it() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, ModelOutcome, Name, Text};
+
+    let tree = Tree::new("external-model-moved-onto")?;
+    let native = super::conversing(
+        &tree,
+        Script::new(Vec::new()),
+        &super::Guard::Nothing,
+        Some("openai"),
+    )?;
+    let left = native.session().id().cloned().ok_or("an id")?;
+    let (mut conversation, peer) = stepped(&tree, native, &connected([claude::clean()]))?;
+
+    let moved = answered_off(
+        &tree,
+        &mut conversation,
+        ROUTED_ELSEWHERE,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-sonnet-5-5")?,
+            effort: None,
+        },
+    )?;
+
+    assert_eq!(
+        moved,
+        Outcome::Model(ModelOutcome::MovedOnto {
+            onto: Text::cut("work"),
+            unwritten: None,
+        })
+    );
+    let standing = client::snapshot(&conversation);
+    assert_eq!(standing.execution, Execution::Instance(Name::new("work")?));
+    assert_eq!(
+        standing.model.as_ref().map(|model| model.text().as_str()),
+        Some("claude-sonnet-5-5")
+    );
+    let route = conversation.session().route().map(RouteBinding::instance);
+    assert_eq!(route, Some("work"));
+    assert!(
+        conversation
+            .session()
+            .id()
+            .is_some_and(|moved| *moved != left),
+        "no new session"
+    );
+    let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        crucible_config::user(&tree.home()?),
+    )?)?;
+    assert_eq!(
+        written.pointer("/externalAgents/work/model"),
+        Some(&serde_json::json!("claude-sonnet-5-5"))
+    );
+    let (turned, _) = super::turn(&mut conversation, "after")?;
+    assert!(matches!(turned, Turned::Ran(_)), "{turned:?}");
+    let started = fake_peer::argued(&peer);
+    let run = started.last().ok_or("the run was never started")?;
+    assert!(
+        run.windows(2)
+            .any(|pair| pair == ["--model", "claude-sonnet-5-5"]),
+        "{started:?}"
+    );
+    Session::reopen(&tree.sessions(), &tree.workspace()?, &left)?;
+    Ok(())
+}
+
+/// Off the route, a model of a provider reached through an agent keeps the
+/// rung in force where the model serves it: the agent's entry is written at
+/// it and the agent's first run is started at it.
+#[test]
+fn a_model_moved_onto_an_agent_keeps_the_rung_in_force_it_serves() -> Result<(), Failed> {
+    use crucible_client_api::{EffortOutcome, ModelOutcome, Name, Rung, Text};
+
+    let tree = Tree::new("external-model-onto-rung")?;
+    let native = super::conversing(
+        &tree,
+        Script::new(Vec::new()),
+        &super::Guard::Nothing,
+        Some("openai"),
+    )?;
+    let (mut conversation, peer) = stepped(&tree, native, &connected([claude::clean()]))?;
+    let set = answered_off(
+        &tree,
+        &mut conversation,
+        ROUTED_ELSEWHERE,
+        Command::SetEffort(Rung::Xhigh),
+    )?;
+    assert!(
+        matches!(set, Outcome::Effort(EffortOutcome::Taken { .. })),
+        "{set:?}"
+    );
+
+    let moved = answered_off(
+        &tree,
+        &mut conversation,
+        ROUTED_ELSEWHERE,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-sonnet-5-5")?,
+            effort: None,
+        },
+    )?;
+
+    assert_eq!(
+        moved,
+        Outcome::Model(ModelOutcome::MovedOnto {
+            onto: Text::cut("work"),
+            unwritten: None,
+        })
+    );
+    let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        crucible_config::user(&tree.home()?),
+    )?)?;
+    assert_eq!(
+        written.pointer("/externalAgents/work/effort"),
+        Some(&serde_json::json!("xhigh"))
+    );
+    let (turned, _) = super::turn(&mut conversation, "after")?;
+    assert!(matches!(turned, Turned::Ran(_)), "{turned:?}");
+    let started = fake_peer::argued(&peer);
+    let run = started.last().ok_or("the run was never started")?;
+    assert!(
+        run.windows(2).any(|pair| pair == ["--effort", "xhigh"]),
+        "{started:?}"
+    );
+    Ok(())
+}
+
+/// The user file of a run that reaches anthropic through the installed
+/// agent `work`, which is disconnected, and asks openai.
+const ROUTED_DISCONNECTED: &str = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude", "enabled": false}},
+  "providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}},
+  "provider": "openai"
+}
+"#;
+
+/// Off the route, a model of a provider reached through a disconnected agent
+/// is refused with the two ways back, and nothing moves or is written.
+#[test]
+fn a_model_of_a_provider_reached_through_a_disconnected_agent_moves_nothing() -> Result<(), Failed>
+{
+    use crucible_client_api::{Execution, ModelOutcome, Name};
+
+    let tree = Tree::new("external-model-onto-disconnected")?;
+    let native = super::conversing(
+        &tree,
+        Script::new(Vec::new()),
+        &super::Guard::Nothing,
+        Some("openai"),
+    )?;
+    let left = native.session().id().cloned();
+    let (mut conversation, _peer) = stepped(&tree, native, &connected([]))?;
+
+    let refused = answered_off(
+        &tree,
+        &mut conversation,
+        ROUTED_DISCONNECTED,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-sonnet-5-5")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    assert_eq!(
+        problem.message.as_str(),
+        "the agent work cannot be started: it is disconnected: set \
+         externalAgents.work.enabled to true in the user configuration file, or remove \
+         providers.anthropic.access there to reach anthropic directly"
+    );
+    assert_eq!(client::snapshot(&conversation).execution, Execution::Native);
+    assert_eq!(conversation.session().id().cloned(), left);
+    assert_eq!(
+        std::fs::read_to_string(crucible_config::user(&tree.home()?))?,
+        ROUTED_DISCONNECTED
+    );
+    Ok(())
+}
+
+/// Off the route, a model of a provider reached through an agent at a rung
+/// the model does not serve is refused before anything moves or is written.
+#[test]
+fn a_model_reached_through_an_agent_at_a_rung_it_does_not_serve_moves_nothing() -> Result<(), Failed>
+{
+    use crucible_client_api::{Execution, ModelOutcome, Name, Rung};
+
+    let tree = Tree::new("external-model-onto-unserved")?;
+    let native = super::conversing(
+        &tree,
+        Script::new(Vec::new()),
+        &super::Guard::Nothing,
+        Some("openai"),
+    )?;
+    let left = native.session().id().cloned();
+    let (mut conversation, _peer) = stepped(&tree, native, &connected([]))?;
+
+    let refused = answered_off(
+        &tree,
+        &mut conversation,
+        ROUTED_ELSEWHERE,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-haiku-4-5")?,
+            effort: Some(Rung::Max),
+        },
+    )?;
+
+    assert!(
+        matches!(refused, Outcome::Model(ModelOutcome::Unsupported)),
+        "{refused:?}"
+    );
+    assert_eq!(client::snapshot(&conversation).execution, Execution::Native);
+    assert_eq!(conversation.session().id().cloned(), left);
+    assert_eq!(
+        std::fs::read_to_string(crucible_config::user(&tree.home()?))?,
+        ROUTED_ELSEWHERE
+    );
+    Ok(())
+}
+
+/// The user file of a run on the installed agent `work` that reaches google
+/// through `space`, an agent that chooses its own model.
+const ROUTED_TO_ONE_OF_ITS_OWN: &str = r#"{
+  "externalAgents": {
+    "work": {"driver": "claude", "executable": "claude"},
+    "space": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy"}
+  },
+  "providers": {
+    "anthropic": {"access": {"type": "externalAgent", "instance": "work"}},
+    "google": {"access": {"type": "externalAgent", "instance": "space"}}
+  }
+}
+"#;
+
+/// On a route, a model of a provider reached through another agent, one that
+/// chooses its own model, is refused with what that agent is, and the
+/// conversation stays on its route in the session it was in.
+#[test]
+fn a_model_of_a_provider_reached_through_an_agent_choosing_its_own_is_refused() -> Result<(), Failed>
+{
+    use crucible_client_api::{Execution, ModelOutcome, Name};
+
+    let tree = Tree::new("external-model-onto-its-own")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+    let left = outside.conversation.session().id().cloned();
+
+    let refused = answered_off(
+        &tree,
+        &mut outside.conversation,
+        ROUTED_TO_ONE_OF_ITS_OWN,
+        Command::SelectModel {
+            provider: Name::new("google")?,
+            model: Name::new("gemini-3.8-flash")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    assert_eq!(
+        problem.message.as_str(),
+        "providers.google.access names the agent space, which runs the conversation in \
+         place of google's models; remove access to reach google directly"
+    );
+    assert_eq!(
+        client::snapshot(&outside.conversation).execution,
+        Execution::Instance(Name::new("work")?)
+    );
+    assert_eq!(outside.conversation.session().id().cloned(), left);
+    Ok(())
+}
+
 /// What `/context` answers on the route.
 fn context(tree: &Tree, outside: &mut Outside) -> Result<crucible_client_api::Context, Failed> {
     match answered(tree, outside, Command::Context)? {

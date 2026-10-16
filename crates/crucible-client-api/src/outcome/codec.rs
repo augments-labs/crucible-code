@@ -189,6 +189,11 @@ impl ModelOutcome {
                 "unwritten",
                 unwritten.as_ref(),
             ),
+            Self::MovedOnto { onto, unwritten } => noting(
+                Writing::kind("moved_onto").text("onto", onto),
+                "unwritten",
+                unwritten.as_ref(),
+            ),
         }
         .finish()
     }
@@ -206,6 +211,10 @@ impl ModelOutcome {
             "moved_off" => Self::MovedOff {
                 provider: fields.text("provider")?,
                 retained: Retained::from(&mut fields)?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            "moved_onto" => Self::MovedOnto {
+                onto: fields.text("onto")?,
                 unwritten: maybe_problem(&mut fields, "unwritten")?,
             },
             _ => return Err(ErrorCode::Malformed.into()),

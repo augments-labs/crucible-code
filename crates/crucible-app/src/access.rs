@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crucible_auth::{Held, Kind};
-use crucible_config::{Access, Driver, Settings};
+use crucible_config::{Access, Driver, ExternalAgent, Settings};
 use crucible_credentials::{ApiKey, CredentialError};
 use crucible_models::Effort;
 
@@ -376,38 +376,10 @@ fn settled(
             variable: variable.into(),
         }),
         Some(Access::ExternalAgent { instance }) => {
-            let conflict = if addressed {
-                Some("baseUrl")
-            } else if settings.api_key_env(provider).is_some() {
-                Some("apiKeyEnv")
-            } else {
-                None
-            };
-            if let Some(key) = conflict {
-                return Err(AccessError::AgentConflict {
-                    provider: provider.into(),
-                    key,
-                });
-            }
-            let agent = settings
-                .external_agents()
-                .into_iter()
-                .find(|agent| agent.name() == &*instance)
-                .ok_or_else(|| AccessError::UnknownInstance {
-                    provider: provider.into(),
-                    instance: instance.clone(),
-                })?;
-            let serves = agent.driver().provider();
-            if serves != provider {
-                return Err(AccessError::ForeignAgent {
-                    provider: provider.into(),
-                    instance,
-                    serves,
-                });
-            }
+            let agent = agent(provider, instance, settings)?;
             Ok(routed(Route::External {
                 provider,
-                instance,
+                instance: agent.name().into(),
                 driver: agent.driver(),
                 executable: agent.executable().into(),
                 profile: agent.profile().map(Into::into),
@@ -417,6 +389,54 @@ fn settled(
             }))
         }
     }
+}
+
+/// The installed agent `instance` that `settings` reach `provider` through,
+/// where it is a route to `provider`: nothing beside the route says how
+/// `provider` is reached, the instance is configured, and its driver reaches
+/// `provider`.
+///
+/// # Errors
+///
+/// [`AccessError::AgentConflict`] where `provider` is also given an address or
+/// a key's variable, [`AccessError::UnknownInstance`] where no instance goes by
+/// that name, and [`AccessError::ForeignAgent`] where it reaches another
+/// provider.
+pub(crate) fn agent(
+    provider: &str,
+    instance: Box<str>,
+    settings: &Settings,
+) -> Result<ExternalAgent, AccessError> {
+    let conflict = if settings.base_url(provider).is_some() {
+        Some("baseUrl")
+    } else if settings.api_key_env(provider).is_some() {
+        Some("apiKeyEnv")
+    } else {
+        None
+    };
+    if let Some(key) = conflict {
+        return Err(AccessError::AgentConflict {
+            provider: provider.into(),
+            key,
+        });
+    }
+    let agent = settings
+        .external_agents()
+        .into_iter()
+        .find(|agent| agent.name() == &*instance)
+        .ok_or_else(|| AccessError::UnknownInstance {
+            provider: provider.into(),
+            instance: instance.clone(),
+        })?;
+    let serves = agent.driver().provider();
+    if serves != provider {
+        return Err(AccessError::ForeignAgent {
+            provider: provider.into(),
+            instance,
+            serves,
+        });
+    }
+    Ok(agent)
 }
 
 /// How a login during this run rewrote providers' access, read in place of

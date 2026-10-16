@@ -33,6 +33,15 @@ const TWO: &str = concat!(
     "  },\n"
 );
 
+/// Anthropic routed through the installed agent `work` while the
+/// conversation starts on openai, which holds no key.
+const ROUTED: &str = concat!(
+    "  \"provider\": \"openai\",\n",
+    "  \"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}},\n",
+    "  \"providers\": {\"anthropic\": {\"access\": ",
+    "{\"type\": \"externalAgent\", \"instance\": \"work\"}}},\n",
+);
+
 /// How one capture is set up.
 struct Capture<'a> {
     /// What the snapshot and the case are named after.
@@ -115,6 +124,17 @@ fn keyed(window: &mut Watched, row: &str) {
 /// A signed-in status, then the runs `then` plays.
 fn signed_in(then: impl IntoIterator<Item = Reply>) -> Vec<Reply> {
     std::iter::once(claude::signed_in()).chain(then).collect()
+}
+
+/// Fails where the conversation was not moved onto `work`, or a key was
+/// asked for instead.
+fn moved_onto(window: &Watched) {
+    let picture = window.picture();
+    assert!(
+        picture.contains("anthropic is reached through the agent work"),
+        "{picture}"
+    );
+    assert!(!picture.contains("no credential"), "{picture}");
 }
 
 #[test]
@@ -385,6 +405,52 @@ fn login_with_no_provider_asked_still_offers_an_installed_agent() {
             picture.contains("Use an installed coding agent"),
             "{picture}"
         );
+    }
+}
+
+/// Fails where `/model`, naming a model of a provider the configuration
+/// reaches through an installed agent while no agent runs the conversation,
+/// asks for that provider's key instead of moving onto the agent.
+#[test]
+fn a_model_of_a_provider_reached_through_an_agent_moves_onto_it() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-model-onto-{mode}");
+        let script = Script::of(Vec::new());
+        let mut window = Watched::capturing_agents_asking(
+            &case,
+            (80, 40),
+            native,
+            None,
+            (Some(&script), ROUTED),
+        );
+        window.types_until(
+            "/model anthropic/claude-sonnet-5-5\r",
+            "anthropic is reached through",
+        );
+        moved_onto(&window);
+    }
+}
+
+/// Fails where the same model, taken off the `/model` shelf rather than named
+/// on the line, does not move the conversation onto the agent.
+#[test]
+fn a_model_taken_off_the_shelf_of_a_provider_reached_through_an_agent_moves_onto_it() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-shelf-onto-{mode}");
+        let script = Script::of(Vec::new());
+        let mut window = Watched::capturing_agents_asking(
+            &case,
+            (80, 40),
+            native,
+            None,
+            (Some(&script), ROUTED),
+        );
+        window.types_until("/model\r", "claude-sonnet-5-5");
+        window.types_until("claude-sonnet-5-5", "claude-sonnet-5-5");
+        window.types_until("\r", "anthropic is reached through");
+        moved_onto(&window);
     }
 }
 

@@ -551,11 +551,7 @@ fn started_on(
     if !enabled {
         return Err(unstartable(
             instance,
-            format!(
-                "it is disconnected: set externalAgents.{instance}.enabled to true in the user \
-                 configuration file, or remove providers.{provider}.access there to reach \
-                 {provider} directly"
-            ),
+            launching::disconnected(instance, provider),
         ));
     }
     let Some(agent) = launching::Agent::routed(route, agents, |name| {
