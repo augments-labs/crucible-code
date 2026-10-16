@@ -133,9 +133,11 @@ crucible
 You can instead start without an environment key and use `/login`, which asks
 how usage is paid for: a subscription, where you sign in to your account
 (OpenAI, or Kimi Code on kimi.ai or kimi.com) or give a plan's key (MiniMax,
-or Qwen's Coding Plan or Token Plan), or your own API key. Authentication does
-not silently choose a model; `/model` selects the provider, model and supported reasoning
-effort explicitly. While it asks for a provider, `/login` also offers to run
+or Qwen's Coding Plan or Token Plan), or your own API key. Where no model is
+configured for that provider, the login asks its default, the latest
+middle-tier model at medium effort or the nearest rung it serves, and writes
+it to your configuration; `/model` changes the provider, model and reasoning
+effort. While it asks for a provider, `/login` also offers to run
 the conversation through a coding agent installed on this machine, such as
 Claude Code or Antigravity, on the agent's own sign-in; see [installed coding
 agents](docs/providers/agents.md).

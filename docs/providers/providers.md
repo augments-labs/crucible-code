@@ -73,7 +73,7 @@ rather than kept up to date.
 
 ## Which model
 
-There is **no model built in**, and none of these rungs is a guess:
+Startup builds in no model, and none of these rungs is a guess:
 
 1. `--model`, where it names one.
 2. `providers.<name>.model` in your
@@ -91,6 +91,13 @@ Warning: No model selected. Use /model to select the model to ask.
 Warning: No models available. Use /login or set an API key environment
 variable. Then use /model to select a model.
 ```
+
+A `/login` where no model is being asked fills the second rung: it takes the
+provider's default, its latest middle-tier model at `medium` effort (else the
+nearest rung above it that the model serves, else its strongest, and none for
+a model that takes none), asks it at once and writes both to your
+configuration. A model the configuration already names for that provider is
+kept, and so is a rung it names that the default serves.
 
 Everything except taking a turn works in that state, which is what leaves
 somewhere to type the answer. Down a pipe there is nobody to type it, so a

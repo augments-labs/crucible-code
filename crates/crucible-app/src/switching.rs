@@ -14,7 +14,8 @@
 //! A conversation on an installed agent's route keeps that route, its session
 //! and its run whatever credential for the provider the route reaches is given
 //! or forgotten: the agent answers, and the credential is written down as the
-//! way that provider is reached from the next run on. One given there for
+//! way that provider is reached from the next run on, with its default model
+//! and rung where nothing names a model for it. One given there for
 //! another provider moves the conversation off the route onto it, in a new
 //! session, where that session can be started; otherwise it is only stored.
 //!
@@ -37,7 +38,7 @@ use crucible_workspace::Workspace;
 
 use crate::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Served, Serving, Sourcing,
-    offered, rungs,
+    default_rung, offered, rungs,
 };
 use crate::remember::{self, RememberError};
 use crate::startup::{UNKNOWN_CEILING, accepts, ceiling, window};
@@ -237,10 +238,44 @@ fn beside_the_route(routed: bool, named: Served, with: &Switching<'_>) -> Logged
             });
         }
     };
+    // In the one update that rewrites the access, so that the next launch
+    // finds both or neither, and a refusal leaves the route written as it was.
+    let (model, effort, taken) = first_asked(named, with);
+    let default = taken.then_some((model.as_str(), effort));
     LoggedIn::NextLaunch {
         provider: named.name,
-        unwritten: remember::reaching(with.choosing, named.name, &access).err(),
+        unwritten: remember::reaching_defaulted(with.choosing, named.name, &access, default).err(),
     }
+}
+
+/// What a login asks `named` for where nobody was being asked: the model the
+/// user file names for it as it stands now, else the one the files read at
+/// launch name, each at the rung beside it; else its default, at the rung
+/// configured where the default serves it, else at [`default_rung`]'s. Only
+/// the last is a default taken, answered `true` to be written down.
+///
+/// The user file is read again because `/model` writes to it during the run,
+/// and the files read at launch are not read again.
+fn first_asked(named: Served, with: &Switching<'_>) -> (String, Option<Effort>, bool) {
+    let provider = named.name;
+    let (filed, filed_rung) = remember::chosen(with.choosing, provider);
+    if let Some(model) = filed {
+        return (model, filed_rung, false);
+    }
+    if let Some(model) = with.settings.model(provider).map(str::trim)
+        && !model.is_empty()
+    {
+        return (model.to_owned(), with.settings.effort(provider), false);
+    }
+    let served = rungs(with.providers, provider, named.default);
+    let configured = filed_rung
+        .or_else(|| with.settings.effort(provider))
+        .filter(|rung| served.contains(rung));
+    (
+        named.default.to_owned(),
+        configured.or_else(|| default_rung(&served)),
+        true,
+    )
 }
 
 /// Whether `named` is reached through the installed agent `instance`.
@@ -366,14 +401,40 @@ impl Conversation {
         }
     }
 
+    /// Asks `named`, which nobody was being asked, for what [`first_asked`]
+    /// names, and writes a default taken down for the next run: what could not
+    /// be written, if anything.
+    ///
+    /// The rung left over was asked of the model asked before, so where none
+    /// is named it is cleared rather than carried onto a model that may serve
+    /// none.
+    fn ask_first(&mut self, named: Served, with: &Switching<'_>) -> Option<RememberError> {
+        let provider = named.name;
+        let (model, effort, taken) = first_asked(named, with);
+        self.runner.ask(
+            &model,
+            ceiling(with.providers, provider, &model),
+            Some(window(with.providers, named, &model, with.settings)),
+            accepts(with.providers, provider, &model),
+        );
+        match effort.filter(|effort| serves(with.providers, provider, &model, *effort)) {
+            Some(effort) => self.runner.think(effort),
+            None => self.runner.unthink(),
+        }
+        taken
+            .then(|| remember::defaulting(with.choosing, provider, &model, effort).err())
+            .flatten()
+    }
+
     /// Hands this conversation the provider whose credential was just written
     /// down — unless another is already answering, which keeps everything it
     /// has, or the conversation is on an installed agent's route, which keeps
     /// answering; [`Conversation::logged_in_moving`] moves off that route.
     ///
-    /// A credential never chooses a model or a rung. Where nobody was being
-    /// asked, any model name left over from before is retired with the
-    /// provider it belonged to, and the conversation is left asking for none.
+    /// A credential for the provider being asked keeps its model and rung.
+    /// Where nobody was being asked, any model name left over from before is
+    /// retired with the provider it belonged to, and the conversation asks for
+    /// the model the configuration names, else for the provider's default.
     pub async fn logged_in(&mut self, named: Served, with: &Switching<'_>) -> LoggedIn {
         if let Some(instance) = self.instance() {
             let routed = routes(with.settings, named, instance)
@@ -405,15 +466,17 @@ impl Conversation {
         self.source = Some(set.source);
 
         let unwritten = remember::asking(with.choosing, named.name).err();
-        if changed {
-            self.runner.ask("", UNKNOWN_CEILING, None, None);
-        }
+        let defaulted = if changed {
+            self.ask_first(named, with)
+        } else {
+            None
+        };
         self.reach(named, with);
         self.hastened_as_kept(with.choosing);
 
         LoggedIn::Serving {
             retained,
-            unwritten,
+            unwritten: unwritten.or(defaulted),
         }
     }
 
@@ -447,7 +510,8 @@ impl Conversation {
     }
 
     /// Moves the conversation off the installed agent's route it is on onto
-    /// `named`, which asks no model until one is chosen: nothing where the new
+    /// `named`, asked as [`Conversation::logged_in`] asks a provider nobody
+    /// was being asked: nothing where the new
     /// session's log could not be started, which leaves everything as it was.
     ///
     /// The cache the kept runner made under the identity it last asked is
@@ -488,16 +552,18 @@ impl Conversation {
         self.serving = Some(named.name);
         self.source = Some(set.source);
         let unwritten = remember::asking(with.choosing, named.name).err();
-        if changed {
-            self.runner.ask("", UNKNOWN_CEILING, None, None);
-        }
+        let defaulted = if changed {
+            self.ask_first(named, with)
+        } else {
+            None
+        };
         self.reach(named, with);
         self.hastened_as_kept(with.choosing);
 
         Some(LoggedIn::MovedOff {
             provider: named.name,
             retained,
-            unwritten,
+            unwritten: unwritten.or(defaulted),
         })
     }
 

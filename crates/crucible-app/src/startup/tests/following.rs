@@ -412,6 +412,209 @@ fn a_search_after_a_new_login_is_signed_with_the_new_key() {
     );
 }
 
+/// A login where nobody is being asked takes the provider's default model,
+/// at the rung its rule names, and writes both down for the next run.
+#[test]
+fn a_login_where_nobody_is_asked_takes_the_provider_s_default() {
+    let (url, _requests) = transcribing();
+    let mut run = Run::new(
+        "default-after-login",
+        "meta",
+        "muse-spark-1.2",
+        &at(&url, "meta"),
+        Keys::stored("first-stored-key"),
+    );
+    let left =
+        run.switching(async |conversation, with| conversation.log_out(serving("meta"), with).await);
+    assert!(matches!(left, LoggedOut::SignedOut { .. }), "{left:?}");
+    assert_eq!(run.conversation.serving(), None);
+
+    run.logins
+        .keep(row("meta"), "second-stored-key")
+        .expect("a writable home");
+    let logged = run
+        .switching(async |conversation, with| conversation.logged_in(serving("meta"), with).await);
+
+    assert!(
+        matches!(
+            logged,
+            LoggedIn::Serving {
+                unwritten: None,
+                ..
+            }
+        ),
+        "{logged:?}"
+    );
+    let settled = run.conversation.settled();
+    assert_eq!(settled.model(), "muse-spark-1.3");
+    assert_eq!(settled.effort(), Some(Effort::Medium));
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&run.choosing).expect("the user file"))
+            .expect("configuration");
+    assert_eq!(
+        file.pointer("/providers/meta/model"),
+        Some(&serde_json::json!("muse-spark-1.3"))
+    );
+    assert_eq!(
+        file.pointer("/providers/meta/effort"),
+        Some(&serde_json::json!("medium"))
+    );
+}
+
+/// A model the configuration names for the provider is the one a login where
+/// nobody is being asked takes, rather than the default.
+#[test]
+fn a_login_where_nobody_is_asked_keeps_the_configured_model() {
+    let (url, _requests) = transcribing();
+    let document = format!(
+        r#"{{"providers": {{"meta": {{"baseUrl": "{url}", "model": "muse-spark-1.2"}}}}}}"#
+    );
+    let mut run = Run::new(
+        "configured-after-login",
+        "meta",
+        "muse-spark-1.2",
+        &document,
+        Keys::stored("first-stored-key"),
+    );
+    let _ =
+        run.switching(async |conversation, with| conversation.log_out(serving("meta"), with).await);
+    run.logins
+        .keep(row("meta"), "second-stored-key")
+        .expect("a writable home");
+    let logged = run
+        .switching(async |conversation, with| conversation.logged_in(serving("meta"), with).await);
+
+    assert!(matches!(logged, LoggedIn::Serving { .. }), "{logged:?}");
+    assert_eq!(run.conversation.settled().model(), "muse-spark-1.2");
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&run.choosing).expect("the user file"))
+            .expect("configuration");
+    assert_eq!(
+        file.pointer("/providers/meta/model"),
+        Some(&serde_json::json!("muse-spark-1.2"))
+    );
+    assert_eq!(file.pointer("/providers/meta/effort"), None, "{file}");
+}
+
+/// What the user file says when the login comes is what it reads, not what it
+/// said at launch: a model chosen during the run is kept, and no default is
+/// written over it.
+#[test]
+fn a_login_where_nobody_is_asked_keeps_a_model_chosen_during_the_run() {
+    let (url, _requests) = transcribing();
+    let mut run = Run::new(
+        "chosen-during-run",
+        "meta",
+        "muse-spark-1.2",
+        &at(&url, "meta"),
+        Keys::stored("first-stored-key"),
+    );
+    let _ =
+        run.switching(async |conversation, with| conversation.log_out(serving("meta"), with).await);
+    crate::remember::choosing(&run.choosing, "meta", "muse-spark-1.2-contributor")
+        .expect("a writable user file");
+    run.logins
+        .keep(row("meta"), "second-stored-key")
+        .expect("a writable home");
+    let logged = run
+        .switching(async |conversation, with| conversation.logged_in(serving("meta"), with).await);
+
+    assert!(
+        matches!(
+            logged,
+            LoggedIn::Serving {
+                unwritten: None,
+                ..
+            }
+        ),
+        "{logged:?}"
+    );
+    assert_eq!(
+        run.conversation.settled().model(),
+        "muse-spark-1.2-contributor"
+    );
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&run.choosing).expect("the user file"))
+            .expect("configuration");
+    assert_eq!(
+        file.pointer("/providers/meta/model"),
+        Some(&serde_json::json!("muse-spark-1.2-contributor"))
+    );
+    assert_eq!(file.pointer("/providers/meta/effort"), None, "{file}");
+}
+
+/// A rung configured with no model is kept with the default where the default
+/// serves it, and written beside it.
+#[test]
+fn a_login_where_nobody_is_asked_keeps_a_configured_rung_the_default_serves() {
+    let (url, _requests) = transcribing();
+    let document =
+        format!(r#"{{"providers": {{"meta": {{"baseUrl": "{url}", "effort": "high"}}}}}}"#);
+    let mut run = Run::new(
+        "configured-rung",
+        "meta",
+        "muse-spark-1.2",
+        &document,
+        Keys::stored("first-stored-key"),
+    );
+    let _ =
+        run.switching(async |conversation, with| conversation.log_out(serving("meta"), with).await);
+    run.logins
+        .keep(row("meta"), "second-stored-key")
+        .expect("a writable home");
+    let _ = run
+        .switching(async |conversation, with| conversation.logged_in(serving("meta"), with).await);
+
+    let settled = run.conversation.settled();
+    assert_eq!(settled.model(), "muse-spark-1.3");
+    assert_eq!(settled.effort(), Some(Effort::High));
+}
+
+/// A default that serves no rung is asked at none, whatever rung the model
+/// asked before was at, and none is written beside it.
+#[test]
+fn a_default_that_serves_no_rung_is_asked_at_none() {
+    let (url, _requests) = transcribing();
+    let mut run = Run::new(
+        "no-rung-default",
+        "meta",
+        "muse-spark-1.2",
+        &at(&url, "meta"),
+        Keys::stored("first-stored-key"),
+    );
+    let _ = run.switching(async |conversation, with| conversation.think(Effort::High, with));
+    assert_eq!(run.conversation.settled().effort(), Some(Effort::High));
+    let _ =
+        run.switching(async |conversation, with| conversation.log_out(serving("meta"), with).await);
+    run.logins
+        .keep(row("mimo"), "a-mimo-key")
+        .expect("a writable home");
+    let logged = run
+        .switching(async |conversation, with| conversation.logged_in(serving("mimo"), with).await);
+
+    assert!(
+        matches!(
+            logged,
+            LoggedIn::Serving {
+                unwritten: None,
+                ..
+            }
+        ),
+        "{logged:?}"
+    );
+    let settled = run.conversation.settled();
+    assert_eq!(settled.model(), "mimo-v2.6-pro");
+    assert_eq!(settled.effort(), None);
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&run.choosing).expect("the user file"))
+            .expect("configuration");
+    assert_eq!(
+        file.pointer("/providers/mimo/model"),
+        Some(&serde_json::json!("mimo-v2.6-pro"))
+    );
+    assert_eq!(file.pointer("/providers/mimo/effort"), None);
+}
+
 /// A key forgotten with `/logout` is never sent again: where nothing is left
 /// to ask, a search sends nothing, and where the provider is still served, it
 /// is signed with what serves it now.

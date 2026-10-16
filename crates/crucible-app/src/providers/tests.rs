@@ -1833,3 +1833,81 @@ fn a_minimax_plan_key_is_named_apart_from_a_minimax_api_key() {
     assert_eq!(plan, "MiniMax Token Plan · minimaxi.com key");
     assert_ne!(plan, key);
 }
+
+/// A default is a model its provider offers, so `/model` shows what a login
+/// asked for among the models it lists.
+#[test]
+fn every_default_is_one_of_its_provider_s_models() {
+    for one in every() {
+        assert!(
+            one.models.iter().any(|model| model.name == one.default),
+            "{}'s default {} is not among its models",
+            one.name,
+            one.default
+        );
+    }
+}
+
+/// A credential that serves only some of its provider's models serves the
+/// default, so a login with it is not answered with a refusal.
+#[test]
+fn every_credential_that_narrows_the_models_serves_the_default() {
+    let providers = catalogue();
+    for row in ROWS {
+        let Some(serves) = row.serves() else {
+            continue;
+        };
+        let default = offered(&providers)
+            .find(|one| one.name == row.provider)
+            .expect("a row's provider is offered")
+            .default;
+        assert!(
+            serves.contains(&default),
+            "{} serves {serves:?}, not {default}",
+            row.shown
+        );
+    }
+}
+
+/// Each default and the rung its rule derives, as approved.
+#[test]
+fn every_default_is_asked_at_the_approved_rung() {
+    let providers = catalogue();
+    let defaulted: Vec<_> = offered(&providers)
+        .map(|one| {
+            (
+                one.name,
+                one.default,
+                default_rung(&rungs(&providers, one.name, one.default)),
+            )
+        })
+        .collect();
+    assert_eq!(
+        defaulted,
+        [
+            ("anthropic", "claude-opus-5-5", Some(Effort::Medium)),
+            ("deepseek", "deepseek-v4-pro", Some(Effort::High)),
+            ("google", "gemini-3.8-flash", Some(Effort::Medium)),
+            ("meta", "muse-spark-1.3", Some(Effort::Medium)),
+            ("mimo", "mimo-v2.6-pro", None),
+            ("minimax", "MiniMax-M3", None),
+            ("moonshot", "k3", Some(Effort::High)),
+            ("openai", "gpt-6.1-sol", Some(Effort::Medium)),
+            ("qwen", "qwen3.7-plus", None),
+            ("xai", "grok-4.7", Some(Effort::Medium)),
+            ("zai", "glm-5.3", Some(Effort::High)),
+        ]
+    );
+}
+
+/// Medium where it is served, else the first rung above it, else the
+/// strongest below it, and none where there are none.
+#[test]
+fn a_default_rung_is_medium_or_the_nearest_above_it() {
+    use Effort::{High, Low, Max, Medium, Xhigh};
+    assert_eq!(default_rung(&[Low, Medium, High]), Some(Medium));
+    assert_eq!(default_rung(&[Low, High, Max]), Some(High));
+    assert_eq!(default_rung(&[Max, Xhigh]), Some(Xhigh));
+    assert_eq!(default_rung(&[Low]), Some(Low));
+    assert_eq!(default_rung(&[]), None);
+}

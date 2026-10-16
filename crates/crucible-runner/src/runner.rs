@@ -896,7 +896,9 @@ impl Runner {
     /// There is no way back to `None` from here, and that is the honest shape:
     /// a rung asked for is a rung the caller can see on the screen, and a
     /// session cannot un-see it by being handed the vendor's default again — a
-    /// default this program is never told the name of.
+    /// default this program is never told the name of. [`Runner::unthink`] is
+    /// for the one case that is not that: a model taken on another vendor's
+    /// behalf, which was never asked at the rung left over.
     ///
     /// Reachable between turns, where [`Runner::ask`] is and for the same
     /// reason: a turn owns the runner while it runs.
@@ -906,6 +908,20 @@ impl Runner {
             ..self.agent.model().clone()
         };
         self.agent = Arc::new(self.agent.aimed(harder));
+    }
+
+    /// Asks for no rung from the next turn on, for a model taken in place of
+    /// one asked of another vendor: the rung in force was asked of that model,
+    /// and the one taken may serve none.
+    ///
+    /// Reachable between turns, where [`Runner::ask`] is and for the same
+    /// reason: a turn owns the runner while it runs.
+    pub fn unthink(&mut self) {
+        let unasked = Model {
+            effort: None,
+            ..self.agent.model().clone()
+        };
+        self.agent = Arc::new(self.agent.aimed(unasked));
     }
 
     async fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {

@@ -141,9 +141,10 @@ says either, whatever the vendor's own default is for the model being asked. \
 Not every model takes one, and a rung named for a model that does not is \
 refused by its vendor rather than dropped.
 
-There is no model built in. Left off, or given as a provider and a bare slash, \
+Startup builds in no model. Left off, or given as a provider and a bare slash, \
 the model comes from your configuration; where nothing says, crucible starts \
-and asks rather than picking one, and /model writes your answer down.
+and asks rather than picking one, and /model writes your answer down, as \
+/login writes its provider's default.
 
 crucible keeps its own files in ~/.crucible (or the directory CRUCIBLE_CODE_HOME \
 names), and reads config.json there, then .crucible/config.json and .crucible/config.local.json in the directory it was \
@@ -1355,7 +1356,9 @@ fn launch(
 ///
 /// There is no bottom rung, and that is the point. A name written into this
 /// build would be asked for on behalf of somebody who never chose it, and it
-/// would be asked of whichever provider the key belongs to.
+/// would be asked of whichever provider the key belongs to. The default a
+/// login takes reaches here as the configuration's: the login names the
+/// provider it is for, and writes the model down.
 ///
 /// A key written into a file and left empty is a file that said nothing, not a
 /// request for a model called nothing. Sent as it stands it would reach a

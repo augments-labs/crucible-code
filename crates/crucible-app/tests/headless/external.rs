@@ -2868,10 +2868,11 @@ const ROUTED: &str = r#"{
 }
 "#;
 
-/// What [`ROUTED`] holds once a key for the provider is logged in on the route.
+/// What [`ROUTED`] holds once a key for the provider is logged in on the route:
+/// the way it is reached, and its default model and rung.
 const KEYED: &str = r#"{
   "externalAgents": {"work": {"driver": "claude", "executable": "claude"}},
-  "providers": {"anthropic": {"access": {"type":"apiKey"}}},
+  "providers": {"anthropic": {"access": {"type":"apiKey"}, "model": "claude-opus-5-5", "effort": "medium"}},
   "provider": "anthropic"
 }
 "#;
@@ -3014,6 +3015,7 @@ fn a_subscription_for_the_route_s_provider_is_written_for_the_next_run_alone() -
     );
     let subscribed = KEYED
         .replace("anthropic", "openai")
+        .replace("claude-opus-5-5", "gpt-6.1-sol")
         .replace(r#""apiKey""#, r#""subscription""#);
     assert_eq!(file, subscribed);
     let standing = client::snapshot(&outside.conversation);
@@ -3086,11 +3088,22 @@ fn a_login_for_another_provider_on_the_route_moves_onto_it() -> Result<(), Faile
     );
     assert_eq!(
         file,
-        ROUTED.replace("}}}\n}", "}}},\n  \"provider\": \"openai\"\n}")
+        ROUTED.replace(
+            "}}}\n}",
+            "}}, \"openai\": {\"model\": \"gpt-6.1-sol\", \"effort\": \"medium\"}},\n  \"provider\": \"openai\"\n}"
+        )
     );
     let standing = client::snapshot(&outside.conversation);
     assert_eq!(standing.execution, Execution::Native);
     assert_eq!(standing.provider, Some(Name::new("openai")?));
+    assert_eq!(
+        standing.model,
+        crucible_client_api::Model::new("gpt-6.1-sol")
+    );
+    assert_eq!(
+        outside.conversation.settled().effort(),
+        Some(crucible_models::Effort::Medium)
+    );
     let moved = outside.conversation.session();
     assert!(moved.route().is_none(), "{:?}", moved.route());
     assert!(
