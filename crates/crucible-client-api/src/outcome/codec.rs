@@ -376,6 +376,15 @@ impl LoginOutcome {
                 unwritten.as_ref(),
             ),
             Self::Stored { provider } => Writing::kind("stored").text("provider", provider),
+            Self::MovedOff {
+                provider,
+                retained,
+                unwritten,
+            } => noting(
+                retained.onto(Writing::kind("moved_off").text("provider", provider)),
+                "unwritten",
+                unwritten.as_ref(),
+            ),
         }
         .finish()
     }
@@ -408,6 +417,11 @@ impl LoginOutcome {
             },
             "stored" => Self::Stored {
                 provider: fields.text("provider")?,
+            },
+            "moved_off" => Self::MovedOff {
+                provider: fields.text("provider")?,
+                retained: Retained::from(&mut fields)?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
             },
             _ => return Err(ErrorCode::Malformed.into()),
         };

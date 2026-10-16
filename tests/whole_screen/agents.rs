@@ -510,9 +510,10 @@ fn the_status_row_says_who_runs_the_turns_on_an_agent_route() {
 }
 
 /// Fails where a move onto the agent's route does not name the route and say
-/// the conversation starts fresh there, or where a key stored while on it does
-/// not say this conversation stays on its agent: for the provider the agent
-/// reaches, from the next launch on, and for another, stored and nothing more.
+/// the conversation starts fresh there, where `/login` on it does not offer the
+/// installed agents, or where a key stored while on it does not say where the
+/// conversation is: for the provider the agent reaches, still on its agent
+/// until the next launch, and for another, moved off it onto that provider.
 #[test]
 fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_is() {
     for native in [false, true] {
@@ -533,6 +534,9 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
                 window
                     .picture()
                     .replace("|\n|", " ")
+                    // The full screen's scroll bar, and its thumb, stand
+                    // between a folded line's halves.
+                    .replace(['┃', '●'], " ")
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -542,6 +546,14 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
                 moved.contains("now runs on the agent claude and starts fresh"),
                 "{case}: {moved}"
             );
+
+            window.types_until("/login\r", "Choose how usage is paid for");
+            let offered = said(&window);
+            assert!(
+                offered.contains("Use an installed coding agent"),
+                "{case}: {offered}"
+            );
+            window.types_until("\u{1b}", "cancelled, nothing signed in");
 
             keyed(&mut window, "Anthropic");
             window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
@@ -563,13 +575,14 @@ fn a_route_switch_and_a_key_stored_on_an_agent_route_say_where_the_conversation_
             assert_eq!(access, Some("apiKey"), "{case}: {written}");
 
             keyed(&mut window, "DeepSeek");
-            window.types_until("not-a-key-either\r", "deepseek is stored");
-            let stored = said(&window);
+            window.types_until("not-a-key-either\r", "the one it left");
+            let moved_off = said(&window);
             assert!(
-                stored.contains(
-                    "the credential for deepseek is stored; this conversation stays on its agent"
+                moved_off.contains(
+                    "this conversation left its agent for deepseek, in a new session; \
+                     /resume lists the one it left"
                 ),
-                "{case}: {stored}"
+                "{case}: {moved_off}"
             );
         }
     }

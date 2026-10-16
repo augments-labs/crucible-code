@@ -436,6 +436,17 @@ pub enum LoginOutcome {
         /// The provider the credential is for.
         provider: Text,
     },
+    /// The conversation was on an installed agent's route, and the credential
+    /// is for another provider, which is now the one answering, in a new
+    /// session; the session it left stays listed and can be resumed.
+    MovedOff {
+        /// The provider the credential is for.
+        provider: Text,
+        /// What retiring the cache left behind.
+        retained: Retained,
+        /// Why the provider will not be the next run's, where it will not.
+        unwritten: Option<Problem>,
+    },
 }
 
 /// What still authenticates a provider once its stored credential is gone.

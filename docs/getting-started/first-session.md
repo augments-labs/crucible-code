@@ -224,7 +224,9 @@ from, `set ANTHROPIC_API_KEY` and so on, for anyone who would rather export a
 key than store one. A row that holds your credential says `signed in`. Where
 this release can run an [installed coding agent](../providers/agents.md), a
 third choice, *Use an installed coding agent*, signs the provider you are
-asking in through that agent instead. Escape goes back one screen at a time and
+asking, or the one the agent you are on reaches, in through that agent instead;
+it is offered on an agent too, where taking another provider's subscription or
+key moves the conversation onto that provider in a new session. Escape goes back one screen at a time and
 cancels from the first.
 
 ChatGPT offers a local browser callback and a device code for remote terminals;

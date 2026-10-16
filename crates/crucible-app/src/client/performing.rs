@@ -270,7 +270,11 @@ pub async fn perform(
         Command::SetMode(mode) => Performed::Mode(conversation.switch(reading::mode_in(*mode))),
         Command::CycleMode => Performed::Mode(conversation.cycle()),
         Command::Login { provider } => match served(desk, provider.as_str()) {
-            Ok(named) => Performed::Login(conversation.logged_in(named, &desk.switching).await),
+            Ok(named) => Performed::Login(
+                conversation
+                    .logged_in_moving(named, &desk.switching, desk.sessions, desk.workspace)
+                    .await,
+            ),
             Err(refused) => Performed::Refused(refused),
         },
         Command::Logout { provider } => match served(desk, provider.as_str()) {
@@ -663,6 +667,15 @@ fn login(logged_in: &LoggedIn) -> LoginOutcome {
             retained,
             unwritten,
         } => LoginOutcome::Serving {
+            retained: reading::retained(*retained),
+            unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+        },
+        LoggedIn::MovedOff {
+            provider,
+            retained,
+            unwritten,
+        } => LoginOutcome::MovedOff {
+            provider: crucible_client_api::Text::cut(provider),
             retained: reading::retained(*retained),
             unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
         },

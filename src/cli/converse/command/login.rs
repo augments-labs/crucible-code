@@ -410,7 +410,7 @@ fn reaching(way: &Way, rows: &Rows) -> String {
 /// row chosen from that, until one of them is done.
 fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fatal> {
     let offered = snapshot(walk.conversation).agents == Agents::Available
-        && walk.conversation.serving().is_some();
+        && walk.conversation.reached(&walk.terms.settings).is_some();
     let shown = if offered {
         &FIRST[..]
     } else {
@@ -459,15 +459,16 @@ fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fa
     }
 }
 
-/// The third row: the provider this conversation asks, reached through an
-/// installed agent by the application's connect, each of its questions drawn
-/// here. Back where it ended unconnected, so the first panel stands again.
+/// The third row: the provider this conversation reaches, the one it asks or
+/// the one its agent's route stands in for, reached through an installed agent
+/// by the application's connect, each of its questions drawn here. Back where
+/// it ended unconnected, so the first panel stands again.
 fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
-    // Offered only where a provider is being asked.
-    let Some(provider) = walk.conversation.serving() else {
+    // Offered only where a provider is reached.
+    let Some(provider) = walk.conversation.reached(&walk.terms.settings) else {
         return Ok(Closed::Back);
     };
-    let provider = match Name::new(provider) {
+    let provider = match Name::new(&provider) {
         Ok(provider) => provider,
         Err(refusal) => {
             say(walk.renderer, &astray(&Performed::Refused(refusal)))?;
@@ -1576,6 +1577,15 @@ fn taken<T: Terminal>(
             super::cache::retained(renderer, super::Laid::Hung, retained)?;
             unwritten
         }
+        LoggedIn::MovedOff {
+            provider,
+            retained,
+            unwritten,
+        } => {
+            super::cache::retained(renderer, super::Laid::Hung, retained)?;
+            say(renderer, &moved_off(provider))?;
+            unwritten
+        }
     };
 
     // Written down as well as switched to, so the next run here opens on the
@@ -1594,6 +1604,15 @@ fn taken<T: Terminal>(
     };
 
     say(renderer, &said)
+}
+
+/// What a person is told where a login moved the conversation off its agent
+/// onto `provider`.
+fn moved_off(provider: &str) -> String {
+    format!(
+        "this conversation left its agent for {provider}, in a new session; \
+         /resume lists the one it left"
+    )
 }
 
 #[cfg(test)]

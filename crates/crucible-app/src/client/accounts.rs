@@ -888,9 +888,10 @@ async fn connect(
     Account::Unconnected
 }
 
-/// [`commit`], then moves `conversation` onto `agent` where it was asking
-/// `provider`'s model, as [`Conversation::onto`] says. A conversation on an
-/// agent's route, or asking another provider, stays where it is.
+/// [`commit`], then moves `conversation` onto `agent` where it reaches
+/// `provider`, by its model or another agent's route, as
+/// [`Conversation::onto`] says. A conversation already on `agent`, or reaching
+/// another provider, stays where it is.
 async fn moved(
     conversation: &mut Conversation,
     desk: &Desk<'_>,
@@ -899,7 +900,11 @@ async fn moved(
     written: bool,
 ) -> Account {
     let committed = commit(desk, provider, agent, written);
-    if !matches!(committed, Account::Connected) || conversation.serving() != Some(provider) {
+    let reached = conversation.reached(desk.switching.settings);
+    if !matches!(committed, Account::Connected)
+        || reached.as_deref() != Some(provider)
+        || conversation.instance() == Some(agent.name())
+    {
         return committed;
     }
     let branch = crate::branching::current(desk.workspace.root());
@@ -913,6 +918,8 @@ async fn moved(
             // reported: the outcome says what the connect did, and the log's
             // own trouble is found again when it is resumed.
             let _unclosed = left.finish();
+            // The route the connect wrote is not in the files this run read.
+            conversation.moved_from = Some((provider.into(), agent.name().into()));
             Account::Moved(agent.name().into())
         }
         Err(reason) => Account::Unmoved(reason),

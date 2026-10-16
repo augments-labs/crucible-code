@@ -117,11 +117,11 @@ pub struct Conversation {
     /// What the two web tools answer through: built for the provider and model
     /// being asked, and built again by each switch of either.
     pub(crate) web: crate::following::Following,
-    /// The provider this conversation was asking when a connect during this
-    /// run moved it onto the installed agent named beside it: the route that
-    /// connect wrote is not in the files this run read at launch. Cleared by
-    /// every other move between routes.
-    pub(crate) moved_from: Option<(&'static str, Box<str>)>,
+    /// The provider a connect during this run moved the conversation off, onto
+    /// the installed agent named beside it: the route that connect wrote is
+    /// not in the files this run read at launch. Cleared by every other move
+    /// between routes.
+    pub(crate) moved_from: Option<(Box<str>, Box<str>)>,
     /// When the plan behind each credential was last asked how much of its
     /// limits is used, and which credentials are not to be asked again.
     pub(crate) asks: crate::client::asking::Asks,
@@ -343,12 +343,15 @@ impl Conversation {
 
     /// Moves the conversation back onto this program's own models, closing
     /// the installed agent's run, and continues on the kept runner recording
-    /// into `session` with `transcript`. The session left is returned.
+    /// into `session` with `transcript`, in the permission mode it was in. The
+    /// session left is returned.
     pub async fn inside(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
+        let mode = self.settled().mode();
         if let Some(mut outside) = self.outside.take() {
             outside.retire().await;
         }
         self.moved_from = None;
+        self.runner.switch(mode);
         self.pick_up(session, transcript).await
     }
 
@@ -376,7 +379,8 @@ impl Conversation {
 
     /// The registry name of the provider being asked, or `None` where a run
     /// started with nobody to ask or signed out of the one it had, or is on an
-    /// installed agent's route, which no provider serves.
+    /// installed agent's route, which no provider serves: the one that route
+    /// stands in for is [`Conversation::reached`].
     #[must_use]
     pub fn serving(&self) -> Option<&'static str> {
         self.serving.filter(|_| self.outside.is_none())
@@ -388,6 +392,23 @@ impl Conversation {
     pub(crate) fn credential(&self) -> Option<&crate::providers::CredentialSource> {
         self.serving()?;
         self.source.as_ref()
+    }
+
+    /// The provider a connect through an installed agent reaches for this
+    /// conversation: the one being asked, or, on an agent's route, the one the
+    /// route stands in for. That is the one a connect during this run moved
+    /// the conversation off onto the instance it is on, and otherwise the first
+    /// `settings` reach through that instance.
+    #[must_use]
+    pub fn reached(&self, settings: &crucible_config::Settings) -> Option<Box<str>> {
+        if let Some(serving) = self.serving() {
+            return Some(serving.into());
+        }
+        let instance = self.instance()?;
+        match &self.moved_from {
+            Some((provider, onto)) if **onto == *instance => Some(provider.clone()),
+            _ => settings.referencing(instance).map(Into::into),
+        }
     }
 
     /// The configured instance of the installed agent the conversation is on,
@@ -712,17 +733,16 @@ impl Conversation {
         }
     }
 
-    /// Moves a conversation on a provider's model onto the installed agent
-    /// `entry`, in a new session bound to its route with nothing carried
-    /// over, and returns the session left, which stays on the disk where a
-    /// resume can find it. A conversation already on an agent's route does not
-    /// move.
+    /// Moves the conversation onto the installed agent `entry`, from a
+    /// provider's model or another agent's route, in a new session bound to
+    /// its route with nothing carried over, and returns the session left, which
+    /// stays on the disk where a resume can find it.
     ///
     /// # Errors
     ///
-    /// What to say where it is on an agent's route, the agent cannot be
-    /// started in the conversation's mode, or the new log could not be
-    /// started; the session in hand is then untouched.
+    /// What to say where the agent cannot be started in the conversation's
+    /// mode, or the new log could not be started; the session in hand is then
+    /// untouched.
     pub async fn onto(
         &mut self,
         sessions: &Path,
@@ -730,9 +750,6 @@ impl Conversation {
         branch: Option<&str>,
         entry: &ExternalAgent,
     ) -> Result<Arc<Session>, String> {
-        if self.outside.is_some() {
-            return Err("it is on an installed agent's route".to_owned());
-        }
         let Some(steps) = self.steps.as_ref() else {
             return Err(
                 "the sandbox policy its runs are confined by could not be built".to_owned(),
@@ -751,7 +768,6 @@ impl Conversation {
             .external(Arc::new(session), Transcript::new(), installed)
             .await
             .map_err(|refused| refused.reason().as_str().to_owned())?;
-        self.moved_from = self.serving.map(|provider| (provider, entry.name().into()));
         Ok(left)
     }
 

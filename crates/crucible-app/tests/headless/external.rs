@@ -2175,6 +2175,68 @@ fn a_connect_writes_the_route_and_enables_the_instance() -> Result<(), Failed> {
     Ok(())
 }
 
+/// The user file of a conversation on `work` with a second instance beside it.
+const TWO_ROUTED: &str = r#"{
+  "externalAgents": {
+    "work": {"driver": "claude", "executable": "claude"},
+    "home": {"driver": "claude", "executable": "claude"}
+  },
+  "providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}}
+}
+"#;
+
+/// A connect, on a route, of the provider it reaches through another instance
+/// moves the conversation onto that instance, in a new session bound to it;
+/// the session it left can be resumed.
+#[test]
+fn a_connect_through_another_agent_moves_the_route_onto_it() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Name, Text};
+
+    let tree = Tree::new("external-connect-another")?;
+    let script = connected([claude::clean(), claude::signed_in()]);
+    let mut outside = Outside::new(&tree, &script)?;
+    let left = outside
+        .conversation
+        .session()
+        .id()
+        .cloned()
+        .ok_or("an id")?;
+    let route = outside
+        .conversation
+        .session()
+        .route()
+        .cloned()
+        .ok_or("a route")?;
+    let mut picking = Picking::of([
+        Some(client::accounts::USE_ACCOUNT),
+        Some(client::accounts::CONNECT),
+    ]);
+
+    let ((outcome, _), _) = connecting_counted(
+        &tree,
+        &mut outside,
+        TWO_ROUTED,
+        ("anthropic", Some("home")),
+        &mut picking,
+    )?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::AgentConnected {
+            said: Text::cut(&client::accounts::moved_onto("home")),
+            onto: Some(Name::new("home")?),
+        })
+    );
+    let moved = outside.conversation.session();
+    assert_eq!(moved.route().map(RouteBinding::instance), Some("home"));
+    assert!(
+        moved.id().is_some_and(|moved| *moved != left),
+        "no new session"
+    );
+    Session::reopen_routed(&tree.sessions(), &tree.workspace()?, &left, &route)?;
+    Ok(())
+}
+
 /// A connect writes nothing while it asks: the file read as each question is
 /// put holds what it held before, and the route and the instance's enabling
 /// are there once the route is confirmed.
@@ -2320,11 +2382,12 @@ fn a_key_for_the_provider_a_connect_moved_off_is_written_for_the_next_run() -> R
 }
 
 /// A key logged in, after `/resume` moved a conversation on a provider's model
-/// onto an agent that does not reach that provider, is only stored: how the
-/// provider is reached is not rewritten.
+/// onto an agent that does not reach that provider, moves it back onto the
+/// provider as any provider the route does not reach: how the provider is
+/// reached is not rewritten.
 #[test]
-fn a_key_for_the_provider_a_resume_moved_off_is_only_stored() -> Result<(), Failed> {
-    use crucible_client_api::{LoginOutcome, Text};
+fn a_key_for_the_provider_a_resume_moved_off_moves_back_onto_it() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Retained, Text};
 
     let tree = Tree::new("external-resume-then-key")?;
     let id = recorded_on(&tree, "work", "before")?;
@@ -2343,11 +2406,19 @@ fn a_key_for_the_provider_a_resume_moved_off_is_only_stored() -> Result<(), Fail
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::Stored {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("anthropic"),
+            retained: Retained::default(),
+            unwritten: None,
         })
     );
-    assert_eq!(file, INSTALLED);
+    let file: serde_json::Value = serde_json::from_str(&file)?;
+    assert_eq!(file.pointer("/providers"), None);
+    assert_eq!(
+        file.pointer("/provider"),
+        Some(&serde_json::json!("anthropic"))
+    );
+    assert!(conversation.session().route().is_none());
     Ok(())
 }
 
@@ -2840,7 +2911,7 @@ fn credited_on(
     provider: &str,
     command: fn(crucible_client_api::Name) -> Command,
 ) -> Result<(Outcome, String), Failed> {
-    let mut desk = super::Desk::new(tree, &[])?;
+    let mut desk = super::Desk::stored(tree)?;
     if let Some(directory) = desk.choosing.parent() {
         std::fs::create_dir_all(directory)?;
     }
@@ -2981,22 +3052,88 @@ fn a_login_whose_write_fails_leaves_the_route_written_as_it_was() -> Result<(), 
     Ok(())
 }
 
-/// A key logged in for another provider is stored and nothing else: the file
-/// and the route are as they were.
+/// A key logged in on the route for a provider the route does not reach moves
+/// the conversation off the agent onto that provider, in a new session, and
+/// writes it down as the provider asked; the session left can be resumed.
 #[test]
-fn a_login_for_another_provider_on_the_route_is_only_stored() -> Result<(), Failed> {
-    use crucible_client_api::{Execution, LoginOutcome, Name, Text};
+fn a_login_for_another_provider_on_the_route_moves_onto_it() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name, Retained, Text};
 
-    let tree = Tree::new("external-login-stored")?;
+    let tree = Tree::new("external-login-moved-off")?;
     let mut outside = Outside::new(&tree, &connected([]))?;
+    let left = outside
+        .conversation
+        .session()
+        .id()
+        .cloned()
+        .ok_or("an id")?;
+    let route = outside
+        .conversation
+        .session()
+        .route()
+        .cloned()
+        .ok_or("a route")?;
 
     let (outcome, file) = crediting(&tree, &mut outside, ROUTED, "openai", login)?;
 
     assert_eq!(
         outcome,
-        Outcome::Login(LoginOutcome::Stored {
+        Outcome::Login(LoginOutcome::MovedOff {
             provider: Text::cut("openai"),
+            retained: Retained::default(),
+            unwritten: None,
         })
+    );
+    assert_eq!(
+        file,
+        ROUTED.replace("}}}\n}", "}}},\n  \"provider\": \"openai\"\n}")
+    );
+    let standing = client::snapshot(&outside.conversation);
+    assert_eq!(standing.execution, Execution::Native);
+    assert_eq!(standing.provider, Some(Name::new("openai")?));
+    let moved = outside.conversation.session();
+    assert!(moved.route().is_none(), "{:?}", moved.route());
+    assert!(
+        moved.id().is_some_and(|moved| *moved != left),
+        "no new session"
+    );
+    Session::reopen_routed(&tree.sessions(), &tree.workspace()?, &left, &route)?;
+    Ok(())
+}
+
+/// The permission mode the conversation was in on the route is the one it is
+/// in once a login moves it off.
+#[test]
+fn a_move_off_the_route_keeps_the_conversation_s_mode() -> Result<(), Failed> {
+    let tree = Tree::new("external-login-moved-off-mode")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+    assert_eq!(
+        outside.conversation.switch(Mode::FullAccess),
+        Mode::FullAccess
+    );
+
+    let _ = crediting(&tree, &mut outside, ROUTED, "openai", login)?;
+
+    assert_eq!(outside.conversation.settled().mode(), Mode::FullAccess);
+    assert!(outside.conversation.session().route().is_none());
+    Ok(())
+}
+
+/// A key for a provider the route does not reach, which cannot be set up, is
+/// said to be unusable, and the conversation stays on the route.
+#[test]
+fn an_unusable_login_for_another_provider_leaves_the_route() -> Result<(), Failed> {
+    use crucible_client_api::{Execution, LoginOutcome, Name};
+
+    let tree = Tree::new("external-login-unusable-off")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+
+    // Nothing stored for it, so the desk cannot set it up.
+    let (outcome, file) = credited(&tree, &mut outside, ROUTED, "openai", login)?;
+
+    assert!(
+        matches!(outcome, Outcome::Login(LoginOutcome::Unusable(_))),
+        "{outcome:?}"
     );
     assert_eq!(file, ROUTED);
     let standing = client::snapshot(&outside.conversation);
