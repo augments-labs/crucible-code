@@ -789,12 +789,12 @@ fn outcomes() -> Vec<Outcome> {
             unwritten: Some(problem()),
         }),
         Outcome::Model(ModelOutcome::MovedOff {
-            provider: Text::cut("openai"),
+            provider: Text::cut("elsewhere"),
             retained: retained(),
             unwritten: None,
         }),
         Outcome::Model(ModelOutcome::MovedOff {
-            provider: Text::cut("openai"),
+            provider: Text::cut("elsewhere"),
             retained: retained(),
             unwritten: Some(problem()),
         }),
