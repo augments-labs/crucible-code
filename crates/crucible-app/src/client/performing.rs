@@ -582,9 +582,11 @@ fn logout(logged_out: &LoggedOut) -> LogoutOutcome {
             retained: reading::retained(*retained),
             problem: Problem::failed(problem),
         },
-        LoggedOut::Kept => LogoutOutcome::Kept,
-        LoggedOut::Routed { instance } => LogoutOutcome::StillServed {
-            retained: reading::retained(crate::switching::Retained::default()),
+        LoggedOut::Kept { retained } => LogoutOutcome::Kept {
+            retained: reading::retained(*retained),
+        },
+        LoggedOut::Routed { instance, retained } => LogoutOutcome::StillServed {
+            retained: reading::retained(*retained),
             standing: Standing::External {
                 instance: crucible_client_api::Text::cut(instance),
             },

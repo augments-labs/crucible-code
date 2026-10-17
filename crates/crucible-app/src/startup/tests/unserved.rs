@@ -71,7 +71,7 @@ fn a_credential_whose_provider_cannot_be_built_still_leaves_a_provider_to_choose
         .handle()
         .expect("a runtime")
         .block_on(conversation.log_out(serving("anthropic"), &with));
-    assert!(matches!(left, LoggedOut::Kept), "{left:?}");
+    assert!(matches!(left, LoggedOut::Kept { .. }), "{left:?}");
 
     // What the terminal says, read off the store as it is now.
     let stored = logins.read();

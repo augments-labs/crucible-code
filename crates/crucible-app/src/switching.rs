@@ -18,7 +18,9 @@
 //! moves off the route onto that provider, in a new session, as it does for a
 //! credential given there for another provider, where that session can be
 //! started. Otherwise the route keeps answering and the credential is only
-//! stored. One forgotten there leaves the route, its session and its run.
+//! stored. One forgotten there leaves the route, its session and its run as
+//! they were, and sets up again the provider kept beside the route where it
+//! was the one forgotten, as it would be off the route.
 //! A model taken there of a provider the agent does not reach moves it the
 //! same way, onto that model, where a credential reaches the provider.
 //! A model taken of a provider this run's settings route through an installed
@@ -255,7 +257,8 @@ pub enum LoggedIn {
 /// What came of forgetting a stored credential.
 #[derive(Debug)]
 pub enum LoggedOut {
-    /// The provider is the one answering, and the cache made with its
+    /// The provider is the one answering, or the one kept beside the installed
+    /// agent's route the conversation is on, and the cache made with its
     /// credential could not be retired. The credential is still stored.
     CacheHeld(PromptCacheResourceError),
     /// The store could not be changed.
@@ -266,13 +269,23 @@ pub enum LoggedOut {
         problem: AuthError,
     },
     /// Forgotten, and another provider is the one answering: nothing about the
-    /// session moved.
-    Kept,
+    /// session moved. On an installed agent's route, the provider kept beside
+    /// it, where it is this one, is set up again from what is left, as
+    /// [`Self::StillServed`] and [`Self::SignedOut`] say it is off the route.
+    Kept {
+        /// What retiring the cache of the one kept beside the route left
+        /// behind.
+        retained: Retained,
+    },
     /// Forgotten, and the provider is still reached through the installed
-    /// agent the conversation is on: nothing about the session moved.
+    /// agent the conversation is on: nothing about the session moved, and
+    /// what is kept beside the route is set up again as for [`Self::Kept`].
     Routed {
         /// The configured instance.
         instance: Box<str>,
+        /// What retiring the cache of the one kept beside the route left
+        /// behind.
+        retained: Retained,
     },
     /// Forgotten, and the provider still answers from a credential the store
     /// never held or still holds.
@@ -892,17 +905,7 @@ impl Conversation {
         (sessions, workspace): (&Path, &Workspace),
     ) -> Result<(Retained, Option<RememberError>), Unmoved> {
         let set = (with.serving)(named, &with.logins.read()).map_err(Unmoved::Unusable)?;
-        let retained = if self.runner.prompt_cache_retirement_pending() {
-            match self.runner.retire_prompt_cache(&Cancel::new()).await {
-                Ok(result) => Retained {
-                    ambiguous: result.ambiguous,
-                    orphaned: result.orphaned,
-                },
-                Err(problem) => return Err(Unmoved::CacheHeld(problem)),
-            }
-        } else {
-            Retained::default()
-        };
+        let retained = self.retire().await.map_err(Unmoved::CacheHeld)?;
         let branch = crate::branching::current(workspace.root());
         let session = Session::start(sessions, workspace, branch.as_deref())
             .map_err(|problem| Unmoved::Unstarted(problem.into()))?;
@@ -942,7 +945,10 @@ impl Conversation {
     }
 
     /// Forgets the credential stored for `named`, and sets the conversation up
-    /// again from whatever is left where `named` was the one answering.
+    /// again from whatever is left where `named` was the one answering, or
+    /// the one kept beside the installed agent's route it is on: a session a
+    /// provider's model ran, resumed there later, is never asked with the
+    /// credential forgotten.
     ///
     /// The cache is retired first and the store changed second: a resource
     /// made with a credential is deleted with it, and once the credential is
@@ -952,8 +958,8 @@ impl Conversation {
             .instance()
             .filter(|instance| routes(with.settings, named, instance))
             .map(Box::from);
-        let answering = self.serving() == Some(named.name);
-        let retained = if answering {
+        let kept = self.serving == Some(named.name);
+        let retained = if kept {
             match self.retire().await {
                 Ok(retained) => retained,
                 Err(problem) => return LoggedOut::CacheHeld(problem),
@@ -969,11 +975,35 @@ impl Conversation {
             self.reread(with);
             return LoggedOut::Unforgotten { retained, problem };
         }
-        if !answering {
+        let source = if kept {
+            self.served_again(named, with).await
+        } else {
             self.reread(with);
-            return routed.map_or(LoggedOut::Kept, |instance| LoggedOut::Routed { instance });
+            None
+        };
+        // On a route the agent goes on answering, whatever was set up again
+        // beside it.
+        if !kept || self.instance().is_some() {
+            return match routed {
+                Some(instance) => LoggedOut::Routed { instance, retained },
+                None => LoggedOut::Kept { retained },
+            };
         }
+        match source {
+            Some(source) => LoggedOut::StillServed { retained, source },
+            None => LoggedOut::SignedOut { retained },
+        }
+    }
 
+    /// Sets `named` up again, once its stored credential is forgotten, from a
+    /// credential the store never held or still holds, and answers where that
+    /// comes from; with none, signs the conversation out of it, so that nobody
+    /// is asked until `/login` or `/model` says who.
+    async fn served_again(
+        &mut self,
+        named: Served,
+        with: &Switching<'_>,
+    ) -> Option<CredentialSource> {
         let stored = with.logins.read();
         if let Ok(remaining) = (with.serving)(named, &stored) {
             self.runner.serve(remaining.provider);
@@ -981,10 +1011,7 @@ impl Conversation {
             self.source = Some(remaining.source.clone());
             self.reach(named, with);
             self.hastened_as_kept(with.choosing);
-            return LoggedOut::StillServed {
-                retained,
-                source: remaining.source,
-            };
+            return Some(remaining.source);
         }
 
         let reachable = reachable(with, &stored);
@@ -1001,7 +1028,7 @@ impl Conversation {
         self.source = None;
         self.reachable = reachable;
         self.web.stop();
-        LoggedOut::SignedOut { retained }
+        None
     }
 
     /// Reads again whether any provider could be set up from the store, where

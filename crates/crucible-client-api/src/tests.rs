@@ -552,7 +552,9 @@ fn login_outcomes() -> Vec<Outcome> {
             retained: retained(),
             problem: problem(),
         }),
-        Outcome::Logout(LogoutOutcome::Kept),
+        Outcome::Logout(LogoutOutcome::Kept {
+            retained: retained(),
+        }),
         Outcome::Logout(LogoutOutcome::StillServed {
             retained: retained(),
             standing: Standing::Environment(marked()),
@@ -1198,7 +1200,7 @@ const fn logout_arm(one: &LogoutOutcome) -> (usize, usize) {
     match one {
         LogoutOutcome::CacheHeld(_) => (0, 16),
         LogoutOutcome::Unforgotten { .. } => (1, 16),
-        LogoutOutcome::Kept => (2, 16),
+        LogoutOutcome::Kept { .. } => (2, 16),
         LogoutOutcome::StillServed {
             standing: Standing::Environment(_),
             ..

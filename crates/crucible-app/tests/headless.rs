@@ -1014,7 +1014,7 @@ fn a_logout_of_a_provider_nobody_is_asking_changes_nothing_else() -> Result<(), 
 
     let left = runtime()?.block_on(conversation.log_out(desk.one("google")?, &desk.with()));
 
-    assert!(matches!(left, LoggedOut::Kept), "{left:?}");
+    assert!(matches!(left, LoggedOut::Kept { .. }), "{left:?}");
     assert_eq!(desk.logins.read().providers().count(), 0);
     assert_eq!(desk.reached(), Vec::<&str>::new());
     assert_eq!(conversation.serving(), Some("anthropic"));
