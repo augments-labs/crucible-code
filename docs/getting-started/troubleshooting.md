@@ -205,6 +205,25 @@ provider in the configuration file in your home directory, then start the older
 crucible again. A later crucible asks at standard speed until `/fast` is chosen
 again.
 
+### `crucible: <home>/config.json: externalAgents is not a setting crucible has at line <n>, column <m>`
+
+This is 0.47.1 or earlier reading a configuration file in which a later
+crucible set up an [installed coding agent](../providers/agents.md). Delete the
+`externalAgents` block, and `access` from each provider, in the configuration
+file in your home directory, then start the older crucible again. A later
+crucible then runs no agent, and reaches each provider as it does with no
+[`access`](../configuration/configuration.md#access) written, until `/login`
+sets an agent up again or what you deleted is put back.
+
+### `crucible: <home>/config.json: providers.anthropic.access is not a setting crucible has at line <n>, column <m>`
+
+This is 0.47.1 or earlier reading a configuration file in which a later
+crucible wrote which way a provider is reached; the provider named may be
+another. Delete `access` from each provider in the configuration file in your
+home directory, then start the older crucible again. A later crucible then
+reaches each provider as it does with no
+[`access`](../configuration/configuration.md#access) written.
+
 ### `anthropic: HTTP 401: check the Anthropic API key and its model access`
 
 The provider refused the request with that status. For Anthropic's
