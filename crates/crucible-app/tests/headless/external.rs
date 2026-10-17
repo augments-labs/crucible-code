@@ -2924,6 +2924,54 @@ fn a_connect_writes_the_route_and_enables_the_instance() -> Result<(), Failed> {
     Ok(())
 }
 
+/// Connecting the agent a conversation was disconnected from, while it is
+/// still on that agent, lets its next turn start the agent again.
+#[test]
+fn a_connect_after_a_disconnect_lets_the_next_turn_start_the_agent() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, LogoutOutcome, Text};
+
+    let tree = Tree::new("external-reconnect")?;
+    let script = connected([claude::clean(), claude::signed_in(), claude::clean()]);
+    let mut outside = Outside::new(&tree, &script)?;
+    let mut choosing = Choosing {
+        choice: Some(client::accounts::DISCONNECT),
+        put: Vec::new(),
+    };
+    let (outcome, disconnected) =
+        disconnecting(&tree, &mut outside, Asking::every(), &mut choosing)?;
+    assert!(
+        matches!(outcome, Outcome::Logout(LogoutOutcome::Disconnected { .. })),
+        "{outcome:?}"
+    );
+    let mut picking = Picking::of([]);
+
+    let ((outcome, file), _) = connecting_counted(
+        &tree,
+        &mut outside,
+        &disconnected,
+        Some("work"),
+        &mut picking,
+    )?;
+
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::AgentConnected {
+            said: Text::cut(client::accounts::CONNECTED),
+            onto: None,
+        })
+    );
+    assert_eq!(file, CONNECTED_FILE);
+    let launched = outside.launched().len();
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_ok(), "{turned:?}");
+    assert_eq!(
+        outside.launched().len(),
+        launched + 1,
+        "the agent was not started again"
+    );
+    Ok(())
+}
+
 /// The user file of a conversation on `work` with a second instance beside it.
 const TWO_ROUTED: &str = r#"{
   "externalAgents": {
