@@ -8,6 +8,55 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-21
+
+**Crucible 0.48.0 lets an installed coding agent take a conversation's turns.**
+Claude Code and Antigravity's agent server run under the conversation's sandbox
+on their own accounts, connected from `/login` and managed from `/logout`, and
+`providers.<name>.access` chooses whether each provider is reached by
+subscription, key or agent. A `/login` where no provider was being asked now
+takes a model, Claude Haiku 5.5 joins `/model`, `/usage` stops pricing a fast
+answer at standard rates, and TLS moves to rustls 0.23.46 and refuses the
+distrusted emSign intermediates, for six published advisories. Scripts and
+clients read new format numbers; before rolling back to 0.47.1, delete each
+provider's `access`, and the block listing your installed agents, from your
+configuration file.
+
+### Added
+
+- **Claude Code and Antigravity can take a conversation's turns.** Your configuration file can name an installed Claude Code, 2.1.277 or later before 2.2.0, or Antigravity's agent server 1.3.0, and a provider whose `access` names it, `anthropic` or `google`, has its turns run by that agent, signed in to its own account, under the conversation's sandbox, widened so that it reaches its vendor's hosts and writes the profile directory set for it, and held to none of the time or output ceilings one command has. The agent starts at the conversation's first turn once you agree to its route's content use, and is held to the conversation's mode, ask, allow edits or full access, with the questions that mode leaves to you brought to you. A Claude Code allow for the rest of the session keeps only the agent's rules for the command you were asked about: that exact command, or the commands beginning with words a rule names where those words hold no wildcard or shell syntax.
+- **`providers.<name>.access` chooses how crucible reaches each provider.** It is `subscription`, `apiKey`, or an installed agent named by its `instance`, and crucible then uses that way alone, stopping at start with a sentence naming the setting where it is missing. It is read only from the configuration file in your home directory; left out, a provider is reached the way it always has been. Before rolling back to 0.47.1, delete each provider's `access`, and the block listing your installed agents, from that file, or 0.47.1 stops on them.
+- **`/login` and `/logout` connect and manage installed agents.** `/login` offers *Use an installed coding agent* as a third choice: it finds the agent's program, asks once before first starting it, checks that it is signed in and moves the conversation onto it in a new session, while a subscription or key login on an agent's route moves the conversation off it onto that provider. `/logout` lists each agent with *Connect*, *Disconnect from Crucible*, *Sign out of the agent* and *Remove integration settings*, each asked first, and a session left by any move stays listed for `/resume`.
+- **`/model` and `/effort` work on an installed agent's route.** On Claude Code they offer Anthropic's models and rungs from crucible's own list and write the one taken into the agent's entry as its `model` and `effort` for its next run, while Antigravity chooses its own model and they say so. A model of another provider moves the conversation off the agent where a credential for it is in hand, and a model of a provider whose `access` names an agent moves the conversation onto that agent, each in a new session.
+- **What an installed agent does is drawn as crucible's own work is.** Its tool calls stand as call rows with their results, its edits as the diffs they made and its lookups folded on one line, and a resumed session draws them again. The row under the box names the agent and who pays, the line above it reads how much of the model's window the agent holds, which `/context` gives as `held by the agent`, and the transcript says when the agent made room. `/usage` heads the agent's figures as its own report, with the cost it reported rather than a price from crucible's tables.
+- **`crucible agents install antigravity` installs the agent server crucible runs.** It downloads release 1.3.0 for your platform from the address Google publishes it at, sending nothing about your session or directory, and unpacks it under `programs/antigravity/1.3.0` in crucible's home only once its size and SHA-256 match the ones this build pins. `/login` then sets Antigravity up on that release, and says to run the command where it is not there yet.
+- **A session remembers which installed agent ran it.** `--continue`, `--resume` and `/resume` carry it on with that agent, which picks up the session it kept, while your configuration still names the agent as it was and it is connected, and the `/resume` picker and `crucible sessions list` say what ran each session. A session a provider's model ran is never continued on an agent: `/resume` takes it back to the provider the run moved off, and otherwise it waits for the next launch that reaches a provider directly.
+- **A client with no terminal can connect and manage an installed agent too.** It can connect a provider through an agent, picking the agent and instance where several are set up, and disconnect, sign out or remove one, each after a confirmation, and its snapshot says where the conversation runs and who pays. What the agent does with its own tools streams as `tool_activity`, never as a call the client is asked about, and the outcome of a turn stopped while the agent was acting says `uncertain`, where its `finished` report says `cancelled`.
+- **Claude Haiku 5.5 can be chosen in `/model`.** `claude-haiku-5-5` takes all five effort rungs, starts at its 1,000,000-token window, and keeps and replays its thinking as Fable 5.1, Opus 5.5 and Sonnet 5.5 do. Its cost is priced at Anthropic's two prompt-length rates, the higher one once a prompt is over 100,000 tokens with its cache reads and writes counted in.
+
+### Changed
+
+- **A `/login` where no provider was being asked now takes a model.** It asks the model your configuration names for that provider, else the provider's default, its latest middle-tier model at `medium` effort or the nearest rung above that it serves, and writes the default it takes to your configuration so the next start opens on it. Before, it left the model to `/model`, and a turn typed first was refused.
+- **A `/login` row whose credential is already stored asks before replacing it.** Taking a row that says `signed in` offers *Use it*, which reaches the provider with the stored credential and writes none, and *Replace it*, which opens the key box or sign-in as before.
+- **Scripts and clients read new format numbers.** The client protocol moves to revision 4, and a frame that says revision 3 is refused as an unsupported version, while `crucible sessions list --json` writes `format_version` 2, adding each session's `backend` and, for one an installed agent ran, its `route`. A session an installed agent ran is logged in format 14, which builds before 0.48.0 cannot resume; a provider's session stays at format 13, so going back to 0.47 loses none of those.
+
+### Fixed
+
+- **`/usage` no longer prices a fast answer at the standard rate.** An answer to a request that carried a model's fast form was summed at the standard prices crucible keeps, below what the vendor billed for it. Once such a request has gone out and not been refused, the session's cost reads `not priced`; a message sent again at standard after a refusal is priced as before.
+- **Sonnet 5.5's cache reads are priced right.** A cache hit on Claude Sonnet 5.5 is now costed at $0.10 per million tokens, 0.05x its input as Anthropic charges, where it was costed at twice that.
+
+### Security
+
+- **TLS now uses rustls 0.23.46, which fixes four published advisories.** They cover session secrets in debug output, data sent after an ECH rejection, an allocation of up to 1 GiB while decompressing a certificate, and a key-exchange downgrade.
+- **TLS refuses certificates that chain through the distrusted emSign intermediates.** Their private keys are now public, so anyone could have used them to impersonate any server crucible connects to. webpki-roots 1.0.10 and rustls-webpki 0.103.16 fix RUSTSEC-2026-0381 and RUSTSEC-2026-0382.
+
+### Internal
+
+- **Every conversation runs behind one execution contract.** crucible's own loop and each installed agent say up front which operations they support and refuse the rest, and a permission is settled only by an answer naming that question, which a conformance suite holds each of them to.
+- **Whole-screen tests drive a fake installed agent.** The gate builds a stand-in for a vendor's program, and the screens an installed agent is reached through are captured at 80 and 40 columns in both screen modes.
+- **A scheduled workflow reports model-list drift.** On the 1st and 15th of each month, `model-drift` reads the models.dev database and puts what it says against the shipped model lists into one issue.
+- **The repository gate keeps the installed-agent route removable.** It fails on a vendor's name in `crucible-client-api`, and on a file that names the route without being on the list a removal of the route would read.
+
 ## [0.47.1] - 2026-10-09
 
 **Crucible 0.47.1 keeps native mode whole through resizes, and fixes
@@ -5341,7 +5390,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.47.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/augments-labs/crucible-code/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/augments-labs/crucible-code/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/augments-labs/crucible-code/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/augments-labs/crucible-code/compare/v0.45.3...v0.46.0
