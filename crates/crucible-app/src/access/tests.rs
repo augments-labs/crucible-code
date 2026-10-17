@@ -432,16 +432,27 @@ fn an_agent_access_resolves_to_its_instance_as_written() {
 }
 
 #[test]
-fn an_access_a_login_rewrote_resolves_in_place_of_the_agent_the_launch_read() {
+fn an_access_written_during_the_run_resolves_in_place_of_the_agent_the_launch_read() {
     let sample = Sample::new("access-agent-rewritten");
     let settings = agent_settings(&sample, "", true);
     let rewritten = Rewritten::new();
     assert!(matches!(rewritten.over(&settings), Cow::Borrowed(_)));
 
-    rewritten.rewrite("anthropic", Access::ApiKey);
+    // The file as a login on the agent's route leaves it: the agent kept, the
+    // provider reached by its key.
+    rewritten.record(
+        Routes::of(
+            r#"{"providers": {"anthropic": {"access": {"type": "apiKey"}}},
+                "externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}}"#,
+            "config.json",
+        )
+        .unwrap(),
+    );
+    let read = rewritten.over(&settings);
+    assert_eq!(read.external_agents().len(), 1, "the agent kept is read");
     let route = resolved(
         serving("anthropic"),
-        &rewritten.over(&settings),
+        &read,
         &lookup(Some("ANTHROPIC_API_KEY")),
         None,
         NO_SUBSCRIPTION,

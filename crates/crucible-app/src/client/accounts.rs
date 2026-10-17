@@ -593,7 +593,10 @@ async fn sign_out(
         return Account::Contended(contended);
     }
     let names: Vec<&str> = sharing.iter().map(ExternalAgent::name).collect();
-    if let Err(problem) = remember::disabling_every(desk.switching.choosing, &names) {
+    if let Err(problem) = desk
+        .switching
+        .recorded(remember::disabling_every(desk.switching.choosing, &names))
+    {
         let _ = slot.finish(Ending::Failed);
         return Account::ThisRunOnly(problem);
     }
@@ -918,8 +921,6 @@ async fn moved(
             // reported: the outcome says what the connect did, and the log's
             // own trouble is found again when it is resumed.
             let _unclosed = left.finish();
-            // The route the connect wrote is not in the files this run read.
-            conversation.moved_from = Some((provider.into(), agent.name().into()));
             Account::Moved(agent.name().into())
         }
         Err(reason) => Account::Unmoved(reason),
@@ -946,13 +947,10 @@ fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent, written: bool)
     } else {
         remember::installing(desk.switching.choosing, provider, agent)
     };
-    if let Err(problem) = wrote {
+    if let Err(problem) = desk.switching.recorded(wrote) {
         let _ = slot.finish(Ending::Failed);
         return Account::ConnectUnsaved(problem);
     }
-    // The route written now is how the provider is reached, over any access
-    // a login earlier in the run rewrote it to.
-    desk.switching.rewritten.forget(provider);
     // The route is written and in force whether or not the journal takes its
     // end; an open record is replaced by the next connect of the scope.
     let _ = slot.finish(Ending::Succeeded);
@@ -1072,7 +1070,10 @@ async fn remove(
             return Account::Contended(contended);
         }
     }
-    match remember::removing(desk.switching.choosing, agent.name()) {
+    match desk
+        .switching
+        .recorded(remember::removing(desk.switching.choosing, agent.name()))
+    {
         Ok(()) => match slot.finish(Ending::Succeeded) {
             Ok(_) => Account::Removed,
             Err(contended) => Account::Contended(contended),
@@ -1117,7 +1118,10 @@ async fn disconnect(
             return Account::Contended(contended);
         }
     }
-    match remember::disabling(desk.switching.choosing, agent.name()) {
+    match desk
+        .switching
+        .recorded(remember::disabling(desk.switching.choosing, agent.name()))
+    {
         Ok(()) => match slot.finish(Ending::Succeeded) {
             Ok(_) => Account::Disconnected { stopped },
             Err(contended) => Account::Contended(contended),

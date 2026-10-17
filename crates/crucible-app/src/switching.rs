@@ -27,6 +27,13 @@
 //! anything moves where the agent chooses its own model, is disconnected, or
 //! the model does not serve the rung asked.
 //!
+//! What this run's settings say of the installed agents and of how each
+//! provider is reached is what the user file said after the last write here
+//! or in an account command that changed either, read through [`Rewritten`]
+//! in place of what the launch read: a route a connect wrote, an agent it
+//! installed, and a model or rung written for one are in force for the next
+//! command, as they are for the next launch.
+//!
 //! What an answer deliberately carries beside the outcome: what a cache
 //! retirement could not remove, and what could not be written down. Neither
 //! undoes the switch. Both are something a reader is told, and a front end
@@ -61,7 +68,8 @@ use crate::{AppError, Conversation};
 pub struct Switching<'a> {
     /// The providers a name is read against.
     pub providers: &'a Providers,
-    /// What the configuration files said.
+    /// What the configuration files said, with the installed agents and
+    /// every provider's access as [`Switching::rewritten`] holds them.
     pub settings: &'a Settings,
     /// Sets one provider up from the credentials in hand.
     pub serving: &'a Serving,
@@ -71,8 +79,9 @@ pub struct Switching<'a> {
     pub logins: &'a Store,
     /// The user configuration file a choice is written down in.
     pub choosing: &'a Path,
-    /// How a login during this run rewrote a provider's access, which
-    /// [`Switching::serving`] and [`Switching::sourcing`] read too.
+    /// The installed agents and providers' access as the account writes
+    /// during this run left them, which [`Switching::serving`] and
+    /// [`Switching::sourcing`] read too.
     pub rewritten: &'a Rewritten,
 }
 
@@ -81,6 +90,18 @@ impl std::fmt::Debug for Switching<'_> {
         out.debug_struct("Switching")
             .field("choosing", &self.choosing)
             .finish_non_exhaustive()
+    }
+}
+
+impl Switching<'_> {
+    /// What a write that changes the installed agents or how a provider is
+    /// reached came to: where it was written, what it wrote is read for the
+    /// rest of the run through [`Switching::rewritten`].
+    pub(crate) fn recorded(
+        &self,
+        written: Result<crucible_config::Routes, RememberError>,
+    ) -> Result<(), RememberError> {
+        written.map(|routes| self.rewritten.record(routes))
     }
 }
 
@@ -273,7 +294,7 @@ pub enum LoggedOut {
 /// is on an installed agent's route, before any move off it.
 ///
 /// `routed` says whether `named` is a provider the route stands in for: one
-/// the files read at launch reach through its instance, or the one
+/// this run's settings reach through its instance, or the one
 /// [`Conversation::reached`] names. The kind of credential stored decides how
 /// that provider is reached next: an account by its subscription, a key as a
 /// key.
@@ -296,14 +317,18 @@ fn beside_the_route(routed: bool, named: Served, with: &Switching<'_>) -> Logged
     };
     // In the one update that rewrites the access, so that the next launch
     // finds both or neither, and a refusal leaves the route written as it was.
-    let (model, effort, taken) = first_asked(named, with);
-    let default = taken.then_some((model.as_str(), effort));
-    let unwritten = remember::reaching_defaulted(with.choosing, named.name, &access, default).err();
     // Written down, it is how this run reaches the provider too, so that the
     // move off the route sets it up as the next launch would.
-    if unwritten.is_none() {
-        with.rewritten.rewrite(named.name, access);
-    }
+    let (model, effort, taken) = first_asked(named, with);
+    let default = taken.then_some((model.as_str(), effort));
+    let unwritten = with
+        .recorded(remember::reaching_defaulted(
+            with.choosing,
+            named.name,
+            &access,
+            default,
+        ))
+        .err();
     LoggedIn::NextLaunch {
         provider: named.name,
         unwritten,
@@ -589,7 +614,14 @@ impl Conversation {
 
         Switched::MovedOnto {
             instance: entry.name().into(),
-            unwritten: remember::choosing_agent(with.choosing, entry.name(), name, effort).err(),
+            unwritten: with
+                .recorded(remember::choosing_agent(
+                    with.choosing,
+                    entry.name(),
+                    name,
+                    effort,
+                ))
+                .err(),
         }
     }
 
@@ -668,7 +700,14 @@ impl Conversation {
         self.choose_agent_model(name, effort);
         Switched::Taken {
             retained: Retained::default(),
-            unwritten: remember::choosing_agent(with.choosing, &instance, name, effort).err(),
+            unwritten: with
+                .recorded(remember::choosing_agent(
+                    with.choosing,
+                    &instance,
+                    name,
+                    effort,
+                ))
+                .err(),
         }
     }
 
@@ -694,7 +733,9 @@ impl Conversation {
 
         self.agent_effort(effort);
         Rung::Taken {
-            unwritten: remember::thinking_agent(with.choosing, &instance, effort).err(),
+            unwritten: with
+                .recorded(remember::thinking_agent(with.choosing, &instance, effort))
+                .err(),
         }
     }
 

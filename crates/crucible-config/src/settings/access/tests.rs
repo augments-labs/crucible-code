@@ -28,23 +28,47 @@ fn each_access_type_is_read_back_as_its_variant() {
 }
 
 #[test]
-fn a_rewritten_access_is_read_in_place_of_the_one_written_and_keeps_the_rest() {
+fn routes_stand_in_for_both_blocks_the_launch_read_and_keep_the_rest() {
     let read = settings(
         r#"{"providers": {
-            "anthropic": {"access": {"type": "externalAgent", "instance": "work"}, "model": "claude-opus-5-5"}
-        }}"#,
+            "anthropic": {"access": {"type": "externalAgent", "instance": "work"}, "model": "claude-opus-5-5"},
+            "openai": {"access": {"type": "subscription"}}
+        },
+        "externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#,
     );
-    let reaching = read.reaching("anthropic", &Access::ApiKey);
-    assert_eq!(reaching.access("anthropic"), Some(Access::ApiKey));
-    assert_eq!(reaching.model("anthropic"), Some("claude-opus-5-5"));
+    let routes = Routes::of(
+        r#"{"providers": {
+            "anthropic": {"access": {"type": "apiKey"}},
+            "google": {"access": {"type": "externalAgent", "instance": "home"}}
+        },
+        "externalAgents": {"home": {"driver": "claude", "executable": "claude", "enabled": false}}}"#,
+        "config.json",
+    )
+    .expect("a user file");
+
+    let written = read.routed(&routes);
+
+    assert_eq!(written.access("anthropic"), Some(Access::ApiKey));
+    assert_eq!(written.access("openai"), None);
     assert_eq!(
-        read.access("anthropic"),
+        written.access("google"),
         Some(Access::ExternalAgent {
-            instance: "work".into()
+            instance: "home".into()
         })
     );
-    let fresh = settings("{}").reaching("openai", &Access::Subscription);
-    assert_eq!(fresh.access("openai"), Some(Access::Subscription));
+    assert_eq!(written.model("anthropic"), Some("claude-opus-5-5"));
+    let agents = written.external_agents();
+    assert_eq!(
+        agents.iter().map(ExternalAgent::name).collect::<Vec<_>>(),
+        ["home"]
+    );
+    assert!(!agents.iter().any(ExternalAgent::enabled));
+    let bare = read.routed(&Routes::of("", "config.json").expect("an empty user file"));
+    assert_eq!(bare.access("anthropic"), None);
+    assert!(bare.external_agents().is_empty());
+    assert_eq!(bare.model("anthropic"), Some("claude-opus-5-5"));
+    assert_eq!(read.access("openai"), Some(Access::Subscription));
+    assert!(Routes::of("{", "config.json").is_err());
 }
 
 #[test]

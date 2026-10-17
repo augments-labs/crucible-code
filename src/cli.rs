@@ -1055,9 +1055,10 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // What a provider is served on is read again, from the store as it is
     // then, once a credential taken out may have moved it: another may still
     // serve it, and the write that took it out may have failed. It and the
-    // two the session is set up again through read the access a login during
-    // the run rewrote out of one record, so none takes a provider for an
-    // agent's once it reaches the provider directly.
+    // two the session is set up again through read the installed agents and
+    // access the account writes during the run left out of one record, so none
+    // takes a provider for an agent's once it reaches the provider directly,
+    // or misses a route a connect wrote.
     let rewritten = crucible_app::access::Rewritten::new();
     services
         .consent()

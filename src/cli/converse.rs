@@ -258,8 +258,9 @@ pub(crate) struct Terms {
     /// here and one built there pointing at different files would be a `/login`
     /// that wrote where nothing reads.
     pub(crate) logins: Store,
-    /// How a login during this run rewrote a provider's access, read by
-    /// `serving`, `sourcing` and the content-use hold in place of `settings`.
+    /// The installed agents and providers' access as the account writes during
+    /// this run left them, read by `serving`, `sourcing`, the content-use hold
+    /// and every command in place of those two blocks of `settings`.
     pub(crate) rewritten: crucible_app::access::Rewritten,
     /// Subscription implementations compiled into this binary.
     pub(crate) subscriptions: Subscriptions,
@@ -347,8 +348,10 @@ impl Terms {
         }
     }
 
-    /// The settings with the access a login during this run rewrote read in
-    /// place of what the launch read: what a provider is reached with now.
+    /// The settings with the installed agents and every provider's access as
+    /// the account writes during this run left them, in place of what the
+    /// launch read: which agents there are, and what a provider is reached
+    /// with now.
     pub(crate) fn reading(&self) -> std::borrow::Cow<'_, crucible_config::Settings> {
         self.rewritten.over(&self.settings)
     }

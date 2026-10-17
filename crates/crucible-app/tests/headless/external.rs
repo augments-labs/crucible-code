@@ -46,6 +46,9 @@ use crucible_types::{
 
 use super::{Failed, Nobody, Script, Tree, saying};
 
+#[path = "external/routing.rs"]
+mod routing;
+
 /// The runtime an agent's turns run on: its pipes are read on it, so it
 /// drives input and output as the application's own does.
 fn runtime() -> Result<tokio::runtime::Handle, Failed> {
@@ -3051,61 +3054,6 @@ fn a_connect_moves_a_conversation_on_the_provider_s_model_onto_the_route() -> Re
         })
         .collect();
     assert_eq!(kept, ["one"]);
-    Ok(())
-}
-
-/// A key logged in, after a connect moved the conversation onto the agent,
-/// for the provider it was moved off is written down as how that provider is
-/// reached, though the files read at launch had no route, and moves the
-/// conversation back onto it.
-#[test]
-fn a_key_for_the_provider_a_connect_moved_off_moves_back_onto_it() -> Result<(), Failed> {
-    use crucible_client_api::{LoginOutcome, Retained, Text};
-
-    let tree = Tree::new("external-connect-then-key")?;
-    let native = started_native(&tree, Script::new(Vec::new()))?;
-    let script = connected([claude::signed_in(), claude::clean()]);
-    let (mut conversation, _peer) = stepped(&tree, native, &script)?;
-    let mut picking = Picking::of([]);
-    let command = |instance| Command::Connect {
-        instance: Some(instance),
-    };
-    let asked = Asked {
-        installed: (UNCONNECTED, "work"),
-        command: &command,
-        asking: Asking::every(),
-        after: None,
-    };
-    let (moved, file) = accounting_on(&tree, &mut conversation, &asked, &mut picking)?;
-    assert!(
-        matches!(moved, Outcome::Login(LoginOutcome::AgentConnected { .. })),
-        "{moved:?}"
-    );
-    super::Desk::new(&tree, &[])?
-        .logins
-        .keep("anthropic", "a-key-no-vendor-issued")?;
-
-    let (outcome, keyed) = credited_on(&tree, &mut conversation, UNCONNECTED, "anthropic", login)?;
-
-    assert_eq!(
-        outcome,
-        Outcome::Login(LoginOutcome::MovedOff {
-            provider: Text::cut("anthropic"),
-            retained: Retained::default(),
-            unwritten: None,
-        })
-    );
-    assert!(conversation.session().route().is_none());
-    assert_eq!(file, CONNECTED_FILE);
-    let keyed: serde_json::Value = serde_json::from_str(&keyed)?;
-    assert_eq!(
-        keyed.pointer("/providers/anthropic/access/type"),
-        Some(&serde_json::json!("apiKey"))
-    );
-    assert_eq!(
-        keyed.pointer("/provider"),
-        Some(&serde_json::json!("anthropic"))
-    );
     Ok(())
 }
 

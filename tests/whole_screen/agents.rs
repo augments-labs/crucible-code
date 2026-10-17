@@ -500,6 +500,46 @@ fn the_logout_panel_offers_what_can_be_done_with_an_agent() {
     );
 }
 
+/// Fails where `/logout`, once a connect has installed the agent during the
+/// run, does not offer it, or where disconnecting it from there is not
+/// written down.
+#[test]
+fn an_agent_a_connect_installed_is_offered_by_logout_in_the_same_run() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-logout-installed-{mode}");
+        let script = Script::of(signed_in([]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut window =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        connected(&mut window);
+
+        window.types_and_catches_where("/logout\r", "an agent or nothing offered", |picture| {
+            picture.contains("external agent instance") || picture.contains("nothing is stored")
+        });
+        let offered = window.picture();
+        assert!(
+            offered.contains("external agent instance"),
+            "{case}: {offered}"
+        );
+        takes(&mut window, "claude");
+        window.types_until("", "Disconnect from Crucible");
+        takes(&mut window, "Disconnect from Crucible");
+        window.types_until("", "Disconnect claude from Crucible?");
+        takes(&mut window, "Disconnect from Crucible");
+        window.types_until("", "Disconnected from Crucible.");
+
+        let file = std::fs::read_to_string(window.home().join("config.json"))
+            .expect("the configuration file");
+        let written: serde_json::Value =
+            serde_json::from_str(&file).expect("a configuration in its format");
+        let enabled = written
+            .pointer("/externalAgents/claude/enabled")
+            .and_then(serde_json::Value::as_bool);
+        assert_eq!(enabled, Some(false), "{case}: {written}");
+    }
+}
+
 #[test]
 fn a_run_lost_mid_effect_says_its_work_is_uncertain() {
     captured(
