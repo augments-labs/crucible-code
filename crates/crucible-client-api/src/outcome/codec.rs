@@ -398,7 +398,7 @@ impl LogoutOutcome {
             Self::Unforgotten { retained, problem } => {
                 retained.onto(failed("unforgotten", problem))
             }
-            Self::Kept => Writing::kind("kept"),
+            Self::Kept { retained } => retained.onto(Writing::kind("kept")),
             Self::StillServed { retained, standing } => retained
                 .onto(Writing::kind("still_served"))
                 .with("standing", standing.written()),
@@ -431,7 +431,9 @@ impl LogoutOutcome {
                 retained: Retained::from(&mut fields)?,
                 problem: problem(&mut fields)?,
             },
-            "kept" => Self::Kept,
+            "kept" => Self::Kept {
+                retained: Retained::from(&mut fields)?,
+            },
             "still_served" => Self::StillServed {
                 retained: Retained::from(&mut fields)?,
                 standing: Standing::read(fields.take("standing")?)?,

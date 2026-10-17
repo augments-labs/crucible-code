@@ -284,7 +284,8 @@ pub enum ResumeOutcome {
     /// No session of this workspace answers to that identity.
     Unknown,
     /// A provider's model ran it, and the conversation is on an installed
-    /// agent's route it started on, so no provider was set up to ask: it can
+    /// agent's route with no provider set up beside it to ask, since it
+    /// started on the route or was logged out there of the one it had: it can
     /// be picked up on the next launch that reaches a provider directly.
     /// Nothing was opened, and the session in hand is untouched.
     NextLaunch,
@@ -461,7 +462,11 @@ pub enum LogoutOutcome {
         problem: Problem,
     },
     /// It was removed, and the session is asking somebody else anyway.
-    Kept,
+    Kept {
+        /// What retiring the cache of the provider kept beside an installed
+        /// agent's route left behind, where that provider was this one.
+        retained: Retained,
+    },
     /// It was removed, and the provider is still authenticated another way.
     StillServed {
         /// What retiring the cache left behind.

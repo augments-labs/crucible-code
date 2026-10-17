@@ -29,7 +29,11 @@ another agent reaches the provider, the credential is only stored, and a
 rewritten `access` is read from the next launch. *Use it* on a row already
 holding its credential does the same with the one stored. `/logout` for the
 provider the agent reaches removes the stored credential and says the agent
-still reaches it.
+still reaches it. Logging out there of the provider the conversation was asking
+before it moved onto the agent also takes the removed credential from what
+`/resume` goes back to: a session that provider's model ran resumes on a
+credential still left for it, else on the next launch that reaches a provider
+directly.
 
 `/login` always offers a third choice, *Use an installed coding agent*, where
 this release ships an agent, whatever provider is being asked or none. It asks

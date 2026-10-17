@@ -553,16 +553,18 @@ impl Conversation {
     }
 
     /// Retires the persistent prompt-cache resources this conversation owns
-    /// before its provider identity changes.
+    /// before its provider identity changes: the kept runner's, on an
+    /// installed agent's route as off it, since a move off the route or a
+    /// credential forgotten there changes the identity of the runner kept
+    /// beside it.
     pub(crate) async fn retire_prompt_cache(
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
-        match self.native_mut() {
-            Some(runner) if runner.prompt_cache_retirement_pending() => {
-                runner.retire_prompt_cache(cancel).await
-            }
-            Some(_) | None => Ok(PromptCacheCleanup::default()),
+        if self.runner.prompt_cache_retirement_pending() {
+            self.runner.retire_prompt_cache(cancel).await
+        } else {
+            Ok(PromptCacheCleanup::default())
         }
     }
 
@@ -784,8 +786,10 @@ pub enum Unpicked {
     /// was.
     #[error(transparent)]
     Session(#[from] SessionError),
-    /// A provider's model ran it, and the run started on an installed agent's
-    /// route, so no provider was set up to ask.
+    /// A provider's model ran it, and the conversation is on an installed
+    /// agent's route with no provider set up beside it to ask: the run started
+    /// on the route, or the credential of the one kept beside it was forgotten
+    /// there.
     #[error(
         "this session was run on a provider's model, and this run has none set up; \
          resume it on the next launch that reaches a provider directly"

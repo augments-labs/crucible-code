@@ -22,7 +22,7 @@
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::client::accounts::{DISCONNECT, REMOVE, SIGN_OUT};
-use crucible_app::switching::{LoggedOut, Retained};
+use crucible_app::switching::LoggedOut;
 use crucible_client_api::{Command, Name};
 use crucible_config::ExternalAgent;
 use crucible_tui::{Offered, Panel, Renderer, Row, Slot, Terminal, clip};
@@ -405,9 +405,9 @@ fn forgetting<T: Terminal>(
             super::cache::retained(renderer, super::Laid::Hung, retained)?;
             return say(renderer, &format!("! {problem}"));
         }
-        LoggedOut::Kept => (Retained::default(), KEPT.to_owned()),
-        LoggedOut::Routed { instance } => (
-            Retained::default(),
+        LoggedOut::Kept { retained } => (retained, KEPT.to_owned()),
+        LoggedOut::Routed { instance, retained } => (
+            retained,
             format!(
                 "{} is still reached through the agent {instance}",
                 named.name

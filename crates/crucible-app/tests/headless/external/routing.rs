@@ -14,11 +14,13 @@ use crucible_app::access::Rewritten;
 use crucible_app::client::{self, Front};
 use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, LoginOutcome, LogoutOutcome, ModelOutcome, Name,
-    Outcome, Request, ResumeOutcome, Retained, Text,
+    Outcome, Request, ResumeOutcome, Retained, Standing, Text,
 };
 use crucible_config::{Access, Settings};
 use crucible_external_harnesses::fake_peer::{self, scripts::claude};
 use crucible_runner::Turned;
+use crucible_session::Session;
+use crucible_types::{Message, SessionId};
 
 use super::{
     CONNECTED_FILE, Choosing, INSTALLED, Picking, UNCONNECTED, UNINSTALLED, connected, recorded_on,
@@ -530,5 +532,95 @@ fn a_key_for_the_provider_a_connect_moved_off_moves_back_onto_it() -> Result<(),
         keyed.pointer("/provider"),
         Some(&serde_json::json!("anthropic"))
     );
+    Ok(())
+}
+
+/// A session a provider's model ran, on the disk of `tree`, holding `said`.
+fn recorded_natively(tree: &Tree, said: &str) -> Result<SessionId, Failed> {
+    let session = Session::start(&tree.sessions(), &tree.workspace()?, None)?;
+    let id = session.id().cloned().ok_or("an id")?;
+    session.append(&Message::User {
+        text: said.into(),
+        attachments: Box::new([]),
+    });
+    drop(session);
+    Ok(id)
+}
+
+/// A key logged out of on an agent's route, for the provider the
+/// conversation asked before a connect moved it onto the route, is gone from
+/// what was kept beside the route too: a session a provider's model ran
+/// waits for the next launch rather than resuming on the forgotten key.
+/// That holds where the route stands in for the provider, and where it
+/// stands in for another.
+#[test]
+fn a_key_logged_out_of_on_an_agent_s_route_is_not_resumed_on() -> Result<(), Failed> {
+    for (provider, routed) in [("anthropic", true), ("openai", false)] {
+        let tree = Tree::new(&format!("routing-logout-{provider}"))?;
+        let run = Run::launched(&tree, UNCONNECTED)?;
+        let id = recorded_natively(&tree, "before")?;
+        crate::Desk::stored(&tree)?
+            .logins
+            .keep(provider, "a-key-no-vendor-issued")?;
+        let native = crate::conversing(
+            &tree,
+            Script::new(Vec::new()),
+            &crate::Guard::Nothing,
+            Some(provider),
+        )?;
+        let script = connected([claude::signed_in(), claude::clean()]);
+        let (mut conversation, _peer) = stepped(&tree, native, &script)?;
+        let onto = run.settle(
+            crate::Desk::new(&tree, &[])?,
+            (&tree, &mut conversation),
+            connect(Some("work"))?,
+            &mut Picking::of([]),
+        )?;
+        assert!(
+            matches!(onto, Outcome::Login(LoginOutcome::AgentConnected { .. })),
+            "{onto:?}"
+        );
+        let current = conversation.session().id().cloned();
+
+        let out = run.perform(
+            crate::Desk::stored(&tree)?,
+            &tree,
+            &mut conversation,
+            Command::Logout {
+                provider: Name::new(provider)?,
+            },
+        )?;
+        let resumed = run.perform(
+            crate::Desk::stored(&tree)?,
+            &tree,
+            &mut conversation,
+            Command::Resume(id),
+        )?;
+
+        if routed {
+            assert_eq!(
+                out,
+                Outcome::Logout(LogoutOutcome::StillServed {
+                    retained: Retained::default(),
+                    standing: Standing::External {
+                        instance: Text::cut("work"),
+                    },
+                }),
+                "{provider}"
+            );
+        } else {
+            assert!(
+                matches!(out, Outcome::Logout(LogoutOutcome::Kept { .. })),
+                "{provider}: {out:?}"
+            );
+        }
+        assert_eq!(
+            resumed,
+            Outcome::Resumed(ResumeOutcome::NextLaunch),
+            "{provider}: {}",
+            told(&resumed)
+        );
+        assert_eq!(conversation.session().id(), current.as_ref(), "{provider}");
+    }
     Ok(())
 }

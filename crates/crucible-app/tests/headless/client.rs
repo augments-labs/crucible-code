@@ -1432,7 +1432,7 @@ fn a_prompt_after_the_last_key_is_forgotten_says_a_credential_is_missing() -> Re
         Some(crucible_app::providers::Missing::Provider)
     );
     let second = runtime.block_on(conversation.log_out(desk.one("google")?, &desk.with()));
-    assert!(matches!(second, LoggedOut::Kept), "{second:?}");
+    assert!(matches!(second, LoggedOut::Kept { .. }), "{second:?}");
     let request = Wire::default().sent(prompt("hello")?)?;
 
     let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
