@@ -25,6 +25,10 @@ const SIZES: [(u16, u16); 2] = [(80, 40), (40, 40)];
 const WORK: &str =
     "  \"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}},\n";
 
+/// The instance a `/login` to the agent writes when none was configured.
+const LOGGED_IN: &str =
+    "  \"externalAgents\": {\"claude\": {\"driver\": \"claude\", \"executable\": \"claude\"}},\n";
+
 /// Two configured instances of it.
 const TWO: &str = concat!(
     "  \"externalAgents\": {\n",
@@ -1038,6 +1042,71 @@ fn a_resumed_agent_session_draws_the_agent_s_calls_as_they_were_drawn() {
             "{mode} counts the agent's lookups on one line again\n{picture}"
         );
     }
+}
+
+/// A session the agent ran, resumed in a window whose file holds no yes to
+/// the agent's route, asks that route at the next message, before the agent
+/// is started, and says what starting it runs; the yes lets the message go
+/// to the agent, in either screen mode.
+#[test]
+fn a_message_that_would_start_an_unanswered_agent_asks_its_route_first() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-resumed-unanswered-{mode}");
+        let script = Script::of(signed_in([claude::clean()]));
+        let vendor = Vendor::answering("Not asked.");
+        let mut first =
+            Watched::capturing_agents(&case, (80, 40), native, &vendor, (Some(&script), ""));
+        connected(&mut first);
+        first.types_until("Do it all.\r", "Done.");
+        first.ends_on("TERM");
+        let id = crate::native::recorded_holding(&first, "Do it all.");
+
+        let went_on = Reply::new()
+            .hear(1)
+            .say(claude::init())
+            .say(claude::said("Went on."))
+            .say(claude::answered(Some(claude::PRICE)));
+        let again = Script::of([went_on]);
+        let mut window =
+            Watched::capturing_agents(&case, (80, 60), native, &vendor, (Some(&again), LOGGED_IN));
+        window.types_until(&format!("/resume {id}\r"), "Done.");
+        window.types_until("Go on.\r", "Use it anyway");
+        let asked = window.picture();
+        assert!(
+            asked.contains("Starting Claude Code runs"),
+            "{mode} says what starting the agent runs\n{asked}"
+        );
+        window.types_until("\r", "Went on.");
+    }
+}
+
+#[test]
+fn with_no_terminal_a_message_that_would_start_an_unanswered_agent_ends_the_run() {
+    let case = "agent-resumed-unanswered-piped";
+    let script = Script::of(signed_in([claude::clean()]));
+    let vendor = Vendor::answering("Not asked.");
+    let mut first = Watched::capturing_agents(case, (80, 40), false, &vendor, (Some(&script), ""));
+    connected(&mut first);
+    first.types_until("Do it all.\r", "Done.");
+    first.ends_on("TERM");
+    let id = crate::native::recorded_holding(&first, "Do it all.");
+    let started = fake_peer::argued(&watched::agents(case)).len();
+
+    let ended = watched::piped_agents(case, &vendor, LOGGED_IN, &format!("/resume {id}\nGo on.\n"));
+
+    let said = String::from_utf8_lossy(&ended.stderr);
+    assert_eq!(ended.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains("Claude Code: "),
+        "names the agent's route\n{said}"
+    );
+    assert!(said.contains("answer it once in a terminal"), "{said}");
+    assert_eq!(
+        fake_peer::argued(&watched::agents(case)).len(),
+        started,
+        "the agent is not started again\n{said}"
+    );
 }
 
 /// Asserts `picture` shows the priced turn the agent reported, headed as its

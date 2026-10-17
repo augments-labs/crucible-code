@@ -205,7 +205,8 @@ pub enum Pending {
         questions: Vec<Asked>,
     },
     /// Whether a send may go on a route whose vendor says it uses what is
-    /// sent to it. Nothing has been sent.
+    /// sent to it, or an installed agent be started on its own route.
+    /// Nothing has been sent, and nothing started.
     Warning {
         /// Which pending action this is.
         id: PendingId,

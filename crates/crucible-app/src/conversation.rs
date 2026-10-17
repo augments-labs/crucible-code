@@ -105,9 +105,10 @@ pub struct Conversation {
     /// conversation last read it, so a change another process makes in
     /// between is not seen until then.
     pub(crate) reachable: bool,
-    /// The yes given to each route whose vendor uses what is sent, where the
-    /// run holds one: a turn on such a route with no yes is asked about
-    /// before anything is sent.
+    /// The yes given to each route whose vendor uses what is sent, and to
+    /// each installed agent's, where the run holds one: a turn on such a
+    /// route with no yes is asked about before anything is sent, or before
+    /// the agent it would start is started.
     consent: Option<crate::content_use::Consent>,
     /// The installed agents this conversation's start was settled against.
     agents: &'static Registry,
@@ -161,7 +162,7 @@ impl Conversation {
     }
 
     /// The same conversation, asking `consent` before a turn goes on a route
-    /// whose vendor uses what is sent.
+    /// whose vendor uses what is sent, or starts an installed agent.
     #[must_use]
     pub fn consenting(self, consent: crate::content_use::Consent) -> Self {
         Self {
@@ -209,11 +210,31 @@ impl Conversation {
         self.agents
     }
 
-    /// What a turn on a route whose vendor uses what is sent is asked about
-    /// against, where the run holds one.
+    /// What a turn on a route whose vendor uses what is sent, or one that
+    /// would start an installed agent, is asked about against, where the run
+    /// holds one.
     #[must_use]
     pub fn consent(&self) -> Option<&crate::content_use::Consent> {
         self.consent.as_ref()
+    }
+
+    /// The installed agent's route the next turn would start the agent on.
+    /// `None` off such a route, while a run is held, and while the agent is
+    /// disconnected.
+    #[must_use]
+    pub fn launching(&self) -> Option<String> {
+        self.outside
+            .as_deref()
+            .filter(|outside| outside.launches())
+            .map(|outside| crate::content_use::agent_route(outside.driver()))
+    }
+
+    /// What the next turn is asked about before it starts an installed
+    /// agent: the agent's route, where it has no yes. `None` wherever
+    /// [`Conversation::launching`] is, and once the yes is given.
+    #[must_use]
+    pub fn unlaunched(&self) -> Option<crate::content_use::Warned> {
+        self.consent()?.asks(&self.launching()?).copied()
     }
 
     /// The same conversation, remembering the persistent prompt-cache

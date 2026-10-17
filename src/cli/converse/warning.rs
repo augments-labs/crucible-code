@@ -2,24 +2,25 @@
 //! uses what is sent to it.
 //!
 //! Asked on the drawing thread, before the work is handed to a worker, so
-//! the message is still this side's to give back. Put before an installed
-//! agent is first started, it is the application's question, answered on
-//! the drawing thread while the operation that asked it waits: it says what
-//! starting the agent runs, and the application writes down its yes. What
-//! stands is a panel with
-//! the vendor's sentence and the page it comes from; `Use it anyway` writes
-//! the yes into the user's own file and lets the work go, and anything else
-//! sends nothing. Behind it, every client the run sends through holds the
-//! route's origins until the yes is given, and a web source built for a
-//! warned model asks that model's route before each request, so a path that
-//! reached a send without passing here still sends nothing.
+//! the message is still this side's to give back; a message that would start
+//! an installed agent is asked about on that agent's own route, and says
+//! what starting it runs. Put before an installed agent is first started any
+//! other way, it is the application's question, answered on the drawing
+//! thread while the operation that asked it waits: it says the same, and the
+//! application writes down its yes. What stands is a panel with the vendor's
+//! sentence and the page it comes from; `Use it anyway` writes the yes into
+//! the user's own file and lets the work go, and anything else sends
+//! nothing. Behind it, every client the run sends through holds the route's
+//! origins until the yes is given, and a web source built for a warned model
+//! asks that model's route before each request, so a path that reached a
+//! send without passing here still sends nothing.
 //!
 //! A key pressed before the panel was drawn does not answer it: whatever is
 //! waiting to be read when it is about to stand is dropped, so the Enter that
 //! sent the message twice over cannot also say yes.
 
 use crucible_app::Conversation;
-use crucible_app::content_use::Warned;
+use crucible_app::content_use::{self, Warned};
 use crucible_tui::{Offered, Panel, Renderer, Terminal};
 
 use crate::cli::Fatal;
@@ -143,6 +144,9 @@ pub(super) fn ask_while<T: Terminal>(
     );
     let launched = [runs.as_str()];
     let (shown, told): (&[Offered<'_>], &[&str]) = match put {
+        // A message on an installed agent's route that starts the agent says
+        // what starting it runs, as a launch does.
+        Put::Send if content_use::launches(warned.route) => (&SENDING, &launched),
         Put::Send => (&SENDING, &[]),
         Put::Choice => (&CHOOSING, &[]),
         Put::Launch => (&launching, &launched),
@@ -207,18 +211,12 @@ pub(super) fn held<T: Terminal>(
     work: &Work,
     held: &mut Held<'_>,
 ) -> Result<bool, Fatal> {
-    let Some(provider) = conversation.serving() else {
-        return Ok(false);
-    };
     // Every route that holds the send is asked about in turn: two warned
     // routes at one origin each keep the request back until each has its
     // yes. A yes is written down before the next question, so a route comes
     // back only where its yes could not be, and that is said and stops here.
     let said = loop {
-        let Some(warned) = terms
-            .consent
-            .unanswered(provider, conversation.settled().model())
-        else {
+        let Some(warned) = unsent(conversation, terms, work) else {
             return Ok(false);
         };
         // A loop reading lines rather than keys has nobody to put a panel
@@ -245,6 +243,23 @@ pub(super) fn held<T: Terminal>(
     }
     renderer.commit(&said)?;
     Ok(true)
+}
+
+/// The warned route `work` would go on with no yes: the one a send to the
+/// conversation's provider is held by, or on an installed agent's route, the
+/// agent's own where the turn would start it. Room is not made on an agent's
+/// route, so nothing is started for it. Both are read from the yes the
+/// question writes to, so a route answered here is not asked again.
+fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<Warned> {
+    match conversation.serving() {
+        Some(provider) => terms
+            .consent
+            .unanswered(provider, conversation.settled().model()),
+        None => match work {
+            Work::Turn(..) => terms.consent.asks(&conversation.launching()?).copied(),
+            Work::Room(_) => None,
+        },
+    }
 }
 
 /// What becomes of a choice once the question before it is answered.

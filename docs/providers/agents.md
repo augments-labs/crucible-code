@@ -97,6 +97,12 @@ be resumed. Where that agent chooses its own model or is disconnected, or the
 model is not named as above or does not serve the rung asked, its line says
 why and nothing moves.
 
+A conversation moved onto an agent by `/resume` of a session it ran, or by a
+model taken as above, starts the agent with its next message. Where the agent's
+route has no yes, that message asks about it first, as
+[content use](content-use.md#an-installed-agent) says, and nothing is started
+or sent before the yes.
+
 The line above the box reads how much of the model's window the agent's
 context holds, such as `41k/1.0M · 95% window left`: the window is the one
 crucible records for the model the agent is started on, which nobody chooses

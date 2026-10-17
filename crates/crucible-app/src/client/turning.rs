@@ -29,8 +29,9 @@ pub enum Ended {
     /// A compaction, and what it made room for.
     Room(Result<Room, TurnError>),
     /// Nothing was sent: the route it would go on is one whose vendor uses
-    /// what is sent, and no yes to it was given. The question was declined,
-    /// went unanswered, or could not be put to the client.
+    /// what is sent, or the installed agent's it would start, and no yes to
+    /// it was given. The question was declined, went unanswered, or could not
+    /// be put to the client.
     Warned(Warned),
     /// Nothing was sent: a yes was given and could not be written down.
     Unrecorded(RememberError),
@@ -73,14 +74,13 @@ pub async fn turn(
     // Before anything could be sent, and at this door so that every client is
     // asked the same way: a route whose vendor uses what is sent, with no yes
     // to it, is put to the front as a pending action, and a yes given there is
-    // written into the user's own file before the turn goes.
+    // written into the user's own file before the turn goes. So is an
+    // installed agent's route, where the prompt would start the agent.
     //
     // Every route that holds the send is put in turn: two warned routes at
     // one origin each keep the request back until each has its yes. A yes is
     // written down before the next is put, so none comes back.
-    while matches!(request.command(), Command::Prompt(_) | Command::Compact)
-        && let Some(warned) = unanswered(conversation)
-    {
+    while let Some(warned) = held(conversation, request.command()) {
         let accepted = super::deciding::warned(request.capabilities(), front, &warned).await;
         let Some(consent) = conversation.consent().filter(|_| accepted) else {
             return Ended::Warned(warned);
@@ -139,11 +139,23 @@ pub async fn turn(
     }
 }
 
-/// The warned route a turn of `conversation` would go on with no yes.
+/// The warned route a turn sent to the provider `conversation` serves would
+/// go on with no yes; none on an installed agent's route, which serves none.
 pub(super) fn unanswered(conversation: &Conversation) -> Option<Warned> {
     conversation
         .consent()?
         .unanswered(conversation.serving()?, conversation.settled().model())
+}
+
+/// The warned route `command` would go on with no yes: a prompt's or a
+/// compaction's, and for a prompt, the installed agent's it would start. A
+/// compaction on an agent's route starts nothing, and is refused.
+fn held(conversation: &Conversation, command: &Command) -> Option<Warned> {
+    match command {
+        Command::Prompt(_) => unanswered(conversation).or_else(|| conversation.unlaunched()),
+        Command::Compact => unanswered(conversation),
+        _ => None,
+    }
 }
 
 /// Asks the turn `cancel` belongs to to stop.

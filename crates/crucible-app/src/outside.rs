@@ -410,6 +410,12 @@ impl Outside {
         self.driver
     }
 
+    /// Whether the next turn starts the agent: no run is held, or the one
+    /// held is spent, and the agent was not disconnected.
+    pub(crate) const fn launches(&self) -> bool {
+        !self.disconnected && (self.backend.is_none() || self.spent)
+    }
+
     /// What a person sees of the conversation.
     pub(crate) const fn transcript(&self) -> &Transcript {
         &self.transcript
