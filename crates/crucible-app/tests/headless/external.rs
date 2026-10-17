@@ -4111,6 +4111,80 @@ fn a_session_an_agent_ran_resumes_on_its_route_from_a_provider_s_model() -> Resu
     Ok(())
 }
 
+/// A prompt that would start an agent whose route has no yes puts the route
+/// to the client before the agent is started: a yes is written down and the
+/// turn goes on the agent; a no starts nothing and sends nothing.
+#[test]
+fn a_prompt_that_would_start_an_unanswered_agent_asks_its_route_first() -> Result<(), Failed> {
+    for (case, choice) in [("accepted", Some("Accept")), ("declined", None)] {
+        let tree = Tree::new(&format!("external-launch-asked-{case}"))?;
+        let id = recorded_on(&tree, "work", "before")?;
+        let native = started_native(&tree, Script::new(Vec::new()))?;
+        let (mut conversation, peer) = stepped(&tree, native, &connected([claude::clean()]))?;
+        let consent = conversation.consent().ok_or("a consent")?.clone();
+        let choosing = super::Desk::new(&tree, &[])?.choosing;
+        consent.keeps_in(choosing.clone());
+        consent.withdraw("agent:claude");
+        let outcome = resuming_at(&tree, &mut conversation, INSTALLED, id)?;
+        assert!(
+            matches!(outcome, Outcome::Resumed(ResumeOutcome::Picked { .. })),
+            "{case}: {outcome:?}"
+        );
+        let started = fake_peer::argued(&peer).len();
+
+        let request = Request::new(
+            Asking::every(),
+            Correlation::new(1),
+            Command::Prompt(Prompt::new("after")?),
+        );
+        let mut picking = Picking::of([choice]);
+        let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+        let quiet = Watching {
+            events: mpsc::channel().0,
+            stopping: None,
+        };
+        let ended = {
+            let run = conversation.starting(&quiet, &cancel, &steer, &aside);
+            runtime()?.block_on(client::turn(
+                &mut conversation,
+                &request,
+                Box::default(),
+                &mut picking,
+                &run,
+            ))
+        };
+
+        assert!(
+            matches!(
+                picking.put.as_slice(),
+                [Pending::Warning { route, .. }] if route.as_str() == "agent:claude"
+            ),
+            "{case}: {:?}",
+            picking.put
+        );
+        let written = std::fs::read_to_string(&choosing)?;
+        match (choice, ended.response(&request).outcome) {
+            (Some(_), Outcome::Turn(TurnOutcome::Ran { .. })) => {
+                assert!(written.contains("agent:claude"), "{written}");
+                assert!(resumed_as(&peer, EARLIER), "{:?}", fake_peer::argued(&peer));
+                assert_eq!(users(conversation.settled()), ["before", "after"]);
+            }
+            (None, Outcome::Turn(TurnOutcome::Warned { route, .. })) => {
+                assert_eq!(route.as_str(), "agent:claude");
+                assert!(!written.contains("agent:claude"), "{written}");
+                assert_eq!(
+                    fake_peer::argued(&peer).len(),
+                    started,
+                    "the agent was started"
+                );
+                assert_eq!(users(conversation.settled()), ["before"]);
+            }
+            other => return Err(format!("{case}: {other:?}").into()),
+        }
+    }
+    Ok(())
+}
+
 /// `/resume` of a session an agent ran under another entry moves the
 /// conversation off the route it is on and onto that one.
 #[test]

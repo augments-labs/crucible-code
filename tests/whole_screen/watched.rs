@@ -206,6 +206,63 @@ pub(crate) fn agents(case: &str) -> PathBuf {
     working(&scratch(case)).join("agents")
 }
 
+/// The configuration file an agent capture is started with: the screen
+/// `native` asks for, then `configured`, then what any case answered by
+/// `vendor` has.
+fn agents_document(native: bool, vendor: Option<&Vendor>, configured: &str) -> String {
+    let screen = if native {
+        "  \"output\": {\"screen\": \"native\"},\n"
+    } else {
+        ""
+    };
+    let document = document(vendor, None);
+    let rest = document
+        .strip_prefix("{\n")
+        .expect("a whole-screen configuration object");
+    fixture_document(&format!("{{\n{screen}{configured}{rest}"))
+}
+
+/// Runs crucible once as an agent capture of `case` is started, with
+/// `configured` written first as there, but with no terminal at all: `input`
+/// is its whole standard input, and what it printed comes back with how it
+/// ended. The fake peer installed for the case is left as it was.
+pub(crate) fn piped_agents(
+    case: &str,
+    vendor: &Vendor,
+    configured: &str,
+    input: &str,
+) -> std::process::Output {
+    let scratch = scratch(case);
+    let home = scratch.join("home");
+    fs::write(
+        home.join("config.json"),
+        agents_document(false, Some(vendor), configured),
+    )
+    .expect("a configuration file");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_crucible"))
+        .args(["--model", "anthropic/claude-test-1"])
+        .current_dir(working(&scratch))
+        .env_clear()
+        .env("PATH", agents(case))
+        .env("HOME", &scratch)
+        .env("NO_COLOR", "1")
+        .env("CRUCIBLE_CODE_HOME", &home)
+        .env("CRUCIBLE_CODE_PROOF_REGISTRY", "fake")
+        .env("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("crucible starts");
+    child
+        .stdin
+        .take()
+        .expect("its input")
+        .write_all(input.as_bytes())
+        .expect("its input written");
+    child.wait_with_output().expect("crucible ends")
+}
+
 /// What a case starts crucible with beyond what every case is given.
 #[derive(Debug, Default)]
 pub(crate) struct Launch<'a> {
@@ -425,18 +482,9 @@ impl Watched {
             fake_peer::install(&installed, "claude", script).expect("the fake peer installs");
         }
         let path = installed.to_str().expect("a scratch path in UTF-8");
-        let screen = if native {
-            "  \"output\": {\"screen\": \"native\"},\n"
-        } else {
-            ""
-        };
-        let document = document(vendor, None);
-        let rest = document
-            .strip_prefix("{\n")
-            .expect("a whole-screen configuration object");
         Self::configured_with_terminal(
             case,
-            &fixture_document(&format!("{{\n{screen}{configured}{rest}")),
+            &agents_document(native, vendor, configured),
             vendor.is_some(),
             &TerminalFixture {
                 columns,

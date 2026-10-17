@@ -148,6 +148,13 @@ which version is installed. What the agent then sends goes from its own
 process, under its own account and terms, so the yes is kept for the route and
 not for any address.
 
+A conversation can reach the agent's route without starting it, as `/resume`
+of a session the agent ran does. The question then stands when the next
+message is sent, with the same added line: `Use it anyway` writes the yes and
+starts the agent with the message, and anything else leaves the message in the
+prompt box. A run with no terminal to ask on ends there, as on any route asked
+about.
+
 ## A `baseUrl` crucible recognises
 
 A `baseUrl` is warned only at an address crucible documents. Where two rows
