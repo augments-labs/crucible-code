@@ -151,7 +151,7 @@ two-face = { version = "=0.5.2", default-features = false, features = [
 # the screen. What it must not be reached for is an invariant: "no row is wider
 # than the terminal" is a property, it is tested as one, and a snapshot would
 # assert the answer instead of the rule. Dev-only, so nothing here ships.
-insta = "=1.48.0"
+insta = "=1.49.0"
 
 # The terminal itself. One thing genuinely needs it: the ioctl that reports the
 # window size, which is an `unsafe` libc call this workspace denies writing by
