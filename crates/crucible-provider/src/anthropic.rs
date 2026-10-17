@@ -88,6 +88,9 @@ const USD: PricingCurrency = PricingCurrency::new("USD");
 const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
 const FABLE_51_REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 const NEWER_REVIEWED: PricingDate = PricingDate::new(2026, 10, 1);
+/// When Sonnet 5.5's row was last read from the vendor's page: a cache hit
+/// on it costs 0.05x its input, as on Opus 5.5.
+const SONNET_55_REVIEWED: PricingDate = PricingDate::new(2026, 10, 17);
 const HAIKU_55_REVIEWED: PricingDate = PricingDate::new(2026, 10, 16);
 /// The longest prompt Haiku 5.5 is priced short for, its cache reads and
 /// writes counted in; a longer one pays the model's long prices.
@@ -254,7 +257,8 @@ impl Provider for Anthropic {
     ) -> Result<Option<PromptCachePricing>, PricingError> {
         let reviewed = match model {
             FABLE_51 => FABLE_51_REVIEWED,
-            OPUS_55 | SONNET_55 => NEWER_REVIEWED,
+            OPUS_55 => NEWER_REVIEWED,
+            SONNET_55 => SONNET_55_REVIEWED,
             HAIKU_55 => HAIKU_55_REVIEWED,
             _ => PRICING_REVIEWED,
         };
@@ -304,7 +308,7 @@ impl Provider for Anthropic {
                     SONNET_55,
                     SONNET_55,
                     2_000_000_000,
-                    200_000_000,
+                    100_000_000,
                     2_500_000_000,
                     4_000_000_000,
                     10_000_000_000,
@@ -382,10 +386,14 @@ impl Provider for Anthropic {
                     "anthropic-direct-1h-2026-09-06"
                 } else if model == FABLE_51 {
                     "anthropic-direct-5m-2026-09-06"
-                } else if matches!(model, OPUS_55 | SONNET_55) && extended {
+                } else if model == OPUS_55 && extended {
                     "anthropic-direct-1h-2026-10-01"
-                } else if matches!(model, OPUS_55 | SONNET_55) {
+                } else if model == OPUS_55 {
                     "anthropic-direct-5m-2026-10-01"
+                } else if model == SONNET_55 && extended {
+                    "anthropic-direct-1h-2026-10-17"
+                } else if model == SONNET_55 {
+                    "anthropic-direct-5m-2026-10-17"
                 } else if long_prompt && extended {
                     "anthropic-direct-1h-long-2026-10-16"
                 } else if long_prompt {
