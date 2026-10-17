@@ -450,15 +450,26 @@ impl Conversation {
     }
 
     /// Stops the conversation's work on the installed agent `instance`, where
-    /// it is on that one: no turn launches it again, and the run held is
-    /// closed. `None` where the conversation is not on it, and otherwise
-    /// whether the run is known to have stopped.
+    /// it is on that one: no turn launches it again until it is connected
+    /// again, and the run held is closed. `None` where the conversation is not
+    /// on it, and otherwise whether the run is known to have stopped.
     pub(crate) async fn disconnect(&mut self, instance: &str) -> Option<bool> {
         let outside = self
             .outside
             .as_deref_mut()
             .filter(|outside| outside.route().instance() == instance)?;
         Some(outside.disconnect().await)
+    }
+
+    /// Lets the conversation's next turn launch the installed agent
+    /// `instance` again, once it is connected after a disconnect, where the
+    /// conversation is on that one; `None` where it is not.
+    pub(crate) fn reconnect(&mut self, instance: &str) -> Option<()> {
+        self.outside
+            .as_deref_mut()
+            .filter(|outside| outside.route().instance() == instance)?
+            .reconnect();
+        Some(())
     }
 
     /// What a turn of this conversation would be missing, where nothing can

@@ -347,7 +347,7 @@ pub(crate) struct Outside {
     /// stopped waiting for it, or the mode changed since it was launched.
     spent: bool,
     /// Whether the agent was disconnected from Crucible, after which no turn
-    /// launches it again.
+    /// launches it again until it is connected again.
     disconnected: bool,
 }
 
@@ -521,6 +521,13 @@ impl Outside {
             Some(backend) => backend.close().await.is_ok(),
             None => true,
         }
+    }
+
+    /// Takes turns again once the agent is connected after a
+    /// [`Outside::disconnect`]: the next one launches a run, which is refused
+    /// where the run the disconnect closed could not be confirmed stopped.
+    pub(crate) const fn reconnect(&mut self) {
+        self.disconnected = false;
     }
 
     /// Closes the run held, if any; the next turn launches another.

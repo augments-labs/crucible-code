@@ -66,7 +66,8 @@ session it left stays listed and can be resumed. In `/resume`, a session an
 agent ran names the agent on its line. Where the agent cannot be started in
 the conversation's mode, the conversation stays where it was and the next
 session starts on the agent. Connecting the agent a conversation is already on
-leaves it there.
+leaves it there, and where it was disconnected, its next turn starts the agent
+again.
 
 While a conversation runs on an agent, the row under the box says, where the
 provider and model would be, which agent runs its turns and who is paid for

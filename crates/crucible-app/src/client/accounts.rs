@@ -898,7 +898,8 @@ async fn connect(
 
 /// [`commit`], then moves `conversation` onto `agent`, from whichever model
 /// or route it was on, as [`Conversation::onto`] says. A conversation already
-/// on `agent` stays where it is.
+/// on `agent` stays where it is, and its next turn starts the agent again
+/// where it was disconnected from it.
 async fn moved(
     conversation: &mut Conversation,
     desk: &Desk<'_>,
@@ -907,7 +908,10 @@ async fn moved(
     written: bool,
 ) -> Account {
     let committed = commit(desk, provider, agent, written);
-    if !matches!(committed, Account::Connected) || conversation.instance() == Some(agent.name()) {
+    if !matches!(committed, Account::Connected) {
+        return committed;
+    }
+    if conversation.reconnect(agent.name()).is_some() {
         return committed;
     }
     let branch = crate::branching::current(desk.workspace.root());
