@@ -275,7 +275,7 @@ grep-regex = "=0.1.14"
 # silently wrong answer rather than a crash. Used without `derive`: the vendor
 # shapes differ per provider and are read once at the boundary, while context
 # snapshots are already values rather than mirror structs.
-serde_json = "=1.0.151"
+serde_json = "=1.0.154"
 
 # The traits `serde_json`'s reader drives, without serde's derive. A frame from
 # a client is hostile input, and the only way to stop reading one at the entry,
