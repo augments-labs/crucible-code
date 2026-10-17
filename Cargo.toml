@@ -236,7 +236,7 @@ uuid = { version = "=1.28.0", features = ["v7"] }
 # session records and release units are held to the content fingerprint it
 # takes. One audited implementation avoids partial handwritten digests, and the
 # crate has no runtime or platform dependencies.
-sha2 = { version = "=0.11.0", default-features = false }
+sha2 = { version = "=0.11.1", default-features = false }
 
 # A release archive is a gzip-compressed tar, and `std` reads neither format. A
 # hand-written reader of either is the unsafe archive parser the update design
