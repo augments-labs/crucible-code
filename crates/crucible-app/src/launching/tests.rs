@@ -863,3 +863,40 @@ fn an_agent_from_its_entry_is_started_with_the_model_it_names() {
     assert_eq!(agent.model(), Some("opus"));
     assert_eq!(agent.shape(None, Path::new("/work")).model, Some("opus"));
 }
+
+/// The runs of one route are one agent's: none is started beside another
+/// still held, which is what keeps one that could not be confirmed stopped
+/// from having another started beside it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_route_starts_no_run_beside_one_it_still_holds() {
+    let sample = Sample::new("launch-runs-one");
+    let peer = installed(
+        &sample,
+        &Script::of([Reply::new().hear(1), Reply::new().hear(1)]),
+    );
+    let consent = granted();
+    let policy = conversation(&sample);
+    let registry = Registry::new(&SHIPPED);
+    let runs = Runs::new(
+        Launcher::new(local(), Handle::current(), &policy, &consent),
+        Arc::new(SandboxEnablement::new(false, false)),
+        agent(&registry, &peer),
+        "work",
+    );
+
+    let first = runs
+        .launch(Mode::Ask, None, None, None)
+        .await
+        .expect("started");
+    let refused = match runs.launch(Mode::Ask, None, None, None).await {
+        Ok(second) => {
+            let _closed = second.close().await;
+            None
+        }
+        Err(failure) => Some(failure.reason().as_str().to_owned()),
+    };
+    first.close().await.expect("closed");
+
+    assert_eq!(refused.as_deref(), Some("this agent is already running"));
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 1);
+}
