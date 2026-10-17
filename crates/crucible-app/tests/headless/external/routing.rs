@@ -61,7 +61,7 @@ impl Run {
 
     /// [`Run::perform`], of the account operation `command`, asked of a
     /// client that answers as `front` does.
-    fn account(
+    fn settle(
         &self,
         desk: crate::Desk,
         held: (&Tree, &mut Conversation),
@@ -161,7 +161,7 @@ fn a_model_of_the_provider_a_connect_routed_moves_back_onto_the_agent() -> Resul
     let native = started_native(&tree, Script::new(Vec::new()))?;
     let script = connected([claude::signed_in(), claude::clean()]);
     let (mut conversation, peer) = stepped(&tree, native, &script)?;
-    let onto = run.account(
+    let onto = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         connect(Some("work"))?,
@@ -221,7 +221,7 @@ fn a_second_connect_goes_through_the_instance_the_first_installed() -> Result<()
     let native = started_native(&tree, Script::new(Vec::new()))?;
     let script = connected([claude::signed_in(), claude::signed_in()]);
     let (mut conversation, _peer) = stepped(&tree, native, &script)?;
-    let first = run.account(
+    let first = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         connect(None)?,
@@ -241,7 +241,7 @@ fn a_second_connect_goes_through_the_instance_the_first_installed() -> Result<()
         "{away:?}"
     );
 
-    let again = run.account(
+    let again = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         connect(None)?,
@@ -283,7 +283,7 @@ fn a_session_on_an_instance_disconnected_during_the_run_is_refused() -> Result<(
         choice: Some(client::accounts::DISCONNECT),
         put: Vec::new(),
     };
-    let off = run.account(
+    let off = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         Command::Disconnect {
@@ -328,7 +328,7 @@ fn a_connect_back_onto_an_agent_starts_it_on_the_model_taken_on_it() -> Result<(
     let native = started_native(&tree, Script::new(Vec::new()))?;
     let script = connected([claude::signed_in(), claude::signed_in(), claude::clean()]);
     let (mut conversation, peer) = stepped(&tree, native, &script)?;
-    let onto = run.account(
+    let onto = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         connect(Some("work"))?,
@@ -361,7 +361,7 @@ fn a_connect_back_onto_an_agent_starts_it_on_the_model_taken_on_it() -> Result<(
         matches!(away, Outcome::Login(LoginOutcome::MovedOff { .. })),
         "{away:?}"
     );
-    let back = run.account(
+    let back = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         connect(Some("work"))?,
@@ -393,7 +393,7 @@ fn an_instance_a_connect_installed_can_be_disconnected_in_the_same_run() -> Resu
     let run = Run::launched(&tree, UNINSTALLED)?;
     let native = started_native(&tree, Script::new(Vec::new()))?;
     let (mut conversation, _peer) = stepped(&tree, native, &connected([claude::signed_in()]))?;
-    let installed = run.account(
+    let installed = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         connect(None)?,
@@ -411,7 +411,7 @@ fn an_instance_a_connect_installed_can_be_disconnected_in_the_same_run() -> Resu
         put: Vec::new(),
     };
 
-    let off = run.account(
+    let off = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         Command::Disconnect {
@@ -442,7 +442,7 @@ fn a_session_on_an_instance_a_connect_installed_resumes_on_it() -> Result<(), Fa
     let id = recorded_on(&tree, "claude", "before")?;
     let native = started_native(&tree, Script::new(Vec::new()))?;
     let (mut conversation, _peer) = stepped(&tree, native, &connected([claude::signed_in()]))?;
-    let installed = run.account(
+    let installed = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         connect(None)?,
@@ -496,7 +496,7 @@ fn a_key_for_the_provider_a_connect_moved_off_moves_back_onto_it() -> Result<(),
     let native = started_native(&tree, Script::new(Vec::new()))?;
     let script = connected([claude::signed_in(), claude::clean()]);
     let (mut conversation, _peer) = stepped(&tree, native, &script)?;
-    let moved = run.account(
+    let moved = run.settle(
         crate::Desk::new(&tree, &[])?,
         (&tree, &mut conversation),
         connect(Some("work"))?,
