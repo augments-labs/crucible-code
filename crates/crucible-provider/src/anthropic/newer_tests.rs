@@ -168,25 +168,41 @@ fn the_5_5_models_cache_from_512_tokens_at_their_own_prices() {
             "{model}"
         );
     }
-    let priced = |model| {
+    let priced = |model, at| {
         provider
             .prompt_cache_pricing(
                 model,
                 Some(model),
                 Some(64_000),
                 PromptCacheRetentionClass::Ephemeral,
-                PricingDate::new(2026, 10, 1),
+                at,
             )
             .unwrap()
-            .expect("a reviewed price")
+            .map(PromptCachePricing::rates)
     };
     assert_eq!(
-        priced("claude-opus-5-5").rates(),
-        anthropic_rates(4_000_000_000, 200_000_000, 5_000_000_000, 20_000_000_000)
+        priced("claude-opus-5-5", PricingDate::new(2026, 10, 1)),
+        Some(anthropic_rates(
+            4_000_000_000,
+            200_000_000,
+            5_000_000_000,
+            20_000_000_000
+        ))
+    );
+    // A cache hit on either is 0.05x its input price, which for Sonnet 5.5
+    // was first read right on 2026-10-17.
+    assert_eq!(
+        priced("claude-sonnet-5-5", PricingDate::new(2026, 10, 17)),
+        Some(anthropic_rates(
+            2_000_000_000,
+            100_000_000,
+            2_500_000_000,
+            10_000_000_000
+        ))
     );
     assert_eq!(
-        priced("claude-sonnet-5-5").rates(),
-        anthropic_rates(2_000_000_000, 200_000_000, 2_500_000_000, 10_000_000_000)
+        priced("claude-sonnet-5-5", PricingDate::new(2026, 10, 16)),
+        None
     );
 }
 
