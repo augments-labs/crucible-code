@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crucible_models::{
-    Delta, DeltaStream, Effort, PriceRate, PromptCacheCapabilities, PromptCachePricing,
+    Delta, DeltaStream, Effort, FastForm, PriceRate, PromptCacheCapabilities, PromptCachePricing,
     PromptCacheRates, PromptCacheResourceCreate, PromptCacheResourceCreated,
     PromptCacheResourceDeadline, PromptCacheResourceLifecycle, PromptCacheResourceRemote,
     PromptCacheRoute, Provider, ProviderError, Request, Served, Speed, UsageRate,
@@ -177,6 +177,9 @@ struct FastFixture {
     refused_after: Option<usize>,
     /// What each answer says about the speed it was served at.
     serves: Served,
+    /// How the model is asked to answer fast; none unless a test gives it
+    /// one.
+    form: FastForm,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -269,6 +272,12 @@ impl Script {
     /// A provider whose every answer says it was served at `served`.
     pub(crate) const fn serving(mut self, served: Served) -> Self {
         self.fast.serves = served;
+        self
+    }
+
+    /// A provider whose model is asked to answer fast as `form` says.
+    pub(crate) const fn fast_as(mut self, form: FastForm) -> Self {
+        self.fast.form = form;
         self
     }
 
@@ -602,6 +611,10 @@ impl Provider for Script {
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
         self.stream_at(request, Speed::Standard, cancel)
+    }
+
+    fn fast(&self, _model: &str) -> FastForm {
+        self.fast.form
     }
 
     fn stream_at<'a>(

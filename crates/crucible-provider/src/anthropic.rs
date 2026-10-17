@@ -460,7 +460,7 @@ impl Provider for Anthropic {
 
             // Fast only where it was asked and this model at this address has
             // a form the request carries.
-            let fast = speed == crucible_models::Speed::Fast && self.fast(request.model).switched();
+            let fast = self.fast(request.model).carried(speed);
             let mut outgoing = self.headers(request.model, fast).await?;
             let scope = crucible_types::ContinuationScope::new(
                 self.credential_scope,
