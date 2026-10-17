@@ -92,7 +92,7 @@ Warning: No models available. Use /login or set an API key environment
 variable. Then use /model to select a model.
 ```
 
-A `/login` where no model is being asked fills the second rung: it takes the
+A `/login` where no provider is being asked fills the second rung: it takes the
 provider's default, its latest middle-tier model at `medium` effort (else the
 nearest rung above it that the model serves, else its strongest, and none for
 a model that takes none), asks it at once and writes both to your
@@ -579,16 +579,17 @@ until `/logout <provider>` removes it.
 The session is then set up with that provider from the next turn on, without
 restarting, unless another provider is already answering, in which case the
 session keeps the provider and model it has and the line points at `/model`,
-where switching is chosen rather than implied. Authentication selects neither
-[model](#which-model) nor [effort](#how-hard-to-think); where neither was
-already chosen, `/model` is the next explicit step. A session running on an
-[installed agent](agents.md) moves off it instead; what `/login` writes and
-where the conversation goes are said on that page.
+where switching is chosen rather than implied. Where no provider was being
+asked, the login takes a model and its effort, as [Which model](#which-model)
+says; a login for the provider already answering keeps the model and effort in
+force. A session running on an [installed agent](agents.md) moves off it
+instead; what `/login` writes and where the conversation goes are said on that
+page.
 
 Where the login is what set the session up, `provider` is written down for it
 too, because a credential says a vendor can be reached and never which to ask.
 Logging in is somebody saying which, and the next run here should not have to
-be asked again. That still selects neither a model nor an effort.
+be asked again.
 
 Where no variable above is set and that file names nobody, the warning under the
 welcome names this command, and the prompt is there underneath it as usual.

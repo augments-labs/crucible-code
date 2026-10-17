@@ -111,16 +111,20 @@ replaced is what the model is sent; the session log keeps every message.
 
 ## One model, one conversation
 
-A session is one conversation, and each turn is taken by one model. There are
-no subagents: nothing a turn does starts another turn beside it, so every tool
-call you see is that one model asking, and every result goes back to it.
+A session is one conversation, and each turn is taken by one model. crucible
+starts no subagents: nothing a turn does starts another turn beside it, so
+every tool call you see is that one model asking, and every result goes back
+to it. An installed agent, below, may run helpers of its own within its turn.
 
 ## The loop behind a conversation
 
-The loop on this page is crucible's own, and it is the only one a conversation
-runs on. crucible also defines the contract another agent would have to keep
-to run a conversation here: it says up front which operations it supports,
-refuses the ones it does not, and a permission it asks for shows what the call
-sends and waits on an answer that names that one question, so an answer given
-late, or meant for another, settles nothing. No other agent is offered yet, and
-nothing you see or decide in a turn changes.
+The loop on this page is crucible's own, and a conversation runs on it unless
+its provider's `access` names an
+[installed coding agent](../providers/agents.md) such as Claude Code. Then the
+agent's own loop takes the turns, under the conversation's sandbox: the agent
+sends its own requests and runs its own tools, crucible draws what it reports
+doing, and its questions about acting come to you as the conversation's mode
+says. Both loops keep one contract: each says up front which operations it
+supports, refuses the ones it does not, and a permission it asks for waits on
+an answer that names that one question, so an answer given late, or meant for
+another, settles nothing.

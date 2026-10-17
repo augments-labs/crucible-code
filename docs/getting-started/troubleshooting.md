@@ -407,9 +407,9 @@ only an edit by hand leaves, since *Disconnect from Crucible* takes that
 `no <command> command on PATH and none at externalAgents.<name>.executable`
 and `<path> is not executable` mean its program cannot be run where it was
 looked for: install it, or point `executable` at it. A mode the agent has no
-launch for says which modes it runs in instead, as Claude Code does for full
-access. `--continue` and `--resume` refuse a session the agent ran the same
-way, and leave its log as it was.
+launch for says which modes it runs in instead, though Claude Code and
+Antigravity both run in all three. `--continue` and `--resume` refuse a
+session the agent ran the same way, and leave its log as it was.
 
 ### `<agent>: an earlier run of this agent could not be confirmed to have stopped, so no other is started beside it; restart crucible`
 
