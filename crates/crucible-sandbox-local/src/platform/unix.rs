@@ -290,6 +290,10 @@ impl SandboxInput for Input {
 /// the pipe then stays as it was. A runtime without its I/O driver enabled
 /// panics inside Tokio instead, which is why every caller documents needing
 /// one.
+#[allow(
+    unsafe_code,
+    reason = "Tokio's reactor watches a descriptor only on its owner's word that it stays the same open pipe"
+)]
 fn registered<'a, P: AsRawFd>(
     plain: &mut Option<P>,
     registered: &'a mut Option<AsyncFd<P>>,
@@ -298,7 +302,15 @@ fn registered<'a, P: AsRawFd>(
     if registered.is_none() {
         tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
         let pipe = plain.take().ok_or_else(lost)?;
-        match AsyncFd::try_with_interest(pipe, interest) {
+        // SAFETY: what is registered here is a command's `ChildStdin`, or a
+        // pipe `platform::Output` is implemented for: a command's stdout or
+        // stderr, or in tests an anonymous pipe's reading end, bare or
+        // wrapped. Each owns the one descriptor it names whenever asked, the
+        // registration owns the pipe until it is dropped, and `get_mut` is
+        // only used to read or write it, never to exchange it; so the
+        // descriptor stays open and names the same pipe while registered.
+        let attempt = unsafe { AsyncFd::register_with_interest(pipe, interest) };
+        match attempt {
             Ok(pipe) => *registered = Some(pipe),
             Err(refused) => {
                 let (pipe, problem) = refused.into_parts();
