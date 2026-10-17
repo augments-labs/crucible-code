@@ -579,7 +579,7 @@ impl<D: Dialect> Provider for Responses<D> {
             // Fast only where it was asked and this model on this route has a
             // form the request carries; everywhere else the request is the
             // ordinary one.
-            let fast = speed == Speed::Fast && self.fast(request.model).switched();
+            let fast = self.fast(request.model).carried(speed);
             let mut outgoing = self.headers(cancel).await?;
             let scope = ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
             let replays = D::Replay::replays(request.model);

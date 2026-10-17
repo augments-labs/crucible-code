@@ -1125,22 +1125,23 @@ what the session has used: its cost, the time its requests were out and the time
 since it started, the lines edits added and removed, and its tokens in, out,
 read from a cache and written to one. A session with a model crucible has no
 price for says `not priced` rather than `$0.00`, as does one where an answer
-finished without saying what it used. A cost that reads `at least $0.40`
-includes an answer that was stopped before the provider said what it cost: its
-tokens are counted as far as it reported them, and the rest of the session is
-priced in full, so the session cost that much or more. Under that is the same
-context bar `/context` draws, and then the plan limits: one bar for each window
-the plan has, with when it starts again in your local time. The windows that
-apply to every model come first; a plan that limits a model on its own, as
-ChatGPT does for some, has a group of windows under that model's name after
-them, and one that limits a family of models, as MiniMax does, has its group
-named after the model you are using where the family includes it. A window is
-named by its length (`5-hour`, `Daily`, `Weekly`, `Monthly`, `Yearly`, or a
-length such as `3-hour`), a limit counted in requests reads `412 of 1,500 used`,
-and one the vendor does not limit reads `unlimited`. A reset already behind the
-clock reads `since passed`, as the window has started again since it was read.
-Where the plan reports more limits than the panel keeps, `more limits not
-reported` follows the last one drawn.
+finished without saying what it used, and one where a model's
+[fast form](../providers/fast.md) was asked for and not refused. A cost that
+reads `at least $0.40` includes an answer that was stopped before the provider
+said what it cost: its tokens are counted as far as it reported them, and the
+rest of the session is priced in full, so the session cost that much or more.
+Under that is the same context bar `/context` draws, and then the plan limits:
+one bar for each window the plan has, with when it starts again in your local
+time. The windows that apply to every model come first; a plan that limits a
+model on its own, as ChatGPT does for some, has a group of windows under that
+model's name after them, and one that limits a family of models, as MiniMax
+does, has its group named after the model you are using where the family
+includes it. A window is named by its length (`5-hour`, `Daily`, `Weekly`,
+`Monthly`, `Yearly`, or a length such as `3-hour`), a limit counted in requests
+reads `412 of 1,500 used`, and one the vendor does not limit reads `unlimited`.
+A reset already behind the clock reads `since passed`, as the window has started
+again since it was read. Where the plan reports more limits than the panel
+keeps, `more limits not reported` follows the last one drawn.
 
 On an installed agent's route the panel is headed with the agent's name, and
 the session's figures stand under `Session · as claude reported it`, or the

@@ -64,10 +64,12 @@ pub enum Cost {
         /// The sum known, in millionths of the currency.
         micros: u64,
     },
-    /// No sum is the session's: a model had no price, a report fit none, a
-    /// response completed without saying what it used, amounts were in
-    /// currencies that do not add up, the sum was too large for `micros` to
-    /// carry, or its currency has a code this contract cannot name.
+    /// No sum is the session's: a model had no price, a model's fast form,
+    /// billed above the prices kept, was asked for and not refused, a report
+    /// fit none, a response completed without saying what it used, amounts
+    /// were in currencies that do not add up, the sum was too large for
+    /// `micros` to carry, or its currency has a code this contract cannot
+    /// name.
     NotPriced,
 }
 

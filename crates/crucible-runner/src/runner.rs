@@ -43,8 +43,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_context::{ContextSection, PermissionsSection, Room};
 use crucible_models::{
-    Content, Delta, DeltaStream, Effort, PromptCacheAttempt, PromptCachePreparationError, Provider,
-    ProviderError, Request,
+    Content, Delta, DeltaStream, Effort, PromptCacheAttempt, PromptCachePreparationError,
+    PromptCachePricing, Provider, ProviderError, Request,
 };
 use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_sandbox::SandboxAuditRegistry;
@@ -1788,7 +1788,7 @@ impl Runner {
     }
 
     /// Notes, for the session's cost, whether the model a request that may
-    /// have reached it has a price.
+    /// have reached it has a price at the speed it was asked.
     ///
     /// Asked of the smallest band: whether a model is priced, and in which
     /// currency, does not depend on how much is sent. A request that never
@@ -1801,21 +1801,37 @@ impl Runner {
     ) {
         match disposition {
             PromptCacheRequestDisposition::Accepted | PromptCacheRequestDisposition::Unknown => {
-                let record = self
-                    .provider
-                    .prompt_cache_pricing(
-                        &self.agent.model().name,
-                        observation.model_revision,
-                        Some(0),
-                        observation.retention,
-                        observation.pricing_date,
-                    )
-                    .ok()
-                    .flatten();
+                let record = self.prices(Some(0), observation);
                 self.state.totals.asked(totals::Listed::of(record.as_ref()));
             }
             PromptCacheRequestDisposition::NotSent | PromptCacheRequestDisposition::Rejected => {}
         }
+    }
+
+    /// The pricing record that bills the request out, at `input` tokens.
+    ///
+    /// A request that carries the model's fast form has none: the prices a
+    /// provider keeps are its standard ones, and the vendor bills fast above
+    /// them, so a figure from them would say the session cost less than it
+    /// did.
+    fn prices(
+        &self,
+        input: Option<u64>,
+        observation: CacheObservation,
+    ) -> Option<PromptCachePricing> {
+        if self.carries_fast() {
+            return None;
+        }
+        self.provider
+            .prompt_cache_pricing(
+                &self.agent.model().name,
+                observation.model_revision,
+                input,
+                observation.retention,
+                observation.pricing_date,
+            )
+            .ok()
+            .flatten()
     }
 
     /// What one usage report costs, as a pair: the first is the itemized
@@ -1826,17 +1842,7 @@ impl Runner {
         usage: &ProviderUsage,
         observation: CacheObservation,
     ) -> (UsageCost, totals::Price) {
-        let record = self
-            .provider
-            .prompt_cache_pricing(
-                &self.agent.model().name,
-                observation.model_revision,
-                usage.input.total,
-                observation.retention,
-                observation.pricing_date,
-            )
-            .ok()
-            .flatten();
+        let record = self.prices(usage.input.total, observation);
         let cost = record
             .and_then(|pricing| pricing.cost(usage).ok())
             .unwrap_or(UsageCost::UNKNOWN);

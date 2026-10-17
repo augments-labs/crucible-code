@@ -1,9 +1,33 @@
 //! The speed a turn is asked at: the one second send a refusal of fast earns,
-//! and the speed each answer said it was served at.
+//! the speed each answer said it was served at, and what an answer asked
+//! fast is priced at.
 
-use crucible_models::{Served, Speed};
+use crucible_models::{Cost, FastForm, Served, Speed};
 
 use super::*;
+use crate::SessionCost;
+
+/// What the fixture's fast forms say they cost.
+const COST: Cost = Cost {
+    price: "2x the price",
+    speed: None,
+    caveat: None,
+};
+
+/// `answer` with a usage report before its stop, which the fixture's prices
+/// cover: 100 input tokens, 20 of them read from a cache, and 10 output.
+fn reported(mut answer: Vec<Delta>) -> Vec<Delta> {
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(100), Some(20)).unwrap(),
+        Some(10),
+        None,
+        None,
+        &[],
+    )
+    .unwrap();
+    answer.insert(answer.len().saturating_sub(1), Delta::Usage(usage));
+    answer
+}
 
 /// The speed each request was asked at, in order.
 fn speeds(scripted: &Scripted) -> Vec<Speed> {
@@ -212,4 +236,102 @@ fn a_compaction_is_asked_at_the_speed_the_turns_are_and_sent_again_when_refused(
     );
     assert_eq!(scripted.runner.speed(), Speed::Standard);
     assert_eq!(refusals(&scripted.events()).len(), 1);
+}
+
+#[test]
+fn an_answer_asked_at_a_fast_form_is_not_priced_at_the_standard_rate() {
+    // The prices a provider keeps are its standard ones, and the vendor bills
+    // a fast answer above them: the sum would say the session cost less than
+    // it did.
+    let script = Script::new(vec![reported(saying("done"))])
+        .priced()
+        .fast_as(FastForm::Field(COST))
+        .serving(Served::Fast);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.hasten(Speed::Fast);
+
+    scripted.turn("go").expect("a turn");
+
+    assert_eq!(speeds(&scripted), [Speed::Fast]);
+    let totals = scripted.runner.totals();
+    assert_eq!(totals.cost(), SessionCost::NotPriced);
+    assert_eq!(totals.input(), 100, "its tokens still count");
+    assert_eq!(totals.output(), 10);
+}
+
+#[test]
+fn a_compaction_asked_at_a_fast_form_is_not_priced_at_the_standard_rate() {
+    let script = Script::new(vec![
+        reported(saying("first")),
+        reported(saying("second")),
+        reported(recap("notes to self")),
+    ])
+    .priced()
+    .fast_as(FastForm::Field(COST));
+    let compacting = Compaction {
+        keep_tokens: 1,
+        ..Compaction::default()
+    };
+    let mut scripted = Scripted::within(script, 200_000, compacting);
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+    assert!(
+        matches!(scripted.runner.totals().cost(), SessionCost::Priced(_)),
+        "turns at standard are priced: {:?}",
+        scripted.runner.totals().cost()
+    );
+    scripted.runner.hasten(Speed::Fast);
+
+    scripted.compacting().expect("a structured recap");
+
+    assert_eq!(
+        speeds(&scripted),
+        [Speed::Standard, Speed::Standard, Speed::Fast]
+    );
+    assert_eq!(scripted.runner.totals().cost(), SessionCost::NotPriced);
+}
+
+#[test]
+fn only_a_request_that_carries_a_fast_form_goes_unpriced() {
+    // A provider writes the form only where fast is asked of a model whose
+    // form the request carries. A model that is a fast id of its own is
+    // priced by its own record, and one with no form is sent at standard.
+    for (form, speed) in [
+        (FastForm::Field(COST), Speed::Standard),
+        (FastForm::Own(COST), Speed::Fast),
+        (FastForm::None, Speed::Fast),
+    ] {
+        let script = Script::new(vec![reported(saying("done"))])
+            .priced()
+            .fast_as(form);
+        let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+        scripted.runner.hasten(speed);
+
+        scripted.turn("go").expect("a turn");
+
+        assert!(
+            matches!(scripted.runner.totals().cost(), SessionCost::Priced(_)),
+            "{form:?} at {speed}: {:?}",
+            scripted.runner.totals().cost()
+        );
+    }
+}
+
+#[test]
+fn an_answer_sent_again_at_standard_after_a_refusal_is_priced() {
+    let script = Script::new(vec![reported(saying("done"))])
+        .priced()
+        .fast_as(FastForm::Field(COST))
+        .refusing_fast();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.hasten(Speed::Fast);
+
+    scripted.turn("go").expect("a turn");
+
+    assert_eq!(speeds(&scripted), [Speed::Fast, Speed::Standard]);
+    assert!(
+        matches!(scripted.runner.totals().cost(), SessionCost::Priced(_)),
+        "{:?}",
+        scripted.runner.totals().cost()
+    );
 }

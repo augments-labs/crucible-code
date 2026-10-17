@@ -154,7 +154,7 @@ impl Provider for Google {
             let scope = ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
             // Fast only where it was asked and this model at this address has
             // a form the request carries.
-            let fast = speed == crucible_models::Speed::Fast && self.fast(request.model).switched();
+            let fast = self.fast(request.model).carried(speed);
             let body = body::serialize_at(&request, scope, fast)?;
             let wire = wire::Interactions::new(request.model, scope)?;
             let mut outgoing = crucible_credentials::Outgoing::new();
