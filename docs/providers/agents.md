@@ -16,17 +16,20 @@ agent is run.
 `/login` in a conversation running on an agent offers all three choices. For
 the provider the agent reaches, a subscription or key is stored, the
 provider's `access` is rewritten from `externalAgent` to `subscription` or
-`apiKey` and the provider is made the `provider` asked; if that cannot be
-written, the file is left as it was and the conversation stays on the agent.
-The provider the agent reaches includes the one a connect during this run
-moved the conversation off. Once written, and for a subscription or key for a
-provider no agent reaches, the conversation moves off the agent onto that
-provider at once, in a new session in the same permission mode, with nothing
-carried over; its line says so, and the session it left stays listed and can
-be resumed. Where that provider cannot be set up, its line says why and the
-conversation stays on the agent; where the new session cannot be started, or
-another agent reaches the provider, the credential is only stored, and a
-rewritten `access` is read from the next launch. *Use it* on a row already
+`apiKey` and the provider is made the `provider` asked, with the default model
+and rung a login takes where your configuration names no model for it; if that
+cannot be written, the file is left as it was and the conversation stays on
+the agent. The provider the agent reaches includes the one a connect during
+this run moved the conversation off. Once written, and for a subscription or
+key for a provider no agent reaches, the conversation moves off the agent onto
+that provider at once, asking the model a login takes as
+[Which model](providers.md#which-model) says, in a new session in the same
+permission mode, with nothing carried over; its line says so, and the session
+it left stays listed and can be resumed. Where that provider cannot be set
+up, its line says why and the conversation stays on the agent; where the new
+session cannot be started, or another agent reaches the provider, the
+credential is only stored, and a rewritten `access` is read from the next
+launch. *Use it* on a row already
 holding its credential does the same with the one stored. `/logout` for the
 provider the agent reaches removes the stored credential and says the agent
 still reaches it. Logging out there of the provider the conversation was asking

@@ -247,7 +247,7 @@ labelled box, which takes a paste as readily as typing and draws a dot per
 character, never the key. Enter saves it; Enter on an empty box does nothing.
 Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can
 read. The session asks that provider from the next turn on; there is nothing to
-restart. Where no model was being asked, the login takes the one your
+restart. Where no provider was being asked, the login takes the one your
 configuration names for that provider, else the provider's default: its
 latest middle-tier model, at `medium` effort, else the nearest rung above it
 that the model serves, else its strongest, and at none for a model that takes

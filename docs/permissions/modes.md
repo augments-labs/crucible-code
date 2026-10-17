@@ -98,9 +98,10 @@ these three modes, and the agent is held to each: in `ask` its every question
 comes to you, in `allowEdits` it changes files without asking you, and in
 `fullAccess` it asks you about nothing. Claude Code is started in its own
 mode for each, and its other modes are never offered; Antigravity's questions
-are answered yes for you, one action at a time, where the mode allows it. Its
-actions are decided by its own rules, not the ones here, so a `deny` rule does
-not stop it in `fullAccess`; its sandbox holds it in every mode.
+are answered yes for you, one action at a time, where the mode allows it, but
+one it offers no yes to for that action alone comes to you whatever the mode.
+Its actions are decided by its own rules, not the ones here, so a `deny` rule
+does not stop it in `fullAccess`; its sandbox holds it in every mode.
 
 ## When nobody can answer
 
