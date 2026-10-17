@@ -53,7 +53,9 @@
 //! uncertain and one whose caller stopped waiting leave a backend that takes
 //! no further turn: it is closed, and the next turn launches another through
 //! the [`Relaunch`] the conversation holds, resuming the agent's own session
-//! by the name the agent last gave it. A change of mode does the same, since
+//! by the name the agent last gave it. Where the one closed could not be
+//! confirmed stopped, that launch is refused instead, so no second run is
+//! started beside it. A change of mode does the same, since
 //! the agent is told its mode only at launch, and so it never changes
 //! mid-turn. A mode the agent has no launch for is never taken: neither by a
 //! change nor by a conversation moved onto the route in it.
@@ -518,7 +520,8 @@ impl Outside {
     /// Closes the run held, if any; the next turn launches another.
     ///
     /// A run that could not be confirmed stopped is dropped all the same: its
-    /// host keeps the agent's place taken, so nothing is launched over it.
+    /// host keeps the agent's place taken, so this route launches nothing
+    /// over it.
     pub(crate) async fn retire(&mut self) {
         if let Some(backend) = self.backend.take() {
             let _closed = backend.close().await;

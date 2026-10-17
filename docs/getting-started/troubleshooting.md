@@ -411,6 +411,15 @@ launch for says which modes it runs in instead, as Claude Code does for full
 access. `--continue` and `--resume` refuse a session the agent ran the same
 way, and leave its log as it was.
 
+### `<agent>: an earlier run of this agent could not be confirmed to have stopped, so no other is started beside it; restart crucible`
+
+A run of the installed agent was closed, as a failed turn or a change of mode
+closes it, and its process did not say it had exited before crucible stopped
+waiting. Until crucible restarts, no second run is started beside it, so each
+turn on the route ends with this line and nothing is sent. Make sure the
+agent's process has ended, then restart crucible; `--continue` picks the
+session back up.
+
 ## Permissions and the sandbox
 
 ### `<tool> was not allowed`

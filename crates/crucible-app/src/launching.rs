@@ -40,6 +40,8 @@
 //! takes the policy the conversation's commands would run under at that
 //! moment, confined or not as the sandbox is then, so a run started after the
 //! sandbox was turned off or on is held to the same choice a command would be.
+//! Every run of one [`Runs`] is launched on one control, so none starts beside
+//! another still held or one that could not be confirmed stopped.
 //!
 //! An account step on any instance the configuration names, the
 //! conversation's route or not, is taken through [`Steps`], under the same
@@ -702,6 +704,10 @@ pub struct Runs {
     agent: Agent,
     /// The `externalAgents` entry it is.
     instance: Box<str>,
+    /// What every run is launched on, so that none is started beside another
+    /// still held or one that could not be confirmed stopped; none once this
+    /// process has numbered every one it can.
+    control: Option<Control>,
 }
 
 impl std::fmt::Debug for Runs {
@@ -730,6 +736,7 @@ impl Runs {
             consent: launcher.consent.clone(),
             agent,
             instance: instance.into(),
+            control: Control::new(),
         }
     }
 }
@@ -756,8 +763,10 @@ impl Relaunch for Runs {
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
         Box::pin(async move {
             let mut dialect = (self.agent.row().dialect)(mode)?;
-            let control =
-                Control::new().ok_or_else(|| Failure::new("no control for the agent's run"))?;
+            let control = self
+                .control
+                .as_ref()
+                .ok_or_else(|| Failure::new("no control for the agent's run"))?;
             let session = SessionRef::new(&self.instance)
                 .ok_or_else(|| Failure::new("the agent's entry has no name a run can carry"))?;
             let policy = self.policy.clone().with_enabled(self.enablement.enabled());
@@ -770,7 +779,7 @@ impl Relaunch for Runs {
             )
             .launch(
                 &agent,
-                &control,
+                control,
                 dialect.as_mut(),
                 resume.map(ExternalRef::reference),
             )
@@ -898,6 +907,7 @@ impl Steps {
             consent: self.consent.clone(),
             agent,
             instance: instance.into(),
+            control: Control::new(),
         }
     }
 
