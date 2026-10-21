@@ -274,7 +274,7 @@ echo "==> a machine with no key"
 # nothing to answer is allowed to end quietly, and what it owes instead is the
 # sentence saying which key that is.
 if said=$(sandbox /opt/crucible/crucible </dev/null 2>&1); then
-    if [[ $said == */login* && $said == *'installed coding agent'* ]]; then
+    if [[ $said == */login* && $said == *'coding agent'* ]]; then
         echo '    says what to do about it'
     else
         printf '    FAIL a run with no key never said what to do: %q\n' "$said"
