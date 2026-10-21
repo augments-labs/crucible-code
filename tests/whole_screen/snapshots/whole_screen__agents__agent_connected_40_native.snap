@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 31,4 scrollback 0
+40x40 cursor 33,4 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -32,13 +32,13 @@ expression: picture
 |                                        |
 |                                        |
 |                                        |
+|                                        |
+|                                        |
 |               0/1.0M · 100% window left|
 |╭──────────────────────────────────────╮|
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |
