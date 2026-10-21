@@ -17,7 +17,8 @@
 //! with one exception: an installed agent's route, spelled `agent:` and its
 //! driver, is always asked about once before its first launch, with
 //! [`LAUNCHING`] beside whatever its vendor says, because a launch is
-//! execution and not only a request.
+//! execution and not only a request. A client with no terminal is put the
+//! same words, closing the warning's sentence.
 //!
 //! **The hold.** Every HTTP client built outside tests that can reach a vendor
 //! is handed a [`Consent`], asked before each request leaves; the release

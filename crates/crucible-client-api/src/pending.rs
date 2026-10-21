@@ -214,7 +214,8 @@ pub enum Pending {
         route: Text,
         /// What the route is called.
         shown: Text,
-        /// What the vendor says, in English.
+        /// What the vendor says, in English, and for an installed agent's
+        /// route, what starting it runs.
         sentence: Text,
         /// The page it says it on, and the day that was read.
         source: Text,

@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 34,0 scrollback 0
+80x40 cursor 35,0 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -28,8 +28,9 @@ expression: picture
 |setting off in your Claude data privacy controls.                               |
 |Claude Code data usage, 12 Oct 2026                                             |
 |                                                                                |
-|Starting Claude Code runs this profile's hooks, MCP servers and plugins, which  |
-|may send content on their own.                                                  |
+|Starting it runs the hooks, helper commands, MCP servers and plugins its profile|
+|names, and any the project's own settings name, which may send content on their |
+|own.                                                                            |
 |                                                                                |
 |› Continue                                                                      |
 |  Starts Claude Code to check the account; this route is not asked again        |
@@ -38,7 +39,6 @@ expression: picture
 |  Nothing starts                                                                |
 |                                                                                |
 |enter to choose · esc to go back                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

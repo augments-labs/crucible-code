@@ -1101,7 +1101,7 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
 /// and sends nothing.
 #[test]
 fn a_send_on_a_warned_route_is_put_to_the_client_and_only_a_yes_sends_it() -> Result<(), Failed> {
-    use crucible_app::content_use::{Consent, Routes, Serving};
+    use crucible_app::content_use::{Consent, LAUNCHING, Routes, Serving};
 
     for (said, sends) in [
         (Saying::Heeding(true), 1),
@@ -1135,6 +1135,7 @@ fn a_send_on_a_warned_route_is_put_to_the_client_and_only_a_yes_sends_it() -> Re
                 [Pending::Warning { route, sentence, source, .. }]
                     if route.as_str() == "key:google"
                         && sentence.as_str().starts_with("On unpaid quota")
+                        && !sentence.as_str().contains(LAUNCHING)
                         && source.as_str() == "Gemini API terms, 30 Sep 2026"
             ),
             "{:?}",

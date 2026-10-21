@@ -99,6 +99,16 @@ fn held(window: &mut Watched) {
     window.types_until("", "Nothing starts");
 }
 
+/// A window of `size` held at the question put before the agent's program is
+/// first started, in the screen mode `native` says.
+pub(crate) fn held_window(case: &str, size: (u16, u16), native: bool) -> Watched {
+    let vendor = Vendor::answering("Not asked.");
+    let script = Script::of(Vec::new());
+    let mut window = Watched::capturing_agents(case, size, native, &vendor, (Some(&script), ""));
+    held(&mut window);
+    window
+}
+
 /// What the agent said of its sign-in, once it was let start: `wanted` is on
 /// that screen.
 fn checked(window: &mut Watched, wanted: &str) {
@@ -1159,7 +1169,7 @@ fn a_message_that_would_start_an_unanswered_agent_asks_its_route_first() {
         window.types_until("Go on.\r", "Use it anyway");
         let asked = window.picture();
         assert!(
-            asked.contains("Starting Claude Code runs"),
+            asked.contains("Starting it runs the hooks, helper commands"),
             "{mode} says what starting the agent runs\n{asked}"
         );
         window.types_until("\r", "Went on.");
