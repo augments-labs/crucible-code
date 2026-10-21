@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.47.1"
+version = "0.48.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -670,3 +670,11 @@ strip = "symbols"
 
 [profile.bench]
 inherits = "release"
+
+# An external agent's program is identified by a digest of up to 64 MiB of it
+# before each start, and unoptimized that digest takes seconds where a release
+# build takes milliseconds. Every test that starts an agent pays it, enough to
+# run the release gate's single-machine suite past its time limit, so the one
+# crate that computes it is optimized in the builds tests use.
+[profile.dev.package.sha2]
+opt-level = 3
