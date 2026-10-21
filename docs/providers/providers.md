@@ -88,8 +88,8 @@ Warning: No model selected. Use /model to select the model to ask.
 ```
 
 ```
-Warning: No models available. Use /login or set an API key environment
-variable. Then use /model to select a model.
+Warning: No models available. Use /login to sign in or to use an installed
+coding agent, or set an API key environment variable.
 ```
 
 A `/login` where no provider is being asked fills the second rung: it takes the

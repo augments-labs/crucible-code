@@ -47,8 +47,9 @@
 //! than what makes this one ask at all.
 //!
 //! A run with no key for anything is left alone to draw its prompt. The warning
-//! under the welcome names this command and `/model` both, which is the whole of
-//! what somebody meeting crucible for the first time has to read; a panel
+//! under the welcome names this command, with the installed coding agent it
+//! offers, which is the whole of what somebody meeting crucible for the first
+//! time has to read; a panel
 //! standing in front of that prompt would be this program answering a question
 //! nobody asked it, on the one screen where the reader is still finding out
 //! where they are.

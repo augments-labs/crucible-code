@@ -8,9 +8,9 @@ expression: picture
 |                                        |
 |                                        |
 |Warning: No models available. Use       |
-|/login or set an API key environment    |
-|variable. Then use /model to select a   |
-|model.                                  |
+|/login to sign in or to use an          |
+|installed coding agent, or set an API   |
+|key environment variable.               |
 |                                        |
 |› /login                                |
 |                                        |
