@@ -34,6 +34,8 @@
 //! | sign out | sign out | [`LogoutOutcome::AgentSignedOut`] |
 //! | sign out, not shown signed out afterwards | sign out | [`LogoutOutcome::SignOutUnverified`] |
 //! | sign out, the file not written | sign out | [`LogoutOutcome::StoppedForThisRunOnly`] |
+//! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
+//! | sign out | sign out, its agent's route unanswered, the yes not written | [`ErrorCode::Failed`] |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
 //! | connect, signed in, already on the instance | the agent's route accepted | [`LoginOutcome::AgentConnected`] |
@@ -53,6 +55,12 @@
 //! and a client told only that it failed would not know the conversation can
 //! no longer use it. Where the conversation was not on the instance, nothing
 //! was stopped, and it is told only that the removal failed.
+//!
+//! A sign-out runs the agent's own program, so once it is chosen it puts the
+//! agent's content-use route to the client where that has no yes, before
+//! anything is changed: a no, or a yes that cannot be written down, leaves
+//! every instance, its run and the files as they were. Choosing to disconnect
+//! instead starts nothing of the agent's and asks nothing.
 //!
 //! A sign-out takes every instance sharing the credential scope out of use
 //! before the agent's own program is run: their runs in this conversation are
@@ -129,9 +137,10 @@ pub enum Account {
     /// Nothing was removed, because the provider named here is still reached
     /// through the instance.
     StillReferenced(String),
-    /// The instance's settings could not be taken out of the file, and nothing
-    /// of the conversation's was stopped: the file could not be read first, or
-    /// the conversation was not on the instance.
+    /// Nothing of the conversation's was stopped, because what had to be
+    /// written first could not be: for a removal, the file could not be read
+    /// or the conversation was not on the instance; for a sign-out, the yes to
+    /// the agent's content-use route.
     Unremoved(RememberError),
     /// The instance's run in this conversation was stopped and it takes no new
     /// work, and its settings could not be taken out of the file, so they are
@@ -400,7 +409,13 @@ pub async fn account(
                 .collect();
             let confirmation = signing_out(&agent, &sharing, conversation.instance());
             match confirmed(request.capabilities(), front, &confirmation).await {
-                Some(0) => Performed::Account(sign_out(conversation, desk, &agent, &sharing).await),
+                Some(0) => {
+                    if let Some(unasked) = launch_asked(conversation, request, front, &agent).await
+                    {
+                        return Performed::Account(unasked);
+                    }
+                    Performed::Account(sign_out(conversation, desk, &agent, &sharing).await)
+                }
                 Some(1) => Performed::Account(disconnect(conversation, desk, &agent).await),
                 _ => Performed::Account(Account::Undecided),
             }
@@ -585,6 +600,25 @@ fn signing_out(agent: &ExternalAgent, sharing: &[ExternalAgent], on: Option<&str
             ("Cancel".to_owned(), "Change nothing.".to_owned()),
         ],
     }
+}
+
+/// Puts `agent`'s route to `front` where it has no yes, before a sign-out
+/// changes anything, since the agent's own program is run for it. Answers the
+/// account to end the sign-out with where the route did not get its yes, or
+/// the yes could not be written down, and `None` where the sign-out may go on.
+async fn launch_asked(
+    conversation: &Conversation,
+    request: &Request,
+    front: &mut dyn Front,
+    agent: &ExternalAgent,
+) -> Option<Account> {
+    let consent = conversation.consent()?;
+    let row = crate::backends::REGISTRY.row(agent.driver())?;
+    let warned = consent.asks(row.route).copied()?;
+    if !super::deciding::warned(request.capabilities(), front, &warned).await {
+        return Some(Account::Undecided);
+    }
+    consent.accept(&warned).err().map(Account::Unremoved)
 }
 
 /// Takes every instance in `sharing` out of use from Crucible, durably, and
