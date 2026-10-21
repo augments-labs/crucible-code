@@ -23,7 +23,7 @@
 //! waits for a future with
 //! `Handle::block_on`.
 //! Tokio's own documentation of that method, at `src/runtime/handle.rs:248-253`
-//! in the pinned 1.53.1 source, says that on a `current_thread` runtime only
+//! in the pinned 1.53.3 source, says that on a `current_thread` runtime only
 //! `Runtime::block_on` can drive the IO and timer drivers and
 //! `Handle::block_on` cannot, so anything relying on IO or timers does not work
 //! unless another thread is inside `Runtime::block_on` on the same runtime. A
