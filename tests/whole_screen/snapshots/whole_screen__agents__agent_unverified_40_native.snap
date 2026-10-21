@@ -2,11 +2,13 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 26,0 scrollback 0
+40x40 cursor 28,0 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
 |› /login                                |
+|                                        |
+|                                        |
 |                                        |
 |                                        |
 |                                        |
@@ -30,8 +32,6 @@ expression: picture
 |  Change nothing.                       |
 |                                        |
 |esc to go back                          |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

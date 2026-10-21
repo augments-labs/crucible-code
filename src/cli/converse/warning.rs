@@ -138,11 +138,7 @@ pub(super) fn ask_while<T: Terminal>(
             says: "Nothing starts",
         },
     ];
-    let runs = format!(
-        "Starting {agent} runs this profile's hooks, MCP servers and plugins, which may send \
-         content on their own."
-    );
-    let launched = [runs.as_str()];
+    let launched = [content_use::LAUNCHING];
     let (shown, told): (&[Offered<'_>], &[&str]) = match put {
         // A message on an installed agent's route that starts the agent says
         // what starting it runs, as a launch does.
