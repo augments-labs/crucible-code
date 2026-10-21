@@ -559,11 +559,13 @@ fn refused(result: &Result<Outcome, Failure>) -> Result<(), String> {
 mod tests {
     //! The suite's cases, held to what they say they judge.
 
-    use std::fs::OpenOptions;
+    use std::fs::{self, OpenOptions};
     use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use crucible_execution::Decision;
     use crucible_runtime::BoxFuture;
@@ -579,12 +581,35 @@ mod tests {
     use crate::fake_peer::{self, Plain};
     use crate::tests::Owned;
 
-    /// The local sandbox, except that a stop leaves the grandchild's beat as
-    /// a stop landing between a beat's truncating open and its write does:
-    /// empty, for good.
-    struct Torn(Arc<dyn SandboxService>);
+    /// The case these tests hold to what it judges.
+    const UNHEEDED: &str = "an unheeded stop ends the agent and what it started";
 
-    impl SandboxService for Torn {
+    /// How long the beat must hold still before it is torn: several of the
+    /// fake peer's beats, so a grandchild still beating is seen to.
+    const STILL: Duration = Duration::from_millis(150);
+
+    /// The longest a tear waits for the beat to hold still.
+    const SETTLING: Duration = Duration::from_secs(5);
+
+    /// Processes a stop left running, kept here once the host lets them go.
+    type Kept = Arc<Mutex<Vec<Box<dyn SandboxProcess>>>>;
+
+    /// What a stop of the process the local sandbox starts does instead.
+    #[derive(Clone)]
+    enum Stop {
+        /// The local stop, after which the grandchild's beat is left as a
+        /// stop landing between a beat's truncating open and its write leaves
+        /// it: empty, for good.
+        Tears,
+        /// Nothing, as a stop that never reaches the process group does: the
+        /// agent and its grandchild run on, kept until the test stops them.
+        Spares(Kept),
+    }
+
+    /// The local sandbox, with `Stop` in place of its stop.
+    struct Stopping(Arc<dyn SandboxService>, Stop);
+
+    impl SandboxService for Stopping {
         fn probe(
             &self,
         ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>>
@@ -597,23 +622,28 @@ mod tests {
             request: SandboxRequest,
         ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
             // The fake peer's grandchild beats into the file of this name in
-            // the directory it was started in; the test checks it was torn.
+            // the directory it was started in.
             let beat = request.policy().working_directory().join("lingering");
             Box::pin(async move {
                 let inner = self.0.prepare(request).await?;
-                let session: Box<dyn SandboxSession> = Box::new(TornSession { inner, beat });
+                let session: Box<dyn SandboxSession> = Box::new(StoppingSession {
+                    inner,
+                    beat,
+                    stop: self.1.clone(),
+                });
                 Ok(session)
             })
         }
     }
 
-    /// A session whose started process tears the beat at `beat` when stopped.
-    struct TornSession {
+    /// A session whose started process is stopped as `stop` says.
+    struct StoppingSession {
         inner: Box<dyn SandboxSession>,
         beat: PathBuf,
+        stop: Stop,
     }
 
-    impl SandboxSession for TornSession {
+    impl SandboxSession for StoppingSession {
         fn inspection(&self) -> &SandboxInspection {
             self.inner.inspection()
         }
@@ -642,80 +672,129 @@ mod tests {
         {
             Box::pin(async move {
                 let inner = self.inner.start(command).await?;
-                let process: Box<dyn SandboxProcess> = Box::new(TornProcess {
-                    inner,
+                let process: Box<dyn SandboxProcess> = Box::new(StoppingProcess {
+                    inner: Some(inner),
                     beat: self.beat,
+                    stop: self.stop,
                 });
                 Ok(process)
             })
         }
     }
 
-    /// The local process, which truncates the beat at `beat` once stopped.
-    struct TornProcess {
-        inner: Box<dyn SandboxProcess>,
+    /// The local process, stopped as `stop` says. It is held until dropped,
+    /// when one a stop spared is handed to what keeps it.
+    struct StoppingProcess {
+        inner: Option<Box<dyn SandboxProcess>>,
         beat: PathBuf,
+        stop: Stop,
     }
 
-    impl SandboxProcess for TornProcess {
+    impl StoppingProcess {
+        fn inner(&self) -> &dyn SandboxProcess {
+            self.inner.as_deref().expect("held until dropped")
+        }
+
+        fn inner_mut(&mut self) -> &mut dyn SandboxProcess {
+            self.inner.as_deref_mut().expect("held until dropped")
+        }
+    }
+
+    impl SandboxProcess for StoppingProcess {
         fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>> {
-            self.inner.take_stdin()
+            self.inner_mut().take_stdin()
         }
 
         fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
-            self.inner.take_async_stdin()
+            self.inner_mut().take_async_stdin()
         }
 
         fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
-            self.inner.take_stdout()
+            self.inner_mut().take_stdout()
         }
 
         fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
-            self.inner.take_stderr()
+            self.inner_mut().take_stderr()
         }
 
         fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-            self.inner.try_wait()
+            self.inner_mut().try_wait()
         }
 
         fn ended(&mut self) -> bool {
-            self.inner.ended()
+            self.inner_mut().ended()
         }
 
         fn publication_outcome(&self) -> Option<SandboxLifecycle> {
-            self.inner.publication_outcome()
+            self.inner().publication_outcome()
         }
 
         fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
             Box::pin(async move {
-                let stopped = self.inner.stop().await;
-                torn(&self.beat);
-                stopped
+                match self.stop {
+                    Stop::Tears => {
+                        let stopped = self.inner_mut().stop().await;
+                        torn(&self.beat);
+                        stopped
+                    }
+                    Stop::Spares(_) => Ok(()),
+                }
             })
         }
 
         fn stop_sync(&mut self) -> io::Result<()> {
-            let stopped = self.inner.stop_sync();
-            torn(&self.beat);
-            stopped
+            match self.stop {
+                Stop::Tears => {
+                    let stopped = self.inner_mut().stop_sync();
+                    torn(&self.beat);
+                    stopped
+                }
+                Stop::Spares(_) => Ok(()),
+            }
         }
 
         fn inspection(&self) -> &SandboxInspection {
-            self.inner.inspection()
+            self.inner().inspection()
         }
 
         fn usage(&self) -> SandboxUsage {
-            self.inner.usage()
+            self.inner().usage()
         }
 
         fn violation(&self) -> Option<SandboxViolation> {
-            self.inner.violation()
+            self.inner().violation()
+        }
+    }
+
+    impl Drop for StoppingProcess {
+        fn drop(&mut self) {
+            // Dropping the local process would stop it, which is what the
+            // spared one must not be until the case has judged it.
+            if let (Stop::Spares(kept), Some(inner)) = (&self.stop, self.inner.take())
+                && let Ok(mut kept) = kept.lock()
+            {
+                kept.push(inner);
+            }
         }
     }
 
     /// Opens `beat` truncating, as a beat does, and writes nothing, as a beat
     /// stopped before its write does. Where there is no beat, makes none.
+    ///
+    /// It first waits for the beat to hold still: on Linux the local stop
+    /// returns once the group is sent its kill and the leader reaped, not once
+    /// the grandchild is gone, so a beat already under way can still land.
     fn torn(beat: &Path) {
+        let deadline = Instant::now() + SETTLING;
+        let mut was = fs::read(beat).ok();
+        loop {
+            thread::sleep(STILL);
+            let now = fs::read(beat).ok();
+            if now == was || Instant::now() >= deadline {
+                break;
+            }
+            was = now;
+        }
         let _ = OpenOptions::new().write(true).truncate(true).open(beat);
     }
 
@@ -736,33 +815,68 @@ mod tests {
         }
     }
 
+    /// The suite over the local sandbox with `stop` in place of its stop,
+    /// played in `at`.
+    fn suite<'a>(stop: Stop, set: &'a Set, at: &'a Owned) -> Suite<'a> {
+        let local: Arc<dyn SandboxService> =
+            Arc::new(LocalSandbox::new().watching_on(Handle::current()));
+        Suite {
+            service: Arc::new(Stopping(local, stop)),
+            dialect: || Box::new(Plain),
+            set,
+            directory: &at.0,
+        }
+    }
+
+    /// Which case the suite plays, and where in `at` it plays it.
+    fn played(at: &Owned) -> (usize, PathBuf) {
+        let index = CASES
+            .iter()
+            .position(|case| *case == UNHEEDED)
+            .expect("the case is played");
+        (index, at.0.join(format!("case-{index}")))
+    }
+
     /// A stop that lands between a beat's truncating open and its write leaves
     /// nothing to read afterwards, and the agent it ended had still begun.
     #[tokio::test(flavor = "multi_thread")]
-    #[allow(clippy::expect_used)]
     async fn a_stop_that_tears_the_last_beat_still_finds_the_agent_began() {
         let at = Owned::new("torn-beat");
         let set = plain();
-        let local: Arc<dyn SandboxService> =
-            Arc::new(LocalSandbox::new().watching_on(Handle::current()));
-        let suite = Suite {
-            service: Arc::new(Torn(local)),
-            dialect: || Box::new(Plain),
-            set: &set,
-            directory: &at.0,
-        };
-        let index = CASES
-            .iter()
-            .position(|case| *case == "an unheeded stop ends the agent and what it started")
-            .expect("the case is played");
+        let (index, here) = played(&at);
 
-        let judged = suite.case(index).await;
+        let judged = suite(Stop::Tears, &set, &at).case(index).await;
 
-        let here = at.0.join(format!("case-{index}"));
         assert!(
             here.join("lingering").is_file() && fake_peer::lingering(&here).is_none(),
             "the stop tore the beat"
         );
         assert_eq!(judged, Ok(()));
+    }
+
+    /// A stop that never reaches the process group leaves the agent's own
+    /// process beating, and the case says so.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stop_that_spares_the_grandchild_is_found_still_beating() {
+        let at = Owned::new("spared-beat");
+        let set = plain();
+        let (index, _) = played(&at);
+        let kept = Kept::default();
+
+        let judged = suite(Stop::Spares(Arc::clone(&kept)), &set, &at)
+            .case(index)
+            .await;
+
+        let spared = std::mem::take(&mut *kept.lock().expect("nothing panicked holding it"));
+        assert!(!spared.is_empty(), "the host let its spared agent go");
+        for mut process in spared {
+            process.stop_sync().expect("the spared agent stops");
+        }
+        assert!(
+            judged
+                .as_ref()
+                .is_err_and(|why| why.starts_with("the agent's own process still beats")),
+            "the case judged a beating grandchild {judged:?}"
+        );
     }
 }
