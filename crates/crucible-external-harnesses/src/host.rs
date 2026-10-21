@@ -706,7 +706,7 @@ impl Host {
                 Ok(outcome)
             }
             Ending::Failed(failure) => {
-                let failure = Failure::new(self.shown(failure.reason()).as_str());
+                let failure = failure.reworded(self.shown(failure.reason()).as_str());
                 sink.post(Event::Failed(failure.clone()));
                 Err(failure)
             }

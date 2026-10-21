@@ -18,6 +18,11 @@
 //! that against any backend handed to it. A claim read from a cached
 //! observation is never support: see [`Capabilities::observed`].
 //!
+//! A failure says what it leaves of the agent's own session, the one a later
+//! launch would resume ([`SessionFate`]). Only the backend reading the agent's
+//! wire can tell that the agent has no session by the name it was asked for,
+//! so a failure leaves the session kept unless that backend says it is gone.
+//!
 //! Everything a backend reports is bounded before it is kept: text arrives as
 //! a [`Text`] that clips itself and says so, and pending actions sit in a table
 //! of at most [`PENDINGS`].
@@ -29,8 +34,8 @@ mod lifecycle;
 mod pending;
 
 pub use backend::{
-    Backend, Description, Error, Failure, NAME_BYTES, Nonconformance, Outcome, SessionRef, Sink,
-    TurnRequest, Unsupported, conformance,
+    Backend, Description, Error, Failure, NAME_BYTES, Nonconformance, Outcome, SessionFate,
+    SessionRef, Sink, TurnRequest, Unsupported, conformance,
 };
 pub use capability::{
     Capabilities, Capability, Claim, Confined, Confinement, Freshness, Observation, Scope,

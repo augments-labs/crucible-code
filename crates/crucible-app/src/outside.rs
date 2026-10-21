@@ -53,7 +53,10 @@
 //! uncertain and one whose caller stopped waiting leave a backend that takes
 //! no further turn: it is closed, and the next turn launches another through
 //! the [`Relaunch`] the conversation holds, resuming the agent's own session
-//! by the name the agent last gave it. Where the one closed could not be
+//! by the name the agent last gave it. A failure the backend says left the
+//! agent with no session by that name lets the name go, so the launch after
+//! it starts a new session rather than fail again asking for that one; no
+//! other failure does. Where the one closed could not be
 //! confirmed stopped, that launch is refused instead, so no second run is
 //! started beside it. A change of mode does the same, since
 //! the agent is told its mode only at launch, and so it never changes
@@ -81,7 +84,7 @@ use std::time::Instant;
 
 use crucible_execution::{
     About, Backend, Cost, Decision, Error, Event, Failure, Lookup, NAME_BYTES, Outcome, PENDINGS,
-    Pending, PendingRef, Sink, Text, TurnRequest, Usage,
+    Pending, PendingRef, SessionFate, Sink, Text, TurnRequest, Usage,
 };
 use crucible_models::{Effort, ProviderError};
 use crucible_runner::{
@@ -339,7 +342,8 @@ pub(crate) struct Outside {
     model: Option<Box<str>>,
     /// The effort the agent is launched at; `None` leaves it its own.
     effort: Option<Effort>,
-    /// The agent's own name for its session, as last given.
+    /// The agent's own name for its session, as last given, until a turn's
+    /// failure says the agent has no session by it.
     named: Option<ExternalRef>,
     /// The next turn.
     turn: TurnId,
@@ -664,6 +668,14 @@ impl Outside {
         self.spent = false;
         if spent_run {
             self.retire().await;
+        }
+        if let Err(Error::Failed(failure)) = &ended {
+            match failure.fate() {
+                SessionFate::Kept => {}
+                // Resumed again it would fail again, so the next launch
+                // starts the agent on a session of its own.
+                SessionFate::Gone => self.named = None,
+            }
         }
         match ended {
             Ok(Outcome::Cancelled) if uncertain.is_some() => Ok(Turned::Uncertain(
