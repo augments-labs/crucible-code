@@ -25,7 +25,9 @@
 //! next run on it. The other providers stand beside it as they would off the
 //! route, and a model taken off one of them moves the conversation off the
 //! agent onto it, in a new session. An agent that chooses its own model is
-//! told so instead, at rest and mid-turn. Off such a route, a model of a
+//! told so instead of a shelf, at rest and mid-turn; a model named on the
+//! line is put to the conversation as anywhere else, and one of another
+//! provider moves it off the agent. Off such a route, a model of a
 //! provider the configuration reaches through an installed agent moves the
 //! conversation onto that agent, in a new session, to be started on it.
 
@@ -218,8 +220,9 @@ impl Selected {
 
 /// Runs it: the model named, one taken off the panel, or what is being asked
 /// now and what else could be, of the one provider an installed agent's route
-/// reaches. On the route of an agent that chooses its own model, it says so
-/// and does none of these.
+/// reaches. On the route of an agent that chooses its own model, `/model` alone
+/// says so and offers neither a panel nor a list; a model named on the line is
+/// put to the conversation as anywhere else.
 ///
 /// `keys` is whether there is a keyboard to walk a panel with. Down a pipe there
 /// is not, and a panel waiting for a key nobody can press is a session that
@@ -238,7 +241,12 @@ pub(super) fn run<T: Terminal>(
 ) -> Result<(), Fatal> {
     let execution = crucible_app::client::execution(conversation);
     let model = crucible_app::client::model(conversation);
-    if let Some(said) = chosen_by_agent(&execution, model.as_ref(), false) {
+    // Only the shelf is refused there: a model named on the line is the same
+    // request a client with no terminal makes, which the conversation answers,
+    // moving off the agent where the model is another provider's.
+    if said.is_empty()
+        && let Some(said) = chosen_by_agent(&execution, model.as_ref(), false)
+    {
         return say(renderer, &said);
     }
     if !said.is_empty() {
