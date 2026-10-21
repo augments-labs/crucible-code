@@ -8,7 +8,10 @@
 //! with a version or a description its profile does not admit. The session is
 //! then opened, or resumed where the conversation has one, and the prompt goes
 //! out once the agent has named it. Later turns of the run send the prompt
-//! alone, once a session is open.
+//! alone, once a session is open. An agent that refuses to open a session it
+//! kept because it has none by that name fails the turn saying the session is
+//! gone, so the next launch opens a new one rather than ask for it again; any
+//! other refusal says nothing of the session.
 //!
 //! A turn stopped before its prompt is out sends the agent nothing more and
 //! ends cancelled once the request it is waiting on is answered; an agent it
@@ -58,6 +61,16 @@ const PROTOCOL: u64 = 1;
 
 /// The code an agent refuses with when it must be signed in first.
 const SIGN_IN_REQUIRED: i64 = -32000;
+
+/// The code an agent refuses with when what a request names is not there.
+///
+/// The protocol's schema (`agent-client-protocol-schema`, `error.rs`) names it
+/// `ResourceNotFound`, "a given resource, such as a file, was not found", and
+/// gives no other code for a session that cannot be loaded or resumed. Its
+/// reference adapter for Claude Code (`claude-agent-acp`) refuses with it a
+/// session it cannot resume, one never kept among them, which "keeps
+/// failing", and other agents refuse a session they cannot load the same way.
+const RESOURCE_NOT_FOUND: i64 = -32002;
 
 /// The most bytes a name the agent gives keeps: its own name, its version, a
 /// sign-in method or a session.
@@ -386,7 +399,7 @@ impl Acp {
     ) -> Result<Vec<Act>, Failure> {
         let result = match outcome {
             Ok(result) => result,
-            Err(refused) => return Ok(self.ended(Act::Fail(refusal(&refused)))),
+            Err(refused) => return Ok(self.ended(Act::Fail(refusal(awaited, &refused)))),
         };
         match awaited {
             Awaited::Initialize => {
@@ -572,7 +585,7 @@ impl Acp {
                 done(Reading::Signed(Authentication::SignedOut))
             }
             (Awaited::SignOut, Ok(_)) => done(Reading::Signed(Authentication::SignedOut)),
-            (_, Err(refused)) => done(Reading::Unreadable(refusal(&refused))),
+            (_, Err(refused)) => done(Reading::Unreadable(refusal(awaited, &refused))),
             (Awaited::Open { .. } | Awaited::Prompt, Ok(_)) => done(Reading::Unreadable(
                 Failure::new("The agent answered a turn's request during an account step."),
             )),
@@ -611,12 +624,19 @@ impl Acp {
     }
 }
 
-/// What the agent's refusal `refused` says, for the user.
-fn refusal(refused: &Refused) -> Failure {
+/// What the agent's refusal `refused` of the request `awaited` says, for the
+/// user, and of the session: gone only where the agent has none by the name
+/// it kept it under.
+fn refusal(awaited: Awaited, refused: &Refused) -> Failure {
     if refused.code == SIGN_IN_REQUIRED {
         return Failure::new("The agent is not signed in. Sign in with /login, then try again.");
     }
-    Failure::new(&format!("The agent refused: {}", refused.message.as_str()))
+    let said = format!("The agent refused: {}", refused.message.as_str());
+    if awaited == (Awaited::Open { kept: true }) && refused.code == RESOURCE_NOT_FOUND {
+        Failure::gone(&said)
+    } else {
+        Failure::new(&said)
+    }
 }
 
 impl Dialect for Acp {
