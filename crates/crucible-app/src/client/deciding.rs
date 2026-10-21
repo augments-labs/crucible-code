@@ -73,7 +73,7 @@ use crucible_runtime::BoxFuture;
 use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
 use crucible_types::{Answered, Question, ToolCall};
 
-use crate::content_use::Warned;
+use crate::content_use::{LAUNCHING, Warned, launches};
 
 /// How many pending identities this process has given out.
 ///
@@ -591,10 +591,17 @@ pub async fn warned(capabilities: Capabilities, front: &mut dyn Front, warned: &
     if !capabilities.has(Capability::Permissions) {
         return false;
     }
+    // An installed agent's route is asked about as a launch, so the client is
+    // told what starting it runs, in the words the terminal shows.
+    let sentence = if launches(warned.route) {
+        format!("{} {LAUNCHING}", warned.warning.sentence)
+    } else {
+        warned.warning.sentence.to_owned()
+    };
     let words = [
         Text::cut(warned.route),
         Text::cut(warned.shown),
-        Text::cut(warned.warning.sentence),
+        Text::cut(&sentence),
         Text::cut(&warned.warning.cited()),
     ];
     if words.iter().any(Text::truncated) && !front.draws_whole() {
