@@ -62,6 +62,13 @@ nothing. Disconnecting, or signing out, writes the agent's `enabled: false`
 and takes away the `access` of every provider reached through it, in one
 update, so the next session asks that provider directly.
 
+Removing stops the agent's run in the conversation first and then takes its
+entry out of the user file; where the file cannot be written and the
+conversation was on that agent, the line says the agent is stopped for this run
+only and its settings could not be removed, and the entry stays, so the next
+run starts the agent again. Where the conversation was on another route,
+nothing was stopped and the line says only that the removal failed.
+
 Connecting an agent moves the conversation onto it at once, whatever provider
 it was asking, in a new session bound to it with nothing carried over, and the line it
 ends on names the agent and says the conversation starts fresh there; the
@@ -89,7 +96,9 @@ that provider, moves the conversation off the agent onto that provider and
 model at once, in a new session, as a login for it would, and is written down
 as the `provider`, model and rung asked; a rung that model does not serve is
 refused and nothing moves. An agent that chooses its own model has
-`/model` and `/effort` say so instead.
+`/model` alone and `/effort` say so instead; a model named on the `/model` line
+of a provider with a credential in hand moves the conversation off the agent
+onto it, and one of the agent's own provider is refused.
 
 A model taken of a provider whose `access` names an installed agent, while the
 conversation runs on no agent that reaches that provider, moves the

@@ -155,9 +155,11 @@ jobs:
   #
   # What it may not become is the bare tag: the floor above is a
   # promise about a build input, and an input that can change underneath a
-  # rebuild is not one. The smoke step before `publish` measures the floor the
-  # artifact actually carries and fails the release when it has moved, so a
-  # digest that raises glibc blocks the release rather than shipping quietly.
+  # rebuild is not one. The smoke step, `smoke-linux`, measures the floor the
+  # artifact actually carries and goes red when it has moved. That red does not
+  # block the release: `staged` takes its verdict only from the jobs in its
+  # `needs` list, which omits `smoke-linux` (see the note above `staged`), so
+  # the red stays on the staging run to be read before a tag.
   #
   # Each build job also builds the releases the update cells need, one or two
   # more release builds after its own, and its time limit allows for them.
