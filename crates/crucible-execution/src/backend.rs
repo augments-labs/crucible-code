@@ -151,12 +151,26 @@ pub enum Outcome {
     CutShort,
 }
 
-/// A turn or an operation failed.
+/// A turn or an operation failed, and what that says of the agent's session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
 #[error("{reason}")]
 pub struct Failure {
     /// What went wrong, in a sentence.
     reason: Text,
+    /// What it says of the session the agent ran it in.
+    fate: SessionFate,
+}
+
+/// What a failure says of the agent's own session, the one a later launch
+/// would resume: only the backend reading the agent's wire can tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SessionFate {
+    /// Nothing about the failure says the session is gone, so a later turn
+    /// may resume it.
+    Kept,
+    /// The agent said it has no session by the name it was asked for, so a
+    /// later turn resuming it would fail the same way.
+    Gone,
 }
 
 impl Failure {
@@ -165,6 +179,26 @@ impl Failure {
     pub fn new(reason: &str) -> Self {
         Self {
             reason: Text::new(reason),
+            fate: SessionFate::Kept,
+        }
+    }
+
+    /// It failed because the agent has no session by the name it was asked
+    /// for, and `reason` says so.
+    #[must_use]
+    pub fn gone(reason: &str) -> Self {
+        Self {
+            reason: Text::new(reason),
+            fate: SessionFate::Gone,
+        }
+    }
+
+    /// The same failure, said as `reason`.
+    #[must_use]
+    pub fn reworded(&self, reason: &str) -> Self {
+        Self {
+            reason: Text::new(reason),
+            fate: self.fate,
         }
     }
 
@@ -172,6 +206,12 @@ impl Failure {
     #[must_use]
     pub const fn reason(&self) -> &Text {
         &self.reason
+    }
+
+    /// What it says of the agent's session.
+    #[must_use]
+    pub const fn fate(&self) -> SessionFate {
+        self.fate
     }
 }
 
