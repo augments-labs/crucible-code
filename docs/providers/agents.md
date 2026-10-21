@@ -285,6 +285,13 @@ saying to sign in. Signing out runs the agent's own logout, then asks again
 whether a session can be opened, and says the sign-out is unverified unless
 the agent then answers that it is signed out.
 
+**Its session.** Each time the agent is started again, after a failed turn, a
+change of mode or `/resume`, it is asked to resume the session it last named.
+Where it answers that it has no session by that name, that message fails with
+what the agent said, and the next one starts it on a new session, which holds
+nothing of what was said before; any other refusal leaves the session it named
+to be asked for again.
+
 **Permissions.** The agent asks about every action itself. In ask mode each
 question comes to you; in allow edits crucible answers yes, for that action
 alone, to a change, deletion or move of a file, and asks you the rest; in full
