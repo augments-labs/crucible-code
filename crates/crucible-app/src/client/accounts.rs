@@ -74,8 +74,10 @@
 //! file only with the route.
 //!
 //! A connect reaches the one provider the agent signs in to, which the
-//! client does not name. It starts nothing of the agent's before its
-//! content-use route has a yes, and then reads only whether the agent is
+//! client does not name. For a client that did not say it answers account
+//! questions it is undecided at once, before the agent is started, even where
+//! the agent is signed in. Otherwise it starts nothing of the agent's before
+//! its content-use route has a yes, and then reads only whether the agent is
 //! signed in. Signed in, it is already connected, and nothing more is asked;
 //! not signed in, or not read either way, the client is told so, with the
 //! command that signs the agent in where it has one, and may check again,
@@ -94,7 +96,8 @@
 use std::path::Path;
 
 use crucible_client_api::{
-    Command, ErrorCode, LoginOutcome, LogoutOutcome, Name, Outcome, Problem, Refusal, Request, Text,
+    Capability, Command, ErrorCode, LoginOutcome, LogoutOutcome, Name, Outcome, Problem, Refusal,
+    Request, Text,
 };
 use crucible_config::{ConfigError, ExternalAgent};
 use crucible_execution::Authentication;
@@ -874,6 +877,11 @@ async fn connect(
         written,
     } = *asked;
     let capabilities = request.capabilities();
+    // A client that did not say it answers account questions is asked nothing,
+    // and an agent already signed in is no reason to act without its say.
+    if !capabilities.has(Capability::Account) {
+        return Account::Unconnected;
+    }
     // Nothing of the agent's is started before its route has a yes, and a yes
     // is written down before anything is.
     if let Some(consent) = conversation.consent()
