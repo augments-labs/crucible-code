@@ -204,7 +204,7 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 # no system store, bundle or platform verifier is read, so a certificate is
 # trusted the same way on every machine. Named here for `crucible-http`, the one
 # crate that builds a client to verify a recipient.
-webpki-roots = "=1.0.9"
+webpki-roots = "=1.0.10"
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; one decoder serves
