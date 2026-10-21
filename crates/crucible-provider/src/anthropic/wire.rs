@@ -23,8 +23,9 @@ use crate::stream::Wire;
 
 /// The Messages API, being narrated.
 ///
-/// Legacy projections remain stateless. Fable's request-bound parser retains
-/// ordered blocks until the complete message closes, without exposing thinking.
+/// Legacy projections remain stateless. A model `super::bound` admits gets a
+/// request-bound parser, which retains ordered blocks until the complete message
+/// closes, without exposing thinking.
 #[derive(Default)]
 pub(super) struct Messages {
     blocks: Option<super::continuation::Blocks>,
