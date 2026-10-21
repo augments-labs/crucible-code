@@ -611,9 +611,13 @@ fn signing_out(agent: &ExternalAgent, sharing: &[ExternalAgent], on: Option<&str
 }
 
 /// Puts `agent`'s route to `front` where it has no yes, before a sign-out
-/// changes anything, since the agent's own program is run for it. Answers the
-/// account to end the sign-out with where the route did not get its yes, or
-/// the yes could not be written down, and `None` where the sign-out may go on.
+/// changes anything, since the agent's own program is run for it. A launch
+/// the launcher would refuse, the program not installed or the row withheld,
+/// is said to be so first and the route is not put: nobody agrees to what
+/// cannot happen. Answers the account to end the sign-out with where the
+/// launch is so refused and the client goes no further, where the route did
+/// not get its yes, or the yes could not be written down, and `None` where the
+/// sign-out may go on.
 async fn launch_asked(
     conversation: &Conversation,
     request: &Request,
@@ -876,11 +880,12 @@ fn command(row: &crate::backends::Row) -> &'static str {
         .map_or(row.driver.name(), |dialect| dialect.program())
 }
 
-/// Whether `agent`'s program, of the row given and shown as named, is
-/// installed: told where it is not, with the command that installs it for an
-/// agent whose release crucible installs, the client may look again until it is or
-/// go back to the list of agents; nothing where it cancelled or answered
-/// nothing.
+/// Whether the launcher would start `agent`, of the row given and shown as
+/// named: told where it would not, the program not installed, with the command
+/// that installs it for an agent whose release crucible installs, or the row
+/// withheld, the client may look again until it would or go back; nothing
+/// where it cancelled or answered nothing. It decides as a start does, so what
+/// is said here is what a start would refuse.
 async fn found(
     conversation: &Conversation,
     front: &mut dyn Front,

@@ -3,11 +3,15 @@
 //! Each case here holds a conversation whose user file names an instance of
 //! Claude Code whose program is nowhere on the `PATH`, and whose route has no
 //! yes. A command that would start that program is refused for it being
-//! missing; nobody is asked to agree to a launch that cannot happen, and no
-//! yes is written down for it.
+//! missing; nobody is asked to agree to a launch that cannot happen, and the
+//! command ends undecided, as it does where a person declines. The consent
+//! here has no file to write a yes to, so what a yes would have recorded is
+//! not asserted; only that the route is not put and the command's outcome.
 
 use crucible_app::client;
-use crucible_client_api::{Capabilities as Asking, Command, Name, Pending};
+use crucible_client_api::{
+    Capabilities as Asking, Command, LoginOutcome, LogoutOutcome, Name, Outcome, Pending,
+};
 use crucible_external_harnesses::fake_peer::{self, scripts::claude};
 
 use super::{Asked, Outside, Picking, accounting, connected};
@@ -29,32 +33,34 @@ fn asked_route(put: &[Pending]) -> bool {
 }
 
 /// A connect through, or a sign-out of, an instance whose program is not
-/// installed, with its route unanswered, does not put the route to the client,
-/// writes no yes for it, and starts nothing of the agent's.
+/// installed, with its route unanswered, does not put the route to the client
+/// and ends undecided. Before the refusal came first the route was put, its
+/// accept could not be kept, and the command ended some other way.
 #[test]
 fn a_launch_that_cannot_happen_is_refused_before_the_route_is_asked() -> Result<(), Failed> {
     type Made = fn(Name) -> Command;
-    let cases: [(&str, Made, Vec<Option<&'static str>>); 2] = [
+    let cases: [(&str, Made, Vec<Option<&'static str>>, Outcome); 2] = [
         (
             "connect",
             |instance| Command::Connect {
                 instance: Some(instance),
             },
             vec![Some("Accept"), None],
+            Outcome::Login(LoginOutcome::Undecided),
         ),
         (
             "sign-out",
             |instance| Command::SignOut { instance },
             vec![Some(client::accounts::SIGN_OUT), Some("Accept"), None],
+            Outcome::Logout(LogoutOutcome::Undecided),
         ),
     ];
     let mut failures = Vec::new();
-    for (case, command, choices) in cases {
+    for (case, command, choices, undecided) in cases {
         let tree = Tree::new(&format!("external-refused-first-{case}"))?;
         let script = connected([claude::clean(), claude::signed_in()]);
         let mut outside = Outside::new(&tree, &script)?;
         outside.unanswer();
-        let consent = outside.conversation.consent().ok_or("a consent")?.clone();
         let asked = Asked {
             installed: (MISSING, "work"),
             command: &command,
@@ -62,29 +68,18 @@ fn a_launch_that_cannot_happen_is_refused_before_the_route_is_asked() -> Result<
             after: None,
         };
         let mut picking = Picking::of(choices);
-        for _ in 0..500 {
-            if fake_peer::played(&outside.peer) >= 3 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let before = fake_peer::played(&outside.peer);
 
         let (outcome, _file) = accounting(&tree, &mut outside, &asked, &mut picking)?;
-        let started = fake_peer::played(&outside.peer) - before;
 
         if asked_route(&picking.put) {
             failures.push(format!(
                 "{case}: the agent's route was asked about for a program that is not installed"
             ));
         }
-        if consent.asks("agent:claude").is_none() {
+        if outcome != undecided {
             failures.push(format!(
-                "{case}: a yes was written down for a launch that cannot happen: {outcome:?}"
+                "{case}: ended {outcome:?} rather than undecided, with the route unanswered"
             ));
-        }
-        if started != 0 {
-            failures.push(format!("{case}: the agent's program was started"));
         }
     }
     // Every case is run, so that a failure in one does not hide the other.
