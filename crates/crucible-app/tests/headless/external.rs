@@ -4810,3 +4810,47 @@ fn a_client_driving_an_agent_is_asked_and_told_what_the_proof_table_says() -> Re
     }
     Ok(())
 }
+
+/// A client that never said it answers account questions is asked nothing by a
+/// connect, and the agent being signed in does not let the connect act: the
+/// file is as it was, the agent's program is not started for it, and the
+/// conversation stays where it was.
+#[test]
+fn a_connect_of_a_client_that_answers_no_account_questions_changes_nothing() -> Result<(), Failed> {
+    use crucible_client_api::{Capability as Claimed, LoginOutcome};
+
+    let tree = Tree::new("external-connect-unclaimed")?;
+    let script = connected([claude::clean(), claude::signed_in()]);
+    let mut outside = Outside::new(&tree, &script)?;
+    let mut picking = Picking::of([]);
+    let command = |instance| Command::Connect {
+        instance: Some(instance),
+    };
+    let asked = Asked {
+        installed: (UNCONNECTED, "work"),
+        command: &command,
+        asking: Asking::none().with(Claimed::Permissions),
+        after: None,
+    };
+    // The conversation's own run has played its part before the connect is
+    // asked, so what is counted afterwards is the connect's.
+    for _ in 0..500 {
+        if fake_peer::played(&outside.peer) >= 3 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let before = fake_peer::played(&outside.peer);
+
+    let (outcome, file) = accounting(&tree, &mut outside, &asked, &mut picking)?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    assert!(picking.put.is_empty(), "{:?}", picking.put);
+    assert_eq!(file, UNCONNECTED);
+    assert_eq!(
+        fake_peer::played(&outside.peer),
+        before,
+        "the agent was asked whether it is signed in"
+    );
+    Ok(())
+}
