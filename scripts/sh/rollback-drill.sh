@@ -292,7 +292,7 @@ echo '==> candidate reads and recovers the fixtures'
 status=$(headless "$candidate" "$chome")
 [[ $status == 0 ]] || fail "the candidate fresh run exited $status"
 has "$stage/out" '/login' 'the candidate fresh run never said what to do about a missing key'
-has "$stage/out" '/model' 'the candidate fresh run never named /model'
+has "$stage/out" 'coding agent' 'the candidate fresh run never named the coding agent'
 if grep -q $'\e' "$stage/out"; then
     fail 'the candidate fresh run wrote an escape sequence to redirected output'
 fi

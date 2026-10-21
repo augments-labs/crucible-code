@@ -393,9 +393,9 @@ mod tests {
 
     #[test]
     fn a_session_with_nothing_to_ask_says_so_under_the_welcome() {
-        // The one screen somebody with a fresh install sees. It has to say both
-        // halves — how to authenticate, and how to choose — because neither on
-        // its own gets them to a turn.
+        // The one screen somebody with a fresh install sees. It has to name
+        // every way `/login` offers to a turn: an account or a key, and an
+        // installed coding agent.
         let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
         let screen = shown(
             80,
@@ -411,7 +411,9 @@ mod tests {
         );
 
         assert!(screen.contains("No models available"), "{screen}");
-        assert!(screen.contains("/model"), "{screen}");
+        assert!(screen.contains("/login"), "{screen}");
+        assert!(screen.contains("coding agent"), "{screen}");
+        assert!(!screen.contains("/model"), "{screen}");
     }
 
     #[test]

@@ -85,7 +85,7 @@ alone, and are used again by a later crucible.
 
 ## Keys and models
 
-### `Warning: No models available. Use /login or set an API key environment variable. Then use /model to select a model.`
+### `Warning: No models available. Use /login to sign in or to use an installed coding agent, or set an API key environment variable.`
 
 Said under the welcome, and again at a prompt, when no provider holds a
 credential: none of `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`,
@@ -93,8 +93,9 @@ credential: none of `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`,
 `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` or
 `ZAI_API_KEY` is exported with a value, and `/login` has stored nothing.
 An exported variable that is empty holds no key. Everything but a turn works in
-this state, so run `/login`, which takes a model as well, or export a key, start
-again and choose one with `/model`.
+this state, so run `/login`, which takes a model as well or connects an
+[installed agent](../providers/agents.md), or export a key, start again and
+choose a model with `/model`.
 
 Two neighbours say which half is missing. `Warning: No provider selected. Use
 /model to select a provider and model.` means more than one provider has a

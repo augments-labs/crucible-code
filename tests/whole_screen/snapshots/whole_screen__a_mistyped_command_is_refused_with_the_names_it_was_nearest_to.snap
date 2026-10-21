@@ -14,8 +14,8 @@ expression: refused_as_a_slip(&mut window)
 |╰─────────────────────────────────────────────────────────────────────────────╯┃|
 |                                                                               ┃|
 |                                                                               ┃|
-|Warning: No models available. Use /login or set an API key environment         ┃|
-|variable. Then use /model to select a model.                                   ┃|
+|Warning: No models available. Use /login to sign in or to use an installed     ┃|
+|coding agent, or set an API key environment variable.                          ┃|
 |                                                                               ┃|
 |› /modle                                                                       ┃|
 |⎿ ! no such command: /modle                                                    ●|
