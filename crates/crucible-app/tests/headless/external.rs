@@ -17,7 +17,7 @@ use std::task::Poll;
 use crucible_app::access::Route;
 use crucible_app::backends::{REGISTRY, Registry, Row};
 use crucible_app::client::{self, Front, Shown};
-use crucible_app::content_use::{Consent, Routes};
+use crucible_app::content_use::{Consent, LAUNCHING, Routes};
 use crucible_app::external::External;
 use crucible_app::launching::{Agent, Launcher, Steps};
 use crucible_app::outside::{Installed, Relaunch};
@@ -2531,6 +2531,128 @@ fn a_removal_of_an_instance_the_user_file_does_not_hold_is_refused_unasked() -> 
     Ok(())
 }
 
+/// A client that chooses `REMOVE`, and as it does leaves the user file holding
+/// `unusable`, as though another program had been writing it between the
+/// check and the write.
+struct Spoiling {
+    file: PathBuf,
+    unusable: &'static str,
+    put: usize,
+}
+
+impl Front for Spoiling {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Ruled>> {
+        Box::pin(async move {
+            self.put += 1;
+            std::fs::write(&self.file, self.unusable).ok()?;
+            Some(Ruled::Picked {
+                id: pending.id(),
+                choice: crucible_client_api::Said::new(client::accounts::REMOVE).ok()?,
+            })
+        })
+    }
+
+    fn refused(&mut self, _refusal: crucible_client_api::Refusal) {}
+}
+
+/// A removal whose write fails once the agent's run was stopped tells the
+/// client the instance is stopped for this run only, since the settings are
+/// still in the file and the next run starts it again; it is not told only
+/// that the removal failed.
+#[test]
+fn a_removal_whose_write_fails_says_the_agent_was_stopped_and_its_settings_remain()
+-> Result<(), Failed> {
+    use crucible_client_api::LogoutOutcome;
+
+    // Still names the instance, and is not a configuration that can be edited.
+    let unusable = r#"{"externalAgents": {"work": {"driver": "claude""#;
+    let tree = Tree::new("external-remove-unwritten")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let desk = super::Desk::new(&tree, &[])?;
+    let mut spoiling = Spoiling {
+        file: desk.choosing.clone(),
+        unusable,
+        put: 0,
+    };
+    let asked = Asked {
+        installed: (INSTALLED, "work"),
+        command: &|instance| Command::RemoveIntegration { instance },
+        asking: Asking::every(),
+        after: None,
+    };
+
+    let (outcome, file) = accounting_at(
+        desk,
+        &tree,
+        &mut outside.conversation,
+        &asked,
+        &mut spoiling,
+    )?;
+
+    assert_eq!(spoiling.put, 1, "the removal was asked about once");
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Logout(LogoutOutcome::StoppedForThisRunOnly { .. })
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(file, unusable, "nothing was written");
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_err(), "a stopped agent took a turn");
+    Ok(())
+}
+
+/// A removal of an instance the conversation is not on stops nothing, so where
+/// its write fails the client is told only that it failed, not that anything
+/// was stopped for this run.
+#[test]
+fn a_removal_whose_write_fails_off_the_route_says_only_that_it_failed() -> Result<(), Failed> {
+    let two = r#"{
+  "externalAgents": {"work": {"driver": "claude", "executable": "claude"}, "spare": {"driver": "claude", "executable": "claude"}},
+  "updates": {"check": "auto"}
+}
+"#;
+    // Still names the instance, and is not a configuration that can be edited.
+    let unusable = r#"{"externalAgents": {"spare": {"driver": "claude""#;
+    let tree = Tree::new("external-remove-unwritten-off-route")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+    let desk = super::Desk::new(&tree, &[])?;
+    let mut spoiling = Spoiling {
+        file: desk.choosing.clone(),
+        unusable,
+        put: 0,
+    };
+    let asked = Asked {
+        installed: (two, "spare"),
+        command: &|instance| Command::RemoveIntegration { instance },
+        asking: Asking::every(),
+        after: None,
+    };
+
+    let (outcome, file) = accounting_at(
+        desk,
+        &tree,
+        &mut outside.conversation,
+        &asked,
+        &mut spoiling,
+    )?;
+
+    assert_eq!(spoiling.put, 1, "the removal was asked about once");
+    assert_eq!(
+        outcome,
+        Outcome::Refused(crucible_client_api::ErrorCode::Failed.into())
+    );
+    assert_eq!(file, unusable, "nothing was written");
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_ok(), "the agent in use was stopped: {turned:?}");
+    Ok(())
+}
+
 /// Two instances on Claude Code's default profile, and one on a profile of
 /// its own, written as an absolute path on each platform.
 #[cfg(not(windows))]
@@ -4205,9 +4327,11 @@ fn a_prompt_that_would_start_an_unanswered_agent_asks_its_route_first() -> Resul
         assert!(
             matches!(
                 picking.put.as_slice(),
-                [Pending::Warning { route, .. }] if route.as_str() == "agent:claude"
+                [Pending::Warning { route, sentence, .. }]
+                    if route.as_str() == "agent:claude"
+                        && sentence.as_str().ends_with(LAUNCHING)
             ),
-            "{case}: {:?}",
+            "{case}: the client is not told what starting the agent runs: {:?}",
             picking.put
         );
         let written = std::fs::read_to_string(&choosing)?;

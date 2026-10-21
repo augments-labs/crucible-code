@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 34,0 scrollback 0
+80x40 cursor 35,0 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -19,6 +19,7 @@ expression: picture
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |› /login                                                                        |
+|                                                                                |
 |                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
@@ -38,7 +39,6 @@ expression: picture
 |  Change nothing.                                                               |
 |                                                                                |
 |esc to go back                                                                  |
-|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

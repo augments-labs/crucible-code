@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 26,0 scrollback 0
+40x40 cursor 28,0 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -19,9 +19,11 @@ expression: picture
 |controls.                               |
 |Claude Code data usage, 12 Oct 2026     |
 |                                        |
-|Starting Claude Code runs this profile's|
-|hooks, MCP servers and plugins, which   |
-|may send content on their own.          |
+|Starting it runs the hooks, helper      |
+|commands, MCP servers and plugins its   |
+|profile names, and any the project's own|
+|settings name, which may send content on|
+|their own.                              |
 |                                        |
 |› Continue                              |
 |  Starts Claude Code to check the accou…|
@@ -30,8 +32,6 @@ expression: picture
 |  Nothing starts                        |
 |                                        |
 |enter to choose · esc to go back        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

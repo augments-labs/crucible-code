@@ -99,6 +99,16 @@ fn held(window: &mut Watched) {
     window.types_until("", "Nothing starts");
 }
 
+/// A window of `size` held at the question put before the agent's program is
+/// first started, in the screen mode `native` says.
+pub(crate) fn held_window(case: &str, size: (u16, u16), native: bool) -> Watched {
+    let vendor = Vendor::answering("Not asked.");
+    let script = Script::of(Vec::new());
+    let mut window = Watched::capturing_agents(case, size, native, &vendor, (Some(&script), ""));
+    held(&mut window);
+    window
+}
+
 /// What the agent said of its sign-in, once it was let start: `wanted` is on
 /// that screen.
 fn checked(window: &mut Watched, wanted: &str) {
@@ -786,6 +796,91 @@ fn model_and_effort_on_an_agent_route_offer_every_provider_s_models() {
     }
 }
 
+/// The configuration of Antigravity, an agent that chooses its own model, as
+/// the fake peer stands in for it under the name `claude`, its sign-in kept
+/// in a profile directory of the case's own.
+fn space(case: &str) -> String {
+    format!(
+        "  \"externalAgents\": {{\"space\": {{\"driver\": \"antigravity\", \
+         \"executable\": \"claude\", \"profileDir\": {}}}}},\n",
+        serde_json::Value::from(watched::agents(case).join("profile").to_string_lossy())
+    )
+}
+
+/// What the fake peer says to an Antigravity status check of a signed-in
+/// profile: it initializes, then opens a session.
+fn antigravity_signed_in() -> Reply {
+    use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let version = Manifest::REVIEWED
+        .versions
+        .first()
+        .copied()
+        .unwrap_or_default();
+    Reply::new()
+        .hear(1)
+        .say(acp::initialized(
+            Manifest::REVIEWED.name,
+            version,
+            Manifest::REVIEWED.sign_in,
+        ))
+        .hear(1)
+        .say(acp::opened(1))
+}
+
+/// Fails where `/model` naming another provider's model, on the route of an
+/// agent that chooses its own model, says the agent chooses it instead of
+/// moving the conversation off the agent onto that model as the same request
+/// from a client with no terminal does; or where `/model` alone stops saying so.
+#[test]
+fn a_model_named_on_the_route_of_an_agent_choosing_its_own_moves_off_it() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-model-off-own-{mode}");
+        let script = Script::of([antigravity_signed_in(), antigravity_signed_in()]);
+        let vendor = Vendor::answering("Not asked.");
+        let mut window = Watched::capturing_agents(
+            &case,
+            (80, 40),
+            native,
+            &vendor,
+            (Some(&script), &space(&case)),
+        );
+        first(&mut window);
+        takes(&mut window, "Use an installed coding agent");
+        window.types_until("", "Antigravity");
+        takes(&mut window, "Antigravity");
+        window.types_until("", "Nothing starts");
+        takes(&mut window, "Continue");
+        window.types_until("", "Connected.");
+
+        let joined = |picture: &str| {
+            picture
+                .replace(['|', '⎿', '┃', '●'], " ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        window.types_until("/model\r", "chooses its own model");
+        assert!(
+            joined(&window.picture()).contains("which chooses its own model"),
+            "{case}: {}",
+            window.picture()
+        );
+
+        window.types_until("/model anthropic/claude-sonnet-5-5\r", "the one it left");
+        let moved_off = joined(&window.picture());
+        assert!(
+            moved_off.contains(
+                "this conversation left its agent for anthropic, in a new session; \
+                 /resume lists the one it left"
+            ),
+            "{case}: {moved_off}"
+        );
+    }
+}
+
 /// Fails where `/usage`, or the Usage tab of `/settings`, over a running turn
 /// on an agent's route draws a native row, a plan limit or nothing spent,
 /// rather than what the agent reported of the turn before, headed as its
@@ -1074,7 +1169,7 @@ fn a_message_that_would_start_an_unanswered_agent_asks_its_route_first() {
         window.types_until("Go on.\r", "Use it anyway");
         let asked = window.picture();
         assert!(
-            asked.contains("Starting Claude Code runs"),
+            asked.contains("Starting it runs the hooks, helper commands"),
             "{mode} says what starting the agent runs\n{asked}"
         );
         window.types_until("\r", "Went on.");

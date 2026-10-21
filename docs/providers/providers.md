@@ -394,7 +394,8 @@ moves the conversation off the agent onto it, in a new session. A model of a
 provider whose `access` names an installed agent the conversation is not on
 moves it onto that agent, in a new session, as [installed
 agents](agents.md) describes. For an agent that chooses its own model,
-`/model` and `/effort` say so instead.
+`/model` alone and `/effort` say so instead; a model named on the line still
+moves the conversation off the agent onto another provider.
 
 Where a vendor serves a model faster for a higher price, `/fast` asks for it,
 after saying what it costs. [Fast](fast.md) lists which models have a fast form,

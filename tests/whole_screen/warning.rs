@@ -12,6 +12,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crucible_app::content_use::LAUNCHING;
+
+use crate::agents;
 use crate::watched::{Launch, Watched};
 
 /// How long a request that was let go is given to reach the proxy.
@@ -152,4 +155,31 @@ pub(crate) fn based(base: &str) -> String {
          \"provider\": \"moonshot\",\n  \"providers\": {{\"moonshot\": {{\"model\": \"kimi-for-coding\", \
          \"baseUrl\": \"{base}\"}}}}\n}}\n"
     )
+}
+
+/// The question put before an installed agent first starts shows what
+/// starting it runs in the sentence the user docs print, whole, at every width
+/// and in both screen modes: helper commands and the project's own settings
+/// included.
+#[test]
+fn the_launch_question_shows_the_documented_sentence() {
+    for native in [false, true] {
+        for size in [(80, 40), (40, 40)] {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agent-launch-sentence-{}-{mode}", size.0);
+            let picture = agents::held_window(&case, size, native).picture();
+            // The panel wraps the sentence to its width, so it is read as the
+            // words it is, whatever rows they stand on.
+            let read = picture
+                .replace('|', " ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                read.contains(LAUNCHING),
+                "{mode} at {} columns lacks the launch sentence\n{picture}",
+                size.0
+            );
+        }
+    }
 }
