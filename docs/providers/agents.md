@@ -63,9 +63,11 @@ and takes away the `access` of every provider reached through it, in one
 update, so the next session asks that provider directly.
 
 Removing stops the agent's run in the conversation first and then takes its
-entry out of the user file; where the file cannot be written, the line says the
-agent is stopped for this run only and its settings could not be removed, and
-the entry stays, so the next run starts the agent again.
+entry out of the user file; where the file cannot be written and the
+conversation was on that agent, the line says the agent is stopped for this run
+only and its settings could not be removed, and the entry stays, so the next
+run starts the agent again. Where the conversation was on another route,
+nothing was stopped and the line says only that the removal failed.
 
 Connecting an agent moves the conversation onto it at once, whatever provider
 it was asking, in a new session bound to it with nothing carried over, and the line it
