@@ -4297,6 +4297,45 @@ fn a_session_an_agent_ran_resumes_on_its_route_from_that_route() -> Result<(), F
     Ok(())
 }
 
+/// The runs of a route rebuilt for one instance, as `/resume`, a move onto
+/// the agent and a connect's move each rebuild it, are one agent's: none is
+/// started beside the one an earlier rebuild left held, and another
+/// instance's runs are its own.
+#[test]
+fn a_route_rebuilt_for_one_instance_starts_no_run_beside_the_one_it_left() -> Result<(), Failed> {
+    let tree = Tree::new("external-rebuilt-one-control")?;
+    let script = connected([claude::clean(), claude::clean(), claude::clean()]);
+    let (launching, peer) = launching(&tree, &script)?;
+    let steps = steps(&launching, &peer);
+    let (model, effort) = (launching.agent.model(), launching.agent.effort());
+
+    let (refused, beside_other) = runtime()?.block_on(async {
+        let rebuilt = |instance: &str| steps.runs(launching.agent.clone(), instance);
+        let (first, again, other) = (rebuilt("work"), rebuilt("work"), rebuilt("home"));
+        let held = first.launch(Mode::Ask, model, effort, None).await?;
+        let refused = match again.launch(Mode::Ask, model, effort, None).await {
+            Ok(second) => {
+                let _closed = second.close().await;
+                None
+            }
+            Err(failure) => Some(failure.reason().as_str().to_owned()),
+        };
+        let beside_other = match other.launch(Mode::Ask, model, effort, None).await {
+            Ok(home) => {
+                let _closed = home.close().await;
+                true
+            }
+            Err(_) => false,
+        };
+        held.close().await?;
+        Ok::<_, Failed>((refused, beside_other))
+    })?;
+
+    assert_eq!(refused.as_deref(), Some("this agent is already running"));
+    assert!(beside_other, "another instance's run was refused");
+    Ok(())
+}
+
 /// `/resume` of a session a provider's model ran, on a route the run moved
 /// onto from a provider's model, goes back to the runner it started on, which
 /// still keeps its prompt caches where it was told to, shows the session's

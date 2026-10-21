@@ -41,18 +41,24 @@
 //! moment, confined or not as the sandbox is then, so a run started after the
 //! sandbox was turned off or on is held to the same choice a command would be.
 //! Every run of one [`Runs`] is launched on one control, so none starts beside
-//! another still held or one that could not be confirmed stopped.
+//! another still held or one that could not be confirmed stopped. The [`Runs`]
+//! that [`Steps`] hands out for one `externalAgents` entry share one control
+//! between them, so a route rebuilt for that entry, by a resume, a move onto
+//! the agent or a connect, starts no run beside one the route it replaces
+//! left held.
 //!
 //! An account step on any instance the configuration names, the
 //! conversation's route or not, is taken through [`Steps`], under the same
 //! policy at that moment and the same gates, and so is the run of a session
-//! an agent ran, picked back up on that agent from elsewhere. What it read is all it returns:
+//! an agent ran, picked back up on that agent from elsewhere. An account step
+//! runs on a control of its own, apart from any run's. What it read is all it returns:
 //! a step that could not be started reads as unreadable, saying why, so a
 //! caller claims nothing the step did not establish.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crucible_config::{Driver, ExternalAgent};
@@ -814,6 +820,10 @@ pub struct Steps {
     registry: &'static Registry,
     /// The `PATH` an agent's program is looked for on.
     path: Option<OsString>,
+    /// What every run of an `externalAgents` entry is launched on, by the
+    /// entry's name, made when the entry's first run is asked for. An entry
+    /// is one the configuration names, so there are no more than it has.
+    controls: Mutex<HashMap<Box<str>, Control>>,
 }
 
 impl std::fmt::Debug for Steps {
@@ -841,7 +851,20 @@ impl Steps {
             consent: launcher.consent.clone(),
             registry,
             path,
+            controls: Mutex::default(),
         }
+    }
+
+    /// What every run of the entry `instance` is launched on; none once this
+    /// process has numbered every control it can.
+    fn control(&self, instance: &str) -> Option<Control> {
+        let mut kept = self.controls.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(control) = kept.get(instance) {
+            return Some(control.clone());
+        }
+        let control = Control::new()?;
+        kept.insert(instance.into(), control.clone());
+        Some(control)
     }
 
     /// What is installed as `executable`, looked for on the `PATH` every step
@@ -896,7 +919,8 @@ impl Steps {
     }
 
     /// Runs of `agent`, the entry `instance`, each launched under the policy
-    /// and the yeses every step is.
+    /// and the yeses every step is, and on the control every other [`Runs`]
+    /// of that entry is launched on.
     #[must_use]
     pub fn runs(&self, agent: Agent, instance: &str) -> Runs {
         Runs {
@@ -907,7 +931,7 @@ impl Steps {
             consent: self.consent.clone(),
             agent,
             instance: instance.into(),
-            control: Control::new(),
+            control: self.control(instance),
         }
     }
 
