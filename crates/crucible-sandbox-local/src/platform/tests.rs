@@ -476,6 +476,34 @@ fn a_stream_waited_on_off_a_runtime_is_an_error_rather_than_a_panic() {
     assert!(answer.is_err(), "a read off a runtime answered {answer:?}");
 }
 
+/// A waiting read is woken by bytes written to a pipe whose writer stays open,
+/// so it is the read interest the reactor was given that woke it: a pipe
+/// registered for anything but reading is woken only by its writer closing,
+/// which every other test's writer does.
+#[cfg(unix)]
+#[test]
+fn a_waiting_read_is_woken_by_bytes_while_the_writer_stays_open() {
+    let (mut stream, mut writer) = plain_pipe();
+    let mut buffer = [0; 16];
+
+    let (quiet, heard) = runtime().block_on(async {
+        let mut reading = stream.read(&mut buffer);
+        let quiet = tokio::time::timeout(Duration::from_millis(50), &mut reading)
+            .await
+            .is_err();
+        writer.write_all(b"a kettle").expect("bytes written");
+        let heard = tokio::time::timeout(Duration::from_secs(5), reading).await;
+        (quiet, heard)
+    });
+
+    assert!(quiet, "a quiet pipe answered");
+    let heard = heard
+        .expect("the read was woken by bytes on a pipe whose writer is still open")
+        .expect("a read");
+    assert!(matches!(heard, ReadState::Bytes(8)), "{heard:?}");
+    assert_eq!(buffer.get(..8), Some(b"a kettle".as_slice()));
+}
+
 /// Never reads its standard input and never ends, in cmd itself, so killing
 /// cmd leaves nothing behind.
 #[cfg(windows)]
