@@ -5,7 +5,8 @@
 //! launch read, and what its own writes changed of them since. Nothing
 //! rewrites the user file between two commands, so each is decided from what
 //! the commands before it wrote, as it is for someone typing them one after
-//! another.
+//! another. A sign-out of an agent whose route has no yes is asked about
+//! first, and a no leaves the same files and runs it found.
 
 use std::path::Path;
 
@@ -14,17 +15,17 @@ use crucible_app::access::Rewritten;
 use crucible_app::client::{self, Front};
 use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, LoginOutcome, LogoutOutcome, ModelOutcome, Name,
-    Outcome, Request, ResumeOutcome, Retained, Standing, Text,
+    Outcome, Pending, Request, ResumeOutcome, Retained, Standing, Text,
 };
 use crucible_config::{Access, Settings};
-use crucible_external_harnesses::fake_peer::{self, scripts::claude};
+use crucible_external_harnesses::fake_peer::{self, Reply, scripts::claude};
 use crucible_runner::Turned;
 use crucible_session::Session;
 use crucible_types::{Message, SessionId};
 
 use super::{
-    CONNECTED_FILE, Choosing, INSTALLED, Picking, UNCONNECTED, UNINSTALLED, connected, recorded_on,
-    runtime, started_native, stepped,
+    Asked, CONNECTED_FILE, Choosing, INSTALLED, Outside, Picking, SHARED, UNCONNECTED, UNINSTALLED,
+    accounting, connected, recorded_on, runtime, started_native, stepped, turn,
 };
 use crate::{Failed, Script, Tree};
 
@@ -621,6 +622,74 @@ fn a_key_logged_out_of_on_an_agent_s_route_is_not_resumed_on() -> Result<(), Fai
             told(&resumed)
         );
         assert_eq!(conversation.session().id(), current.as_ref(), "{provider}");
+    }
+    Ok(())
+}
+
+/// Whether `put` holds the question for the route of an installed agent.
+fn asked_route(put: &[Pending]) -> bool {
+    put.iter().any(|pending| {
+        matches!(pending, Pending::Warning { route, .. } if route.as_str() == "agent:claude")
+    })
+}
+
+/// A sign-out of an agent whose route has no yes puts the route to the client
+/// before anything changes: a yes is written down and the sign-out goes on; a
+/// no stops no instance, writes nothing and starts nothing of the agent's.
+#[test]
+fn a_sign_out_of_an_unanswered_agent_asks_its_route_before_anything_changes() -> Result<(), Failed>
+{
+    for (case, answer) in [("declined", None), ("accepted", Some("Accept"))] {
+        let tree = Tree::new(&format!("external-sign-out-asked-{case}"))?;
+        let script = connected([claude::clean(), Reply::new(), claude::signed_out()]);
+        let mut outside = Outside::new(&tree, &script)?;
+        let consent = outside.conversation.consent().ok_or("a consent")?.clone();
+        consent.keeps_in(crate::Desk::new(&tree, &[])?.choosing);
+        consent.withdraw("agent:claude");
+        // The conversation's run is started as it opens, and is counted once
+        // the peer has read its script: after the probe, the status check and
+        // it.
+        for _ in 0..500 {
+            if fake_peer::played(&outside.peer) >= 3 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let before = fake_peer::played(&outside.peer);
+        let asked = Asked {
+            installed: (SHARED, "work"),
+            command: &|instance| Command::SignOut { instance },
+            asking: Asking::every(),
+            after: None,
+        };
+        let mut picking = Picking::of([Some(client::accounts::SIGN_OUT), answer]);
+
+        let (outcome, file) = accounting(&tree, &mut outside, &asked, &mut picking)?;
+        let started = fake_peer::played(&outside.peer) - before;
+
+        assert!(
+            asked_route(&picking.put),
+            "{case}: the client is not asked about the agent's route: {:?}",
+            picking.put
+        );
+        if answer.is_some() {
+            assert!(
+                matches!(
+                    outcome,
+                    Outcome::Logout(LogoutOutcome::AgentSignedOut { .. })
+                ),
+                "{case}: {outcome:?}"
+            );
+            assert!(file.contains("agent:claude"), "{case}: {file}");
+            assert!(file.contains(r#""enabled": false"#), "{case}: {file}");
+            assert_eq!(started, 2, "{case}: a logout and a status step");
+        } else {
+            assert_eq!(outcome, Outcome::Logout(LogoutOutcome::Undecided), "{case}");
+            assert_eq!(file, SHARED, "{case}: an instance was written off");
+            assert_eq!(started, 0, "{case}: the agent's program was started");
+            let (turned, _events) = turn(&mut outside, "again", false)?;
+            assert!(turned.is_ok(), "{case}: the run was stopped: {turned:?}");
+        }
     }
     Ok(())
 }
