@@ -16,15 +16,16 @@ use crucible_external_harnesses::fake_peer::{
 };
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Ran, Reading,
-    Refusal, Request, STOP_GRACE, Shape, Told,
+    Refusal, Request, STOP_GRACE, Shape, Told, Unstopped,
 };
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxCommand, SandboxError, SandboxFeature,
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
-    SandboxLaunch, SandboxNetworkPolicy, SandboxPolicy, SandboxRequest, SandboxResourceLimits,
-    SandboxService, SandboxSession, inspection,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInput,
+    SandboxInspection, SandboxLaunch, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
+    SandboxProcess, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxSession,
+    SandboxUsage, SandboxViolation, inspection,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_types::TurnId;
@@ -322,6 +323,160 @@ async fn a_stop_abandoned_in_its_grace_leaves_a_relaunch_refused() {
         "{relaunched:?}"
     );
     assert_eq!(fake_peer::played(&at.0), 1);
+}
+
+/// A sandbox whose processes run as the local one's do, but whose stop of one
+/// always fails, so that no stop can be confirmed.
+struct Stubborn(Arc<dyn SandboxService>);
+
+impl SandboxService for Stubborn {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.0.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session: Box<dyn SandboxSession> =
+                Box::new(StubbornSession(self.0.prepare(request).await?));
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct StubbornSession(Box<dyn SandboxSession>);
+
+impl SandboxSession for StubbornSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> =
+                Box::new(StubbornLaunch(self.0.stage(command).await?));
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct StubbornLaunch(Box<dyn SandboxLaunch>);
+
+impl SandboxLaunch for StubbornLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let process: Box<dyn SandboxProcess> =
+                Box::new(StubbornProcess(self.0.release().await?));
+            Ok(process)
+        })
+    }
+}
+
+/// Its process, which never reads as ended and whose stop always fails.
+struct StubbornProcess(Box<dyn SandboxProcess>);
+
+impl SandboxProcess for StubbornProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.0.take_async_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        Ok(None)
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async { Err(std::io::Error::other(STUCK)) })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+/// What the stubborn sandbox's failed stop says.
+const STUCK: &str = "the scope did not answer";
+
+/// A stop the sandbox could not confirm fails carrying the error that left it
+/// unconfirmed, so that whoever reads the failure can say why.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
+async fn an_unstopped_run_keeps_the_error_that_left_it_unconfirmed() {
+    let at = Owned::new("unstopped-source");
+    let program = found(&at.0, "plain", &Script::of([Reply::new().hear_out()]));
+    let control = Control::new().expect("a control");
+    let host = Host::launch(
+        Arc::new(Stubborn(local())),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await
+    .expect("started");
+
+    let unstopped = host
+        .stop(Duration::ZERO)
+        .await
+        .expect_err("a stop that cannot be confirmed fails");
+
+    let cause = std::error::Error::source(&unstopped).expect("the error that left it unconfirmed");
+    let cause = cause
+        .downcast_ref::<std::io::Error>()
+        .expect("an I/O error");
+    assert_eq!(cause.to_string(), STUCK);
+}
+
+/// A stop that never finished says so, rather than naming an error it never
+/// had.
+#[test]
+fn an_unstopped_run_whose_stop_never_finished_says_so_and_names_no_error() {
+    let never = Unstopped::Unfinished;
+    let failed = Unstopped::Unreaped(std::io::Error::other(STUCK));
+
+    assert!(std::error::Error::source(&never).is_none());
+    assert_ne!(never.to_string(), failed.to_string());
 }
 
 /// The plain protocol with its account steps spoken: a step begins with its

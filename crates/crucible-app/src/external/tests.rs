@@ -598,7 +598,10 @@ async fn every_close_and_turn_after_an_unconfirmed_stop_fails() {
     let second = backend.close().await;
     let prompted = backend.prompt(turn("again"), &sink).await;
 
-    let said = unstopped(Unstopped).to_string();
+    let said = unstopped(&Unstopped::Unreaped(std::io::Error::other(
+        "the scope did not answer",
+    )))
+    .to_string();
     assert_eq!(first.map_err(|error| error.to_string()), Err(said.clone()));
     assert_eq!(second.map_err(|error| error.to_string()), Err(said.clone()));
     assert_eq!(prompted.err().map(|error| error.to_string()), Some(said));
