@@ -1257,3 +1257,237 @@ async fn a_sandbox_that_never_says_what_it_could_hold_refuses_in_time() {
     );
     assert_eq!(fake_peer::played(&at.0), 0);
 }
+
+/// Where a sandbox that starts its process holds the launch.
+#[derive(Clone, Copy)]
+enum Hold {
+    /// After the spawn, before the process is handed over.
+    Release,
+    /// While the stop of a process handed over without its pipes is waited on.
+    Stop,
+}
+
+/// A sandbox that starts its process and then holds the launch, so that a
+/// launch can be dropped at a known point before the host holds a run.
+struct Holding {
+    inner: Arc<dyn SandboxService>,
+    at: Hold,
+    /// Told once the launch is held.
+    reached: Arc<tokio::sync::Notify>,
+}
+
+impl SandboxService for Holding {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.inner.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session: Box<dyn SandboxSession> = Box::new(HoldingSession {
+                inner: self.inner.prepare(request).await?,
+                at: self.at,
+                reached: Arc::clone(&self.reached),
+            });
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct HoldingSession {
+    inner: Box<dyn SandboxSession>,
+    at: Hold,
+    reached: Arc<tokio::sync::Notify>,
+}
+
+impl SandboxSession for HoldingSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.inner.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.inner.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> = Box::new(HoldingLaunch {
+                inner: self.inner.stage(command).await?,
+                at: self.at,
+                reached: self.reached,
+            });
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct HoldingLaunch {
+    inner: Box<dyn SandboxLaunch>,
+    at: Hold,
+    reached: Arc<tokio::sync::Notify>,
+}
+
+impl SandboxLaunch for HoldingLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.inner.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let spawned = self.inner.release().await?;
+            match self.at {
+                Hold::Release => {
+                    let _spawned = spawned;
+                    self.reached.notify_one();
+                    std::future::pending().await
+                }
+                Hold::Stop => {
+                    let process: Box<dyn SandboxProcess> = Box::new(Pipeless {
+                        inner: spawned,
+                        reached: self.reached,
+                    });
+                    Ok(process)
+                }
+            }
+        })
+    }
+}
+
+/// A process handed over without its input, whose stop does not answer.
+struct Pipeless {
+    inner: Box<dyn SandboxProcess>,
+    reached: Arc<tokio::sync::Notify>,
+}
+
+impl SandboxProcess for Pipeless {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        None
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        None
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.inner.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.inner.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.inner.try_wait()
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async {
+            self.reached.notify_one();
+            std::future::pending().await
+        })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.inner.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.inner.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.inner.violation()
+    }
+}
+
+/// A launch given up on after its process was spawned and before the host held
+/// a run leaves the agent's place free: the next launch is not refused as
+/// though a run were still live.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_dropped_after_its_spawn_leaves_the_next_launch_unrefused() {
+    let at = Owned::new("dropped-launch");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let held = Holding {
+        inner: local(),
+        at: Hold::Release,
+        reached: Arc::clone(&reached),
+    };
+    let mut launching = Box::pin(Host::launch(
+        Arc::new(held),
+        Handle::current(),
+        &control,
+        launch(program.clone(), &at.0, Request::default()),
+    ));
+
+    tokio::select! {
+        started = &mut launching => panic!("the held launch finished: {started:?}"),
+        () = reached.notified() => {}
+    }
+    drop(launching);
+    let next = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await;
+
+    assert!(!matches!(next, Err(Refusal::Busy)), "{next:?}");
+    if let Ok(host) = next {
+        host.stop(STOP_GRACE).await.expect("stopped");
+    }
+}
+
+/// A launch given up on while the stop of a process it could not speak to was
+/// still being waited on has not confirmed that process ended, so the agent's
+/// place stays taken, as a run whose stop was abandoned keeps it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_dropped_while_a_pipeless_process_is_stopped_leaves_a_relaunch_refused() {
+    let at = Owned::new("dropped-stop");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let held = Holding {
+        inner: local(),
+        at: Hold::Stop,
+        reached: Arc::clone(&reached),
+    };
+    let mut launching = Box::pin(Host::launch(
+        Arc::new(held),
+        Handle::current(),
+        &control,
+        launch(program.clone(), &at.0, Request::default()),
+    ));
+
+    tokio::select! {
+        started = &mut launching => panic!("the held launch finished: {started:?}"),
+        () = reached.notified() => {}
+    }
+    drop(launching);
+    let next = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await;
+
+    assert!(matches!(next, Err(Refusal::Unstopped)), "{next:?}");
+}
