@@ -89,7 +89,9 @@ that provider, moves the conversation off the agent onto that provider and
 model at once, in a new session, as a login for it would, and is written down
 as the `provider`, model and rung asked; a rung that model does not serve is
 refused and nothing moves. An agent that chooses its own model has
-`/model` and `/effort` say so instead.
+`/model` alone and `/effort` say so instead; a model named on the `/model` line
+of a provider with a credential in hand moves the conversation off the agent
+onto it, and one of the agent's own provider is refused.
 
 A model taken of a provider whose `access` names an installed agent, while the
 conversation runs on no agent that reaches that provider, moves the
