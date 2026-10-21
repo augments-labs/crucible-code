@@ -186,9 +186,10 @@ fn explicit_placement(request: &Request<'_>) -> Option<ExplicitPlacement> {
         .iter()
         .rev()
         .filter(|point| {
-            // Thinking cannot carry an explicit cache marker. A Fable response
-            // may contain nothing else, so use an earlier legal boundary and
-            // report only the marker the serializer can actually write.
+            // Thinking cannot carry an explicit cache marker. For a model
+            // `super::bound` admits, a message with no text and no calls may
+            // hold only thinking, so use an earlier legal boundary and report
+            // only the marker the serializer can actually write.
             !super::bound(request.model) || !point.message()
                 .and_then(|index| usize::try_from(index).ok())
                 .and_then(|index| request.transcript.messages().get(index))
