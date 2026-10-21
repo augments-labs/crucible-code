@@ -27,7 +27,9 @@
 //! | disconnect, the file not written | disconnect | [`LogoutOutcome::StoppedForThisRunOnly`] |
 //! | remove, a provider reached through it | nothing | [`LogoutOutcome::StillReferenced`] |
 //! | remove | remove | [`LogoutOutcome::IntegrationRemoved`] |
-//! | remove, the file not written | remove | [`ErrorCode::Failed`] |
+//! | remove, the file not written, the conversation on it | remove | [`LogoutOutcome::StoppedForThisRunOnly`] |
+//! | remove, the file not written, the conversation not on it | remove | [`ErrorCode::Failed`] |
+//! | remove, the file not readable | remove | [`ErrorCode::Failed`] |
 //! | remove, an instance the user file does not name | nothing | [`ErrorCode::InvalidArgument`] |
 //! | sign out | sign out | [`LogoutOutcome::AgentSignedOut`] |
 //! | sign out, not shown signed out afterwards | sign out | [`LogoutOutcome::SignOutUnverified`] |
@@ -45,9 +47,12 @@
 //! | connect, no instance named, no agent shipping | nothing | [`ErrorCode::InvalidArgument`] |
 //! | connect, no instance named | an agent not found, then cancel | [`LoginOutcome::Undecided`] |
 //!
-//! A removal whose write fails after its run was stopped is told only that it
-//! failed: the settings are still there, so the next run starts the agent as
-//! before, and nothing is lasting about the stop to report.
+//! A removal whose write fails after the conversation's run on the instance
+//! was stopped is told that the instance is stopped for this run only: the
+//! settings are still in the file, so the next run starts the agent as before,
+//! and a client told only that it failed would not know the conversation can
+//! no longer use it. Where the conversation was not on the instance, nothing
+//! was stopped, and it is told only that the removal failed.
 //!
 //! A sign-out takes every instance sharing the credential scope out of use
 //! before the agent's own program is run: their runs in this conversation are
@@ -121,9 +126,14 @@ pub enum Account {
     /// Nothing was removed, because the provider named here is still reached
     /// through the instance.
     StillReferenced(String),
-    /// The instance's run was stopped, and its settings could not be taken out
-    /// of the file.
+    /// The instance's settings could not be taken out of the file, and nothing
+    /// of the conversation's was stopped: the file could not be read first, or
+    /// the conversation was not on the instance.
     Unremoved(RememberError),
+    /// The instance's run in this conversation was stopped and it takes no new
+    /// work, and its settings could not be taken out of the file, so they are
+    /// still there for the next run.
+    RemovalUnsaved(RememberError),
     /// Every instance sharing the credential scope takes no new work, which
     /// is written down, and the agent's own program read signed out both by
     /// its logout and by a status step after it.
@@ -172,6 +182,10 @@ impl Account {
             }
             Self::ThisRunOnly(problem) => LogoutOutcome::StoppedForThisRunOnly {
                 said: Text::cut(THIS_RUN_ONLY),
+                problem: Problem::failed(problem),
+            },
+            Self::RemovalUnsaved(problem) => LogoutOutcome::StoppedForThisRunOnly {
+                said: Text::cut(REMOVAL_UNSAVED),
                 problem: Problem::failed(problem),
             },
             Self::Removed => LogoutOutcome::IntegrationRemoved {
@@ -242,6 +256,11 @@ pub const NOT_CONFIRMED_STOPPED: &str = "New work disabled; existing work not co
 
 /// What a person is told where the disconnect could not be written down.
 pub const THIS_RUN_ONLY: &str = "Stopped for this run only; disconnect could not be saved.";
+
+/// What a person is told where the instance was stopped and its settings could
+/// not be taken out of the file.
+pub const REMOVAL_UNSAVED: &str =
+    "Stopped for this run only; the settings could not be removed and are still saved.";
 
 /// The choice that goes on with a disconnect, by its name.
 pub const DISCONNECT: &str = "Disconnect from Crucible";
@@ -1067,8 +1086,10 @@ async fn remove(
         return Account::Contended(contended);
     }
     // Whether the run stopped is not what a removal reports: once the settings
-    // are gone, nothing can start it again.
-    let _ = conversation.disconnect(agent.name()).await;
+    // are gone, nothing can start it again. Whether there was a run to stop is:
+    // where the write fails, only a conversation that was on the instance has
+    // been stopped.
+    let on_it = conversation.disconnect(agent.name()).await.is_some();
     for stage in [Stage::Quiesced, Stage::Committing] {
         if let Err(contended) = slot.advance(stage) {
             return Account::Contended(contended);
@@ -1088,6 +1109,7 @@ async fn remove(
                 RememberError::Unusable(ConfigError::StillReferenced { provider, .. }) => {
                     Account::StillReferenced(provider.into())
                 }
+                problem if on_it => Account::RemovalUnsaved(problem),
                 problem => Account::Unremoved(problem),
             }
         }
