@@ -9,9 +9,9 @@ in place of its own models: no key for the provider is looked for, and the
 agent is started by the conversation's first turn rather than when crucible
 starts. An agent reaches only the provider it signs in to: Claude Code reaches
 `anthropic` and Antigravity `google`, and an `access` that names an agent under
-any other provider is refused at start. A disconnected agent, or one that cannot
-run in the conversation's mode, is refused before anything is recorded. The sections below say how each
-agent is run.
+any other provider is refused at start. A disconnected agent, or one whose program
+cannot be run, is refused before anything is recorded. The sections below say
+how each agent is run.
 
 `/login` in a conversation running on an agent offers all three choices. For
 the provider the agent reaches, a subscription or key is stored, the
@@ -73,9 +73,8 @@ Connecting an agent moves the conversation onto it at once, whatever provider
 it was asking, in a new session bound to it with nothing carried over, and the line it
 ends on names the agent and says the conversation starts fresh there; the
 session it left stays listed and can be resumed. In `/resume`, a session an
-agent ran names the agent on its line. Where the agent cannot be started in
-the conversation's mode, the conversation stays where it was and the next
-session starts on the agent. Connecting the agent a conversation is already on
+agent ran names the agent on its line. Where the agent cannot be started,
+the conversation stays where it was and the next session starts on the agent. Connecting the agent a conversation is already on
 leaves it there, and where it was disconnected, its next turn starts the agent
 again.
 

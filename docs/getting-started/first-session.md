@@ -267,8 +267,8 @@ You do not have to know that command to find it. A run holding no key for any
 provider says so under the welcome and names both halves of setting one up:
 
 ```
-Warning: No models available. Use /login or set an API key environment
-variable. Then use /model to select a model.
+Warning: No models available. Use /login to sign in or to use an installed
+coding agent, or set an API key environment variable.
 ```
 
 The prompt is there underneath it, the way it is on every other run. crucible
