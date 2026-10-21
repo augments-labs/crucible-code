@@ -18,6 +18,13 @@ use super::{
     Asked, Effort, Laid, Selected, answered, applied, in_force, keys, offered, taken, titled,
 };
 
+/// The runner `conversation` drives, for what no front end reads off it.
+fn native(conversation: &Conversation) -> &crucible_runner::Runner {
+    conversation
+        .native_runner()
+        .expect("a conversation on this program's own runner")
+}
+
 /// The built-in providers, as one generation the rows are read off.
 fn catalogue() -> Providers {
     crucible_app::providers::providers()
@@ -133,9 +140,9 @@ fn a_row_whose_provider_cannot_be_reached_takes_nothing_and_says_it_once() {
     assert!(!written.contains("No model selected"), "{written}");
     assert!(!written.contains("No models available"), "{written}");
     assert!(
-        conversation.runner().model().is_empty(),
+        conversation.settled().model().is_empty(),
         "{}",
-        conversation.runner().model()
+        conversation.settled().model()
     );
 }
 
@@ -159,8 +166,8 @@ fn taking_a_row_asks_for_the_model_and_then_the_rung_marked_under_it() {
     applied(selected, Some(at), &mut renderer, &mut conversation, &terms)
         .expect("the row to be taken");
 
-    assert_eq!(conversation.runner().model(), "claude-sonnet-5");
-    assert_eq!(conversation.runner().effort(), Some(Effort::Xhigh));
+    assert_eq!(conversation.settled().model(), "claude-sonnet-5");
+    assert_eq!(conversation.settled().effort(), Some(Effort::Xhigh));
 }
 
 #[test]
@@ -185,20 +192,20 @@ fn google_model_switch_requires_an_explicit_compatible_effort() {
     )
     .unwrap();
     assert_eq!(
-        conversation.runner().model(),
+        conversation.settled().model(),
         "old",
         "an incompatible inherited rung must not silently cross providers"
     );
-    assert_eq!(conversation.runner().effort(), Some(Effort::Max));
+    assert_eq!(conversation.settled().effort(), Some(Effort::Max));
     assert_eq!(conversation.serving(), Some("anthropic"));
     assert!(renderer.terminal().written().contains("effort"));
     applied(google, Some(2), &mut renderer, &mut conversation, &terms).unwrap();
-    assert_eq!(conversation.runner().model(), "gemini-3.8-flash");
-    assert_eq!(conversation.runner().effort(), Some(Effort::High));
+    assert_eq!(conversation.settled().model(), "gemini-3.8-flash");
+    assert_eq!(conversation.settled().effort(), Some(Effort::High));
     assert_eq!(conversation.serving(), Some("google"));
     super::super::effort::run("xhigh", &mut renderer, &mut conversation, &terms, false).unwrap();
     assert_eq!(
-        conversation.runner().effort(),
+        conversation.settled().effort(),
         Some(Effort::High),
         "an unsupported typed rung must leave the selected rung unchanged"
     );
@@ -218,8 +225,8 @@ fn taking_a_model_that_serves_no_rung_leaves_the_rung_exactly_as_it_was() {
 
     applied(selected, None, &mut renderer, &mut conversation, &terms).expect("the row to be taken");
 
-    assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
-    assert_eq!(conversation.runner().effort(), Some(Effort::High));
+    assert_eq!(conversation.settled().model(), "claude-haiku-4-5");
+    assert_eq!(conversation.settled().effort(), Some(Effort::High));
 }
 
 #[test]
@@ -243,9 +250,9 @@ fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
     )
     .expect("the model to be taken");
 
-    assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
-    assert_eq!(conversation.runner().maximum_output(), 16_000);
-    assert_eq!(conversation.runner().context_window(), Some(345_678));
+    assert_eq!(conversation.settled().model(), "claude-haiku-4-5");
+    assert_eq!(native(&conversation).maximum_output(), 16_000);
+    assert_eq!(native(&conversation).context_window(), Some(345_678));
 }
 
 /// What the status row under the box says of the model, at a width that holds
@@ -318,6 +325,7 @@ fn every_place_the_model_is_drawn_names_it_the_same_way() {
                     );
                     let current = Asked {
                         provider: Some(served.name),
+                        reaching: None,
                         model: model.name,
                         effort: effort.map(Effort::as_str),
                         pace: super::super::Pace::default(),
@@ -424,7 +432,7 @@ fn a_model_taken_off_the_shelf_is_answered_with_the_rung_taken_with_it() {
             .any(|row| row == "anthropic · claude-sonnet-5 · low"),
         "{said:#?}"
     );
-    assert_eq!(conversation.runner().effort(), Some(Effort::Low));
+    assert_eq!(conversation.settled().effort(), Some(Effort::Low));
 }
 
 #[test]
@@ -457,6 +465,7 @@ fn the_shelf_stood_while_a_turn_runs_names_the_rung_in_force() {
     // and the row under the box says so: the title says the same.
     let current = Asked {
         provider: Some("anthropic"),
+        reaching: None,
         model: "claude-sonnet-5",
         effort: Some("high"),
         pace: super::super::Pace::default(),
@@ -483,6 +492,7 @@ fn a_model_with_no_provider_answering_is_named_on_its_own() {
     // says the model and the rung, and no word stands in for the vendor.
     let current = Asked {
         provider: None,
+        reaching: None,
         model: "claude-sonnet-5",
         effort: Some("high"),
         pace: super::super::Pace::default(),
@@ -530,6 +540,7 @@ fn a_row_says_no_rung_before_it_says_fast_and_fast_for_either_kind_of_form() {
 fn the_shelf_title_says_fast_only_after_an_answer_served_fast() {
     let asked = |served| Asked {
         provider: Some("openai"),
+        reaching: None,
         model: "gpt-6-astra",
         effort: Some("high"),
         pace: super::super::Pace {
@@ -793,5 +804,5 @@ fn a_pick_applied_as_a_turn_ends_folds_its_refusal_at_the_whole_window() {
         ],
         "{rows:#?}"
     );
-    assert_eq!(conversation.runner().model(), "old");
+    assert_eq!(conversation.settled().model(), "old");
 }

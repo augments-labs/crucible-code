@@ -21,10 +21,11 @@ impl Version {
     /// number would refuse or misread: a field added that must be there, one
     /// renamed, moved or taken away, or a word added that a build speaking the
     /// old number would refuse as malformed, as the second revision added the
-    /// `plan_limit` code and the third the `summary_kind` a requested call
-    /// carries. A test holds the number and what the frames are made of
-    /// together, so that one cannot move without the other being looked at.
-    pub const CURRENT: Self = Self(3);
+    /// `plan_limit` code, the third the `summary_kind` a requested call
+    /// carries and the fourth the words a route to an installed agent brings.
+    /// A test holds the number and what the frames are made of together, so
+    /// that one cannot move without the other being looked at.
+    pub const CURRENT: Self = Self(4);
 
     /// The revision numbered `number`, spoken or not.
     #[must_use]
@@ -56,11 +57,20 @@ pub enum Capability {
     Questions,
     /// It wants the provisional progress of a turn as well as its outcome.
     Progress,
+    /// It can be put the confirmations an account operation on an installed
+    /// agent asks for, and choose among them. An operation for a client
+    /// without this puts nothing and changes nothing.
+    Account,
 }
 
 impl Capability {
     /// Every capability this build has heard of.
-    pub const EVERY: [Self; 3] = [Self::Permissions, Self::Questions, Self::Progress];
+    pub const EVERY: [Self; 4] = [
+        Self::Permissions,
+        Self::Questions,
+        Self::Progress,
+        Self::Account,
+    ];
 
     /// The word it crosses as.
     #[must_use]
@@ -69,6 +79,7 @@ impl Capability {
             Self::Permissions => "permissions",
             Self::Questions => "questions",
             Self::Progress => "progress",
+            Self::Account => "account",
         }
     }
 
@@ -77,6 +88,7 @@ impl Capability {
             Self::Permissions => 1,
             Self::Questions => 2,
             Self::Progress => 4,
+            Self::Account => 8,
         }
     }
 }
@@ -99,6 +111,7 @@ impl Capabilities {
             .with(Capability::Permissions)
             .with(Capability::Questions)
             .with(Capability::Progress)
+            .with(Capability::Account)
     }
 
     /// These, and `one`.

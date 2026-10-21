@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.47.1"
+version = "0.48.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -44,7 +44,9 @@ crucible-client-api = { path = "crates/crucible-client-api" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-context = { path = "crates/crucible-context" }
 crucible-credentials = { path = "crates/crucible-credentials" }
+crucible-execution = { path = "crates/crucible-execution" }
 crucible-extension = { path = "crates/crucible-extension" }
+crucible-external-harnesses = { path = "crates/crucible-external-harnesses" }
 crucible-http = { path = "crates/crucible-http" }
 crucible-mcp = { path = "crates/crucible-mcp" }
 crucible-models = { path = "crates/crucible-models" }
@@ -77,7 +79,7 @@ crucible-workspace = { path = "crates/crucible-workspace" }
 # Features are named per crate rather than here, so a crate that needs the
 # executor does not compile the process, network and file integrations that
 # belong to the boundaries owning them; `full` is not used anywhere.
-tokio = { version = "=1.53.1", default-features = false }
+tokio = { version = "=1.53.3", default-features = false }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
@@ -149,7 +151,7 @@ two-face = { version = "=0.5.2", default-features = false, features = [
 # the screen. What it must not be reached for is an invariant: "no row is wider
 # than the terminal" is a property, it is tested as one, and a snapshot would
 # assert the answer instead of the rule. Dev-only, so nothing here ships.
-insta = "=1.48.0"
+insta = "=1.49.0"
 
 # The terminal itself. One thing genuinely needs it: the ioctl that reports the
 # window size, which is an `unsafe` libc call this workspace denies writing by
@@ -193,7 +195,7 @@ hyper-util = { version = "=0.1.21", default-features = false, features = ["clien
 tower-service = "=0.3.3"
 # TLS. One stack, in Rust, over `ring` rather than the default `aws-lc-rs`, a C
 # library this tree does not build; TLS 1.2 is kept beside 1.3 as it was before.
-rustls = { version = "=0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "tls12", "ring"] }
 # The same TLS over an asynchronous socket: the reads, writes, wakeups and
 # close-notify a handshake and its records need, which `rustls` leaves to its
 # caller. Default features off for the same reason as above.
@@ -202,7 +204,7 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 # no system store, bundle or platform verifier is read, so a certificate is
 # trusted the same way on every machine. Named here for `crucible-http`, the one
 # crate that builds a client to verify a recipient.
-webpki-roots = "=1.0.9"
+webpki-roots = "=1.0.10"
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; one decoder serves
@@ -225,7 +227,7 @@ getrandom = "=0.4.3"
 # one process. The version and variant bit layout, the monotonic tie-break
 # counter, and the timestamp recovery are format machinery this crate owns;
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
-uuid = { version = "=1.26.1", features = ["v7"] }
+uuid = { version = "=1.28.0", features = ["v7"] }
 
 # SHA-256, wherever a one-way digest is needed. Browser OAuth uses RFC 7636
 # S256. Prompt-cache scope identity needs a digest of credential-owned material
@@ -234,7 +236,7 @@ uuid = { version = "=1.26.1", features = ["v7"] }
 # session records and release units are held to the content fingerprint it
 # takes. One audited implementation avoids partial handwritten digests, and the
 # crate has no runtime or platform dependencies.
-sha2 = { version = "=0.11.0", default-features = false }
+sha2 = { version = "=0.11.1", default-features = false }
 
 # A release archive is a gzip-compressed tar, and `std` reads neither format. A
 # hand-written reader of either is the unsafe archive parser the update design
@@ -243,8 +245,15 @@ sha2 = { version = "=0.11.0", default-features = false }
 # Only their readers are used: nothing is unpacked by `tar`'s own extraction,
 # which is why its extended-attribute support is left off. `flate2` is already
 # in the tree under image decoding, at this version.
-flate2 = { version = "=1.1.9", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 tar = { version = "=0.4.46", default-features = false }
+
+# An agent's release that crucible downloads for the user is a zip archive,
+# which `std` does not read, and a hand-written reader of one is an archive
+# parser. Only its reader is used, over stored and deflated members, which
+# `flate2` above inflates in pure Rust; nothing is extracted by the crate's own
+# extraction, so each member is checked before a byte of it is written.
+zip = { version = "=9.0.4", default-features = false, features = ["deflate-flate2"] }
 
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
@@ -266,7 +275,7 @@ grep-regex = "=0.1.14"
 # silently wrong answer rather than a crash. Used without `derive`: the vendor
 # shapes differ per provider and are read once at the boundary, while context
 # snapshots are already values rather than mirror structs.
-serde_json = "=1.0.151"
+serde_json = "=1.0.154"
 
 # The traits `serde_json`'s reader drives, without serde's derive. A frame from
 # a client is hostile input, and the only way to stop reading one at the entry,
@@ -319,7 +328,7 @@ seccompiler = { version = "=0.5.0", default-features = false }
 # system, which `std` has no way to reach. The same libc is already compiled for
 # tokio, mio and the other crates that reach the platform through it, so these
 # uses add no build.
-libc = "=0.2.189"
+libc = "=0.2.190"
 
 # Being told something from outside. A closed window or a `kill` arrives as a
 # signal, and `std` has no way to hear one: without a handler the process ends
@@ -332,7 +341,7 @@ libc = "=0.2.189"
 # signal context — and the call that afterwards ends the process the way the
 # signal would have. Unix only. `crossterm` carries its own copy from the older
 # 0.3 line, so this is a second, small one.
-signal-hook = { version = "=0.4.4", default-features = false }
+signal-hook = { version = "=0.4.5", default-features = false }
 
 # Windows has no file mode, so the 0600 a session log is held at has to be
 # written as a DACL instead: one entry, for the account crucible is running as,
@@ -382,7 +391,7 @@ windows-sys = { version = "=0.61.2", features = [
 # its times in UTC, and says so. The provider crate takes it for the other
 # side of that hour: reading the RFC 3339 instant a vendor writes it as, which
 # `std` has no parser for.
-jiff = { version = "=0.2.37", default-features = false, features = [
+jiff = { version = "=0.2.38", default-features = false, features = [
     "std",
     "tz-system",
     "tzdb-zoneinfo",
@@ -588,6 +597,15 @@ crucible-session = { workspace = true, features = ["proof"] }
 # The macro a test answers a fake service's future with, for the tests that
 # drive one by hand.
 crucible-runtime = { workspace = true, features = ["proof"] }
+# The application, with the accessor a test reads the runner behind a
+# conversation through for what no front end reads off it, and that chooses
+# the agents the binary can start from an environment variable. Dev-only for
+# the same reason as the two above.
+crucible-app = { workspace = true, features = ["proof"] }
+# The scripted stand-in for an installed agent, which the whole-screen captures
+# put on the program's `PATH` under an agent's name. Dev-only for the same
+# reason as the application above.
+crucible-external-harnesses = { workspace = true, features = ["proof"] }
 # The confinement the command line runs commands under, keeping its sandbox
 # state in a directory of this checkout's while the integration tests run it, so
 # another checkout's tests never lock, recover or change it. Named here as well

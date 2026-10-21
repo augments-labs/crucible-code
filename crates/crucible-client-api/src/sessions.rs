@@ -7,11 +7,14 @@
 //! and the list is refused over [`ITEMS`] sessions rather than cut. The host
 //! lists no more than that and counts the rest in `omitted`.
 //!
-//! A [`Session`] says only what the host's index and the first line of its
-//! log say: its id, which names when it started, how many messages it has,
-//! the branch it was started on and the title it was given. Nothing anybody
-//! wrote in a session is a field here. The branch and the title are a
-//! [`Text`], so neither runs past the ceiling unmarked.
+//! A [`Session`] says only what the host's index and the opening of its log
+//! say: its id, which names when it started, how many messages it has, the
+//! branch it was started on, the title it was given, and what ran it — a
+//! provider's model, said as the backend `native`, or an installed agent,
+//! said as its driver with the configured instance as its route. Nothing
+//! anybody wrote in a session is a field here. The branch and the title are a
+//! [`Text`], so neither runs past the ceiling unmarked; the backend and the
+//! route are a [`Name`].
 //!
 //! A list is `incomplete` wherever it may not be every session there is:
 //! sessions were left out past the window, logs did not read, the host's
@@ -27,12 +30,12 @@ use std::time::UNIX_EPOCH;
 
 use crucible_types::SessionId;
 
-use crate::bounds::{ITEMS, Text};
+use crate::bounds::{ITEMS, Name, Text};
 use crate::error::{ErrorCode, Refusal};
 use crate::wire::{Fields, Writing, frame, parsed, text, written};
 
 /// The number every document here says it is written in.
-pub const FORMAT_VERSION: u64 = 1;
+pub const FORMAT_VERSION: u64 = 2;
 
 /// The word every document here is named by.
 pub const KIND: &str = "sessions";
@@ -49,9 +52,24 @@ pub struct Session {
     pub messages: u64,
     /// The title it was given, where it was given one.
     pub title: Option<Text>,
+    /// What ran it: [`NATIVE`] for a provider's model, and an installed
+    /// agent's driver otherwise.
+    pub backend: Name,
+    /// The installed agent it was run by, as its configuration names it,
+    /// where one ran it.
+    pub route: Option<Name>,
 }
 
+/// The backend a session a provider's model ran is listed under.
+pub const NATIVE: &str = "native";
+
 impl Session {
+    /// Whether its backend and route agree: a provider's model runs a session
+    /// on no route, and an installed agent always on one.
+    fn consistent(&self) -> bool {
+        (self.backend.as_str() == NATIVE) == self.route.is_none()
+    }
+
     /// When the session started, in milliseconds since the epoch: what its id
     /// names, and the epoch for an id that names nothing this machine holds.
     fn started(&self) -> u64 {
@@ -76,8 +94,9 @@ pub struct Listing {
     pub sessions: Vec<Session>,
     /// How many more there were past those.
     pub omitted: u64,
-    /// How many logs the index names whose first line did not read, said
-    /// nothing of.
+    /// How many logs the index names that could not be listed, said nothing
+    /// of: a first line or a route that did not read, or a route naming the
+    /// backend of a session no agent ran.
     pub unreadable: u64,
     /// Whether the host's index holds all the sessions it keeps, so older ones
     /// may have fallen out of it.
@@ -153,7 +172,7 @@ impl Report {
     ///
     /// [`ErrorCode::TooLarge`] for more than [`ITEMS`] sessions or a document
     /// over the frame ceiling, and [`ErrorCode::Malformed`] for a session said
-    /// twice.
+    /// twice or one whose backend and route disagree.
     pub fn encode(&self) -> Result<Vec<u8>, Refusal> {
         let written = match self {
             Self::Failed(problem) => Writing::new().with("problem", written(problem)),
@@ -161,7 +180,7 @@ impl Report {
                 if listing.sessions.len() > ITEMS {
                     return Err(ErrorCode::TooLarge.into());
                 }
-                if !listing.distinct() {
+                if !listing.distinct() || !listing.sessions.iter().all(Session::consistent) {
                     return Err(ErrorCode::Malformed.into());
                 }
                 let sessions: Vec<serde_json::Value> = listing
@@ -174,6 +193,8 @@ impl Report {
                             .with("messages", session.messages)
                             .maybe("branch", session.branch.as_ref().map(written))
                             .maybe("title", session.title.as_ref().map(written))
+                            .with("backend", session.backend.as_str())
+                            .maybe("route", session.route.as_ref().map(Name::as_str))
                             .finish()
                     })
                     .collect();
@@ -246,7 +267,8 @@ impl Report {
 }
 
 /// The session `value` is, refused where its start is not the one its id
-/// names.
+/// names, or where what ran it and its route disagree: a provider's model has
+/// no route, and an installed agent always has one.
 fn session(value: serde_json::Value) -> Result<Session, Refusal> {
     let mut one = Fields::of(value)?;
     let id = SessionId::from_str(&one.string("id")?).map_err(|_| ErrorCode::Malformed)?;
@@ -256,9 +278,14 @@ fn session(value: serde_json::Value) -> Result<Session, Refusal> {
         branch: one.maybe("branch").map(text).transpose()?,
         messages: one.number("messages")?,
         title: one.maybe("title").map(text).transpose()?,
+        backend: one.name("backend")?,
+        route: one
+            .maybe("route")
+            .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
+            .transpose()?,
     };
     one.done()?;
-    if session.started() != started {
+    if session.started() != started || !session.consistent() {
         return Err(ErrorCode::Malformed.into());
     }
     Ok(session)

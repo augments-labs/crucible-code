@@ -7,11 +7,11 @@
 
 use std::sync::Arc;
 
-use crucible_runner::{Agent, Breakdown, Model, Tools};
+use crucible_runner::{Agent, Breakdown, Model, Runner, Tools};
 use crucible_runtime::Aside;
 use crucible_session::Session;
 use crucible_tools::{Mode, Permission, Rules};
-use crucible_tui::{Aimed, Key, Recording};
+use crucible_tui::{Aimed, Key, Recording, Remaining};
 use crucible_types::{AgentId, ToolArgs};
 
 use super::drawing::{over, writing};
@@ -69,7 +69,7 @@ fn engine(mode: Mode) -> Runner {
 
 /// The row a session in this mode is drawn with.
 fn settled(mode: Mode) -> Says {
-    saying(&engine(mode))
+    saying(crucible_app::Settled::from(&engine(mode)))
 }
 
 /// A walk over nothing, with nowhere to write what is said back to.
@@ -103,7 +103,7 @@ fn the_top_border_says_where_the_arrow_reached_and_says_nothing_once_the_line_is
         &editor,
         &says,
         Bordering {
-            left: None,
+            left: Remaining::default(),
             history: recalling.place(),
         },
         Style::plain(),
@@ -125,7 +125,7 @@ fn the_top_border_says_where_the_arrow_reached_and_says_nothing_once_the_line_is
         &editor,
         &says,
         Bordering {
-            left: None,
+            left: Remaining::default(),
             history: recalling.place(),
         },
         Style::plain(),
@@ -169,7 +169,7 @@ fn a_line_the_arrow_put_in_the_box_leaves_the_border_when_it_is_sent() {
         &editor,
         &says,
         Bordering {
-            left: None,
+            left: Remaining::default(),
             history: recalling.place(),
         },
         Style::plain(),
@@ -283,7 +283,7 @@ fn a_run_with_nothing_to_type_into_says_so_rather_than_reading_keys() {
     assert_eq!(renderer.terminal().written(), "");
 
     // And nothing was stepped on the way out of a call that read no key.
-    assert_eq!(conversation.runner().mode(), Mode::Ask);
+    assert_eq!(conversation.settled().mode(), Mode::Ask);
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn the_box_is_drawn_around_the_line_with_the_mode_under_it() {
 fn the_window_reading_is_in_the_box_once_and_takes_no_row_of_its_own() {
     let mut renderer = roomy();
     let mut says = settled(Mode::Ask);
-    says.left = Some(73);
+    says.left = Remaining::new(Some(73));
 
     draw(
         &mut renderer,
@@ -567,10 +567,16 @@ fn the_row_is_read_off_the_engine_rather_than_from_a_copy_of_the_mode() {
     // meant to say what is in force would be the one thing that could be wrong
     // about it.
     let mut runner = engine(Mode::Ask);
-    assert_eq!(saying(&runner).mode, "ask mode on");
+    assert_eq!(
+        saying(crucible_app::Settled::from(&runner)).mode,
+        "ask mode on"
+    );
 
     runner.cycle();
-    assert_eq!(saying(&runner).mode, "allow edits on");
+    assert_eq!(
+        saying(crucible_app::Settled::from(&runner)).mode,
+        "allow edits on"
+    );
 }
 
 #[test]
@@ -582,8 +588,14 @@ fn stepping_into_full_access_takes_effect_on_the_press() {
     runner.cycle();
 
     assert_eq!(runner.mode(), Mode::FullAccess);
-    assert_eq!(saying(&runner).mode, "full access mode on");
-    assert_eq!(saying(&runner).tone, tone(Mode::FullAccess));
+    assert_eq!(
+        saying(crucible_app::Settled::from(&runner)).mode,
+        "full access mode on"
+    );
+    assert_eq!(
+        saying(crucible_app::Settled::from(&runner)).tone,
+        tone(Mode::FullAccess)
+    );
 }
 
 #[test]
@@ -608,7 +620,7 @@ fn the_row_under_the_box_is_drawn_from_characters_every_terminal_has() {
         assert!(says.mode.is_ascii(), "{:?}", says.mode);
         assert!(says.keys.is_ascii(), "{:?}", says.keys);
 
-        let running = under(&engine(mode));
+        let running = under(crucible_app::Settled::from(&engine(mode)));
         assert!(running.keys.is_ascii(), "{:?}", running.keys);
     }
 }
@@ -1209,7 +1221,7 @@ fn the_row_under_a_running_turn_keeps_the_mode_cycle_hint() {
     // already named on the working row above. The status row therefore stays
     // the same across a turn rather than replacing the mode's control.
     for mode in [Mode::Ask, Mode::AllowEdits, Mode::FullAccess] {
-        let says = under(&engine(mode));
+        let says = under(crucible_app::Settled::from(&engine(mode)));
         assert_eq!(says.mode, mode.sentence(), "{mode:?}");
         assert_eq!(says.keys, CYCLE, "{mode:?}");
     }
@@ -1224,8 +1236,8 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     turning.saw(&crucible_runner::Event::Carried { breakdown: carried });
     let planning = nothing();
     let mut says = settled(Mode::Ask);
-    says.left = Some(1);
-    assert_ne!(says.left, carried.left());
+    says.left = Remaining::new(Some(1));
+    assert_ne!(says.left, Remaining::new(carried.left()));
     let shown = format!("{}% window left", carried.left().unwrap_or_default());
 
     let footed = working(
@@ -1265,7 +1277,7 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
     let planning = nothing();
     let started = crate::cli::converse::tests::measured();
     let mut says = settled(Mode::Ask);
-    says.left = started.left();
+    says.left = Remaining::new(started.left());
     let turning = Turning::started(started);
     let shown = format!("{}% window left", started.left().unwrap_or_default());
 
@@ -2341,4 +2353,15 @@ fn an_open_list_with_no_room_keeps_a_queue_from_standing_taller() {
 
     let open = queued_under_a_turn(20, &listing("/"));
     assert!(open.over.is_empty(), "{:?}", open.over);
+}
+
+#[test]
+fn the_route_s_row_names_the_model_an_agent_was_started_on() {
+    // An agent left to choose its own model names none, and the row says
+    // only which entry runs the turns, as before.
+    assert_eq!(
+        super::execution("work", Some("opus")),
+        "execution: work, model: opus"
+    );
+    assert_eq!(super::execution("work", None), "execution: work");
 }

@@ -75,7 +75,7 @@ use std::time::{Duration, Instant};
 
 use crucible_runner::{Breakdown, Event, Totals};
 use crucible_tools::Looking;
-use crucible_tui::{Row, Slot, Working};
+use crucible_tui::{Remaining, Row, Slot, Working};
 use crucible_types::{Compacting, PlanWindows, ToolId};
 
 use super::super::draw;
@@ -491,7 +491,7 @@ struct Drawn {
     /// value does not carry reaches the screen only when something else on the
     /// candidate happens to change with it — a stale number, arriving late, in
     /// the prompt somebody is reading to find out what is going on.
-    left: Option<u8>,
+    left: Remaining,
     /// The clock, and the face both marks are wearing, coarsened to the one
     /// number every unit of them divides.
     beat: u64,
@@ -644,6 +644,42 @@ impl Turning {
                     Vec::new()
                 }
             }
+            // Always held in the footing, whatever it is: nothing says how
+            // many of the agent's calls are out at once, so a row written up
+            // front could take another call's result under it. One the agent
+            // only looked around with is owed to the run being counted, as a
+            // native one is.
+            Event::AgentCalled {
+                call,
+                tool,
+                summary,
+                looking,
+            } => {
+                self.calling.push_back(Calling {
+                    id: call.clone(),
+                    asked: Instant::now(),
+                    said: draw::called_as(tool, summary),
+                    printing: Printing::default(),
+                    backgroundable: false,
+                    looking: *looking,
+                    name: draw::pascal(tool),
+                });
+                Vec::new()
+            }
+            // A failed lookup has its own row, as a native one does, and so
+            // does one the agent says changed a file, so the change is drawn.
+            Event::AgentAnswered { call, output, diff } => self
+                .calling
+                .iter()
+                .position(|one| one.id == *call)
+                .and_then(|at| self.calling.remove(at))
+                .map_or_else(Vec::new, |calling| {
+                    let mut returned = settled(calling);
+                    if output.is_failed() || diff.is_some() {
+                        returned.looking = None;
+                    }
+                    vec![returned]
+                }),
             Event::ToolFinished { call, output, .. } => self
                 .calling
                 .iter()
@@ -674,6 +710,7 @@ impl Turning {
             | Event::Carried { .. }
             | Event::Compacting { .. }
             | Event::Compacted { .. }
+            | Event::AgentCompacted { .. }
             | Event::Wrote { .. }
             | Event::Steered { .. }
             | Event::Aged { .. }
@@ -681,6 +718,7 @@ impl Turning {
             | Event::FastRefused { .. }
             | Event::Used { .. }
             | Event::PlanLimits { .. }
+            | Event::Reported { .. }
             | Event::Retrying => Vec::new(),
         };
 
@@ -718,11 +756,19 @@ impl Turning {
 
         self.doing = match event {
             Event::Delta { .. } => Doing::Writing,
-            Event::ToolRequested { .. } | Event::Wrote { .. } => Doing::Running,
+            Event::ToolRequested { .. } | Event::AgentCalled { .. } | Event::Wrote { .. } => {
+                Doing::Running
+            }
             // Room having been made puts the turn back where a finished tool
             // does: waiting on the model, with the next request not yet asked.
-            Event::ToolFinished { .. } if !self.calling.is_empty() => Doing::Running,
-            Event::ToolFinished { .. } | Event::Compacted { .. } => Doing::Thinking,
+            Event::ToolFinished { .. } | Event::AgentAnswered { .. }
+                if !self.calling.is_empty() =>
+            {
+                Doing::Running
+            }
+            Event::ToolFinished { .. } | Event::AgentAnswered { .. } | Event::Compacted { .. } => {
+                Doing::Thinking
+            }
             // The same request going out again, this time at standard speed.
             Event::Retrying | Event::FastRefused { .. } => Doing::Retrying,
             Event::Compacting { .. } => Doing::Compacting,
@@ -731,11 +777,13 @@ impl Turning {
             | Event::Sandbox { .. }
             | Event::Spent { .. }
             | Event::Carried { .. }
+            | Event::AgentCompacted { .. }
             | Event::Steered { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::Used { .. }
             | Event::PlanLimits { .. }
+            | Event::Reported { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => self.doing,
         };
@@ -771,7 +819,7 @@ impl Turning {
     pub(super) fn moved(&mut self) -> bool {
         let now = Drawn {
             doing: self.shown_doing(),
-            left: self.breakdown.left(),
+            left: draw::remaining(&self.breakdown),
             spent: self.spent,
             beat: Working::beat(self.running()),
 
@@ -865,8 +913,8 @@ impl Turning {
 
     /// The usable room left before compaction, read off [`Turning::breakdown`]
     /// so the prompt line and `/context` cannot disagree.
-    pub(super) const fn left(&self) -> Option<u8> {
-        self.breakdown.left()
+    pub(super) fn left(&self) -> Remaining {
+        draw::remaining(&self.breakdown)
     }
 
     /// The last request divided by what holds the window: the one the turn

@@ -5,6 +5,11 @@ use std::io::{self, Read, Write};
 #[cfg(target_os = "windows")]
 mod windows;
 
+/// The names a writable root's metadata is protected under, as
+/// `crucible_sandbox::PROTECTED_METADATA` lists them for a crate this one does
+/// not depend on; the local sandbox's tests hold the two lists equal.
+pub const PROTECTED_METADATA: [&[u8]; 4] = [b".git", b".agents", b".codex", b".crucible"];
+
 /// Internal macOS launcher mode. It closes inherited descriptors and applies
 /// hard limits before entering the system Seatbelt executable.
 pub const MACOS_LAUNCH_MODE: &str = "--macos-seatbelt-launch";

@@ -52,7 +52,25 @@ pub enum Progress {
         /// What kind of thing those words name.
         summary_kind: SummaryKind,
     },
-    /// A tool call ended.
+    /// An installed agent reported using one of its own tools.
+    ///
+    /// Not a request: the agent runs its tools itself, so nothing here was
+    /// asked for, allowed or run by this program. A
+    /// [`ToolFinished`](Self::ToolFinished) under the same call follows it
+    /// where the agent says the call ended. The texts are the agent's.
+    ToolActivity {
+        /// The agent's identifier for the call, or nothing for a file it
+        /// said it changed outside any call.
+        call: Text,
+        /// Which tool, as the agent named it.
+        tool: Text,
+        /// What it did with it, or the file it changed.
+        summary: Text,
+        /// What kind of thing those words name.
+        summary_kind: SummaryKind,
+    },
+    /// A tool call ended: one the model asked for, or one an installed agent
+    /// reported using.
     ToolFinished {
         /// The provider's identifier for the call.
         call: Text,
@@ -91,7 +109,9 @@ pub enum Progress {
     /// reported some, as `/usage` reads them while it runs. Only a vendor that
     /// reports them sends this.
     Limits(Limits),
-    /// A turn reported that it finished.
+    /// A turn reported that it finished. A stop under an installed agent's
+    /// work is told here as cancelled; whether that work happened is the
+    /// turn's outcome to say.
     Finished {
         /// Its ordinal in the session.
         turn: u64,
@@ -144,10 +164,11 @@ impl SummaryKind {
 
 impl Progress {
     /// Every kind of progress, by the word it crosses as.
-    pub const KINDS: [&'static str; 13] = [
+    pub const KINDS: [&'static str; 14] = [
         "started",
         "delta",
         "tool_requested",
+        "tool_activity",
         "tool_finished",
         "retrying",
         "compacting",
@@ -167,6 +188,7 @@ impl Progress {
             Self::Started { .. } => "started",
             Self::Delta { .. } => "delta",
             Self::ToolRequested { .. } => "tool_requested",
+            Self::ToolActivity { .. } => "tool_activity",
             Self::ToolFinished { .. } => "tool_finished",
             Self::Retrying => "retrying",
             Self::Compacting { .. } => "compacting",
@@ -189,7 +211,15 @@ impl Progress {
         match self {
             Self::Started { turn } => object.with("turn", *turn),
             Self::Delta { text } => object.text("text", text),
+            // The same fields: what tells them apart is the kind written
+            // above, which says whether this program was asked to run it.
             Self::ToolRequested {
+                call,
+                tool,
+                summary,
+                summary_kind,
+            }
+            | Self::ToolActivity {
                 call,
                 tool,
                 summary,
@@ -246,6 +276,12 @@ impl Progress {
                 text: fields.text("text")?,
             },
             "tool_requested" => Self::ToolRequested {
+                call: fields.text("call")?,
+                tool: fields.text("tool")?,
+                summary: fields.text("summary")?,
+                summary_kind: SummaryKind::named(&fields.string("summary_kind")?)?,
+            },
+            "tool_activity" => Self::ToolActivity {
                 call: fields.text("call")?,
                 tool: fields.text("tool")?,
                 summary: fields.text("summary")?,

@@ -20,6 +20,7 @@ use crucible_types::{
     CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
 };
 
+use crate::providers::CredentialSource;
 use crate::switching::Retained;
 use crate::{Conversation, providers};
 
@@ -34,26 +35,91 @@ use crate::{Conversation, providers};
 /// directly and does not ask for one.
 #[must_use]
 pub fn snapshot(conversation: &Conversation) -> Snapshot {
-    let runner = conversation.runner();
-    let transcript = runner.transcript();
+    let settled = conversation.settled();
+    let transcript = settled.transcript();
 
     Snapshot {
         session: conversation.session().id().cloned(),
         provider: conversation.serving().and_then(|name| Name::new(name).ok()),
-        model: Model::new(runner.model()),
-        effort: runner.effort().map(rung),
-        speed: pace(runner.speed()),
-        served: match runner.served() {
+        execution: execution(conversation),
+        billing: billing(conversation),
+        agents: if conversation.agents().shipping().next().is_some() {
+            api::Agents::Available
+        } else {
+            api::Agents::None
+        },
+        model: model(conversation),
+        effort: settled.effort().map(rung),
+        speed: pace(settled.speed()),
+        served: match settled.served() {
             Served::Fast => Some(api::Pace::Fast),
             Served::Standard => Some(api::Pace::Standard),
             Served::Unsaid => None,
         },
-        mode: mode_out(runner.mode()),
+        mode: mode_out(settled.mode()),
         messages: count(transcript.len()),
         turns: count(transcript.turns()),
-        carrying: runner.carrying(),
-        left: runner.left().and_then(Percent::new),
+        carrying: settled.carrying(),
+        left: settled.left().and_then(Percent::new),
         pending: None,
+    }
+}
+
+/// The one provider whose models the installed agent `conversation` is on
+/// can be started on, where it is on one that is started on a model: the
+/// provider whose models `/model` offers there unnarrowed by any credential
+/// of this program, since the agent's own sign-in serves them.
+#[must_use]
+pub fn reaching(conversation: &Conversation) -> Option<&'static str> {
+    conversation
+        .agent_driver()
+        .filter(|driver| driver.takes_model())
+        .map(crucible_config::Driver::provider)
+}
+
+/// Who runs `conversation`'s turns: this program, or an installed agent.
+///
+/// The field of [`snapshot`] the terminal reads, with [`billing`], for what
+/// `/usage` heads its figures with and what the status row says on an agent's
+/// route; it is read alone so that a turn starting builds nothing else.
+#[must_use]
+pub fn execution(conversation: &Conversation) -> api::Execution {
+    match conversation.instance() {
+        // Bound alike, so an instance a route was bound to is always one;
+        // `an_instance_a_route_binds_is_a_name_a_client_reads` holds them.
+        Some(instance) => {
+            Name::new(instance).map_or(api::Execution::Native, api::Execution::Instance)
+        }
+        None => api::Execution::Native,
+    }
+}
+
+/// The model `conversation`'s turns are answered by, where one is named: the
+/// one the installed agent it is on is started on, else the one in force
+/// here.
+///
+/// The field of [`snapshot`] the terminal's status row reads beside
+/// [`execution`] on an installed agent's route, where an agent left to choose
+/// its own model names none.
+#[must_use]
+pub fn model(conversation: &Conversation) -> Option<Model> {
+    Model::new(conversation.settled().model())
+}
+
+/// Who is paid for what `conversation`'s turns use, as far as this program
+/// can tell.
+///
+/// The field of [`snapshot`] the terminal's status row reads beside
+/// [`execution`] on an installed agent's route.
+#[must_use]
+pub fn billing(conversation: &Conversation) -> api::Billing {
+    match (conversation.instance(), conversation.credential()) {
+        (Some(_), _) => api::Billing::External,
+        (None, Some(CredentialSource::Subscription)) => api::Billing::Subscription,
+        (None, Some(CredentialSource::StoredKey | CredentialSource::Environment(_))) => {
+            api::Billing::Key
+        }
+        (None, None) => api::Billing::Unknown,
     }
 }
 
@@ -87,6 +153,31 @@ pub fn progress(
             summary: Text::cut(summary.as_str()),
             summary_kind: summary_kind(summary.argument()),
         },
+        // An installed agent's use of its own tools, told after the fact and
+        // never as a call anybody here is asked about.
+        Event::AgentCalled {
+            call,
+            tool,
+            summary,
+            ..
+        } => Progress::ToolActivity {
+            call: Text::cut(call.as_str()),
+            tool: Text::cut(tool),
+            summary: Text::cut(summary.as_str()),
+            summary_kind: summary_kind(summary.argument()),
+        },
+        // Its diff, like a native call's, is the terminal's alone.
+        Event::AgentAnswered { call, output, .. } => Progress::ToolFinished {
+            call: Text::cut(call.as_str()),
+            failed: output.is_failed(),
+        },
+        // A file it said it changed, under no call.
+        Event::Reported { tool, summary } => Progress::ToolActivity {
+            call: Text::cut(""),
+            tool: Text::cut(tool),
+            summary: Text::cut(summary),
+            summary_kind: SummaryKind::Path,
+        },
         Event::ToolFinished { call, output, .. } => Progress::ToolFinished {
             call: Text::cut(call.as_str()),
             failed: output.is_failed(),
@@ -100,6 +191,9 @@ pub fn progress(
         Event::Compacted { compacted } => Progress::Compacted {
             replaced: count(compacted.replaced),
         },
+        // An installed agent's own recap stands in place of messages it holds
+        // and this side never did, so none of this side's are replaced.
+        Event::AgentCompacted { .. } => Progress::Compacted { replaced: 0 },
         Event::Spent { spend } => Progress::Spent {
             tokens: spend.tokens(),
         },
@@ -181,7 +275,7 @@ fn used_up(
 }
 
 /// How the window of the next request to `model` is spent, as a client reads
-/// it.
+/// it: the parts Crucible counts, and none an installed agent holds.
 ///
 /// Every category the runner counts is placed by name, so one it adds is a
 /// category this match, and so the contract, has to be told about. The
@@ -206,7 +300,8 @@ pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
 /// The wall time is read as this is called. Called between turns by
 /// [`perform`](super::perform), and by the terminal mid-turn with the figures
 /// that turn last reported; a client with no terminal is streamed the same
-/// figures by [`progress`].
+/// figures by [`progress`]. Its context carries none of what an installed
+/// agent holds: the caller that knows the route sets that.
 #[must_use]
 pub fn usage(
     model: &str,
@@ -367,6 +462,7 @@ fn counted(breakdown: &Breakdown) -> api::Context {
         messages: 0,
         reserve: 0,
         free: 0,
+        external: breakdown.held(),
     };
     for category in Category::EVERY {
         let tokens = breakdown.tokens(category);

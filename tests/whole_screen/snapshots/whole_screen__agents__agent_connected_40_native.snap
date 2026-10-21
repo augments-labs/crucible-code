@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 31,4 scrollback 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /login                                |
+|⎿ Connected. This conversation now runs |
+|  on the agent claude and starts fresh, |
+|  in a new session; the earlier one can |
+|  be resumed.                           |
+|  execution: claude, model:             |
+|  claude-opus-5-5 · billing: external   |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|               0/1.0M · 100% window left|
+|╭──────────────────────────────────────╮|
+|│ ›                                    │|
+|╰──────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |

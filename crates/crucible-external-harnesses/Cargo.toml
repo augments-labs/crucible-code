@@ -1,0 +1,79 @@
+[package]
+name = "crucible-external-harnesses"
+description = "Another vendor's coding agent, run as a supervised process behind the execution contract."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The scripted peer and the suite every dialect runs against it. Off by default,
+# so a shipped build compiles neither; another package's tests turn it on to
+# reach the peer and the script sets.
+[features]
+proof = []
+
+# The scripted peer the tests launch in place of a vendor's agent. A binary of
+# its own, so that what it writes to standard output is protocol and nothing
+# else, and built only for a run that asked for the proof.
+[[bin]]
+name = "crucible-fake-peer"
+path = "src/bin/fake-peer.rs"
+required-features = ["proof"]
+
+# This crate starts somebody else's program and speaks to it, and names neither
+# the configuration that chose it nor the session it records into: those are
+# written into a launch as plain values by the composition root.
+[dependencies]
+# The contract a supervised agent answers as: its events, its pending table and
+# the lifecycle an account operation moves through.
+crucible-execution.workspace = true
+# The owner-only directory and files the lifecycle journal is kept in.
+crucible-privacy.workspace = true
+# `BoxFuture` and `Cancel`, the shapes a wait on a process is held in.
+crucible-runtime.workspace = true
+# The confinement a launch is prepared, inspected and started under.
+crucible-sandbox.workspace = true
+# Bounded frames over the process's pipes, its drained standard error and the
+# bounded finish that reaps it.
+crucible-transport.workspace = true
+# The identities a sandbox request is made under.
+crucible-types.workspace = true
+# The journal's records and the fake peer's script are JSON, and a hand-written
+# reader for a file somebody could edit is a parser this crate would then own.
+serde_json.workspace = true
+# The executable's identity: a one-way digest of what was selected, compared
+# with what is about to be started.
+sha2.workspace = true
+# Every refusal here is an enum this crate owns, and the derive writes the
+# `Display` and `source` impls rather than shipping a runtime.
+thiserror.workspace = true
+# The runtime a process's pipes are read on, the channel a decision reaches a
+# running turn through, and the timers that bound every wait. Named here only to
+# be handed down and awaited on: nothing in this crate builds a runtime or
+# spawns a thread.
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+# The archive a pinned agent release comes in is a zip, read member by member
+# so that each is checked against the pin before it is written, and its
+# deflated members are inflated by `flate2`'s pure-Rust backend.
+zip.workspace = true
+flate2.workspace = true
+
+# `answered!`, the sandbox the tests launch the peer under, and a runtime with
+# workers for them. The sandbox keeps its state per checkout under test, so two
+# checkouts testing at once keep apart. `test-util` is the paused clock a
+# bound on a wait that never ends is asserted under.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
+crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
+
+[lints]
+workspace = true
+
+# `flate2` is named for its pure-Rust backend, which `zip` inflates through and
+# has no feature of its own to choose, so no code here calls it.
+[package.metadata.cargo-machete]
+ignored = ["flate2"]

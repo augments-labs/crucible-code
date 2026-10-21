@@ -51,6 +51,8 @@ impl Put for Nobody {
     }
 }
 
+impl crate::client::Asker for Nobody {}
+
 /// The built-in providers, as one generation to resolve a name against.
 fn catalogue() -> Providers {
     crate::providers::providers()
@@ -108,6 +110,37 @@ fn wiring_keeps_the_services_http_reference() {
     assert!(std::ptr::eq(web.http, &raw const http));
 }
 
+/// What [`credential`] answers for `audience`, by the route the resolver
+/// settles from `auth`: the two are only ever called together.
+fn routed(
+    audience: ApiAudience,
+    sending: Option<Endpoint>,
+    auth: ProviderAuth<'_>,
+) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
+    let route = access::settle(serving(audience.provider), auth);
+    credential(audience, route, sending, auth)
+}
+
+/// The key openai's requests are signed with on a machine holding `keys`,
+/// with `from` its environment.
+fn keyed_with(
+    keys: &StoredCredentials,
+    from: &dyn Fn(&str) -> Option<String>,
+) -> Result<Box<dyn Credential>, AppError> {
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let auth = ProviderAuth {
+        settings: &Settings::default(),
+        from,
+        stored: keys,
+        subscriptions: &subscriptions,
+    };
+    key(
+        access::settle(serving("openai"), auth),
+        Header::bearer(),
+        auth,
+    )
+}
+
 /// Polls `authorizing` once and panics if it was not ready: every credential
 /// built by this crate's own wiring answers at its first poll.
 fn authorized<T>(authorizing: impl Future<Output = T>) -> T {
@@ -146,13 +179,7 @@ fn a_key_written_down_signs_the_request_where_no_variable_holds_one() {
     let sample = Sample::new("key-stored");
     let keys = sample.stored("openai");
 
-    let signed = key(
-        "OPENAI_API_KEY",
-        Header::bearer(),
-        &|_| None,
-        keys.get("openai"),
-    )
-    .expect("a key written down");
+    let signed = keyed_with(&keys, &|_| None).expect("a key written down");
 
     assert_eq!(signing(&*signed), format!("Bearer {WRITTEN}"));
 }
@@ -165,13 +192,8 @@ fn a_variable_signs_the_request_over_the_key_written_down_for_it() {
     let sample = Sample::new("key-exported-over-stored");
     let keys = sample.stored("openai");
 
-    let signed = key(
-        "OPENAI_API_KEY",
-        Header::bearer(),
-        &|_| Some("an-exported-key".to_owned()),
-        keys.get("openai"),
-    )
-    .expect("a key exported");
+    let signed =
+        keyed_with(&keys, &|_| Some("an-exported-key".to_owned())).expect("a key exported");
 
     assert_eq!(signing(&*signed), "Bearer an-exported-key");
 }
@@ -184,13 +206,7 @@ fn a_variable_exported_blank_leaves_the_key_written_down_standing() {
     let sample = Sample::new("key-blanked");
     let keys = sample.stored("openai");
 
-    let signed = key(
-        "OPENAI_API_KEY",
-        Header::bearer(),
-        &|_| Some(String::new()),
-        keys.get("openai"),
-    )
-    .expect("a key written down");
+    let signed = keyed_with(&keys, &|_| Some(String::new())).expect("a key written down");
 
     assert_eq!(signing(&*signed), format!("Bearer {WRITTEN}"));
 }
@@ -224,8 +240,10 @@ fn a_provider_reads_the_variable_its_configuration_names() {
     // Somebody with a work key and a personal key has two variables, and only
     // one of them can be the vendor's usual name.
     let sample = Sample::new("key-variable");
-    let settings =
-        sample.user(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"anthropic": {{{}}}}}}}"#,
+        crate::access::naming("WORK_ANTHROPIC_KEY")
+    ));
 
     let read = RefCell::new(Vec::new());
     built(Some(serving("anthropic")), &settings, &|name: &str| {
@@ -266,10 +284,9 @@ fn an_openai_subscription_uses_its_fixed_audience() {
     let keys = sample.subscribed("openai");
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
-    let (endpoint, _) = credential(
+    let (endpoint, _) = routed(
         ApiAudience {
             provider: "openai",
-            variable: "OPENAI_API_KEY",
             vendor: OpenAi::VENDOR,
         },
         None,
@@ -294,10 +311,9 @@ fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
     let keys = sample.subscribed("openai");
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
-    let (endpoint, _) = credential(
+    let (endpoint, _) = routed(
         ApiAudience {
             provider: "openai",
-            variable: "OPENAI_API_KEY",
             vendor: OpenAi::VENDOR,
         },
         None,
@@ -319,10 +335,9 @@ fn a_kimi_subscription_uses_the_managed_coding_audience() {
     let keys = sample.subscribed("moonshot");
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
-    let (endpoint, _) = credential(
+    let (endpoint, _) = routed(
         ApiAudience {
             provider: "moonshot",
-            variable: "MOONSHOT_API_KEY",
             vendor: Moonshot::CODING,
         },
         None,
@@ -348,10 +363,9 @@ fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() 
         sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
-    let (endpoint, _) = credential(
+    let (endpoint, _) = routed(
         ApiAudience {
             provider: "openai",
-            variable: "OPENAI_API_KEY",
             vendor: OpenAi::VENDOR,
         },
         sending_to(&settings, "openai").expect("an address the check accepted"),
@@ -394,6 +408,854 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
     .expect_err("a subscription sent to an API-key gateway");
 
     assert!(matches!(problem, AppError::SubscriptionAddress { .. }));
+}
+
+#[test]
+fn a_provider_whose_access_names_an_agent_builds_no_model_of_its_own_and_no_key_answers_for_it() {
+    let sample = Sample::new("agent-construction");
+    let keys = sample.stored("anthropic");
+    let settings = sample.user(
+        r#"{"providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "mine"}}},
+            "externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}}"#,
+    );
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+
+    let http = HttpTurns::unavailable();
+    let problem = provider(
+        Some(serving("anthropic")),
+        NO_MODEL_CHOSEN,
+        ProviderAuth {
+            settings: &settings,
+            from: &|_| Some("an-exported-key".to_owned()),
+            stored: &keys,
+            subscriptions: &subscriptions,
+        },
+        &http,
+    )
+    .expect_err("a model the agent runs in place of");
+
+    let said = problem.to_string();
+    assert!(
+        matches!(problem, AppError::ExternalAgent { .. }),
+        "{problem:?}"
+    );
+    assert_eq!(
+        said,
+        "providers.anthropic.access names the agent mine, which runs the conversation in place \
+         of anthropic's models; remove access to reach anthropic directly"
+    );
+}
+
+/// A run asking anthropic, whose access names the agent `mine`, Claude Code
+/// played by the fake peer playing `script` and configured with `entry`'s
+/// further keys, picking up `resuming`.
+fn on_the_agent(
+    sample: &Sample,
+    services: &Services,
+    script: &crucible_external_harnesses::fake_peer::Script,
+    entry: &str,
+    resuming: Resuming,
+) -> Result<Conversation, AppError> {
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        script,
+    )
+    .expect("the peer installed");
+    on_the_program(sample, services, &program, entry, (resuming, Mode::Ask))
+}
+
+/// [`on_the_agent`], with the agent's executable configured as `program`,
+/// picking up `resuming` in `mode`, on what this release ships.
+fn on_the_program(
+    sample: &Sample,
+    services: &Services,
+    program: &std::path::Path,
+    entry: &str,
+    (resuming, mode): (Resuming, Mode),
+) -> Result<Conversation, AppError> {
+    on_the_program_over(
+        sample,
+        services,
+        program,
+        entry,
+        (resuming, mode, &crate::backends::REGISTRY),
+    )
+}
+
+/// [`on_the_program`], with `agents` the agents the run can be started on.
+fn on_the_program_over(
+    sample: &Sample,
+    services: &Services,
+    program: &std::path::Path,
+    entry: &str,
+    (resuming, mode, agents): (Resuming, Mode, &'static Registry),
+) -> Result<Conversation, AppError> {
+    let settings = sample.user(&format!(
+        r#"{{"sandbox": {{"enabled": false}},
+            "providers": {{"anthropic": {{"access": {{"type": "externalAgent", "instance": "mine"}}}}}},
+            "externalAgents": {{"mine": {{"driver": "claude", "executable": {}{entry}}}}}}}"#,
+        // Written as JSON writes a string, so a path's separators survive on
+        // every platform.
+        serde_json::Value::from(program.to_string_lossy()),
+    ));
+    assembled(
+        &Startup {
+            providers: &catalogue(),
+            provider: Some(serving("anthropic")),
+            unasked: NO_MODEL_CHOSEN,
+            model: None,
+            effort: None,
+            resuming,
+            mode,
+            leaving: &crucible_builtins::Background::new(),
+            services,
+            settings: &settings,
+            sessions: &sample.logs(),
+            workspace: &sample.workspace(),
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| None,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        },
+        agents,
+    )
+}
+
+#[test]
+fn a_provider_whose_access_names_an_agent_starts_the_run_on_the_agent_s_route() {
+    // Nothing is started at assembly: the agent is launched by the first
+    // turn, once the route has its yes, and its answer is the turn's.
+    let sample = Sample::new("agent-startup");
+    let services = Services::new();
+    let script = crucible_external_harnesses::fake_peer::Script::of([
+        crucible_external_harnesses::fake_peer::scripts::claude::clean(),
+    ]);
+
+    let mut conversation = on_the_agent(&sample, &services, &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+
+    assert_eq!(conversation.serving(), None);
+    assert!(
+        crucible_external_harnesses::fake_peer::heard(&sample.root().join("peer")).is_empty(),
+        "the agent was started before a turn"
+    );
+    let route = crucible_session::pick_routed(&sample.logs(), &sample.workspace(), None)
+        .expect("the run's log")
+        .1
+        .expect("a log bound to the route");
+    assert_eq!((route.driver(), route.instance()), ("claude", "mine"));
+    // The kept runner records nowhere, so the route's log is the only one.
+    assert_eq!(logs_in(&sample), 1, "a log no route is bound to was opened");
+
+    let agent = crate::backends::REGISTRY
+        .row(crucible_config::Driver::Claude)
+        .expect("Claude Code's row");
+    conversation
+        .consent()
+        .expect("the run's consent")
+        .give(agent.route);
+    let (events, _seen) = std::sync::mpsc::channel();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let turned = {
+        let run = conversation.starting(&events, &cancel, &steer, &aside);
+        services
+            .runtime()
+            .handle()
+            .expect("the run's runtime")
+            .block_on(conversation.turn("hi", Box::new([]), &mut Nobody, &run))
+    };
+
+    assert!(
+        matches!(turned, Ok(crucible_runner::Turned::Ran(_))),
+        "{turned:?}"
+    );
+    assert!(
+        !crucible_external_harnesses::fake_peer::heard(&sample.root().join("peer")).is_empty(),
+        "the turn never reached the agent"
+    );
+}
+
+/// How many session logs `sample` holds.
+fn logs_in(sample: &Sample) -> usize {
+    std::fs::read_dir(sample.logs())
+        .expect("the sessions directory")
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .is_ok_and(|entry| entry.path().extension().is_some_and(|it| it == "jsonl"))
+        })
+        .count()
+}
+
+/// Whether a `/login` for `provider` by `access` wrote the user file, and the
+/// run started after it, asking `provider` with `stored` the credentials kept.
+/// The file first reaches `provider` through the agent `mine`, and `spelled`
+/// turns its text into what is written.
+fn after_logging_in(
+    sample: &Sample,
+    (provider, access): (&'static str, &crucible_config::Access),
+    spelled: fn(&str) -> String,
+    stored: &StoredCredentials,
+) -> (bool, Result<Conversation, AppError>) {
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &script,
+    )
+    .expect("the peer installed");
+    sample.user(&spelled(&format!(
+        r#"{{"sandbox": {{"enabled": false}},
+            "providers": {{"{provider}": {{"access": {{"type": "externalAgent", "instance": "mine"}}}}}},
+            "externalAgents": {{"mine": {{"driver": "claude", "executable": {}}}}}}}"#,
+        serde_json::Value::from(program.to_string_lossy()),
+    )));
+    // What the login writes, and nothing where the file cannot say it.
+    let written = crate::remember::reaching(&sample.user_file(), provider, access).is_ok();
+    let settings = sample.user(&std::fs::read_to_string(sample.user_file()).expect("the file"));
+    let services = Services::new();
+    let next = assembled(
+        &Startup {
+            providers: &catalogue(),
+            provider: Some(serving(provider)),
+            unasked: NO_MODEL_CHOSEN,
+            model: None,
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &services,
+            settings: &settings,
+            sessions: &sample.logs(),
+            workspace: &sample.workspace(),
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| None,
+            stored,
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        },
+        &crate::backends::REGISTRY,
+    );
+    (written, next)
+}
+
+#[test]
+fn the_run_after_a_login_on_an_agent_s_route_asks_the_provider_by_its_credential() {
+    // A key or an account alike: what the login wrote is what the next run
+    // reaches the provider by, on this program's own model. OpenAI's account,
+    // since its accounts are ones this program can sign in.
+    for (provider, access) in [
+        ("anthropic", crucible_config::Access::ApiKey),
+        ("openai", crucible_config::Access::Subscription),
+    ] {
+        let sample = Sample::new("agent-login-next-run");
+        let stored = if access == crucible_config::Access::Subscription {
+            sample.subscribed(provider)
+        } else {
+            sample.stored(provider)
+        };
+
+        let (written, next) =
+            after_logging_in(&sample, (provider, &access), str::to_owned, &stored);
+        let next = next.expect("the next run");
+
+        assert!(written, "{provider}");
+
+        assert_eq!(next.serving(), Some(provider));
+        assert!(next.session().route().is_none(), "{provider}");
+        let newest = crucible_session::pick_routed(&sample.logs(), &sample.workspace(), None)
+            .expect("the run's log");
+        assert!(
+            newest.1.is_none(),
+            "{provider}: its log is bound to the route"
+        );
+    }
+}
+
+#[test]
+fn the_run_after_a_login_the_file_could_not_say_stays_on_the_agent_s_route() {
+    // The providers written twice, so the block the file means is not one a
+    // scan of the text can be sure of: it is left as it was, and so is the
+    // route.
+    let sample = Sample::new("agent-login-unwritten-next-run");
+    let stored = sample.stored("anthropic");
+    let twice =
+        |file: &str| file.replacen(r#""providers": {"#, r#""providers": {}, "providers": {"#, 1);
+
+    let (written, next) = after_logging_in(
+        &sample,
+        ("anthropic", &crucible_config::Access::ApiKey),
+        twice,
+        &stored,
+    );
+    let next = next.expect("the next run");
+
+    assert!(!written);
+
+    assert_eq!(next.serving(), None);
+    let route = next.session().route().expect("the run's route");
+    assert_eq!((route.driver(), route.instance()), ("claude", "mine"));
+}
+
+#[test]
+fn a_session_no_agent_ran_is_not_continued_on_an_agent_s_route() {
+    // The run would hand the agent a history it never had, so the log is
+    // left as it was and the run says where it can be continued.
+    let sample = Sample::new("agent-unrouted-resume");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    let (path, id) = (
+        session.path().to_owned(),
+        session.id().expect("an id").clone(),
+    );
+    session.append(&Message::said("rename the module"));
+    drop(session);
+    let before = std::fs::read(&path).expect("the log");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+
+    for resuming in [Resuming::Newest, Resuming::Exact(id)] {
+        let Err(problem) = on_the_agent(&sample, &Services::new(), &script, "", resuming) else {
+            panic!("a session no agent ran was continued on an agent's route");
+        };
+
+        assert!(matches!(problem, AppError::Unrouted { .. }), "{problem:?}");
+        assert!(problem.to_string().contains("next launch"), "{problem}");
+        assert_eq!(std::fs::read(&path).expect("the log"), before);
+    }
+}
+
+#[test]
+fn a_session_an_agent_ran_is_continued_on_its_route() {
+    let sample = Sample::new("agent-routed-resume");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let id = first.session().id().expect("an id").clone();
+    drop(first);
+
+    let resumed = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        "",
+        Resuming::Exact(id.clone()),
+    )
+    .expect("the session continued on its route");
+
+    assert_eq!(resumed.session().id(), Some(&id));
+    assert_eq!(resumed.serving(), None);
+}
+
+#[test]
+fn a_session_an_agent_ran_is_continued_on_its_route_by_the_agent_s_own_session() {
+    // The first turn after the resume starts the agent on the session it
+    // kept, by the name the log recorded, and the log is claimed once.
+    let sample = Sample::new("agent-routed-resume-turn");
+    let services = Services::new();
+    let script = crucible_external_harnesses::fake_peer::Script::of([
+        crucible_external_harnesses::fake_peer::scripts::claude::clean(),
+    ]);
+    let first = on_the_agent(&sample, &services, &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let id = first.session().id().expect("an id").clone();
+    let route = first.session().route().expect("the run's route").clone();
+    assert!(
+        first
+            .session()
+            .external(&crucible_session::ExternalRef::new("mine", "earlier").expect("a name"))
+    );
+    drop(first);
+
+    let mut resumed = on_the_agent(&sample, &services, &script, "", Resuming::Exact(id.clone()))
+        .expect("the session continued on its route");
+    let held = Session::reopen_routed(&sample.logs(), &sample.workspace(), &id, &route).map(|_| ());
+    assert!(held.is_err(), "the session was left unclaimed");
+    let agent = crate::backends::REGISTRY
+        .row(crucible_config::Driver::Claude)
+        .expect("Claude Code's row");
+    resumed
+        .consent()
+        .expect("the run's consent")
+        .give(agent.route);
+    let (events, _seen) = std::sync::mpsc::channel();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let turned = {
+        let run = resumed.starting(&events, &cancel, &steer, &aside);
+        services
+            .runtime()
+            .handle()
+            .expect("the run's runtime")
+            .block_on(resumed.turn("again", Box::new([]), &mut Nobody, &run))
+    };
+
+    assert!(
+        matches!(turned, Ok(crucible_runner::Turned::Ran(_))),
+        "{turned:?}"
+    );
+    let argued = crucible_external_harnesses::fake_peer::argued(&sample.root().join("peer"));
+    assert!(
+        argued
+            .last()
+            .is_some_and(|start| start.windows(2).any(|pair| pair == ["--resume", "earlier"])),
+        "{argued:?}"
+    );
+}
+
+/// A run asking anthropic, whose block is `anthropic`, with the agent `mine`
+/// configured as Claude Code played by `program` and `others` further
+/// `externalAgents` entries, picking up `resuming`.
+fn resuming_over(
+    sample: &Sample,
+    program: &std::path::Path,
+    (anthropic, others): (&str, &str),
+    resuming: Resuming,
+) -> Result<Conversation, AppError> {
+    let program = serde_json::Value::from(program.to_string_lossy());
+    let settings = sample.user(&format!(
+        r#"{{"sandbox": {{"enabled": false}},
+            "providers": {{"anthropic": {anthropic}}},
+            "externalAgents": {{"mine": {{"driver": "claude", "executable": {program}}}{others}}}}}"#
+    ));
+    assembled(
+        &Startup {
+            providers: &catalogue(),
+            provider: Some(serving("anthropic")),
+            unasked: NO_MODEL_CHOSEN,
+            model: None,
+            effort: None,
+            resuming,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
+            settings: &settings,
+            sessions: &sample.logs(),
+            workspace: &sample.workspace(),
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| None,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        },
+        &crate::backends::REGISTRY,
+    )
+}
+
+#[test]
+fn a_session_an_agent_ran_is_continued_on_its_route_whatever_the_provider_asked_is_reached_by() {
+    // Asked of a provider's own model, and of a provider another agent
+    // answers for: either way the session goes on where it was run, with no
+    // credential looked for, since none is asked of a provider.
+    let sample = Sample::new("agent-routed-resume-elsewhere");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let id = first.session().id().expect("an id").clone();
+    first.session().append(&Message::said("rename the module"));
+    drop(first);
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &script,
+    )
+    .expect("the peer installed");
+    let other = format!(
+        r#", "other": {{"driver": "claude", "executable": {}}}"#,
+        serde_json::Value::from(program.to_string_lossy())
+    );
+    let asking = [
+        ("{}", ""),
+        (
+            r#"{"access": {"type": "externalAgent", "instance": "other"}}"#,
+            other.as_str(),
+        ),
+    ];
+
+    for (anthropic, others) in asking {
+        for resuming in [Resuming::Newest, Resuming::Exact(id.clone())] {
+            let resumed = resuming_over(&sample, &program, (anthropic, others), resuming)
+                .expect("the session continued on its route");
+
+            assert_eq!(resumed.session().id(), Some(&id), "{anthropic}");
+            let route = resumed.session().route().expect("the session's route");
+            assert_eq!(route.instance(), "mine", "{anthropic}");
+            assert_eq!(resumed.serving(), None, "{anthropic}");
+            assert_eq!(
+                resumed.settled().transcript().messages().len(),
+                1,
+                "the session's history was not shown"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_session_an_agent_ran_is_not_continued_once_its_agent_names_another_profile() {
+    // The same entry, now opening the agent's sessions somewhere else: the
+    // agent there never ran this one, so its history is kept as it was.
+    let sample = Sample::new("agent-routed-resume-profile");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let (path, id) = (
+        first.session().path().to_owned(),
+        first.session().id().expect("an id").clone(),
+    );
+    drop(first);
+    let before = std::fs::read(&path).expect("the log");
+    let profile = serde_json::Value::from(sample.root().join("elsewhere").to_string_lossy());
+
+    let Err(problem) = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        &format!(r#", "configDir": {profile}"#),
+        Resuming::Exact(id),
+    ) else {
+        panic!("a session was continued on an agent that never ran it");
+    };
+
+    assert!(
+        matches!(
+            &problem,
+            AppError::Session(crucible_session::SessionError::Rerouted { .. })
+        ),
+        "{problem:?}"
+    );
+    assert_eq!(std::fs::read(&path).expect("the log"), before);
+}
+
+#[test]
+fn a_session_an_agent_ran_is_not_continued_on_its_route_once_the_agent_is_disconnected() {
+    let sample = Sample::new("agent-routed-resume-disconnected");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+    let first = on_the_agent(&sample, &Services::new(), &script, "", Resuming::No)
+        .expect("a run on the agent's route");
+    let (path, id) = (
+        first.session().path().to_owned(),
+        first.session().id().expect("an id").clone(),
+    );
+    drop(first);
+    let before = std::fs::read(&path).expect("the log");
+
+    let Err(problem) = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        r#", "enabled": false"#,
+        Resuming::Exact(id),
+    ) else {
+        panic!("a session was continued on a disconnected agent");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(problem.to_string().contains("disconnected"), "{problem}");
+    assert_eq!(std::fs::read(&path).expect("the log"), before);
+}
+
+#[test]
+fn an_agent_whose_program_cannot_be_run_is_not_started_and_no_log_is_written() {
+    let sample = Sample::new("agent-not-executable");
+    // A directory, which no platform runs, where a program was expected.
+    let program = sample.root().join("claude");
+    std::fs::create_dir_all(&program).expect("a directory");
+
+    let Err(problem) = on_the_program(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask),
+    ) else {
+        panic!("an agent whose program cannot be run was started");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(
+        problem.to_string().contains("is not executable"),
+        "{problem}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
+}
+
+/// The shipped Claude Code row, refusing full access, as an agent with no
+/// launch for a mode would.
+fn without_full_access(
+    mode: Mode,
+) -> Result<Box<dyn crucible_external_harnesses::Dialect>, crucible_execution::Failure> {
+    match mode {
+        Mode::FullAccess => Err(crucible_execution::Failure::new(
+            "full access is not offered",
+        )),
+        Mode::Ask | Mode::AllowEdits => (crate::backends::CLAUDE.dialect)(mode),
+    }
+}
+
+#[test]
+fn an_agent_with_no_launch_in_the_run_s_mode_is_not_started_and_no_log_is_written() {
+    static REFUSING: Registry = Registry::new(&[crate::backends::Row {
+        dialect: without_full_access,
+        ..crate::backends::CLAUDE
+    }]);
+    let sample = Sample::new("agent-full-access");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let Err(problem) = on_the_program_over(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::FullAccess, &REFUSING),
+    ) else {
+        panic!("an agent was started in a mode it has no launch in");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
+}
+
+#[test]
+fn an_agent_the_run_s_registry_has_no_row_for_is_not_started_and_no_log_is_written() {
+    static NONE: Registry = Registry::new(&[]);
+    let sample = Sample::new("agent-unregistered");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let Err(problem) = on_the_program_over(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask, &NONE),
+    ) else {
+        panic!("an agent the run's registry has no row for was started");
+    };
+
+    assert!(
+        problem.to_string().contains("no launch for its driver"),
+        "{problem}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
+}
+
+#[test]
+fn a_run_s_conversation_holds_the_registry_its_start_was_settled_against() {
+    static CLAUDE_ONLY: Registry = Registry::new(&[crate::backends::CLAUDE]);
+    let sample = Sample::new("agent-registry-kept");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let conversation = on_the_program_over(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask, &CLAUDE_ONLY),
+    )
+    .expect("a run on the agent's route");
+
+    assert!(std::ptr::eq(conversation.agents(), &raw const CLAUDE_ONLY));
+}
+
+#[test]
+fn a_conversation_nobody_handed_a_registry_runs_on_what_ships() {
+    let sample = Sample::new("agent-registry-default");
+    let program = crucible_external_harnesses::fake_peer::install(
+        &sample.root().join("peer"),
+        "claude",
+        &crucible_external_harnesses::fake_peer::Script::of([]),
+    )
+    .expect("the peer installed");
+
+    let conversation = on_the_program(
+        &sample,
+        &Services::new(),
+        &program,
+        "",
+        (Resuming::No, Mode::Ask),
+    )
+    .expect("a run on the agent's route");
+
+    assert!(std::ptr::eq(
+        conversation.agents(),
+        &raw const crate::backends::REGISTRY
+    ));
+}
+
+#[test]
+fn a_disconnected_agent_is_not_started_and_no_log_is_written() {
+    let sample = Sample::new("agent-disconnected");
+    let script = crucible_external_harnesses::fake_peer::Script::of([]);
+
+    let Err(problem) = on_the_agent(
+        &sample,
+        &Services::new(),
+        &script,
+        r#", "enabled": false"#,
+        Resuming::No,
+    ) else {
+        panic!("a disconnected agent was started");
+    };
+
+    assert!(
+        matches!(problem, AppError::Unstartable { .. }),
+        "{problem:?}"
+    );
+    assert!(problem.to_string().contains("disconnected"), "{problem}");
+    // Nothing can be connected from a start that is refused, so the refusal
+    // names the line to change instead.
+    assert!(
+        problem.to_string().contains(".enabled to true in "),
+        "{problem}"
+    );
+    assert!(
+        !problem.to_string().contains("connect it again"),
+        "{problem}"
+    );
+    assert!(
+        std::fs::read_dir(sample.logs()).map_or(true, |mut logs| logs.next().is_none()),
+        "a log was written for a run that never started"
+    );
+}
+
+/// What `provider` answers for openai on a machine holding `keys`, with
+/// `settings` written and `exported` the only variable set.
+fn openai_with(
+    keys: &StoredCredentials,
+    settings: &Settings,
+    exported: Option<&str>,
+) -> Result<Box<dyn Provider>, AppError> {
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let http = HttpTurns::unavailable();
+    let exported = exported.map(str::to_owned);
+    provider(
+        Some(serving("openai")),
+        NO_MODEL_CHOSEN,
+        ProviderAuth {
+            settings,
+            from: &|_| exported.clone(),
+            stored: keys,
+            subscriptions: &subscriptions,
+        },
+        &http,
+    )
+}
+
+#[test]
+fn a_subscription_access_with_a_configured_address_is_refused_without_offering_a_key() {
+    // Old precedence would have signed in with the exported key and gone to
+    // the gateway. Somebody who wrote `subscription` chose the account, so the
+    // run is told the address cannot stand with it, and is not told to use
+    // the method they did not choose.
+    let sample = Sample::new("access-subscription-address");
+    let keys = sample.subscribed("openai");
+    let settings = sample.user(
+        r#"{"providers": {"openai": {"access": {"type": "subscription"}, "baseUrl": "https://gateway.example/v1"}}}"#,
+    );
+
+    let problem = openai_with(&keys, &settings, Some("an-exported-key"))
+        .expect_err("a subscription access sent to a gateway");
+
+    let said = problem.to_string();
+    assert!(said.contains("providers.openai.baseUrl"), "{said}");
+    assert!(!said.contains("API key"), "{said}");
+    assert!(!said.contains("OPENAI_API_KEY"), "{said}");
+}
+
+#[test]
+fn a_subscription_access_with_no_account_is_refused_naming_login_and_not_the_key() {
+    let sample = Sample::new("access-subscription-missing");
+    let settings =
+        sample.user(r#"{"providers": {"openai": {"access": {"type": "subscription"}}}}"#);
+
+    let problem = openai_with(
+        &StoredCredentials::default(),
+        &settings,
+        Some("an-exported-key"),
+    )
+    .expect_err("no account is signed in");
+
+    let said = problem.to_string();
+    assert!(said.contains("/login"), "{said}");
+    assert!(!said.contains("API key"), "{said}");
+    assert!(!said.contains("OPENAI_API_KEY"), "{said}");
+}
+
+#[test]
+fn an_api_key_access_never_falls_back_to_a_held_subscription() {
+    let sample = Sample::new("access-key-missing");
+    let keys = sample.subscribed("openai");
+    let settings = sample.user(r#"{"providers": {"openai": {"access": {"type": "apiKey"}}}}"#);
+
+    let problem = openai_with(&keys, &settings, None).expect_err("no key is set or stored");
+
+    let said = problem.to_string();
+    assert!(said.contains("/login"), "{said}");
+    assert!(said.contains("OPENAI_API_KEY"), "{said}");
+    assert!(!said.contains("subscription"), "{said}");
+    assert!(!said.contains("account"), "{said}");
+}
+
+#[test]
+fn an_agent_access_beside_a_configured_address_is_refused_naming_the_key() {
+    let sample = Sample::new("access-agent-address");
+    let settings = sample.user(
+        r#"{"providers": {"openai": {"access": {"type": "externalAgent", "instance": "mine"}, "baseUrl": "https://gateway.example/v1"}},
+            "externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}}"#,
+    );
+
+    let problem = openai_with(
+        &StoredCredentials::default(),
+        &settings,
+        Some("an-exported-key"),
+    )
+    .expect_err("an agent cannot be sent to an address");
+
+    let said = problem.to_string();
+    assert!(said.contains("providers.openai.baseUrl"), "{said}");
 }
 
 #[test]
@@ -545,6 +1407,67 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
 }
 
 #[test]
+fn a_session_an_agent_ran_is_refused_before_anything_to_run_it_on_is_built() {
+    // Answered from the log before a provider is built: here the provider
+    // would fail for want of a key, and the failure a resume of this session
+    // owes is that it cannot be continued on a provider's model at all, with
+    // its history left as it was.
+    let sample = Sample::new("rerouted");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+    let route = crucible_session::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&logs, &workspace, None, &route).expect("a routed session");
+    let (path, id) = (
+        session.path().to_owned(),
+        session.id().expect("an id").clone(),
+    );
+    session.append(&Message::said("rename the module"));
+    drop(session);
+    let before = std::fs::read(&path).expect("the log");
+
+    for resuming in [Resuming::Newest, Resuming::Exact(id)] {
+        let Err(problem) = assemble(&Startup {
+            providers: &catalogue(),
+            provider: Some(serving("openai")),
+            unasked: NO_MODEL_CHOSEN,
+            model: Some("gpt-5.6-terra"),
+            effort: None,
+            resuming,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| None,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        }) else {
+            panic!("a session an agent ran was continued on a provider's model");
+        };
+
+        assert!(
+            matches!(
+                &problem,
+                AppError::Session(crucible_session::SessionError::Rerouted { .. })
+            ),
+            "{problem:?}"
+        );
+        let said = problem.to_string();
+        assert!(
+            said.contains("work") && said.contains("new session"),
+            "{said}"
+        );
+        assert_eq!(std::fs::read(&path).expect("the log"), before);
+    }
+}
+
+#[test]
 fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     // The state the warning under the welcome describes. Everything but the
     // turn works, which is what leaves `/model` somewhere to be typed.
@@ -577,7 +1500,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     .expect("a session with nothing set up still starts");
 
     assert_eq!(
-        conversation.runner().model(),
+        conversation.settled().model(),
         "",
         "an unnamed model is the empty name"
     );
@@ -624,6 +1547,52 @@ fn a_session_with_nothing_chosen_says_whether_a_provider_or_a_credential_is_miss
         .expect("a session with nothing chosen still starts");
 
         assert_eq!(conversation.missing(), Some(missing));
+    }
+}
+
+/// A run's snapshot says who its credential bills from the start, as
+/// startup resolved it: a key here, and nobody where no provider is asked.
+#[test]
+fn a_run_s_snapshot_says_who_the_credential_it_started_with_bills() {
+    for (provider, billing) in [
+        (
+            Some(serving("anthropic")),
+            crucible_client_api::Billing::Key,
+        ),
+        (None, crucible_client_api::Billing::Unknown),
+    ] {
+        let sample = Sample::new("started-billing");
+        let (logs, workspace) = (sample.logs(), sample.workspace());
+        let from = |name: &str| (name == "ANTHROPIC_API_KEY").then(|| "a-key".to_owned());
+
+        let conversation = assemble(&Startup {
+            providers: &catalogue(),
+            provider,
+            unasked: NOTHING_TO_ASK,
+            model: None,
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &from,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        })
+        .expect("the run starts");
+
+        let standing = crate::client::snapshot(&conversation);
+        assert_eq!(standing.billing, billing);
+        assert_eq!(standing.execution, crucible_client_api::Execution::Native);
     }
 }
 
@@ -773,7 +1742,7 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
     assert!(reaching.searching.is_none());
     assert!(reaching.fetching.is_none());
 
-    let settings = sample.user(r#"{"providers":{"google":{"baseUrl":"https://gateway.example/interactions?alt=sse","apiKeyEnv":"WORK_GEMINI"}}}"#);
+    let settings = sample.user(&format!(r#"{{"providers":{{"google":{{"baseUrl":"https://gateway.example/interactions?alt=sse",{}}}}}}}"#, crate::access::naming("WORK_GEMINI")));
     let from = |name: &str| (name == "WORK_GEMINI").then(|| "synthetic-key".into());
     let auth = ProviderAuth {
         settings: &settings,
@@ -1344,15 +2313,15 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
 
     let hosted = starting(&["docs".to_owned()]);
     assert!(
-        hosted.runner().offering().is_empty(),
+        hosted.runner.offering().is_empty(),
         "a live toolset has no generation until the turn that prepares it"
     );
 
     let alone = starting(&[]);
     assert!(
-        alone.runner().offering().contains(&"bash".to_owned()),
+        alone.runner.offering().contains(&"bash".to_owned()),
         "a run that named no server is the built-in roster itself: {:?}",
-        alone.runner().offering()
+        alone.runner.offering()
     );
 }
 
@@ -1405,10 +2374,9 @@ fn moonshot_address(
             .then(|| exported.map(str::to_owned))
             .flatten()
     };
-    credential(
+    routed(
         ApiAudience {
             provider: "moonshot",
-            variable: "MOONSHOT_API_KEY",
             vendor: Moonshot::CODING,
         },
         sending,
@@ -1715,7 +2683,7 @@ fn a_provider_is_served_on_the_route_its_credential_goes_to() {
             subscriptions: &subscriptions,
         };
 
-        let serving = served_on(named, "VARIABLE", auth);
+        let serving = served_on(serving(named), auth);
         let case = format!("case {at}: {named} {held} {exported} {base:?}");
         if route.is_none() && origin.is_none() {
             assert_eq!(serving, None, "{case}");
@@ -1735,10 +2703,9 @@ fn a_provider_is_served_on_the_route_its_credential_goes_to() {
             _ => continue,
         };
         let sending = base.map(|base| Endpoint::parse(base).unwrap());
-        let (endpoint, _) = credential(
+        let (endpoint, _) = routed(
             ApiAudience {
                 provider: named,
-                variable: "VARIABLE",
                 vendor,
             },
             sending,
@@ -1858,7 +2825,7 @@ fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
         })
         .expect("a session over a key starts");
 
-        assert_eq!(conversation.runner().speed(), asked, "kept {kept:?}");
+        assert_eq!(conversation.settled().speed(), asked, "kept {kept:?}");
     }
 }
 

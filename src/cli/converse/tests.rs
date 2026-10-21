@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crucible_auth::Store;
 use crucible_models::Delta;
 use crucible_runner::Event;
-use crucible_runner::{Agent, Model, Tools};
+use crucible_runner::{Agent, Model, Runner, Tools};
 use crucible_session::Session;
 use crucible_tools::{Mode, Permission, Revealed, Rules};
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
@@ -103,6 +103,7 @@ pub(crate) fn plain() -> Terms {
         // watched, and a loop these terms drive must not write a key into
         // whatever home the machine running the suite has.
         logins: Store::in_home(&unwritten),
+        rewritten: crucible_app::access::Rewritten::new(),
         subscriptions: crucible_app::subscription::Subscriptions::production(
             &crucible_auth::Renewals::new(),
         ),
@@ -377,11 +378,11 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         &opening,
     );
     let mut turning = Turning::started(crucible_runner::Breakdown::default());
-    let mut says = typing::under(&scripted(
+    let mut says = typing::under(crucible_app::Settled::from(&scripted(
         Script::new(Vec::new()),
         Tools::new(),
         Arc::new(Session::nowhere()),
-    ));
+    )));
     let mut seen = Inbox::new(seen);
     let mut drawn = Ok(());
     let mut meanwhile = typing::Meanwhile::Nothing;
@@ -398,6 +399,10 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         leaving: &mut leaving,
         terms: &terms,
         serving: Some("anthropic"),
+        reaching: None,
+        external: None,
+        execution: crucible_client_api::Execution::Native,
+        model: None,
     };
 
     while turn.step(&mut renderer) {}
@@ -2085,3 +2090,64 @@ fn a_run_that_asked_not_to_be_kept_is_not_sent_anywhere() {
 }
 
 mod research;
+
+/// A panel standing over a turn on an installed agent's route reads what the
+/// agent last said its context holds, as the line above the box does, and
+/// what it held as the turn began until the turn says; on a provider's model
+/// it reads none.
+#[test]
+fn a_panel_over_a_turn_reads_what_the_agent_holds_only_on_its_route() {
+    let (_post, seen) = sync_channel(CAPACITY);
+    let terms = plain();
+    let opening = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        terms.plan.clone(),
+        terms.sending.get(),
+        Answers {
+            input: &mut input,
+            keys: false,
+        },
+        &opening,
+    );
+    let mut says = typing::under(crucible_app::Settled::from(&scripted(
+        Script::new(Vec::new()),
+        Tools::new(),
+        Arc::new(Session::nowhere()),
+    )));
+    let mut seen = Inbox::new(seen);
+    let mut drawn = Ok(());
+    let mut meanwhile = typing::Meanwhile::Nothing;
+    let mut leaving = None;
+    for (breakdown, external, read) in [
+        (crucible_runner::Breakdown::default(), None, None),
+        (
+            crucible_runner::Breakdown::default(),
+            Some(58_200),
+            Some(58_200),
+        ),
+        (
+            crucible_runner::Breakdown::reported(Some(1_000_000), 80_000),
+            Some(10_000),
+            Some(80_000),
+        ),
+    ] {
+        let mut turning = Turning::started(breakdown);
+        let turn = Turn {
+            turning: &mut turning,
+            held: &mut held,
+            says: &mut says,
+            seen: &mut seen,
+            drawn: &mut drawn,
+            meanwhile: &mut meanwhile,
+            leaving: &mut leaving,
+            terms: &terms,
+            serving: None,
+            reaching: None,
+            external,
+            execution: crucible_client_api::Execution::Native,
+            model: None,
+        };
+        assert_eq!(turn.counted().usage.context.external, read);
+    }
+}

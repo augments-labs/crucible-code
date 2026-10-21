@@ -12,6 +12,12 @@
 //! crucible's words by its length; the group's name is the one thing a vendor
 //! wrote that is drawn, as text, cut to fit.
 //!
+//! Where an installed agent runs the turns, the title names it, and the
+//! Session block is headed as its report: its cost, as it reported it or
+//! `not priced`, never a price this program's tables would put on it, the
+//! wall time and its tokens. It reports no time waiting on an API, no lines
+//! changed and no plan limit, so none is drawn.
+//!
 //! What is known stands at once: what the responses so far reported, or what
 //! the plan last answered. Opening the panel between turns also asks the
 //! plan, where the application will ask it — a sign-in whose vendor keeps a
@@ -59,7 +65,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crucible_app::Conversation;
-use crucible_app::client::Performed;
+use crucible_app::client::{Performed, execution};
 use crucible_app::providers::{CredentialSource, credential_source, in_use, offered};
 use crucible_app::startup::ProviderAuth;
 use crucible_client_api::{self as api, Cost, Limit, Reading, Window};
@@ -248,7 +254,8 @@ pub(super) fn run<T: Terminal>(
         Performed::Usage(usage) => *usage,
         other => return Ok(renderer.commit(&astray(&other))?),
     };
-    let mut shown = Shown::of(terms, conversation.serving(), usage);
+    let execution = execution(conversation);
+    let mut shown = Shown::of(terms, conversation.serving(), execution, usage);
     shown.out = terms.ask_limits(conversation);
     if keys {
         let mut watch = |shown: &mut Shown| shown.watched(terms, conversation, false);
@@ -335,7 +342,12 @@ pub(super) fn live<T: Terminal>(
     counted: &Counted,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<(), Fatal> {
-    let mut shown = Shown::of(terms, counted.serving, counted.usage.clone());
+    let mut shown = Shown::of(
+        terms,
+        counted.serving,
+        counted.execution.clone(),
+        counted.usage.clone(),
+    );
     if stood(renderer, terms, &mut shown, while_waiting, None)? == Ended::Cramped {
         shown.printed(renderer, Laid::Flush, terms.style().glyphs())?;
     }
@@ -349,6 +361,8 @@ pub(super) fn live<T: Terminal>(
 struct Shown {
     heading: String,
     usage: api::Usage,
+    /// Who runs the turns the figures are from.
+    execution: api::Execution,
     clock: Clock,
     out: Option<Out>,
     /// The body's first row shown.
@@ -359,10 +373,26 @@ struct Shown {
 }
 
 impl Shown {
-    fn of(terms: &Terms, serving: Option<&'static str>, usage: api::Usage) -> Self {
+    fn of(
+        terms: &Terms,
+        serving: Option<&'static str>,
+        execution: api::Execution,
+        usage: api::Usage,
+    ) -> Self {
+        // An agent's route is headed with its name alone, so no stored
+        // credential is read for it.
+        let signed = serving
+            .filter(|_| matches!(execution, api::Execution::Native))
+            .and_then(|name| signed(terms, name));
         Self {
-            heading: heading(terms, serving, terms.style().glyphs()),
+            heading: heading(
+                serving,
+                signed.as_deref(),
+                &execution,
+                terms.style().glyphs(),
+            ),
             usage,
+            execution,
             clock: Clock::system(),
             out: None,
             scrolled: 0,
@@ -434,11 +464,14 @@ impl Shown {
         let Self {
             heading,
             usage,
+            execution,
             clock,
             ..
         } = self;
         relaid(renderer, laid, move |columns| {
-            body(&heading, &usage, asking, columns, glyphs, &clock)
+            body(
+                &heading, &usage, &execution, asking, columns, glyphs, &clock,
+            )
         })
     }
 
@@ -447,6 +480,7 @@ impl Shown {
         body(
             &self.heading,
             &self.usage,
+            &self.execution,
             asking,
             columns,
             glyphs,
@@ -487,12 +521,22 @@ pub(super) fn answered_in(
 /// `API key` rather than the variable's name: the heading says what pays, and
 /// where the key was read from is `/model`'s to say. A sign-in keeps its name.
 /// Read off the stored credentials as the panel opens; a provider that
-/// answers with none is named alone, and none answering names nothing.
-fn heading(terms: &Terms, serving: Option<&'static str>, glyphs: Glyphs) -> String {
+/// answers with none is named alone, and none answering names nothing. On an
+/// installed agent's route the agent answers, with an account of its own, so
+/// the heading is its instance's name alone.
+pub(super) fn heading(
+    serving: Option<&str>,
+    signed: Option<&str>,
+    execution: &api::Execution,
+    glyphs: Glyphs,
+) -> String {
+    if let api::Execution::Instance(instance) = execution {
+        return instance.as_str().to_owned();
+    }
     let Some(name) = serving else {
         return String::new();
     };
-    signed(terms, name).map_or_else(
+    signed.map_or_else(
         || name.to_owned(),
         |words| format!("{name} {} {words}", glyphs.dot()),
     )
@@ -502,9 +546,9 @@ fn heading(terms: &Terms, serving: Option<&'static str>, glyphs: Glyphs) -> Stri
 /// words it, where it answers with one.
 pub(super) fn signed(terms: &Terms, name: &str) -> Option<String> {
     let providers = terms.providers.snapshot();
-    let stored = terms.logins.read();
+    let (stored, settings) = (terms.logins.read(), terms.reading());
     let auth = ProviderAuth {
-        settings: &terms.settings,
+        settings: &settings,
         from: &*terms.environment,
         stored: &stored,
         subscriptions: &terms.subscriptions,
@@ -574,6 +618,11 @@ fn framed(rows: Vec<Row>, columns: usize, glyphs: Glyphs, footer: String) -> Vec
 /// `heading` names who is answering, after the word `Usage`; `asking` names
 /// the provider whose plan is being asked, while it is. Reset times are read
 /// against `clock`. Every row fits `columns`.
+///
+/// On an installed agent's route, `execution`, the session's figures are
+/// headed as that agent's report, and the rows it reports nothing for, the
+/// time waiting on the API and the lines changed, are not drawn. Nor is a
+/// plan limit, which no agent reports.
 // What is drawn, whose plan is being asked, and how wide, in which glyphs and
 // against which clock, are independent inputs: the panel, `/settings` and the
 // tests each hold them apart.
@@ -581,6 +630,7 @@ fn framed(rows: Vec<Row>, columns: usize, glyphs: Glyphs, footer: String) -> Vec
 pub(crate) fn body(
     heading: &str,
     usage: &api::Usage,
+    execution: &api::Execution,
     asking: Option<&str>,
     columns: usize,
     glyphs: Glyphs,
@@ -598,19 +648,34 @@ pub(crate) fn body(
         Glyphs::Ascii => "-",
     };
     let (cost_slot, cost) = self::cost(&usage.used.cost);
+    let total = labelled("Total cost", at).then(cost_slot, cost);
+    let wall = labelled("Wall time", at).then(Slot::Plain, took(usage.used.wall_ms));
 
-    let mut rows = vec![
-        Row::new().then(Slot::Strong, title),
-        Row::new(),
-        Row::new().then(Slot::Plain, "Session"),
-        labelled("Total cost", at).then(cost_slot, cost),
-        labelled("API time", at).then(Slot::Plain, took(usage.used.api_ms)),
-        labelled("Wall time", at).then(Slot::Plain, took(usage.used.wall_ms)),
-        labelled("Lines changed", at).then(
-            Slot::Plain,
-            format!("+{} {minus}{}", usage.used.added, usage.used.removed),
-        ),
-    ];
+    let mut rows = vec![Row::new().then(Slot::Strong, title), Row::new()];
+    match execution {
+        api::Execution::Native => rows.extend([
+            Row::new().then(Slot::Plain, "Session"),
+            total,
+            labelled("API time", at).then(Slot::Plain, took(usage.used.api_ms)),
+            wall,
+            labelled("Lines changed", at).then(
+                Slot::Plain,
+                format!("+{} {minus}{}", usage.used.added, usage.used.removed),
+            ),
+        ]),
+        api::Execution::Instance(instance) => rows.extend([
+            Row::new().then(
+                Slot::Plain,
+                format!(
+                    "Session {} as {} reported it",
+                    glyphs.dot(),
+                    instance.as_str()
+                ),
+            ),
+            total,
+            wall,
+        ]),
+    }
     let tokens = [
         format!("{} in", count(usage.used.input)),
         format!("{} out", count(usage.used.output)),
@@ -644,7 +709,16 @@ pub(crate) fn body(
 
     rows.push(Row::new());
     rows.push(Row::new().then(Slot::Plain, "Plan limits"));
-    rows.extend(limits(&usage.limits, asking, columns, glyphs, clock));
+    match execution {
+        api::Execution::Native => {
+            rows.extend(limits(&usage.limits, asking, columns, glyphs, clock));
+        }
+        api::Execution::Instance(_) => rows.push(
+            Row::new()
+                .then(Slot::Plain, "  ")
+                .then(Slot::Quiet, "not reported by agents"),
+        ),
+    }
     rows.into_iter().map(|row| row.clipped(columns)).collect()
 }
 

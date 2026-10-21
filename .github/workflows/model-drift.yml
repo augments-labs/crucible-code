@@ -1,0 +1,70 @@
+name: model-drift
+
+# The model lists are written by hand from the vendors' pages, and vendors
+# release models several times a year. This reads the models.dev database every
+# two weeks and puts what it says against the shipped lists into one issue, so
+# a refresh starts from a list rather than from memory. It is not a
+# pull-request verdict: the database changes without a source change.
+on:
+  schedule:
+    # The 1st and the 15th, early, so the issue is waiting at the start of a day.
+    - cron: "23 6 1,15 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: model-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Model lists against models.dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --locked --quiet --bin generate-models
+
+      - name: Read the database and report what it says
+        id: drift
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --max-time 60 \
+            --output "$RUNNER_TEMP/models.json" https://models.dev/api.json
+          status=0
+          target/debug/generate-models --drift < "$RUNNER_TEMP/models.json" \
+            > "$RUNNER_TEMP/drift.md" || status=$?
+          case $status in
+            0) echo "found=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "found=true" >> "$GITHUB_OUTPUT"; cat "$RUNNER_TEMP/drift.md" ;;
+            *) exit "$status" ;;
+          esac
+
+      # One open issue at a time: a later run comments on it rather than
+      # stacking another beside it, and only when the report has changed.
+      - name: Open or update the drift issue
+        if: steps.drift.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh label create model-drift --color C5DEF5 \
+            --description "Model lists differ from the model database" 2>/dev/null || true
+          open=$(gh issue list --label model-drift --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [[ -n $open ]]; then
+            last=$(gh issue view "$open" --json body,comments \
+              --jq 'if (.comments | length) > 0 then .comments[-1].body else .body end')
+            if [[ $last != "$(cat "$RUNNER_TEMP/drift.md")" ]]; then
+              gh issue comment "$open" --body-file "$RUNNER_TEMP/drift.md"
+            fi
+          else
+            gh issue create --title "Model lists differ from models.dev" \
+              --label model-drift --body-file "$RUNNER_TEMP/drift.md"
+          fi

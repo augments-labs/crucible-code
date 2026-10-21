@@ -29,9 +29,13 @@
 //! Nothing in here reads the environment or the disk on its own account
 //! except through a parameter it was handed: the lookup, the home, the
 //! workspace. That is what lets a startup be failed every way it can fail
-//! without a key or a home directory anywhere near the test.
+//! without a key or a home directory anywhere near the test. The one exception
+//! is `proof`, which only a test build has: it reads from the environment which
+//! agents that build's binary can start.
 
+pub mod access;
 pub mod auth;
+pub mod backends;
 pub mod branching;
 pub mod client;
 pub mod content_use;
@@ -39,9 +43,16 @@ mod conversation;
 pub mod doctor;
 mod error;
 pub mod extensions;
+pub mod external;
 mod following;
+pub mod installing;
+pub mod launching;
 pub mod mcp;
 mod models;
+pub mod native;
+pub mod outside;
+#[cfg(feature = "proof")]
+pub mod proof;
 pub mod providers;
 pub mod remember;
 pub mod runtime;
@@ -57,5 +68,5 @@ pub mod subscription;
 pub mod switching;
 pub mod update;
 
-pub use conversation::Conversation;
+pub use conversation::{Conversation, Settled, Unpicked};
 pub use error::AppError;

@@ -5,6 +5,9 @@
 //! overwritten in place: nothing per response is kept, so it is the same size
 //! after a thousand answers as after one. It is this process's count and is
 //! never written to the session; a session picked up starts counting again.
+//! A session another agent runs has no runner counting it, so its figures are
+//! what that agent reported, summed by whoever drives it and stated whole
+//! through [`Totals::reported`].
 //!
 //! **A response is counted once.** What a provider reports while a response
 //! arrives is that response's total so far rather than an increment, so the
@@ -15,8 +18,9 @@
 //! for one turn.
 //!
 //! **A response's cost joins the sum when it ends, by one rule.** A response
-//! that completed with a usage report its model's prices cover adds that
-//! price. A model with no price, a report no price fits, amounts in
+//! that completed with a usage report its model's prices cover adds that price.
+//! A model with no price, a request that carried the model's fast form, which
+//! the vendor bills above the prices kept, a report no price fits, amounts in
 //! currencies that do not add up, or a sum too large to carry make the sum
 //! [`SessionCost::NotPriced`] whatever it was before, a lower bound included,
 //! and it stays so: a reader shown `$0.40` for a session that also spent an
@@ -25,11 +29,10 @@
 //! [`SessionCost::Unspent`] meaning only that no response has ended. A response
 //! that ended without completing, stopped, failed or asked again, on a model
 //! with a price, still counts its tokens as last reported and adds whatever of
-//! them its last report priced, and the sum becomes
-//! [`SessionCost::AtLeast`]: what the provider billed for it is not known, and
-//! everything else is. Later priced responses keep adding to that floor. A
-//! request that never went out, or that the provider turned away, is no
-//! response and adds nothing.
+//! them its last report priced, and the sum becomes [`SessionCost::AtLeast`]:
+//! what the provider billed for it is not known, and everything else is. Later
+//! priced responses keep adding to that floor. A request that never went out,
+//! or that the provider turned away, is no response and adds nothing.
 //!
 //! Whether the model has a price is asked of the pricing record when the
 //! request goes out, before anything is reported, so a short report and an
@@ -50,10 +53,10 @@ pub enum SessionCost {
     /// A response ended before the provider said what it cost, so the
     /// session spent this or more.
     AtLeast(CostAmount),
-    /// No sum is the session's: a model has no price, a report fits none, a
-    /// completed response reported no usage to price, the amounts are in
-    /// currencies that do not add up to one figure, or the sum is too large
-    /// to carry.
+    /// No sum is the session's: a model has no price, a request carried a
+    /// fast form no price kept covers, a report fits none, a completed
+    /// response reported no usage to price, the amounts are in currencies
+    /// that do not add up to one figure, or the sum is too large to carry.
     NotPriced,
 }
 
@@ -65,7 +68,8 @@ pub(super) enum Listed {
         /// Nothing, in that currency and unit.
         nothing: CostAmount,
     },
-    /// No record, or one missing a rate: no report of this model is priced.
+    /// No record bills the request, or the one that does misses a rate: no
+    /// report of it is priced.
     Unpriced,
 }
 
@@ -83,8 +87,8 @@ impl Listed {
 /// What one usage report was priced at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Price {
-    /// The report's model has no price at its size, or the price could not be
-    /// applied to it.
+    /// No price bills the report's request at its size, or the price could
+    /// not be applied to it.
     Unpriced,
     /// A model priced in full, and a report short of a quantity its price
     /// needs, such as one that opens an answer before any output.
@@ -204,6 +208,20 @@ impl Heard {
     }
 }
 
+/// The tokens another agent reported using, summed over a session, as
+/// [`Totals::reported`] states them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReportedTokens {
+    /// Input tokens, cache reads included.
+    pub input: u64,
+    /// Output tokens.
+    pub output: u64,
+    /// Input tokens read from a cache.
+    pub cache_read: u64,
+    /// Input tokens written to a cache.
+    pub cache_write: u64,
+}
+
 /// What a session has used: tokens, cost, time and lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Totals {
@@ -234,6 +252,32 @@ impl Totals {
             pending: Pending::Unasked,
             waited: Duration::ZERO,
             started: Instant::now(),
+            added: 0,
+            removed: 0,
+        }
+    }
+
+    /// The figures of a session another agent ran, as it reported them:
+    /// tokens summed across its turns, the cost those reports came to, and
+    /// when the first of them started.
+    ///
+    /// Nothing here is counted by this program, so no request time and no
+    /// edited lines are known, and they read as nothing.
+    #[must_use]
+    pub const fn reported(tokens: ReportedTokens, cost: SessionCost, started: Instant) -> Self {
+        Self {
+            settled: Heard {
+                input: tokens.input,
+                output: tokens.output,
+                cache_read: tokens.cache_read,
+                cache_write: tokens.cache_write,
+                reported: true,
+            },
+            cost,
+            reading: Heard::NOTHING,
+            pending: Pending::Unasked,
+            waited: Duration::ZERO,
+            started,
             added: 0,
             removed: 0,
         }

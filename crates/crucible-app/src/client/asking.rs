@@ -181,6 +181,10 @@ pub fn asking(
         | Command::CycleMode
         | Command::Login { .. }
         | Command::Logout { .. }
+        | Command::Disconnect { .. }
+        | Command::RemoveIntegration { .. }
+        | Command::SignOut { .. }
+        | Command::Connect { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }
@@ -203,7 +207,7 @@ pub(super) fn started(conversation: &mut Conversation, now: Instant) -> Option<A
     {
         return None;
     }
-    let question = conversation.runner.provider().ask_limits()?;
+    let question = conversation.native()?.provider().ask_limits()?;
     conversation.asks.sending(credential, now);
     Some(Asking {
         credential,
@@ -217,7 +221,9 @@ pub(super) fn started(conversation: &mut Conversation, now: Instant) -> Option<A
 pub fn asked(conversation: &mut Conversation, answered: Answered) -> Performed {
     match answered.asked {
         Asked::Answered(windows) if credential(conversation) == Some(answered.credential) => {
-            conversation.runner.answered_limits(windows);
+            if let Some(runner) = conversation.native_mut() {
+                runner.answered_limits(windows);
+            }
         }
         Asked::Closed => conversation.asks.close(answered.credential),
         // The client that would have sent it held it back: nothing left, so
@@ -233,21 +239,23 @@ pub fn asked(conversation: &mut Conversation, answered: Answered) -> Performed {
 /// What the session has used and the plan's limits as `conversation` knows
 /// them, asking nobody.
 pub(super) fn usage(conversation: &Conversation) -> Performed {
-    let runner = conversation.runner();
-    Performed::Usage(Box::new(reading::usage(
-        runner.model(),
-        &runner.breakdown(),
-        &runner.totals(),
-        runner.plan_limits().as_ref(),
+    let settled = conversation.settled();
+    let mut usage = reading::usage(
+        settled.model(),
+        &settled.breakdown(),
+        &settled.totals(),
+        settled.plan_limits().as_ref(),
         conversation.serving(),
-    )))
+    );
+    usage.context.external = settled.external();
+    Performed::Usage(Box::new(usage))
 }
 
 /// The credential `conversation` asks through, where it asks anybody.
 fn credential(conversation: &Conversation) -> Option<Credential> {
     let serving = conversation.serving()?;
     let scope = conversation
-        .runner()
+        .native()?
         .provider()
         .prompt_cache_route()
         .credential_scope;

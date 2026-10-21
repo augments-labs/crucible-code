@@ -29,6 +29,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "MCP servers: programs to start, with their arguments and environment",
     ),
     (
+        "externalAgents",
+        "installed agents a provider may be reached through: programs to start, read only from the user's own file",
+    ),
+    (
         "systemPrompt.custom",
         "the system prompt, which is free text",
     ),

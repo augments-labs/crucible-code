@@ -5,7 +5,7 @@ use crucible_tools::{Ask, Command, Mode, Remember, Sensitivity, Settled, Verdict
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 
 use crate::document::{Document, Origin};
-use crate::settings::Settings;
+use crate::settings::{Driver, ExternalAgent, Settings};
 
 use super::*;
 
@@ -807,4 +807,448 @@ fn a_settings_row_already_saying_the_answer_leaves_the_file_as_it_was() {
         setting(text, FILE, row_of("output.glyphs"), "ascii").expect("read"),
         text
     );
+}
+
+#[test]
+fn disabling_an_agent_writes_its_enabled_false_and_nothing_else() {
+    let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\"\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
+    let written = disabling(text, FILE, "work").unwrap();
+    assert_eq!(
+        written,
+        text.replace(
+            "\"executable\": \"claude\"\n    },",
+            "\"executable\": \"claude\",\n      \"enabled\": false\n    },"
+        )
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let mut enabled: Vec<(String, bool)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.enabled()))
+        .collect();
+    enabled.sort();
+    assert_eq!(
+        enabled,
+        [("home".to_owned(), true), ("work".to_owned(), false)]
+    );
+    // Written again, it is already so.
+    assert_eq!(disabling(&written, FILE, "work").unwrap(), written);
+}
+
+#[test]
+fn disabling_an_agent_takes_away_every_access_reached_through_it_and_no_other() {
+    let text = "{\n  \"provider\": \"openai\",\n  \"providers\": {\n    \"openai\": {\n      \"model\": \"m\",\n      \"access\": {\"instance\": \"work\", \"type\": \"externalAgent\"}\n    },\n    \"google\": {\"access\": {\"type\": \"externalAgent\", \"instance\": \"work\"}},\n    \"moonshot\": {\"access\": {\"type\": \"externalAgent\", \"instance\": \"home\"}},\n    \"anthropic\": {\"access\": {\"type\": \"apiKey\"}}\n  },\n  \"externalAgents\": {\n    \"work\": {\"driver\": \"claude\", \"executable\": \"claude\"},\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
+    let written = disabling(text, FILE, "work").unwrap();
+    assert_eq!(
+        written,
+        text.replace(
+            "\"model\": \"m\",\n      \"access\": {\"instance\": \"work\", \"type\": \"externalAgent\"}\n",
+            "\"model\": \"m\"\n"
+        )
+        .replace(
+            "\"google\": {\"access\": {\"type\": \"externalAgent\", \"instance\": \"work\"}}",
+            "\"google\": {}"
+        )
+        .replace(
+            "\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}",
+            "\"work\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}"
+        )
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    assert_eq!(settings.referencing("work"), None);
+    assert_eq!(settings.referencing("home").as_deref(), Some("moonshot"));
+    // Written again, it is already so.
+    assert_eq!(disabling(&written, FILE, "work").unwrap(), written);
+    // An agent already disabled still lets go of what reaches it.
+    let disabled = text.replace(
+        "\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}",
+        "\"work\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}",
+    );
+    assert_eq!(disabling(&disabled, FILE, "work").unwrap(), written);
+}
+
+#[test]
+fn disabling_an_agent_takes_an_access_written_first_with_the_comma_after_it() {
+    let text = r#"{"providers": {"openai": {"access": {"type": "externalAgent", "instance": "work"}, "model": "m"}}, "externalAgents": {"work": {"enabled": false, "driver": "claude", "executable": "claude"}}}"#;
+    assert_eq!(
+        disabling(text, FILE, "work").unwrap(),
+        text.replace(
+            r#"{"access": {"type": "externalAgent", "instance": "work"}, "model": "m"}"#,
+            // The space after the comma is a neighbour's, and stays.
+            r#"{ "model": "m"}"#
+        )
+    );
+}
+
+#[test]
+fn disabling_an_enabled_agent_turns_its_word_over_in_place() {
+    let text = r#"{"externalAgents": {"work": {"enabled": true, "driver": "claude", "executable": "claude"}}}"#;
+    assert_eq!(
+        disabling(text, FILE, "work").unwrap(),
+        text.replace("\"enabled\": true", "\"enabled\": false")
+    );
+}
+
+#[test]
+fn disabling_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
+    for text in [
+        "",
+        "{}",
+        r#"{"externalAgents": {}}"#,
+        r#"{"externalAgents": {"home": {"driver": "claude", "executable": "claude"}}}"#,
+    ] {
+        assert!(
+            matches!(
+                disabling(text, FILE, "work"),
+                Err(ConfigError::Unspliceable { .. })
+            ),
+            "{text}"
+        );
+    }
+    assert!(matches!(
+        disabling("{", FILE, "work"),
+        Err(ConfigError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn connecting_an_agent_writes_the_provider_s_access_asks_it_then_enables_it_and_nothing_else() {
+    let text = "{\n  \"provider\": \"openai\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\",\n      \"enabled\": false\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}\n  }\n}\n";
+    let written = connecting(text, FILE, "anthropic", "work").unwrap();
+    assert_eq!(
+        written,
+        "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\",\n      \"enabled\": true\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\", \"enabled\": false}\n  },\n  \"providers\": {\n    \"anthropic\": {\n      \"access\": {\"instance\":\"work\",\"type\":\"externalAgent\"}\n    }\n  }\n}\n"
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    assert_eq!(
+        settings.access("anthropic"),
+        Some(crate::settings::Access::ExternalAgent {
+            instance: "work".into()
+        })
+    );
+    let mut enabled: Vec<(String, bool)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.enabled()))
+        .collect();
+    enabled.sort();
+    assert_eq!(
+        enabled,
+        [("home".to_owned(), false), ("work".to_owned(), true)]
+    );
+    assert_eq!(settings.provider(), Some("anthropic"));
+    // Written again, it is already so.
+    assert_eq!(
+        connecting(&written, FILE, "anthropic", "work").unwrap(),
+        written
+    );
+}
+
+#[test]
+fn connecting_an_agent_that_says_nothing_of_enabled_leaves_it_saying_nothing() {
+    let text = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude"}}, "providers": {"anthropic": {"access": {"type": "subscription"}}}}"#;
+    assert_eq!(
+        connecting(text, FILE, "anthropic", "work").unwrap(),
+        text.replace(
+            r#"{"type": "subscription"}}}}"#,
+            r#"{"instance":"work","type":"externalAgent"}}}, "provider": "anthropic"}"#
+        )
+    );
+}
+
+#[test]
+fn reaching_a_provider_directly_writes_its_access_and_asks_it_and_nothing_else() {
+    use crate::settings::Access;
+
+    let text = "{\n  \"provider\": \"openai\",\n  \"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}},\n  \"providers\": {\n    \"anthropic\": {\n      \"access\": {\"type\": \"externalAgent\", \"instance\": \"work\"}\n    }\n  }\n}\n";
+    for (access, spelled) in [
+        (Access::Subscription, r#"{"type":"subscription"}"#),
+        (Access::ApiKey, r#"{"type":"apiKey"}"#),
+    ] {
+        let written = reaching(text, FILE, "anthropic", &access).unwrap();
+        assert_eq!(
+            written,
+            text.replace("\"openai\"", "\"anthropic\"")
+                .replace(r#"{"type": "externalAgent", "instance": "work"}"#, spelled)
+        );
+        let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+        assert_eq!(settings.access("anthropic"), Some(access.clone()));
+        assert_eq!(settings.provider(), Some("anthropic"));
+        // Written again, it is already so.
+        assert_eq!(
+            reaching(&written, FILE, "anthropic", &access).unwrap(),
+            written
+        );
+    }
+}
+
+#[test]
+fn reaching_a_provider_into_a_file_it_cannot_be_written_into_writes_nothing() {
+    use crate::settings::Access;
+
+    assert!(matches!(
+        reaching("{", FILE, "anthropic", &Access::Subscription),
+        Err(ConfigError::Malformed { .. })
+    ));
+    assert!(matches!(
+        reaching("[]", FILE, "anthropic", &Access::Subscription),
+        Err(ConfigError::Unspliceable { .. })
+    ));
+}
+
+#[test]
+fn connecting_an_agent_the_file_does_not_name_is_refused_and_writes_nothing() {
+    for text in [
+        "",
+        "{}",
+        r#"{"externalAgents": {}}"#,
+        r#"{"externalAgents": {"home": {"driver": "claude", "executable": "claude"}}}"#,
+    ] {
+        assert!(
+            matches!(
+                connecting(text, FILE, "anthropic", "work"),
+                Err(ConfigError::Unspliceable { .. })
+            ),
+            "{text}"
+        );
+    }
+    assert!(matches!(
+        connecting("{", FILE, "anthropic", "work"),
+        Err(ConfigError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn installing_an_agent_writes_its_block_the_provider_s_access_and_enables_it_last() {
+    let profile = if cfg!(windows) {
+        r"C:\Users\me\.crucible\agents\antigravity"
+    } else {
+        "/home/me/.crucible/agents/antigravity"
+    };
+    for (text, driver, executable, profile) in [
+        ("", Driver::Claude, "claude", None),
+        (
+            "{\n  \"provider\": \"anthropic\"\n}\n",
+            Driver::Claude,
+            "claude",
+            None,
+        ),
+        (
+            r#"{"externalAgents": {"home": {"driver": "claude", "executable": "claude"}}}"#,
+            Driver::Antigravity,
+            "agy_acp_server.par",
+            Some(profile),
+        ),
+    ] {
+        let name = driver.name();
+        let written = installing(
+            text,
+            FILE,
+            "anthropic",
+            &ExternalAgent::unwritten(name, driver, executable, profile),
+        )
+        .unwrap_or_else(|problem| panic!("{text}: {problem}"));
+        let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+        assert_eq!(
+            settings.access("anthropic"),
+            Some(crate::settings::Access::ExternalAgent {
+                instance: name.into()
+            }),
+            "{written}"
+        );
+        let installed = settings
+            .external_agents()
+            .into_iter()
+            .find(|agent| agent.name() == name)
+            .map(|agent| {
+                (
+                    agent.enabled(),
+                    agent.driver(),
+                    agent.executable().to_owned(),
+                    agent.profile().map(str::to_owned),
+                )
+            });
+        assert_eq!(
+            installed,
+            Some((
+                true,
+                driver,
+                executable.to_owned(),
+                profile.map(str::to_owned)
+            )),
+            "{written}"
+        );
+        // Everything the file held before is still held.
+        if let Ok(before) = serde_json::from_str::<Value>(text) {
+            let after: Value = serde_json::from_str(&written).unwrap_or_default();
+            for (key, value) in before.as_object().into_iter().flatten() {
+                if key != "externalAgents" {
+                    assert_eq!(after.get(key), Some(value), "{written}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn installing_an_agent_the_file_already_names_is_refused() {
+    let text =
+        r#"{"externalAgents": {"claude": {"driver": "claude", "executable": "claude-work"}}}"#;
+    assert!(matches!(
+        installing(
+            text,
+            FILE,
+            "anthropic",
+            &ExternalAgent::unwritten("claude", Driver::Claude, "claude", None),
+        ),
+        Err(ConfigError::Unspliceable { .. })
+    ));
+}
+
+#[test]
+fn removing_an_agent_cuts_out_its_block_and_nothing_else() {
+    let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\"\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
+    let written = removing(text, FILE, "work").unwrap();
+    assert_eq!(
+        written,
+        "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n"
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let names: Vec<String> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| agent.name().to_owned())
+        .collect();
+    assert_eq!(names, ["home"]);
+
+    // The only one leaves the object empty.
+    let only = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#;
+    let emptied = removing(only, FILE, "work").unwrap();
+    assert_eq!(emptied, r#"{"externalAgents": {}}"#);
+
+    // The last one goes with the comma before it.
+    let last = removing(text, FILE, "home").unwrap();
+    assert!(!last.contains("home"), "{last}");
+    assert!(last.contains("\"work\""), "{last}");
+    Settings::resolve(vec![Document::sample(&last, Origin::User)]);
+}
+
+#[test]
+fn removing_an_agent_a_provider_is_reached_through_is_refused_and_writes_nothing() {
+    let text = r#"{"providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}},
+        "externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#;
+    match removing(text, FILE, "work") {
+        Err(ConfigError::StillReferenced {
+            instance, provider, ..
+        }) => assert_eq!((&*instance, &*provider), ("work", "anthropic")),
+        other => panic!("{other:?}"),
+    }
+    // Reached through another instance, it does not hold this one.
+    let elsewhere = text.replace(r#""instance": "work""#, r#""instance": "home""#);
+    assert!(removing(&elsewhere, FILE, "work").is_ok());
+}
+
+#[test]
+fn removing_an_agent_the_file_does_not_name_is_refused() {
+    for text in [
+        "",
+        "{}",
+        r#"{"externalAgents": {}}"#,
+        r#"{"externalAgents": {"home": {"driver": "claude", "executable": "claude"}}}"#,
+    ] {
+        assert!(
+            matches!(
+                removing(text, FILE, "work"),
+                Err(ConfigError::Unremovable { .. })
+            ),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn choosing_an_agents_model_writes_its_model_and_nothing_else() {
+    let text = "{\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"claude\",\n      \"executable\": \"claude\"\n    },\n    \"home\": {\"driver\": \"claude\", \"executable\": \"claude\", \"model\": \"haiku\"}\n  }\n}\n";
+    let written = choosing_agent_model(text, FILE, "work", Some("opus")).unwrap();
+    assert_eq!(
+        written,
+        text.replace(
+            "\"executable\": \"claude\"\n    },",
+            "\"executable\": \"claude\",\n      \"model\": \"opus\"\n    },"
+        )
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let mut models: Vec<(String, Option<String>)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.model().map(Into::into)))
+        .collect();
+    models.sort();
+    assert_eq!(
+        models,
+        [
+            ("home".to_owned(), Some("haiku".to_owned())),
+            ("work".to_owned(), Some("opus".to_owned()))
+        ]
+    );
+    // Written again, it is already so.
+    assert_eq!(
+        choosing_agent_model(&written, FILE, "work", Some("opus")).unwrap(),
+        written
+    );
+}
+
+#[test]
+fn choosing_an_agents_model_writes_over_the_one_named_or_takes_it_out() {
+    let text = r#"{"externalAgents": {"work": {"driver": "claude", "model": "haiku", "executable": "claude"}}}"#;
+    assert_eq!(
+        choosing_agent_model(text, FILE, "work", Some("claude-opus-5-5[1m]")).unwrap(),
+        text.replace("\"haiku\"", "\"claude-opus-5-5[1m]\"")
+    );
+    // Left to the agent, the entry names no model at all. The space after the
+    // comma is a neighbour's, and stays.
+    assert_eq!(
+        choosing_agent_model(text, FILE, "work", None).unwrap(),
+        r#"{"externalAgents": {"work": {"driver": "claude",  "executable": "claude"}}}"#
+    );
+    let unnamed = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#;
+    assert_eq!(
+        choosing_agent_model(unnamed, FILE, "work", None).unwrap(),
+        unnamed
+    );
+}
+
+#[test]
+fn an_agents_model_its_program_could_not_take_is_not_written() {
+    let text = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude"}}}"#;
+    // Read as an option by the program it is handed to.
+    assert!(
+        choosing_agent_model(text, FILE, "work", Some("--dangerously-skip-permissions")).is_err()
+    );
+    assert!(choosing_agent_model(text, FILE, "work", Some("a \"quoted\" name")).is_err());
+    // An entry the file does not hold is not made up.
+    assert!(matches!(
+        choosing_agent_model(text, FILE, "home", Some("opus")),
+        Err(ConfigError::Unspliceable { .. })
+    ));
+}
+
+#[test]
+fn an_agents_effort_is_written_beside_its_model_or_taken_out() {
+    let text = r#"{"externalAgents": {"work": {"driver": "claude", "executable": "claude", "model": "claude-opus-5-5"}}}"#;
+    let written = thinking_agent(text, FILE, "work", Some(Effort::High)).unwrap();
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let efforts: Vec<_> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.model().map(str::to_owned), agent.effort()))
+        .collect();
+    assert_eq!(
+        efforts,
+        [(Some("claude-opus-5-5".to_owned()), Some(Effort::High))]
+    );
+    assert_eq!(thinking_agent(&written, FILE, "work", None).unwrap(), text);
+    // An agent that chooses its own model takes no effort either.
+    let chooses = r#"{"externalAgents": {"work": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy"}}}"#;
+    assert!(thinking_agent(chooses, FILE, "work", Some(Effort::High)).is_err());
 }

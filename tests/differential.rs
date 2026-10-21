@@ -1685,6 +1685,8 @@ impl crucible_tools::Ask for Allowing {
     }
 }
 
+impl crucible_app::client::Asker for Allowing {}
+
 /// `text` with the clock readings in the session totals a turn posts put out
 /// of the comparison: how long requests were out, which a turn whose model
 /// waits makes longer by design, and the instant the session started. Every
@@ -1854,9 +1856,7 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
             crucible_runtime::Aside::new(),
         );
         let turned = {
-            let run = conversation
-                .runner()
-                .starting(&events, &cancel, &steer, &aside);
+            let run = conversation.starting(&events, &cancel, &steer, &aside);
             runtime.block_on(conversation.turn(
                 "probe the tree",
                 Box::default(),

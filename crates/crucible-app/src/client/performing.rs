@@ -18,11 +18,11 @@ use crucible_types::{PromptCacheResourceError, PromptCacheResourceRecord, Sessio
 use crucible_workspace::Workspace;
 
 use super::{asking, reading};
-use crate::Conversation;
 use crate::providers::{CredentialSource, Served, offered};
 use crate::remember::{self, RememberError};
 use crate::speed::Hastened;
 use crate::switching::{LoggedIn, LoggedOut, Rung, Switched, Switching};
+use crate::{Conversation, Unpicked};
 
 /// What the host lends a command: the registry generation and files a switch
 /// is decided from, where sessions are kept, the workspace they belong to,
@@ -87,8 +87,14 @@ pub enum Resumed {
     },
     /// No session of this workspace answers to the name.
     Unknown,
-    /// Its log could not be read; the session in hand is untouched.
-    Failed(SessionError),
+    /// A provider's model ran it, and the run is on an installed agent's route
+    /// it started on, so no provider was set up to ask: it goes on at the
+    /// next launch that reaches one directly.
+    NextLaunch,
+    /// Its log could not be read, or the agent that ran it is no longer
+    /// configured as it was or cannot be started; the session in hand is
+    /// untouched.
+    Failed(Unpicked),
 }
 
 /// What came of `/settings` changing one row.
@@ -125,6 +131,8 @@ pub enum Performed {
     Login(LoggedIn),
     /// `/logout`.
     Logout(LoggedOut),
+    /// An account operation on an installed agent.
+    Account(super::accounts::Account),
     /// `/cache`: the persistent resources remembered.
     Cache(Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError>),
     /// `/cache clean`.
@@ -150,6 +158,8 @@ pub enum Performed {
         model: Box<str>,
         /// The runner's count of it.
         breakdown: Breakdown,
+        /// What an installed agent last said its context holds, on its route.
+        external: Option<u64>,
     },
     /// `/usage`: what the session has used, and the plan's limits as the
     /// runner holds them once it was asked. Only [`Command::AskLimits`] asks
@@ -175,9 +185,15 @@ pub async fn perform(
     desk: &Desk<'_>,
 ) -> Performed {
     match request.command() {
-        Command::Prompt(_) | Command::Compact | Command::Cancel => {
-            Performed::Refused(ErrorCode::Busy.into())
-        }
+        // A disconnect asks which way to go, and only `account` has a front
+        // end to ask.
+        Command::Prompt(_)
+        | Command::Compact
+        | Command::Cancel
+        | Command::Disconnect { .. }
+        | Command::RemoveIntegration { .. }
+        | Command::SignOut { .. }
+        | Command::Connect { .. } => Performed::Refused(ErrorCode::Busy.into()),
         // No turn is stopped here, so there is no action this could be about.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
         Command::Clear => Performed::Cleared(clear(conversation, desk).await),
@@ -189,11 +205,11 @@ pub async fn perform(
         } => match served(desk, provider.as_str()) {
             Ok(selected) => Performed::Model(
                 conversation
-                    .ask_for(
+                    .ask_for_moving(
                         selected,
-                        model.as_str(),
-                        effort.map(reading::effort),
+                        (model.as_str(), effort.map(reading::effort)),
                         &desk.switching,
+                        (desk.sessions, desk.workspace),
                     )
                     .await,
             ),
@@ -205,14 +221,14 @@ pub async fn perform(
         Command::SetSpeed(pace) => {
             Performed::Speed(conversation.hasten(reading::speed(*pace), &desk.switching))
         }
-        Command::SetMode(mode) => {
-            let mode = reading::mode_in(*mode);
-            conversation.switch(mode);
-            Performed::Mode(mode)
-        }
+        Command::SetMode(mode) => Performed::Mode(conversation.switch(reading::mode_in(*mode))),
         Command::CycleMode => Performed::Mode(conversation.cycle()),
         Command::Login { provider } => match served(desk, provider.as_str()) {
-            Ok(named) => Performed::Login(conversation.logged_in(named, &desk.switching).await),
+            Ok(named) => Performed::Login(
+                conversation
+                    .logged_in_moving(named, &desk.switching, desk.sessions, desk.workspace)
+                    .await,
+            ),
             Err(refused) => Performed::Refused(refused),
         },
         Command::Logout { provider } => match served(desk, provider.as_str()) {
@@ -243,8 +259,9 @@ pub async fn perform(
             }
         }
         Command::Context => Performed::Context {
-            model: conversation.runner().model().into(),
-            breakdown: conversation.runner().breakdown(),
+            model: conversation.settled().model().into(),
+            breakdown: conversation.settled().breakdown(),
+            external: conversation.settled().external(),
         },
         Command::Usage => asking::usage(conversation),
         // Asked and awaited in a row: a client that would rather keep going
@@ -307,6 +324,10 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::CycleMode
         | Command::Login { .. }
         | Command::Logout { .. }
+        | Command::Disconnect { .. }
+        | Command::RemoveIntegration { .. }
+        | Command::SignOut { .. }
+        | Command::Connect { .. }
         | Command::InspectCache
         | Command::CleanCache
         | Command::Sandbox { .. }
@@ -349,7 +370,7 @@ async fn clear(conversation: &mut Conversation, desk: &Desk<'_>) -> Cleared {
     // A session that has said nothing is already the empty one this would go
     // and open, and a second log would leave two files for a session that
     // never happened.
-    if conversation.runner().transcript().is_empty() {
+    if conversation.settled().transcript().is_empty() {
         return Cleared::Nothing;
     }
 
@@ -374,11 +395,16 @@ async fn resume(conversation: &mut Conversation, desk: &Desk<'_>, id: &SessionId
         return Resumed::Same;
     }
 
-    match conversation.resume(desk.sessions, desk.workspace, id).await {
+    let entries = desk.switching.settings.external_agents();
+    match conversation
+        .resume(desk.sessions, desk.workspace, id, &entries)
+        .await
+    {
         Ok(left) => Resumed::Picked {
             unclosed: closed(&left),
         },
-        Err(SessionError::Unknown { .. }) => Resumed::Unknown,
+        Err(Unpicked::Session(SessionError::Unknown { .. })) => Resumed::Unknown,
+        Err(Unpicked::NextLaunch) => Resumed::NextLaunch,
         Err(problem) => Resumed::Failed(problem),
     }
 }
@@ -417,6 +443,7 @@ impl Performed {
                     unclosed: unclosed.as_ref().map(|said| Problem::failed(said)),
                 },
                 Resumed::Unknown => ResumeOutcome::Unknown,
+                Resumed::NextLaunch => ResumeOutcome::NextLaunch,
                 Resumed::Failed(problem) => ResumeOutcome::Failed(Problem::failed(problem)),
             }),
             Self::Model(switched) => Outcome::Model(model(switched)),
@@ -438,6 +465,7 @@ impl Performed {
             Self::Mode(mode) => Outcome::Mode(reading::mode_out(*mode)),
             Self::Login(logged_in) => Outcome::Login(login(logged_in)),
             Self::Logout(logged_out) => Outcome::Logout(logout(logged_out)),
+            Self::Account(account) => account.outcome(),
             Self::Cache(listed) => Outcome::Cache(cache(listed)),
             Self::Cleaned(cleaned) => Outcome::Cleaned(match cleaned {
                 Ok(counted) => CleanOutcome::Counted {
@@ -468,9 +496,14 @@ impl Performed {
             }),
             Self::Help => Outcome::help(),
             Self::Notes(notes) => Outcome::Notes(notes.clone()),
-            Self::Context { model, breakdown } => {
-                Outcome::Context(reading::context(model, breakdown))
-            }
+            Self::Context {
+                model,
+                breakdown,
+                external,
+            } => Outcome::Context(crucible_client_api::Context {
+                external: *external,
+                ..reading::context(model, breakdown)
+            }),
             Self::Usage(usage) => Outcome::Usage(usage.as_ref().clone()),
             Self::Leaving => Outcome::Leaving,
         }
@@ -489,18 +522,53 @@ fn model(switched: &Switched) -> ModelOutcome {
             retained: reading::retained(*retained),
             unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
         },
+        Switched::MovedOff {
+            provider,
+            retained,
+            unwritten,
+        } => ModelOutcome::MovedOff {
+            provider: crucible_client_api::Text::cut(provider),
+            retained: reading::retained(*retained),
+            unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+        },
+        Switched::MovedOnto {
+            instance,
+            unwritten,
+        } => ModelOutcome::MovedOnto {
+            onto: crucible_client_api::Text::cut(instance),
+            unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+        },
     }
 }
 
 fn login(logged_in: &LoggedIn) -> LoginOutcome {
     match logged_in {
         LoggedIn::Unusable(problem) => LoginOutcome::Unusable(Problem::failed(problem)),
+        LoggedIn::NextLaunch {
+            provider,
+            unwritten,
+        } => LoginOutcome::NextLaunch {
+            provider: crucible_client_api::Text::cut(provider),
+            unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+        },
+        LoggedIn::Stored { provider } => LoginOutcome::Stored {
+            provider: crucible_client_api::Text::cut(provider),
+        },
         LoggedIn::Elsewhere => LoginOutcome::Elsewhere,
         LoggedIn::CacheHeld(problem) => LoginOutcome::CacheHeld(Problem::failed(problem)),
         LoggedIn::Serving {
             retained,
             unwritten,
         } => LoginOutcome::Serving {
+            retained: reading::retained(*retained),
+            unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+        },
+        LoggedIn::MovedOff {
+            provider,
+            retained,
+            unwritten,
+        } => LoginOutcome::MovedOff {
+            provider: crucible_client_api::Text::cut(provider),
             retained: reading::retained(*retained),
             unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
         },
@@ -514,7 +582,15 @@ fn logout(logged_out: &LoggedOut) -> LogoutOutcome {
             retained: reading::retained(*retained),
             problem: Problem::failed(problem),
         },
-        LoggedOut::Kept => LogoutOutcome::Kept,
+        LoggedOut::Kept { retained } => LogoutOutcome::Kept {
+            retained: reading::retained(*retained),
+        },
+        LoggedOut::Routed { instance, retained } => LogoutOutcome::StillServed {
+            retained: reading::retained(*retained),
+            standing: Standing::External {
+                instance: crucible_client_api::Text::cut(instance),
+            },
+        },
         LoggedOut::StillServed { retained, source } => LogoutOutcome::StillServed {
             retained: reading::retained(*retained),
             standing: match source {

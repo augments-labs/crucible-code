@@ -511,6 +511,8 @@ pub(super) struct Counted {
     pub(super) usage: api::Usage,
     /// The provider the turn asks, by its name in the registry.
     pub(super) serving: Option<&'static str>,
+    /// Who runs the turn: this program, or an installed agent.
+    pub(super) execution: api::Execution,
     /// The permission mode the turn runs under.
     pub(super) mode: Mode,
     /// The session being recorded into, where the run is being kept at all.
@@ -542,8 +544,13 @@ pub(super) enum Kept {
 /// runner is away is told instead of reading it.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Asked<'a> {
-    /// The provider's name in the registry, where one is answering.
+    /// The provider's name in the registry, where one is answering, or the
+    /// one an installed agent's route reaches.
     pub(super) provider: Option<&'static str>,
+    /// The one provider an installed agent's route that is started on a model
+    /// reaches: its sign-in is the agent's, so no credential of this program
+    /// narrows its models.
+    pub(super) reaching: Option<&'static str>,
     /// The model in force, empty where none is.
     pub(super) model: &'a str,
     /// The rung it is asked on, where one is in force.
@@ -566,12 +573,12 @@ pub(super) struct Pace {
 }
 
 impl Pace {
-    /// The pace of the model `runner` asks.
-    pub(super) fn of(runner: &crucible_runner::Runner) -> Self {
+    /// The pace of the model `settled` names.
+    pub(super) fn of(settled: crucible_app::Settled<'_>) -> Self {
         Self {
-            form: runner.provider().fast(runner.model()),
-            speed: runner.speed(),
-            served: runner.served().fast(),
+            form: settled.fast(),
+            speed: settled.speed(),
+            served: settled.served().fast(),
         }
     }
 }
@@ -579,10 +586,23 @@ impl Pace {
 pub(super) fn deferred<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    current: Asked<'_>,
+    (current, execution, model): (
+        Asked<'_>,
+        &crucible_client_api::Execution,
+        Option<&crucible_client_api::Model>,
+    ),
     wanted: &Owned,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Option<Kept>, Fatal> {
+    if let Owned::Known {
+        command: Command::Model,
+        ..
+    } = wanted
+        && let Some(said) = chosen_by_agent(execution, model, false)
+    {
+        say(renderer, &said)?;
+        return Ok(None);
+    }
     match &wanted {
         // A loop rather than a sequence, because "go back" returns to the
         // picker, and a pick is only held once it has been confirmed.
@@ -998,7 +1018,7 @@ fn moded<T: Terminal>(
     let ring = Row::new().then(Slot::Quiet, clip(mode::ring(style.glyphs()), columns));
 
     if said.is_empty() {
-        let rows = [sentence(conversation.runner().mode(), columns), ring];
+        let rows = [sentence(conversation.settled().mode(), columns), ring];
         renderer.present(&rows)?;
         return Ok(());
     }
@@ -1083,6 +1103,32 @@ fn relaid<T: Terminal>(
 /// [`HUNG`] columns too wide once it is.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
     say_at(renderer, Laid::Hung, said)
+}
+
+/// What `/model`, and `/effort` where `thinking`, say on the route of an
+/// installed agent that chooses its own model, in place of a shelf or a
+/// ladder: the agent is asked for neither, so taking any row either would hold
+/// is refused. Nothing on a provider's route, nor on an agent's started on
+/// `model`, whose shelf and ladder are its provider's.
+fn chosen_by_agent(
+    execution: &crucible_client_api::Execution,
+    model: Option<&crucible_client_api::Model>,
+    thinking: bool,
+) -> Option<String> {
+    let crucible_client_api::Execution::Instance(instance) = execution else {
+        return None;
+    };
+    if model.is_some() {
+        return None;
+    }
+    let instance = instance.as_str();
+    Some(if thinking {
+        format!(
+            "this conversation runs on the agent {instance}, which chooses its own model and how hard it thinks"
+        )
+    } else {
+        format!("this conversation runs on the agent {instance}, which chooses its own model")
+    })
 }
 
 /// Says one thing back, quietly, folded to where it will stand.

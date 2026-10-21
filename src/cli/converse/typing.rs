@@ -36,15 +36,15 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use crucible_app::Conversation;
+use crucible_app::Settled;
 use crucible_builtins::{Background, Ended};
 use crucible_client_api::Command;
 use crucible_models::Effort;
-use crucible_runner::Runner;
 use crucible_runtime::{Aside, Cancel};
 use crucible_tools::Mode;
 use crucible_tui::{
-    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Recalled, Renderer, Row, Slot,
-    Terminal, Typed, characters, pressed,
+    Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Recalled, Remaining, Renderer, Row,
+    Slot, Terminal, Typed, characters, pressed,
 };
 
 use crate::cli::Fatal;
@@ -513,7 +513,7 @@ pub(crate) fn ask<T: Terminal>(
     // inside one.
     planning.moved();
 
-    let mut says = saying(conversation.runner()).naming(commands);
+    let mut says = routed(conversation).naming(commands);
     says.running = left.count();
 
     // A local, because where the mark was in it is not worth keeping: a list of
@@ -739,7 +739,7 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Cycle => {
                 terms.perform(conversation, Command::CycleMode);
 
-                says = saying(conversation.runner()).naming(commands);
+                says = routed(conversation).naming(commands);
                 true
             }
 
@@ -864,8 +864,8 @@ pub(super) struct Says {
     /// because a command ending is neither a keystroke nor a turn.
     pub(super) running: usize,
     /// How much usable room remains before compaction at the latest reading.
-    /// `None` makes the prompt say that the reading is unknown.
-    pub(super) left: Option<u8>,
+    /// An unknown reading makes the prompt say nothing of it.
+    pub(super) left: Remaining,
     /// The mode in force, kept as a value so shift+tab can step off it while
     /// the runner that owns it is away.
     ///
@@ -876,9 +876,22 @@ pub(super) struct Says {
     /// The commands a line may open with, by name, so the box can draw the one
     /// it opens with in the accent. Told once a prompt, by [`Says::naming`].
     pub(super) named: Vec<&'static str>,
+    /// Who runs the turns and who is paid for them, drawn where the provider
+    /// and model are, on an installed agent's route alone, which has neither:
+    /// `None` on this program's own runner, whose row is drawn as it always
+    /// was. In the contract's words, as [`Says::routing`] reads them.
+    pub(super) route: Option<[String; 2]>,
 }
 
 impl Says {
+    /// The same rows, saying on an installed agent's route who runs
+    /// `conversation`'s turns and who is paid for them, as any front end reads
+    /// them.
+    pub(super) fn routing(mut self, conversation: &Conversation) -> Self {
+        self.route = route(conversation);
+        self
+    }
+
     /// The same rows with one more thing said under them.
     ///
     /// A copy, because what it is made from belongs to the session and what is
@@ -1046,8 +1059,8 @@ pub(super) struct Footing<'a> {
 /// runs: its mode is held for the next turn until the runner comes back. Esc is
 /// already named on the working row above the box, and Return needs no second
 /// explanation here.
-pub(super) fn under(runner: &Runner) -> Says {
-    saying(runner)
+pub(super) fn under(settled: Settled<'_>) -> Says {
+    saying(settled)
 }
 
 /// Reads whatever the keyboard already has, and redraws the box if it moved.
@@ -1973,25 +1986,61 @@ pub(super) fn stand<T: Terminal>(
 }
 
 /// The row for the mode the box is showing.
-pub(super) fn saying(runner: &Runner) -> Says {
-    let mode = runner.mode();
+pub(super) fn saying(settled: Settled<'_>) -> Says {
+    let mode = settled.mode();
 
     Says {
         mode: Cow::Borrowed(mode.sentence()),
         keys: Cow::Borrowed(CYCLE),
-        model: runner.model().to_owned(),
-        provider: runner.serving(),
-        effort: runner.effort().map(Effort::as_str),
-        pace: super::command::Pace::of(runner),
+        model: settled.model().to_owned(),
+        provider: settled.serving(),
+        effort: settled.effort().map(Effort::as_str),
+        pace: super::command::Pace::of(settled),
         tone: tone(mode),
         asking: None,
-        left: runner.left(),
+        left: crate::cli::draw::remaining(&settled.breakdown()),
         running_mode: mode,
         // Filled in by the frame rather than by the session, because it changes
         // while nothing else on this row does.
         running: 0,
         named: Vec::new(),
+        route: None,
     }
+}
+
+/// Who runs `conversation`'s turns, on which model where one was chosen for
+/// it, and who is paid for them, in the client contract's words, as the status
+/// row and a route switch's line both say it: nothing where no agent runs
+/// them.
+pub(super) fn route(conversation: &Conversation) -> Option<[String; 2]> {
+    let crucible_client_api::Execution::Instance(instance) =
+        crucible_app::client::execution(conversation)
+    else {
+        return None;
+    };
+    let billing = crucible_app::client::billing(conversation);
+    let model = crucible_app::client::model(conversation);
+    Some([
+        execution(
+            instance.as_str(),
+            model.as_ref().map(|model| model.text().as_str()),
+        ),
+        format!("billing: {}", billing.as_str()),
+    ])
+}
+
+/// What runs the turns, as [`route`] says it: the agent's entry `instance`,
+/// and the model it was started on where one was chosen for it.
+fn execution(instance: &str, model: Option<&str>) -> String {
+    match model {
+        Some(model) => format!("execution: {instance}, model: {model}"),
+        None => format!("execution: {instance}"),
+    }
+}
+
+/// The row for `conversation`: [`saying`]'s, [`Says::routing`] it.
+pub(super) fn routed(conversation: &Conversation) -> Says {
+    saying(conversation.settled()).routing(conversation)
 }
 
 /// The columns a command list keeps in front of its names for the mark: the

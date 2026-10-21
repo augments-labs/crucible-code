@@ -9,6 +9,7 @@ use crucible_session::SessionError;
 use crucible_tools::ToolsetError;
 use crucible_workspace::PathError;
 
+use crate::access::AccessError;
 use crate::providers::ArmError;
 
 /// Why a run could not be assembled, or could not carry on.
@@ -130,6 +131,68 @@ pub enum AppError {
         provider: Box<str>,
     },
 
+    /// The provider's access, as configured, cannot be resolved to a route.
+    #[error(transparent)]
+    Access(AccessError),
+
+    /// The provider is reached through an installed agent, which runs a
+    /// conversation in place of the provider's models: what asks one of them
+    /// directly, a credential or a switch of model, has none to ask.
+    #[error(
+        "providers.{provider}.access names the agent {instance}, which runs the conversation in \
+         place of {provider}'s models; remove access to reach {provider} directly"
+    )]
+    ExternalAgent {
+        /// The provider.
+        provider: Box<str>,
+        /// The `externalAgents` entry it names.
+        instance: Box<str>,
+    },
+
+    /// A session a provider's model ran was asked to be continued by a run on
+    /// an installed agent's route, which would hand the agent a history it
+    /// never had. Refused before anything is built or the log is touched; a
+    /// run started on a provider's model continues it.
+    #[error(
+        "this session was run on a provider's model, so the agent {instance} cannot continue it; \
+         resume it on the next launch that reaches a provider directly"
+    )]
+    Unrouted {
+        /// The `externalAgents` entry the run is on.
+        instance: Box<str>,
+    },
+
+    /// The agent the provider's access names cannot be started on this run,
+    /// found before anything is built or the log is touched.
+    #[error("the agent {instance} cannot be started: {reason}")]
+    Unstartable {
+        /// The `externalAgents` entry it is.
+        instance: Box<str>,
+        /// Why, in a sentence.
+        reason: Box<str>,
+    },
+
+    /// An installed agent was asked to be started on a model its program
+    /// could not be started on, found before anything moved or was written.
+    #[error(
+        "the agent {instance} cannot be started on {model:?}: {}",
+        crucible_config::AGENT_MODEL_NAMED
+    )]
+    AgentModel {
+        /// The `externalAgents` entry it is.
+        instance: Box<str>,
+        /// The model, as it was asked for.
+        model: Box<str>,
+    },
+
+    /// The conversation is on an installed agent's route, and what was asked
+    /// is not chosen here: its model, and so the provider serving it.
+    #[error("this conversation is on {driver}, whose model is not chosen from here")]
+    Installed {
+        /// The agent's program, as the agent registry names it.
+        driver: &'static str,
+    },
+
     /// Provider construction and source resolution disagreed.
     #[error("no credential is available for {provider}; use /login or set its API key variable")]
     Authentication {
@@ -147,4 +210,31 @@ pub enum AppError {
     /// started, so no conversation was assembled.
     #[error(transparent)]
     Unstarted(#[from] crate::runtime::Unstarted),
+
+    /// A test build was asked to start agents from a registry it has no
+    /// name for. Only a test build has this, as it has [`crate::proof`].
+    #[cfg(feature = "proof")]
+    #[error("a test build's agents were asked for as {value:?}; the registries are fake and empty")]
+    ProofRegistry {
+        /// What was asked for, as far as it reads as text.
+        value: Box<str>,
+    },
+}
+
+impl From<AccessError> for AppError {
+    /// Written out so the two refusals a provider whose access was left off
+    /// has always given keep the variants every caller already matches.
+    fn from(refused: AccessError) -> Self {
+        match refused {
+            AccessError::Absent(absent) => Self::Credential(absent),
+            AccessError::SubscriptionAddress { provider } => Self::SubscriptionAddress { provider },
+            other @ (AccessError::SubscriptionElsewhere { .. }
+            | AccessError::NoSubscription { .. }
+            | AccessError::NotSignedIn { .. }
+            | AccessError::NoKey { .. }
+            | AccessError::AgentConflict { .. }
+            | AccessError::UnknownInstance { .. }
+            | AccessError::ForeignAgent { .. }) => Self::Access(other),
+        }
+    }
 }

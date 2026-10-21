@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+80x40 cursor 39,0 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────╮ |
+|│                                                                             │ |
+|│ CRUCIBLE                                                                    │ |
+|│ /…/workspace                                                                │ |
+|│                                                                             │ |
+|│ Recent sessions                                                             │ |
+|│                                                                             │ |
+|│ No earlier session for this workspace                                       │ |
+|│                                                                             │ |
+|│ ─────────────────────────────────────────────────────────────────────────── │ |
+|│                                                                             │ |
+|│ Tips                                                                        │ |
+|│                                                                             │ |
+|│ · /          opens the command list                                         │ |
+|│ · \ enter    adds a line without sending                                    │ |
+|│ · shift+tab  steps the permission mode                                      │ |
+|│ · ctrl+c     clears the line typed so far                                   │ |
+|╰─────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                |
+|› /login                                                                        |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Log in                                                                          |
+|                                                                                |
+|claude is not signed in.                                                        |
+|                                                                                |
+|Agent: claude, run as claude.                                                   |
+|Profile: the agent's default.                                                   |
+|Sign in: run `claude auth login` in a terminal, then choose Check again.        |
+|                                                                                |
+|› Check again                                                                   |
+|  Read the agent's sign-in again.                                               |
+|                                                                                |
+|  Cancel                                                                        |
+|  Change nothing.                                                               |
+|                                                                                |
+|esc to go back                                                                  |

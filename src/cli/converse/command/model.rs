@@ -18,6 +18,16 @@
 //! What is taken is written down, because the answer to "which model" is the
 //! same answer every time this directory is opened and asking it once a session
 //! is asking it for ever.
+//!
+//! On an installed agent's route the shelf holds every model of the one
+//! provider the agent reaches, since the agent's own sign-in serves them
+//! rather than a credential of this program, and one taken starts the agent's
+//! next run on it. The other providers stand beside it as they would off the
+//! route, and a model taken off one of them moves the conversation off the
+//! agent onto it, in a new session. An agent that chooses its own model is
+//! told so instead, at rest and mid-turn. Off such a route, a model of a
+//! provider the configuration reaches through an installed agent moves the
+//! conversation onto that agent, in a new session, to be started on it.
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
@@ -41,7 +51,7 @@ use crucible_app::providers::{
 };
 use crucible_app::startup::served;
 
-use super::{Asked, Laid, Terms, about, relaid, say, say_at};
+use super::{Asked, Laid, Terms, about, chosen_by_agent, relaid, say, say_at};
 
 mod narrowing;
 
@@ -207,7 +217,9 @@ impl Selected {
 }
 
 /// Runs it: the model named, one taken off the panel, or what is being asked
-/// now and what else could be.
+/// now and what else could be, of the one provider an installed agent's route
+/// reaches. On the route of an agent that chooses its own model, it says so
+/// and does none of these.
 ///
 /// `keys` is whether there is a keyboard to walk a panel with. Down a pipe there
 /// is not, and a panel waiting for a key nobody can press is a session that
@@ -224,18 +236,25 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
+    let execution = crucible_app::client::execution(conversation);
+    let model = crucible_app::client::model(conversation);
+    if let Some(said) = chosen_by_agent(&execution, model.as_ref(), false) {
+        return say(renderer, &said);
+    }
     if !said.is_empty() {
         return named(said, renderer, conversation, terms, keys);
     }
 
     if keys {
-        let runner = conversation.runner();
-        let track = Track::Offered(runner.effort());
+        let settled = conversation.settled();
+        let track = Track::Offered(settled.effort());
+        let reaching = crucible_app::client::reaching(conversation);
         let current = Asked {
-            provider: conversation.serving(),
-            model: runner.model(),
-            effort: runner.effort().map(Effort::as_str),
-            pace: super::Pace::of(runner),
+            provider: conversation.serving().or(reaching),
+            reaching,
+            model: settled.model(),
+            effort: settled.effort().map(Effort::as_str),
+            pace: super::Pace::of(settled),
         };
         let mut on = None;
         loop {
@@ -324,6 +343,7 @@ pub(super) fn confirmed<T: Terminal>(
         source: None,
         title: "Switch model?",
         said: Some(&says),
+        told: &[],
         shown: &rows,
         chosen: 0,
         footer: "esc to go back",
@@ -356,7 +376,10 @@ fn named<T: Terminal>(
             Ok(provider) => provider,
             Err(problem) => return say(renderer, &format!("! {problem}")),
         }
-    } else if let Some(provider) = conversation.serving() {
+    } else if let Some(provider) = conversation
+        .serving()
+        .or_else(|| crucible_app::client::reaching(conversation))
+    {
         match served(&providers, provider) {
             Ok(provider) => provider,
             Err(problem) => return say(renderer, &format!("! {problem}")),
@@ -451,7 +474,7 @@ fn stood<T: Terminal>(
     // sign-in serves decides the fast form a row's model has, and which of
     // its models each provider's credential in use serves decides its list.
     let stored = terms.logins.read();
-    let using = in_use(terms, &providers, &stored);
+    let using = in_use(terms, &providers, &stored, current.reaching);
     let all = narrowed(narrowing::every(&providers), &using);
     let routes = terms.consent.routes();
 
@@ -557,6 +580,7 @@ fn stood<T: Terminal>(
                 })
                 .collect();
 
+            let reading = terms.reading();
             let stocked: Vec<Stocked<'_>> = standing
                 .models
                 .iter()
@@ -569,7 +593,7 @@ fn stood<T: Terminal>(
                     let form = if now {
                         current.pace.form
                     } else {
-                        row_form(one.provider, one.model.name, &terms.settings, &stored)
+                        row_form(one.provider, one.model.name, &reading, &stored)
                     };
                     (one, window, now, form)
                 })
@@ -776,6 +800,29 @@ fn taken<T: Terminal>(
             super::cache::retained(renderer, laid, retained)?;
             unwritten
         }
+        Switched::MovedOff {
+            provider,
+            retained,
+            unwritten,
+        } => {
+            super::cache::retained(renderer, laid, retained)?;
+            say_at(renderer, laid, &super::login::moved_off(provider))?;
+            unwritten
+        }
+        Switched::MovedOnto {
+            instance,
+            unwritten,
+        } => {
+            say_at(
+                renderer,
+                laid,
+                &format!(
+                    "{provider} is reached through the agent {instance}, so this conversation \
+                     moved onto it, in a new session; /resume lists the one it left"
+                ),
+            )?;
+            unwritten
+        }
     };
 
     // The word may have come off the line and was never shape-checked — anything
@@ -785,7 +832,7 @@ fn taken<T: Terminal>(
     renderer.commit(&answered(
         provider,
         name,
-        effort.or(conversation.runner().effort()),
+        effort.or(conversation.settled().effort()),
         terms.style().glyphs(),
     ))?;
 
@@ -837,22 +884,24 @@ fn listed<T: Terminal>(
 ) -> Result<(), Fatal> {
     // Read out of a configuration file or off the command line either way, so
     // it goes out the way arrived text goes out.
-    let runner = conversation.runner();
-    match runner.model() {
+    let settled = conversation.settled();
+    let reaching = crucible_app::client::reaching(conversation);
+    match settled.model() {
         "" => renderer.commit(NO_MODEL_CHOSEN)?,
         name => renderer.commit(&in_force(
-            conversation.serving(),
+            conversation.serving().or(reaching),
             name,
-            runner.effort(),
+            settled.effort(),
             terms.style().glyphs(),
         ))?,
     }
 
     let providers = terms.providers.snapshot();
     let stored = terms.logins.read();
+    let using = in_use(terms, &providers, &stored, reaching);
     let lines = lines(
         narrowing::every(&providers),
-        &in_use(terms, &providers, &stored),
+        &using,
         terms.consent.routes(),
         terms.style().glyphs(),
     );
@@ -903,19 +952,24 @@ fn lines(
 }
 
 /// The credential each offered provider is sent with, read off `stored`
-/// and the environment as a run would read it.
+/// and the environment as a run would read it. The provider an installed
+/// agent's route reaches, `reaching`, has none here: the agent's own sign-in
+/// serves every one of its models.
 fn in_use<'a>(
     terms: &Terms,
     providers: &'a Providers,
     stored: &StoredCredentials,
+    reaching: Option<&str>,
 ) -> BTreeMap<&'a str, InUse> {
+    let settings = terms.reading();
     let auth = crucible_app::startup::ProviderAuth {
-        settings: &terms.settings,
+        settings: &settings,
         from: &*terms.environment,
         stored,
         subscriptions: &terms.subscriptions,
     };
     offered(providers)
+        .filter(|provider| Some(provider.name) != reaching)
         .filter_map(|provider| {
             crucible_app::providers::in_use(provider, auth).map(|one| (provider.name, one))
         })

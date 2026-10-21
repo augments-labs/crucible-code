@@ -15,6 +15,7 @@ use crucible_tools::Minted;
 use serde_json::Value;
 
 use crate::error::ConfigError;
+use crate::settings::access::ExternalAgent;
 use crate::shape::rows::{Row, Values};
 use crate::shape::whole;
 
@@ -420,6 +421,338 @@ pub fn sandboxing(text: &str, file: &str, enabled: bool) -> Result<String, Confi
     Ok(splice::over(text, was, written))
 }
 
+/// The text of a configuration file where the installed agent `instance`
+/// takes no new work: its block's `enabled` is `false`, every provider's
+/// `access` that reached it through the instance is gone, so the next start
+/// asks that provider directly rather than being refused, and every other
+/// byte is where it was.
+///
+/// Only the user file names installed agents, so `text` is that file's. An
+/// instance already disabled that no provider reaches leaves it as it was.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, and [`ConfigError::Unspliceable`]
+/// where `externalAgents.<instance>` is not an object the file holds, and
+/// [`ConfigError::Unremovable`] where an `access` cannot be taken out without
+/// rewriting.
+pub fn disabling(text: &str, file: &str, instance: &str) -> Result<String, ConfigError> {
+    let at = format!("externalAgents.{instance}.enabled");
+    let refused = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: at.clone().into(),
+        written: "false".into(),
+    };
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let Some(block) = document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .filter(|block| block.is_object())
+    else {
+        return Err(refused());
+    };
+    let disabled = if block.get("enabled").and_then(Value::as_bool) == Some(false) {
+        text.to_owned()
+    } else {
+        let root = splice::root(text).ok_or_else(refused)?;
+        let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
+        let at = splice::member(text, agents, instance).ok_or_else(refused)?;
+        if block.get("enabled").is_none() {
+            splice::insert(text, at, |_| "\"enabled\": false".to_owned())
+        } else {
+            let was = splice::member(text, at, "enabled").ok_or_else(refused)?;
+            splice::over(text, was, "false")
+        }
+    };
+    unreached(disabled, file, instance)
+}
+
+/// The text of a configuration file where the installed agent `instance` is
+/// started on `model`, or on its provider's default where that is `None`: its
+/// block's `model` written over, added or taken out, and every other byte
+/// where it was.
+///
+/// Only the user file names installed agents, so `text` is that file's. The
+/// text is read back before it is returned, so a model the agent's program
+/// could not be started on, or a driver that takes none, is refused rather
+/// than written.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, either as it is or as it would
+/// be; [`ConfigError::Unspliceable`] where `externalAgents.<instance>` is not
+/// an object the file holds, and [`ConfigError::Unremovable`] where its
+/// `model` cannot be taken out without rewriting.
+pub fn choosing_agent_model(
+    text: &str,
+    file: &str,
+    instance: &str,
+    model: Option<&str>,
+) -> Result<String, ConfigError> {
+    agent_member(text, file, instance, "model", model)
+}
+
+/// The text of a configuration file where the installed agent `instance` is
+/// started at `effort`, or at its model's default rung where that is `None`:
+/// the same splice as [`choosing_agent_model`], into the key beside it.
+///
+/// # Errors
+///
+/// As [`choosing_agent_model`].
+pub fn thinking_agent(
+    text: &str,
+    file: &str,
+    instance: &str,
+    effort: Option<Effort>,
+) -> Result<String, ConfigError> {
+    agent_member(text, file, instance, "effort", effort.map(Effort::as_str))
+}
+
+/// `text` with `externalAgents.<instance>.<key>` written as `value`, or taken
+/// out where that is `None`, and read back before it is returned.
+fn agent_member(
+    text: &str,
+    file: &str,
+    instance: &str,
+    key: &str,
+    value: Option<&str>,
+) -> Result<String, ConfigError> {
+    let at = format!("externalAgents.{instance}.{key}");
+    // As JSON reads it: a quote written raw would end the document.
+    let written = value.map(|value| Value::String(value.to_owned()).to_string());
+    let refused = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: at.clone().into(),
+        written: written.clone().unwrap_or_default().into(),
+    };
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let Some(block) = document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .filter(|block| block.is_object())
+    else {
+        return Err(refused());
+    };
+    let named = block.get(key);
+    if named.and_then(Value::as_str) == value && named.is_some() == value.is_some() {
+        return Ok(text.to_owned());
+    }
+    let root = splice::root(text).ok_or_else(refused)?;
+    let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
+    let entry = splice::member(text, agents, instance).ok_or_else(refused)?;
+    let chosen = match (written.as_deref(), named.is_some()) {
+        (Some(written), false) => splice::insert(text, entry, |_| format!("\"{key}\": {written}")),
+        (Some(written), true) => {
+            let was = splice::member(text, entry, key).ok_or_else(refused)?;
+            splice::over(text, was, written)
+        }
+        (None, true) => {
+            splice::remove(text, entry, key).ok_or_else(|| ConfigError::Unremovable {
+                file: file.into(),
+                at: at.clone().into(),
+            })?
+        }
+        (None, false) => text.to_owned(),
+    };
+    crate::document::Document::parse(&chosen, file, crate::document::Origin::User)?;
+    Ok(chosen)
+}
+
+/// `text` without the `access` of any provider that reaches it through the
+/// installed agent `instance`.
+///
+/// One provider at a time, read again after each, so each cut is made in the
+/// text the one before it left; a document names a bounded number of
+/// providers, and each pass takes one away or stops.
+fn unreached(mut text: String, file: &str, instance: &str) -> Result<String, ConfigError> {
+    loop {
+        let document =
+            crate::document::Document::parse(&text, file, crate::document::Origin::User)?;
+        let Some(provider) = crate::settings::access::referencing(document.value(), instance)
+        else {
+            return Ok(text);
+        };
+        let refused = || ConfigError::Unremovable {
+            file: file.into(),
+            at: format!("providers.{provider}.access").into(),
+        };
+        let root = splice::root(&text).ok_or_else(refused)?;
+        let providers = splice::member(&text, root, "providers").ok_or_else(refused)?;
+        let block = splice::member(&text, providers, &provider).ok_or_else(refused)?;
+        text = splice::remove(&text, block, "access").ok_or_else(refused)?;
+    }
+}
+
+/// The text of a configuration file that reaches `provider` through the
+/// installed agent `instance`, asks it, and lets that instance take new work.
+///
+/// `providers.<provider>.access` is written first, the top-level `provider`
+/// next and the instance's `enabled: true` last, all in the one text handed
+/// back, so no file is ever written that admits work through an instance no
+/// provider was meant to reach. An instance that says nothing of `enabled` is
+/// already enabled and is left saying nothing; what is already so leaves the
+/// text as it was.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, including an `access` the
+/// provider may not take, and [`ConfigError::Unspliceable`] where
+/// `externalAgents.<instance>` is not an object the file holds or the answer
+/// cannot be written without rewriting.
+pub fn connecting(
+    text: &str,
+    file: &str,
+    provider: &str,
+    instance: &str,
+) -> Result<String, ConfigError> {
+    let at = format!("externalAgents.{instance}.enabled");
+    let refused = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: at.clone().into(),
+        written: "true".into(),
+    };
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let Some(block) = document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .filter(|block| block.is_object())
+    else {
+        return Err(refused());
+    };
+    let access = serde_json::json!({
+        "type": crate::settings::access::Kind::ExternalAgent.name(),
+        "instance": instance,
+    });
+    let reached = beside(text, file, provider, "access", &access)?;
+    let reached = asking(&reached, file, provider)?;
+    let written = if block.get("enabled").and_then(Value::as_bool) == Some(false) {
+        let root = splice::root(&reached).ok_or_else(refused)?;
+        let agents = splice::member(&reached, root, "externalAgents").ok_or_else(refused)?;
+        let held = splice::member(&reached, agents, instance).ok_or_else(refused)?;
+        let was = splice::member(&reached, held, "enabled").ok_or_else(refused)?;
+        splice::over(&reached, was, "true")
+    } else {
+        reached
+    };
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok(written)
+}
+
+/// The text of a configuration file that reaches `provider` as `access` says
+/// and asks it, in the one text handed back.
+///
+/// `providers.<provider>.access` is written first and the top-level
+/// `provider` last, so no file is ever written that asks the provider by a way
+/// it was not meant to be reached. Either already so is left as it was.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, including an `access` the
+/// provider may not take, and [`ConfigError::Unspliceable`] where the answer
+/// cannot be written without rewriting.
+pub fn reaching(
+    text: &str,
+    file: &str,
+    provider: &str,
+    access: &crate::settings::Access,
+) -> Result<String, ConfigError> {
+    let reached = beside(text, file, provider, "access", &access.written())?;
+    let written = asking(&reached, file, provider)?;
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok(written)
+}
+
+/// The text of a configuration file that installs `agent` under its name,
+/// with its driver, executable and profile directory where it has one, then
+/// reaches `provider` through it and lets it take new work, as
+/// [`connecting`] does, in the one text handed back: the instance is written
+/// disabled and enabled last.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, and
+/// [`ConfigError::Unspliceable`] where the file already names an instance
+/// called as `agent` is, or the answer cannot be written without rewriting.
+pub fn installing(
+    text: &str,
+    file: &str,
+    provider: &str,
+    agent: &ExternalAgent,
+) -> Result<String, ConfigError> {
+    let (instance, driver) = (agent.name(), agent.driver());
+    let at = format!("externalAgents.{instance}");
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let mut block = serde_json::json!({
+        "driver": driver.name(),
+        "executable": agent.executable(),
+        "enabled": false,
+    });
+    if let (Some(profile), Some(fields)) = (agent.profile(), block.as_object_mut()) {
+        fields.insert(driver.profile_key().to_owned(), Value::from(profile));
+    }
+    if document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .is_some()
+    {
+        return Err(ConfigError::Unspliceable {
+            file: file.into(),
+            at: at.into(),
+            written: block.to_string().into(),
+        });
+    }
+    let installed = spliced_at(text, file, &["externalAgents", instance], &at, &block)?;
+    connecting(&installed, file, provider, instance)
+}
+
+/// The text of a configuration file without the installed agent `instance`.
+///
+/// Only `externalAgents.<instance>` goes, with the comma that separated it
+/// from its neighbour; nothing else is changed. Nothing is removed while a provider's
+/// `access` in the same text still reaches it through the instance, so no
+/// provider is left naming an agent that is not there.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, [`ConfigError::StillReferenced`]
+/// while a provider reaches it, and [`ConfigError::Unremovable`] where
+/// `externalAgents.<instance>` is not in the file or cannot be cut out without
+/// rewriting it.
+pub fn removing(text: &str, file: &str, instance: &str) -> Result<String, ConfigError> {
+    let refused = || ConfigError::Unremovable {
+        file: file.into(),
+        at: format!("externalAgents.{instance}").into(),
+    };
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    if let Some(provider) = crate::settings::access::referencing(document.value(), instance) {
+        return Err(ConfigError::StillReferenced {
+            file: file.into(),
+            instance: instance.into(),
+            provider: provider.into(),
+        });
+    }
+    if document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .is_none()
+    {
+        return Err(refused());
+    }
+    let root = splice::root(text).ok_or_else(refused)?;
+    let agents = splice::member(text, root, "externalAgents").ok_or_else(refused)?;
+    splice::remove(text, agents, instance).ok_or_else(refused)
+}
+
 /// The text of a configuration file that reads fenced code in `theme`.
 ///
 /// The same splice as [`drawing`], one key over. See it for what is preserved.
@@ -469,19 +802,31 @@ pub fn setting(text: &str, file: &str, row: &Row, word: &str) -> Result<String, 
 /// `text` with `answer` at `row`'s key, every object on the way created.
 fn spliced(text: &str, file: &str, row: &Row, answer: &Value) -> Result<String, ConfigError> {
     let path: Vec<&str> = row.path().collect();
+    spliced_at(text, file, &path, row.key(), answer)
+}
+
+/// `text` with `answer` at `path`, spelled `key` where it is refused, every
+/// object on the way created.
+fn spliced_at(
+    text: &str,
+    file: &str,
+    path: &[&str],
+    key: &str,
+    answer: &Value,
+) -> Result<String, ConfigError> {
     let written = answer.to_string();
 
     if text.trim().is_empty() {
         return Ok(format!(
             "{{\n  {}\n}}\n",
-            nested(&path, &written, Some("  "))
+            nested(path, &written, Some("  "))
         ));
     }
 
     let value = parsed(text, file)?;
     let refuse = || ConfigError::Unspliceable {
         file: file.into(),
-        at: row.key().into(),
+        at: key.into(),
         written: written.clone().into(),
     };
     let mut span = splice::root(text)
@@ -626,6 +971,46 @@ pub fn choosing(
     } else {
         without(&written, file, provider, "fast")
     }
+}
+
+/// The text of a configuration file that asks `provider` for `model` at
+/// `effort`, a default taken where nothing named a model: `text` unchanged
+/// where it already names a model for `provider`, and otherwise [`choosing`]
+/// with the rung written beside it, or none where the model takes none.
+///
+/// # Errors
+///
+/// As [`choosing`] and [`thinking`].
+pub fn defaulting(
+    text: &str,
+    file: &str,
+    provider: &str,
+    model: &str,
+    effort: Option<Effort>,
+) -> Result<String, ConfigError> {
+    if named(text, provider).is_some_and(|named| !named.is_empty()) {
+        return Ok(text.to_owned());
+    }
+    let chosen = choosing(text, file, provider, model)?;
+    match effort {
+        Some(effort) => thinking(&chosen, file, provider, effort),
+        None => Ok(chosen),
+    }
+}
+
+/// The model and the rung `text` names for `provider`, each where it names
+/// one; neither where it is not configuration.
+#[must_use]
+pub fn chosen(text: &str, provider: &str) -> (Option<String>, Option<Effort>) {
+    let effort = serde_json::from_str::<Value>(text).ok().and_then(|value| {
+        answered(&value, provider, "effort")
+            .and_then(Value::as_str)
+            .and_then(|effort| effort.parse().ok())
+    });
+    (
+        named(text, provider).filter(|named| !named.is_empty()),
+        effort,
+    )
 }
 
 /// The model `text` names for `provider`, where it is a file that names one.

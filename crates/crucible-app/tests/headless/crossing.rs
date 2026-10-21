@@ -272,9 +272,7 @@ fn turned(
     let (events, reported) = mpsc::channel::<EventEnvelope>();
     let (steer, aside) = (Steer::new(), Aside::new());
     let turned = {
-        let run = conversation
-            .runner()
-            .starting(&events, cancel, &steer, &aside);
+        let run = conversation.starting(&events, cancel, &steer, &aside);
         runtime.block_on(conversation.turn("go", Box::default(), &mut Nobody, &run))
     };
     drop(events);
@@ -383,12 +381,12 @@ fn a_clearing_line_still_owed_is_written_before_the_turn_s_own() -> Result<(), F
 
     let (seen, stopped) = serving(|services| -> Result<_, String> {
         let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let owed = conversation.runner().owes_clearings();
+        let owed = conversation.settled().owes_clearings();
         turned(&runtime, &mut conversation, &Cancel::new())
             .0
             .map_err(|e| e.to_string())?;
         let session = Arc::clone(conversation.session());
-        let still = conversation.runner().owes_clearings();
+        let still = conversation.settled().owes_clearings();
         drop(conversation);
         let trouble = session.finish();
         let log = std::fs::read_to_string(session.path()).map_err(|e| e.to_string())?;
@@ -435,7 +433,7 @@ fn a_pick_up_writes_the_line_owed_to_the_session_it_leaves() -> Result<(), Faile
             Arc::ptr_eq(&left, &first),
             cleared_in(&first)?,
             cleared_in(conversation.session())?,
-            conversation.runner().owes_clearings(),
+            conversation.settled().owes_clearings(),
         ))
     });
     let (same, written, started, owed) = seen?;
@@ -459,13 +457,11 @@ fn a_compaction_writes_the_line_still_owed() -> Result<(), Failed> {
 
     let (seen, stopped) = serving(|services| -> Result<_, String> {
         let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let owed = conversation.runner().owes_clearings();
+        let owed = conversation.settled().owes_clearings();
         {
             let (events, _reported) = mpsc::channel::<EventEnvelope>();
             let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
-            let run = conversation
-                .runner()
-                .starting(&events, &cancel, &steer, &aside);
+            let run = conversation.starting(&events, &cancel, &steer, &aside);
             runtime
                 .block_on(conversation.compact(
                     crucible_types::Compacting::Asked,

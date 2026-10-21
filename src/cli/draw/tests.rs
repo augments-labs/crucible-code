@@ -725,6 +725,42 @@ fn a_question_about_several_commands_shows_the_line_that_was_sent() {
 }
 
 #[test]
+fn an_agent_asking_where_there_is_no_room_for_a_panel_says_who_would_act() {
+    // The row a time is all a small window gets, and a question that did not
+    // say whose action it is would be answered for somebody unnamed.
+    let leaving = Leaving {
+        tool: "Bash".to_owned(),
+        summary: "Bash(ls)".to_owned(),
+        effect: crucible_client_api::pending::Effect::SpawnsProcess,
+        sent: Some("ls -la".to_owned()),
+        left_running: false,
+        instance: "work".to_owned(),
+        confinement: Some(crucible_client_api::inspection::Claim::Enforced),
+    };
+
+    assert_eq!(
+        left(&leaving, Glyphs::Ascii, WIDE),
+        [
+            "? Bash wants to run: ls -la",
+            "execution: work - confinement: enforced",
+        ]
+    );
+
+    let unsaid = Leaving {
+        sent: None,
+        confinement: None,
+        ..leaving
+    };
+    assert_eq!(
+        left(&unsaid, Glyphs::Unicode, WIDE),
+        [
+            "? Bash wants to run: Bash(ls)",
+            "execution: work · confinement: unknown",
+        ]
+    );
+}
+
+#[test]
 fn a_question_about_a_process_cannot_be_made_into_a_row_nobody_counted() {
     // The program is reported whole when the command chains or redirects,
     // so this text is the model's to choose. A row it broke itself is one
@@ -1206,6 +1242,36 @@ fn a_turn_is_a_column_of_blocks_with_one_blank_row_between_them() {
             "\n",
             "Neither imports the other.\n",
         )
+    );
+}
+
+#[test]
+fn a_failed_turn_on_an_agent_s_route_says_its_failure_once() {
+    // The conversation posts nothing of how an agent's turn ended; the one
+    // failure the terminal draws is the worker's, after what streamed.
+    let turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta("Editing the file.\n"),
+        beat(Event::Used {
+            totals: crucible_runner::Totals::new(),
+        }),
+        beat(Event::Failed {
+            error: TurnError::Provider(ProviderError::Protocol {
+                provider: "anthropic",
+                problem: "the agent stopped answering".into(),
+            }),
+        }),
+    ];
+
+    let drawn = transcript(turn);
+
+    assert!(drawn.starts_with("Editing the file.\n"), "{drawn}");
+    assert_eq!(
+        drawn.matches("the agent stopped answering").count(),
+        1,
+        "{drawn}"
     );
 }
 
@@ -1949,6 +2015,40 @@ fn refusal(turned: &Turned) -> String {
     let mut renderer = Renderer::new(Recording::new(WIDE, 24));
     refused(&mut renderer, turned).expect("the terminal to be written");
     renderer.terminal().written().to_string()
+}
+
+#[test]
+fn an_uncertain_stop_says_what_was_under_way_may_have_happened_and_no_guardrail() {
+    // Stopped while another agent was acting: a reader told only that the turn
+    // stopped would take it that nothing changed, and one told a guardrail
+    // refused it would go looking for a check that never ran.
+    let (events, _seen) = std::sync::mpsc::channel();
+    let (cancel, steer, aside) = (
+        crucible_runtime::Cancel::new(),
+        crucible_runtime::Steer::new(),
+        crucible_runtime::Aside::new(),
+    );
+    let run = crucible_runner::RunContext::outside(&events, &cancel, &steer, &aside);
+    let turned = Turned::Uncertain(crucible_runner::RunResult::reported(
+        &run,
+        StopReason::Cancelled,
+        crucible_types::Spend::NONE,
+    ));
+    assert_eq!(
+        refusal(&turned),
+        "",
+        "an uncertain stop was drawn as a refusal"
+    );
+
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+    uncertain(&mut renderer).expect("the terminal to be written");
+    let written = renderer.terminal().written().to_string();
+
+    assert!(
+        written.contains("may or may not have happened"),
+        "{written}"
+    );
+    assert!(!written.contains("guardrail"), "{written}");
 }
 
 #[test]
@@ -2728,4 +2828,99 @@ fn the_screen_and_a_limit_name_drop_the_same_format_characters() {
             named && !JOINERS.contains(&character) && !SEPARATORS.contains(&character);
         assert_eq!(drawn, screen_drops, "U+{:04X}", u32::from(character));
     }
+}
+
+/// What the terminal is sent, and the rows it then shows, when the agent
+/// running the turn reports using `tool` on `summary`, in a window `columns`
+/// wide.
+fn reported(tool: &str, summary: &str, columns: usize) -> (String, Vec<String>) {
+    let mut renderer = Renderer::new(Recording::new(columns, 24));
+
+    event(
+        &mut renderer,
+        Event::Reported {
+            tool: tool.into(),
+            summary: summary.into(),
+        },
+        &here(),
+        Style::plain(),
+        &mut Kept::default(),
+    )
+    .expect("the report to draw");
+
+    let terminal = renderer.terminal();
+    (terminal.written().to_string(), terminal.picture().said())
+}
+
+#[test]
+fn what_an_agent_reports_it_did_is_drawn_as_the_agents_and_not_as_a_call() {
+    let (_, rows) = reported("Edit", "src/lib.rs", 80);
+
+    assert_eq!(rows, ["the agent used Edit · src/lib.rs"]);
+}
+
+#[test]
+fn a_report_with_nothing_said_of_it_names_the_tool_alone() {
+    let (_, rows) = reported("Search", "", 80);
+
+    assert_eq!(rows, ["the agent used Search"]);
+}
+
+#[test]
+fn a_report_draws_none_of_the_control_bytes_the_agent_sent() {
+    let (written, rows) = reported("Bash", "ls\u{1b}[31m -la\u{7}\nrm -rf x", 80);
+
+    assert!(
+        !written.contains("\u{1b}[31m") && !written.contains('\u{7}'),
+        "the agent's control bytes reached the terminal: {written:?}"
+    );
+    assert_eq!(rows, ["the agent used Bash · ls [31m -la  rm -rf x"]);
+}
+
+#[test]
+fn a_report_too_long_for_the_window_stands_on_one_row() {
+    let (_, rows) = reported("Bash", &"x".repeat(200), 40);
+
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    assert!(
+        rows.iter().all(|row| crucible_tui::columns(row) <= 40),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_report_naming_no_tool_says_a_tool_rather_than_leaving_a_gap() {
+    let (_, rows) = reported(" \u{7} ", "src/lib.rs", 80);
+
+    assert_eq!(rows, ["the agent used a tool · src/lib.rs"]);
+}
+
+#[test]
+fn a_report_mid_answer_stands_apart_and_the_answer_resumes_under_it() {
+    let turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta("Editing the file.\n"),
+        beat(Event::Reported {
+            tool: "Edit".into(),
+            summary: "src/lib.rs".into(),
+        }),
+        delta("Done.\n"),
+        beat(Event::TurnFinished {
+            turn: TurnId::FIRST,
+            stop: StopReason::Yielded,
+        }),
+    ];
+
+    assert_eq!(
+        transcript(turn),
+        concat!(
+            "Editing the file.\n",
+            "\n",
+            "the agent used Edit · src/lib.rs\n",
+            "\n",
+            "Done.\n",
+        ),
+    );
 }

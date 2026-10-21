@@ -93,7 +93,8 @@ credential: none of `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`,
 `MINIMAX_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` or
 `ZAI_API_KEY` is exported with a value, and `/login` has stored nothing.
 An exported variable that is empty holds no key. Everything but a turn works in
-this state, so export a key or run `/login`, then `/model`.
+this state, so run `/login`, which takes a model as well, or export a key, start
+again and choose one with `/model`.
 
 Two neighbours say which half is missing. `Warning: No provider selected. Use
 /model to select a provider and model.` means more than one provider has a
@@ -204,13 +205,32 @@ provider in the configuration file in your home directory, then start the older
 crucible again. A later crucible asks at standard speed until `/fast` is chosen
 again.
 
+### `crucible: <home>/config.json: externalAgents is not a setting crucible has at line <n>, column <m>`
+
+This is 0.47.1 or earlier reading a configuration file in which a later
+crucible set up an [installed coding agent](../providers/agents.md). Delete the
+`externalAgents` block, and `access` from each provider, in the configuration
+file in your home directory, then start the older crucible again. A later
+crucible then runs no agent, and reaches each provider as it does with no
+[`access`](../configuration/configuration.md#access) written, until `/login`
+sets an agent up again or what you deleted is put back.
+
+### `crucible: <home>/config.json: providers.anthropic.access is not a setting crucible has at line <n>, column <m>`
+
+This is 0.47.1 or earlier reading a configuration file in which a later
+crucible wrote which way a provider is reached; the provider named may be
+another. Delete `access` from each provider in the configuration file in your
+home directory, then start the older crucible again. A later crucible then
+reaches each provider as it does with no
+[`access`](../configuration/configuration.md#access) written.
+
 ### `anthropic: HTTP 401: check the Anthropic API key and its model access`
 
 The provider refused the request with that status. For Anthropic's
-`claude-fable-5-1`, `claude-opus-5-5` and `claude-sonnet-5-5`, OpenAI's
-`gpt-6-astra` and every Google model the message is a sentence of crucible's
-own, chosen by status; for any other model, and for every other provider, it is
-the service's own words, read for at most 8 KiB and
+`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5` and
+`claude-haiku-5-5`, OpenAI's `gpt-6-astra` and every Google model the message
+is a sentence of crucible's own, chosen by status; for any other model, and for
+every other provider, it is the service's own words, read for at most 8 KiB and
 ending in ` [cut: the reply was longer than crucible reads]` or
 ` [cut: crucible stopped reading here]` where it was cut.
 
@@ -245,9 +265,9 @@ sites](../providers/providers.md#rows-and-sites).
 
 The request was accepted and the failure arrived inside the answer:
 `overloaded_error`, `api_error`, `timeout_error` or `rate_limit_error`. The
-sentence is crucible's own for `claude-fable-5-1`, `claude-opus-5-5` and
-`claude-sonnet-5-5`; any other Anthropic model shows the service's words after
-the kind, as in `anthropic: overloaded_error: Overloaded`. It is about the
+sentence is crucible's own for `claude-fable-5-1`, `claude-opus-5-5`,
+`claude-sonnet-5-5` and `claude-haiku-5-5`; any other Anthropic model shows the
+service's words after the kind, as in `anthropic: overloaded_error: Overloaded`. It is about the
 moment, not the request, so crucible asked again twice, a quarter and then half a second later, with `retrying` in the row above
 the box, before reporting it. Ask again; nothing about the prompt needs to
 change. See [when a response goes
@@ -255,9 +275,9 @@ away](../providers/providers.md#when-a-response-goes-away).
 
 ### `anthropic: unexpected response: Anthropic reported a message failure; private details omitted`
 
-The other failure `claude-fable-5-1`, `claude-opus-5-5` and `claude-sonnet-5-5`
-report from inside an answer: Anthropic put an error in the stream whose kind
-is none of the four above. crucible keeps neither the kind nor the words,
+The other failure `claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`
+and `claude-haiku-5-5` report from inside an answer: Anthropic put an error in
+the stream whose kind is none of the four above. crucible keeps neither the kind nor the words,
 because a response from one of these can carry the model's private history, and it does not ask again: a kind outside those four
 is read as being about the request rather than the moment, so the same
 request would get the same answer. Any other Anthropic model shows every
@@ -392,6 +412,33 @@ went on without it. It is said once. What reached the disk before it is still
 there, and a later write that succeeds still lands, so freeing the space is
 enough; nothing has to be restarted. See [when recording
 stops](../sessions/sessions.md#when-recording-stops).
+
+## Installed coding agents
+
+### `crucible: the agent <name> cannot be started: <reason>`
+
+The provider asked for has its `access` set to the
+[installed agent](../providers/agents.md) `externalAgents.<name>`, and this
+launch cannot run it, so nothing was recorded. `it is disconnected` means the
+entry's `enabled` is `false` while a provider's `access` still names it, which
+only an edit by hand leaves, since *Disconnect from Crucible* takes that
+`access` away: set `enabled` back to `true`, or, for a new session, remove
+`providers.<provider>.access` to reach the provider directly.
+`no <command> command on PATH and none at externalAgents.<name>.executable`
+and `<path> is not executable` mean its program cannot be run where it was
+looked for: install it, or point `executable` at it. A mode the agent has no
+launch for says which modes it runs in instead, though Claude Code and
+Antigravity both run in all three. `--continue` and `--resume` refuse a
+session the agent ran the same way, and leave its log as it was.
+
+### `<agent>: an earlier run of this agent could not be confirmed to have stopped, so no other is started beside it; restart crucible`
+
+A run of the installed agent was closed, as a failed turn or a change of mode
+closes it, and its process did not say it had exited before crucible stopped
+waiting. Until crucible restarts, no second run is started beside it, so each
+turn on the route ends with this line and nothing is sent. Make sure the
+agent's process has ended, then restart crucible; `--continue` picks the
+session back up.
 
 ## Permissions and the sandbox
 

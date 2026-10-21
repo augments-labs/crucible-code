@@ -14,6 +14,10 @@
 //! A window the model never stated has nothing to take a share of: the panel
 //! says so, and shows the tokens with no bar, no free row and no percent.
 //!
+//! On an installed agent's route, a last row gives what the agent last said
+//! its context holds, which Crucible cannot see into, and the bar gives it
+//! its part; a provider's model has no such row.
+//!
 //! The panel stands in the room the window gives it. Where it is taller, it
 //! shows as much of the body as the room leaves under the rule and over the
 //! footer, with a row saying how many more are below; ↑ and ↓ scroll it, and
@@ -59,9 +63,14 @@ pub(super) fn run<T: Terminal>(
     keys: bool,
 ) -> Result<(), Fatal> {
     let context = match terms.perform(conversation, api::Command::Context) {
-        Performed::Context { model, breakdown } => {
-            crucible_app::client::context(&model, &breakdown)
-        }
+        Performed::Context {
+            model,
+            breakdown,
+            external,
+        } => api::Context {
+            external,
+            ..crucible_app::client::context(&model, &breakdown)
+        },
         other => return Ok(renderer.commit(&astray(&other))?),
     };
     if keys && stood(renderer, terms, &context, |_| Ok(()))? != Ended::Cramped {
@@ -248,19 +257,43 @@ fn body(context: &api::Context, columns: usize, glyphs: Glyphs) -> Vec<Row> {
                 .filter(|&category| category != Category::Free)
                 .map(|category| unmeasured(context, category).clipped(columns)),
         );
+        if context.external.is_some() {
+            rows.push(unmeasured(context, Category::External).clipped(columns));
+        }
         return rows;
     };
 
-    let parts = Category::EVERY.map(|category| Part {
-        slot: tone(category),
-        fill: fill(category),
-        size: context.tokens(category),
-    });
+    // What an installed agent holds is spent room as much as anything counted
+    // here, so it stands in the bar before what is free.
+    let held = context.external.map(|_| Category::External);
+    let parts: Vec<Part> = Category::EVERY
+        .into_iter()
+        .filter(|&category| category != Category::Free)
+        .chain(held)
+        .chain([Category::Free])
+        .map(|category| Part {
+            slot: tone(category),
+            fill: fill(category),
+            size: context.tokens(category),
+        })
+        .collect();
     rows.push(Bar { parts: &parts }.row(columns, glyphs));
     rows.push(Row::new());
     rows.extend(Category::EVERY.into_iter().map(|category| {
         measured(context, category, window, columns >= ROOMY, glyphs).clipped(columns)
     }));
+    if context.external.is_some() {
+        rows.push(
+            measured(
+                context,
+                Category::External,
+                window,
+                columns >= ROOMY,
+                glyphs,
+            )
+            .clipped(columns),
+        );
+    }
     rows
 }
 
@@ -284,7 +317,8 @@ fn measured(
         | Category::Tools
         | Category::Mcp
         | Category::Messages
-        | Category::Reserve => share(tokens, window),
+        | Category::Reserve
+        | Category::External => share(tokens, window),
     };
     let (indent, cells, tokens_wide, share_wide) = if roomy {
         ("  ", 2, 7, 9)
@@ -321,6 +355,7 @@ const fn name(category: Category) -> &'static str {
         Category::Messages => "messages",
         Category::Reserve => "reserve",
         Category::Free => "free",
+        Category::External => "held by the agent",
     }
 }
 
@@ -332,7 +367,7 @@ const fn tone(category: Category) -> Slot {
         Category::Tools => Slot::DoingMark,
         Category::Mcp => Slot::Trouble,
         Category::Messages => Slot::Accent,
-        Category::Reserve | Category::Free => Slot::Quiet,
+        Category::Reserve | Category::Free | Category::External => Slot::Quiet,
     }
 }
 
@@ -345,7 +380,8 @@ const fn fill(category: Category) -> Fill {
         | Category::Tools
         | Category::Mcp
         | Category::Messages
-        | Category::Reserve => Fill::Solid,
+        | Category::Reserve
+        | Category::External => Fill::Solid,
     }
 }
 

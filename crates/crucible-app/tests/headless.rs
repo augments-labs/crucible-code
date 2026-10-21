@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use crucible_agents::{
     AgentBuilder, AgentContext, Decision, InputGuardrail, Model, OutputGuardrail, Undecided,
 };
+use crucible_app::access::{AccessError, Rewritten};
 use crucible_app::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Resolved, Served, Serving,
     Sourcing, providers,
@@ -47,6 +48,10 @@ use crucible_workspace::Workspace;
 mod client;
 #[path = "headless/crossing.rs"]
 mod crossing;
+#[path = "headless/external.rs"]
+mod external;
+#[path = "headless/native.rs"]
+mod native;
 #[path = "headless/searching.rs"]
 mod searching;
 #[path = "headless/speed.rs"]
@@ -115,6 +120,8 @@ struct Script {
     scope: CredentialScopeId,
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
     asked: Arc<AtomicUsize>,
+    /// What the user had said, as each request carried it.
+    sent: Arc<Mutex<Vec<Vec<String>>>>,
     /// The plan windows every response says its vendor reported.
     limits: Option<PlanWindows>,
     /// What its plan answers when asked, where it has a source to ask.
@@ -130,6 +137,7 @@ impl Script {
             scope: CredentialScopeId::new(),
             rounds: Mutex::new(rounds.into_iter()),
             asked: Arc::default(),
+            sent: Arc::default(),
             limits: None,
             answering: None,
             limits_asked: Arc::default(),
@@ -193,11 +201,23 @@ impl Provider for Script {
 
     fn stream<'a>(
         &'a self,
-        _request: Request<'a>,
+        request: Request<'a>,
         _cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        let said = request
+            .transcript
+            .messages()
+            .iter()
+            .filter_map(|message| match message {
+                Message::User { text, .. } => Some(text.to_string()),
+                _ => None,
+            })
+            .collect();
         Box::pin(async move {
             self.asked.fetch_add(1, Ordering::Relaxed);
+            if let Ok(mut sent) = self.sent.lock() {
+                sent.push(said);
+            }
             let round = self
                 .rounds
                 .lock()
@@ -269,6 +289,8 @@ impl Ask for Nobody {
         Box::pin(async { (Verdict::Deny, Remember::Never) })
     }
 }
+
+impl crucible_app::client::Asker for Nobody {}
 
 /// Cannot say either way, by name and with the reason it could not.
 #[derive(Debug)]
@@ -369,6 +391,7 @@ struct Desk {
     logins: Store,
     choosing: PathBuf,
     reached: Arc<Mutex<Vec<&'static str>>>,
+    rewritten: Rewritten,
 }
 
 impl Desk {
@@ -376,10 +399,10 @@ impl Desk {
         Self::reaching(tree, move |one, _| reachable.contains(&one.name))
     }
 
-    /// One that reaches a provider only while a key for it is stored, the way
-    /// a machine with nothing in its environment does.
+    /// One that reaches a provider only while a key or an account for it is
+    /// stored, the way a machine with nothing in its environment does.
     fn stored(tree: &Tree) -> Result<Self, Failed> {
-        Self::reaching(tree, |one, stored| stored.get(one.name).is_some())
+        Self::reaching(tree, |one, stored| stored.has(one.name))
     }
 
     fn reaching(
@@ -413,6 +436,7 @@ impl Desk {
             logins: Store::in_home(home.path()),
             choosing: crucible_config::user(&home),
             reached,
+            rewritten: Rewritten::new(),
         })
     }
 
@@ -424,6 +448,7 @@ impl Desk {
             sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
+            rewritten: &self.rewritten,
         }
     }
 
@@ -455,9 +480,7 @@ fn turn(conversation: &mut Conversation, prompt: &str) -> Result<(Turned, String
     let (events, reported) = mpsc::channel::<EventEnvelope>();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let turned = {
-        let run = conversation
-            .runner()
-            .starting(&events, &cancel, &steer, &aside);
+        let run = conversation.starting(&events, &cancel, &steer, &aside);
         runtime()?.block_on(conversation.turn(prompt, Box::default(), &mut Nobody, &run))?
     };
     drop(events);
@@ -480,7 +503,7 @@ fn prose(reported: &Receiver<EventEnvelope>) -> String {
 /// under is in the transcript too, and is not what these tests are about.
 fn spoken(conversation: &Conversation) -> usize {
     conversation
-        .runner()
+        .settled()
         .transcript()
         .messages()
         .iter()
@@ -578,7 +601,7 @@ fn resuming_picks_a_session_back_up_with_what_it_held() -> Result<(), Failed> {
 
     let id = id.expect("a started session has an id");
     let left =
-        runtime()?.block_on(conversation.resume(&tree.sessions(), &tree.workspace()?, &id))?;
+        runtime()?.block_on(conversation.resume(&tree.sessions(), &tree.workspace()?, &id, &[]))?;
 
     assert_eq!(
         left.path(),
@@ -606,6 +629,7 @@ fn a_session_nobody_recorded_is_refused_and_the_one_in_hand_is_kept() -> Result<
         &tree.sessions(),
         &tree.workspace()?,
         &SessionId::new(),
+        &[],
     ));
 
     assert!(refused.is_err(), "{refused:?}");
@@ -709,7 +733,7 @@ fn a_model_switched_to_within_a_provider_is_asked_for_and_written_down() -> Resu
         ),
         "{switched:?}"
     );
-    assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
+    assert_eq!(conversation.settled().model(), "claude-haiku-4-5");
     assert_eq!(conversation.serving(), Some("anthropic"));
     assert_eq!(
         desk.reached(),
@@ -752,8 +776,8 @@ fn a_provider_switched_to_is_the_one_asked_from_then_on() -> Result<(), Failed> 
     );
     assert_eq!(desk.reached(), ["google"]);
     assert_eq!(conversation.serving(), Some("google"));
-    assert_eq!(conversation.runner().serving(), "google");
-    assert_eq!(conversation.runner().model(), "gemini-3.8-flash");
+    assert_eq!(conversation.settled().serving(), "google");
+    assert_eq!(conversation.settled().model(), "gemini-3.8-flash");
     let written = written(&tree)?;
     assert_eq!(written.provider(), Some("google"));
     assert_eq!(written.model("google"), Some("gemini-3.8-flash"));
@@ -786,8 +810,8 @@ fn a_provider_nothing_can_reach_is_refused_and_the_one_answering_is_kept() -> Re
         "{switched:?}"
     );
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().serving(), "anthropic");
-    assert_eq!(conversation.runner().model(), "script");
+    assert_eq!(conversation.settled().serving(), "anthropic");
+    assert_eq!(conversation.settled().model(), "script");
     assert_eq!(written(&tree)?.provider(), None, "nothing was written");
     Ok(())
 }
@@ -824,8 +848,8 @@ fn a_switch_is_refused_for_a_rung_the_model_does_not_serve() -> Result<(), Faile
     );
     assert_eq!(desk.reached(), Vec::<&str>::new(), "nobody was reached for");
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().model(), "script");
-    assert_eq!(conversation.runner().effort(), Some(Effort::Max));
+    assert_eq!(conversation.settled().model(), "script");
+    assert_eq!(conversation.settled().effort(), Some(Effort::Max));
     let written = written(&tree)?;
     assert_eq!(written.provider(), None);
     assert_eq!(written.effort("anthropic"), Some(Effort::Max));
@@ -853,7 +877,7 @@ fn a_rung_gemini_does_not_serve_is_refused_and_the_one_in_force_is_kept() -> Res
     let thought = conversation.think(Effort::Max, &desk.with());
 
     assert!(matches!(thought, Rung::Unsupported), "{thought:?}");
-    assert_eq!(conversation.runner().effort(), None);
+    assert_eq!(conversation.settled().effort(), None);
     assert_eq!(written(&tree)?.effort("google"), None);
     Ok(())
 }
@@ -880,11 +904,15 @@ fn a_logout_falls_back_to_a_credential_the_store_never_held() -> Result<(), Fail
     assert_eq!(desk.logins.read().providers().count(), 0, "the key is gone");
     assert_eq!(conversation.serving(), Some("anthropic"));
     assert_eq!(
-        conversation.runner().serving(),
+        conversation.settled().serving(),
         "anthropic",
         "set up again from what remains"
     );
-    assert_eq!(conversation.runner().model(), "script", "the model is kept");
+    assert_eq!(
+        conversation.settled().model(),
+        "script",
+        "the model is kept"
+    );
     Ok(())
 }
 
@@ -906,11 +934,40 @@ fn a_logout_with_nothing_to_fall_back_to_leaves_nobody_asked() -> Result<(), Fai
     assert_eq!(desk.logins.read().providers().count(), 0);
     assert_eq!(conversation.serving(), None);
     assert_eq!(
-        conversation.runner().model(),
+        conversation.settled().model(),
         "",
         "a model belongs to a vendor"
     );
-    assert_eq!(conversation.runner().serving(), "none");
+    assert_eq!(conversation.settled().serving(), "none");
+    let refused = turn(&mut conversation, "anybody there")
+        .err()
+        .map(|problem| problem.to_string())
+        .unwrap_or_default();
+    assert!(refused.contains(NOTHING_TO_ASK), "{refused}");
+    Ok(())
+}
+
+#[test]
+fn a_logout_leaving_only_providers_their_access_refuses_says_nothing_can_be_asked()
+-> Result<(), Failed> {
+    let tree = Tree::new("logout-access-refused")?;
+    let mut desk = Desk::new(&tree, &[])?;
+    desk.serving = Box::new(|one: Served, _| {
+        Err(AppError::Access(AccessError::NotSignedIn {
+            provider: one.name.into(),
+        }))
+    });
+    desk.logins.keep("anthropic", "a-key-no-vendor-issued")?;
+    let mut conversation = conversing(
+        &tree,
+        Script::named("anthropic"),
+        &Guard::Nothing,
+        Some("anthropic"),
+    )?;
+
+    let left = runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+
+    assert!(matches!(left, LoggedOut::SignedOut { .. }), "{left:?}");
     let refused = turn(&mut conversation, "anybody there")
         .err()
         .map(|problem| problem.to_string())
@@ -957,11 +1014,11 @@ fn a_logout_of_a_provider_nobody_is_asking_changes_nothing_else() -> Result<(), 
 
     let left = runtime()?.block_on(conversation.log_out(desk.one("google")?, &desk.with()));
 
-    assert!(matches!(left, LoggedOut::Kept), "{left:?}");
+    assert!(matches!(left, LoggedOut::Kept { .. }), "{left:?}");
     assert_eq!(desk.logins.read().providers().count(), 0);
     assert_eq!(desk.reached(), Vec::<&str>::new());
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().serving(), "anthropic");
+    assert_eq!(conversation.settled().serving(), "anthropic");
     Ok(())
 }
 
@@ -984,13 +1041,60 @@ fn a_credential_given_to_a_session_asking_nobody_is_who_it_asks_next() -> Result
         "{signed:?}"
     );
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().serving(), "anthropic");
+    assert_eq!(conversation.settled().serving(), "anthropic");
     assert_eq!(
-        conversation.runner().model(),
-        "",
-        "a name left over from before belongs to no vendor"
+        conversation.settled().model(),
+        "claude-opus-5-5",
+        "a name left over from before is retired for the provider's default"
     );
     assert_eq!(written(&tree)?.provider(), Some("anthropic"));
+    assert_eq!(written(&tree)?.model("anthropic"), Some("claude-opus-5-5"));
+    Ok(())
+}
+
+/// A snapshot says who is paid by the credential serving the conversation:
+/// nobody before one does, a key once a key does, a plan once an account
+/// does, and nobody again once the last is signed out.
+#[test]
+fn a_snapshot_says_who_the_credential_serving_it_bills() -> Result<(), Failed> {
+    use crucible_client_api::{Billing, Execution};
+
+    let tree = Tree::new("snapshot-billing")?;
+    let mut desk = Desk::new(&tree, &["anthropic", "google"])?;
+    let mut conversation = conversing(&tree, Script::named("none"), &Guard::Nothing, None)?;
+    let before = crucible_app::client::snapshot(&conversation);
+    assert_eq!(before.execution, Execution::Native);
+    assert_eq!(before.billing, Billing::Unknown);
+
+    runtime()?.block_on(conversation.logged_in(desk.one("anthropic")?, &desk.with()));
+    assert_eq!(
+        crucible_app::client::snapshot(&conversation).billing,
+        Billing::Key
+    );
+
+    desk.serving = Box::new(|one: Served, _: &StoredCredentials| {
+        Ok(Resolved {
+            provider: Box::new(Script::named(one.name)),
+            source: CredentialSource::Subscription,
+        })
+    });
+    runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+    assert_eq!(
+        crucible_app::client::snapshot(&conversation).billing,
+        Billing::Subscription,
+        "set up again from an account"
+    );
+
+    desk.serving = Box::new(|one: Served, _: &StoredCredentials| {
+        Err(AppError::Authentication {
+            provider: one.name.into(),
+        })
+    });
+    runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+    let after = crucible_app::client::snapshot(&conversation);
+    assert_eq!(conversation.serving(), None);
+    assert_eq!(after.billing, Billing::Unknown);
+    assert_eq!(after.execution, Execution::Native);
     Ok(())
 }
 
@@ -1009,8 +1113,8 @@ fn a_credential_for_another_provider_keeps_the_one_already_answering() -> Result
 
     assert!(matches!(signed, LoggedIn::Elsewhere), "{signed:?}");
     assert_eq!(conversation.serving(), Some("anthropic"));
-    assert_eq!(conversation.runner().serving(), "anthropic");
-    assert_eq!(conversation.runner().model(), "script");
+    assert_eq!(conversation.settled().serving(), "anthropic");
+    assert_eq!(conversation.settled().model(), "script");
     assert_eq!(written(&tree)?.provider(), None);
     Ok(())
 }

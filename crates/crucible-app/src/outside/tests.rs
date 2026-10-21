@@ -1,0 +1,755 @@
+use std::collections::VecDeque;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
+
+use crucible_execution::{
+    Capabilities, Currency, Description, Effects, Fault, Observation, Scope, SessionRef,
+};
+use crucible_runner::EventEnvelope;
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_tools::{Remember, Sensitivity, Verdict};
+use crucible_types::{Change, Compacting, Diff, Line, ToolCall};
+
+use super::*;
+
+/// What one priced turn costs, in millionths of a dollar.
+const PRICE: u64 = 250_000;
+
+/// One turn as an agent tells it: what it posts, and how it ends.
+type Told = (Vec<Event>, Result<Outcome, Error>);
+
+/// An agent that tells each turn as it was scripted.
+struct Scripted {
+    turns: Mutex<VecDeque<Told>>,
+}
+
+impl Scripted {
+    fn playing(turns: impl IntoIterator<Item = Told>) -> Box<dyn Backend> {
+        Box::new(Self {
+            turns: Mutex::new(turns.into_iter().collect()),
+        })
+    }
+}
+
+impl Backend for Scripted {
+    fn describe(&self) -> Description {
+        Description::new("claude", "work", Capabilities::unknown())
+    }
+
+    fn open(&self, _: Option<SessionRef>) -> BoxFuture<'_, Result<SessionRef, Error>> {
+        Box::pin(async { Err(Failure::new("not opened here").into()) })
+    }
+
+    fn prompt<'a>(
+        &'a self,
+        _: TurnRequest,
+        events: &'a dyn Sink,
+    ) -> BoxFuture<'a, Result<Outcome, Error>> {
+        let told = self.turns.lock().expect("the script").pop_front();
+        Box::pin(async move {
+            let (posted, ended) = told.expect("a turn scripted");
+            for event in posted {
+                events.post(event);
+            }
+            ended
+        })
+    }
+
+    fn decide(&self, _: &PendingRef, _: Decision) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn interrupt(&self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn close(&self) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Launches the backends it holds in order, refusing full access, as an agent
+/// with no launch for a mode would, and any launch past the last, and
+/// remembers each resume it was asked for.
+struct Again {
+    backends: Mutex<VecDeque<Result<Box<dyn Backend>, Failure>>>,
+    resumed: Resumed,
+}
+
+/// The agent's own session each launch was asked to resume, in order.
+type Resumed = Arc<Mutex<Vec<Option<String>>>>;
+
+impl Again {
+    fn launching(
+        backends: impl IntoIterator<Item = Result<Box<dyn Backend>, Failure>>,
+    ) -> (Box<dyn Relaunch>, Resumed) {
+        let resumed = Arc::default();
+        let again = Self {
+            backends: Mutex::new(backends.into_iter().collect()),
+            resumed: Arc::clone(&resumed),
+        };
+        (Box::new(again), resumed)
+    }
+}
+
+impl Relaunch for Again {
+    fn admits(&self, mode: Mode) -> Result<(), Failure> {
+        match mode {
+            Mode::FullAccess => Err(Failure::new("full access is not offered")),
+            Mode::Ask | Mode::AllowEdits => Ok(()),
+        }
+    }
+
+    fn model(&self) -> Option<&str> {
+        None
+    }
+
+    fn effort(&self) -> Option<Effort> {
+        None
+    }
+
+    fn launch<'a>(
+        &'a self,
+        _: Mode,
+        _: Option<&'a str>,
+        _: Option<Effort>,
+        resume: Option<&'a ExternalRef>,
+    ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
+        self.resumed
+            .lock()
+            .expect("the record")
+            .push(resume.map(|named| named.reference().to_owned()));
+        let next = self.backends.lock().expect("the launches").pop_front();
+        Box::pin(async move { next.unwrap_or_else(|| Err(Failure::new("nothing left"))) })
+    }
+}
+
+/// Nobody to ask: every leave asked for is refused.
+struct Nobody;
+
+impl crucible_tools::Ask for Nobody {
+    fn ask<'a>(
+        &'a mut self,
+        _: &'a ToolCall,
+        _: &'a Sensitivity,
+    ) -> BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Deny, Remember::Never) })
+    }
+}
+
+impl Asker for Nobody {}
+
+/// A conversation on the agent `backend`, relaunched by `relaunch`.
+fn outside(backend: Box<dyn Backend>, relaunch: Box<dyn Relaunch>) -> Outside {
+    Outside::new(
+        Installed {
+            backend: Some(backend),
+            relaunch,
+            route: RouteBinding::new("claude", "work", None).expect("a route"),
+        },
+        Transcript::new(),
+        Mode::Ask,
+        None,
+    )
+}
+
+/// A conversation whose agent tells `turns` in order.
+fn scripted(turns: impl IntoIterator<Item = Told>) -> Outside {
+    outside(Scripted::playing(turns), Again::launching([]).0)
+}
+
+/// Takes one turn of `outside`, answering with how it ended and what it
+/// posted.
+async fn turn(outside: &mut Outside) -> (Result<Turned, TurnError>, Vec<RunEvent>) {
+    let (events, heard): (Sender<EventEnvelope>, Receiver<EventEnvelope>) = channel();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let run = RunContext::outside(&events, &cancel, &steer, &aside);
+    let session = Session::nowhere();
+    let turned = outside.turn("go", &mut Nobody, &run, &session).await;
+    drop(events);
+    let posted = heard.try_iter().map(EventEnvelope::into_event).collect();
+    (turned, posted)
+}
+
+fn dollars() -> Currency {
+    Currency::new("USD").expect("a currency")
+}
+
+/// A turn's figures: those of a priced turn, costing `cost` where it says.
+fn usage(turn: TurnId, cost: Option<Cost>) -> Event {
+    let usage = Usage::of(turn)
+        .input(125)
+        .cache_read(20)
+        .cache_write(5)
+        .output(40);
+    let usage = match cost {
+        Some(cost) => usage.cost(cost),
+        None => usage,
+    };
+    Event::Usage(Observation::live(usage, Scope::Session))
+}
+
+/// A turn answered, costing `millionths` of a dollar where it says.
+fn answered(turn: TurnId, millionths: Option<u64>) -> Told {
+    let cost = millionths.map(|millionths| Cost::new(millionths, dollars()));
+    (
+        vec![
+            Event::Started { turn },
+            Event::Delta(Text::new("Done.")),
+            usage(turn, cost),
+            Event::Finished(Outcome::Answered),
+        ],
+        Ok(Outcome::Answered),
+    )
+}
+
+/// A turn stopped with nothing reported of it.
+fn stopped(turn: TurnId) -> Told {
+    (
+        vec![Event::Started { turn }, Event::Finished(Outcome::Cancelled)],
+        Ok(Outcome::Cancelled),
+    )
+}
+
+/// A turn that failed with nothing reported of it, its stream lost where
+/// `lost`.
+fn failed(turn: TurnId, lost: bool) -> Told {
+    let failure = Failure::new("the agent stopped answering");
+    let mut posted = vec![Event::Started { turn }];
+    if lost {
+        posted.push(Event::Process(Fault::new(Text::new("exit 9"))));
+    }
+    posted.push(Event::Failed(failure.clone()));
+    (posted, Err(failure.into()))
+}
+
+/// `millionths` of a dollar, as the session's figures hold it.
+fn amount(millionths: u64) -> CostAmount {
+    CostAmount::new(
+        DOLLARS,
+        PricingUnit::Mixed,
+        u128::from(millionths) * 1_000_000_000,
+    )
+}
+
+/// The turns in order, one script each.
+fn turns() -> impl Iterator<Item = TurnId> {
+    std::iter::successors(Some(TurnId::FIRST), |turn| Some(turn.next()))
+}
+
+/// One turn's script, given the turn it is.
+type Script = fn(TurnId) -> Told;
+
+/// The cost `scripts` leave the session at, taking one turn of each.
+async fn cost_after(scripts: impl IntoIterator<Item = Script>) -> SessionCost {
+    let told: Vec<Told> = scripts
+        .into_iter()
+        .zip(turns())
+        .map(|(f, t)| f(t))
+        .collect();
+    let count = told.len();
+    let mut outside = scripted(told);
+    for _ in 0..count {
+        let _turned = turn(&mut outside).await;
+    }
+    outside.totals().cost()
+}
+
+fn priced(turn: TurnId) -> Told {
+    answered(turn, Some(PRICE))
+}
+
+fn priced_twice(turn: TurnId) -> Told {
+    answered(turn, Some(2 * PRICE))
+}
+
+fn unpriced(turn: TurnId) -> Told {
+    answered(turn, None)
+}
+
+fn lost_failed(turn: TurnId) -> Told {
+    failed(turn, true)
+}
+
+fn plain_failed(turn: TurnId) -> Told {
+    failed(turn, false)
+}
+
+/// The seven sequences a session's cost is read from, over the events an
+/// agent posts.
+#[tokio::test]
+async fn the_seven_cost_sequences_read_as_the_native_path_does() {
+    let cases: [(&[Script], SessionCost); 7] = [
+        (&[priced], SessionCost::Priced(amount(PRICE))),
+        (&[unpriced], SessionCost::NotPriced),
+        (&[priced, unpriced], SessionCost::NotPriced),
+        (&[priced, priced], SessionCost::Priced(amount(2 * PRICE))),
+        (&[priced, stopped], SessionCost::AtLeast(amount(PRICE))),
+        (&[stopped, priced], SessionCost::NotPriced),
+        (
+            &[priced, stopped, priced_twice],
+            SessionCost::AtLeast(amount(3 * PRICE)),
+        ),
+    ];
+    for (scripts, expected) in cases {
+        assert_eq!(cost_after(scripts.iter().copied()).await, expected);
+    }
+}
+
+/// A turn that failed after a priced one may have spent and did not say.
+#[tokio::test]
+async fn a_failed_turn_after_a_priced_one_reads_at_least_its_sum() {
+    assert_eq!(
+        cost_after([priced as Script, plain_failed]).await,
+        SessionCost::AtLeast(amount(PRICE))
+    );
+}
+
+/// A lost stream posts its fault and then the failure that ends the turn,
+/// and the turn is counted once: the floor is posted once, and the failure
+/// is not posted at all, its caller posting it from the error.
+#[tokio::test]
+async fn a_fault_then_a_failure_is_counted_once() {
+    let mut outside = scripted([priced(TurnId::FIRST), lost_failed(TurnId::FIRST.next())]);
+    let _first = turn(&mut outside).await;
+
+    let (turned, posted) = turn(&mut outside).await;
+
+    assert!(turned.is_err());
+    let floors: Vec<_> = posted
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::Used { totals } => Some(totals.cost()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(floors, [SessionCost::AtLeast(amount(PRICE))]);
+    assert!(
+        !posted
+            .iter()
+            .any(|event| matches!(event, RunEvent::Failed { .. }))
+    );
+    assert_eq!(outside.totals().cost(), SessionCost::AtLeast(amount(PRICE)));
+}
+
+/// A launch refused before the agent's turn began leaves the figures as they
+/// were, and posts nothing.
+#[tokio::test]
+async fn a_refused_launch_leaves_the_tally_as_it_was() {
+    let (again, _) = Again::launching([Err(Failure::new("the sandbox would not start"))]);
+    let mut outside = outside(Scripted::playing([priced(TurnId::FIRST)]), again);
+    let _first = turn(&mut outside).await;
+    let before = outside.totals();
+    outside.switch(Mode::AllowEdits);
+
+    let (turned, posted) = turn(&mut outside).await;
+
+    let Err(TurnError::Provider(ProviderError::Transport { problem, .. })) = turned else {
+        panic!("{turned:?}");
+    };
+    assert_eq!(&*problem, "the sandbox would not start");
+    assert!(posted.is_empty(), "{posted:?}");
+    assert_eq!(outside.totals().cost(), before.cost());
+    assert_eq!(outside.totals().input(), before.input());
+}
+
+/// A sum too large to state in millionths, or a cost in another currency,
+/// leaves the session not priced for good.
+#[tokio::test]
+async fn a_sum_that_cannot_be_stated_is_not_priced() {
+    fn most(turn: TurnId) -> Told {
+        answered(turn, Some(u64::MAX))
+    }
+    assert_eq!(
+        cost_after([most as Script]).await,
+        SessionCost::Priced(amount(u64::MAX))
+    );
+    assert_eq!(
+        cost_after([most as Script, most]).await,
+        SessionCost::NotPriced
+    );
+
+    let euros = Cost::new(PRICE, Currency::new("EUR").expect("a currency"));
+    let mut tally = Tally::new(None);
+    tally.begin();
+    tally.used(&Usage::of(TurnId::FIRST).cost(euros));
+    tally.end(true);
+    tally.begin();
+    tally.used(&Usage::of(TurnId::FIRST.next()).cost(Cost::new(PRICE, dollars())));
+    tally.end(true);
+    assert_eq!(tally.totals().cost(), SessionCost::NotPriced);
+}
+
+/// What the agent's context holds is nothing before it started, what it last
+/// said its request carried, and what it said was left once it made room:
+/// never what a turn's figures add up to, and not known where it said nothing
+/// of what was left.
+#[tokio::test]
+async fn the_context_holds_what_the_agent_last_said_it_does() {
+    let (first, second, third) = (
+        TurnId::FIRST,
+        TurnId::FIRST.next(),
+        TurnId::FIRST.next().next(),
+    );
+    let compacted = |turn, why, after| {
+        (
+            vec![
+                Event::Started { turn },
+                Event::Compacted {
+                    why,
+                    before: 41_293,
+                    after,
+                },
+                Event::Finished(Outcome::Answered),
+            ],
+            Ok(Outcome::Answered),
+        )
+    };
+    let (mut carried, ended) = answered(first, Some(PRICE));
+    carried.insert(2, Event::Carried(41_293));
+    let mut outside = scripted([
+        (carried, ended),
+        compacted(second, Compacting::Full, Some(9_000)),
+        compacted(third, Compacting::Asked, None),
+    ]);
+    assert_eq!(outside.held(), Some(0));
+
+    let (_, posted) = turn(&mut outside).await;
+    assert_eq!(outside.held(), Some(41_293));
+    let breakdowns: Vec<_> = posted
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::Carried { breakdown } => Some(breakdown.held()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(breakdowns, [Some(41_293)]);
+
+    let (_, posted) = turn(&mut outside).await;
+    assert_eq!(outside.held(), Some(9_000));
+    let told: Vec<_> = posted
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::AgentCompacted { why, before, after } => {
+                Some(format!("{why:?} {before} {after:?}"))
+            }
+            RunEvent::Carried { breakdown } => Some(format!("{:?}", breakdown.held())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(told, ["Full 41293 Some(9000)", "Some(9000)"]);
+
+    let _ = turn(&mut outside).await;
+    assert_eq!(
+        outside.held(),
+        None,
+        "the agent said nothing of what was left"
+    );
+}
+
+/// A conversation that resumes the agent's own session does not know what
+/// its context holds until the agent says.
+#[test]
+fn a_resumed_conversation_holds_nothing_known() {
+    let named = ExternalRef::new("work", "the-agent-s-own").expect("a name");
+    let outside = Outside::new(
+        Installed {
+            backend: None,
+            relaunch: Again::launching([]).0,
+            route: RouteBinding::new("claude", "work", None).expect("a route"),
+        },
+        Transcript::new(),
+        Mode::Ask,
+        Some(named),
+    );
+    assert_eq!(outside.held(), None);
+}
+
+/// The figures reported add up across turns, and a session that has begun
+/// no turn reads as having used nothing.
+#[tokio::test]
+async fn tokens_add_up_across_turns() {
+    assert_eq!(Tally::new(None).totals().cost(), SessionCost::Unspent);
+    let mut outside = scripted([priced(TurnId::FIRST), priced_twice(TurnId::FIRST.next())]);
+    let _first = turn(&mut outside).await;
+    let _second = turn(&mut outside).await;
+
+    let totals = outside.totals();
+    assert_eq!(
+        (
+            totals.input(),
+            totals.output(),
+            totals.cache_read(),
+            totals.cache_write()
+        ),
+        (250, 80, 40, 10)
+    );
+}
+
+/// What a person sees of a turn is kept: the prompt and the answer, the
+/// answer stopped as the turn was.
+#[tokio::test]
+async fn a_turn_keeps_its_prompt_and_its_answer() {
+    let mut outside = scripted([priced(TurnId::FIRST)]);
+
+    let (turned, posted) = turn(&mut outside).await;
+
+    assert!(matches!(turned, Ok(Turned::Ran(_))), "{turned:?}");
+    let messages = outside.transcript().messages();
+    assert!(
+        matches!(messages, [Message::User { text, .. }, Message::Agent { text: answer, stop: Some(StopReason::Yielded), .. }]
+            if &**text == "go" && &**answer == "Done."),
+        "{messages:?}"
+    );
+    assert!(posted.iter().any(|event| matches!(
+        event,
+        RunEvent::TurnFinished {
+            stop: StopReason::Yielded,
+            ..
+        }
+    )));
+}
+
+/// Each way an agent ends a turn is the stop the runner reports for it.
+#[tokio::test]
+async fn each_end_is_the_runner_s_stop() {
+    for (outcome, stop) in [
+        (Outcome::Answered, StopReason::Yielded),
+        (Outcome::Cancelled, StopReason::Cancelled),
+        (Outcome::CutShort, StopReason::Unknown),
+    ] {
+        let mut outside = scripted([(
+            vec![
+                Event::Started {
+                    turn: TurnId::FIRST,
+                },
+                Event::Finished(outcome),
+            ],
+            Ok(outcome),
+        )]);
+
+        let (turned, posted) = turn(&mut outside).await;
+
+        let Ok(Turned::Ran(result)) = turned else {
+            panic!("{outcome:?}: {turned:?}");
+        };
+        assert_eq!(result.stop(), stop, "{outcome:?}");
+        assert!(
+            posted.iter().any(|event| matches!(
+                event,
+                RunEvent::TurnFinished { stop: posted, .. } if *posted == stop
+            )),
+            "{outcome:?}: {posted:?}"
+        );
+    }
+}
+
+/// A turn stopped with something under way may or may not have done it: it
+/// answers as uncertain, and a lost one says so in its failure; either way
+/// the next turn launches the agent again, resuming its own session.
+#[tokio::test]
+async fn an_uncertain_turn_says_so_and_its_run_is_replaced() {
+    let under_way = || Event::Uncertain(Effects::new(Text::new("Edit src/lib.rs")));
+    let opened = Event::Opened(SessionRef::new("own-session").expect("a reference"));
+    let first = Scripted::playing([(
+        vec![
+            Event::Started {
+                turn: TurnId::FIRST,
+            },
+            under_way(),
+            Event::Finished(Outcome::Cancelled),
+            opened,
+        ],
+        Ok(Outcome::Cancelled),
+    )]);
+    let failure = Failure::new("the agent stopped answering");
+    let second = Scripted::playing([(
+        vec![
+            Event::Started {
+                turn: TurnId::FIRST.next(),
+            },
+            under_way(),
+            Event::Process(Fault::new(Text::new("exit 9"))),
+            Event::Failed(failure.clone()),
+        ],
+        Err(failure.into()),
+    )]);
+    let (again, resumed) = Again::launching([Ok(second)]);
+    let mut outside = outside(first, again);
+
+    let (stopped, _) = turn(&mut outside).await;
+    let (lost, _) = turn(&mut outside).await;
+
+    assert!(
+        matches!(&stopped, Ok(Turned::Uncertain(result)) if result.stop() == StopReason::Cancelled),
+        "{stopped:?}"
+    );
+    let Err(TurnError::Provider(ProviderError::Transport { problem, .. })) = lost else {
+        panic!("{lost:?}");
+    };
+    assert_eq!(
+        &*problem,
+        "the agent stopped answering What the agent was doing may or may not have happened."
+    );
+    assert_eq!(
+        *resumed.lock().expect("the record"),
+        [Some("own-session".to_owned())]
+    );
+}
+
+/// Nothing is attached to an agent's turn, and a mode the agent has no launch
+/// for, full access in this fake, is not taken: the mode stays, and a cycle
+/// steps past it.
+#[test]
+fn attachments_and_unlaunchable_modes_are_refused() {
+    let mut outside = scripted([]);
+    let attached = [Attachment {
+        path: "shot.png".into(),
+        modality: crucible_types::Modality::Image,
+        media_type: "image/png".into(),
+        hash: [0; 32],
+    }];
+
+    let refused = unattached(&attached);
+
+    assert!(matches!(refused, Err(TurnError::Refused(_))), "{refused:?}");
+    assert!(unattached(&[]).is_ok());
+    assert_eq!(outside.switch(Mode::FullAccess), Mode::Ask);
+    assert_eq!(outside.cycle(), Mode::AllowEdits);
+    assert_eq!(outside.cycle(), Mode::Ask);
+}
+
+/// The agent's call `call` with its own tool `Bash`.
+fn calling(call: &str) -> Event {
+    Event::ToolActivity {
+        call: Text::new(call),
+        tool: Text::new("Bash"),
+        summary: Text::new("ls"),
+        about: About::Command,
+        looked: None,
+    }
+}
+
+/// The agent's call `call` come back with `report`.
+fn answering(call: &str, report: Text) -> Event {
+    Event::ToolReport {
+        call: Text::new(call),
+        failed: false,
+        report,
+        diff: None,
+    }
+}
+
+/// A turn that posts `events` and is answered.
+fn telling(events: impl IntoIterator<Item = Event>) -> Told {
+    let mut told = vec![Event::Started {
+        turn: TurnId::FIRST,
+    }];
+    told.extend(events);
+    told.push(Event::Finished(Outcome::Answered));
+    (told, Ok(Outcome::Answered))
+}
+
+/// What of `posted` is about the agent's calls: a call drawn, an answer under
+/// one, or something it did said and not drawn.
+fn calls(posted: &[RunEvent]) -> Vec<String> {
+    posted
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::AgentCalled { call, .. } => Some(format!("called {}", call.as_str())),
+            RunEvent::AgentAnswered { call, .. } => Some(format!("answered {}", call.as_str())),
+            RunEvent::Reported { tool, .. } => Some(format!("said {tool}")),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Fails where a call that could take another's result is drawn as a call:
+/// one with no id of its own, or one under an id already out. And where an
+/// answer with no call drawn for it is drawn under nothing.
+#[tokio::test]
+async fn only_a_call_under_an_id_of_its_own_is_drawn_and_answered() {
+    let mut outside = scripted([telling([
+        calling("a"),
+        calling("a"),
+        calling(""),
+        answering("b", Text::new("no call")),
+        answering("a", Text::new("listed")),
+        answering("a", Text::new("again")),
+        calling("a"),
+    ])]);
+
+    let (_, posted) = turn(&mut outside).await;
+
+    assert_eq!(
+        calls(&posted),
+        [
+            "called a",
+            "said Bash",
+            "said Bash",
+            "answered a",
+            "called a"
+        ]
+    );
+}
+
+/// Fails where more of an agent's calls are held out than one native
+/// response may ask for, each waiting for an answer the agent may never send.
+#[tokio::test]
+async fn calls_past_as_many_as_are_held_are_said_and_not_drawn() {
+    let mut outside = scripted([telling(
+        (0..=CALLS_OUT).map(|at| calling(&format!("call-{at}"))),
+    )]);
+
+    let (_, posted) = turn(&mut outside).await;
+
+    let said = calls(&posted);
+    assert_eq!(said.len(), CALLS_OUT + 1);
+    assert!(
+        said.iter()
+            .take(CALLS_OUT)
+            .all(|one| one.starts_with("called "))
+    );
+    assert_eq!(said.last().map(String::as_str), Some("said Bash"));
+}
+
+/// Fails where a result the agent sent more of than is kept reads as whole.
+#[tokio::test]
+async fn a_cut_answer_says_it_was_cut() {
+    let mut outside = scripted([telling([
+        calling("a"),
+        answering("a", Text::clipped("listing", 4)),
+    ])]);
+
+    let (_, posted) = turn(&mut outside).await;
+
+    let answered = posted.iter().find_map(|event| match event {
+        RunEvent::AgentAnswered { output, .. } => Some(output.text().to_owned()),
+        _ => None,
+    });
+    assert_eq!(answered, Some(format!("list\n{CUT_REPORT}")));
+}
+
+/// Fails where the change an agent says its call made is lost on the way to
+/// the row that draws the call.
+#[tokio::test]
+async fn an_answer_s_change_reaches_the_call_it_answers() {
+    let diff = Diff::new([Line::new(4, Change::Added, "b")]);
+    let mut outside = scripted([telling([
+        calling("a"),
+        Event::ToolReport {
+            call: Text::new("a"),
+            failed: false,
+            report: Text::new("done"),
+            diff: Some(diff.clone()),
+        },
+    ])]);
+
+    let (_, posted) = turn(&mut outside).await;
+
+    let answered = posted.iter().find_map(|event| match event {
+        RunEvent::AgentAnswered { diff, .. } => Some(diff.clone()),
+        _ => None,
+    });
+    assert_eq!(answered, Some(Some(diff)));
+}

@@ -85,7 +85,8 @@ impl Retained {
     }
 }
 
-/// Why a model stopped, as this protocol spells it.
+/// Why a model stopped, as this protocol spells it, and one stop that is
+/// no model's: [`Stop::Uncertain`], which only a turn's outcome carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stop {
     /// It finished and yielded.
@@ -102,13 +103,17 @@ pub enum Stop {
     Paused,
     /// Somebody cancelled it.
     Cancelled,
+    /// Somebody stopped it while an installed agent was acting, so what the
+    /// agent was doing may or may not have happened. Only a turn's outcome
+    /// says this; the turn's own `finished` report calls it cancelled.
+    Uncertain,
     /// The provider gave a reason nobody here has heard of.
     Unknown,
 }
 
 impl Stop {
     /// Every reason.
-    pub const EVERY: [Self; 8] = [
+    pub const EVERY: [Self; 9] = [
         Self::Yielded,
         Self::WantsTools,
         Self::OutOfTokens,
@@ -116,6 +121,7 @@ impl Stop {
         Self::Filtered,
         Self::Paused,
         Self::Cancelled,
+        Self::Uncertain,
         Self::Unknown,
     ];
 
@@ -130,6 +136,7 @@ impl Stop {
             Self::Filtered => "filtered",
             Self::Paused => "paused",
             Self::Cancelled => "cancelled",
+            Self::Uncertain => "uncertain",
             Self::Unknown => "unknown",
         }
     }
@@ -216,9 +223,10 @@ pub enum TurnOutcome {
     /// what it began is unconfirmed rather than undone.
     Failed(Problem),
     /// Nothing was sent: the route the turn would go on is one whose vendor
-    /// says it uses what is sent, and no yes to it was given. The question
-    /// was declined, went unanswered, or could not be put to this client; a
-    /// yes that could not be written down is [`TurnOutcome::Failed`].
+    /// says it uses what is sent, or the installed agent's the turn would
+    /// start, and no yes to it was given. The question was declined, went
+    /// unanswered, or could not be put to this client; a yes that could not
+    /// be written down is [`TurnOutcome::Failed`].
     Warned {
         /// The route, as a yes to it is written down.
         route: Text,
@@ -276,7 +284,13 @@ pub enum ResumeOutcome {
     },
     /// No session of this workspace answers to that identity.
     Unknown,
-    /// Its log could not be read; the session in hand is untouched.
+    /// A provider's model ran it, and the conversation is on an installed
+    /// agent's route with no provider set up beside it to ask, since it
+    /// started on the route or was logged out there of the one it had: it can
+    /// be picked up on the next launch that reaches a provider directly.
+    /// Nothing was opened, and the session in hand is untouched.
+    NextLaunch,
+    /// It could not be picked up; the session in hand is untouched.
     Failed(Problem),
 }
 
@@ -293,6 +307,27 @@ pub enum ModelOutcome {
     Taken {
         /// What retiring the cache left behind.
         retained: Retained,
+        /// Why the choice will not outlive the host process, where it will not.
+        unwritten: Option<Problem>,
+    },
+    /// The conversation was on an installed agent's route, which does not
+    /// reach the provider, and moved off it onto the provider and this model,
+    /// in a new session; the session it left stays listed and can be resumed.
+    MovedOff {
+        /// The provider the model is asked of.
+        provider: Text,
+        /// What retiring the cache left behind.
+        retained: Retained,
+        /// Why the choice will not outlive the host process, where it will not.
+        unwritten: Option<Problem>,
+    },
+    /// The provider is reached through an installed agent's instance the
+    /// conversation was not on, and it moved onto that instance, which is
+    /// started on this model, in a new session; the session it left stays
+    /// listed and can be resumed.
+    MovedOnto {
+        /// The instance the conversation moved onto.
+        onto: Text,
         /// Why the choice will not outlive the host process, where it will not.
         unwritten: Option<Problem>,
     },
@@ -345,6 +380,56 @@ pub enum LoginOutcome {
         /// Why the choice will not outlive the host process, where it will not.
         unwritten: Option<Problem>,
     },
+    /// The provider is reached through an installed agent's instance from
+    /// now on, which is written down, the agent read signed in first.
+    AgentConnected {
+        /// What the person is told.
+        said: Text,
+        /// The instance the conversation moved onto, in a new session; the
+        /// session it left stays listed and can be resumed. Absent where it
+        /// stayed where it was.
+        onto: Option<Name>,
+    },
+    /// The agent read signed in, and the configuration that would reach the
+    /// provider through it could not be written, so nothing changed.
+    ConnectUnsaved {
+        /// What the person is told.
+        said: Text,
+        /// Why it could not be written.
+        problem: Problem,
+    },
+    /// Nobody chose a way to go on, so nothing changed: the client could not
+    /// be asked, or it cancelled or went back.
+    Undecided,
+    /// The conversation is on an installed agent's route for the provider,
+    /// and keeps it: the provider is reached directly, with the credential
+    /// stored, from the next launch on.
+    NextLaunch {
+        /// The provider.
+        provider: Text,
+        /// Why the next launch will still reach it through the agent, where
+        /// that could not be written down.
+        unwritten: Option<Problem>,
+    },
+    /// The conversation is on an installed agent's route, and the credential
+    /// is stored for another provider: nothing else changed. A provider this
+    /// run reaches through another agent, or one whose new session could not
+    /// be started, comes to this.
+    Stored {
+        /// The provider the credential is for.
+        provider: Text,
+    },
+    /// The conversation was on an installed agent's route, and the credential
+    /// is for another provider, which is now the one answering, in a new
+    /// session; the session it left stays listed and can be resumed.
+    MovedOff {
+        /// The provider the credential is for.
+        provider: Text,
+        /// What retiring the cache left behind.
+        retained: Retained,
+        /// Why the provider will not be the next run's, where it will not.
+        unwritten: Option<Problem>,
+    },
 }
 
 /// What still authenticates a provider once its stored credential is gone.
@@ -358,6 +443,11 @@ pub enum Standing {
     StoredKey,
     /// A stored account.
     Subscription,
+    /// The installed agent the conversation reaches it through.
+    External {
+        /// The configured instance.
+        instance: Text,
+    },
 }
 
 /// How forgetting a stored credential ended.
@@ -373,7 +463,11 @@ pub enum LogoutOutcome {
         problem: Problem,
     },
     /// It was removed, and the session is asking somebody else anyway.
-    Kept,
+    Kept {
+        /// What retiring the cache of the provider kept beside an installed
+        /// agent's route left behind, where that provider was this one.
+        retained: Retained,
+    },
     /// It was removed, and the provider is still authenticated another way.
     StillServed {
         /// What retiring the cache left behind.
@@ -386,6 +480,55 @@ pub enum LogoutOutcome {
         /// What retiring the cache left behind.
         retained: Retained,
     },
+    /// The instance is out of use from Crucible, durably, and the work it had
+    /// running has stopped. The agent's own sign-in was not touched.
+    Disconnected {
+        /// What the person is told, which says what is known of that sign-in.
+        said: Text,
+    },
+    /// The instance takes no new work and that is written down, but the work
+    /// it had running could not be confirmed stopped.
+    NewWorkDisabledWorkNotConfirmedStopped {
+        /// What the person is told.
+        said: Text,
+    },
+    /// The instance takes no new work in this run, and that could not be
+    /// written down, so the next run may use it again.
+    StoppedForThisRunOnly {
+        /// What the person is told.
+        said: Text,
+        /// Why it could not be written down.
+        problem: Problem,
+    },
+    /// The instance's settings are gone from the configuration. The agent's
+    /// sign-in, its program and the conversations held were not touched.
+    IntegrationRemoved {
+        /// What the person is told, which says what was kept.
+        said: Text,
+    },
+    /// The instance, and every one sharing its sign-in, are out of use from
+    /// Crucible, durably, and the agent's own program says that sign-in is
+    /// signed out.
+    AgentSignedOut {
+        /// What the person is told.
+        said: Text,
+    },
+    /// The instance, and every one sharing its sign-in, are out of use from
+    /// Crucible, durably, but nothing showed that the agent's own sign-in was
+    /// signed out.
+    SignOutUnverified {
+        /// What the person is told, which says the sign-out is unverified.
+        said: Text,
+    },
+    /// Nothing was removed, because a provider is still reached through the
+    /// instance.
+    StillReferenced {
+        /// What the person is told, which names the provider.
+        said: Text,
+    },
+    /// Nobody chose a way to go on, so nothing changed: the client could not
+    /// be asked, or it cancelled.
+    Undecided,
 }
 
 /// One persistent prompt-cache resource, as a listing shows it.

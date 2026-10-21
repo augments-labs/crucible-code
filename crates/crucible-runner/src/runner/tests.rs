@@ -391,7 +391,11 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
@@ -421,7 +425,11 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
@@ -445,7 +453,11 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
@@ -485,7 +497,11 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
@@ -515,7 +531,11 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
@@ -544,7 +564,11 @@ impl Scripted {
                 | Event::Carried { .. }
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
+                | Event::AgentCompacted { .. }
                 | Event::Retrying
+                | Event::AgentCalled { .. }
+                | Event::AgentAnswered { .. }
+                | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }

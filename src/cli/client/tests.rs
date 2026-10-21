@@ -48,7 +48,7 @@ pub(crate) enum Noted {
         /// What the application answered.
         outcome: Outcome,
         /// Where the conversation stood once it had.
-        standing: Snapshot,
+        standing: Box<Snapshot>,
     },
     /// A turn stopped on this, and the front end was put it.
     Put(Pending),
@@ -89,7 +89,7 @@ impl Witness for Journal {
         self.note(Noted::Answered {
             asked: request.command().clone(),
             outcome,
-            standing: snapshot(conversation),
+            standing: Box::new(snapshot(conversation)),
         });
     }
 
@@ -362,9 +362,7 @@ impl<'a> Driving<'a> {
                     rulings: rulings.into_iter(),
                 };
                 self.cancel.reset();
-                let run = conversation
-                    .runner()
-                    .starting(&events, &self.cancel, &steer, &aside);
+                let run = conversation.starting(&events, &self.cancel, &steer, &aside);
                 let ended = self.terms.runtime.block_on(client::turn(
                     conversation,
                     &request,
@@ -378,13 +376,14 @@ impl<'a> Driving<'a> {
             }
             _ => {
                 let providers = self.terms.providers.snapshot();
+                let settings = self.terms.reading();
 
                 self.terms
                     .runtime
                     .block_on(client::perform(
                         conversation,
                         &request,
-                        &self.terms.desk(&providers),
+                        &self.terms.desk(&providers, &settings),
                     ))
                     .outcome()
             }
@@ -393,7 +392,7 @@ impl<'a> Driving<'a> {
         self.journal.note(Noted::Answered {
             asked: request.command().clone(),
             outcome: received(&request, outcome),
-            standing: standing(conversation),
+            standing: Box::new(standing(conversation)),
         });
     }
 }
@@ -423,10 +422,10 @@ fn unnamed(noted: Vec<Noted>, stood_in: &SessionId) -> Vec<Noted> {
                     other => other,
                 },
                 outcome,
-                standing: Snapshot {
+                standing: Box::new(Snapshot {
                     session: None,
-                    ..standing
-                },
+                    ..*standing
+                }),
             },
             other => other,
         })
@@ -508,6 +507,21 @@ fn renumbered(noted: Vec<Noted>) -> Vec<Noted> {
             Noted::Decided(Decision::Accepted { id }) => {
                 Noted::Decided(Decision::Accepted { id: ordinal(id) })
             }
+            Noted::Decided(Decision::Picked { id, choice }) => Noted::Decided(Decision::Picked {
+                id: ordinal(id),
+                choice,
+            }),
+            Noted::Put(Pending::Account {
+                id,
+                asks,
+                facts,
+                choices,
+            }) => Noted::Put(Pending::Account {
+                id: ordinal(id),
+                asks,
+                facts,
+                choices,
+            }),
             Noted::Put(Pending::Warning {
                 id,
                 route,

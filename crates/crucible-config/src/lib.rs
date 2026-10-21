@@ -71,12 +71,15 @@ pub use document::check::{
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{
-    accepting, allowing, asking, choosing, drawing, forgetting, hastened, hastening, reading,
-    sandboxing, setting, slowing, thinking, unasked,
+    accepting, allowing, asking, choosing, choosing_agent_model, chosen, connecting, defaulting,
+    disabling, drawing, forgetting, hastened, hastening, installing, reaching, reading, removing,
+    sandboxing, setting, slowing, thinking, thinking_agent, unasked,
 };
+pub use settings::access::{MODEL_NAMED as AGENT_MODEL_NAMED, model_name as agent_model};
 pub use settings::{
-    Color, Compaction, Forced, Glyphs, McpServer, SandboxSettings, ScreenMode, ScrollSpeed,
-    Sending, Settings, ThemeChoice, ToolDetail, TranscriptColours, Updates, When, local, user,
+    Access, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, McpServer, Routes,
+    SandboxSettings, ScreenMode, ScrollSpeed, Sending, Settings, ThemeChoice, ToolDetail,
+    TranscriptColours, Updates, When, local, user,
 };
 pub use shape::THEME;
 pub use shape::rows::{Row, RowId, Values, row, rows};

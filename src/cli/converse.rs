@@ -51,16 +51,16 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::oneshot;
 
-use crucible_app::Conversation;
 use crucible_app::client::Ended;
 use crucible_app::providers::{Lookup, Served, Serving, Sourcing, available};
 use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
+use crucible_app::{Conversation, Settled};
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_client_api::{Command, ErrorCode, Prompt, Refusal};
 use crucible_context::Room;
-use crucible_runner::{Event, Runner, TurnError, Turned};
+use crucible_runner::{Event, TurnError, Turned};
 use crucible_runtime::Cancel;
 use crucible_session::Session;
 use crucible_tui::{
@@ -258,6 +258,10 @@ pub(crate) struct Terms {
     /// here and one built there pointing at different files would be a `/login`
     /// that wrote where nothing reads.
     pub(crate) logins: Store,
+    /// The installed agents and providers' access as the account writes during
+    /// this run left them, read by `serving`, `sourcing`, the content-use hold
+    /// and every command in place of those two blocks of `settings`.
+    pub(crate) rewritten: crucible_app::access::Rewritten,
     /// Subscription implementations compiled into this binary.
     pub(crate) subscriptions: Subscriptions,
     /// The yes given to each route whose vendor uses what is sent, which the
@@ -324,22 +328,32 @@ impl Terms {
     }
 
     /// What a change of who is asked is decided from, read against one
-    /// generation of the providers.
+    /// generation of the providers and of [`Terms::reading`].
     ///
     /// The generation is the caller's, so that the rows it draws and the
     /// switch it asks for are read against the same one.
     pub(crate) fn switching<'a>(
         &'a self,
         providers: &'a crucible_app::providers::Providers,
+        settings: &'a crucible_config::Settings,
     ) -> crucible_app::switching::Switching<'a> {
         crucible_app::switching::Switching {
             providers,
-            settings: &self.settings,
+            settings,
             serving: &self.serving,
             sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
+            rewritten: &self.rewritten,
         }
+    }
+
+    /// The settings with the installed agents and every provider's access as
+    /// the account writes during this run left them, in place of what the
+    /// launch read: which agents there are, and what a provider is reached
+    /// with now.
+    pub(crate) fn reading(&self) -> std::borrow::Cow<'_, crucible_config::Settings> {
+        self.rewritten.over(&self.settings)
     }
 
     /// What a session with no model says, read off what this machine holds now.
@@ -351,9 +365,9 @@ impl Terms {
         // With a provider chosen the missing piece is the model whatever else
         // is set up, so the credentials are read only when they decide it.
         let any = provider.is_none() && {
-            let stored = self.logins.read();
+            let (stored, settings) = (self.logins.read(), self.reading());
             let auth = ProviderAuth {
-                settings: &self.settings,
+                settings: &settings,
                 from: &*self.environment,
                 stored: &stored,
                 subscriptions: &self.subscriptions,
@@ -656,7 +670,7 @@ fn conversing<T: Terminal>(
     // room a pruning gave back, and holding it for the length of the run would
     // be this screen undoing what that pruning was run to do.
     let pruned = conversation.session().take_pruned();
-    let against = replaying::Replay::of(conversation.runner(), terms, &pruned);
+    let against = replaying::Replay::of(conversation.settled(), terms, &pruned);
     replaying::replayed(renderer, &against, conversation.session(), &mut held.kept)?;
     drop(pruned);
 
@@ -666,7 +680,7 @@ fn conversing<T: Terminal>(
     // above the loop and the command inside it reach the same code.
     let mut making = resuming::asked(
         renderer,
-        conversation.runner(),
+        conversation.settled(),
         conversation.session(),
         terms,
         keys,
@@ -785,7 +799,7 @@ fn conversing<T: Terminal>(
             Asked::Expand | Asked::Clicked(_) => continue,
 
             Asked::Untyped => {
-                match unboxed(renderer, conversation.runner(), style, held.answers.input)? {
+                match unboxed(renderer, conversation.settled(), style, held.answers.input)? {
                     Some(said) => (said, true),
                     None => break,
                 }
@@ -831,7 +845,7 @@ fn conversing<T: Terminal>(
         let imported = attaching::imported(&held);
         let attached = attaching::beside(
             renderer,
-            attaching::Asking::of(conversation.runner(), imported.as_deref()),
+            attaching::Asking::of(conversation.settled(), imported.as_deref()),
             &terms.workspace,
             attaching::Sent {
                 prompt: &prompt,
@@ -935,12 +949,12 @@ fn troubled<T: Terminal>(
 /// one in.
 fn unboxed<T: Terminal>(
     renderer: &mut Renderer<T>,
-    runner: &Runner,
+    settled: Settled<'_>,
     style: Style,
     input: &mut dyn BufRead,
 ) -> Result<Option<String>, Fatal> {
     let mark = style.glyphs().caret();
-    draw::mark(renderer, &format!("{} {mark} ", runner.mode()))?;
+    draw::mark(renderer, &format!("{} {mark} ", settled.mode()))?;
 
     let Some(said) = read(input)? else {
         // The mark is still the last thing on its row, and nothing but this
@@ -1064,6 +1078,7 @@ fn ran<T: Terminal>(
     match &took.did {
         Did::Reported | Did::UsedUp => {}
         Did::Refused(turned) => draw::refused(renderer, turned)?,
+        Did::Uncertain => draw::uncertain(renderer)?,
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
         Did::Unsent(refusal) => renderer.commit(&format!("! {refusal}"))?,
@@ -1076,7 +1091,7 @@ fn ran<T: Terminal>(
     // line that asked for it — a rule is drawn from the first column, and a
     // mark shoved in front of one reads as a result that lost its start. The
     // blank above that record is the one it asks for on its way in.
-    if !matches!(took.did, Did::Reported | Did::UsedUp) {
+    if !matches!(took.did, Did::Reported | Did::UsedUp | Did::Uncertain) {
         replied(renderer, command, style)?;
     }
 
@@ -1152,6 +1167,18 @@ struct Turn<'a, 'h> {
     /// Which provider is answering, by its name in the registry, as it stood
     /// when the turn began: the conversation that knows is on the worker.
     serving: Option<&'static str>,
+    /// The one provider an installed agent's route reaches, whose models
+    /// `/model` offers unnarrowed, as it stood when the turn began.
+    reaching: Option<&'static str>,
+    /// What an installed agent last said its context holds, as it stood when
+    /// the turn began; `None` on a provider's model. It stands until the turn
+    /// under way hears the agent say what its context holds now.
+    external: Option<u64>,
+    /// Who runs the turn, as it stood when the turn began.
+    execution: crucible_client_api::Execution,
+    /// The model the agent running the turn was started on, where one was
+    /// chosen for it, as it stood when the turn began.
+    model: Option<crucible_client_api::Model>,
 }
 
 impl Turn<'_, '_> {
@@ -1252,9 +1279,14 @@ impl Turn<'_, '_> {
                         // to: this call did something, and a line counting what
                         // was only looked at may not close over it.
                         *self.drawn = stop_if_failed(
-                            settling(renderer, self.held, self.terms.style())
-                                .and_then(|()| draw::returned(renderer, &said, self.terms.style()))
-                                .map_err(Fatal::from),
+                            settling(
+                                renderer,
+                                &mut self.held.gathering,
+                                &mut self.held.kept,
+                                self.terms.style(),
+                            )
+                            .and_then(|()| draw::returned(renderer, &said, self.terms.style()))
+                            .map_err(Fatal::from),
                             &self.terms.cancel,
                         );
                     }
@@ -1266,7 +1298,13 @@ impl Turn<'_, '_> {
                 // and the count of what was looked at belongs above it.
                 if breaks(&one) && self.drawn.is_ok() {
                     *self.drawn = stop_if_failed(
-                        settling(renderer, self.held, self.terms.style()).map_err(Fatal::from),
+                        settling(
+                            renderer,
+                            &mut self.held.gathering,
+                            &mut self.held.kept,
+                            self.terms.style(),
+                        )
+                        .map_err(Fatal::from),
                         &self.terms.cancel,
                     );
                 }
@@ -1284,7 +1322,7 @@ impl Turn<'_, '_> {
                     // are what a drawing thread that has stopped means, said
                     // out loud rather than by going quiet.
                     match one {
-                        Seen::Question { reply, .. } => {
+                        Seen::Question { reply, .. } | Seen::Leave { reply, .. } => {
                             let _ = reply.send(verdict(None));
                         }
                         Seen::Asked { reply, .. } => {
@@ -1464,22 +1502,7 @@ impl Turn<'_, '_> {
         // once a pass. The keyboard is not the turn's here, which is why this
         // is `drain` rather than `step` — and why the hook is handed the
         // renderer rather than closing over it.
-        let counted = command::Counted {
-            usage: crucible_app::client::usage(
-                &self.says.model,
-                &self.turning.breakdown(),
-                &self.turning.totals(),
-                self.turning.limits().as_ref(),
-                self.serving,
-            ),
-            serving: self.serving,
-            mode: self.says.running_mode,
-            session: self
-                .held
-                .attachment_store
-                .as_ref()
-                .map(|(_, id)| id.clone()),
-        };
+        let counted = self.counted();
         let ran = command::live(renderer, self.terms, command, &counted, &mut |renderer| {
             self.drain(renderer);
             Ok(())
@@ -1487,6 +1510,31 @@ impl Turn<'_, '_> {
         // `/settings` may have changed which press sends.
         self.held.editor.send_with(self.terms.sending.get());
         ran
+    }
+
+    /// What the turn last reported, as the panels standing over it read it.
+    fn counted(&self) -> command::Counted {
+        let mut usage = crucible_app::client::usage(
+            &self.says.model,
+            &self.turning.breakdown(),
+            &self.turning.totals(),
+            self.turning.limits().as_ref(),
+            self.serving,
+        );
+        // What the turn has heard of the agent stands; until it hears, what
+        // the agent held as the turn began.
+        usage.context.external = usage.context.external.or(self.external);
+        command::Counted {
+            usage,
+            serving: self.serving,
+            execution: self.execution.clone(),
+            mode: self.says.running_mode,
+            session: self
+                .held
+                .attachment_store
+                .as_ref()
+                .map(|(_, id)| id.clone()),
+        }
     }
 
     /// Runs a command whose pick is held for the turn started next.
@@ -1520,12 +1568,16 @@ impl Turn<'_, '_> {
 
         let model = self.says.model.clone();
         let current = command::Asked {
-            provider: self.serving,
+            provider: self.serving.or(self.reaching),
+            reaching: self.reaching,
             model: &model,
             effort: self.says.effort,
             pace: self.says.pace,
         };
-        let picked = command::deferred(renderer, self.terms, current, command, &mut |renderer| {
+        let execution = self.execution.clone();
+        let model = self.model.clone();
+        let asked = (current, &execution, model.as_ref());
+        let picked = command::deferred(renderer, self.terms, asked, command, &mut |renderer| {
             self.drain(renderer);
             Ok(())
         })?;
@@ -1570,8 +1622,14 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let mut says = typing::under(conversation.runner()).naming(&terms.commands.snapshot());
+    let mut says = typing::under(conversation.settled())
+        .routing(&conversation)
+        .naming(&terms.commands.snapshot());
     let serving = conversation.serving();
+    let reaching = crucible_app::client::reaching(&conversation);
+    let external = conversation.settled().external();
+    let execution = crucible_app::client::execution(&conversation);
+    let model = crucible_app::client::model(&conversation);
 
     // And what ended while nothing was running goes into the aside rather than
     // into what is above, which is the one place a fact like this can be put
@@ -1599,9 +1657,9 @@ fn take<T: Terminal>(
     // Started before the worker rather than on the first thing it reports, so
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
-    let runner = conversation.runner();
-    let mut turning = Turning::started(runner.breakdown())
-        .using(runner.totals(), runner.plan_limits())
+    let settled = conversation.settled();
+    let mut turning = Turning::started(settled.breakdown())
+        .using(settled.totals(), settled.plan_limits())
         .pinning(terms.pinning.get());
 
     attaching::refresh_store(held, importing(conversation.session()));
@@ -1662,6 +1720,10 @@ fn take<T: Terminal>(
         leaving: &mut leaving,
         terms,
         serving,
+        reaching,
+        external,
+        execution,
+        model,
     };
     while turn.step(renderer) {}
 
@@ -1723,9 +1785,7 @@ fn sent(
         // post: a `TurnError` is handed back rather than reported, and a
         // failure stamped with a run of its own would say the turn that
         // failed was somebody else's.
-        let run = conversation
-            .runner()
-            .starting(&relay, &running, &steer, &aside);
+        let run = conversation.starting(&relay, &running, &steer, &aside);
         let reporting = run.reporting();
 
         // What somebody asked for is asked of the application as the
@@ -1765,6 +1825,7 @@ fn sent(
         // have reported nothing at all.
         let did = match ended {
             Ended::Turn(Ok(Turned::Ran(_))) | Ended::Room(Ok(Room::Made(_))) => Did::Reported,
+            Ended::Turn(Ok(Turned::Uncertain(_))) => Did::Uncertain,
             Ended::Turn(Ok(refused)) => Did::Refused(refused),
             Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
             Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
@@ -1810,6 +1871,11 @@ enum Did {
     /// lines in it, run as the next turn, would stop again or go to a vendor
     /// that has said the plan is spent.
     UsedUp,
+    /// It was reported as [`Self::Reported`] is, and it was stopped while
+    /// another agent was acting, so what it was doing may or may not have
+    /// happened. Said once the turn is over, because the stop it reported says
+    /// only that it stopped.
+    Uncertain,
     /// A guardrail turned the turn away, or could not decide about it. Carried
     /// back whole because the refusal may be the only thing the turn produced:
     /// a prompt refused before any request was made posts no event.
@@ -1995,7 +2061,7 @@ fn breaks(one: &Seen) -> bool {
     match one {
         // Both are the reader being shown something, and a count of what was
         // looked at belongs above it rather than around it.
-        Seen::Question { .. } | Seen::Asked { .. } => true,
+        Seen::Question { .. } | Seen::Leave { .. } | Seen::Asked { .. } => true,
 
         Seen::Turn(event) => match event {
             // The calls themselves, and what arrives while they are out. None
@@ -2004,8 +2070,13 @@ fn breaks(one: &Seen) -> bool {
             // A result is here as well, and it has to be: the event that folded
             // a call into the run is the one before this, and breaking on the
             // result would end every run at one call.
+            //
+            // An installed agent's calls and their answers are the same, by
+            // the agent's account rather than a tool's.
             Event::ToolRequested { .. }
             | Event::ToolFinished { .. }
+            | Event::AgentCalled { .. }
+            | Event::AgentAnswered { .. }
             | Event::Wrote { .. }
             | Event::Spent { .. }
             | Event::PromptCache { .. }
@@ -2033,7 +2104,9 @@ fn breaks(one: &Seen) -> bool {
             | Event::Delta { .. }
             | Event::Compacting { .. }
             | Event::Compacted { .. }
+            | Event::AgentCompacted { .. }
             | Event::Steered { .. }
+            | Event::Reported { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::FastRefused { .. }
@@ -2049,19 +2122,23 @@ fn breaks(one: &Seen) -> bool {
 /// gathered enough to be worth folding. And the call's own row where it did
 /// not: a run of one is not folded, so the row it was always going to have is
 /// written now that it is known no second call was coming.
+///
+/// A replay of an installed agent's turn ends its runs here too, which is
+/// what keeps the two drawing the same rows.
 fn settling<T: Terminal>(
     renderer: &mut Renderer<T>,
-    held: &mut Held<'_>,
+    gathering: &mut Gathering,
+    kept: &mut Kept,
     style: Style,
 ) -> Result<(), TerminalError> {
-    let mut gathering = held.gathering.taken();
+    let mut gathering = gathering.taken();
 
     if gathering.folds() {
         // Swept rather than pointed one at a time: what the turn gathered and
         // has not yet offered is exactly this run, because every other result
         // was pointed at its own row as it went down.
         let at = draw::gathered(renderer, &gathering.did(), style)?;
-        held.kept.onto(at);
+        kept.onto(at);
         return Ok(());
     }
 
@@ -2072,17 +2149,11 @@ fn settling<T: Terminal>(
     draw::returned(renderer, &alone.said, style)?;
 
     let Some(output) = alone.output else {
-        held.kept.abandoned(&alone.call);
+        kept.abandoned(&alone.call);
         return Ok(());
     };
 
-    draw::came_back(
-        renderer,
-        &mut held.kept,
-        &alone.call,
-        draw::Shown::live(output),
-        style,
-    )
+    draw::came_back(renderer, kept, &alone.call, output, style)
 }
 
 /// Refuses a pending action already off the channel: the drain cannot meet
@@ -2107,7 +2178,17 @@ fn shown<T: Terminal>(
         // count is its row — but what it came back with is kept either way,
         // because the line counting the run is the door to all of it.
         Seen::Turn(Event::ToolFinished { call, output, .. }) if held.gathering.holds(&call) => {
-            if let Some(output) = held.gathering.answered(&call, output) {
+            if let Some(output) = held.gathering.answered(&call, draw::Shown::live(output)) {
+                held.kept.gathered(&call, output.into_text(), None);
+            }
+        }
+        // And one of an installed agent's calls the run is counting, by the
+        // agent's account of what it came back with.
+        Seen::Turn(Event::AgentAnswered { call, output, diff }) if held.gathering.holds(&call) => {
+            if let Some(output) = held
+                .gathering
+                .answered(&call, draw::Shown::reported(output, diff))
+            {
                 held.kept.gathered(&call, output.into_text(), None);
             }
         }
@@ -2131,6 +2212,18 @@ fn shown<T: Terminal>(
             match answer {
                 Ok(answer) => {
                     // A worker that stopped waiting has already denied itself.
+                    let _ = reply.send(answer);
+                }
+                Err(problem) => return refuse(reply, verdict(None), problem),
+            }
+        }
+        // Put as a call is, under the same rule about the clock.
+        Seen::Leave { leaving, reply } => {
+            let answer = terms.ending.unclocked().and_then(|_unclocked| {
+                answering::leave(renderer, &leaving, &mut held.answers, style)
+            });
+            match answer {
+                Ok(answer) => {
                     let _ = reply.send(answer);
                 }
                 Err(problem) => return refuse(reply, verdict(None), problem),

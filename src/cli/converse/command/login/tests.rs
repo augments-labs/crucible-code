@@ -45,6 +45,7 @@ fn in_force(sample: &Sample) -> Terms {
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
+        rewritten: crucible_app::access::Rewritten::new(),
         subscriptions: crucible_app::subscription::Subscriptions::production(
             &crucible_auth::Renewals::new(),
         ),
@@ -107,7 +108,7 @@ fn a_credential_stored_while_a_provider_is_in_force_leaves_the_session_as_it_is(
         .expect("a provider this build has an arm for");
     taken(named, &mut renderer, &mut conversation, &terms).expect("the terminal to be written");
 
-    assert_eq!(conversation.runner().model(), "claude-test-1");
+    assert_eq!(conversation.settled().model(), "claude-test-1");
     assert_eq!(conversation.serving(), Some("anthropic"));
 
     let written = renderer.terminal().written().to_string();
@@ -311,7 +312,7 @@ fn a_credential_stored_for_the_provider_in_force_keeps_its_model() {
         .expect("a provider this build has an arm for");
     taken(named, &mut renderer, &mut conversation, &terms).expect("the terminal to be written");
 
-    assert_eq!(conversation.runner().model(), "claude-test-1");
+    assert_eq!(conversation.settled().model(), "claude-test-1");
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("asking claude-test-1"), "{written}");
 }
@@ -417,17 +418,30 @@ fn the_paste_box_draws_its_mark_and_its_dots_out_of_the_glyph_set() {
 #[test]
 fn every_way_is_named_by_what_the_reader_holds_and_how_it_is_billed() {
     // Two ways to pay, whatever the store holds: an account whose plan
-    // includes the usage, or a key billed by what is sent. Neither row is a
-    // sentence about what pressing Enter does, and neither names a vendor:
-    // the vendors are the lists each leads to.
+    // includes the usage, or a key billed by what is sent; and an installed
+    // agent's own sign-in third, where one is offered. No row is a sentence
+    // about what pressing Enter does, and none names a vendor: the vendors
+    // are the lists each leads to.
     let shown: Vec<&str> = FIRST.iter().map(|way| way.name).collect();
     let says: Vec<&str> = FIRST.iter().map(|way| way.says).collect();
 
-    assert_eq!(shown, ["Your account with subscription", KEY_ROUTE_SHOWN]);
+    assert_eq!(
+        shown,
+        [
+            "Your account with subscription",
+            KEY_ROUTE_SHOWN,
+            "Use an installed coding agent"
+        ]
+    );
     assert_eq!(
         says,
-        ["Usage included in your paid plan", "API usage billing"]
+        [
+            "Usage included in your paid plan",
+            "API usage billing",
+            "Sign in through an official harness"
+        ]
     );
+    assert_eq!(FIRST.get(..PAID).map(<[_]>::len), Some(2));
     assert_eq!(HOW, "Choose how usage is paid for.");
 }
 
@@ -769,6 +783,7 @@ fn signed_in_is_kept_at_forty_columns_where_the_plan_words_are_cut() {
         source: None,
         title: TITLE,
         said: Some(ACCOUNTS),
+        told: &[],
         shown: &shown,
         chosen: 0,
         footer: BACK,
@@ -1202,6 +1217,7 @@ fn a_warned_row_keeps_its_caution_at_forty_columns() {
             source: None,
             title: TITLE,
             said: None,
+            told: &[],
             shown: &shown,
             chosen: 0,
             footer: BACK,
@@ -1305,4 +1321,21 @@ fn a_refused_key_is_answered_by_its_mark_and_never_its_text() {
     ] {
         assert_eq!(super::unfitting(&misfit, Glyphs::Ascii), said);
     }
+}
+
+#[test]
+fn a_fact_an_agent_gave_reaches_the_panel_with_none_of_its_control_bytes() {
+    let drawn = drawn_facts(&[
+        "Reason: \u{1b}]0;title\u{7}status\tunavailable\nretry".to_owned(),
+        "Agent: work, run as work.".to_owned(),
+    ]);
+
+    assert!(
+        drawn.iter().all(|fact| !fact.chars().any(char::is_control)),
+        "{drawn:?}"
+    );
+    assert_eq!(
+        drawn.get(1).map(String::as_str),
+        Some("Agent: work, run as work.")
+    );
 }

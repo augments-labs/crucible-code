@@ -44,6 +44,11 @@ fn id(nth: u64) -> SessionId {
     .expect("a legacy session id")
 }
 
+#[allow(clippy::expect_used)]
+fn native() -> crucible_client_api::Name {
+    crucible_client_api::Name::new(crucible_client_api::sessions::NATIVE).expect("a name")
+}
+
 fn whole(sessions: Vec<Listed>) -> Listing {
     Listing {
         sessions,
@@ -170,6 +175,8 @@ fn everything_that_kept_a_list_from_being_whole_is_said_under_it() {
             branch: None,
             messages: 3,
             title: None,
+            backend: native(),
+            route: None,
         }],
         omitted: 4,
         unreadable: 2,
@@ -197,6 +204,8 @@ fn what_a_terminal_would_act_on_in_a_title_or_branch_is_shown_as_its_escape() {
         branch: Some(Text::cut("ma\u{1b}[2Jin")),
         messages: 1,
         title: Some(Text::cut("\u{202e}gnirts\u{7}")),
+        backend: native(),
+        route: None,
     }]);
 
     let text = human(&std::env::temp_dir(), &listing, &ago);
@@ -278,4 +287,111 @@ fn a_branch_too_long_to_show_whole_is_cut_where_it_says_so_and_leaves_the_list_i
         "b".repeat(crucible_client_api::bounds::TEXT_BYTES)
     );
     assert!(text.contains(&shown), "{text}");
+}
+
+#[test]
+fn a_session_an_agent_ran_lists_its_driver_and_route_and_any_other_lists_native() {
+    let sample = Sample::new("sessions-routed");
+    let native = recorded(&sample, None, None);
+    let route = crucible_session::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    session.append(&Message::said(PROMPT));
+    let routed = session.id().expect("a recorded session").clone();
+    drop(session);
+
+    let listed = listing(&sample.root(), &sample.logs()).expect("a listing");
+
+    let Report::Listed(said) = listed.contract() else {
+        panic!("a list: {:?}", listed.contract());
+    };
+    let row = |id: &SessionId| {
+        let one = said
+            .sessions
+            .iter()
+            .find(|one| &one.id == id)
+            .expect("listed");
+        (
+            one.backend.as_str().to_owned(),
+            one.route.as_ref().map(|route| route.as_str().to_owned()),
+        )
+    };
+    assert_eq!(row(&routed), ("claude".to_owned(), Some("work".to_owned())));
+    assert_eq!(row(&native), ("native".to_owned(), None));
+    let text = listed.human(&ago);
+    assert!(text.contains("run by work (claude)"), "{text}");
+}
+
+#[test]
+fn a_route_named_as_long_as_a_session_may_keep_it_is_listed_and_not_refused() {
+    // The session store bounds an instance's name and the contract bounds a
+    // name; a contract that kept less would turn every session run on such a
+    // route into one the list could not read.
+    let sample = Sample::new("sessions-longest-route");
+    let longest = (1..=4096)
+        .map(|length| "w".repeat(length))
+        .take_while(|name| crucible_session::RouteBinding::new("claude", name, None).is_ok())
+        .last()
+        .expect("a route name a session may keep");
+    let route = crucible_session::RouteBinding::new("claude", &longest, None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    session.append(&Message::said(PROMPT));
+    drop(session);
+
+    let listed = listing(&sample.root(), &sample.logs()).expect("a listing");
+
+    let Report::Listed(said) = listed.contract() else {
+        panic!("a list: {:?}", listed.contract());
+    };
+    assert_eq!(said.unreadable, 0);
+    assert_eq!(
+        said.sessions
+            .iter()
+            .map(|one| one.route.as_ref().map(|route| route.as_str().len()))
+            .collect::<Vec<_>>(),
+        [Some(longest.len())]
+    );
+}
+
+#[test]
+fn the_native_backend_is_one_name_for_the_contract_the_runner_and_the_store() {
+    // The listing reads a session with no route as the contract's native
+    // backend, and a route can never name it only because the store refuses
+    // the same spelling.
+    assert_eq!(super::NATIVE, crucible_session::NATIVE_DRIVER);
+    assert_eq!(super::NATIVE, crate::native::DRIVER);
+}
+
+#[test]
+fn a_route_whose_driver_is_spelled_as_a_providers_model_is_counted_and_not_listed() {
+    // A row naming the native backend and a route is one every client
+    // refuses, and it would take the whole list down with it. No binding names
+    // that driver, so the log is one another build wrote.
+    let sample = Sample::new("sessions-native-driver");
+    let route = crucible_session::RouteBinding::new("claude", "work", None).expect("a route");
+    let session = Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    session.append(&Message::said(PROMPT));
+    let path = session.path().to_owned();
+    drop(session);
+    let log = std::fs::read_to_string(&path).expect("the log");
+    std::fs::write(
+        &path,
+        log.replacen(
+            r#""driver":"claude""#,
+            &format!(r#""driver":"{}""#, super::NATIVE),
+            1,
+        ),
+    )
+    .expect("the log rewritten");
+    recorded(&sample, None, None);
+
+    let listed = listing(&sample.root(), &sample.logs()).expect("a listing");
+
+    let Report::Listed(said) = listed.contract() else {
+        panic!("a list: {:?}", listed.contract());
+    };
+    assert_eq!((said.sessions.len(), said.unreadable), (1, 1));
+    assert!(listed.contract().encode().is_ok());
 }

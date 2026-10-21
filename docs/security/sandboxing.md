@@ -308,7 +308,9 @@ states one hour of aggregate Job processor time and no handle-count limit.
 macOS states only the open-file ceiling because its catchable CPU signal is not
 a hard boundary. `bash` adds
 `command_time_limit`, `output_limit` and `concurrency_limit` for the one command
-it is running. `memory_limit` is enforced but not asked for: the knob is the
+it is running. An installed coding agent that answers a conversation's turns
+lives as long as the conversation, so it is held to no processor-time, command
+time or output ceiling; its account steps are. `memory_limit` is enforced but not asked for: the knob is the
 address space a process may map rather than the memory it uses, and runtimes
 that reserve enormously and touch little would be refused by any ceiling low
 enough to catch a real runaway. `disk_limit` is unsupported above, and a policy

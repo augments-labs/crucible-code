@@ -205,7 +205,8 @@ pub enum Pending {
         questions: Vec<Asked>,
     },
     /// Whether a send may go on a route whose vendor says it uses what is
-    /// sent to it. Nothing has been sent.
+    /// sent to it, or an installed agent be started on its own route.
+    /// Nothing has been sent, and nothing started.
     Warning {
         /// Which pending action this is.
         id: PendingId,
@@ -218,6 +219,20 @@ pub enum Pending {
         /// The page it says it on, and the day that was read.
         source: Text,
     },
+    /// Which way an account operation on an installed agent goes on, if at
+    /// all. Nothing has changed yet, and choosing none changes nothing.
+    Account {
+        /// Which pending action this is.
+        id: PendingId,
+        /// What is being asked.
+        asks: Text,
+        /// What the operation would affect, a sentence each: the instance, its
+        /// profile, the account where known, the work running on it, and who
+        /// else shares its sign-in.
+        facts: Vec<Text>,
+        /// The ways it may go, one of them to leave everything as it is.
+        choices: Vec<Choice>,
+    },
 }
 
 impl Pending {
@@ -225,9 +240,10 @@ impl Pending {
     #[must_use]
     pub const fn id(&self) -> PendingId {
         match self {
-            Self::Permission { id, .. } | Self::Questions { id, .. } | Self::Warning { id, .. } => {
-                *id
-            }
+            Self::Permission { id, .. }
+            | Self::Questions { id, .. }
+            | Self::Warning { id, .. }
+            | Self::Account { id, .. } => *id,
         }
     }
 
@@ -265,6 +281,22 @@ impl Pending {
                 .text("shown", shown)
                 .text("sentence", sentence)
                 .text("source", source),
+            Self::Account {
+                id,
+                asks,
+                facts,
+                choices,
+            } => Writing::kind("account")
+                .with("id", id.number())
+                .text("asks", asks)
+                .with(
+                    "facts",
+                    facts.iter().map(crate::wire::written).collect::<Vec<_>>(),
+                )
+                .with(
+                    "choices",
+                    choices.iter().map(Choice::written).collect::<Vec<_>>(),
+                ),
         }
         .finish()
     }
@@ -301,6 +333,20 @@ impl Pending {
                 sentence: fields.text("sentence")?,
                 source: fields.text("source")?,
             },
+            "account" => Self::Account {
+                id,
+                asks: fields.text("asks")?,
+                facts: fields
+                    .list("facts")?
+                    .into_iter()
+                    .map(crate::wire::text)
+                    .collect::<Result<_, _>>()?,
+                choices: fields
+                    .list("choices")?
+                    .into_iter()
+                    .map(Choice::read)
+                    .collect::<Result<_, _>>()?,
+            },
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;
@@ -308,25 +354,41 @@ impl Pending {
     }
 }
 
+impl Choice {
+    fn written(&self) -> Value {
+        Writing::new()
+            .text("name", &self.name)
+            .text("says", &self.says)
+            .maybe("recommended", self.recommended.then_some(true))
+            .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let choice = Self {
+            name: fields.text("name")?,
+            says: fields.text("says")?,
+            recommended: fields
+                .maybe("recommended")
+                .map(|value| value.as_bool().ok_or(ErrorCode::Malformed))
+                .transpose()?
+                .unwrap_or(false),
+        };
+        fields.done()?;
+        Ok(choice)
+    }
+}
+
 impl Asked {
     fn written(&self) -> Value {
-        let choices: Vec<Value> = self
-            .choices
-            .iter()
-            .map(|choice| {
-                Writing::new()
-                    .text("name", &choice.name)
-                    .text("says", &choice.says)
-                    .maybe("recommended", choice.recommended.then_some(true))
-                    .finish()
-            })
-            .collect();
-
         Writing::new()
             .text("heading", &self.heading)
             .text("asks", &self.asks)
             .with("several", self.several)
-            .with("choices", choices)
+            .with(
+                "choices",
+                self.choices.iter().map(Choice::written).collect::<Vec<_>>(),
+            )
             .finish()
     }
 
@@ -339,21 +401,8 @@ impl Asked {
             choices: fields
                 .list("choices")?
                 .into_iter()
-                .map(|value| {
-                    let mut fields = Fields::of(value)?;
-                    let choice = Choice {
-                        name: fields.text("name")?,
-                        says: fields.text("says")?,
-                        recommended: fields
-                            .maybe("recommended")
-                            .map(|value| value.as_bool().ok_or(ErrorCode::Malformed))
-                            .transpose()?
-                            .unwrap_or(false),
-                    };
-                    fields.done()?;
-                    Ok(choice)
-                })
-                .collect::<Result<_, Refusal>>()?,
+                .map(Choice::read)
+                .collect::<Result<_, _>>()?,
         };
         fields.done()?;
         Ok(asked)
@@ -423,6 +472,13 @@ pub enum Decision {
         /// The pending action being answered.
         id: PendingId,
     },
+    /// About an account confirmation: the way chosen, by its name.
+    Picked {
+        /// The pending action being answered.
+        id: PendingId,
+        /// The name of the choice.
+        choice: Said,
+    },
 }
 
 impl Decision {
@@ -433,7 +489,8 @@ impl Decision {
             Self::Ruled { id, .. }
             | Self::Answered { id, .. }
             | Self::Declined { id }
-            | Self::Accepted { id } => *id,
+            | Self::Accepted { id }
+            | Self::Picked { id, .. } => *id,
         }
     }
 
@@ -478,6 +535,9 @@ impl Decision {
             }
             Self::Declined { id } => Writing::kind("declined").with("id", id.number()),
             Self::Accepted { id } => Writing::kind("accepted").with("id", id.number()),
+            Self::Picked { id, choice } => Writing::kind("picked")
+                .with("id", id.number())
+                .with("choice", choice.as_str()),
         }
         .finish()
     }
@@ -510,6 +570,10 @@ impl Decision {
             },
             "declined" => Self::Declined { id },
             "accepted" => Self::Accepted { id },
+            "picked" => Self::Picked {
+                id,
+                choice: fields.said("choice")?,
+            },
             _ => return Err(ErrorCode::InvalidArgument.into()),
         };
         fields.done()?;

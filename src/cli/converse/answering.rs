@@ -27,7 +27,7 @@ use crucible_types::{Answer as Chosen, Answered, Question, ToolCall};
 
 use super::super::Fatal;
 use super::super::draw;
-use super::super::seen::{Answer, Given};
+use super::super::seen::{Answer, Given, Leaving};
 use super::super::style::Style;
 use super::{QUEUED_BYTES, asking};
 
@@ -211,6 +211,25 @@ pub(super) fn asked<T: Terminal>(
     }
 
     draw::question(renderer, call, sensitivity, style)?;
+    answered(renderer, answers)
+}
+
+/// Puts the leave an installed agent asks and waits for its answer, on the
+/// panel or a row at a time as [`asked`] puts a call's.
+pub(super) fn leave<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    leaving: &Leaving,
+    answers: &mut Answers<'_>,
+    style: Style,
+) -> Result<Answer, Fatal> {
+    if answers.keys {
+        match asking::leave(renderer, style, leaving)? {
+            asking::Answered::Said(answer) => return Ok(answer),
+            asking::Answered::Cramped => {}
+        }
+    }
+
+    draw::leave(renderer, leaving, style)?;
     answered(renderer, answers)
 }
 

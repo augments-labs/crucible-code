@@ -257,6 +257,26 @@ pub enum ConfigError {
         at: At,
     },
 
+    /// A key written beside a variant that does not read it, or a variant
+    /// missing the one key only it reads.
+    ///
+    /// One declaration serves each block, and which of its keys apply is
+    /// decided by another key in it: `instance` only beside an
+    /// `externalAgent` access, `configDir` only for a `claude` instance.
+    /// Refused where it is written rather than ignored, because a key nothing
+    /// reads is one the reader believes is in force.
+    #[error("{file}: {path}{at} — {problem}")]
+    Variant {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The dotted path to the key, or to the block missing it.
+        path: Box<str>,
+        /// Where it is, when that can be said.
+        at: At,
+        /// Which variant reads the key, naming no value.
+        problem: Box<str>,
+    },
+
     /// A server identifier holding a character its tool names are qualified
     /// with.
     ///
@@ -462,6 +482,22 @@ pub enum ConfigError {
         at: Box<str>,
         /// The answer, written the way JSON would hold it, so it can be pasted.
         written: Box<str>,
+    },
+
+    /// An installed agent's settings were not removed, because a provider is
+    /// still reached through it: removing them would leave that provider's
+    /// `access` naming nothing.
+    #[error(
+        "{file}: {provider} is still reached through the agent {instance}. Choose another way \
+         to reach {provider} before removing it"
+    )]
+    StillReferenced {
+        /// The file, as the user would name it.
+        file: Box<str>,
+        /// The instance asked about.
+        instance: Box<str>,
+        /// The first provider whose `access` names it.
+        provider: Box<str>,
     },
 
     /// A stale setting could not be removed without rewriting its document.

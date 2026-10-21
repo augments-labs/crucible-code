@@ -1,0 +1,46 @@
+---
+source: tests/whole_screen/agents.rs
+assertion_line: 65
+expression: picture
+---
+80x40 cursor 39,0 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────╮ |
+|│                                                                             │ |
+|│ CRUCIBLE                                                                    │ |
+|│ /…/workspace                                                                │ |
+|│                                                                             │ |
+|│ Recent sessions                                                             │ |
+|│                                                                             │ |
+|│ No earlier session for this workspace                                       │ |
+|│                                                                             │ |
+|│ ─────────────────────────────────────────────────────────────────────────── │ |
+|│                                                                             │ |
+|│ Tips                                                                        │ |
+|│                                                                             │ |
+|│ · /          opens the command list                                         │ |
+|│ · \ enter    adds a line without sending                                    │ |
+|│ · shift+tab  steps the permission mode                                      │ |
+|│ · ctrl+c     clears the line typed so far                                   │ |
+|╰─────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                |
+|› /logout                                                                       |
+|                                                                                |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|work                                                                            |
+|                                                                                |
+|Choose what to do with this agent.                                              |
+|                                                                                |
+|› Connect                                                                       |
+|  Reach its own provider through it, and move this conversation onto it         |
+|                                                                                |
+|  Disconnect from Crucible                                                      |
+|  Crucible sends it no new work; its sign-in is kept                            |
+|                                                                                |
+|  Sign out of the agent                                                         |
+|  Runs its own sign-out; every instance sharing that sign-in takes no new work  |
+|                                                                                |
+|  Remove integration settings                                                   |
+|  Crucible forgets its settings; its sign-in and history are kept               |
+|                                                                                |
+|esc to cancel                                                                   |

@@ -57,10 +57,11 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_builtins::Ended;
-use crucible_runner::{Event, TurnError, Turned};
+use crucible_client_api::pending::Effect;
+use crucible_runner::{Breakdown, Event, TurnError, Turned};
 use crucible_tools::{Argument, Sensitivity, Summary, ToolOutput};
 use crucible_tui::{
-    Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
+    Glyphs, Remaining, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
 use crucible_types::{
     Answer, Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
@@ -71,6 +72,7 @@ use crucible_workspace::{Workspace, written};
 use super::converse::Parting;
 use super::converse::command::Clock;
 use super::kept::Kept;
+use super::seen::Leaving;
 use super::style::Style;
 
 pub(crate) mod opening;
@@ -163,6 +165,33 @@ pub(crate) fn event<T: Terminal>(
         | Event::PlanLimits { .. }
         | Event::Compacting { .. } => Ok(()),
 
+        // A call the agent running this turn made with one of its own tools,
+        // over there. Drawn as a call made here is, live in the footing until
+        // the agent says what it came back with: the reader is asking the same
+        // question of it, what was run and what it said. Nothing ran here and
+        // nobody here was asked, which is the permission row's to say, and
+        // there is none.
+        Event::AgentCalled {
+            call,
+            tool,
+            summary,
+            ..
+        } => {
+            kept.calling(call, called_as(&tool, &summary).text().to_owned());
+            renderer.settle()
+        }
+        Event::AgentAnswered { call, output, diff } => {
+            came_back(renderer, kept, &call, Shown::reported(output, diff), style)
+        }
+
+        // A file the agent said it changed, under no call of its: a block of
+        // its own, worded as the agent's.
+        Event::Reported { tool, summary } => {
+            renderer.settle()?;
+            renderer.apart()?;
+            renderer.present(&[reported(&tool, &summary, columns, style.glyphs())])
+        }
+
         // What it came to does not. Room having been made is a thing that
         // happened to the session rather than a state it is in, and the row
         // above the box takes its rows back — so this is written down where the
@@ -170,6 +199,18 @@ pub(crate) fn event<T: Terminal>(
         Event::Compacted { compacted } => {
             renderer.apart()?;
             renderer.present(&compacted_rows(compacted, columns, style.glyphs()))
+        }
+        // The same, for an installed agent that made room in its own context:
+        // only what it held either side is known here.
+        Event::AgentCompacted { why, before, after } => {
+            renderer.apart()?;
+            renderer.present(&agent_compacted_rows(
+                why,
+                before,
+                after,
+                columns,
+                style.glyphs(),
+            ))
         }
 
         // Kept and not drawn. What a running command prints stands under the
@@ -753,6 +794,44 @@ pub(crate) fn question<T: Terminal>(
     mark(renderer, &answers(style.glyphs()))
 }
 
+/// Draws the leave an installed agent asks, and leaves the cursor where the
+/// answer goes, bounded by the window for the reason [`question`] is.
+///
+/// The row saying who would act stands under the question, so that an answer
+/// is never given to a question that did not say whose action it is.
+pub(crate) fn leave<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    leaving: &Leaving,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let columns = renderer.transcript_columns();
+
+    renderer.settle()?;
+    for row in left(leaving, style.glyphs(), columns) {
+        renderer.commit(&row)?;
+    }
+
+    mark(renderer, &answers(style.glyphs()))
+}
+
+/// The rows of an installed agent's leave to act, folded to `columns` and
+/// worded as [`asked`] words a call with the same effect.
+fn left(leaving: &Leaving, glyphs: Glyphs, columns: usize) -> Vec<String> {
+    let tool = &leaving.tool;
+    let what = leaving.subject();
+    let said = match leaving.effect {
+        Effect::Reads => format!("? {tool} wants to read: {what}"),
+        Effect::ReadsOutside => format!("? {tool} wants to read, outside the workspace: {what}"),
+        Effect::MutatesFile => format!("? {tool} wants to change: {what}"),
+        Effect::SpawnsProcess => format!("? {tool} wants to run: {what}"),
+        Effect::ReachesNetwork => format!("? {tool} wants to send: {what}"),
+    };
+
+    let mut rows = wrapped(&said, columns);
+    rows.extend(wrapped(&leaving.acting(glyphs.dot()), columns));
+    rows
+}
+
 /// One question, written into the transcript where there was no room to stand a
 /// panel in.
 ///
@@ -865,7 +944,16 @@ impl Called {
 /// the tool is out, and the footing draws the mark itself because the mark is
 /// the part that moves.
 pub(crate) fn called(call: &ToolCall, summary: &Summary) -> Called {
-    let name = pascal(&call.name);
+    called_as(&call.name, summary)
+}
+
+/// A call line's words for a tool by its name, whoever ran it.
+///
+/// What [`called`] reads off a call this program made, and what a call an
+/// installed agent made with its own tool is worded from, so a row reads the
+/// same whichever side of the wire the tool ran on.
+pub(crate) fn called_as(tool: &str, summary: &Summary) -> Called {
+    let name = pascal(tool);
 
     if summary.is_empty() {
         Called::new(name, Argument::Other)
@@ -1542,6 +1630,13 @@ impl Shown {
         }
     }
 
+    /// What an installed agent said one of its own calls came back with, and
+    /// the change it said the call made, which is its word and not a change
+    /// anything here watched happen.
+    pub(crate) const fn reported(output: RecordedToolOutput, diff: Option<Diff>) -> Self {
+        Self { output, diff }
+    }
+
     /// A result read back from a session, with the preview its log kept.
     pub(crate) fn replayed(output: RecordedToolOutput, diff: Option<Diff>) -> Self {
         Self { output, diff }
@@ -1713,12 +1808,7 @@ fn block(diff: &Diff, window: usize, glyphs: Glyphs) -> Vec<Row> {
 /// because the cause is the part a reader can do something about.
 pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
-    let why = match compacted.why {
-        Compacting::Asked => "you asked",
-        Compacting::Resumed => "you chose notes over carrying this session whole",
-        Compacting::Full => "the window was full",
-        Compacting::Refused => "the model would not take another request this size",
-    };
+    let why = asked_for(compacted.why);
     let turns = if compacted.kept == 1 { "turn" } else { "turns" };
     let result = if compacted.replaced == 0 {
         format!(
@@ -1749,6 +1839,72 @@ pub(super) fn compacted_rows(compacted: Compacted, columns: usize, glyphs: Glyph
         Row::new().then(Slot::Quiet, result),
         rule(),
     ]
+}
+
+/// What asked for room to be made, as the compaction notice says it.
+const fn asked_for(why: Compacting) -> &'static str {
+    match why {
+        Compacting::Asked => "you asked",
+        Compacting::Resumed => "you chose notes over carrying this session whole",
+        Compacting::Full => "the window was full",
+        Compacting::Refused => "the model would not take another request this size",
+    }
+}
+
+/// The notice that the agent running the turn made room in its own context,
+/// for `why`, from `before` tokens to `after` where it said.
+pub(super) fn agent_compacted_rows(
+    why: Compacting,
+    before: u64,
+    after: Option<u64>,
+    columns: usize,
+    glyphs: Glyphs,
+) -> Vec<Row> {
+    let rule = || Row::new().then(Slot::Quiet, glyphs.horizontal().repeat(columns));
+    let result = match after {
+        Some(after) => format!(
+            " the agent made room {} {} → {} carried",
+            glyphs.dot(),
+            tokens(before),
+            tokens(after),
+        ),
+        None => format!(
+            " the agent made room {} {} carried before",
+            glyphs.dot(),
+            tokens(before),
+        ),
+    };
+    vec![
+        rule(),
+        Row::new()
+            .then(Slot::Plain, " compacted ")
+            .then(Slot::Quiet, format!("{} {}", glyphs.dot(), asked_for(why))),
+        Row::new().then(Slot::Quiet, result),
+        rule(),
+    ]
+}
+
+/// The row saying the agent running the turn used `tool` on `summary`.
+///
+/// Both are the agent's words, so control bytes are taken out before they are
+/// drawn, and the row is cut to `columns` rather than folded: one report is
+/// one row, however much the agent said about it.
+pub(super) fn reported(tool: &str, summary: &str, columns: usize, glyphs: Glyphs) -> Row {
+    // Trimmed again because a control byte at either end is a space only once
+    // it has been flattened, and a tool with no name left is still a tool.
+    let tool = flattened(tool);
+    let tool = match tool.trim() {
+        "" => "a tool",
+        named => named,
+    };
+    let summary = flattened(summary);
+    let summary = summary.trim();
+    let said = if summary.is_empty() {
+        format!("the agent used {tool}")
+    } else {
+        format!("the agent used {tool} {} {summary}", glyphs.dot())
+    };
+    Row::new().then(Slot::Quiet, said).clipped(columns)
 }
 
 /// What a request to make room says when there was none to make.
@@ -1794,6 +1950,27 @@ pub(crate) fn stopped<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Ter
     renderer.present(&rows)
 }
 
+/// Says that a turn was stopped while another agent was acting.
+///
+/// The turn reported its stop as it ended, as any stopped turn does; what that
+/// does not say is that the agent was in the middle of something, a command or
+/// an edit, when it stopped, and that it may or may not have happened. A reader
+/// told only that the turn stopped would take it that nothing changed.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be written to.
+pub(crate) fn uncertain<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), TerminalError> {
+    let rows: Vec<Row> = fold(UNCERTAIN, renderer.transcript_columns())
+        .into_iter()
+        .map(|row| Row::new().then(Slot::Quiet, row))
+        .collect();
+    renderer.present(&rows)
+}
+
+/// And what it says.
+const UNCERTAIN: &str = "what the agent was doing when it stopped may or may not have happened";
+
 /// Says that a guardrail turned a turn away, or could not decide about it.
 ///
 /// The one ending of a turn that may have drawn nothing at all: a prompt
@@ -1816,7 +1993,8 @@ pub(crate) fn refused<T: Terminal>(
     turned: &Turned,
 ) -> Result<(), TerminalError> {
     let said = match turned {
-        Turned::Ran(_) => return Ok(()),
+        // An uncertain stop is no refusal, and [`uncertain`] says it.
+        Turned::Ran(_) | Turned::Uncertain(_) => return Ok(()),
         Turned::Rejected { rejection, stop } => format!(
             "the guardrail `{}` refused {}: {}",
             rejection.guard(),
@@ -1849,10 +2027,16 @@ pub(crate) fn refused<T: Terminal>(
 
 /// A token count, as a row says it.
 pub(crate) fn tokens(tokens: u64) -> String {
-    match tokens {
-        0..=999 => tokens.to_string(),
-        1_000..=999_999 => format!("{}k", tokens / 1_000),
-        _ => format!("{}.{}M", tokens / 1_000_000, (tokens % 1_000_000) / 100_000),
+    crucible_tui::tokens(tokens)
+}
+
+/// The usable-window reading the prompt draws from `breakdown`: beside the
+/// tokens held of the window where an installed agent said what it holds.
+pub(crate) fn remaining(breakdown: &Breakdown) -> Remaining {
+    let left = Remaining::new(breakdown.left());
+    match (breakdown.held(), breakdown.window()) {
+        (Some(held), Some(window)) => left.holding(held, u64::from(window)),
+        _ => left,
     }
 }
 

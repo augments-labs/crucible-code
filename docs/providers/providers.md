@@ -19,12 +19,14 @@ provider for `meta/llama-4`.
 
 1. `--model provider/model`, where it names one outright.
 2. `provider` in your [configuration](../configuration/configuration.md), when
-   that provider still has a usable credential. This is the only setting that
+   that provider still has a usable credential, or its access names an
+   [installed agent](agents.md), which signs in for itself. This is the only setting that
    remembers a vendor choice, and it is read only from the configuration file
    in your home directory: a file a repository brings cannot choose who is sent
    your key.
 3. Exactly one provider having a usable credential: a stored account login, a
-   stored API key, or a key in one of the variables in [Keys](#keys). That is
+   stored API key, a key in one of the variables in [Keys](#keys), or access
+   naming an installed agent. That is
    the absence of a choice to make, and it lets a first run work with one
    credential and nothing configured.
 
@@ -71,7 +73,7 @@ rather than kept up to date.
 
 ## Which model
 
-There is **no model built in**, and none of these rungs is a guess:
+Startup builds in no model, and none of these rungs is a guess:
 
 1. `--model`, where it names one.
 2. `providers.<name>.model` in your
@@ -89,6 +91,13 @@ Warning: No model selected. Use /model to select the model to ask.
 Warning: No models available. Use /login or set an API key environment
 variable. Then use /model to select a model.
 ```
+
+A `/login` where no provider is being asked fills the second rung: it takes the
+provider's default, its latest middle-tier model at `medium` effort (else the
+nearest rung above it that the model serves, else its strongest, and none for
+a model that takes none), asks it at once and writes both to your
+configuration. A model the configuration already names for that provider is
+kept, and so is a rung it names that the default serves.
 
 Everything except taking a turn works in that state, which is what leaves
 somewhere to type the answer. Down a pipe there is nobody to type it, so a
@@ -158,7 +167,7 @@ This build serves eleven providers. The name in the first column is what
 
 | Provider | Vendor | Models and their rungs | Variable |
 | --- | --- | --- | --- |
-| `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
+| `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-5-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
 | `deepseek` | DeepSeek | `deepseek-flash`, `deepseek-v4-pro`: low, high, max | `DEEPSEEK_API_KEY` |
 | `google` | Google | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
 | `meta` | Meta | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
@@ -378,7 +387,14 @@ on and is written to `~/.crucible/config.json` beside the model, so the next run
 here asks for the same. There is no way back to asking for nothing from inside
 a session: a rung you can see on the screen cannot be un-seen by being handed a
 default this program is never told the name of. Remove the key from the file
-for that.
+for that. On an installed agent's route, a model of the provider the agent
+reaches, and the rung taken with it, start the agent's next run and are
+written into its entry; a model of another provider with a credential in hand
+moves the conversation off the agent onto it, in a new session. A model of a
+provider whose `access` names an installed agent the conversation is not on
+moves it onto that agent, in a new session, as [installed
+agents](agents.md) describes. For an agent that chooses its own model,
+`/model` and `/effort` say so instead.
 
 Where a vendor serves a model faster for a higher price, `/fast` asks for it,
 after saying what it costs. [Fast](fast.md) lists which models have a fast form,
@@ -438,14 +454,15 @@ current effort first. Nothing is silently mapped to a different rung.
 | Anthropic | `claude-fable-5-1` | low, medium, high, xhigh, max |
 | Anthropic | `claude-opus-5-5` | low, medium, high, xhigh, max |
 | Anthropic | `claude-sonnet-5-5` | low, medium, high, xhigh, max |
+| Anthropic | `claude-haiku-5-5` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-astra` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6.1-sol` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-sol` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-luna` | low, medium, high, xhigh, max |
 
-No configured effort means no effort field. Opus 5.5 and Sonnet 5.5 are
-asked, and their thinking kept and replayed, as Fable 5.1's is. Fable 5.1 still
-uses adaptive thinking, including the documented preserved-thinking and per-message effort
+No configured effort means no effort field. Opus 5.5, Sonnet 5.5 and Haiku 5.5
+are asked, and their thinking kept and replayed, as Fable 5.1's is. Fable 5.1
+still uses adaptive thinking, including the documented preserved-thinking and per-message effort
 controls. Preserved thinking requires a compatible Anthropic workspace data
 retention setting; consult [Anthropic's preserved-thinking guide](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
 Crucible does not change workspace retention on your behalf.
@@ -518,8 +535,8 @@ time or broke off after the bound had filled ends in
 ` [cut: crucible stopped reading here]`, because whether that one had more to
 come usually cannot be told. Either way the end of what was kept is dropped
 wherever that end begins a key, since a cut can land in the middle of one.
-Google, Fable 5.1, Opus 5.5, Sonnet 5.5 and Astra answer every refusal with a
-sentence of crucible's own instead.
+Google, Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and Astra answer every
+refusal with a sentence of crucible's own instead.
 
 The exact key crucible sent is removed from a log line, an error message, a
 session file and anything crucible prints. That is the value crucible knows it
@@ -546,11 +563,14 @@ needs nothing from your shell afterwards:
 
 `/login <provider>` inside a session is the direct API-key route. It writes
 from a labelled box that takes a paste and draws a dot per character rather
-than the key. `/login` on its own asks how usage is paid for: *Your account with
+than the key, after asking first where a key is already stored, as below. `/login` on its own asks how usage is paid for: *Your account with
 subscription* lists the accounts, and *Provide your own API key* lists the
 providers, each row naming the variable the provider reads from, and opens the
-same box. A row that holds the credential its provider is served by says
-`signed in`.
+same box. *Use an installed coding agent*, offered where this release ships one,
+connects an [installed agent](agents.md) to the provider it signs in to. A row that holds the credential its provider is served by says
+`signed in`, and taking it asks first: *Use it* reaches the provider with the
+credential already stored, with no credential typed or written, and *Replace it*
+opens the box or sign-in that gives another in its place.
 
 The command reports that the key was stored, not that it was verified. Provider
 authentication is established by the next request; a rejected key stays stored
@@ -559,20 +579,25 @@ until `/logout <provider>` removes it.
 The session is then set up with that provider from the next turn on, without
 restarting, unless another provider is already answering, in which case the
 session keeps the provider and model it has and the line points at `/model`,
-where switching is chosen rather than implied. Authentication selects neither
-[model](#which-model) nor [effort](#how-hard-to-think); where neither was
-already chosen, `/model` is the next explicit step.
+where switching is chosen rather than implied. Where no provider was being
+asked, the login takes a model and its effort, as [Which model](#which-model)
+says; a login for the provider already answering keeps the model and effort in
+force. A session running on an [installed agent](agents.md) moves off it
+instead; what `/login` writes and where the conversation goes are said on that
+page.
 
 Where the login is what set the session up, `provider` is written down for it
 too, because a credential says a vendor can be reached and never which to ask.
 Logging in is somebody saying which, and the next run here should not have to
-be asked again. That still selects neither a model nor an effort.
+be asked again.
 
 Where no variable above is set and that file names nobody, the warning under the
 welcome names this command, and the prompt is there underneath it as usual.
 
 `/logout <provider>` removes that provider's stored account or API key, and
-`/logout` on its own offers every stored credential crucible can remove.
+`/logout` on its own offers every stored credential crucible can remove, then
+each installed agent the settings name, as
+[agents](agents.md) describes.
 Editing the file by hand works too: crucible only reads what is there, and a
 name under `keys` that this build does not serve is left alone rather than
 offered for removal.
@@ -608,6 +633,12 @@ therefore uses the configured environment or stored key rather than an account
 token; with nothing else to sign with, the run is refused rather than sending
 a plan's token to a gateway.
 
+That order is what a provider with no `access` gets. `providers.<name>.access`
+chooses one way, `subscription` or `apiKey`, and then nothing falls back from
+it: an exported key does not answer for a provider set to `subscription`, and a
+signed-in account does not answer for one set to `apiKey`. See
+[`access`](../configuration/configuration.md#access).
+
 `/logout` reaches the protected store only. A child process cannot unset a
 variable in its parent shell, so after removing a stored credential crucible
 resolves the provider again and names any environment variable that remains
@@ -632,9 +663,11 @@ never learn whether it came from an account or a key.
 
 ### Account login today
 
-`/login` offers ChatGPT and Kimi Code accounts. The other rows of its
-subscription list, MiniMax's plan and Qwen's Coding Plan and Token Plan, take a
-plan's key and sign in to nothing; see [rows and sites](#rows-and-sites).
+`/login` reaches a provider three ways: an account, your own API key, or an
+[installed coding agent](agents.md). The accounts it signs in to are ChatGPT
+and Kimi Code. The other rows of its subscription list, MiniMax's plan and
+Qwen's Coding Plan and Token Plan, take a plan's key and sign in to nothing;
+see [rows and sites](#rows-and-sites).
 ChatGPT uses browser PKCE or device authorization and is fixed to the ChatGPT
 subscription Responses endpoint.
 Kimi Code uses RFC 8628 device authorization, with one row for each of Kimi's
@@ -664,6 +697,11 @@ Plan and xAI's SuperGrok have no row: Meta keeps the Muse Code credential for
 Muse Code alone, the Z.ai Coding Plan names the tools it may be used in and
 crucible is not one, and the other two are not offered in this release. Google accepts a Gemini Developer API
 key only; Gemini product subscriptions are not an authentication route here.
+
+An installed coding agent stores nothing here: *Use an installed coding agent*
+connects an agent to the provider it signs in to, and the agent then runs the
+conversation's turns on the account its own profile is signed in to, and
+crucible never reads its credentials. See [installed coding agents](agents.md).
 
 Google requests use `POST https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse`
 with `stream:true`, `store:false`, and local input history, never

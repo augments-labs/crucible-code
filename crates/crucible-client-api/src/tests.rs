@@ -22,8 +22,12 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 73] = [
+const KEYS: [&str; 77] = [
+    "agents",
     "ambiguous",
+    "billing",
+    "execution",
+    "instance",
     "answers",
     "summary_kind",
     "asks",
@@ -99,7 +103,7 @@ const KEYS: [&str; 73] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 52] = [
+const MORE_KEYS: [&str; 57] = [
     "added",
     "api_ms",
     "cache_read",
@@ -152,6 +156,11 @@ const MORE_KEYS: [&str; 52] = [
     "asked",
     "sent",
     "left_running",
+    "facts",
+    "said",
+    "choice",
+    "external",
+    "onto",
 ];
 
 /// The field names of the inspection document, kept apart for the same reason.
@@ -342,6 +351,26 @@ fn warning() -> Pending {
     }
 }
 
+fn account() -> Pending {
+    Pending::Account {
+        id: PendingId::new(10),
+        asks: marked(),
+        facts: vec![marked(), marked()],
+        choices: vec![
+            Choice {
+                name: marked(),
+                says: marked(),
+                recommended: true,
+            },
+            Choice {
+                name: marked(),
+                says: marked(),
+                recommended: false,
+            },
+        ],
+    }
+}
+
 fn decisions() -> Vec<Decision> {
     vec![
         Decision::Ruled {
@@ -367,6 +396,10 @@ fn decisions() -> Vec<Decision> {
         Decision::Accepted {
             id: PendingId::new(9),
         },
+        Decision::Picked {
+            id: PendingId::new(10),
+            choice: Said::new(MARKER).unwrap(),
+        },
     ]
 }
 
@@ -378,22 +411,35 @@ fn commands() -> Vec<Command> {
         Command::Clear,
         Command::Resume(SessionId::new()),
         Command::SelectModel {
-            provider: name("anthropic"),
-            model: name("claude-sonnet-5"),
+            provider: name("acme"),
+            model: name("acme-large-5"),
             effort: Some(Rung::High),
         },
         Command::SelectModel {
-            provider: name("anthropic"),
-            model: name("claude-sonnet-5"),
+            provider: name("acme"),
+            model: name("acme-large-5"),
             effort: None,
         },
         Command::CycleMode,
         Command::Login {
-            provider: name("anthropic"),
+            provider: name("acme"),
         },
         Command::Logout {
-            provider: name("anthropic"),
+            provider: name("acme"),
         },
+        Command::Disconnect {
+            instance: name("work"),
+        },
+        Command::RemoveIntegration {
+            instance: name("work"),
+        },
+        Command::SignOut {
+            instance: name("work"),
+        },
+        Command::Connect {
+            instance: Some(name("work")),
+        },
+        Command::Connect { instance: None },
         Command::InspectCache,
         Command::CleanCache,
         Command::Sandbox { enabled: true },
@@ -469,12 +515,46 @@ fn login_outcomes() -> Vec<Outcome> {
             retained: retained(),
             unwritten: None,
         }),
+        Outcome::Login(LoginOutcome::AgentConnected {
+            said: marked(),
+            onto: None,
+        }),
+        Outcome::Login(LoginOutcome::AgentConnected {
+            said: marked(),
+            onto: Some(name("work")),
+        }),
+        Outcome::Login(LoginOutcome::ConnectUnsaved {
+            said: marked(),
+            problem: problem(),
+        }),
+        Outcome::Login(LoginOutcome::Undecided),
+        Outcome::Login(LoginOutcome::NextLaunch {
+            provider: marked(),
+            unwritten: Some(problem()),
+        }),
+        Outcome::Login(LoginOutcome::NextLaunch {
+            provider: marked(),
+            unwritten: None,
+        }),
+        Outcome::Login(LoginOutcome::Stored { provider: marked() }),
+        Outcome::Login(LoginOutcome::MovedOff {
+            provider: marked(),
+            retained: retained(),
+            unwritten: Some(problem()),
+        }),
+        Outcome::Login(LoginOutcome::MovedOff {
+            provider: marked(),
+            retained: retained(),
+            unwritten: None,
+        }),
         Outcome::Logout(LogoutOutcome::CacheHeld(problem())),
         Outcome::Logout(LogoutOutcome::Unforgotten {
             retained: retained(),
             problem: problem(),
         }),
-        Outcome::Logout(LogoutOutcome::Kept),
+        Outcome::Logout(LogoutOutcome::Kept {
+            retained: retained(),
+        }),
         Outcome::Logout(LogoutOutcome::StillServed {
             retained: retained(),
             standing: Standing::Environment(marked()),
@@ -487,15 +567,31 @@ fn login_outcomes() -> Vec<Outcome> {
             retained: retained(),
             standing: Standing::Subscription,
         }),
+        Outcome::Logout(LogoutOutcome::StillServed {
+            retained: retained(),
+            standing: Standing::External { instance: marked() },
+        }),
         Outcome::Logout(LogoutOutcome::SignedOut {
             retained: retained(),
         }),
+        Outcome::Logout(LogoutOutcome::Disconnected { said: marked() }),
+        Outcome::Logout(LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { said: marked() }),
+        Outcome::Logout(LogoutOutcome::StoppedForThisRunOnly {
+            said: marked(),
+            problem: problem(),
+        }),
+        Outcome::Logout(LogoutOutcome::IntegrationRemoved { said: marked() }),
+        Outcome::Logout(LogoutOutcome::AgentSignedOut { said: marked() }),
+        Outcome::Logout(LogoutOutcome::SignOutUnverified { said: marked() }),
+        Outcome::Logout(LogoutOutcome::StillReferenced { said: marked() }),
+        Outcome::Logout(LogoutOutcome::Undecided),
     ]
 }
 
-/// How a window is spent, where everything about it is known, and where none
-/// of what may be left out is there.
-fn contexts() -> [Context; 2] {
+/// How a window is spent, where everything about it is known, where none of
+/// what may be left out is there, and on an installed agent's route, where
+/// the agent's part is all that crosses.
+fn contexts() -> [Context; 3] {
     [
         Context {
             model: Model::new(MARKER),
@@ -508,6 +604,7 @@ fn contexts() -> [Context; 2] {
             messages: 41_600,
             reserve: 36_000,
             free: 103_900,
+            external: None,
         },
         Context {
             model: None,
@@ -520,6 +617,20 @@ fn contexts() -> [Context; 2] {
             messages: 41_600,
             reserve: 0,
             free: 0,
+            external: None,
+        },
+        Context {
+            model: None,
+            window: None,
+            left: None,
+            system: 0,
+            instructions: 0,
+            tools: 0,
+            mcp: 0,
+            messages: 0,
+            reserve: 0,
+            free: 0,
+            external: Some(58_200),
         },
     ]
 }
@@ -545,7 +656,7 @@ fn plan_limits() -> Limits {
                 ],
             },
             LimitGroup {
-                model: Some(name("GPT-5.3-Codex-Spark")),
+                model: Some(name("acme-small-5")),
                 limits: vec![
                     limit(
                         Window::Lasting { minutes: 180 },
@@ -567,7 +678,7 @@ fn plan_limits() -> Limits {
 /// not priced with none, known only as a floor, and before anything was asked
 /// with one window. Callers destructure it by position, so keep this order.
 fn usages() -> [Usage; 4] {
-    let [context, unknown] = contexts();
+    let [context, unknown, _] = contexts();
     let used = Used {
         cost: Cost::Priced {
             currency: name("USD"),
@@ -666,6 +777,7 @@ fn outcomes() -> Vec<Outcome> {
             unclosed: Some(problem()),
         }),
         Outcome::Resumed(ResumeOutcome::Unknown),
+        Outcome::Resumed(ResumeOutcome::NextLaunch),
         Outcome::Resumed(ResumeOutcome::Failed(problem())),
         Outcome::Model(ModelOutcome::Unsupported),
         Outcome::Model(ModelOutcome::Unreachable(problem())),
@@ -676,6 +788,24 @@ fn outcomes() -> Vec<Outcome> {
         }),
         Outcome::Model(ModelOutcome::Taken {
             retained: retained(),
+            unwritten: Some(problem()),
+        }),
+        Outcome::Model(ModelOutcome::MovedOff {
+            provider: Text::cut("elsewhere"),
+            retained: retained(),
+            unwritten: None,
+        }),
+        Outcome::Model(ModelOutcome::MovedOff {
+            provider: Text::cut("elsewhere"),
+            retained: retained(),
+            unwritten: Some(problem()),
+        }),
+        Outcome::Model(ModelOutcome::MovedOnto {
+            onto: Text::cut("work"),
+            unwritten: None,
+        }),
+        Outcome::Model(ModelOutcome::MovedOnto {
+            onto: Text::cut("work"),
             unwritten: Some(problem()),
         }),
         Outcome::Effort(EffortOutcome::Unasked),
@@ -773,7 +903,7 @@ fn responses() -> Vec<Response> {
 }
 
 fn progress() -> Vec<Progress> {
-    let [whole, unknown] = contexts();
+    let [whole, unknown, agent] = contexts();
     let [counted, unpriced, _, unspent] = usages();
     vec![
         Progress::Started { turn: 1 },
@@ -802,6 +932,12 @@ fn progress() -> Vec<Progress> {
             summary: marked(),
             summary_kind: SummaryKind::Other,
         },
+        Progress::ToolActivity {
+            call: marked(),
+            tool: marked(),
+            summary: marked(),
+            summary_kind: SummaryKind::Path,
+        },
         Progress::ToolFinished {
             call: marked(),
             failed: true,
@@ -816,6 +952,7 @@ fn progress() -> Vec<Progress> {
             ..whole
         }),
         Progress::Context(unknown),
+        Progress::Context(agent),
         // Every cost and every window, each streamed as `/usage` reads it.
         Progress::Used(counted.used),
         Progress::Used(unpriced.used),
@@ -834,10 +971,19 @@ fn snapshots() -> Vec<Snapshot> {
     permissions()
         .map(Some)
         .into_iter()
-        .chain([Some(questions()), Some(warning()), None])
-        .map(|pending| Snapshot {
+        .chain([Some(questions()), Some(warning()), Some(account()), None])
+        .zip(Billing::EVERY.into_iter().cycle())
+        .zip(Agents::EVERY.into_iter().cycle())
+        .map(|((pending, billing), agents)| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
-            provider: pending.as_ref().map(|_| name("anthropic")),
+            provider: pending.as_ref().map(|_| name("acme")),
+            execution: if billing == Billing::External {
+                Execution::Instance(name("work"))
+            } else {
+                Execution::Native
+            },
+            billing,
+            agents,
             model: pending.as_ref().and_then(|_| Model::new(MARKER)),
             effort: pending.as_ref().map(|_| Rung::Max),
             speed: if pending.is_some() {
@@ -968,22 +1114,24 @@ const fn decision_arm(one: &Decision) -> (usize, usize) {
         Decision::Ruled {
             ruling: Ruling::Allow,
             ..
-        } => (0, 5),
+        } => (0, 6),
         Decision::Ruled {
             ruling: Ruling::Deny,
             ..
-        } => (1, 5),
-        Decision::Answered { .. } => (2, 5),
-        Decision::Declined { .. } => (3, 5),
-        Decision::Accepted { .. } => (4, 5),
+        } => (1, 6),
+        Decision::Answered { .. } => (2, 6),
+        Decision::Declined { .. } => (3, 6),
+        Decision::Accepted { .. } => (4, 6),
+        Decision::Picked { .. } => (5, 6),
     }
 }
 
 const fn pending_arm(one: &Pending) -> (usize, usize) {
     match one {
-        Pending::Permission { .. } => (0, 3),
-        Pending::Questions { .. } => (1, 3),
-        Pending::Warning { .. } => (2, 3),
+        Pending::Permission { .. } => (0, 4),
+        Pending::Questions { .. } => (1, 4),
+        Pending::Warning { .. } => (2, 4),
+        Pending::Account { .. } => (3, 4),
     }
 }
 
@@ -1010,57 +1158,74 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 28),
-        Command::Compact => (1, 28),
-        Command::Cancel => (2, 28),
-        Command::Decide(_) => (3, 28),
-        Command::Clear => (4, 28),
-        Command::Resume(_) => (5, 28),
+        Command::Prompt(_) => (0, 33),
+        Command::Compact => (1, 33),
+        Command::Cancel => (2, 33),
+        Command::Decide(_) => (3, 33),
+        Command::Clear => (4, 33),
+        Command::Resume(_) => (5, 33),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 28),
-        Command::SelectModel { effort: None, .. } => (7, 28),
-        Command::SetEffort(_) => (8, 28),
-        Command::SetMode(_) => (9, 28),
-        Command::CycleMode => (10, 28),
-        Command::Login { .. } => (11, 28),
-        Command::Logout { .. } => (12, 28),
-        Command::InspectCache => (13, 28),
-        Command::CleanCache => (14, 28),
-        Command::Sandbox { enabled: true } => (15, 28),
-        Command::Sandbox { enabled: false } => (16, 28),
-        Command::Theme(Theme::Drawing(_)) => (17, 28),
-        Command::Theme(Theme::Syntax(_)) => (18, 28),
-        Command::Help => (19, 28),
-        Command::ReleaseNotes { version: None } => (20, 28),
-        Command::ReleaseNotes { version: Some(_) } => (21, 28),
-        Command::Exit => (22, 28),
-        Command::SetSpeed(_) => (23, 28),
-        Command::Context => (24, 28),
-        Command::Usage => (25, 28),
-        Command::Setting { .. } => (26, 28),
-        Command::AskLimits => (27, 28),
+        } => (6, 33),
+        Command::SelectModel { effort: None, .. } => (7, 33),
+        Command::SetEffort(_) => (8, 33),
+        Command::SetMode(_) => (9, 33),
+        Command::CycleMode => (10, 33),
+        Command::Login { .. } => (11, 33),
+        Command::Logout { .. } => (12, 33),
+        Command::InspectCache => (13, 33),
+        Command::CleanCache => (14, 33),
+        Command::Sandbox { enabled: true } => (15, 33),
+        Command::Sandbox { enabled: false } => (16, 33),
+        Command::Theme(Theme::Drawing(_)) => (17, 33),
+        Command::Theme(Theme::Syntax(_)) => (18, 33),
+        Command::Help => (19, 33),
+        Command::ReleaseNotes { version: None } => (20, 33),
+        Command::ReleaseNotes { version: Some(_) } => (21, 33),
+        Command::Exit => (22, 33),
+        Command::SetSpeed(_) => (23, 33),
+        Command::Context => (24, 33),
+        Command::Usage => (25, 33),
+        Command::Setting { .. } => (26, 33),
+        Command::AskLimits => (27, 33),
+        Command::Disconnect { .. } => (28, 33),
+        Command::RemoveIntegration { .. } => (29, 33),
+        Command::SignOut { .. } => (30, 33),
+        Command::Connect { instance: Some(_) } => (31, 33),
+        Command::Connect { instance: None } => (32, 33),
     }
 }
 
 const fn logout_arm(one: &LogoutOutcome) -> (usize, usize) {
     match one {
-        LogoutOutcome::CacheHeld(_) => (0, 7),
-        LogoutOutcome::Unforgotten { .. } => (1, 7),
-        LogoutOutcome::Kept => (2, 7),
+        LogoutOutcome::CacheHeld(_) => (0, 16),
+        LogoutOutcome::Unforgotten { .. } => (1, 16),
+        LogoutOutcome::Kept { .. } => (2, 16),
         LogoutOutcome::StillServed {
             standing: Standing::Environment(_),
             ..
-        } => (3, 7),
+        } => (3, 16),
         LogoutOutcome::StillServed {
             standing: Standing::StoredKey,
             ..
-        } => (4, 7),
+        } => (4, 16),
         LogoutOutcome::StillServed {
             standing: Standing::Subscription,
             ..
-        } => (5, 7),
-        LogoutOutcome::SignedOut { .. } => (6, 7),
+        } => (5, 16),
+        LogoutOutcome::StillServed {
+            standing: Standing::External { .. },
+            ..
+        } => (6, 16),
+        LogoutOutcome::SignedOut { .. } => (7, 16),
+        LogoutOutcome::Disconnected { .. } => (8, 16),
+        LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { .. } => (9, 16),
+        LogoutOutcome::StoppedForThisRunOnly { .. } => (10, 16),
+        LogoutOutcome::IntegrationRemoved { .. } => (11, 16),
+        LogoutOutcome::StillReferenced { .. } => (12, 16),
+        LogoutOutcome::Undecided => (13, 16),
+        LogoutOutcome::AgentSignedOut { .. } => (14, 16),
+        LogoutOutcome::SignOutUnverified { .. } => (15, 16),
     }
 }
 
@@ -1098,22 +1263,35 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             ClearOutcome::Failed(_) => (3, 4),
         },
         Outcome::Resumed(resumed) => match resumed {
-            ResumeOutcome::Same => (0, 5),
-            ResumeOutcome::Picked { unclosed: Some(_) } => (1, 5),
-            ResumeOutcome::Picked { unclosed: None } => (2, 5),
-            ResumeOutcome::Unknown => (3, 5),
-            ResumeOutcome::Failed(_) => (4, 5),
+            ResumeOutcome::Same => (0, 6),
+            ResumeOutcome::Picked { unclosed: Some(_) } => (1, 6),
+            ResumeOutcome::Picked { unclosed: None } => (2, 6),
+            ResumeOutcome::Unknown => (3, 6),
+            ResumeOutcome::NextLaunch => (4, 6),
+            ResumeOutcome::Failed(_) => (5, 6),
         },
         Outcome::Model(model) => match model {
-            ModelOutcome::Unsupported => (0, 5),
-            ModelOutcome::Unreachable(_) => (1, 5),
-            ModelOutcome::CacheHeld(_) => (2, 5),
+            ModelOutcome::Unsupported => (0, 9),
+            ModelOutcome::Unreachable(_) => (1, 9),
+            ModelOutcome::CacheHeld(_) => (2, 9),
             ModelOutcome::Taken {
                 unwritten: Some(_), ..
-            } => (3, 5),
+            } => (3, 9),
             ModelOutcome::Taken {
                 unwritten: None, ..
-            } => (4, 5),
+            } => (4, 9),
+            ModelOutcome::MovedOff {
+                unwritten: Some(_), ..
+            } => (5, 9),
+            ModelOutcome::MovedOff {
+                unwritten: None, ..
+            } => (6, 9),
+            ModelOutcome::MovedOnto {
+                unwritten: Some(_), ..
+            } => (7, 9),
+            ModelOutcome::MovedOnto {
+                unwritten: None, ..
+            } => (8, 9),
         },
         Outcome::Effort(effort) => match effort {
             EffortOutcome::Unasked => (0, 4),
@@ -1129,15 +1307,32 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             SpeedOutcome::Taken { unwritten: None } => (4, 5),
         },
         Outcome::Login(login) => match login {
-            LoginOutcome::Unusable(_) => (0, 5),
-            LoginOutcome::Elsewhere => (1, 5),
-            LoginOutcome::CacheHeld(_) => (2, 5),
+            LoginOutcome::Unusable(_) => (0, 14),
+            LoginOutcome::Elsewhere => (1, 14),
+            LoginOutcome::CacheHeld(_) => (2, 14),
             LoginOutcome::Serving {
                 unwritten: Some(_), ..
-            } => (3, 5),
+            } => (3, 14),
             LoginOutcome::Serving {
                 unwritten: None, ..
-            } => (4, 5),
+            } => (4, 14),
+            LoginOutcome::AgentConnected { onto: None, .. } => (5, 14),
+            LoginOutcome::AgentConnected { onto: Some(_), .. } => (6, 14),
+            LoginOutcome::ConnectUnsaved { .. } => (7, 14),
+            LoginOutcome::Undecided => (8, 14),
+            LoginOutcome::NextLaunch {
+                unwritten: Some(_), ..
+            } => (9, 14),
+            LoginOutcome::NextLaunch {
+                unwritten: None, ..
+            } => (10, 14),
+            LoginOutcome::Stored { .. } => (11, 14),
+            LoginOutcome::MovedOff {
+                unwritten: Some(_), ..
+            } => (12, 14),
+            LoginOutcome::MovedOff {
+                unwritten: None, ..
+            } => (13, 14),
         },
         Outcome::Logout(logout) => logout_arm(logout),
         Outcome::Cache(cache) => match cache {
@@ -1287,6 +1482,7 @@ fn sessions_arms(seen: &mut BTreeSet<(String, usize, usize)>) {
                     for (what, there) in [
                         ("sessions.branch", session.branch.is_some()),
                         ("sessions.title", session.title.is_some()),
+                        ("sessions.route", session.route.is_some()),
                     ] {
                         seen.insert((what.to_owned(), usize::from(there), 2));
                     }
@@ -1344,6 +1540,7 @@ fn every_arm_that_crosses_has_a_specimen() {
         either("context.model", context.model.is_some());
         either("context.window", context.window.is_some());
         either("context.left", context.left.is_some());
+        either("context.external", context.external.is_some());
     }
     for snapshot in snapshots() {
         either("snapshot.session", snapshot.session.is_some());
@@ -1360,6 +1557,7 @@ fn every_arm_that_crosses_has_a_specimen() {
         "context.model",
         "context.window",
         "context.left",
+        "context.external",
         "snapshot.session",
         "snapshot.provider",
         "snapshot.model",
@@ -1534,7 +1732,8 @@ fn framed(value: &Value) -> Vec<u8> {
 }
 
 fn asking(command: &Value) -> Value {
-    json!({"version": 3, "capabilities": [], "correlation": 41, "command": command})
+    json!({"version": Version::CURRENT.number(), "capabilities": [], "correlation": 41,
+        "command": command})
 }
 
 /// `frame` with `field` saying `value` instead.
@@ -1556,7 +1755,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 1, 2, 4, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 5, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1617,9 +1816,9 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
         (b"{\"version\": 2".to_vec(), None),
-        (framed(&json!({"version": 3})), None),
+        (framed(&json!({"version": 4})), None),
         (
-            framed(&json!({"version": 3, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 4, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
@@ -1642,7 +1841,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 3, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 4, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -1849,7 +2048,10 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     };
     let fullest = Snapshot {
         session: Some(SessionId::new()),
-        provider: Some(name("anthropic")),
+        provider: Some(name("acme")),
+        execution: Execution::Instance(Name::new(&"n".repeat(NAME_BYTES)).unwrap()),
+        billing: Billing::Subscription,
+        agents: Agents::Available,
         model: Model::new(MARKER),
         effort: Some(Rung::Max),
         speed: Pace::Standard,
@@ -1878,13 +2080,67 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     }
 }
 
+/// Every object in `value`, wherever it is nested, by its JSON pointer.
+fn objects(value: &Value, at: &str, found: &mut Vec<String>) {
+    match value {
+        Value::Object(fields) => {
+            found.push(at.to_owned());
+            for (key, inner) in fields {
+                objects(inner, &format!("{at}/{key}"), found);
+            }
+        }
+        Value::Array(items) => {
+            for (index, inner) in items.iter().enumerate() {
+                objects(inner, &format!("{at}/{index}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn a_field_nobody_asked_for_refuses_the_frame_wherever_it_is_nested() {
+    for specimen in specimens() {
+        let whole: Value = serde_json::from_slice(&specimen.frame).unwrap();
+        let kind = specimen.what.split(' ').next().unwrap_or_default();
+        let mut at = Vec::new();
+        objects(&whole, "", &mut at);
+        for pointer in at {
+            let mut odd = whole.clone();
+            odd.pointer_mut(&pointer)
+                .and_then(Value::as_object_mut)
+                .unwrap()
+                .insert("unasked".to_owned(), json!(true));
+            let frame = framed(&odd);
+            let refused = match kind {
+                "request" => Request::decode(&frame).err().map(|it| it.refusal.code()),
+                "response" => Response::decode(&frame).err().map(Refusal::code),
+                "progress" => Progress::decode(&frame).err().map(Refusal::code),
+                "snapshot" => Snapshot::decode(&frame).err().map(Refusal::code),
+                "inspection" => inspection::Inspection::decode(&frame)
+                    .err()
+                    .map(Refusal::code),
+                "doctor" => doctor::Report::decode(&frame).err().map(Refusal::code),
+                "sessions" => sessions::Report::decode(&frame).err().map(Refusal::code),
+                other => panic!("no reader for {other}"),
+            };
+            assert_eq!(
+                refused,
+                Some(ErrorCode::Malformed),
+                "{} with a field at {pointer:?}",
+                specimen.what
+            );
+        }
+    }
+}
+
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":3,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":4,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -1894,7 +2150,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":3,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -2057,7 +2313,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 1, 2, 4, 65_536, u64::MAX] {
+        for version in [0, 1, 2, 3, 5, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -2071,6 +2327,76 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
         assert_eq!(
             read(&framed(&silent)).unwrap_err().code(),
             ErrorCode::Malformed
+        );
+    }
+}
+
+/// Where a conversation runs, who is paid for it and whether an agent is
+/// offered each cross in every arm, in the words a client reads.
+#[test]
+fn a_snapshot_says_what_it_runs_on_who_is_paid_and_whether_agents_are_offered() {
+    let Some(base) = snapshots().pop() else {
+        panic!("no snapshot");
+    };
+    for execution in [Execution::Native, Execution::Instance(name("work"))] {
+        for billing in Billing::EVERY {
+            for agents in Agents::EVERY {
+                let snapshot = Snapshot {
+                    execution: execution.clone(),
+                    billing,
+                    agents,
+                    ..base.clone()
+                };
+                let frame = snapshot.encode().unwrap();
+                assert_eq!(Snapshot::decode(&frame).unwrap(), snapshot);
+            }
+        }
+    }
+
+    let on = Snapshot {
+        execution: Execution::Instance(name("work")),
+        billing: Billing::External,
+        agents: Agents::Available,
+        ..base.clone()
+    };
+    let written: Value = serde_json::from_slice(&on.encode().unwrap()).unwrap();
+    let at = |frame: &Value, field: &str| frame.pointer(&format!("/snapshot/{field}")).cloned();
+    assert_eq!(
+        at(&written, "execution"),
+        Some(json!({"kind": "instance", "instance": "work"}))
+    );
+    assert_eq!(at(&written, "billing"), Some(json!("external")));
+    assert_eq!(at(&written, "agents"), Some(json!("available")));
+    let native = Snapshot {
+        execution: Execution::Native,
+        ..on
+    };
+    let written: Value = serde_json::from_slice(&native.encode().unwrap()).unwrap();
+    assert_eq!(at(&written, "execution"), Some(json!({"kind": "native"})));
+
+    // Each is required, and a word it does not have is refused.
+    for (field, wrong) in [
+        ("execution", json!({"kind": "elsewhere"})),
+        ("billing", json!("free")),
+        ("agents", json!("some")),
+    ] {
+        let mut frame = written.clone();
+        *frame.pointer_mut(&format!("/snapshot/{field}")).unwrap() = wrong;
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        assert!(
+            Snapshot::decode(&bytes).is_err(),
+            "{field} misspelt was read"
+        );
+        let mut frame = written.clone();
+        frame
+            .pointer_mut("/snapshot")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove(field);
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        assert!(
+            Snapshot::decode(&bytes).is_err(),
+            "{field} left out was read"
         );
     }
 }
@@ -2186,10 +2512,12 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // The digest sees that a field is there and where, and nothing else. A
     // value changing type, a required field becoming optional or the reverse,
     // and whatever sits inside an array that is empty in every specimen all
-    // leave it as it was; those still need the number moved by hand.
+    // leave it as it was; those still need the number moved by hand. A
+    // sessions list is a document with its own number, so a change to it
+    // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (3, 9_249_023_251_157_594_290),
+        (4, 13_428_585_615_253_225_727),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2199,7 +2527,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
 fn a_context_with_no_window_says_no_room_left_and_none_free() {
     // Both are read against the window, so without one a frame that states
     // either states a figure nothing measured.
-    let [_, unknown] = contexts();
+    let [_, unknown, _] = contexts();
     let response = Response {
         correlation: Some(Correlation::new(3)),
         outcome: Outcome::Context(unknown),
@@ -2255,6 +2583,30 @@ fn a_context_streamed_during_a_turn_names_no_model() {
         Progress::decode(&framed(&frame)).unwrap_err().code(),
         ErrorCode::Malformed
     );
+}
+
+#[test]
+fn a_context_says_what_an_agent_holds_only_on_its_route() {
+    let [whole, _, agent] = contexts();
+    // A context streamed during a turn names no model.
+    let whole = Context {
+        model: None,
+        ..whole
+    };
+    for (context, held) in [(whole, None), (agent, Some(58_200))] {
+        let streamed = Progress::Context(context);
+        let frame: Value = serde_json::from_slice(&streamed.encode().unwrap()).unwrap();
+        assert_eq!(
+            frame.pointer("/context/external").and_then(Value::as_u64),
+            held
+        );
+        let Ok(Progress::Context(read)) = Progress::decode(&framed(&frame)) else {
+            panic!("{frame}");
+        };
+        assert_eq!(read.external, held);
+        assert_eq!(read.tokens(Category::External), held.unwrap_or(0));
+        assert!(!Category::EVERY.contains(&Category::External));
+    }
 }
 
 #[test]
@@ -2380,7 +2732,7 @@ fn limit_every_window_and_reading_reads_back_as_it_was_written() {
     assert_eq!(Progress::decode(&frame).unwrap(), one);
     assert_eq!(
         value.pointer("/limits/1/model"),
-        Some(&json!("GPT-5.3-Codex-Spark")),
+        Some(&json!("acme-small-5")),
         "{value}"
     );
     assert_eq!(

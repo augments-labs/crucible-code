@@ -99,6 +99,7 @@ ordinary startup never scrapes mutable documentation.
 | Anthropic Messages: `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), [tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching) | `anthropic-prompt-cache-2026-08-31` |
 | OpenAI Responses: `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna` | implicit automatic caching; up to four explicit input-content breakpoints on the public API | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-10-01` |
 | Anthropic Messages: `claude-opus-5-5`, `claude-sonnet-5-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) | `anthropic-prompt-cache-2026-10-01` |
+| Anthropic Messages: `claude-haiku-5-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) | `anthropic-prompt-cache-2026-10-16` |
 | Meta Responses: `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | automatic prefix caching with a routing key | [Meta prompt caching](https://dev.meta.ai/docs/prompt-caching) | `meta-prompt-cache-2026-10-01` |
 | xAI Responses: `grok-4.7`, `grok-4.6` | automatic prefix caching with a routing key | [xAI prompt caching](https://docs.x.ai/developers/advanced-api-usage/prompt-caching) | `xai-prompt-cache-2026-10-01` |
 | DeepSeek Chat Completions: `deepseek-flash`, `deepseek-v4-pro` | provider-managed caching, reported usage only | [DeepSeek context caching](https://api-docs.deepseek.com/guides/kv_cache) | `deepseek-prompt-cache-2026-10-01` |
@@ -111,7 +112,9 @@ ordinary startup never scrapes mutable documentation.
 The OpenAI public pricing record uses the current [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
 and model-specific documentation. The Anthropic record uses the pricing table in
 the prompt-caching guide. Pricing is selected only for an exact protocol,
-endpoint, model, revision, date, retention class and input band. Subscription
+endpoint, model, revision, date, retention class and input band: Claude Haiku
+5.5's prompt pays Anthropic's higher prices once it is over 100,000 tokens,
+its cache reads and writes counted in. Subscription
 billing and Moonshot membership billing remain unknown rather than being
 invented as token prices.
 

@@ -2,7 +2,7 @@
 
 use crucible_runner::TurnError;
 use crucible_tools::{Summary, ToolOutput};
-use crucible_tui::{Editor, Glyphs, Key};
+use crucible_tui::{Editor, Glyphs, Key, Remaining};
 use crucible_types::{Spend, StopReason, ToolArgs, ToolCall, ToolId, TurnId};
 
 use super::*;
@@ -415,7 +415,7 @@ fn the_window_left_is_handed_to_the_prompt_and_takes_no_turn_row() {
     let texts: Vec<String> = rows.iter().map(Row::text).collect();
 
     assert!(carried.left().is_some(), "{carried:?}");
-    assert_eq!(turning.left(), carried.left());
+    assert_eq!(turning.left(), Remaining::new(carried.left()));
     assert!(
         texts.iter().all(|row| !row.contains("window left")),
         "{texts:?}"
@@ -450,7 +450,7 @@ fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
     turning.interrupting();
 
     turning.saw(&Event::Carried { breakdown: carried });
-    assert_eq!(turning.left(), carried.left());
+    assert_eq!(turning.left(), Remaining::new(carried.left()));
 
     turning.saw(&Event::Compacted {
         compacted: crucible_types::Compacted {
@@ -576,7 +576,7 @@ fn compacting_keeps_the_latest_window_reading_until_its_replacement_arrives() {
     });
 
     assert!(started.left().is_some(), "{started:?}");
-    assert_eq!(turning.left(), started.left());
+    assert_eq!(turning.left(), Remaining::new(started.left()));
 }
 
 #[test]
@@ -1618,6 +1618,48 @@ fn a_failed_lookup_settles_as_an_individual_call() {
     assert!(returned.first().unwrap().looking.is_none());
 }
 
+/// What an agent's read came back with, under call `a`, with the change it
+/// said the read made where it said one.
+fn agent_answered(output: ToolOutput, diff: Option<crucible_types::Diff>) -> Event {
+    Event::AgentAnswered {
+        call: ToolId::new("a"),
+        output: output.into_recorded(),
+        diff,
+    }
+}
+
+#[test]
+fn an_agent_s_lookup_settles_into_a_run_unless_it_failed_or_changed_a_file() {
+    let settled = |answered: Event| {
+        let mut turning = Turning::started(Breakdown::default());
+        turning.saw(&Event::AgentCalled {
+            call: ToolId::new("a"),
+            tool: "Read".into(),
+            summary: Summary::new("src/main.rs"),
+            looking: Some(Looking::File),
+        });
+        turning
+            .saw(&answered)
+            .into_iter()
+            .map(|settled| settled.looking)
+            .collect::<Vec<_>>()
+    };
+    let changed = crucible_types::Diff::between("a\n", "b\n");
+
+    assert_eq!(
+        settled(agent_answered(ToolOutput::ok("fn main() {}"), None)),
+        [Some(Looking::File)]
+    );
+    assert_eq!(
+        settled(agent_answered(ToolOutput::failed("file missing"), None)),
+        [None]
+    );
+    assert_eq!(
+        settled(agent_answered(ToolOutput::ok("done"), Some(changed))),
+        [None]
+    );
+}
+
 #[test]
 fn usage_a_turn_keeps_what_it_last_reported_for_the_panel_over_it() {
     // `/usage` stands over a running turn while the runner is away on it, so
@@ -1642,6 +1684,48 @@ fn usage_a_turn_keeps_what_it_last_reported_for_the_panel_over_it() {
 
     assert_eq!(turning.totals(), posted);
     assert_eq!(turning.limits(), Some(windows(42)));
+}
+
+#[test]
+fn usage_over_an_agent_s_turn_keeps_what_it_last_reported() {
+    // An agent's run reports whole figures, each replacing the last, so the
+    // panel over its turn reads the latest and never a sum of them.
+    use crucible_runner::{ReportedTokens, SessionCost};
+    use crucible_types::{CostAmount, PricingCurrency, PricingUnit};
+    use std::time::Instant;
+
+    let reported = |input, micros| {
+        let tokens = ReportedTokens {
+            input,
+            output: 10,
+            cache_read: 0,
+            cache_write: 0,
+        };
+        let cost = CostAmount::new(
+            PricingCurrency::new("USD"),
+            PricingUnit::MillionTokens,
+            micros,
+        );
+        Totals::reported(tokens, SessionCost::Priced(cost), Instant::now())
+    };
+    let mut turning = Turning::started(Breakdown::default()).using(Totals::new(), None);
+    let (first, second) = (reported(100, 7), reported(250, 19));
+
+    turning.saw(&Event::TurnStarted {
+        turn: TurnId::FIRST,
+    });
+    turning.saw(&Event::Used { totals: first });
+    turning.saw(&Event::Delta {
+        text: "Done.".into(),
+    });
+    turning.saw(&Event::Used { totals: second });
+    turning.saw(&Event::TurnFinished {
+        turn: TurnId::FIRST,
+        stop: StopReason::Yielded,
+    });
+
+    assert_eq!(turning.totals(), second);
+    assert_eq!(turning.totals().input(), 250);
 }
 
 #[test]

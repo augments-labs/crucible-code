@@ -8,7 +8,9 @@
 //!
 //! Nothing in here reads the environment or the disk on its own account: the
 //! lookup is a parameter, which is what lets a startup be failed both ways it
-//! can fail without a key or a home directory anywhere near the test.
+//! can fail without a key or a home directory anywhere near the test. The one
+//! exception is a test build: under `proof`, [`assemble`] reads which agents
+//! it can start from the variable `crate::proof` names.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -32,14 +34,19 @@ use crucible_provider::{
     Zai,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
+use crucible_sandbox::SandboxPolicy;
 use crucible_sandbox_local::LocalSandbox;
-use crucible_session::Session;
+use crucible_session::{RouteBinding, Session};
 use crucible_tools::{DescribeTool, Fetch, Mode, Put, Revealed, Search, Tool, ToolsetError};
 use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
 use crucible_workspace::Workspace;
 
+use crate::access::{self, AccessError, KeySource, Route, Settled};
+use crate::backends::Registry;
 use crate::content_use::{self, Consent, Serving};
 use crate::following::Following;
+use crate::launching::{self, Launcher, Runs, Steps, Unresumable};
+use crate::outside::Installed;
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
 use crate::services::Services;
@@ -201,8 +208,23 @@ impl fmt::Debug for Startup<'_> {
 /// [`AppError`] where no provider, server or session could be set up as
 /// asked, and [`AppError::Unstarted`] where the runtime the conversation's
 /// turns run on would not start; nothing is written to the disk for a startup
-/// that fails.
+/// that fails. A test build also refuses, before anything is built, agents
+/// its environment asks for under a name it has no registry for.
 pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
+    // A test build starts the agents its environment names, so a test of the
+    // whole program can run it over agents this release does not ship; a
+    // build that ships has no reader of that name.
+    #[cfg(feature = "proof")]
+    let agents = crate::proof::registry_from_environment()?;
+    #[cfg(not(feature = "proof"))]
+    let agents = &crate::backends::REGISTRY;
+    assembled(startup, agents)
+}
+
+/// [`assemble`], with `agents` the installed agents the run can be started
+/// on: the ones its start is settled against, which the conversation it
+/// returns records.
+fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Conversation, AppError> {
     let Startup {
         settings,
         sessions,
@@ -210,29 +232,38 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
         ..
     } = *startup;
 
-    // Before the session, and the last thing on the way in that can fail: the
-    // caller has already prepared the terminal for the same reason. Starting a
-    // session writes a file, and one written for a run that never happened is
-    // then the newest for this directory — which is what `--continue` would
-    // offer instead of the last real session.
     let auth = ProviderAuth {
         settings,
         from: startup.from,
         stored: startup.stored,
         subscriptions: startup.subscriptions,
     };
+    // Before anything a session could be run on is built, and read without
+    // touching the log: the session a resume asks for, and the installed
+    // agent's route it was opened on, where one was, since a session is
+    // continued on what ran it and saying it cannot be is owed whatever else
+    // is wrong with this run. The one picked here is the one reopened below.
+    let resumed = resumed(startup)?;
+    // A session an agent ran runs the conversation on the agent's route, and
+    // so does a provider whose access names an installed agent.
+    let on_agent = on_agent(startup, auth, agents, resumed.as_ref())?;
+    let picked = resumed.filter(|_| on_agent.is_none()).map(|(id, _)| id);
+    // The provider the kept runner asks: none on an agent's route, where the
+    // agent's own model answers.
+    let native = startup.provider.filter(|_| on_agent.is_none());
+
+    // Before the session, and the last thing on the way in that can fail: the
+    // caller has already prepared the terminal for the same reason. Starting a
+    // session writes a file, and one written for a run that never happened is
+    // then the newest for this directory — which is what `--continue` would
+    // offer instead of the last real session.
     // Before anything could be sent: what the user's own file says yes to,
     // and what each provider's requests would go on, are what the clients
     // ask before a request leaves.
     let consent = startup.services.consent();
     consent.recorded(settings.content_accepted().into_iter().map(str::to_owned));
     serve(consent, startup.providers, auth);
-    let provider = provider(
-        startup.provider,
-        startup.unasked,
-        auth,
-        startup.services.http(),
-    )?;
+    let provider = provider(native, startup.unasked, auth, startup.services.http())?;
 
     // Beside the provider, and for its reason: naming a server nobody wrote
     // down, or one whose program is not on this machine, is a run that cannot
@@ -250,7 +281,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // billed a plan session's searches to whatever key the shell carried.
     // Held in one place the two tools read at each call, so a switch of model
     // or provider puts what it builds where they will find it.
-    let following = Following::new(startup.provider.map(|one| one.name), web(startup, settings));
+    let following = Following::new(native.map(|one| one.name), web(startup, settings));
 
     // Before the session, for the reason the provider is: the runtime every
     // turn runs on, and every command the sandbox starts is watched on, is
@@ -266,22 +297,22 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // bound.
     let worker = startup.services.tool_worker()?.clone();
 
-    let (session, earlier) = match &startup.resuming {
-        Resuming::Newest => {
-            let (session, transcript) = Session::resume(sessions, workspace)?;
-            (session, Some(transcript))
-        }
-        Resuming::Exact(id) => {
-            let (session, transcript) = reopening(sessions, workspace, id)?;
-            (session, Some(transcript))
-        }
-        Resuming::No => {
-            let branch = crate::branching::current(workspace.root());
-            (
-                Session::start(sessions, workspace, branch.as_deref())?,
-                None,
-            )
-        }
+    // On an agent's route the log is the route's, and the kept runner is
+    // handed one that keeps nothing until the conversation is moved there.
+    let outside = on_agent
+        .map(|agent| agent.opened(sessions, workspace))
+        .transpose()?;
+    let (session, earlier) = if outside.is_some() {
+        (Session::nowhere(), None)
+    } else if let Some(id) = picked {
+        let (session, transcript) = reopening(sessions, workspace, &id)?;
+        (session, Some(transcript))
+    } else {
+        let branch = crate::branching::current(workspace.root());
+        (
+            Session::start(sessions, workspace, branch.as_deref())?,
+            None,
+        )
     };
 
     // Build the registry before the runner, because its exact immutable
@@ -297,6 +328,8 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // of its own, so the thread that draws never asks a process anything.
     startup.leaving.watching_on(runtime.clone());
     let offering = tools(startup, settings, &following, Arc::clone(&sandbox))?;
+    let agents_sandbox = Arc::clone(&sandbox);
+    let steps_sandbox = Arc::clone(&sandbox);
 
     // Operator-authored instructions are the stable request prefix. Everything
     // that can move within the session is read by context assembly instead.
@@ -314,8 +347,9 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // for every run that never asked for one.
     let context = ContextInputs::new(workspace.root());
     let permission = settings.permission(startup.mode);
-    let serving = startup.provider.map(|one| one.name);
+    let serving = native.map(|one| one.name);
     let run_policy = policy(settings);
+    let source = native.and_then(|one| providers::credential_source(one, auth));
     let mut conversation = Conversation::recording(Arc::new(session), serving, |session| {
         let runner = if chosen.is_empty() {
             Runner::new(provider, offering, asking, context, session)
@@ -342,6 +376,37 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
         }
     });
     recorded(&mut conversation, &runtime);
+    if let Some((session, transcript, agent)) = outside {
+        let OnAgent {
+            agent,
+            instance,
+            route,
+            policy,
+            ..
+        } = agent;
+        let runs = Runs::new(
+            Launcher::new(
+                agents_sandbox,
+                runtime.clone(),
+                &policy,
+                startup.services.consent(),
+            ),
+            settings.sandbox().enablement(),
+            agent,
+            &instance,
+        );
+        let installed = Installed {
+            backend: None,
+            relaunch: Box::new(runs),
+            route,
+        };
+        conversation
+            .opened_outside(Arc::new(session), transcript, installed)
+            .map_err(|refused| AppError::Unstartable {
+                instance,
+                reason: refused.reason().as_str().into(),
+            })?;
+    }
     // With nobody chosen, what a turn is missing is decided from the same
     // credentials the opening's sentence was: a provider to choose where one
     // can be reached, and a credential to set up where none can.
@@ -353,9 +418,221 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     if let Some(file) = startup.services.consent().file() {
         conversation.hastened_as_kept(file);
     }
+    // A step on an agent the conversation is not on runs under the same
+    // policy its own commands would; where that cannot be built, no step runs.
+    if let Ok(policy) = settings.sandbox().enforcing_policy(workspace) {
+        let launcher = Launcher::new(
+            Arc::clone(&steps_sandbox),
+            runtime.clone(),
+            &policy,
+            startup.services.consent(),
+        );
+        conversation = conversation.stepping(Steps::new(
+            launcher,
+            settings.sandbox().enablement(),
+            agents,
+            (startup.from)("PATH").map(OsString::from),
+        ));
+    }
     Ok(conversation
         .consenting(startup.services.consent().clone())
+        .registry(agents)
+        .credited(source)
         .following(following))
+}
+
+/// A run on an installed agent's route, asked of a provider whose access
+/// names the agent or continuing a session the agent ran: the agent, the
+/// entry it is, the route its session is bound to, the session picked up on
+/// that route, and the policy its runs are confined by.
+struct OnAgent {
+    /// The agent.
+    agent: launching::Agent,
+    /// The `externalAgents` entry it is.
+    instance: Box<str>,
+    /// The route its session is bound to.
+    route: RouteBinding,
+    /// The session picked up, where one was asked for.
+    picked: Option<SessionId>,
+    /// The conversation's own policy, which each run's widens.
+    policy: SandboxPolicy,
+}
+
+impl OnAgent {
+    /// The session the run records into, bound to the route, and what was
+    /// seen of it so far.
+    fn opened(
+        self,
+        sessions: &Path,
+        workspace: &Workspace,
+    ) -> Result<(Session, Transcript, Self), AppError> {
+        let (session, transcript) = if let Some(id) = &self.picked {
+            Session::reopen_routed(sessions, workspace, id, &self.route).map_err(unknown)?
+        } else {
+            let branch = crate::branching::current(workspace.root());
+            let started =
+                Session::start_routed(sessions, workspace, branch.as_deref(), &self.route)?;
+            (started, Transcript::new())
+        };
+        Ok((session, transcript, self))
+    }
+}
+
+/// The session `startup` asks to pick up, and the installed agent's route it
+/// was opened on, where it was; read without claiming, replaying or cutting
+/// it.
+fn resumed(startup: &Startup<'_>) -> Result<Option<(SessionId, Option<RouteBinding>)>, AppError> {
+    let (sessions, workspace) = (startup.sessions, startup.workspace);
+    Ok(match &startup.resuming {
+        Resuming::No => None,
+        Resuming::Newest => Some(crucible_session::pick_routed(sessions, workspace, None)?),
+        Resuming::Exact(id) => {
+            Some(crucible_session::pick_routed(sessions, workspace, Some(id)).map_err(unknown)?)
+        }
+    })
+}
+
+/// The installed agent the run is on: the one the session `resumed` was
+/// opened on, where it was opened on one, and otherwise the one the provider
+/// `startup` asks for runs the conversation on, where that provider's access
+/// names one; nothing where the run is on a provider's model.
+///
+/// Settled before anything is built or a log is touched: an agent that cannot
+/// be started, or a session no agent ran, is refused here. A route that cannot
+/// be settled at all is left to the provider's construction to say why.
+///
+/// # Errors
+///
+/// [`AppError::Unstartable`] where the agent is disconnected, has no launch in
+/// the run's mode, has no program that can be run, or names itself in a way a
+/// session cannot be bound to; [`AppError::Unrouted`] where the session asked
+/// for was run on a provider's model and the provider asked for is reached
+/// through an agent; [`AppError::Session`] where the agent the session was
+/// opened on is no longer configured as it was; and [`AppError::Config`] where
+/// the run's confinement cannot be built.
+fn on_agent(
+    startup: &Startup<'_>,
+    auth: ProviderAuth<'_>,
+    agents: &'static Registry,
+    resumed: Option<&(SessionId, Option<RouteBinding>)>,
+) -> Result<Option<OnAgent>, AppError> {
+    let asked = startup
+        .provider
+        .and_then(|one| access::settle(one, auth).ok())
+        .map(|settled| settled.into_parts().0);
+    match (resumed, asked) {
+        (Some((id, Some(opened))), _) => reopened_on(startup, agents, id, opened).map(Some),
+        (Some((_, None)), Some(Route::External { instance, .. })) => {
+            Err(AppError::Unrouted { instance })
+        }
+        (Some((_, None)), _) | (None, None) => Ok(None),
+        (None, Some(route)) => started_on(startup, agents, &route),
+    }
+}
+
+/// The agent `route` names, where it is an installed agent's, for a run that
+/// starts a new session on it.
+fn started_on(
+    startup: &Startup<'_>,
+    agents: &'static Registry,
+    route: &Route,
+) -> Result<Option<OnAgent>, AppError> {
+    let Route::External {
+        provider,
+        instance,
+        driver,
+        profile,
+        enabled,
+        ..
+    } = route
+    else {
+        return Ok(None);
+    };
+    if !enabled {
+        return Err(unstartable(
+            instance,
+            launching::disconnected(instance, provider),
+        ));
+    }
+    let Some(agent) = launching::Agent::routed(route, agents, |name| {
+        (startup.from)(name).map(OsString::from)
+    }) else {
+        return Err(unstartable(
+            instance,
+            "this release has no launch for its driver".to_owned(),
+        ));
+    };
+    startable(startup, &agent, instance)?;
+    let route = RouteBinding::new(driver.name(), instance, profile.as_deref())
+        .map_err(|refused| unstartable(instance, refused.to_string()))?;
+    Ok(Some(OnAgent {
+        agent,
+        instance: instance.clone(),
+        route,
+        picked: None,
+        policy: startup
+            .settings
+            .sandbox()
+            .enforcing_policy(startup.workspace)?,
+    }))
+}
+
+/// The agent the session `id` was opened on as `opened`, as the
+/// configuration still names it, for a run that continues that session.
+///
+/// Whatever the provider asked for is reached through: the session goes on
+/// where it was run, or not at all.
+fn reopened_on(
+    startup: &Startup<'_>,
+    agents: &'static Registry,
+    id: &SessionId,
+    opened: &RouteBinding,
+) -> Result<OnAgent, AppError> {
+    let instance = opened.instance();
+    let (agent, route) = launching::reopening(
+        &startup.settings.external_agents(),
+        agents,
+        |name| (startup.from)(name).map(OsString::from),
+        startup.mode,
+        opened,
+    )
+    .map_err(|refused| match refused {
+        Unresumable::Rerouted => AppError::Session(crucible_session::SessionError::Rerouted {
+            id: id.as_str().into(),
+            route: Box::new(opened.clone()),
+        }),
+        Unresumable::Unstartable(reason) => unstartable(instance, reason),
+    })?;
+    Ok(OnAgent {
+        agent,
+        instance: instance.into(),
+        route,
+        picked: Some(id.clone()),
+        policy: startup
+            .settings
+            .sandbox()
+            .enforcing_policy(startup.workspace)?,
+    })
+}
+
+/// Refuses `agent`, the `externalAgents` entry `instance`, where the run's
+/// mode has no launch for it or its program cannot be run.
+fn startable(
+    startup: &Startup<'_>,
+    agent: &launching::Agent,
+    instance: &str,
+) -> Result<(), AppError> {
+    agent
+        .startable(startup.mode, instance)
+        .map_err(|reason| unstartable(instance, reason))
+}
+
+/// The agent `instance` cannot be started on this run, for `reason`.
+fn unstartable(instance: &str, reason: String) -> AppError {
+    AppError::Unstartable {
+        instance: instance.into(),
+        reason: reason.into(),
+    }
 }
 
 /// Waits on `runtime` for what picking the session up owes it, before the
@@ -373,7 +650,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
 /// stay out of what this run sends either way, and the next pick-up of the
 /// session clears them from what it reads again and owes the same lines.
 fn recorded(conversation: &mut Conversation, runtime: &tokio::runtime::Handle) {
-    if !conversation.runner().owes_clearings() {
+    if !conversation.settled().owes_clearings() {
         return;
     }
     std::thread::scope(|scope| {
@@ -470,12 +747,18 @@ pub fn reopening(
     workspace: &Workspace,
     id: &SessionId,
 ) -> Result<(Session, Transcript), AppError> {
+    Session::reopen(sessions, workspace, id).map_err(unknown)
+}
+
+/// `problem`, with a session id that answers to nothing said as the user's
+/// mistake rather than the log's.
+fn unknown(problem: crucible_session::SessionError) -> AppError {
     use crucible_session::SessionError;
 
-    Session::reopen(sessions, workspace, id).map_err(|problem| match problem {
+    match problem {
         SessionError::Unknown { id, .. } => AppError::NoSession(id),
         other => AppError::Session(other),
-    })
+    }
 }
 
 /// Fills the plan from the last time the session wrote one.
@@ -577,14 +860,15 @@ impl fmt::Debug for ProviderAuth<'_> {
 /// Everything a factory is handed to build one provider or its web sources.
 ///
 /// Resolved once by the caller from the settings and the record, so no factory
-/// reads a setting or pairs a name with a variable on its own: the variable is
-/// the configured one or the record's usual name, and the address is the one a
-/// setting moved requests to, already parsed at that boundary.
+/// reads a setting or chooses a credential on its own: the route is the one
+/// [`access::resolve`] settled, and the address is the one a setting moved
+/// requests to, already parsed at that boundary.
 pub struct Wiring<'a> {
     /// The provider's registered name, and the key `/login` wrote it under.
     pub named: &'static str,
-    /// The environment variable the key is read from.
-    pub variable: &'a str,
+    /// Where its credential is, as the one resolver settled it, or why it has
+    /// none: refused only by the factory that needed one.
+    route: Result<Settled, AccessError>,
     /// Where a setting says requests should go, where one does.
     pub sending: Option<Endpoint>,
     /// The shared HTTP service the provider and web factories use.
@@ -597,7 +881,7 @@ impl fmt::Debug for Wiring<'_> {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("Wiring")
             .field("named", &self.named)
-            .field("variable", &self.variable)
+            .field("route", &self.route.as_ref().map(Settled::route))
             .field("sending", &self.sending)
             .field("auth", &self.auth)
             .finish()
@@ -631,11 +915,9 @@ pub type Reach = fn(Wiring<'_>, &str) -> Reaching;
 /// worth a test. Setting the real environment from one is `unsafe` in edition
 /// 2024, and this workspace denies `unsafe` code.
 ///
-/// Which variable holds the key is configuration, so a file may name a
-/// different one — somebody with a work key and a personal key has two
-/// variables and one of them is not the vendor's usual name. Failing that it is
-/// the vendor's usual name, written beside the provider in `PROVIDERS`. The
-/// *value* stays where it always was: read once, here, and applied to a header.
+/// Which credential answers, and which variable holds a key, is settled by
+/// [`access::resolve`] alone. The *value* stays where it always was: read
+/// once, here, and applied to a header.
 ///
 /// `stored` is the other place a credential can be, and the one `/login`
 /// writes to: an API key, or the renewable state of an account login. Reachable
@@ -667,10 +949,11 @@ fn wiring<'a>(
     http: &'a HttpTurns,
 ) -> Result<Wiring<'a>, AppError> {
     let named = serving.name;
+    let sending = sending_to(auth.settings, named)?;
     Ok(Wiring {
         named,
-        variable: auth.settings.api_key_env(named).unwrap_or(serving.key),
-        sending: sending_to(auth.settings, named)?,
+        route: access::settle(serving, auth),
+        sending,
         http,
         auth,
     })
@@ -688,12 +971,7 @@ fn wiring<'a>(
 pub fn anthropic(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(Anthropic::at(
         wiring.sending.unwrap_or(Anthropic::VENDOR),
-        key(
-            wiring.variable,
-            Header::bare("x-api-key"),
-            wiring.auth.from,
-            wiring.auth.stored.get(wiring.named),
-        )?,
+        key(wiring.route, Header::bare("x-api-key"), wiring.auth)?,
         Box::new(wiring.http.clone()),
     )))
 }
@@ -715,9 +993,9 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let (endpoint, credential) = credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor: Moonshot::CODING,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     )?;
@@ -805,14 +1083,23 @@ pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let http = wiring.http;
-    let auth = wiring.auth;
-    // The store is looked at first, so the variable is read here only where a
-    // plan's key is stored, and a provider with none reads it once.
-    let on_plan = auth.stored.held(wiring.named).is_some_and(|held| {
-        crate::providers::Rows::production()
-            .of(held.kind, &held.name)
-            .is_some_and(|row| row.list == crate::providers::List::Subscription)
-    }) && ApiKey::from_lookup(wiring.variable, auth.from).is_err();
+    let on_plan = match wiring.route.as_ref().map(Settled::route) {
+        Ok(Route::ApiKey {
+            source: KeySource::Stored { name },
+            ..
+        }) => crate::providers::Rows::production()
+            .of(crucible_auth::Kind::Key, name)
+            .is_some_and(|row| row.list == crate::providers::List::Subscription),
+        Ok(
+            Route::ApiKey {
+                source: KeySource::Environment { .. },
+                ..
+            }
+            | Route::Subscription { .. }
+            | Route::External { .. },
+        )
+        | Err(_) => false,
+    };
     let (endpoint, credential) = keyed(wiring, MiniMax::IO)?;
     let transport = Box::new(http.clone());
     Ok(Box::new(if on_plan {
@@ -865,9 +1152,9 @@ fn keyed(
     credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     )
@@ -882,12 +1169,7 @@ fn keyed(
 pub fn google(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(Google::at(
         wiring.sending.unwrap_or(Google::VENDOR),
-        key(
-            wiring.variable,
-            Header::bare("x-goog-api-key"),
-            wiring.auth.from,
-            wiring.auth.stored.get(wiring.named),
-        )?,
+        key(wiring.route, Header::bare("x-goog-api-key"), wiring.auth)?,
         Box::new(wiring.http.clone()),
     )))
 }
@@ -902,9 +1184,9 @@ pub fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let (endpoint, credential) = credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor: OpenAi::VENDOR,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     )?;
@@ -917,11 +1199,10 @@ pub fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 
 /// The vendor audience a credential is issued against.
 ///
-/// The provider's name, the variable its key is read from and the address its
-/// vendor signs at travel together because no call site may pair them by hand.
-struct ApiAudience<'a> {
+/// The provider's name and the address its vendor signs at travel together
+/// because no call site may pair them by hand.
+struct ApiAudience {
     provider: &'static str,
-    variable: &'a str,
     vendor: Endpoint,
 }
 
@@ -932,96 +1213,107 @@ struct ApiAudience<'a> {
 /// separately would let a later endpoint choice send it somewhere it was never
 /// meant to go.
 ///
-/// A stored subscription answers first, and only at the vendor's own address:
-/// an account authorized through `/login` is a deliberate choice, made after
-/// any variable the shell happened to inherit, and `baseUrl` is set by somebody
-/// with a reason not to reach the vendor — a plan's token is the vendor's, so
-/// one configured to go elsewhere is no credential at all. Below it the order
-/// is the one [`key`] keeps for every provider: the variable first, then the
-/// key `/login` wrote down.
+/// Which credential answers is the route's, settled by [`access::resolve`]: a
+/// subscription only ever at the vendor's own address, which the resolver
+/// keeps from meeting a configured one and which is refused here again before
+/// a token could follow one. A key is sent to the address of the row
+/// it was given on: the variable's to its provider's environment row, a stored
+/// one to the row its name says. A configured address takes either, as it
+/// always has.
 fn credential(
-    audience: ApiAudience<'_>,
+    audience: ApiAudience,
+    route: Result<Settled, AccessError>,
     sending: Option<Endpoint>,
     auth: ProviderAuth<'_>,
 ) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
-    if sending.is_none()
-        && let Some(subscribed) = auth
-            .subscriptions
-            .credential(audience.provider, auth.stored)
-    {
-        return Ok((subscribed.endpoint, subscribed.credential));
-    }
-    // A key is sent to the address of the row it was given on: the variable's
-    // to its provider's environment row, a stored one to the row its name
-    // says. A configured address takes either, as it always has.
     let rows = crate::providers::Rows::production();
     let address = |row: Option<&crate::providers::Row>| row.and_then(|row| row.address.clone());
-    match ApiKey::from_lookup(audience.variable, auth.from) {
-        Ok(exported) => Ok((
-            sending
-                .or_else(|| address(rows.environment(audience.provider)))
-                .unwrap_or(audience.vendor),
-            Box::new(HeaderKey::new(exported, Header::bearer())),
-        )),
-        Err(absent) => {
-            if let Some(held) = auth
-                .stored
-                .held(audience.provider)
-                .filter(|held| held.kind == crucible_auth::Kind::Key)
-                && let Some(written) = auth.stored.get(&held.name)
-            {
-                return Ok((
-                    sending
-                        .or_else(|| address(rows.of(held.kind, &held.name)))
-                        .unwrap_or(audience.vendor),
-                    Box::new(HeaderKey::new(written, Header::bearer())),
-                ));
-            }
-            if auth
-                .subscriptions
-                .credential(audience.provider, auth.stored)
-                .is_some()
-            {
-                // Reachable only with `sending` set: without an address
-                // configured, the first arm above has already answered.
-                return Err(AppError::SubscriptionAddress {
-                    provider: audience.provider.into(),
-                });
-            }
-            Err(absent.into())
+    let (route, exported) = route?.into_parts();
+    match route {
+        Route::Subscription { .. } if sending.is_some() => Err(AppError::SubscriptionAddress {
+            provider: audience.provider.into(),
+        }),
+        Route::Subscription { .. } => auth
+            .subscriptions
+            .credential(audience.provider, auth.stored)
+            .map(|subscribed| (subscribed.endpoint, subscribed.credential))
+            .ok_or_else(|| AppError::Authentication {
+                provider: audience.provider.into(),
+            }),
+        Route::ApiKey { source, .. } => {
+            let (applied, row) = match source {
+                KeySource::Environment { variable } => (
+                    exported_key(exported, &variable)?,
+                    rows.environment(audience.provider),
+                ),
+                KeySource::Stored { name } => (
+                    stored_key(audience.provider, &name, auth)?,
+                    rows.of(crucible_auth::Kind::Key, &name),
+                ),
+            };
+            Ok((
+                sending.or_else(|| address(row)).unwrap_or(audience.vendor),
+                Box::new(HeaderKey::new(applied, Header::bearer())),
+            ))
         }
+        Route::External { instance, .. } => Err(AppError::ExternalAgent {
+            provider: audience.provider.into(),
+            instance,
+        }),
     }
 }
 
-/// What `named`'s requests are sent on, resolved in the order `credential`
-/// and `key` choose a credential: a stored sign-in where no address is
-/// configured, then the variable's key, then a stored key. `None` where no
-/// credential would be found, so nothing would be sent.
+/// The key the variable held when the route was settled.
+///
+/// The resolver settles the variable's route only with the key it read, so
+/// this answers with it; the refusal is the one a variable with nothing in it
+/// has always had.
+fn exported_key(exported: Option<ApiKey>, variable: &str) -> Result<ApiKey, AppError> {
+    exported.ok_or_else(|| {
+        crucible_credentials::CredentialError::NotInEnvironment(variable.into()).into()
+    })
+}
+
+/// The key the store holds under `name`, for `provider`.
+///
+/// The resolver found it held a moment ago; a store that no longer gives it
+/// back is one another crucible changed since, and the provider is not signed.
+fn stored_key(provider: &str, name: &str, auth: ProviderAuth<'_>) -> Result<ApiKey, AppError> {
+    auth.stored
+        .get(name)
+        .ok_or_else(|| AppError::Authentication {
+            provider: provider.into(),
+        })
+}
+
+/// What `one`'s requests are sent on, by the route [`access::resolve`]
+/// settles. `None` where no route resolves, or where crucible sends nothing
+/// itself, so nothing would be sent.
 ///
 /// A configured address takes a key wherever the key came from, and answers
 /// for the route [`content_use::recognised`] says, or for none.
 #[must_use]
-pub fn served_on(named: &str, variable: &str, auth: ProviderAuth<'_>) -> Option<Serving> {
+pub fn served_on(one: Served, auth: ProviderAuth<'_>) -> Option<Serving> {
     let rows = crate::providers::Rows::production();
-    let base = auth.settings.base_url(named);
-    if base.is_none() && auth.subscriptions.credential(named, auth.stored).is_some() {
-        let row = rows.held(named, auth.stored)?;
-        return Some(Serving {
-            route: Some(content_use::row_route(row)),
-            at: None,
-        });
-    }
-    let row = if ApiKey::from_lookup(variable, auth.from).is_ok() {
-        rows.environment(named)
-    } else {
-        let held = auth
-            .stored
-            .held(named)
-            .filter(|held| held.kind == crucible_auth::Kind::Key)?;
-        auth.stored.get(&held.name)?;
-        rows.of(held.kind, &held.name)
+    let row = match access::resolve(one, auth).ok()? {
+        Route::Subscription { .. } => {
+            let row = rows.held(one.name, auth.stored)?;
+            return Some(Serving {
+                route: Some(content_use::row_route(row)),
+                at: None,
+            });
+        }
+        Route::ApiKey {
+            source: KeySource::Environment { .. },
+            ..
+        } => rows.environment(one.name),
+        Route::ApiKey {
+            source: KeySource::Stored { name },
+            ..
+        } => rows.of(crucible_auth::Kind::Key, &name),
+        Route::External { .. } => return None,
     };
-    Some(match base {
+    Some(match auth.settings.base_url(one.name) {
         Some(base) => Serving {
             route: content_use::recognised(base).map(str::to_owned),
             at: Some(crucible_http::Origin::of(base)?),
@@ -1041,10 +1333,7 @@ pub fn served_on(named: &str, variable: &str, auth: ProviderAuth<'_>) -> Option<
 /// up again, since replacing the whole map mid-run would forget the others.
 pub fn serve(consent: &Consent, providers: &Providers, auth: ProviderAuth<'_>) {
     let serving = providers::offered(providers)
-        .filter_map(|one| {
-            let variable = auth.settings.api_key_env(one.name).unwrap_or(one.key);
-            served_on(one.name, variable, auth).map(|serving| (one.name.to_owned(), serving))
-        })
+        .filter_map(|one| served_on(one, auth).map(|serving| (one.name.to_owned(), serving)))
         .collect();
     consent.serving(serving);
 }
@@ -1242,12 +1531,7 @@ pub(crate) fn reached(
 
 /// Anthropic's own search and fetch, on the session's model.
 pub fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
-    let Ok(credential) = key(
-        wiring.variable,
-        Header::bare("x-api-key"),
-        wiring.auth.from,
-        wiring.auth.stored.get(wiring.named),
-    ) else {
+    let Ok(credential) = key(wiring.route, Header::bare("x-api-key"), wiring.auth) else {
         return Reaching::nothing();
     };
 
@@ -1261,12 +1545,7 @@ pub fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
 
 /// Gemini search and URL context use the same checked key and recipient as turns.
 pub fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
-    let Ok(credential) = key(
-        wiring.variable,
-        Header::bare("x-goog-api-key"),
-        wiring.auth.from,
-        wiring.auth.stored.get(wiring.named),
-    ) else {
+    let Ok(credential) = key(wiring.route, Header::bare("x-goog-api-key"), wiring.auth) else {
         return Reaching::nothing();
     };
     let web = Arc::new(GoogleWeb::new(
@@ -1301,9 +1580,9 @@ pub fn openai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     let Ok((endpoint, credential)) = credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor: OpenAi::VENDOR,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     ) else {
@@ -1331,9 +1610,9 @@ pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
     let Ok((endpoint, credential)) = credential(
         ApiAudience {
             provider: wiring.named,
-            variable: wiring.variable,
             vendor: Moonshot::CODING,
         },
+        wiring.route,
         wiring.sending,
         wiring.auth,
     ) else {
@@ -1426,30 +1705,41 @@ fn sending_to(settings: &Settings, named: &str) -> Result<Option<Endpoint>, AppE
         .transpose()
 }
 
-/// A key, ready to sign a request with.
+/// A key, ready to sign a request with, for a provider whose every
+/// credential is a key.
 ///
-/// The variable's name is what is configured; the value is read once, here, and
-/// goes no further than the header it is applied to.
-///
-/// The variable first and what `/login` wrote down second. A key exported into
-/// this run is the one whoever started it chose for this run — it is how a
-/// second account, a work key, or a key that has just been rotated is used
-/// without touching what is on the disk, and it lasts exactly as long as the
-/// shell it was exported in. `written` is the standing answer underneath it.
+/// The route says where it is; the value is read once, here, and goes no
+/// further than the header it is applied to. A route that is not a key is
+/// one the resolver never settles for such a provider, and is refused as one
+/// with nothing to sign with.
 fn key(
-    variable: &str,
+    route: Result<Settled, AccessError>,
     header: Header,
-    from: &dyn Fn(&str) -> Option<String>,
-    written: Option<ApiKey>,
+    auth: ProviderAuth<'_>,
 ) -> Result<Box<dyn Credential>, AppError> {
-    let key = match ApiKey::from_lookup(variable, from) {
-        Ok(exported) => exported,
-
-        // Unset, or set to blank — which is how a shell turns a provider off.
-        // Off for the variable rather than for crucible: somebody who ran
-        // `/login` said so once and for every run after it, and a blank export
-        // is what the machine has to say about the variable it is blanking.
-        Err(absent) => written.ok_or(absent)?,
+    let (route, exported) = route?.into_parts();
+    let key = match route {
+        Route::ApiKey {
+            source: KeySource::Environment { variable },
+            ..
+        } => exported_key(exported, &variable)?,
+        Route::ApiKey {
+            provider,
+            source: KeySource::Stored { name },
+        } => stored_key(provider, &name, auth)?,
+        Route::Subscription { provider, .. } => {
+            return Err(AppError::Authentication {
+                provider: provider.into(),
+            });
+        }
+        Route::External {
+            provider, instance, ..
+        } => {
+            return Err(AppError::ExternalAgent {
+                provider: provider.into(),
+                instance,
+            });
+        }
     };
 
     Ok(Box::new(HeaderKey::new(key, header)))

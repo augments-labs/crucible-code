@@ -178,7 +178,7 @@ fn a_model_with_no_fast_form_or_one_of_its_own_changes_nothing() -> Result<(), F
             Hastened::Unasked | Hastened::Taken { .. } => "changed",
         };
         assert_eq!(said, answer);
-        assert_eq!(conversation.runner().speed(), Speed::Standard);
+        assert_eq!(conversation.settled().speed(), Speed::Standard);
         assert!(!desk.choosing.exists(), "nothing is written down");
     }
     Ok(())
@@ -193,7 +193,7 @@ fn nobody_being_asked_is_nobody_to_ask_fast() -> Result<(), Failed> {
     let hastened = conversation.hasten(Speed::Fast, &desk.with());
 
     assert!(matches!(hastened, Hastened::Unasked), "{hastened:?}");
-    assert_eq!(conversation.runner().speed(), Speed::Standard);
+    assert_eq!(conversation.settled().speed(), Speed::Standard);
     Ok(())
 }
 
@@ -210,7 +210,7 @@ fn the_speed_in_the_file_is_asked_only_where_the_model_has_a_fast_form() -> Resu
 
         conversation.hastened_as_kept(&desk.choosing);
 
-        assert_eq!(conversation.runner().speed(), asked, "{form:?}");
+        assert_eq!(conversation.settled().speed(), asked, "{form:?}");
     }
     Ok(())
 }
@@ -233,7 +233,7 @@ fn another_model_goes_back_to_standard_and_the_same_one_keeps_fast() -> Result<(
         ),
         "{again:?}"
     );
-    assert_eq!(conversation.runner().speed(), Speed::Fast);
+    assert_eq!(conversation.settled().speed(), Speed::Fast);
     assert_eq!(written(&tree)?.speed("openai"), Speed::Fast);
 
     let other =
@@ -248,7 +248,7 @@ fn another_model_goes_back_to_standard_and_the_same_one_keeps_fast() -> Result<(
         ),
         "{other:?}"
     );
-    assert_eq!(conversation.runner().speed(), Speed::Standard);
+    assert_eq!(conversation.settled().speed(), Speed::Standard);
     assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
     Ok(())
 }
@@ -269,7 +269,7 @@ fn a_refusal_of_fast_is_written_down_as_standard() -> Result<(), Failed> {
         *speeds.lock().map_err(|_| "poisoned")?,
         [Speed::Fast, Speed::Standard]
     );
-    assert_eq!(conversation.runner().speed(), Speed::Standard);
+    assert_eq!(conversation.settled().speed(), Speed::Standard);
     assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
     Ok(())
 }
@@ -317,6 +317,7 @@ impl Moving {
             sourcing: &self.desk.sourcing,
             logins: &self.logins,
             choosing: &self.desk.choosing,
+            rewritten: &self.desk.rewritten,
         }
     }
 }
@@ -337,7 +338,7 @@ fn a_key_stored_where_the_environment_served_turns_fast_off() -> Result<(), Fail
         matches!(logged_in, LoggedIn::Serving { .. }),
         "{logged_in:?}"
     );
-    assert_eq!(conversation.runner().speed(), Speed::Standard);
+    assert_eq!(conversation.settled().speed(), Speed::Standard);
     turn(&mut conversation, "go")?;
     assert_eq!(
         *moving.speeds.lock().map_err(|_| "poisoned")?,
@@ -359,7 +360,7 @@ fn a_key_written_again_under_its_own_row_keeps_fast() -> Result<(), Failed> {
     let _ = runtime()?.block_on(conversation.logged_in(openai, &moving.with()));
 
     assert_eq!(written(&tree)?.speed("openai"), Speed::Fast);
-    assert_eq!(conversation.runner().speed(), Speed::Fast);
+    assert_eq!(conversation.settled().speed(), Speed::Fast);
     Ok(())
 }
 
@@ -380,7 +381,7 @@ fn a_stored_key_forgotten_while_the_environment_still_serves_turns_fast_off() ->
         "{logged_out:?}"
     );
     assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
-    assert_eq!(conversation.runner().speed(), Speed::Standard);
+    assert_eq!(conversation.settled().speed(), Speed::Standard);
     Ok(())
 }
 
@@ -491,9 +492,7 @@ fn a_refusal_of_fast_while_making_room_is_written_down_as_standard() -> Result<(
 
     let (events, _reported) = mpsc::channel::<EventEnvelope>();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
-    let run = conversation
-        .runner()
-        .starting(&events, &cancel, &steer, &aside);
+    let run = conversation.starting(&events, &cancel, &steer, &aside);
     let mut spent = crucible_types::Spend::default();
     let _ = runtime()?.block_on(conversation.compact(
         crucible_types::Compacting::Asked,
@@ -507,7 +506,7 @@ fn a_refusal_of_fast_while_making_room_is_written_down_as_standard() -> Result<(
         Some(&[Speed::Fast, Speed::Standard][..]),
         "{asked:?}"
     );
-    assert_eq!(conversation.runner().speed(), Speed::Standard);
+    assert_eq!(conversation.settled().speed(), Speed::Standard);
     assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
     Ok(())
 }

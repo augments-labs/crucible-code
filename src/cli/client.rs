@@ -12,18 +12,33 @@
 //! from the whole value, never from the copy the contract cuts to its
 //! ceilings, and nothing drawn is ever serialized.
 //!
+//! An account operation stops to ask which way to go on, and the terminal is
+//! asked as any front end is: [`Answering`] puts each question through the
+//! application's [`Front`], and the drawing thread, which polls the operation
+//! itself, takes it off a channel, draws it and sends the answer back. The
+//! panel is drawn from the question whole, as the host holds it.
+//!
 //! A terminal has somebody at it and a screen, so it claims every capability.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::Poll;
+
+use tokio::sync::{mpsc, oneshot};
 
 use crucible_app::Conversation;
-use crucible_app::client::{Answered, Desk, Performed, asked, asking, interrupt, keep, perform};
+use crucible_app::client::{
+    Answered, Confirmation, Desk, Front, Performed, Shown, account, asked, asking, interrupt, keep,
+    perform,
+};
+use crucible_app::content_use::Warned;
 use crucible_app::providers::Providers;
 use crucible_client_api::{
-    Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Theme,
+    Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Said,
+    Theme,
 };
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 
 use super::converse::Terms;
 
@@ -130,15 +145,168 @@ impl Terms {
     /// Carries out `request` through the door that answers it whole, waiting
     /// for it, and tells whoever is listening what came of it.
     fn performed(&self, conversation: &mut Conversation, request: &Request) -> Performed {
-        let providers = self.providers.snapshot();
-        let performed =
-            self.runtime
-                .block_on(perform(conversation, request, &self.desk(&providers)));
+        let (providers, settings) = (self.providers.snapshot(), self.reading());
+        let desk = self.desk(&providers, &settings);
+        let performed = self.runtime.block_on(perform(conversation, request, &desk));
 
         self.client
             .answered(request, conversation, || performed.outcome());
 
         performed
+    }
+}
+
+/// A question an account operation stopped on, whole, as the host holds it.
+#[derive(Debug, Clone)]
+pub(crate) enum Question {
+    /// Which way the operation goes on.
+    Account(Confirmation),
+    /// The route an installed agent would be started on, whose vendor uses
+    /// what is sent.
+    Warning(Warned),
+}
+
+/// What the drawing thread answered a [`Question`] with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reply {
+    /// The choice at this place in the question's list.
+    Took(usize),
+    /// Yes to the route.
+    Yes,
+    /// No to it.
+    No,
+}
+
+/// A question on its way to the drawing thread, and where its answer goes:
+/// nothing, where it was not answered.
+struct Put {
+    question: Question,
+    reply: oneshot::Sender<Option<Reply>>,
+}
+
+/// What [`Terms::operate`] is waiting for next.
+enum Step {
+    /// The operation is over.
+    Done(Performed),
+    /// It stopped on a question.
+    Asked(Put),
+}
+
+/// The front an account operation is asked through: each question goes to
+/// the thread polling the operation, which draws it and answers.
+struct Answering {
+    to: mpsc::Sender<Put>,
+    client: Client,
+}
+
+impl Front for Answering {
+    /// Hands the question to the drawing thread and awaits its answer. Only
+    /// an account operation's questions and the route it would start an
+    /// agent on are put here; anything else is answered by nobody.
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            let question = match shown {
+                Shown::Account(confirmation) => Question::Account(confirmation.clone()),
+                Shown::Warning(warned) => Question::Warning(*warned),
+                Shown::Call { .. } | Shown::Questions(_) | Shown::External(_) => return None,
+            };
+
+            self.client.put(pending);
+
+            let (reply, hear) = oneshot::channel();
+            self.to.send(Put { question, reply }).await.ok()?;
+            let id = pending.id();
+            let decision = match (hear.await.ok()??, pending) {
+                // Named as the pending action names it, which is what it is
+                // held against.
+                (Reply::Took(at), Pending::Account { choices, .. }) => Decision::Picked {
+                    id,
+                    choice: Said::new(choices.get(at)?.name.as_str()).ok()?,
+                },
+                (Reply::Took(_), _) => return None,
+                (Reply::Yes, _) => Decision::Accepted { id },
+                (Reply::No, _) => Decision::Declined { id },
+            };
+
+            self.client.decided(&decision);
+
+            Some(decision)
+        })
+    }
+
+    /// Nothing to say: every decision made above names the action it was put
+    /// and answers it as it asked.
+    fn refused(&mut self, _: Refusal) {}
+
+    /// The panel is drawn from the question as the host holds it, never from
+    /// the cut words a pending action carries.
+    fn draws_whole(&self) -> bool {
+        true
+    }
+}
+
+impl Terms {
+    /// Asks the application for the account operation `command`, answering
+    /// each question it stops on with `answer`, here on the drawing thread,
+    /// and hands back what came of it for the caller to draw.
+    ///
+    /// The operation is polled here, between questions, on the runtime the
+    /// turns run on, and stops being polled while a question is drawn: what
+    /// it does, it does while nobody is being asked anything.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `answer` fails with; the operation is dropped where it stood.
+    pub(crate) fn operate<E>(
+        &self,
+        conversation: &mut Conversation,
+        command: Command,
+        mut answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
+    ) -> Result<Performed, E> {
+        let request = self.client.asking(command);
+        let (providers, settings) = (self.providers.snapshot(), self.reading());
+        let desk = self.desk(&providers, &settings);
+        // One question is out at a time: the operation awaits each answer.
+        let (to, mut from) = mpsc::channel(1);
+        let mut front = Answering {
+            to,
+            client: self.client.clone(),
+        };
+
+        let performed = {
+            let mut operation = std::pin::pin!(account(conversation, &request, &desk, &mut front));
+            loop {
+                let step = self.runtime.block_on(std::future::poll_fn(|context| {
+                    if let Poll::Ready(performed) = operation.as_mut().poll(context) {
+                        return Poll::Ready(Step::Done(performed));
+                    }
+                    // The front that asks holds the only sender and outlives
+                    // this loop, so the channel closing never ends the wait:
+                    // the operation does.
+                    match from.poll_recv(context) {
+                        Poll::Ready(Some(put)) => Poll::Ready(Step::Asked(put)),
+                        Poll::Ready(None) | Poll::Pending => Poll::Pending,
+                    }
+                }));
+                match step {
+                    Step::Done(performed) => break performed,
+                    Step::Asked(put) => {
+                        let replied = answer(&put.question)?;
+                        // An operation that stopped waiting has nobody to tell.
+                        let _ = put.reply.send(replied);
+                    }
+                }
+            }
+        };
+
+        self.client
+            .answered(&request, conversation, || performed.outcome());
+
+        Ok(performed)
     }
 }
 
@@ -244,8 +412,8 @@ impl Terms {
     /// conversation, which is what lets it be asked while a turn has it.
     pub(crate) fn keep(&self, command: Command) -> Performed {
         let request = self.client.asking(command);
-        let providers = self.providers.snapshot();
-        let kept = keep(&request, &self.desk(&providers));
+        let (providers, settings) = (self.providers.snapshot(), self.reading());
+        let kept = keep(&request, &self.desk(&providers, &settings));
 
         if let Some(witness) = &self.client.witness {
             witness.apart(&request, kept.outcome());
@@ -260,10 +428,15 @@ impl Terms {
         self.client.interrupt(cancel);
     }
 
-    /// What the host lends a command, from the providers in force.
-    fn desk<'a>(&'a self, providers: &'a Providers) -> Desk<'a> {
+    /// What the host lends a command, from the providers in force and the
+    /// settings as [`Terms::reading`] reads them.
+    fn desk<'a>(
+        &'a self,
+        providers: &'a Providers,
+        settings: &'a crucible_config::Settings,
+    ) -> Desk<'a> {
         Desk {
-            switching: self.switching(providers),
+            switching: self.switching(providers, settings),
             sessions: &self.sessions,
             workspace: &self.workspace,
             reads: |named| crucible_tui::syntax::colours(named).is_some(),

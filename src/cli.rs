@@ -12,6 +12,7 @@
 //! Nothing above this file knows what an HTTP client is, and nothing below it
 //! knows what the command line said.
 
+mod agents;
 mod auth;
 mod browser;
 mod choice;
@@ -55,7 +56,7 @@ use crucible_app::startup::{self, Startup, assemble, served};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_config::{Home, Settings};
+use crucible_config::{Driver, Home, Settings};
 use crucible_models::Effort;
 use crucible_runtime::Cancel;
 use crucible_tools::Revealed;
@@ -141,9 +142,10 @@ says either, whatever the vendor's own default is for the model being asked. \
 Not every model takes one, and a rung named for a model that does not is \
 refused by its vendor rather than dropped.
 
-There is no model built in. Left off, or given as a provider and a bare slash, \
+Startup builds in no model. Left off, or given as a provider and a bare slash, \
 the model comes from your configuration; where nothing says, crucible starts \
-and asks rather than picking one, and /model writes your answer down.
+and asks rather than picking one, and /model writes your answer down, as \
+/login writes its provider's default.
 
 crucible keeps its own files in ~/.crucible (or the directory CRUCIBLE_CODE_HOME \
 names), and reads config.json there, then .crucible/config.json and .crucible/config.local.json in the directory it was \
@@ -154,10 +156,10 @@ recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
 /resume inside a session lists the rest. sessions list says which sessions \
 were recorded for this directory, newest first, with when each started, how \
-many messages it holds, its branch and its saved title, and stops; --json \
-writes it as one JSON document instead. It reads the session index and the \
-first line of each log, so nothing anybody wrote in a session is shown, and \
-no session is opened, resumed or written to.
+many messages it holds, its branch, its saved title and what ran it, and \
+stops; --json writes it as one JSON document instead. It reads the session \
+index and the opening lines of each log, so nothing anybody wrote in a \
+session is shown, and no session is opened, resumed or written to.
 
 extensions list says what is installed in ~/.crucible/extensions (or the \
 extensions directory under CRUCIBLE_CODE_HOME), with what each \
@@ -185,6 +187,12 @@ so neither says whether one would start.
 completion SHELL writes a completion script for bash, zsh, fish, powershell \
 or elvish, made from this command line as it is, and stops. It reads no \
 configuration and opens no terminal.
+
+agents install DRIVER downloads the release of an installed coding agent \
+this build pins, antigravity's agent server, checks its size and SHA-256 \
+against the pin, unpacks it under crucible's home and stops; a release \
+already there is kept. /login then runs that release for an agent it sets \
+up.
 
 update says whether a release later than this one is out and, where \
 install.sh installed crucible, downloads it, checks it against the release's \
@@ -299,10 +307,27 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Install a coding agent crucible can run, where this build downloads
+    /// its release for you, and stop.
+    Agents {
+        #[command(subcommand)]
+        action: AgentsAction,
+    },
     /// Write a completion script for a shell to standard output, and stop.
     Completion {
         /// The shell to write the script for.
         shell: Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentsAction {
+    /// Download the release of an agent this build pins, check it is that
+    /// release and put it where crucible runs it from, and stop.
+    Install {
+        /// The agent, as externalAgents names its driver.
+        #[arg(value_parser = agents::driver)]
+        driver: Driver,
     },
 }
 
@@ -545,6 +570,13 @@ pub(crate) fn start() -> ExitCode {
         (Some(Command::Update { check, dry_run }), _, _) => {
             return update::updated(*check, *dry_run);
         }
+        (
+            Some(Command::Agents {
+                action: AgentsAction::Install { driver },
+            }),
+            _,
+            _,
+        ) => return agents::install(*driver),
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {
@@ -1022,11 +1054,16 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     let providers = providers()?;
     // What a provider is served on is read again, from the store as it is
     // then, once a credential taken out may have moved it: another may still
-    // serve it, and the write that took it out may have failed.
+    // serve it, and the write that took it out may have failed. It and the
+    // two the session is set up again through read the installed agents and
+    // access the account writes during the run left out of one record, so none
+    // takes a provider for an agent's once it reaches the provider directly,
+    // or misses a route a connect wrote.
+    let rewritten = crucible_app::access::Rewritten::new();
     services
         .consent()
         .resolves(crucible_app::providers::resolving(
-            settings.clone(),
+            (settings.clone(), rewritten.clone()),
             subscriptions.clone(),
             &providers.snapshot(),
             std::sync::Arc::new(|name: &str| std::env::var(name).ok()),
@@ -1134,7 +1171,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // the session asking what the next run here would ask, rather than what
         // a second reading of the same files happened to say.
         serving: re_serving(
-            settings.clone(),
+            (settings.clone(), rewritten.clone()),
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
             services.http().clone(),
@@ -1143,12 +1180,13 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // And the web sources a switch builds again, through the same files,
         // logins and environment, so a search names the model asked now.
         sourcing: re_sourcing(
-            settings.clone(),
+            (settings.clone(), rewritten.clone()),
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
             services.http().clone(),
             services.consent().clone(),
         ),
+        rewritten,
         environment: Box::new(|name| std::env::var(name).ok()),
 
         // The two `/resume` reads a directory of logs with. Both are settled
@@ -1355,7 +1393,9 @@ fn launch(
 ///
 /// There is no bottom rung, and that is the point. A name written into this
 /// build would be asked for on behalf of somebody who never chose it, and it
-/// would be asked of whichever provider the key belongs to.
+/// would be asked of whichever provider the key belongs to. The default a
+/// login takes reaches here as the configuration's: the login names the
+/// provider it is for, and writes the model down.
 ///
 /// A key written into a file and left empty is a file that said nothing, not a
 /// request for a model called nothing. Sent as it stands it would reach a

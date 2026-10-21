@@ -38,6 +38,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
+use crucible_external_harnesses::fake_peer::{self, Script};
 use rustix::fs::{Mode, OFlags};
 use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
@@ -161,16 +162,17 @@ const NO_MIDDLE: u64 = 100_000_000;
 /// 255 bytes one name may hold where the temporary directory is short.
 const SCRATCH_LENGTH: usize = 240;
 
+/// What every case's scratch directory is named first, so a picture still
+/// naming one can be found.
+pub(crate) const SCRATCH: &str = "crucible-whole-screen-";
+
 /// The directory `case` is given, which holds everything it makes.
 ///
 /// One flat directory per case, so the last thing a case does can take the
 /// whole of what it made with it.
 pub(crate) fn scratch(case: &str) -> PathBuf {
     let mut named = std::env::temp_dir()
-        .join(format!(
-            "crucible-whole-screen-{}-{case}-",
-            std::process::id()
-        ))
+        .join(format!("{SCRATCH}{}-{case}-", std::process::id()))
         .into_os_string();
     let length = named.len();
     assert!(
@@ -196,6 +198,69 @@ fn working(scratch: &Path) -> PathBuf {
         .join("a-directory-to-be-working-in")
         .join("and-something-below-that-again")
         .join("workspace")
+}
+
+/// The directory an agent capture installs its agents' programs in, and the
+/// whole of the `PATH` it gives crucible.
+pub(crate) fn agents(case: &str) -> PathBuf {
+    working(&scratch(case)).join("agents")
+}
+
+/// The configuration file an agent capture is started with: the screen
+/// `native` asks for, then `configured`, then what any case answered by
+/// `vendor` has.
+fn agents_document(native: bool, vendor: Option<&Vendor>, configured: &str) -> String {
+    let screen = if native {
+        "  \"output\": {\"screen\": \"native\"},\n"
+    } else {
+        ""
+    };
+    let document = document(vendor, None);
+    let rest = document
+        .strip_prefix("{\n")
+        .expect("a whole-screen configuration object");
+    fixture_document(&format!("{{\n{screen}{configured}{rest}"))
+}
+
+/// Runs crucible once as an agent capture of `case` is started, with
+/// `configured` written first as there, but with no terminal at all: `input`
+/// is its whole standard input, and what it printed comes back with how it
+/// ended. The fake peer installed for the case is left as it was.
+pub(crate) fn piped_agents(
+    case: &str,
+    vendor: &Vendor,
+    configured: &str,
+    input: &str,
+) -> std::process::Output {
+    let scratch = scratch(case);
+    let home = scratch.join("home");
+    fs::write(
+        home.join("config.json"),
+        agents_document(false, Some(vendor), configured),
+    )
+    .expect("a configuration file");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_crucible"))
+        .args(["--model", "anthropic/claude-test-1"])
+        .current_dir(working(&scratch))
+        .env_clear()
+        .env("PATH", agents(case))
+        .env("HOME", &scratch)
+        .env("NO_COLOR", "1")
+        .env("CRUCIBLE_CODE_HOME", &home)
+        .env("CRUCIBLE_CODE_PROOF_REGISTRY", "fake")
+        .env("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("crucible starts");
+    child
+        .stdin
+        .take()
+        .expect("its input")
+        .write_all(input.as_bytes())
+        .expect("its input written");
+    child.wait_with_output().expect("crucible ends")
 }
 
 /// What a case starts crucible with beyond what every case is given.
@@ -311,6 +376,133 @@ impl Watched {
     /// address a request goes to was a constant.
     pub(crate) fn answering(case: &str, columns: u16, rows: u16, vendor: &Vendor) -> Self {
         Self::started(case, columns, rows, Some(vendor), true)
+    }
+
+    /// The same, with every installed agent this build knows how to run
+    /// offered as though this release shipped it, and `env` set besides.
+    pub(crate) fn offering_agents(
+        case: &str,
+        size: (u16, u16),
+        vendor: &Vendor,
+        env: &[(&str, &str)],
+    ) -> Self {
+        Self::offering_agents_configured(case, size, vendor, env, "")
+    }
+
+    /// The same, with `configured`, members of the configuration object
+    /// each ending in a comma, written into the user file first.
+    pub(crate) fn offering_agents_configured(
+        case: &str,
+        (columns, rows): (u16, u16),
+        vendor: &Vendor,
+        env: &[(&str, &str)],
+        configured: &str,
+    ) -> Self {
+        let mut offered = vec![("CRUCIBLE_CODE_PROOF_REGISTRY", "fake")];
+        offered.extend_from_slice(env);
+        let document = document(Some(vendor), None);
+        let rest = document
+            .strip_prefix("{\n")
+            .expect("a whole-screen configuration object");
+        Self::configured_with_terminal(
+            case,
+            &fixture_document(&format!("{{\n{configured}{rest}")),
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: false,
+                profile: Profile::default(),
+                cooked: false,
+            },
+            Some(&Launch {
+                env: &offered,
+                ..Launch::default()
+            }),
+        )
+    }
+
+    /// The same, as an installed agent's screens are captured: on the full
+    /// screen or, where `native`, the terminal's own, with every agent this
+    /// build can run offered, and the fake peer installed as `claude` playing
+    /// `script` (nothing at all where there is none) in the case's
+    /// `agents` directory, inside its workspace. That directory is the whole
+    /// of crucible's `PATH`, so no other agent's program can be reached
+    /// whatever this machine has installed. `configured`, members of the
+    /// configuration object each ending in a comma, is written first. The fake
+    /// peer is a binary of another package, which a run of this suite alone
+    /// does not build: the workspace's own test run does, and the error a
+    /// missing one gives names the command that builds it.
+    pub(crate) fn capturing_agents(
+        case: &str,
+        size: (u16, u16),
+        native: bool,
+        vendor: &Vendor,
+        installed: (Option<&Script>, &str),
+    ) -> Self {
+        Self::capturing_agents_asking(case, size, native, Some(vendor), installed)
+    }
+
+    /// The same, with no provider configured and no key in the environment
+    /// where there is no `vendor`, so none is being asked when the window
+    /// opens.
+    pub(crate) fn capturing_agents_asking(
+        case: &str,
+        size: (u16, u16),
+        native: bool,
+        vendor: Option<&Vendor>,
+        installed: (Option<&Script>, &str),
+    ) -> Self {
+        Self::capturing_agents_beside(case, (size, native), vendor, installed, &[])
+    }
+
+    /// [`Watched::capturing_agents`], with `env` set too, such as a key for
+    /// another provider the agent does not reach.
+    pub(crate) fn capturing_agents_keyed(
+        case: &str,
+        size: (u16, u16),
+        native: bool,
+        vendor: &Vendor,
+        (script, env): (Option<&Script>, &[(&str, &str)]),
+    ) -> Self {
+        Self::capturing_agents_beside(case, (size, native), Some(vendor), (script, ""), env)
+    }
+
+    fn capturing_agents_beside(
+        case: &str,
+        ((columns, rows), native): ((u16, u16), bool),
+        vendor: Option<&Vendor>,
+        (script, configured): (Option<&Script>, &str),
+        env: &[(&str, &str)],
+    ) -> Self {
+        let installed = agents(case);
+        fs::create_dir_all(&installed).expect("an agents directory");
+        if let Some(script) = script {
+            fake_peer::install(&installed, "claude", script).expect("the fake peer installs");
+        }
+        let path = installed.to_str().expect("a scratch path in UTF-8");
+        Self::configured_with_terminal(
+            case,
+            &agents_document(native, vendor, configured),
+            vendor.is_some(),
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native,
+                profile: Profile::default(),
+                cooked: false,
+            },
+            Some(&Launch {
+                env: &[
+                    &[("CRUCIBLE_CODE_PROOF_REGISTRY", "fake"), ("PATH", path)],
+                    env,
+                ]
+                .concat(),
+                ..Launch::default()
+            }),
+        )
     }
 
     /// The same, on a terminal that counts columns as `profile` says rather
@@ -812,10 +1004,23 @@ impl Watched {
     /// takes bytes off a stream a stopped process cannot add to, or waits
     /// [`QUIET`] for one, and [`CEILING`] bounds the wait either way.
     pub(crate) fn types_and_catches(&mut self, keys: &str, wanted: &str) {
+        self.types_and_catches_where(keys, &format!("{wanted:?}"), |picture| {
+            picture.contains(wanted)
+        });
+    }
+
+    /// The same, for a screen a piece of text cannot name, as
+    /// [`Self::catches_where`] reads one.
+    pub(crate) fn types_and_catches_where(
+        &mut self,
+        keys: &str,
+        named: &str,
+        drawn: impl Fn(&str) -> bool,
+    ) {
         self.terminal
             .write_all(keys.as_bytes())
             .expect("keys go to the terminal");
-        self.catches(&format!("{keys:?} was typed"), wanted);
+        self.catches_where(&format!("{keys:?} was typed"), named, drawn);
     }
 
     /// Watches a running turn cross more than one face, then proves a key is
@@ -1581,7 +1786,8 @@ fn pair(columns: u16, rows: u16, cooked: bool) -> (File, File) {
 /// `HOME` is inside the scratch directory as well: `CRUCIBLE_CODE_HOME` is what
 /// crucible reads, but a run that fell back for any reason must not fall back
 /// into the developer's own files. `PATH` is the one thing carried over, since
-/// it is how `setsid` is found.
+/// it is how `setsid` is found, and `setsid` is found here, in this
+/// process, so a case may give crucible a `PATH` of its own.
 ///
 /// `keyed` sets the variable a key is read from. It is not a key — the address
 /// beside it is a socket on this machine, and what answers there wants nothing
@@ -1599,7 +1805,7 @@ fn start(
     let second = inside.try_clone().expect("a second handle on the far side");
     let third = inside.try_clone().expect("a third handle on the far side");
 
-    Command::new("setsid")
+    Command::new(setsid())
         .arg("--ctty")
         .arg(env!("CARGO_BIN_EXE_crucible"))
         // Answering fixtures opt into their model exactly as a person does on
@@ -1614,6 +1820,10 @@ fn start(
         .envs(terminal.coloured().then_some(("COLORTERM", "truecolor")))
         .envs((!terminal.coloured()).then_some(("NO_COLOR", "1")))
         .env("CRUCIBLE_CODE_HOME", &home)
+        // No installed agent is offered unless the case asks for one, so a
+        // screen drawn before agents shipped is drawn the same whatever this
+        // release ships.
+        .env("CRUCIBLE_CODE_PROOF_REGISTRY", "empty")
         .envs(keyed.then_some(("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")))
         .envs(launch.map(|launch| launch.env).unwrap_or_default().iter().copied())
         .args(launch.map(|launch| launch.args).unwrap_or_default())
@@ -1622,6 +1832,17 @@ fn start(
         .stderr(Stdio::from(third))
         .spawn()
         .expect("setsid --ctty starts crucible; util-linux provides it")
+}
+
+/// Where `setsid` is on this process's `PATH`, so a case that hands crucible
+/// another `PATH` still starts it; the bare name where it is on none.
+fn setsid() -> PathBuf {
+    std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .map(|directory| directory.join("setsid"))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| PathBuf::from("setsid"))
 }
 
 /// Reads the terminal until it goes away, which is what killing crucible does.

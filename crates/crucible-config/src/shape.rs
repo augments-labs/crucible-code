@@ -23,6 +23,10 @@ mod tests;
 // launching a server costs, and they are read here so the schema and the walk
 // state one number rather than each holding a copy of it.
 use crate::settings::mcp;
+// The access variants, the drivers and each driver's profile key belong to
+// the reader that turns them into types; the bound on how many instances one
+// document may name is read here so the schema publishes it.
+use crate::settings::access;
 
 /// What a value at one position in the document may be.
 pub(crate) enum Shape {
@@ -283,6 +287,20 @@ const PROVIDER: Shape = Shape::Fields(&[
         about: "Address to send this provider's requests to instead of the vendor's, for a gateway or a proxy. Read only from the configuration file in your home directory",
         shape: Shape::Text,
         examples: &["https://gateway.example/v1/messages"],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    // Which credential pays for this provider's turns, or which installed
+    // agent runs them. Left off, the order crucible has always resolved in.
+    // It widens for the reason `apiKeyEnv` does, and further: an agent access
+    // is a program crucible starts, and no file a checkout brings may choose
+    // that for whoever opens it.
+    Field {
+        name: "access",
+        about: "How this provider is reached: a subscription signed in with /login, an API key, or an installed coding agent named under externalAgents. Left off, a subscription where one is signed in and no baseUrl is set, then the API key. Read only from the configuration file in your home directory",
+        shape: ACCESS,
+        examples: &[],
         usual: None,
         needed: false,
         widens: true,
@@ -1364,6 +1382,129 @@ const MCP_SERVER: Shape = Shape::Fields(&[
     },
 ]);
 
+/// What `providers.<name>.access` may say: one route, chosen by `type`.
+///
+/// One object with a discriminant rather than a flag per route, so two routes
+/// can never both be on. `instance` is read only beside `externalAgent`, and
+/// that rule is the document check's, since the shape has one declaration per
+/// block whichever variant is written.
+const ACCESS: Shape = Shape::Fields(&[
+    Field {
+        name: "type",
+        about: "subscription for the account /login signed in, apiKey for the API key, externalAgent for the installed agent named by instance. Nothing falls back from one to another",
+        shape: Shape::Choice(access::KINDS),
+        examples: &["subscription"],
+        usual: None,
+        // An access that does not say which is a route nobody chose.
+        needed: true,
+        widens: true,
+    },
+    Field {
+        name: "instance",
+        about: "The externalAgents entry this provider is reached through; written with externalAgent and only with it",
+        shape: Shape::Text,
+        // No example: an example is checked written beside the example type,
+        // and an instance beside a subscription is refused.
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+]);
+
+/// One installed coding agent crucible may reach a provider through.
+///
+/// Inert, like an MCP record: written here, nothing is started. A provider's
+/// `access` naming the entry is what selects it, and `enabled` is whether new
+/// work may go to it at all. No secret belongs anywhere in it: the agent keeps
+/// its own sign-in, in the profile directory named here or in its usual one.
+const EXTERNAL_AGENT: Shape = Shape::Fields(&[
+    Field {
+        name: "enabled",
+        about: "Whether new work may be sent through this agent. false keeps the entry and the providers that name it, and sends them nothing. Read only from the configuration file in your home directory",
+        shape: Shape::Flag,
+        examples: &[],
+        usual: Some("true"),
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "driver",
+        about: "Which agent this is, and so how crucible speaks to it. Read only from the configuration file in your home directory",
+        shape: Shape::Choice(access::DRIVERS),
+        examples: &["claude"],
+        usual: None,
+        // The driver is what the entry is; without it nothing could be said
+        // about how to start it.
+        needed: true,
+        widens: true,
+    },
+    Field {
+        name: "executable",
+        about: "The agent's program. An absolute path, or a bare program name for PATH to answer. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        // A bare name only: an absolute path is spelled differently on each
+        // platform, and an example has to be one every platform accepts.
+        examples: &["claude"],
+        // Nothing. A program crucible chose would be crucible choosing whose
+        // program runs, which is the one thing this key exists to state.
+        usual: None,
+        needed: true,
+        widens: true,
+    },
+    Field {
+        name: "authentication",
+        about: "How the agent signs in: account, its own account login, with no API key from crucible's environment. Read only from the configuration file in your home directory",
+        shape: Shape::Choice(access::AUTHENTICATIONS),
+        examples: &[],
+        usual: Some("account"),
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "configDir",
+        about: "For a claude agent: an absolute path to the configuration directory it signs in and keeps its state under. Left off, its usual one. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        // No example. Every absolute path is somebody's own machine.
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "profileDir",
+        about: "For an antigravity agent, and required for one: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "model",
+        about: "For a claude agent: the model it is started with, as its provider names it, chosen with /model from that provider's list. Left off, the provider's default model. Letters, digits and . _ - : @ / [ ] only, not starting with -. Read only from the configuration file in your home directory",
+        shape: Shape::Text,
+        // No example. It would have to name a real model, and a model id in a
+        // file served to every editor outlives the model.
+        examples: &[],
+        // Nothing. The provider's default is what is asked when nothing is
+        // written, and writing it here would pin a model that later retires.
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "effort",
+        about: "For a claude agent: how hard it thinks before answering, chosen with /effort. Left off, the default rung of the model it is started with. Read only from the configuration file in your home directory",
+        shape: Shape::Choice(EFFORT),
+        // A `Choice` lists its own answers.
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+]);
+
 /// What the `mcp` block may say.
 ///
 /// One key, rather than servers keyed directly under `mcp`. The block is where
@@ -1464,6 +1605,21 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         usual: None,
         needed: false,
         widens: false,
+    },
+    // Refused as a whole under the working directory, so a project file is
+    // told at the block rather than at whichever key it wrote first.
+    Field {
+        name: "externalAgents",
+        about: "Installed coding agents a provider's access may name, keyed by the name access.instance uses. Nothing is started by being written here. Read only from the configuration file in your home directory",
+        shape: Shape::Named {
+            declared: &[],
+            others: &EXTERNAL_AGENT,
+            most: Some(access::INSTANCES),
+        },
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
     },
     Field {
         name: "input",

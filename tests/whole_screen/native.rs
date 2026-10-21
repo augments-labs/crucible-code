@@ -120,21 +120,42 @@ fn dividers(read: &str, rule: &str) -> usize {
 }
 
 /// The session the run in `window` recorded, by the id `/resume` takes.
-fn recorded_id(window: &Watched) -> String {
-    fn found(directory: &std::path::Path) -> Option<String> {
-        for entry in std::fs::read_dir(directory).ok()?.flatten() {
+pub(crate) fn recorded_id(window: &Watched) -> String {
+    recorded_holding(window, "")
+}
+
+/// The one session the run in `window` recorded whose log holds `said`, by
+/// the id `/resume` takes.
+///
+/// A connect leaves the session it moved off beside the one it opened, and
+/// which log a directory lists first is the file system's choice, so a run
+/// with two is told apart by what was typed into it.
+pub(crate) fn recorded_holding(window: &Watched, said: &str) -> String {
+    fn found(directory: &std::path::Path, said: &str, ids: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if let Some(id) = found(&path) {
-                    return Some(id);
-                }
-            } else if path.extension().is_some_and(|kind| kind == "jsonl") {
-                return path.file_stem()?.to_str().map(str::to_owned);
+                found(&path, said, ids);
+            } else if path.extension().is_some_and(|kind| kind == "jsonl")
+                && std::fs::read_to_string(&path).is_ok_and(|log| log.contains(said))
+            {
+                ids.extend(
+                    path.file_stem()
+                        .and_then(|id| id.to_str())
+                        .map(str::to_owned),
+                );
             }
         }
-        None
     }
-    found(&window.home().join("sessions")).expect("a session log the first run left")
+    let mut ids = Vec::new();
+    found(&window.home().join("sessions"), said, &mut ids);
+    match ids.as_slice() {
+        [id] => id.clone(),
+        _ => panic!("one session log holding {said:?} from the first run, not {ids:?}"),
+    }
 }
 
 /// The window with the session id typed into `/resume` written over.

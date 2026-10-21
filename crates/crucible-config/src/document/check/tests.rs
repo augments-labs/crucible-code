@@ -393,6 +393,272 @@ fn a_provider_can_still_be_pointed_somewhere_from_the_user_file() {
 }
 
 #[test]
+fn neither_workspace_file_can_choose_how_a_provider_is_reached() {
+    // Which access a provider is reached by is whose credential pays for the
+    // turn, and an installed agent is a program crucible would start. A
+    // repository choosing either for whoever opens it is the objection
+    // `apiKeyEnv` and `baseUrl` already answer, one key up.
+    for read in [shared as fn(&str) -> Result<Document, ConfigError>, local] {
+        let err = read(r#"{"providers": {"openai": {"access": {"type": "apiKey"}}}}"#).unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+        assert!(said.contains("providers.openai.access"), "got {said}");
+        assert!(said.contains("home directory"), "got {said}");
+
+        let err = read(
+            r#"{"externalAgents": {"mine": {"driver": "claude", "executable": "/tmp/evil"}}}"#,
+        )
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+        assert!(said.contains("externalAgents"), "got {said}");
+        assert!(!said.contains("/tmp/evil"), "got {said}");
+    }
+}
+
+#[test]
+fn access_and_an_agent_instance_are_read_from_the_user_file() {
+    // Paths in this platform's spelling, quoted for JSON: a backslash is an
+    // escape there.
+    let path = |at: &str| serde_json::json!(crate::sample::rooted(at)).to_string();
+    mine(&format!(
+        r#"{{
+            "providers": {{
+                "openai": {{"access": {{"type": "subscription"}}}},
+                "google": {{"access": {{"type": "apiKey"}}}},
+                "anthropic": {{"access": {{"type": "externalAgent", "instance": "personal"}}}}
+            }},
+            "externalAgents": {{
+                "personal": {{
+                    "enabled": true,
+                    "driver": "claude",
+                    "executable": "claude",
+                    "authentication": "account",
+                    "configDir": {}
+                }},
+                "work": {{"driver": "antigravity", "executable": {}, "profileDir": {}}}
+            }}
+        }}"#,
+        path("home/me/.claude-personal"),
+        path("opt/agy/agy"),
+        path("home/me/agy"),
+    ))
+    .unwrap();
+}
+
+#[test]
+fn an_access_type_crucible_does_not_know_is_refused_naming_the_three_it_does() {
+    let err = mine(r#"{"providers": {"openai": {"access": {"type": "auto"}}}}"#).unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::NotAChoice { .. }), "got {err:?}");
+    for known in ["subscription", "apiKey", "externalAgent"] {
+        assert!(said.contains(known), "got {said}");
+    }
+}
+
+#[test]
+fn access_without_a_type_is_refused() {
+    let err = mine(r#"{"providers": {"openai": {"access": {}}}}"#).unwrap_err();
+    assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
+    assert!(err.to_string().contains("type"), "{err}");
+}
+
+#[test]
+fn an_agent_access_without_an_instance_is_refused() {
+    let err =
+        mine(r#"{"providers": {"anthropic": {"access": {"type": "externalAgent"}}}}"#).unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+    assert!(said.contains("providers.anthropic.access"), "got {said}");
+    assert!(said.contains("instance"), "got {said}");
+}
+
+#[test]
+fn an_instance_beside_a_native_access_is_refused() {
+    // One variant at a time: an instance written beside `subscription` is a
+    // second route the reader may believe is in force.
+    for kind in ["subscription", "apiKey"] {
+        let err = mine(&format!(
+            r#"{{"providers": {{"openai": {{"access": {{"type": "{kind}", "instance": "mine"}}}}}}}}"#
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+        assert!(said.contains("instance"), "got {said}");
+        assert!(said.contains(kind), "got {said}");
+    }
+}
+
+#[test]
+fn an_instance_holding_another_drivers_profile_key_is_refused() {
+    for (driver, foreign) in [("claude", "profileDir"), ("antigravity", "configDir")] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "{driver}", "executable": "agent", "{foreign}": "/home/me/p"}}}}}}"#
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+        assert!(
+            said.contains(&format!("externalAgents.mine.{foreign}")),
+            "got {said}"
+        );
+        assert!(said.contains(driver), "got {said}");
+    }
+}
+
+#[test]
+fn an_instance_needs_a_driver_and_an_executable() {
+    for (text, missing) in [
+        (
+            r#"{"externalAgents": {"mine": {"executable": "claude"}}}"#,
+            "driver",
+        ),
+        (
+            r#"{"externalAgents": {"mine": {"driver": "claude"}}}"#,
+            "executable",
+        ),
+    ] {
+        let err = mine(text).unwrap_err();
+        assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
+        assert!(err.to_string().contains(missing), "{err}");
+    }
+}
+
+/// An antigravity agent left to its usual home would share the sign-in the
+/// Antigravity IDE keeps there, so it is refused without a profile of its own.
+#[test]
+fn an_antigravity_instance_needs_a_profile_of_its_own() {
+    let err =
+        mine(r#"{"externalAgents": {"mine": {"driver": "antigravity", "executable": "agy"}}}"#)
+            .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
+    assert!(said.contains("profileDir"), "got {said}");
+    assert!(
+        mine(r#"{"externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}}"#)
+            .is_ok()
+    );
+}
+
+/// The model is handed to the agent's program as an argument of its own, so
+/// a value that could be read as an option, or that holds anything a model's
+/// name does not, is refused before anything is started.
+#[test]
+fn an_agent_model_is_a_name_and_never_an_option() {
+    for model in [
+        "-x",
+        "--dangerously-skip-permissions",
+        "opus sonnet",
+        "",
+        "op\nus",
+        "opüs",
+        &"o".repeat(129),
+    ] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "claude", "executable": "claude", "model": {}}}}}}}"#,
+            serde_json::Value::from(model)
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{model:?}: got {err:?}"
+        );
+        assert!(
+            said.contains("externalAgents.mine.model"),
+            "{model:?}: got {said}"
+        );
+    }
+    for model in [
+        "opus",
+        "claude-opus-5-5",
+        "claude-opus-5-5[1m]",
+        "us.anthropic/claude:v1@x",
+        &"o".repeat(128),
+    ] {
+        assert!(
+            mine(&format!(
+                r#"{{"externalAgents": {{"mine": {{"driver": "claude", "executable": "claude", "model": "{model}"}}}}}}"#
+            ))
+            .is_ok(),
+            "{model}"
+        );
+    }
+}
+
+/// A model or an effort written for an agent that chooses its own model
+/// would be one nothing reads, so it is refused rather than left to look as
+/// if it were in force.
+#[test]
+fn a_model_or_effort_for_an_agent_that_chooses_its_own_is_refused() {
+    for (key, value) in [("model", "opus"), ("effort", "high")] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy", "{key}": "{value}"}}}}}}"#
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+        assert!(
+            said.contains(&format!("externalAgents.mine.{key}")),
+            "got {said}"
+        );
+        assert!(said.contains("antigravity"), "got {said}");
+    }
+}
+
+#[test]
+fn a_driver_crucible_does_not_know_is_refused() {
+    let err = mine(r#"{"externalAgents": {"mine": {"driver": "codex", "executable": "codex"}}}"#)
+        .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::NotAChoice { .. }), "got {err:?}");
+    assert!(
+        said.contains("claude") && said.contains("antigravity"),
+        "got {said}"
+    );
+}
+
+#[test]
+fn an_agent_executable_is_a_bare_name_or_an_absolute_path() {
+    // A relative path is resolved against whichever directory crucible was
+    // started in, so the program it names is whatever a checkout put there.
+    let err =
+        mine(r#"{"externalAgents": {"mine": {"driver": "claude", "executable": "bin/claude"}}}"#)
+            .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Unrooted { .. }), "got {err:?}");
+    assert!(
+        said.contains("externalAgents.mine.executable"),
+        "got {said}"
+    );
+}
+
+#[test]
+fn an_agent_executable_that_names_no_program_is_refused() {
+    // Each would be looked for as a directory, or nothing, wherever crucible
+    // was started.
+    for found in ["", ".", "..", "claude/", "claude/."] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "claude", "executable": "{found}"}}}}}}"#
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Unrooted { .. }),
+            "{found:?}: got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn an_agent_profile_is_an_absolute_path() {
+    let err = mine(r#"{"externalAgents": {"mine": {"driver": "claude", "executable": "claude", "configDir": "profiles/me"}}}"#)
+        .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Relative { .. }), "got {err:?}");
+    assert!(said.contains("externalAgents.mine.configDir"), "got {said}");
+}
+
+#[test]
 fn a_widening_key_is_read_only_from_the_user_file() {
     // The setting still exists for a person to choose outside the checkout;
     // the refusal is about its origin, not about removing the key outright.

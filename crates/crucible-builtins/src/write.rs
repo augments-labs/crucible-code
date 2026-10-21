@@ -19,14 +19,13 @@ use crucible_tools::{
     Approved, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolContext, ToolError,
     ToolOutput,
 };
-use crucible_types::ToolArgs;
+use crucible_types::{Diff, ToolArgs};
 use crucible_workspace::{PathError, Workspace};
 
 use std::sync::LazyLock;
 
 use crate::args::Args;
 use crate::atomic;
-use crate::changed;
 use crate::ledger::{Fingerprint, Ledger, Shown};
 use crate::schema::{Field, Schema, Shape};
 use crate::summary;
@@ -296,7 +295,7 @@ fn put(
     // is not one that was empty, and a diff drawn from an empty string would
     // say every line here is new when the truth is that nobody can say.
     let output = match before {
-        Some(before) => answer.showing(changed::between(&before, content)),
+        Some(before) => answer.showing(Diff::between(&before, content)),
         None => answer,
     };
 

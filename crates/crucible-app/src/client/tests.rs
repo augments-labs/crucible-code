@@ -16,7 +16,7 @@ use crucible_client_api::{
 use crucible_tools::{Argument, Ask, Remember, Sensitivity, Summary, Target, Verdict};
 use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
-use super::deciding::{Deciding, Front, Shown, questions, warned};
+use super::deciding::{Confirmation, Deciding, Front, Shown, confirmed, questions, warned};
 use super::reading::progress;
 use crate::content_use::WARNED;
 
@@ -34,6 +34,10 @@ enum Reply {
     Accepting,
     /// Send anyway, naming some other action.
     AcceptingOther(u64),
+    /// The choice of this name, naming the action it was put.
+    Picking(&'static str),
+    /// The choice of this name, naming some other action.
+    PickingOther(u64, &'static str),
 }
 
 /// Answers from a script, and remembers what it was put and what was refused.
@@ -92,6 +96,14 @@ impl Front for Scripted {
                 Reply::Accepting => Decision::Accepted { id },
                 Reply::AcceptingOther(number) => Decision::Accepted {
                     id: PendingId::new(number),
+                },
+                Reply::Picking(name) => Decision::Picked {
+                    id,
+                    choice: Said::new(name).ok()?,
+                },
+                Reply::PickingOther(number, name) => Decision::Picked {
+                    id: PendingId::new(number),
+                    choice: Said::new(name).ok()?,
                 },
             })
         })
@@ -918,4 +930,145 @@ fn plan_limit_ends_the_turn_a_client_asked_for_under_the_same_code() {
         }
         other => panic!("a used-up plan was told as {other:?}"),
     }
+}
+
+/// A disconnect's question, as the accounts door asks it.
+fn disconnecting() -> Confirmation {
+    Confirmation {
+        asks: "Disconnect work from Crucible?".into(),
+        facts: vec![
+            "Agent: work.".into(),
+            "Account: not known to Crucible.".into(),
+        ],
+        choices: vec![
+            (
+                "Disconnect from Crucible".into(),
+                "Stop using it here.".into(),
+            ),
+            ("Cancel".into(), "Change nothing.".into()),
+        ],
+    }
+}
+
+/// What `front` picks of a disconnect's choices, by its place.
+fn picked(front: &mut Scripted, has: Capabilities) -> Option<usize> {
+    crucible_runtime::answered!(confirmed(has, front, &disconnecting()))
+}
+
+#[test]
+fn a_client_that_never_said_it_answers_account_questions_is_put_none_and_nothing_is_picked() {
+    let mut front = Scripted::saying([Reply::Picking("Disconnect from Crucible")]);
+    let without = Capabilities::none()
+        .with(Capability::Permissions)
+        .with(Capability::Questions)
+        .with(Capability::Progress);
+    assert_eq!(picked(&mut front, without), None);
+    assert!(
+        front.put.is_empty(),
+        "the choice it had ready was never heard"
+    );
+}
+
+#[test]
+fn a_choice_naming_an_account_question_never_put_is_discarded() {
+    let mut front = Scripted::saying([
+        Reply::PickingOther(9_000, "Disconnect from Crucible"),
+        Reply::PickingOther(9_001, "Disconnect from Crucible"),
+        Reply::PickingOther(9_002, "Disconnect from Crucible"),
+    ]);
+    assert_eq!(picked(&mut front, Capabilities::every()), None);
+    assert_eq!(
+        front.refused,
+        [
+            ErrorCode::StaleDecision,
+            ErrorCode::StaleDecision,
+            ErrorCode::StaleDecision,
+            ErrorCode::Abandoned
+        ]
+    );
+}
+
+#[test]
+fn an_account_question_is_settled_only_by_one_of_its_own_choices_or_a_going_back() {
+    let mut front = Scripted::saying([
+        Reply::Accepting,
+        Reply::Picking("Sign out"),
+        Reply::Picking("Cancel"),
+    ]);
+    assert_eq!(picked(&mut front, Capabilities::every()), Some(1));
+    assert_eq!(
+        front.refused,
+        [ErrorCode::WrongDecision, ErrorCode::InvalidArgument]
+    );
+    let Some(Pending::Account { facts, choices, .. }) = front.put.first() else {
+        panic!("an account question was put: {:?}", front.put);
+    };
+    assert_eq!(facts.len(), 2);
+    let marked: Vec<bool> = choices.iter().map(|choice| choice.recommended).collect();
+    assert_eq!(marked, [true, false], "only disconnecting is recommended");
+
+    let mut back = Scripted::saying([Reply::Declining]);
+    assert_eq!(picked(&mut back, Capabilities::every()), None);
+    assert!(back.refused.is_empty());
+
+    let mut going = Scripted::saying([Reply::Picking("Disconnect from Crucible")]);
+    assert_eq!(picked(&mut going, Capabilities::every()), Some(0));
+}
+
+#[test]
+fn no_other_kind_of_question_is_settled_by_a_choice() {
+    let mut front = Scripted::saying([Reply::Picking("yes"), Reply::Picking("yes")]);
+    assert_eq!(
+        asked(&mut front, Capabilities::every()),
+        (Verdict::Deny, Remember::Never)
+    );
+    assert_eq!(
+        front.refused,
+        [ErrorCode::WrongDecision, ErrorCode::WrongDecision]
+    );
+    let mut warning = Scripted::saying([Reply::Picking("yes")]);
+    assert!(!heeded(&mut warning, Capabilities::every()));
+    assert_eq!(warning.refused, [ErrorCode::WrongDecision]);
+}
+
+/// The reason a sign-in could not be read is one short line, however much the
+/// agent said: a panel's facts are folded whole, and a line the length of the
+/// agent's standard error would leave no room for the choices under it.
+#[test]
+fn a_sign_in_reason_is_the_agents_first_line_cut_short() {
+    use crucible_execution::Failure;
+
+    let reason = |said: &str| super::accounts::reason(&Failure::new(said));
+    let long = "x".repeat(8 * 1024);
+
+    assert_eq!(reason("\n  first  \nsecond").as_deref(), Some("first"));
+    assert_eq!(reason(" \n\t\n"), None);
+    let cut = reason(&long).expect("a reason");
+    assert_eq!(cut.chars().count(), super::accounts::REASON_CHARS);
+    assert!(cut.ends_with('…'), "{cut}");
+}
+
+#[test]
+fn an_agent_action_is_put_naming_who_runs_it_in_the_sandbox_s_own_word() {
+    // The word a front shows is the one `crucible sandbox inspect` prints for
+    // the same level, so the panel and the report never disagree about it.
+    use crucible_client_api::inspection::Claim;
+    use crucible_execution::{Capabilities, Confined, Confinement, Scope};
+
+    let words = [
+        (Confinement::HardEnforced, Claim::Enforced),
+        (Confinement::Observed, Claim::Observed),
+        (Confinement::Unsupported, Claim::Unsupported),
+    ];
+    for (level, word) in words {
+        let claims = Capabilities::unknown().confined(Confined::new(level, Scope::Instance));
+        let acting = super::Acting::new("work", &claims);
+
+        assert_eq!(acting.instance, "work");
+        assert_eq!(acting.confinement, Some(word), "{level:?}");
+    }
+
+    // Nothing said is nothing claimed, never the weakest word.
+    let acting = super::Acting::new("work", &Capabilities::unknown());
+    assert_eq!(acting.confinement, None);
 }

@@ -103,6 +103,7 @@ Keyed by provider name: `anthropic`, `deepseek`, `google`, `meta`, `mimo`,
 | `fast` | `true` asks the `model` beside it for its vendor's fast form, at its price. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
+| `access` | Which one way that provider is reached; see [`access`](#access). |
 | `contextWindow` | The session's context-window size in tokens, keyed by model name. |
 | `defaultContextWindow` | The same, for any model of this provider not named above. |
 
@@ -125,6 +126,33 @@ with `"apiKeyEnv": "WORK_ANTHROPIC_KEY"`, `ANTHROPIC_API_KEY` is not read at
 all. Choosing an arbitrary inherited secret is authority, so `apiKeyEnv` is
 read only from the configuration file in your home directory.
 
+#### `access`
+
+Left out, a provider is reached the way it always has been: a subscription
+`/login` signed in, unless a `baseUrl` is set, then the key in its variable,
+then a key `/login` stored. Written, `access` names one way, and nothing falls
+back from it:
+
+```json
+{ "providers": { "openai": { "access": { "type": "subscription" } } } }
+```
+
+| `type` | Reached by |
+| --- | --- |
+| `subscription` | The account `/login` signed in. A key exported in the shell is not read. |
+| `apiKey` | The key in the provider's variable, then the one `/login` stored. A signed-in account is not used. |
+| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents), whose driver must reach this provider. |
+
+What the chosen way is missing stops the start with a sentence naming the
+setting, and never suggests the other way: `subscription` with no account says
+to sign in with `/login`, `subscription` beside a `baseUrl` says to remove
+`baseUrl`, since an account's token is sent only to its vendor, and `apiKey`
+with nothing found names the variable and `/login`. `instance` is written with
+`externalAgent` and with no other type, and `externalAgent` refuses a `baseUrl`
+or `apiKeyEnv` beside it by name, since the agent signs in and sends for itself.
+`access` chooses which credential is read, so it is read only from the
+configuration file in your home directory.
+
 `baseUrl` is for a gateway or a proxy speaking the same protocol. It must be
 `https`, or `http` on `localhost`, `127.0.0.1` or `[::1]`. The key travels in a
 header on every request, so the address decides who receives it, and plain
@@ -136,10 +164,11 @@ not set.
 { "providers": { "openai": { "model": "gpt-5.6-terra" } } }
 ```
 
-There is no model built in, so this is where a bare `crucible` gets one. It is
+Startup builds in no model, so this is where a bare `crucible` gets one. It is
 read for the provider whose key this machine holds, and `/model <name>` writes
-it here for you. With nothing set here and nothing on the command line, crucible
-starts and asks rather than picking a model on your behalf. See
+it here for you, as `/login` writes the provider's default where nothing is set
+here. With nothing set here and nothing on the command line, crucible starts
+and asks rather than picking a model on your behalf. See
 [Providers and models](../providers/providers.md).
 
 `contextWindow` is keyed by model because a session changes which model it asks
@@ -150,8 +179,13 @@ describe the model you had just left:
 { "providers": { "openai": { "contextWindow": { "gpt-5.6-sol": 272000 } } } }
 ```
 
+On an [installed agent's](../providers/agents.md) route the agent builds its
+own requests and keeps its own context, so `contextWindow` does not apply
+there: the window read is the one crucible records for the model the agent is
+started on.
+
 Without either setting, a model crucible knows starts at its native context
-window: 1,000,000 tokens for Claude Fable, Opus and Sonnet, DeepSeek,
+window: 1,000,000 tokens for Claude Fable, Opus, Sonnet and Haiku 5.5, DeepSeek,
 MiniMax-M3, Qwen and Z.ai; 1,048,576 for Gemini, Muse Spark, MiMo and Kimi K3;
 500,000 for Grok; 262,144 for Kimi K3-256k and the Kimi coding models; 204,800
 for MiniMax-M2.7; and 200,000 for Claude Haiku 4.5. OpenAI's models start at
@@ -170,6 +204,37 @@ Neither is sent anywhere. The configured/default value is the window; the existi
 compaction reserve is applied separately, so automatic compaction starts when
 `carried + reserve >= window`. Setting a window too large may let a request reach
 the provider's real limit and be refused; setting one too small compacts earlier.
+
+### `externalAgents`
+
+Installed agents a provider may be reached through, keyed by a name of your
+choosing that `providers.<name>.access.instance` uses. At most 32.
+
+```json
+{
+  "providers": { "anthropic": { "access": { "type": "externalAgent", "instance": "work" } } },
+  "externalAgents": {
+    "work": { "driver": "claude", "executable": "/usr/local/bin/claude", "configDir": "/home/me/.claude-work" }
+  }
+}
+```
+
+| Key | Means |
+| --- | --- |
+| `driver` | Which agent it is: `claude`, which reaches `anthropic`, or `antigravity`, which reaches `google`. Required. |
+| `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
+| `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
+| `authentication` | How it signs in: `account`, its own login, the only value. |
+| `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
+| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. |
+| `model` | For `claude`: the model it is started on, such as `claude-opus-5-5`. Defaults to Anthropic's default model. |
+| `effort` | For `claude`: the rung it is started at, `low`, `medium`, `high`, `xhigh` or `max`. Defaults to the model's default rung. |
+
+A profile key belongs to its driver, and the other driver's is refused by name.
+An entry names a program crucible would start, so the block is read only from
+the configuration file in your home directory, and `/settings` shows none of
+it. A provider whose access names an entry has its conversations run by that
+agent; see [installed coding agents](../providers/agents.md).
 
 ### `systemPrompt`
 
@@ -432,7 +497,10 @@ default; reaching it stops the process scope. `concurrentCommands` defaults to
 4 and bounds active command slots shared by Bash and sandboxed MCP processes.
 The respective maximum values are 86400, 67108864 and 16; zero is invalid.
 Projects and individual command requests may lower limits but cannot raise an
-inherited ceiling. These guards apply even with OS confinement disabled.
+inherited ceiling. These guards apply even with OS confinement disabled. An
+installed coding agent runs for the whole conversation, so it is held to
+neither `commandSeconds`, `outputBytes` nor a command's processor-time ceiling;
+its sign-in and status checks still are.
 
 Use `/sandbox` during a conversation to inspect the effective boundary or
 switch enablement. The Dependencies tab reports the platform prerequisites;
@@ -808,7 +876,7 @@ is still not a way to ship somebody's key.
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
 `systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
-`providers.<name>.fast`, `provider`, `promptCaching.namespace`,
+`providers.<name>.access`, `providers.<name>.fast`, `provider`, `externalAgents`, `promptCaching.namespace`,
 `contentUse.accepted`, and `sandbox.enabled` set to `false`. Everything after
 the three `permissions` keys is not a permission, and is here for the same
 reason: these replace the instructions that say to ask, choose which credential

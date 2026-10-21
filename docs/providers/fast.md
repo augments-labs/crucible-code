@@ -50,6 +50,13 @@ it served fast. A vendor that serves a fast request at standard speed says so
 in its answer, and the label then leaves `fast` off until one is served fast
 again; nothing is added to the transcript.
 
+Once a request that carried the fast form has gone out and not been refused,
+`/usage` reads `not priced` from then on, even where the vendor served the
+answer at standard speed: the prices crucible keeps are the vendors' standard
+ones, and a fast answer is billed above them. A message sent again at standard
+after a refusal of fast is priced as any other, and the count starts again for
+a session picked up with `/resume`.
+
 ## Where it is kept
 
 `/fast` writes the model in force and `"fast": true` together under the

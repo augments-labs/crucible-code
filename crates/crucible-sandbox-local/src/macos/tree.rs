@@ -7,7 +7,7 @@ use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
 
 use crucible_sandbox::{
-    SandboxError, SandboxFilesystemAccess, SandboxNetworkPolicy, SandboxPolicy,
+    PROTECTED_METADATA, SandboxError, SandboxFilesystemAccess, SandboxNetworkPolicy, SandboxPolicy,
 };
 
 const MAX_ENTRIES: usize = 262_144;
@@ -331,10 +331,9 @@ fn read_metadata_file(path: &Path, problem: &'static str) -> Result<String, Sand
 }
 
 fn protected_name(name: &OsStr) -> bool {
-    matches!(
-        name.to_str(),
-        Some(".git" | ".agents" | ".codex" | ".crucible")
-    )
+    PROTECTED_METADATA
+        .iter()
+        .any(|protected| name == OsStr::new(protected))
 }
 
 fn refused(problem: &'static str) -> SandboxError {

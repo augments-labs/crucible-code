@@ -8,6 +8,11 @@
 //! first was read. It is sent again exactly once, and the speed asked for is
 //! standard from then on, so a refusal is never answered by another fast
 //! request. Any other failure is the one it is, and nothing is sent again.
+//!
+//! An answer to a request that carries the fast form is not priced. The
+//! prices a provider keeps are its standard ones and the vendor bills fast
+//! above them, so the session's cost says it is not priced rather than give
+//! a figure below what was billed.
 
 use crucible_models::{DeltaStream, Provider, ProviderError, Request, Served, Speed};
 
@@ -46,6 +51,20 @@ impl Runner {
     #[must_use]
     pub const fn served(&self) -> Served {
         self.pace.served
+    }
+
+    /// Whether the request out carries the model's fast form, as
+    /// [`Provider::stream_at`] decides it: the model's [`Provider::fast`]
+    /// form [`FastForm::carried`] at the speed asked.
+    ///
+    /// [`FastForm::carried`]: crucible_models::FastForm::carried
+    ///
+    /// Read once [`sent`] has returned, it is the request that went out: a
+    /// refusal has turned the speed to standard by then.
+    pub(super) fn carries_fast(&self) -> bool {
+        self.provider
+            .fast(&self.agent.model().name)
+            .carried(self.pace.asked)
     }
 }
 

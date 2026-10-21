@@ -182,6 +182,7 @@ fn a_panel_fits_the_window_it_stands_in() {
         source: None,
         title: PROSE,
         said: Some(PROSE),
+        told: &[],
         shown: &OFFERED,
         chosen: 1,
         footer: "enter to take it · esc to leave",
@@ -199,6 +200,16 @@ fn a_panel_fits_the_window_it_stands_in() {
     });
     down("a panel", |columns, room, glyphs| {
         panel.within(columns, room, glyphs)
+    });
+    let grounded = Panel {
+        told: &[PROSE, LONG],
+        ..cited
+    };
+    across("a panel resting on facts", |columns, glyphs| {
+        grounded.rows(columns, glyphs)
+    });
+    down("a panel resting on facts", |columns, room, glyphs| {
+        grounded.within(columns, room, glyphs)
     });
 }
 
@@ -234,6 +245,7 @@ fn a_panel_under_headings_fits_the_window_it_stands_in() {
             source: None,
             title: PROSE,
             said: Some(PROSE),
+            told: &[],
             shown: &OFFERED,
             chosen,
             footer: "enter to take it · esc to leave",
@@ -485,6 +497,7 @@ fn a_permission_question_fits_the_window_it_is_answered_in() {
         subject: LONG,
         payload: &PAYLOAD,
         description: PROSE,
+        acting: LONG,
         attribution: "the model's own words about it",
         explanation: &EXPLANATION,
         from: 0,

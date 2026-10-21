@@ -394,6 +394,63 @@ fn a_session_says_how_many_messages_the_index_counted() {
 }
 
 #[test]
+fn a_session_an_agent_ran_says_which_and_still_says_what_was_asked() {
+    // The route is the line after the header, where the first prompt of a
+    // session a provider's model ran would be: reading it must not cost
+    // either session its first prompt.
+    let sample = Sample::new("recent-routed");
+    let route = crate::RouteBinding::new("stream", "work", None).expect("a route");
+    let routed = crate::Session::start_routed(&sample.logs(), &sample.workspace(), None, &route)
+        .expect("a routed session");
+    routed.append(&crucible_types::Message::said("asked of an agent"));
+    drop(routed);
+    let native =
+        crate::Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    native.append(&crucible_types::Message::said("asked of a model"));
+    drop(native);
+
+    let found = here(&sample, &sample.workspace(), 8);
+    let listed: Vec<(&str, Option<(&str, &str)>)> = found
+        .iter()
+        .map(|session| {
+            (
+                session.asked(),
+                session
+                    .route()
+                    .map(|route| (route.driver(), route.instance())),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        listed,
+        [
+            ("asked of a model", None),
+            ("asked of an agent", Some(("stream", "work"))),
+        ]
+    );
+}
+
+#[test]
+fn a_session_whose_route_does_not_read_whole_is_left_out() {
+    // A resume refuses it, so it is not offered as a session a provider's
+    // model ran, and its next line is not taken for the first prompt.
+    let sample = Sample::new("recent-route-torn");
+    let id = nth(1);
+    let opens = String::from_utf8_lossy(wire::ROUTE_OPENS).into_owned();
+    sample.plant(
+        &id,
+        &[
+            sample.header(wire::FORMAT, &id),
+            format!("{opens}not a route"),
+            serde_json::json!({ "user": PROMPT }).to_string(),
+        ],
+    );
+
+    assert!(offered(&sample, 8).is_empty());
+}
+
+#[test]
 fn a_session_that_opened_with_a_file_still_says_what_was_asked() {
     // The row is drawn from the first prompt, and format 6 writes that prompt
     // with a key beside it. A reader that stopped at the shape it knew would

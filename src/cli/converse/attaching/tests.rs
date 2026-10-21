@@ -1,6 +1,7 @@
 use std::fs;
 use std::sync::{Arc, mpsc};
 
+use crucible_app::Settled;
 use crucible_models::{
     Delta, DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 };
@@ -169,7 +170,8 @@ fn an_external_picture_is_imported_for_the_session() {
     let Named::Attached(one) = decide(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: Some(&imported),
@@ -206,7 +208,8 @@ fn a_picture_named_at_the_prompt_is_attached() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -245,7 +248,8 @@ fn an_mp4_is_attached_only_when_provider_and_model_both_accept_video() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &videos(),
+            spells: videos().spells,
+            vendor: "moonshot",
             model: "k3",
             reads: Some(kimi()),
             imported: None,
@@ -273,7 +277,8 @@ fn an_mp4_is_refused_when_the_provider_has_no_video_shape() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("moonshot"),
+            spells: spelling("moonshot").spells,
+            vendor: "moonshot",
             model: "k3",
             reads: Some(kimi()),
             imported: None,
@@ -304,7 +309,8 @@ fn an_mp4_name_with_non_mp4_bytes_is_refused() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &videos(),
+            spells: videos().spells,
+            vendor: "moonshot",
             model: "k3",
             reads: Some(kimi()),
             imported: None,
@@ -335,7 +341,8 @@ fn a_prompt_naming_no_file_attaches_nothing_and_says_nothing() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -361,7 +368,8 @@ fn a_source_file_named_at_the_prompt_is_still_only_text() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -395,7 +403,8 @@ fn the_provider_half_of_the_intersection_names_the_protocol() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -433,7 +442,8 @@ fn a_pdf_on_moonshot_is_refused_by_the_protocol_and_never_sent() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("moonshot"),
+            spells: spelling("moonshot").spells,
+            vendor: "moonshot",
             model: "k3",
             reads: Some(kimi()),
             imported: None,
@@ -476,7 +486,8 @@ fn the_model_half_of_the_intersection_names_the_model() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling,
+            spells: spelling.spells,
+            vendor: spelling.named,
             model: "k3",
             reads: Some(kimi()),
             imported: None,
@@ -508,7 +519,8 @@ fn a_model_outside_the_table_neither_offers_the_file_nor_refuses_it() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-9",
             reads: None,
             imported: None,
@@ -543,7 +555,8 @@ fn a_file_over_the_ceiling_is_refused_where_the_user_can_still_hear_it() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -576,7 +589,8 @@ fn a_png_that_is_not_a_png_is_refused_before_any_request() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -654,7 +668,8 @@ fn what_the_prompt_attached_reaches_the_transcript() {
     let Attaching { attachments, .. } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -694,7 +709,8 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
     let Attaching { attachments, .. } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -756,7 +772,7 @@ fn a_file_sent_with_a_prompt_is_marked_under_it_whichever_way_it_reached_the_scr
     draw::queued(&mut live, prompt, style).expect("a recording cannot fail");
     let attachments = beside(
         &mut live,
-        Asking::of(&runner, None),
+        Asking::of(Settled::from(&runner), None),
         &workspace,
         Sent {
             prompt,
@@ -780,7 +796,7 @@ fn a_file_sent_with_a_prompt_is_marked_under_it_whichever_way_it_reached_the_scr
     replayed(
         &mut replay,
         &Replay {
-            runner: &back,
+            settled: Settled::from(&back),
             pruned: &Pruned::default(),
             style,
         },
@@ -837,7 +853,8 @@ fn a_marker_names_the_image_pasted_before_it() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: Some(&imported),
@@ -869,7 +886,8 @@ fn a_marker_with_nothing_pasted_behind_it_is_a_word() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: None,
@@ -903,7 +921,8 @@ fn a_marker_said_twice_attaches_the_image_once() {
     } = attaching(
         &workspace,
         Asking {
-            provider: &spelling("anthropic"),
+            spells: spelling("anthropic").spells,
+            vendor: "anthropic",
             model: "claude-opus-5",
             reads: Some(opus()),
             imported: Some(&imported),

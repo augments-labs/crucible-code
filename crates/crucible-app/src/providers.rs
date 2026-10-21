@@ -24,6 +24,7 @@ use crucible_registry::{
 };
 
 use crate::AppError;
+use crate::access::{self, AccessError, KeySource, Route};
 use crate::content_use::{Consent, Reading};
 use crate::models;
 use crate::startup::{self, served};
@@ -36,22 +37,27 @@ use crate::subscription::Subscriptions;
 /// [`startup::provider`] has one arm per entry, and adding a provider is an
 /// edit to both in the same commit.
 ///
-/// The models are what `/model` offers and not what anything asks for. No
-/// default is written here and none may be: a model chosen at compile time is
-/// chosen for somebody who never asked for it — it outlives the model, it is
-/// asked for with whichever key happens to be set, and the first anyone hears
-/// of the mismatch is a refusal from a vendor they did not mean to write to.
-/// What to ask for comes from the person running it, through `--model` or
-/// through `providers.<name>.model`, and where neither says, crucible asks
-/// rather than guesses. An offer is how it asks; it is still they who answer.
+/// The models are what `/model` offers, and each provider names one of them
+/// as its default: the one a login asks for where nobody was being asked and
+/// the configuration names no model, so that a sign-in ends on a session that
+/// can answer rather than one whose first turn is refused for want of a
+/// model. The default is the vendor's latest middle tier, and its rung is
+/// [`default_rung`]'s, so only the model is written here. What the person
+/// running it chose, through `--model`, `providers.<name>.model` or `/model`,
+/// always comes first, and a default is written down where it was taken so
+/// that the next run opens on what this one asked.
 ///
-/// So this list going stale costs a shortcut and nothing else. A model retired
-/// since the build is one nobody picked without the vendor refusing it by name,
-/// and a model released since is typed, which is the path that was there before
-/// any of these were written down.
+/// So this list going stale costs a shortcut and an old default. A model
+/// retired since the build is one the vendor refuses by name, and the refusal
+/// says to choose another with `/model`; a model released since is typed, which
+/// is the path that was there before any of these were written down. The lists
+/// and the defaults are read again from the vendors' documentation as they
+/// release models: a scheduled check reports what the models.dev database
+/// lists against them, and each entry says when its vendor was last read.
 const PROVIDERS: [Served; 11] = [
     Served {
         name: "anthropic",
+        default: "claude-opus-5-5",
         shown: "Anthropic",
         key: "ANTHROPIC_API_KEY",
         build: startup::anthropic,
@@ -60,6 +66,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Anthropic::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::shown("claude-fable-5-1", "Claude Fable 5.1", EVERY),
             Model::new("claude-fable-5", EVERY),
@@ -67,15 +74,16 @@ const PROVIDERS: [Served; 11] = [
             Model::new("claude-opus-5", EVERY),
             Model::new("claude-sonnet-5-5", EVERY),
             Model::new("claude-sonnet-5", EVERY),
-            // The one model of this vendor's current three generations that
-            // takes no rung: it reasons against a token budget rather than
-            // against a word, and the field the other three read is one it has
-            // never been served.
+            Model::new("claude-haiku-5-5", EVERY),
+            // The one model here that takes no rung: it reasons against a
+            // token budget rather than against a word, and the field every
+            // model above it reads is one it has never been served.
             Model::new("claude-haiku-4-5", NONE),
         ],
     },
     Served {
         name: "deepseek",
+        default: "deepseek-v4-pro",
         shown: "DeepSeek",
         key: "DEEPSEEK_API_KEY",
         build: startup::deepseek,
@@ -84,6 +92,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: DeepSeek::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("deepseek-flash", LOW_HIGH_MAX),
             Model::new("deepseek-v4-pro", LOW_HIGH_MAX),
@@ -91,12 +100,14 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "google",
+        default: "gemini-3.8-flash",
         shown: "Google",
         key: "GEMINI_API_KEY",
         build: startup::google,
         reach: startup::google_web,
         fast: Google::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         window: 200_000,
         most: None,
         models: &[
@@ -108,6 +119,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "meta",
+        default: "muse-spark-1.3",
         shown: "Meta",
         key: "META_API_KEY",
         build: startup::meta,
@@ -116,6 +128,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Meta::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         // `max` on 1.3 is named by some of the vendor's pages and left out by
         // its parameter lists, so it is not offered until a source settles it.
         models: &[
@@ -127,6 +140,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "mimo",
+        default: "mimo-v2.6-pro",
         shown: "MiMo",
         key: "MIMO_API_KEY",
         build: startup::mimo,
@@ -135,6 +149,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Mimo::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-01",
         models: &[
             Model::new("mimo-v2.6-pro", NONE),
             Model::new("mimo-v2.6-flash", NONE),
@@ -142,6 +157,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "minimax",
+        default: "MiniMax-M3",
         shown: "MiniMax",
         key: "MINIMAX_API_KEY",
         build: startup::minimax,
@@ -150,13 +166,16 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: MiniMax::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("MiniMax-M3", NONE),
+            // Closed to new accounts by its vendor and retired on 2026-11-18.
             Model::new("MiniMax-M2.7", NONE),
         ],
     },
     Served {
         name: "moonshot",
+        default: "k3",
         shown: "MoonshotAI",
         key: "MOONSHOT_API_KEY",
         build: startup::moonshot,
@@ -165,6 +184,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Moonshot::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         // Spelled the way the coding console spells them, that being the one
         // crucible asks. The open platform serves the same models under longer
         // names and does not serve the second of these at all, so a key from
@@ -183,6 +203,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "openai",
+        default: "gpt-6.1-sol",
         shown: "OpenAI",
         key: "OPENAI_API_KEY",
         build: startup::openai,
@@ -195,6 +216,7 @@ const PROVIDERS: [Served; 11] = [
         most: Some(872_000),
         fast: OpenAi::fast_at_vendor,
         fast_signed_in: Some(OpenAi::fast_signed_in),
+        reviewed: "2026-10-16",
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
@@ -211,6 +233,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "qwen",
+        default: "qwen3.7-plus",
         shown: "Qwen",
         key: "DASHSCOPE_API_KEY",
         build: startup::qwen,
@@ -219,6 +242,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Qwen::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("qwen3.8-max", QWEN),
             Model::new("qwen3.8-flash", QWEN),
@@ -228,6 +252,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "xai",
+        default: "grok-4.7",
         shown: "xAI",
         key: "XAI_API_KEY",
         build: startup::xai,
@@ -236,6 +261,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Xai::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("grok-4.7", UP_TO_XHIGH),
             Model::new("grok-4.6", UP_TO_XHIGH),
@@ -243,6 +269,7 @@ const PROVIDERS: [Served; 11] = [
     },
     Served {
         name: "zai",
+        default: "glm-5.3",
         shown: "Z.ai",
         key: "ZAI_API_KEY",
         build: startup::zai,
@@ -251,6 +278,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Zai::fast_at_vendor,
         fast_signed_in: None,
+        reviewed: "2026-10-16",
         models: &[
             Model::new("glm-5.3", LOW_HIGH_MAX),
             Model::new("glm-5.3-flash", LOW_HIGH_MAX),
@@ -894,17 +922,21 @@ pub struct Served {
     /// somebody eventually types the wrong way round, so only [`Served::name`]
     /// is ever matched against.
     pub shown: &'static str,
-    /// The variable its key is read from, unless `apiKeyEnv` names another.
+    /// The variable its key is read from, unless the configuration names
+    /// another; [`access::variable`] says which.
     /// The *name* is what is written here; the value is read once, in
     /// [`startup::provider`], and goes no further than the header it signs.
     pub key: &'static str,
+    /// The model of [`Served::models`] a login asks for where nobody was being
+    /// asked and nothing configured names one: the vendor's latest middle
+    /// tier.
+    pub default: &'static str,
     /// The models `/model` offers for it, newest first, at most five.
     ///
-    /// An offer and not a rung: nothing here is ever asked for unless somebody
-    /// chose it, and a name that is not on the list is typed the way it always
-    /// was. Which is what keeps this from being the model built into the build —
-    /// the list is a shortcut past the vendor's documentation, and the vendor
-    /// remains the authority on what it serves.
+    /// An offer and not a rung: nothing here but [`Served::default`] is asked
+    /// for unless somebody chose it, and a name that is not on the list is
+    /// typed the way it always was. The list is a shortcut past the vendor's
+    /// documentation, and the vendor remains the authority on what it serves.
     ///
     /// That last sentence binds the rungs beside each name too. They are read
     /// off the same documentation and go stale the same way, and what a stale
@@ -912,6 +944,10 @@ pub struct Served {
     /// narrower supported effort set is checked for typed choices as well;
     /// other providers keep their existing vendor-validated typed path.
     pub models: &'static [Model],
+    /// The day the vendor's own pages were last read for [`Served::models`],
+    /// their rungs and [`Served::default`], as `YYYY-MM-DD`: how stale they may
+    /// be, for whoever refreshes them next.
+    pub reviewed: &'static str,
     /// Builds the provider from a resolved credential and address.
     ///
     /// The one place a name becomes a type. A fresh transport every call, and a
@@ -1236,6 +1272,19 @@ pub fn names(providers: &Providers) -> String {
         .join(", ")
 }
 
+/// The rung a default is asked at, of the rungs a model serves: medium, else
+/// the first above it, else the strongest below it, and none where it serves
+/// none.
+#[must_use]
+pub fn default_rung(rungs: &[Effort]) -> Option<Effort> {
+    rungs
+        .iter()
+        .copied()
+        .filter(|rung| *rung >= Effort::Medium)
+        .min()
+        .or_else(|| rungs.iter().copied().max())
+}
+
 /// The rungs `model` serves, as far as this build knows.
 ///
 /// All five for a name the table does not hold, which is the answer for every
@@ -1276,6 +1325,37 @@ pub fn model_shown(provider: &str, model: &str) -> Option<&'static str> {
         .map(|one| one.shown)
 }
 
+/// The model an installed agent reaching `provider` is started on, and the
+/// rung it is started at: `model` where its entry names one, else the
+/// provider's default; `effort` where that model serves it, else the model's
+/// default rung. Read off this build's table, as [`model_shown`] is, since an
+/// agent's launch is shaped before any provider of this program is set up.
+///
+/// Nothing where this build offers no `provider`.
+pub fn agent_started(
+    provider: &str,
+    model: Option<&str>,
+    effort: Option<Effort>,
+) -> Option<(Box<str>, Option<Effort>)> {
+    let served = PROVIDERS.iter().find(|served| served.name == provider)?;
+    let model = model.unwrap_or(served.default);
+    let rungs = served
+        .models
+        .iter()
+        .find(|one| one.name == model)
+        .map_or(EVERY, |one| one.rungs);
+    let effort = effort
+        .filter(|effort| rungs.contains(effort))
+        .or_else(|| default_rung(rungs));
+    Some((model.into(), effort))
+}
+
+/// The window of `model` as `provider` serves it, where this build records
+/// one: the most an installed agent started on it holds.
+pub(crate) fn agent_window(provider: &str, model: &str) -> Option<u32> {
+    facts(provider, model).map(|facts| facts.window)
+}
+
 /// How [`re_serving`] reads one environment variable by name, or learns it is
 /// not set.
 pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;
@@ -1291,29 +1371,38 @@ pub type SharedLookup = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + S
 /// Everything is owned rather than borrowed, because the closure is kept for
 /// the length of the run and a borrow would put its lifetime into every
 /// signature the closure is passed through. The settings are the files this
-/// run already read: nothing in them grows with the transcript. `from` is the
+/// run already read, under the installed agents and access `rewritten` holds
+/// from the account writes during the run: nothing in them grows with the
+/// transcript. `from` is the
 /// environment lookup, handed in like every other source this crate reads, so
 /// that a caller with no environment to offer can say so.
 ///
 /// `consent` is told what the provider is served on each time, before a
 /// request could go: a credential just stored or forgotten can move it.
 pub fn re_serving(
-    settings: Settings,
+    (settings, rewritten): (Settings, access::Rewritten),
     subscriptions: Subscriptions,
     from: Lookup,
     http: HttpTurns,
     consent: Consent,
 ) -> Serving {
     Box::new(move |named: Served, stored: &StoredCredentials| {
+        let settings = rewritten.over(&settings);
         let auth = startup::ProviderAuth {
             settings: &settings,
             from: &*from,
             stored,
             subscriptions: &subscriptions,
         };
-        let variable = settings.api_key_env(named.name).unwrap_or(named.key);
-        consent.served(named.name, startup::served_on(named.name, variable, auth));
-        let source = credential_source(named, auth).ok_or_else(|| AppError::Authentication {
+        consent.served(named.name, startup::served_on(named, auth));
+        // Nothing held is the refusal it has always been here, whichever of
+        // the two ways the resolver says it.
+        let source = match access::resolve(named, auth) {
+            Ok(route) => source_of(&route),
+            Err(AccessError::Absent(_) | AccessError::SubscriptionAddress { .. }) => None,
+            Err(refused) => return Err(refused.into()),
+        }
+        .ok_or_else(|| AppError::Authentication {
             provider: named.name.into(),
         })?;
 
@@ -1341,7 +1430,7 @@ pub type Sourcing = Box<dyn Fn(Served, &str, &StoredCredentials) -> startup::Rea
 /// Owned for the reason [`re_serving`]'s values are. `consent` holds a source
 /// for a model whose route is warned until that route's yes.
 pub fn re_sourcing(
-    settings: Settings,
+    (settings, rewritten): (Settings, access::Rewritten),
     subscriptions: Subscriptions,
     from: Lookup,
     http: HttpTurns,
@@ -1349,6 +1438,7 @@ pub fn re_sourcing(
 ) -> Sourcing {
     Box::new(
         move |named: Served, model: &str, stored: &StoredCredentials| {
+            let settings = rewritten.over(&settings);
             startup::reached(
                 named,
                 model,
@@ -1371,20 +1461,16 @@ pub fn re_sourcing(
 ///
 /// `store` is read and never written, so it carries no hook of its own.
 pub fn resolving(
-    settings: Settings,
+    (settings, rewritten): (Settings, access::Rewritten),
     subscriptions: Subscriptions,
     providers: &Providers,
     from: SharedLookup,
     store: crucible_auth::Store,
 ) -> crate::content_use::Resolver {
-    let variables: std::collections::BTreeMap<String, String> = offered(providers)
-        .map(|one| {
-            let variable = settings.api_key_env(one.name).unwrap_or(one.key);
-            (one.name.to_owned(), variable.to_owned())
-        })
-        .collect();
+    let served: std::collections::BTreeMap<&'static str, Served> =
+        offered(providers).map(|one| (one.name, one)).collect();
     Box::new(move |name| {
-        let Some(variable) = variables.get(name) else {
+        let Some(&one) = served.get(name) else {
             return Reading::Served(None);
         };
         let stored = store.read();
@@ -1393,9 +1479,9 @@ pub fn resolving(
         if stored.unread() {
             return Reading::Unread;
         }
+        let settings = rewritten.over(&settings);
         Reading::Served(startup::served_on(
-            name,
-            variable,
+            one,
             startup::ProviderAuth {
                 settings: &settings,
                 from: &*from,
@@ -1421,9 +1507,10 @@ pub fn resolving(
 /// is not a choice between competitors — it is the absence of anything to
 /// choose, which is what lets a first run work with one credential and no
 /// configuration at all. A stored account login counts beside an exported
-/// variable and a written-down key: it is read through [`credential_source`],
-/// the same answer construction would act on, so discovery and construction
-/// cannot disagree about what this machine holds.
+/// variable and a written-down key, and so does access naming an installed
+/// agent, which signs in for itself: each is read off the route
+/// [`access::resolve`] settles, the same answer construction would act on, so
+/// discovery and construction cannot disagree about what this machine holds.
 ///
 /// Several credentials and nothing choosing between them leaves the provider
 /// open rather than failing the launch. `/model` settles both halves
@@ -1440,7 +1527,7 @@ pub fn chosen(
     auth: startup::ProviderAuth<'_>,
 ) -> Result<Option<Served>, AppError> {
     choosing(providers, auth.settings, |one| {
-        credential_source(one, auth).is_some()
+        access::resolve(one, auth).is_ok()
     })
 }
 
@@ -1471,19 +1558,16 @@ pub(crate) fn choosing(
     Ok(second.is_none().then_some(first))
 }
 
-/// Every variable a key could be read from in this generation: each
-/// provider's own, and the one `apiKeyEnv` names in its place.
+/// Every variable a key could be read from in this generation, as
+/// [`access::variables`] names them for each provider.
 ///
-/// Both, because pointing `apiKeyEnv` elsewhere does not empty the usual
-/// variable, and a key exported before the setting was written is still a key.
 /// A program crucible starts that needs the rest of the environment, the way a
 /// browser does, is started without these.
 pub fn key_variables<'a>(
     providers: &'a Providers,
     settings: &'a Settings,
 ) -> impl Iterator<Item = &'a str> + 'a {
-    offered(providers)
-        .flat_map(move |one| std::iter::once(one.key).chain(settings.api_key_env(one.name)))
+    offered(providers).flat_map(move |one| access::variables(one, settings))
 }
 
 /// Every provider crucible holds a usable credential for, in declaration order.
@@ -1541,19 +1625,14 @@ pub fn in_use(one: Served, auth: startup::ProviderAuth<'_>) -> Option<InUse> {
 
 /// The source provider construction will select, without reading a secret out.
 ///
-/// The order is the one [`startup::provider`] resolves in, and the two must
-/// agree: `/logout` names what remains after a stored credential is removed,
-/// and a source this computes that construction would not select is a sentence
-/// that lies.
+/// Read off the route [`access::resolve`] settles, which is the one
+/// construction applies: `/logout` names what remains after a stored
+/// credential is removed, and a source that construction would not select is a
+/// sentence that lies. `None` where no route resolves, and where the route is
+/// an installed agent, which is signed in by the agent rather than by anything
+/// crucible holds.
 pub fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option<CredentialSource> {
-    let startup::ProviderAuth {
-        settings,
-        from,
-        stored,
-        subscriptions,
-    } = auth;
-    let subscribed = subscriptions.supports(one.name);
-    sourced(one, settings, from, stored.held(one.name), subscribed)
+    source_of(&access::resolve(one, auth).ok()?)
 }
 
 /// [`credential_source`], from what the store holds for `one` rather than
@@ -1564,23 +1643,30 @@ pub(crate) fn sourced(
     one: Served,
     settings: &Settings,
     from: &dyn Fn(&str) -> Option<String>,
-    held: Option<Held>,
+    held: Option<&Held>,
     subscribed: bool,
 ) -> Option<CredentialSource> {
-    if settings.base_url(one.name).is_none()
-        && subscribed
-        && held.as_ref().is_some_and(|held| held.kind == Kind::Account)
-    {
-        return Some(CredentialSource::Subscription);
+    let signing = access::Signing {
+        offered: subscribed,
+        usable: subscribed,
+    };
+    source_of(&access::resolved(one, settings, from, held, signing).ok()?)
+}
+
+/// What a route's credential is, by kind and without a value.
+fn source_of(route: &Route) -> Option<CredentialSource> {
+    match route {
+        Route::Subscription { .. } => Some(CredentialSource::Subscription),
+        Route::ApiKey {
+            source: KeySource::Environment { variable },
+            ..
+        } => Some(CredentialSource::Environment(variable.clone())),
+        Route::ApiKey {
+            source: KeySource::Stored { .. },
+            ..
+        } => Some(CredentialSource::StoredKey),
+        Route::External { .. } => None,
     }
-    let variable = settings.api_key_env(one.name).unwrap_or(one.key);
-    if from(variable).is_some_and(|value| !value.trim().is_empty()) {
-        return Some(CredentialSource::Environment(variable.into()));
-    }
-    if held.is_some_and(|held| held.kind == Kind::Key) {
-        return Some(CredentialSource::StoredKey);
-    }
-    None
 }
 
 #[cfg(test)]

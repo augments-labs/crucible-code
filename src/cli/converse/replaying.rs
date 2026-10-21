@@ -9,17 +9,26 @@
 //! older logs still restore their recorded change counts without inventing
 //! file contents. Display history is streamed a message batch at a time so it
 //! does not create a second session-sized transcript in memory.
+//!
+//! An installed agent's turn comes back with the steps the log kept beside its
+//! answer, and is drawn as the live turn drew it: its words up to each step,
+//! each call over what it came back with, its lookups counted into one line
+//! within a round, and its reports. An older log, or one written by an older
+//! build, has none, and its turns come back as their words alone.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crucible_runner::Runner;
-use crucible_session::{DisplayHistory, DisplayItem, Place, Pruned, Session, SessionError};
+use crucible_app::Settled;
+use crucible_session::{
+    AgentDid, AgentStep, DisplayHistory, DisplayItem, Place, Pruned, Session, SessionError,
+};
+use crucible_tools::Looking;
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
-use crucible_types::{Diff, Message, RECAP, ToolId};
+use crucible_types::{Diff, Message, RECAP, StopReason, ToolId};
 
 use crate::cli::Fatal;
-use crate::cli::converse::Terms;
+use crate::cli::converse::{Terms, settling};
 use crate::cli::draw;
 use crate::cli::gathering::Gathering;
 use crate::cli::kept::{Kept, Log};
@@ -52,7 +61,7 @@ pub(super) fn replayed<T: Terminal>(
     if let Some(history) = session.display_history()? {
         let pruned = Pruned::default();
         let original = Replay {
-            runner: against.runner,
+            settled: against.settled,
             style: against.style,
             pruned: &pruned,
         };
@@ -60,7 +69,7 @@ pub(super) fn replayed<T: Terminal>(
     }
     walked(
         renderer,
-        against.runner.transcript().messages(),
+        against.settled.transcript().messages(),
         &Previews::new(),
         against,
         kept,
@@ -142,7 +151,40 @@ fn streamed<T: Terminal>(
             source,
         })?;
         match item {
-            DisplayItem::Message { message, previews } => {
+            // An installed agent's turn, drawn whole from what it did and
+            // what it said while it did it.
+            DisplayItem::Message {
+                message:
+                    Message::Agent {
+                        text, calls, stop, ..
+                    },
+                steps,
+                ..
+            } if !steps.is_empty() && calls.is_empty() => {
+                if let Some((earlier, previews)) = pending.take() {
+                    walked(renderer, &[earlier], &previews, against, kept)?;
+                }
+                acted(renderer, steps, (&text, stop), against.style, kept)?;
+            }
+            DisplayItem::Agent(steps) => {
+                if let Some((earlier, previews)) = pending.take() {
+                    walked(renderer, &[earlier], &previews, against, kept)?;
+                }
+                acted(renderer, steps, ("", None), against.style, kept)?;
+            }
+            DisplayItem::Message {
+                message,
+                previews,
+                steps,
+            } => {
+                // Steps beside a message no agent's answer could carry them
+                // are drawn ahead of it, which is where they were taken.
+                if !steps.is_empty() {
+                    if let Some((earlier, previews)) = pending.take() {
+                        walked(renderer, &[earlier], &previews, against, kept)?;
+                    }
+                    acted(renderer, steps, ("", None), against.style, kept)?;
+                }
                 // Where the log holds each result, said before any of them is
                 // drawn, so what the store lets go of later it can read back.
                 if let (Message::ToolResults(results), Some(position)) =
@@ -264,7 +306,7 @@ fn walked<T: Terminal>(
     // Counted before a row goes down, because the first row of a run is the
     // one that says how long the run is.
     let mut batch = Batch {
-        folded: Folded::of(messages, against.runner),
+        folded: Folded::of(messages, against.settled),
         previews,
     };
 
@@ -295,7 +337,7 @@ fn walked<T: Terminal>(
 /// being named.
 pub(super) struct Replay<'a> {
     /// The session in hand, for what each tool's call line reads as.
-    pub(super) runner: &'a Runner,
+    pub(super) settled: Settled<'a>,
     /// What the results a pruning cleared said, so a row a reader watched come
     /// back says it again. Empty where nothing was ever cleared, which is every
     /// session short enough not to have needed the room.
@@ -311,9 +353,9 @@ impl<'a> Replay<'a> {
     /// it back on the screen, and this is what keeps them putting it back
     /// against the same three things. A preview builds its own, because the
     /// session it draws is not the one this run is in.
-    pub(super) fn of(runner: &'a Runner, terms: &'a Terms, pruned: &'a Pruned) -> Self {
+    pub(super) fn of(settled: Settled<'a>, terms: &'a Terms, pruned: &'a Pruned) -> Self {
         Self {
-            runner,
+            settled,
             pruned,
             style: terms.style(),
         }
@@ -388,7 +430,7 @@ fn said<T: Terminal>(
             // answered. What the call was about is asked of the tool that owns
             // the arguments, the same way it was asked the first time.
             for call in calls {
-                let line = draw::called(call, &against.runner.about(call));
+                let line = draw::called(call, &against.settled.about(call));
 
                 // Named before the row that answers it goes down, the same way
                 // the turn named it: the expansion carries the call's line, and
@@ -477,6 +519,119 @@ fn said<T: Terminal>(
     Ok(())
 }
 
+/// An installed agent's turn, drawn the way the live turn drew it.
+///
+/// The live turn holds each call until it answers and then draws it over its
+/// result, counts a lookup that came back and changed nothing into the run
+/// above it, and ends that run at words, a report, a new round trip, or a call
+/// that did more than look; at its end, a call never answered stands with
+/// nothing under it. This does the same through the same doors, from the
+/// steps the log kept and the words the answer holds, so the picture a reader
+/// left is the one they come back to.
+fn acted<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    steps: Vec<AgentStep>,
+    (text, stop): (&str, Option<StopReason>),
+    style: Style,
+    kept: &mut Kept,
+) -> Result<(), Fatal> {
+    let mut run = Gathering::default();
+    let mut out: Vec<(ToolId, draw::Called, Option<Looking>)> = Vec::new();
+    let mut drawn = 0;
+    let mut round = None;
+
+    for step in steps {
+        // The words said before it, which end the run above them.
+        let mut said = step.at.min(text.len());
+        while !text.is_char_boundary(said) {
+            said = said.saturating_sub(1);
+        }
+        if said > drawn {
+            settling(renderer, &mut run, kept, style)?;
+            renderer.apart()?;
+            renderer.stream(text.get(drawn..said).unwrap_or_default())?;
+            drawn = said;
+        }
+        // And a round trip ended, which ends one too.
+        if round.is_some_and(|round| round != step.round) {
+            settling(renderer, &mut run, kept, style)?;
+        }
+        round = Some(step.round);
+
+        match step.did {
+            AgentDid::Called {
+                call,
+                tool,
+                summary,
+                looking,
+            } => {
+                let line = draw::called_as(&tool, &summary);
+                kept.calling(call.clone(), line.text().to_owned());
+                renderer.settle()?;
+                out.push((call, line, looking));
+            }
+            AgentDid::Answered { call, output, diff } => {
+                let Some(at) = out.iter().position(|(held, ..)| *held == call) else {
+                    continue;
+                };
+                let (call, line, looking) = out.remove(at);
+                // A failed lookup has its own row, and so does one that
+                // changed a file, so the change is drawn.
+                let looking = looking.filter(|_| !output.is_failed() && diff.is_none());
+                let shown = draw::Shown::replayed(output, diff);
+                if let Some(looking) = looking {
+                    if let Some(alone) = run.took(call.clone(), looking, line) {
+                        match alone.output {
+                            Some(output) => kept.gathered(&alone.call, output.into_text(), None),
+                            None => kept.abandoned(&alone.call),
+                        }
+                    }
+                    if let Some(output) = run.answered(&call, shown) {
+                        kept.gathered(&call, output.into_text(), None);
+                    }
+                    continue;
+                }
+                settling(renderer, &mut run, kept, style)?;
+                draw::returned(renderer, &line, style)?;
+                draw::came_back(renderer, kept, &call, shown, style)?;
+            }
+            AgentDid::Reported { tool, summary } => {
+                settling(renderer, &mut run, kept, style)?;
+                renderer.settle()?;
+                renderer.apart()?;
+                renderer.present(&[draw::reported(
+                    &tool,
+                    &summary,
+                    renderer.transcript_columns(),
+                    style.glyphs(),
+                )])?;
+            }
+        }
+    }
+
+    if let Some(rest) = text.get(drawn..).filter(|rest| !rest.trim().is_empty()) {
+        settling(renderer, &mut run, kept, style)?;
+        renderer.apart()?;
+        renderer.stream(rest)?;
+    }
+
+    // The turn's end: whatever was never answered stands over nothing, below
+    // the run being counted, as it did when the turn finished.
+    for (call, line, _) in out {
+        kept.abandoned(&call);
+        settling(renderer, &mut run, kept, style)?;
+        draw::returned(renderer, &line, style)?;
+    }
+    settling(renderer, &mut run, kept, style)?;
+    renderer.settle()?;
+
+    if let Some(said) = stop.and_then(draw::notice) {
+        renderer.apart()?;
+        renderer.commit(said)?;
+    }
+    Ok(())
+}
+
 /// What one batch of messages is drawn with beside the transcript itself.
 ///
 /// Both halves are worked out per batch, which is what keeps them out of
@@ -524,7 +679,7 @@ impl Folded {
     /// end of a round trip. So a run is one batch of calls at most, which is
     /// what the reader watched: the line went down when the batch was answered
     /// rather than when the turn was.
-    fn of(messages: &[Message], runner: &Runner) -> Self {
+    fn of(messages: &[Message], settled: Settled<'_>) -> Self {
         let mut folded = Self::default();
         let mut run = Gathering::default();
 
@@ -559,7 +714,7 @@ impl Folded {
                                 .any(|result| result.id == call.id && !result.output.is_failed()),
                             _ => false,
                         };
-                        match runner.folds(call).filter(|_| answered) {
+                        match settled.folds(call).filter(|_| answered) {
                             Some(looking) => run.counted(call.id.clone(), looking),
                             None => folded.close(&mut run),
                         }

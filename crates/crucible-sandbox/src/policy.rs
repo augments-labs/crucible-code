@@ -49,6 +49,10 @@ fn permits(
         || matches!(candidate, SandboxFilesystemProvenance::Descendant)
 }
 
+/// The repository and agent metadata a writable root never makes writable:
+/// each of these beneath one is re-declared protected where it exists.
+pub const PROTECTED_METADATA: [&str; 4] = [".git", ".agents", ".codex", ".crucible"];
+
 /// One absolute, bounded filesystem rule.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SandboxFilesystemRule {
@@ -58,6 +62,27 @@ pub struct SandboxFilesystemRule {
 }
 
 impl SandboxFilesystemRule {
+    /// A protected rule for each [`PROTECTED_METADATA`] entry that exists
+    /// beneath `root`.
+    ///
+    /// # Errors
+    ///
+    /// A path outside the contract's bounds is rejected.
+    pub fn protected_beneath(root: &Path) -> Result<Vec<Self>, SandboxPolicyError> {
+        PROTECTED_METADATA
+            .iter()
+            .map(|name| root.join(name))
+            .filter(|path| std::fs::symlink_metadata(path).is_ok())
+            .map(|path| {
+                Self::new(
+                    path,
+                    SandboxFilesystemAccess::Protected,
+                    SandboxFilesystemProvenance::ProtectedMetadata,
+                )
+            })
+            .collect()
+    }
+
     /// Validates one already-resolved policy path.
     ///
     /// # Errors
@@ -490,16 +515,7 @@ impl SandboxPolicy {
                 SandboxFilesystemAccess::ReadWrite,
                 SandboxFilesystemProvenance::Workspace,
             )?);
-            for protected in [".git", ".agents", ".codex", ".crucible"] {
-                let path = root.join(protected);
-                if std::fs::symlink_metadata(&path).is_ok() {
-                    filesystem.push(SandboxFilesystemRule::new(
-                        path,
-                        SandboxFilesystemAccess::Protected,
-                        SandboxFilesystemProvenance::ProtectedMetadata,
-                    )?);
-                }
-            }
+            filesystem.extend(SandboxFilesystemRule::protected_beneath(root)?);
         }
         Self::new(
             true,

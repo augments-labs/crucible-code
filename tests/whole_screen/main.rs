@@ -36,6 +36,7 @@
 // case would say less about what went wrong than the message on the `expect`.
 #![allow(clippy::expect_used, clippy::panic)]
 
+mod agents;
 mod fast;
 mod native;
 mod providers;
@@ -2642,6 +2643,129 @@ fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own()
     }
 }
 
+#[test]
+fn the_login_panel_offers_an_installed_agent_and_its_question_goes_back_unanswered() {
+    // Where an installed agent is offered, the first panel has a third row.
+    // Taking it puts the application's own question of which installed agent
+    // to use; Escape there goes back to the first panel, and
+    // Escape on that cancels. Nothing is written on the way.
+    let vendor = Vendor::answering("Not asked.");
+    let mut window = Watched::offering_agents("login-agent-back", (80, 24), &vendor, &[]);
+    let config = window.home().join("config.json");
+    let before = std::fs::read_to_string(&config).expect("the configuration file");
+
+    window.types_until("/login\r", "Provide your own API key");
+    let first = window.picture();
+    assert!(first.contains("Use an installed coding agent"), "{first}");
+    assert!(
+        first.contains("Sign in through an official harness"),
+        "{first}"
+    );
+
+    takes(&mut window, "Use an installed coding agent");
+    window.types_until("", "Which installed agent should Crucible use?");
+    let asked = window.picture();
+    assert!(
+        asked.contains("nothing is started or written yet"),
+        "{asked}"
+    );
+    assert!(asked.contains("Cancel"), "{asked}");
+
+    window.types_until("\x1b", "Choose how usage is paid for.");
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    let after = std::fs::read_to_string(&config).expect("the configuration file");
+    assert_eq!(after, before);
+}
+
+#[test]
+fn the_login_panel_says_what_starting_an_agent_runs_and_going_back_starts_nothing() {
+    // An agent whose program is on the path, never started: going back from
+    // the question put before it first starts ends the connect, and the
+    // first panel stands again.
+    let bin = watched::scratch("login-agent-launch-bin");
+    std::fs::create_dir_all(&bin).expect("a directory for the program");
+    let program = bin.join("claude");
+    let ran = bin.join("ran");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\ntouch '{}'\nexit 1\n", ran.display()),
+    )
+    .expect("the program");
+    let mut permissions = std::fs::metadata(&program)
+        .expect("its metadata")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&program, permissions).expect("an executable program");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let vendor = Vendor::answering("Not asked.");
+    let mut window =
+        Watched::offering_agents("login-agent-launch", (100, 30), &vendor, &[("PATH", &path)]);
+    let config = window.home().join("config.json");
+    let before = std::fs::read_to_string(&config).expect("the configuration file");
+
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Use an installed coding agent");
+    window.types_until("", "Which installed agent should Crucible use?");
+    takes(&mut window, "Claude Code");
+    window.types_until("", "Nothing starts");
+    let launch = window.picture();
+    assert!(
+        launch.contains("runs this profile's hooks, MCP servers and plugins"),
+        "{launch}"
+    );
+    assert!(
+        launch.contains("Starts Claude Code to check the account"),
+        "{launch}"
+    );
+
+    takes(&mut window, "Go back");
+    window.types_until("", "Choose how usage is paid for.");
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    let after = std::fs::read_to_string(&config).expect("the configuration file");
+    assert_eq!(after, before);
+    assert!(!ran.exists(), "the agent's program was run");
+    std::fs::remove_dir_all(&bin).expect("the program's directory removed");
+}
+
+#[test]
+fn the_logout_panel_lists_an_agent_instance_and_removes_its_settings() {
+    // A configured agent instance is something `/logout` can act on though
+    // no credential of Crucible's is stored for it: taking it offers what can
+    // be done with it, and removing it asks the application's own question
+    // before its settings leave the user's file.
+    let vendor = Vendor::answering("Not asked.");
+    let mut window = Watched::offering_agents_configured(
+        "logout-agent-remove",
+        (100, 30),
+        &vendor,
+        &[],
+        "  \"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}},\n",
+    );
+    let config = window.home().join("config.json");
+
+    window.types_until("/logout\r", "external agent instance");
+    takes(&mut window, "work");
+    window.types_until("", "Remove integration settings");
+    let chooser = window.picture();
+    assert!(chooser.contains("Disconnect from Crucible"), "{chooser}");
+    assert!(chooser.contains("Sign out of the agent"), "{chooser}");
+
+    takes(&mut window, "Remove integration settings");
+    window.types_until("", "Remove the settings for work from Crucible?");
+    takes(&mut window, "Remove integration settings");
+    window.types_until("", "Integration settings removed.");
+
+    let after = std::fs::read_to_string(&config).expect("the configuration file");
+    assert!(!after.contains("\"work\""), "{after}");
+}
+
 /// A store holding an Anthropic key and nothing else, fabricated.
 const KEY_HELD: &str =
     r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key"},"subscriptions":{}}"#;
@@ -2787,6 +2911,66 @@ fn a_key_for_a_provider_holding_a_credential_says_what_it_replaces_and_replaces_
             "{written}"
         );
     }
+}
+
+#[test]
+fn a_row_holding_its_providers_credential_is_used_as_held_or_replaced() {
+    // The row's own credential is taken as it is stored, with no credential
+    // typed or written; or replaced, through the box it always opened.
+    for (kind, row) in [
+        ("Provide your own API key", "Anthropic"),
+        ("Your account with subscription", "OpenAI"),
+    ] {
+        let mut window = Watched::open("login-held-used", 80, 30);
+        let store = window.home().join("auth.json");
+        std::fs::write(&store, HELD_THREE).expect("a store");
+
+        window.types_until("/login\r", "Provide your own API key");
+        takes(&mut window, kind);
+        window.types_until("", row);
+        takes(&mut window, row);
+        window.types_until("", "Use it");
+        if window.picture().contains("Use it anyway") {
+            window.types("\r");
+        }
+        window.types_until("", "Replace it");
+        let choice = window.picture();
+        assert!(choice.contains("Replace it"), "{row}: {choice}");
+        assert!(!choice.contains("It replaces"), "{row}: {choice}");
+
+        takes(&mut window, "Use it");
+        window.types_until("", "login successful");
+        assert_eq!(
+            std::fs::read_to_string(&store).expect("the store"),
+            HELD_THREE,
+            "{row}: nothing written to use what is held"
+        );
+    }
+
+    let mut window = Watched::open("login-held-replaced", 80, 30);
+    std::fs::write(window.home().join("auth.json"), HELD_THREE).expect("a store");
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Provide your own API key");
+    window.types_until("", "Anthropic");
+    takes(&mut window, "Anthropic");
+    window.types_until("", "Replace it");
+    // Escape stands the list again, the row still holding what it held.
+    window.types_until("\x1b", "GEMINI_API_KEY");
+    assert!(
+        !window.picture().contains("Replace it"),
+        "{}",
+        window.picture()
+    );
+    takes(&mut window, "Anthropic");
+    window.types_until("", "Replace it");
+    takes(&mut window, "Replace it");
+    window.types_until("", "It replaces");
+    let picture = window.picture();
+    let sentence = picture.replace("|\n|", " ").replace("  ", " ");
+    assert!(
+        sentence.contains("It replaces the API key held for Anthropic"),
+        "{picture}"
+    );
 }
 
 #[test]
@@ -5920,6 +6104,42 @@ fn context_taller_than_half_the_window_stands_in_half_and_scrolls_in_native_mode
 }
 
 // `/usage`: what the session has used, and the plan windows its vendor reported.
+
+/// `picture` with the case's scratch directory put as a fixed name of the
+/// same length wherever it is drawn, so a screen that names a path below it
+/// is a picture of this program rather than of one run.
+///
+/// The rows are read run together, inside their borders, so a path the screen
+/// wrapped is found whole; the fixed name is ASCII and as many bytes as the
+/// scratch one, so every row keeps its length and is cut back out where it
+/// was. A scratch name still drawn after that, cut by a border the rows were
+/// not read through, fails the case rather than reaching its snapshot.
+fn scrubbed(picture: &str, case: &str) -> String {
+    fn inner(row: &str) -> Option<&str> {
+        row.strip_prefix('|').and_then(|it| it.strip_suffix('|'))
+    }
+
+    let scratch = watched::scratch(case).display().to_string();
+    let fixed = format!("{:-<width$}", "/scratch", width = scratch.len());
+    let rows: Vec<&str> = picture.split('\n').collect();
+    let joined: String = rows.iter().copied().filter_map(inner).collect();
+    let mut rest = joined.replace(&scratch, &fixed);
+    assert!(
+        !rest.contains(watched::SCRATCH),
+        "{case} draws its scratch directory where it was not read whole:\n{picture}"
+    );
+    rows.iter()
+        .map(|row| match inner(row) {
+            Some(drawn) => {
+                let tail = rest.split_off(drawn.len());
+                let cut = std::mem::replace(&mut rest, tail);
+                format!("|{cut}|")
+            }
+            None => (*row).to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// `picture` with the two figures `/usage` reads off the wall clock written as
 /// `Ns`, the rest of each row as it was.

@@ -69,6 +69,39 @@ pub enum Command {
         /// The provider, by the name its registry gives it.
         provider: Name,
     },
+    /// Stop using an installed agent's instance from Crucible, leaving the
+    /// agent's own sign-in as it is. Asked for through a pending account
+    /// confirmation first, and only of a client that claimed
+    /// [`Capability::Account`](crate::Capability::Account).
+    Disconnect {
+        /// The instance, by the name the configuration gives it.
+        instance: Name,
+    },
+    /// Remove an installed agent's instance from the configuration once no
+    /// provider is reached through it, leaving the agent's sign-in, its
+    /// program and every conversation as they are. Asked for as
+    /// [`Command::Disconnect`] is.
+    RemoveIntegration {
+        /// The instance, by the name the configuration gives it.
+        instance: Name,
+    },
+    /// Stop using an installed agent's instance from Crucible, with every
+    /// instance sharing its sign-in, and then sign that sign-in out through
+    /// the agent's own program. Asked for as [`Command::Disconnect`] is.
+    SignOut {
+        /// The instance, by the name the configuration gives it.
+        instance: Name,
+    },
+    /// Reach the provider an installed agent's instance signs in to through
+    /// it from now on, and ask that provider, once the agent reads signed in.
+    /// Asked for as [`Command::Disconnect`] is.
+    Connect {
+        /// The instance, by the name the configuration gives it. A client
+        /// that names none is asked which agent, and which of its instances
+        /// where several are configured; one with none configured is given
+        /// one named after the agent.
+        instance: Option<Name>,
+    },
     /// List the persistent prompt-cache resources this conversation holds.
     InspectCache,
     /// Delete them.
@@ -119,7 +152,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 24] = [
+    pub const KINDS: [&'static str; 28] = [
         "prompt",
         "compact",
         "cancel",
@@ -133,6 +166,10 @@ impl Command {
         "cycle_mode",
         "login",
         "logout",
+        "disconnect",
+        "remove_integration",
+        "sign_out",
+        "connect",
         "inspect_cache",
         "clean_cache",
         "sandbox",
@@ -163,6 +200,10 @@ impl Command {
             Self::CycleMode => "cycle_mode",
             Self::Login { .. } => "login",
             Self::Logout { .. } => "logout",
+            Self::Disconnect { .. } => "disconnect",
+            Self::RemoveIntegration { .. } => "remove_integration",
+            Self::SignOut { .. } => "sign_out",
+            Self::Connect { .. } => "connect",
             Self::InspectCache => "inspect_cache",
             Self::CleanCache => "clean_cache",
             Self::Sandbox { .. } => "sandbox",
@@ -196,6 +237,12 @@ impl Command {
             Self::SetMode(mode) => object.with("mode", mode.as_str()),
             Self::Login { provider } | Self::Logout { provider } => {
                 object.with("provider", provider.as_str())
+            }
+            Self::Disconnect { instance }
+            | Self::RemoveIntegration { instance }
+            | Self::SignOut { instance } => object.with("instance", instance.as_str()),
+            Self::Connect { instance } => {
+                object.maybe("instance", instance.as_ref().map(Name::as_str))
             }
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
@@ -244,6 +291,21 @@ impl Command {
             },
             "logout" => Self::Logout {
                 provider: fields.name("provider")?,
+            },
+            "disconnect" => Self::Disconnect {
+                instance: fields.name("instance")?,
+            },
+            "remove_integration" => Self::RemoveIntegration {
+                instance: fields.name("instance")?,
+            },
+            "sign_out" => Self::SignOut {
+                instance: fields.name("instance")?,
+            },
+            "connect" => Self::Connect {
+                instance: fields
+                    .maybe("instance")
+                    .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
+                    .transpose()?,
             },
             "inspect_cache" => Self::InspectCache,
             "clean_cache" => Self::CleanCache,

@@ -176,10 +176,10 @@ A call that needs your verdict stands a panel where the box was:
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. While the explanation is open and was cut to fit, scrolls it instead. |
-| <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> | Takes that answer at once: `Yes, once`, `Yes, and don't ask again this session`, `No, and end the turn`. |
+| <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> | Takes that answer at once: `Yes, once`, `Yes, and don't ask again this session`, `No, and end the turn` (`No` on an installed agent's panel, where the turn goes on). |
 | <kbd>Enter</kbd> | Takes the marked answer. |
 | <kbd>Ctrl+E</kbd> | Opens the explanation the call sent, under the command or the path, and hides it again. Only where the footer names it. |
-| <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Refuses, the same as `No, and end the turn`. |
+| <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Refuses, the same as the third answer. |
 | Anything else | Nothing. The wheel scrolls the transcript. |
 
 The footer names the keys that apply: `esc to cancel` alone, or
@@ -290,7 +290,9 @@ redraws it; <kbd>↑</kbd> and <kbd>↓</kbd> scroll it where it is taller than 
 window, and the footer then reads `esc to close · ↑↓ to see more`.
 <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
 runs, it stands over the turn with the figures that turn last reported, which
-include anything it has recorded since its last request.
+include anything it has recorded since its last request. On an installed
+agent's route, its `held by the agent` row is what the agent last said its
+context holds, which moves as the turn goes on.
 
 ### `/usage`
 
@@ -368,8 +370,12 @@ today](../providers/providers.md#account-login-today) names the accounts.
 
 ### `/logout`
 
-A panel headed `Remove stored credential`, with the common keys and the
-footer `esc to cancel`.
+A panel headed `Remove stored credential`, or `Sign out or disconnect` where
+an installed agent is listed, with the common keys and the footer
+`esc to cancel`. Taking an agent stands a panel headed with its name, offering
+`Connect`, `Disconnect from Crucible`, `Sign out of the agent` and
+`Remove integration settings`, with the same keys; each then asks its own
+question, where <kbd>Esc</kbd> changes nothing.
 
 ### `/help`, and a command refused mid-turn
 

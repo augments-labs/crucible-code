@@ -18,6 +18,25 @@ fn spent() -> api::Context {
         messages: 184_600,
         reserve: 128_000,
         free: 542_300,
+        external: None,
+    }
+}
+
+/// An installed agent's route: Crucible counts nothing of the request, and
+/// the agent said what its context holds.
+fn held() -> api::Context {
+    api::Context {
+        model: None,
+        window: None,
+        left: None,
+        system: 0,
+        instructions: 0,
+        tools: 0,
+        mcp: 0,
+        messages: 0,
+        reserve: 0,
+        free: 0,
+        external: Some(58_200),
     }
 }
 
@@ -149,6 +168,41 @@ fn context_of_a_window_not_known_has_no_bar_no_free_row_and_no_percent() {
 }
 
 #[test]
+fn context_on_an_agents_route_ends_with_what_the_agent_holds() {
+    let rows = panel(&held(), 80, Glyphs::Unicode);
+
+    assert_eq!(
+        art(&rows),
+        [
+            "─".repeat(80).as_str(),
+            "",
+            "Context · window not known",
+            "",
+            "  system prompt                 0",
+            "  project instructions          0",
+            "  tool schemas                  0",
+            "  MCP tool schemas              0",
+            "  messages                      0",
+            "  reserve                       0",
+            "  held by the agent         58.2k",
+            "",
+            "esc to close",
+        ]
+    );
+
+    // A share of a stated window is taken of it as of every other part.
+    let measured = api::Context {
+        window: Some(200_000),
+        ..held()
+    };
+    let rows = art(&panel(&measured, 80, Glyphs::Unicode));
+    assert_eq!(
+        rows.get(13).map(String::as_str),
+        Some("  ██ held by the agent      58.2k    29.1%")
+    );
+}
+
+#[test]
 fn context_at_forty_columns_keeps_tokens_and_percent_behind_one_swatch_cell() {
     let rows = panel(&spent(), 40, Glyphs::Unicode);
     let bar = format!("{}{}", "█".repeat(16), "░".repeat(24));
@@ -231,7 +285,12 @@ fn context_fits_every_width_down_to_one_column() {
         free: u64::MAX / 2,
         ..spent()
     };
-    for context in [spent(), unmeasured(), enormous] {
+    let agent = api::Context {
+        window: Some(u64::MAX),
+        external: Some(u64::MAX),
+        ..held()
+    };
+    for context in [spent(), unmeasured(), enormous, held(), agent] {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             for columns in 1..=200 {
                 for row in panel(&context, columns, glyphs) {

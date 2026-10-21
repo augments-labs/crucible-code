@@ -6,11 +6,10 @@
 //! itself holds, and holding them on one value is what stops a caller reading
 //! the spend off an event, where it is the screen's copy rather than the run's.
 //!
-//! Nobody outside this crate is handed one yet, and the type is published
-//! ahead of that. [`Runner::turn`] answers with a [`StopReason`], which is all
-//! the wiring above it asks for; a run's own record of itself is kept on this
-//! shape meanwhile, so that the caller which does want the rest reads it off
-//! one value rather than reassembling it from events.
+//! A run this crate drives is stated here, and a run another agent drives is
+//! stated by whoever drives it, through [`RunResult::reported`], under the
+//! identity its events carried. Either way the caller reads the ending, the
+//! run and the spend off one value rather than reassembling them from events.
 //!
 //! What is *not* here: failures. A provider that would not answer, a tool the
 //! user refused, a turn that spent past its ceiling — those stay [`TurnError`],
@@ -24,6 +23,8 @@
 
 use crucible_agents::{GuardrailError, Rejection};
 use crucible_types::{RunId, Spend, StopReason};
+
+use crate::RunContext;
 
 /// How a run ended, in the words the harness uses rather than the model's.
 ///
@@ -98,9 +99,9 @@ impl RunStatus {
 
 /// What one run ended as.
 ///
-/// Published ahead of the callers that will read one, and stated only here:
-/// there is no way in from outside, because a run that nobody ran has no
-/// ending to report.
+/// Stated here for a run this crate drives. The one way in from outside is
+/// [`RunResult::reported`], for a run another agent drove, and it takes the
+/// run's context, because a run that nobody ran has no ending to report.
 ///
 /// The error code is what this fails with today, not something the harness
 /// checks — `compile_fail` accepts any compile error — so the snippet names
@@ -149,6 +150,16 @@ impl RunResult {
         }
     }
 
+    /// A run another agent drove, under `run`, that ended for this reason
+    /// having spent this much, by its own report.
+    ///
+    /// It takes the run's context rather than an identity, so the result
+    /// names the run its events were filed under and no other.
+    #[must_use]
+    pub const fn reported(run: &RunContext<'_>, stop: StopReason, spent: Spend) -> Self {
+        Self::new(run.run(), stop, spent)
+    }
+
     /// Which run this was.
     #[must_use]
     pub const fn run(&self) -> RunId {
@@ -177,15 +188,18 @@ impl RunResult {
 
 /// How one invocation of an agent ended.
 ///
-/// Three, and they are three because the caller has to be able to tell them
+/// Four, and they are four because the caller has to be able to tell them
 /// apart. A run that ended is an answer. A run a guardrail refused produced no
 /// answer this agent will stand behind, and saying so is not the same as saying
 /// the model stopped. A guardrail that could not decide produced no verdict at
 /// all — the check itself is what went wrong, and treating that as a refusal
-/// would let a check that cannot run refuse everything.
+/// would let a check that cannot run refuse everything. A run stopped while
+/// another agent was in the middle of acting ended, but what it was doing may
+/// or may not have happened, and reading that as an ordinary stop would tell
+/// the reader nothing changed.
 ///
-/// Cancellation is not a fourth: somebody stopping a run is an ending the model
-/// and the loop already have a word for, and it arrives as
+/// Cancellation alone is not one of them: somebody stopping a run is an ending
+/// the model and the loop already have a word for, and it arrives as
 /// [`StopReason::Cancelled`] inside [`Turned::Ran`].
 ///
 /// A guardrail never widens anything, so there is no variant here for one
@@ -214,6 +228,9 @@ pub enum Turned {
         /// How the model's own answer ended, where there was one to judge.
         stop: Option<StopReason>,
     },
+    /// The run was stopped while another agent was acting, so what it was
+    /// doing may or may not have happened.
+    Uncertain(RunResult),
 }
 
 impl Turned {
@@ -225,7 +242,7 @@ impl Turned {
     #[must_use]
     pub const fn stop(&self) -> Option<StopReason> {
         match self {
-            Self::Ran(result) => Some(result.stop()),
+            Self::Ran(result) | Self::Uncertain(result) => Some(result.stop()),
             Self::Rejected { stop, .. } | Self::Undecided { stop, .. } => *stop,
         }
     }
@@ -234,7 +251,7 @@ impl Turned {
     #[must_use]
     pub const fn result(&self) -> Option<&RunResult> {
         match self {
-            Self::Ran(result) => Some(result),
+            Self::Ran(result) | Self::Uncertain(result) => Some(result),
             Self::Rejected { .. } | Self::Undecided { .. } => None,
         }
     }
@@ -279,6 +296,46 @@ mod tests {
         assert!(
             matches!(undecided, Turned::Undecided { .. }),
             "a check that could not decide reads as one that refused"
+        );
+    }
+
+    #[test]
+    fn a_result_another_agent_reported_carries_the_run_its_events_did() {
+        let (events, _seen) = std::sync::mpsc::channel();
+        let (cancel, steer, aside) = (
+            crucible_runtime::Cancel::new(),
+            crucible_runtime::Steer::new(),
+            crucible_runtime::Aside::new(),
+        );
+        let run = crate::RunContext::outside(&events, &cancel, &steer, &aside);
+
+        let result = RunResult::reported(&run, StopReason::Cancelled, Spend::new(3));
+
+        assert_eq!(result.run(), run.run());
+        assert_eq!(result.status(), RunStatus::Cancelled);
+        assert_eq!(result.spent().tokens(), 3);
+    }
+
+    #[test]
+    fn an_uncertain_end_says_how_it_stopped() {
+        let (events, _seen) = std::sync::mpsc::channel();
+        let (cancel, steer, aside) = (
+            crucible_runtime::Cancel::new(),
+            crucible_runtime::Steer::new(),
+            crucible_runtime::Aside::new(),
+        );
+        let run = crate::RunContext::outside(&events, &cancel, &steer, &aside);
+        let uncertain = Turned::Uncertain(RunResult::reported(
+            &run,
+            StopReason::Cancelled,
+            Spend::NONE,
+        ));
+
+        assert_eq!(uncertain.stop(), Some(StopReason::Cancelled));
+        assert_eq!(
+            uncertain.result().map(RunResult::run),
+            Some(run.run()),
+            "an uncertain end lost the run it ended"
         );
     }
 

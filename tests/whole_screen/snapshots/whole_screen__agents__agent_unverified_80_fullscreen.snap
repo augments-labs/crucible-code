@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+80x40 cursor 39,0 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────╮ |
+|│                                                                             │ |
+|│ CRUCIBLE                                                                    │ |
+|│ /…/workspace                                                                │ |
+|│                                                                             │ |
+|│ Recent sessions                                                             │ |
+|│                                                                             │ |
+|│ No earlier session for this workspace                                       │ |
+|│                                                                             │ |
+|│ ─────────────────────────────────────────────────────────────────────────── │ |
+|│                                                                             │ |
+|│ Tips                                                                        │ |
+|│                                                                             │ |
+|│ · /          opens the command list                                         │ |
+|│ · \ enter    adds a line without sending                                    │ |
+|│ · shift+tab  steps the permission mode                                      │ |
+|│ · ctrl+c     clears the line typed so far                                   │ |
+|╰─────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                |
+|› /login                                                                        |
+|                                                                                |
+|                                                                                |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Log in                                                                          |
+|                                                                                |
+|Could not verify sign-in                                                        |
+|                                                                                |
+|Agent: claude, run as claude.                                                   |
+|Profile: the agent's default.                                                   |
+|Status: the agent did not say whether it is signed in.                          |
+|Reason: The agent exited with status 2: status unavailable                      |
+|                                                                                |
+|› Check again                                                                   |
+|  Read the agent's sign-in again.                                               |
+|                                                                                |
+|  Cancel                                                                        |
+|  Change nothing.                                                               |
+|                                                                                |
+|esc to go back                                                                  |

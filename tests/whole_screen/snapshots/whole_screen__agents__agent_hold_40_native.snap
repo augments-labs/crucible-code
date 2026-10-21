@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 26,0 scrollback 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /login                                |
+|────────────────────────────────────────|
+|                                        |
+|Claude Code                             |
+|                                        |
+|On Free, Pro and Max, Anthropic trains  |
+|new models on what you send through     |
+|Claude Code while the setting that      |
+|allows it is on. To stop it, turn that  |
+|setting off in your Claude data privacy |
+|controls.                               |
+|Claude Code data usage, 12 Oct 2026     |
+|                                        |
+|Starting Claude Code runs this profile's|
+|hooks, MCP servers and plugins, which   |
+|may send content on their own.          |
+|                                        |
+|› Continue                              |
+|  Starts Claude Code to check the accou…|
+|                                        |
+|  Go back                               |
+|  Nothing starts                        |
+|                                        |
+|enter to choose · esc to go back        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |

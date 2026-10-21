@@ -11,6 +11,7 @@ use super::{
     RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome,
     TurnOutcome, maybe_problem,
 };
+use crate::bounds::Name;
 use crate::error::{ErrorCode, Refusal};
 use crate::wire::{self, Fields, Writing};
 
@@ -142,6 +143,7 @@ impl ResumeOutcome {
                 noting(Writing::kind("picked"), "unclosed", unclosed.as_ref())
             }
             Self::Unknown => Writing::kind("unknown"),
+            Self::NextLaunch => Writing::kind("next_launch"),
             Self::Failed(problem) => failed("failed", problem),
         }
         .finish()
@@ -155,6 +157,7 @@ impl ResumeOutcome {
                 unclosed: maybe_problem(&mut fields, "unclosed")?,
             },
             "unknown" => Self::Unknown,
+            "next_launch" => Self::NextLaunch,
             "failed" => Self::Failed(problem(&mut fields)?),
             _ => return Err(ErrorCode::Malformed.into()),
         };
@@ -177,6 +180,20 @@ impl ModelOutcome {
                 "unwritten",
                 unwritten.as_ref(),
             ),
+            Self::MovedOff {
+                provider,
+                retained,
+                unwritten,
+            } => noting(
+                retained.onto(Writing::kind("moved_off").text("provider", provider)),
+                "unwritten",
+                unwritten.as_ref(),
+            ),
+            Self::MovedOnto { onto, unwritten } => noting(
+                Writing::kind("moved_onto").text("onto", onto),
+                "unwritten",
+                unwritten.as_ref(),
+            ),
         }
         .finish()
     }
@@ -189,6 +206,15 @@ impl ModelOutcome {
             "cache_held" => Self::CacheHeld(problem(&mut fields)?),
             "taken" => Self::Taken {
                 retained: Retained::from(&mut fields)?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            "moved_off" => Self::MovedOff {
+                provider: fields.text("provider")?,
+                retained: Retained::from(&mut fields)?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            "moved_onto" => Self::MovedOnto {
+                onto: fields.text("onto")?,
                 unwritten: maybe_problem(&mut fields, "unwritten")?,
             },
             _ => return Err(ErrorCode::Malformed.into()),
@@ -268,6 +294,31 @@ impl LoginOutcome {
                 "unwritten",
                 unwritten.as_ref(),
             ),
+            Self::AgentConnected { said, onto } => Writing::kind("agent_connected")
+                .text("said", said)
+                .maybe("onto", onto.as_ref().map(Name::as_str)),
+            Self::ConnectUnsaved { said, problem } => {
+                failed("connect_unsaved", problem).text("said", said)
+            }
+            Self::Undecided => Writing::kind("undecided"),
+            Self::NextLaunch {
+                provider,
+                unwritten,
+            } => noting(
+                Writing::kind("next_launch").text("provider", provider),
+                "unwritten",
+                unwritten.as_ref(),
+            ),
+            Self::Stored { provider } => Writing::kind("stored").text("provider", provider),
+            Self::MovedOff {
+                provider,
+                retained,
+                unwritten,
+            } => noting(
+                retained.onto(Writing::kind("moved_off").text("provider", provider)),
+                "unwritten",
+                unwritten.as_ref(),
+            ),
         }
         .finish()
     }
@@ -279,6 +330,30 @@ impl LoginOutcome {
             "elsewhere" => Self::Elsewhere,
             "cache_held" => Self::CacheHeld(problem(&mut fields)?),
             "serving" => Self::Serving {
+                retained: Retained::from(&mut fields)?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            "agent_connected" => Self::AgentConnected {
+                said: fields.text("said")?,
+                onto: fields
+                    .maybe("onto")
+                    .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
+                    .transpose()?,
+            },
+            "connect_unsaved" => Self::ConnectUnsaved {
+                said: fields.text("said")?,
+                problem: problem(&mut fields)?,
+            },
+            "undecided" => Self::Undecided,
+            "next_launch" => Self::NextLaunch {
+                provider: fields.text("provider")?,
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            "stored" => Self::Stored {
+                provider: fields.text("provider")?,
+            },
+            "moved_off" => Self::MovedOff {
+                provider: fields.text("provider")?,
                 retained: Retained::from(&mut fields)?,
                 unwritten: maybe_problem(&mut fields, "unwritten")?,
             },
@@ -295,6 +370,7 @@ impl Standing {
             Self::Environment(variable) => Writing::kind("environment").text("variable", variable),
             Self::StoredKey => Writing::kind("stored_key"),
             Self::Subscription => Writing::kind("subscription"),
+            Self::External { instance } => Writing::kind("external").text("instance", instance),
         }
         .finish()
     }
@@ -305,6 +381,9 @@ impl Standing {
             "environment" => Self::Environment(fields.text("variable")?),
             "stored_key" => Self::StoredKey,
             "subscription" => Self::Subscription,
+            "external" => Self::External {
+                instance: fields.text("instance")?,
+            },
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;
@@ -319,11 +398,27 @@ impl LogoutOutcome {
             Self::Unforgotten { retained, problem } => {
                 retained.onto(failed("unforgotten", problem))
             }
-            Self::Kept => Writing::kind("kept"),
+            Self::Kept { retained } => retained.onto(Writing::kind("kept")),
             Self::StillServed { retained, standing } => retained
                 .onto(Writing::kind("still_served"))
                 .with("standing", standing.written()),
             Self::SignedOut { retained } => retained.onto(Writing::kind("signed_out")),
+            Self::Disconnected { said } => Writing::kind("disconnected").text("said", said),
+            Self::NewWorkDisabledWorkNotConfirmedStopped { said } => {
+                Writing::kind("new_work_disabled_work_not_confirmed_stopped").text("said", said)
+            }
+            Self::StoppedForThisRunOnly { said, problem } => {
+                failed("stopped_for_this_run_only", problem).text("said", said)
+            }
+            Self::IntegrationRemoved { said } => {
+                Writing::kind("integration_removed").text("said", said)
+            }
+            Self::AgentSignedOut { said } => Writing::kind("agent_signed_out").text("said", said),
+            Self::SignOutUnverified { said } => {
+                Writing::kind("sign_out_unverified").text("said", said)
+            }
+            Self::StillReferenced { said } => Writing::kind("still_referenced").text("said", said),
+            Self::Undecided => Writing::kind("undecided"),
         }
         .finish()
     }
@@ -336,7 +431,9 @@ impl LogoutOutcome {
                 retained: Retained::from(&mut fields)?,
                 problem: problem(&mut fields)?,
             },
-            "kept" => Self::Kept,
+            "kept" => Self::Kept {
+                retained: Retained::from(&mut fields)?,
+            },
             "still_served" => Self::StillServed {
                 retained: Retained::from(&mut fields)?,
                 standing: Standing::read(fields.take("standing")?)?,
@@ -344,6 +441,31 @@ impl LogoutOutcome {
             "signed_out" => Self::SignedOut {
                 retained: Retained::from(&mut fields)?,
             },
+            "disconnected" => Self::Disconnected {
+                said: fields.text("said")?,
+            },
+            "new_work_disabled_work_not_confirmed_stopped" => {
+                Self::NewWorkDisabledWorkNotConfirmedStopped {
+                    said: fields.text("said")?,
+                }
+            }
+            "stopped_for_this_run_only" => Self::StoppedForThisRunOnly {
+                said: fields.text("said")?,
+                problem: problem(&mut fields)?,
+            },
+            "integration_removed" => Self::IntegrationRemoved {
+                said: fields.text("said")?,
+            },
+            "agent_signed_out" => Self::AgentSignedOut {
+                said: fields.text("said")?,
+            },
+            "sign_out_unverified" => Self::SignOutUnverified {
+                said: fields.text("said")?,
+            },
+            "still_referenced" => Self::StillReferenced {
+                said: fields.text("said")?,
+            },
+            "undecided" => Self::Undecided,
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;

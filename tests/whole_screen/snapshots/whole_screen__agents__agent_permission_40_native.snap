@@ -1,0 +1,46 @@
+---
+source: tests/whole_screen/agents.rs
+assertion_line: 65
+expression: picture
+---
+40x40 cursor 33,0 scrollback 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /login                                |
+|⎿ Connected. This conversation now runs |
+|  on the agent claude and starts fresh, |
+|  in a new session; the earlier one can |
+|  be resumed.                           |
+|  execution: claude, model:             |
+|  claude-opus-5-5 · billing: external   |
+|                                        |
+|› List them.                            |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|╭──────────────────────────────────────╮|
+|│  Bash command                        │|
+|│                                      │|
+|│    ls                                │|
+|│    execution: claude · confinement:  │|
+|│    unsupported                       │|
+|│                                      │|
+|│  This command needs your verdict.    │|
+|│                                      │|
+|│  Do you want to proceed?             │|
+|│  › 1. Yes, once                      │|
+|│    2. Yes, and don't ask again this  │|
+|│       session                        │|
+|│    3. No                             │|
+|╰──────────────────────────────────────╯|
+|  esc to cancel                         |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |

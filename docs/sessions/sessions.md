@@ -113,6 +113,33 @@ a permission question into one. See
 If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.
 
+A session an installed agent ran is continued on that agent's route, whatever
+the provider asked is reached by: `--continue` and `--resume` start the run on
+the agent the session names, with no provider or credential needed, as long
+as `externalAgents` still names it with the same driver and profile and it is
+connected. Where it no longer does, they refuse the session, naming the
+agent's configured name, and its history is kept as it was, with nothing cut
+from or appended to its log; start a new session to carry on. An agent whose
+program cannot be found, or that has no launch in the run's mode, is refused
+the way a new session on it is. `/resume` of such a session moves the run onto
+that agent, from a provider's model or from another agent's route, under the
+same conditions, and refuses it the same way where they do not hold; the agent
+is asked for its own session, so it carries on with what it held. A log whose
+line naming the agent is
+damaged or cut short is refused as a log that cannot be read, and
+`crucible sessions list` counts it among the logs it could not read, rather
+than taking it for a session a provider's model ran.
+
+The other way round, a run whose provider's access names an installed agent
+does not continue a session a provider's model ran: `--continue` and
+`--resume` refuse it and say it resumes on the next launch that reaches a
+provider directly. `/resume` of it goes back to the provider's model a run that
+started on one moved off, with the session's earlier turns. A run that started
+on an agent's route has no provider's model set up, and neither has one where
+`/logout` on the route removed the last credential of the provider it moved
+off, so `/resume` says the session resumes on the next launch that reaches a
+provider directly. The refusal leaves its log as it was.
+
 A log name in the sessions directory that is a symbolic link or a pipe rather
 than a file is refused as a log that cannot be read is: `--continue` stops with
 `could not read the session log …` and the reason, having read nothing through
@@ -178,7 +205,8 @@ before it and the file is cut to match.
 
 ## Conversation, journal and checkpoints
 
-New logs use format 13 and remain readable alongside formats 3–12. Format 12
+A session a provider's model runs is written as format 13, and one an installed
+agent runs as format 14; both remain readable alongside formats 3–12. Format 12
 adds bounded provider continuation beside completed agent messages: signed
 thinking, encrypted reasoning and native ordering needed for subsequent tool
 passes. This private state is not rendered or given to the recap model, and a
@@ -190,6 +218,12 @@ cannot resume format 12 or 13 logs. A search result may also record which vendor
 search answered it and, where that vendor restricts where it may be sent, the sentence
 to leave in its place. The field is optional within format 13, so builds that read
 format 13 without knowing it, such as 0.41.0, ignore it and still resume these logs.
+Format 14 adds the lines a session an installed agent ran records about it,
+described under [What is in a file](#what-is-in-a-file). Builds before it cannot
+resume a format 14 log and say it was written by a different version of
+crucible. A format 13 log, new or continued by a newer build, keeps its number
+and stays readable by a build that reads format 13, so going back to 0.47
+loses no session a provider's model ran.
 
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible
@@ -270,6 +304,14 @@ back, the file is cut to what was replayed before anything new is appended, a
 log this build cannot read is refused rather than half-understood, and a session
 another crucible has open is not available. The picker says so on the marked
 session's own line rather than waiting for Enter to find out.
+
+A session an [installed agent](../providers/agents.md) ran says which on that
+same line, as `execution: <instance>`, with the agent it is an instance of in
+parentheses where the two are named differently; taking it starts that agent
+again. A run with no keyboard, given the listing instead, says it on the row.
+Connecting the provider a conversation asks through an agent changes the
+session recorded to as well: where the agent can start, the conversation starts
+fresh in a new session the agent runs, and the one it left stays on this list.
 
 The picker looks through every session the index names, not the handful the
 opening screen reads, and lists up to 100 of them. It opens on this
@@ -679,6 +721,26 @@ the file is and where it belongs:
 ```json
 {"branch":"main","format":13,"session":"…","workspace":"/home/you/code/my-project"}
 ```
+
+A session an installed agent ran is numbered 14 and has a second line, written
+with the first, saying which one: its driver, its configured name, the profile it was given,
+a digest of where its program was found rather than the path, the version it
+reported and which run of the agent opened the session. No environment,
+command line or credential is written there.
+
+```json
+{"route":{"driver":"claude","executable":"8766…","generation":0,"instance":"work","profile":"/home/you/.claude-work","version":"2.1.0"}}
+```
+
+Further on, such a log can hold the agent's own name for the session, as an
+`external` line, and an `uncertain` line where a turn ended before the agent
+said whether what it set out to do was done, with what it reported under way.
+Each of these is preceded by a `{"requires_format":14}` line, so a build that
+does not know it refuses the log rather than skipping it. A name longer than
+256 bytes, or a profile longer than 4 KiB, is refused rather than shortened,
+since a shortened one could match a different agent. The reported version is
+cut at 256 bytes and the work under way at 64 KiB, on a character boundary,
+and each says it was cut.
 
 Then one line per message: what you typed, what the model said and asked to
 run, and what the tools returned. Supplemental journal records retain bounded

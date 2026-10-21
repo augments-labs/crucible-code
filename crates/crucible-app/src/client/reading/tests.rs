@@ -258,3 +258,22 @@ fn limit_a_family_group_is_drawn_by_the_catalogs_name_for_the_model_in_use_it_ho
         Some("gpt-6*")
     );
 }
+
+/// Every instance a route can be bound to is a name a snapshot can carry, and
+/// one too long for either is too long for both.
+#[test]
+fn an_instance_a_route_binds_is_a_name_a_client_reads() {
+    for instance in [
+        "w".to_owned(),
+        "w".repeat(api::bounds::NAME_BYTES),
+        "w".repeat(api::bounds::NAME_BYTES + 1),
+        String::new(),
+        "a\u{7}b".to_owned(),
+    ] {
+        assert_eq!(
+            crucible_session::RouteBinding::new("claude", &instance, None).is_ok(),
+            api::Name::new(&instance).is_ok(),
+            "{instance:?}"
+        );
+    }
+}

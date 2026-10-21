@@ -407,7 +407,7 @@ fn sessions_list_says_what_was_recorded_here_and_changes_nothing() {
     );
 
     let document = document(&json);
-    assert_eq!(field(&document, "/format_version"), 1);
+    assert_eq!(field(&document, "/format_version"), 2);
     assert_eq!(field(&document, "/kind"), "sessions");
     assert_eq!(field(&document, "/status"), "complete");
     assert_eq!(field(&document, "/truncated"), false);
@@ -421,6 +421,13 @@ fn sessions_list_says_what_was_recorded_here_and_changes_nothing() {
     assert_eq!(ids, [plain.as_str(), titled.as_str()]);
     assert_eq!(field(&document, "/sessions/1/title/text"), "fix the parser");
     assert_eq!(field(&document, "/sessions/1/branch/text"), "main");
+    for one in 0..2 {
+        assert_eq!(
+            field(&document, &format!("/sessions/{one}/backend")),
+            "native"
+        );
+        assert_eq!(document.pointer(&format!("/sessions/{one}/route")), None);
+    }
 }
 
 #[test]
@@ -452,7 +459,7 @@ fn a_session_index_that_does_not_read_fails_without_quoting_it_or_naming_it_in_t
 
     assert_eq!(json.status.code(), Some(1), "{}", said(&json));
     let document = document(&json);
-    assert_eq!(field(&document, "/format_version"), 1);
+    assert_eq!(field(&document, "/format_version"), 2);
     assert_eq!(field(&document, "/kind"), "sessions");
     assert_eq!(field(&document, "/status"), "failed");
     assert_eq!(

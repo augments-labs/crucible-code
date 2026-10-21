@@ -221,8 +221,13 @@ whose own key you type in, MiniMax on either of its sites and Qwen's Coding Plan
 and Token Plan on either of Alibaba Cloud's. The second
 lists the providers whose key you may hold, each with the variable it reads
 from, `set ANTHROPIC_API_KEY` and so on, for anyone who would rather export a
-key than store one. A row that holds your credential says `signed in`. Escape
-goes back one screen at a time and cancels from the first.
+key than store one. A row that holds your credential says `signed in`. Where
+this release can run an [installed coding agent](../providers/agents.md), a
+third choice, *Use an installed coding agent*, signs the provider you are
+asking, or the one the agent you are on reaches, in through that agent
+instead. On an agent, another provider's subscription or key moves the
+conversation onto that provider in a new session. Escape goes back one screen
+at a time and cancels from the first.
 
 ChatGPT offers a local browser callback and a device code for remote terminals;
 Kimi Code offers a device code. The live panel opens the authorization page,
@@ -242,8 +247,13 @@ labelled box, which takes a paste as readily as typing and draws a dot per
 character, never the key. Enter saves it; Enter on an empty box does nothing.
 Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can
 read. The session asks that provider from the next turn on; there is nothing to
-restart. Authentication never chooses a model or effort; both stay explicit
-choices, and `/model` is where they are asked together.
+restart. Where no provider was being asked, the login takes the one your
+configuration names for that provider, else the provider's default: its
+latest middle-tier model, at `medium` effort, else the nearest rung above it
+that the model serves, else its strongest, and at none for a model that takes
+none. A default taken is written to your configuration, so the
+next start opens on it. A login for the provider already answering keeps the
+model and effort in force; `/model` and `/effort` change either.
 
 Some vendors say they may use what you send to train or improve their models:
 a ChatGPT plan, Kimi Code and the Kimi open platform, a Gemini key on unpaid
@@ -337,8 +347,10 @@ The row under the box has two ends. At the left is the next key: the permission
 mode in force, the key that steps it, and how many commands are still running
 behind the box. At the right is what the session is talking to: the provider,
 the model, the rung it is being asked on where one has been chosen, and `fast`
-after an answer its vendor served fast. It sits beside the box because every
-key that changes it is typed into that box.
+after an answer its vendor served fast; on an installed agent's route it says
+instead which agent runs the turns and who is paid for them, as
+[Installed coding agents](../providers/agents.md) describes. It sits beside the
+box because every key that changes it is typed into that box.
 
 The three are joined by a dot, `anthropic · claude-sonnet-5 · high`, and read
 the same on the `/model` panel and in its answer. What you type keeps its own
@@ -610,6 +622,28 @@ each was given rather than as a paragraph. The colour is the row's rather than
 the text's, so it costs no column, and it is there whether the line is still
 waiting above the box or has already been written out.
 
+On an installed agent's route the agent runs its own tools and crucible runs
+none of them. Each call the agent reports is drawn as a call made here is: the
+tool's name as the agent gave it, with what the call was about, waiting above
+the box until the agent says what it came back with, and then written out with
+that result under it, a failure marked as one and a long result offered whole
+on `ctrl+o`. The result is what the agent reported, given only once the call
+is over, so nothing streams under a command the agent is still running, and a
+call the turn ends without an answer to is written out with none. An edit the
+agent says it made to one file is drawn as an edit made here is: the lines
+added and removed counted under the call, and the changed lines beneath. A
+call with no id of its own, or past the 128 waiting at once, is one toned down
+row with no mark, worded as the agent's, such as `the agent used Bash · ls
+-la`. An agent spoken to over the Agent Client Protocol also has a row for
+each file it says it changed, such as `the agent used file · src/lib.rs`,
+since its calls need not name one. Control characters in anything the agent
+says are taken out, and a credential the agent was given is withheld from the
+changed lines as from the rest of what it says. The session keeps these rows
+for you alone, never for the agent, so a session picked up again with
+`/resume` or `--continue` draws the agent's calls, results, changes and counted
+lookups where the turn drew them; one recorded before this release, or picked
+up by an earlier one, comes back as its prompts and answers only.
+
 Where the model asked for one tool and nothing about it moves, the line is
 written the moment the call goes out. `WebSearch` and `WebFetch` are the two
 that matter here: they print nothing while they run, no key points at them, and
@@ -730,6 +764,11 @@ commands, and `sed -n 'N[,M]p' path` with explicit paths for printing a line ran
 Wildcard paths and extra options keep a `sed` call individual. This classification
 changes only display, never permissions. A failed lookup, a call that writes a
 file, or an unrecognized command ends the run and keeps its own result row.
+On an installed agent's route the agent's own lookups fold the same way: for
+Claude Code, `Read`, `NotebookRead`, `Grep`, `Glob`, `LS`, `WebSearch` and
+`WebFetch`, and for an agent over the Agent Client Protocol, a call it marks as
+reading, searching or fetching. An agent's `Bash` call always keeps its own row, since nothing the
+agent reports says a command only read.
 The run also ends wherever the turn does something else worth
 reading: a paragraph of the answer, your next prompt, a stop.
 
@@ -1074,7 +1113,11 @@ free. Project instructions are what
 the figure the line above the box calls `window left`, the share of the room
 left before compaction, so the two always agree. A model whose window crucible
 does not know shows the tokens alone, with `window not known` in place of the
-size and no bar. Escape closes it.
+size and no bar. On an installed agent's route the agent builds its own
+requests, so crucible counts none of their parts, and a last row, `held by the
+agent`, gives the tokens the agent last said its context holds, against the
+window crucible records for the model the agent is started on. Escape closes
+it.
 
 `/usage` stands a panel over the prompt box, headed with the provider and what
 pays for it (`API key`, or the sign-in's name, such as `ChatGPT sign-in`), with
@@ -1082,22 +1125,33 @@ what the session has used: its cost, the time its requests were out and the time
 since it started, the lines edits added and removed, and its tokens in, out,
 read from a cache and written to one. A session with a model crucible has no
 price for says `not priced` rather than `$0.00`, as does one where an answer
-finished without saying what it used. A cost that reads `at least $0.40`
-includes an answer that was stopped before the provider said what it cost: its
-tokens are counted as far as it reported them, and the rest of the session is
-priced in full, so the session cost that much or more. Under that is the same
-context bar `/context` draws, and then the plan limits: one bar for each window
-the plan has, with when it starts again in your local time. The windows that
-apply to every model come first; a plan that limits a model on its own, as
-ChatGPT does for some, has a group of windows under that model's name after
-them, and one that limits a family of models, as MiniMax does, has its group
-named after the model you are using where the family includes it. A window is
-named by its length (`5-hour`, `Daily`, `Weekly`, `Monthly`, `Yearly`, or a
-length such as `3-hour`), a limit counted in requests reads `412 of 1,500 used`,
-and one the vendor does not limit reads `unlimited`. A reset already behind the
-clock reads `since passed`, as the window has started again since it was read.
-Where the plan reports more limits than the panel keeps, `more limits not
-reported` follows the last one drawn.
+finished without saying what it used, and one where a model's
+[fast form](../providers/fast.md) was asked for and not refused. A cost that
+reads `at least $0.40` includes an answer that was stopped before the provider
+said what it cost: its tokens are counted as far as it reported them, and the
+rest of the session is priced in full, so the session cost that much or more.
+Under that is the same context bar `/context` draws, and then the plan limits:
+one bar for each window the plan has, with when it starts again in your local
+time. The windows that apply to every model come first; a plan that limits a
+model on its own, as ChatGPT does for some, has a group of windows under that
+model's name after them, and one that limits a family of models, as MiniMax
+does, has its group named after the model you are using where the family
+includes it. A window is named by its length (`5-hour`, `Daily`, `Weekly`,
+`Monthly`, `Yearly`, or a length such as `3-hour`), a limit counted in requests
+reads `412 of 1,500 used`, and one the vendor does not limit reads `unlimited`.
+A reset already behind the clock reads `since passed`, as the window has started
+again since it was read. Where the plan reports more limits than the panel
+keeps, `more limits not reported` follows the last one drawn.
+
+On an installed agent's route the panel is headed with the agent's name, and
+the session's figures stand under `Session · as claude reported it`, or the
+name of whichever agent runs the turns: the cost the agent reported, never a
+price crucible's own tables would put on it, read as above, so `at least` after
+a turn that was stopped and `not priced` where it reported none; the time since
+the session started; and its tokens. The agent reports no
+time its requests were out, no lines changed and no plan limit, so the panel
+draws none, and its plan limits read `not reported by agents`. The Usage tab of
+`/settings` draws the same.
 
 The panel opens at once with what crucible already holds, from the last response
 or the last answer, and with the ChatGPT sign-in it then asks ChatGPT for every
@@ -1199,7 +1253,8 @@ A window too short for the box says so instead, and asks for a taller one.
 from which vendor: somebody paying for a ChatGPT plan and somebody holding an
 OpenAI console key are two people, and only one of them has a key to type. So
 the first panel has two rows, whatever is stored: *Your account with
-subscription* and *Provide your own API key*. The accounts connect: ChatGPT
+subscription* and *Provide your own API key*, and a third, *Use an installed
+coding agent*, whenever this release ships one. The accounts connect: ChatGPT
 opens a browser authorization, or a device code from a terminal with no browser
 to reach, and Kimi Code a device code on the site your account belongs to;
 either writes a renewable credential to the same protected store a key goes to.
@@ -1217,17 +1272,19 @@ one in) gets each row as the line to type instead: `/login` and the words that
 reach that row alone.
 
 A key that is written lands on the session that took it: the provider is set up
-there and then, from the next turn on. Logging in chooses neither a model nor a
-rung; `/model` is the explicit next step where nothing has chosen one. A run
-started with no key for anything is one command away from a turn, and the row
-under the box says which model it will be asking, or sends you to `/model` where
-the files name none.
+there and then, from the next turn on. Where nothing was being asked, the
+login also asks a model, as described above, so a run started with no key for
+anything is one command away from a turn, and the row under the box says which
+model it will be asking.
 
 `/logout` is the same panel over what is actually there: the providers a key was
 written down for, and nothing else. `/logout <provider>` forgets that one
 directly, and a name with no key here says so and lists the ones that have. It
 reaches `~/.crucible/auth.json` and only that (a key exported into your shell is
 untouched and goes on winning), which is what the line under the answer says.
+An installed agent your settings name is listed after the keys; taking it
+offers to connect, disconnect, sign it out or remove its settings, each asked
+before anything changes.
 
 `/clear` starts a new session with nothing said in it: the next prompt is the
 first one the model sees, and the turns before it are neither sent nor paid for

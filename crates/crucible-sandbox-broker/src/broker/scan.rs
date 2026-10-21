@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use crucible_sandbox_broker::{
     ENTRY_DIRECTORY, ENTRY_FILE, ENTRY_SYMLINK, MAX_SCAN_ENTRIES, MAX_SCAN_EXTENTS,
     MAX_SCAN_FILE_BYTES, MAX_SCAN_PATH_BYTES, MAX_SCAN_ROOTS, MAX_SCAN_SYMLINK_BYTES,
-    SCAN_END_FRAME, SCAN_FRAME,
+    PROTECTED_METADATA, SCAN_END_FRAME, SCAN_FRAME,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -634,10 +634,7 @@ fn validate_publishable_metadata(path: &Path, metadata: &fs::Metadata) -> io::Re
 }
 
 fn protected_name(name: &OsStr) -> bool {
-    matches!(
-        name.as_bytes(),
-        b".git" | b".agents" | b".codex" | b".crucible"
-    )
+    PROTECTED_METADATA.contains(&name.as_bytes())
 }
 
 fn reserved_name(name: &OsStr) -> bool {

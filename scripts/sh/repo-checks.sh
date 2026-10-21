@@ -419,30 +419,40 @@ else
     fi
 fi
 
-section "every HTTP client is built where its hold was decided"
+section "every vendor client is built where its hold was decided"
 # A request leaves through a client, and a hold is handed to a client when it
-# is built. Each file below builds one outside a tests file, and each was
-# decided about: renewal.rs builds the client sign-ins and renewals go
-# through, handed the application's hold; release.rs lends the client
-# provider turns and web posts share only under a hold its caller hands in,
-# and builds the release check's own, which reaches GitHub alone; command.rs
+# is built; an installed agent's process is a client of its vendor, and its
+# hold is the `Held` its launch is given. Each file below builds an HTTP
+# client, mints a `Held` or launches an agent outside a tests file, and each
+# was decided about: content_use.rs mints a `Held` only for a route the user
+# said yes to, and launching.rs is the one place an installed agent is started,
+# under that hold; conformance.rs launches the fake peer, which reaches no
+# vendor, and compiles only under the proof feature; renewal.rs builds the
+# client sign-ins and renewals go through, handed the application's hold;
+# release.rs lends the client provider turns and web posts share only under a
+# hold its caller hands in, and builds the release check's own, which reaches
+# GitHub alone; command.rs
 # builds the one `crucible update` asks a loopback release source through,
 # which reaches this machine alone and carries nothing from a session;
 # transport/http.rs builds one only inside its test module. One more file is
-# one more decision to take.
-decided="crates/crucible-auth/src/oauth/renewal.rs
+# one more decision to take. A line is a use wherever it names one, called or
+# not, and a `Held` under another name still mints through `::granted`.
+decided="crates/crucible-app/src/content_use.rs
+crates/crucible-app/src/launching.rs
+crates/crucible-auth/src/oauth/renewal.rs
+crates/crucible-external-harnesses/src/conformance.rs
 crates/crucible-provider/src/transport/http.rs
 crates/crucible-update/src/command.rs
 crates/crucible-update/src/release.rs"
 built=$(git ls-files 'crates/*.rs' 'src/*.rs' |
     grep -v -E '(^|/)tests(\.rs|/)' |
-    xargs grep -l -E '^[[:space:]]*[^/[:space:]].*Http::new\(' | sort)
+    xargs grep -l -E '^[[:space:]]*([^/[:space:]].*)?(Http::new|::granted|Host::launch)\b' | sort)
 if [[ -z "$built" ]]; then
-    printf '    FAIL no file builds an HTTP client; this check measured nothing\n'
+    printf '    FAIL no file builds a vendor client; this check measured nothing\n'
     failed=1
 elif [[ "$built" != "$decided" ]]; then
     diff <(printf '%s\n' "$decided") <(printf '%s\n' "$built") | sed 's/^/    /'
-    printf '    FAIL the files building an HTTP client changed; decide whether each is held\n'
+    printf '    FAIL the files building a vendor client changed; decide whether each is held\n'
     failed=1
 fi
 
@@ -479,6 +489,21 @@ wire_names_no_vendor 'Responses' \
     'openai|chatgpt|codex|astra|\bmeta\b|muse|xai|grok|moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax' \
     'crates/crucible-provider/src/responses.rs' \
     'crates/crucible-provider/src/responses/*'
+
+section "the client contract names no vendor"
+# Every front end and every route a conversation runs on speak this contract, so
+# a vendor's name in it, a test's fixture included, would be one vendor's case
+# written into what all of them share. Providers and agents reach it as names.
+contract=$(git ls-files 'crates/crucible-client-api/src/*')
+vendors='anthropic|claude|google|gemini|antigravity|openai|chatgpt|codex'
+if [[ -z "$contract" ]]; then
+    printf '    FAIL the client contract was not found; this check measured nothing\n'
+    failed=1
+elif named=$(printf '%s\n' "$contract" | xargs grep -n -i -E "$vendors"); then
+    printf '%s\n' "$named" | sed 's/^/    /'
+    printf '    FAIL the client contract names a vendor; give it a name no vendor owns\n'
+    failed=1
+fi
 
 section "accepted screens"
 # The whole-screen suite proves a capture matches its accepted picture. It
@@ -766,6 +791,22 @@ fi
 # `sandbox` for the records a resume reads a live backend out of.
 # `code credentials` and `code storage` are test-only edges: the tests build
 # fixtures from those values, and the command line names neither.
+#
+# `execution` is the contract every agent a conversation runs on answers, so it
+# names `runtime` for the future an operation is awaited in and `types` for the
+# turn a pending action belongs to, and nothing that runs a turn: a path from it
+# to `provider`, `runner` or `app` would make one backend's machinery every
+# backend's. `app execution` is the composition root putting the native runner
+# behind that contract.
+#
+# `external-harnesses` supervises another vendor's agent as a child process: it
+# names `execution` for the contract the child answers as, `sandbox` and
+# `transport` for the confinement it starts under and the bounded frames over
+# its pipes, `privacy` for its owner-only journal, and `runtime` and `types` for
+# what it waits in and is identified by. `app external-harnesses` is the
+# composition root launching one. `code external-harnesses` is a test-only
+# edge: the whole-screen captures install its fake peer as an agent's program,
+# and the command line names nothing of it.
 allowed='code app
 code attachments
 code auth
@@ -774,6 +815,7 @@ code config
 code context
 code credentials
 code extension
+code external-harnesses
 code mcp
 code models
 code privacy
@@ -799,7 +841,9 @@ app client-api
 app config
 app context
 app credentials
+app execution
 app extension
+app external-harnesses
 app http
 app mcp
 app models
@@ -836,6 +880,8 @@ context tools
 context types
 context workspace
 credentials types
+execution runtime
+execution types
 models credentials
 models runtime
 models types
@@ -844,6 +890,12 @@ extension runtime
 extension sandbox
 extension transport
 extension types
+external-harnesses execution
+external-harnesses privacy
+external-harnesses runtime
+external-harnesses sandbox
+external-harnesses transport
+external-harnesses types
 http credentials
 http runtime
 mcp runtime
@@ -911,10 +963,12 @@ builtins workspace'
 # that list are ones the layering would let shipped code take as well; an edge
 # here is one it would not, because a test's need is never permission for code
 # that ships. `builtins sandbox-local` is how the tools' tests get one machine's
-# confinement to run a command under; the check at the end of this section
-# holds each of these out of every table a build that ships resolves, reading
-# the manifest under `crates/`, so each names a member crate, not the root.
-test_support='builtins sandbox-local'
+# confinement to run a command under, and `external-harnesses sandbox-local`
+# is how its tests launch the fake peer under the same; the check at the end
+# of this section holds each of these out of every table a build that ships
+# resolves, reading the manifest under `crates/`, so each names a member crate, not the root.
+test_support='builtins sandbox-local
+external-harnesses sandbox-local'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
     if ! grep -Fxq "$edge" <<<"$allowed" && ! grep -Fxq "$edge" <<<"$test_support"; then
@@ -1121,9 +1175,159 @@ while IFS= read -r line; do
     failed=1
 done <<<"$sandbox_state"
 
+section "the agents a test build starts stay out of a release"
+# A test of the whole program runs the binary over agents this release does not
+# ship, or over none, by naming them in one variable that `crucible-app`'s
+# `proof` module reads. A build that ships must have no reader of it, so the
+# name is allowed only where it is read and in the whole-screen cases that set
+# it, the module is compiled only under `proof`, and `proof` is turned on the
+# way `per-checkout-state` is above: by a dev-dependency and by nothing a
+# release build resolves. Its own one edge, to the fake peer's `proof`, is the
+# only feature it may turn on.
+seam_name="CRUCIBLE_CODE_PROOF_REGISTRY"
+seam_reader="crates/crucible-app/src/proof.rs"
+seam_root="crates/crucible-app/src/lib.rs"
+named=$(grep -rlF --include='*.rs' "$seam_name" crates src tests || true)
+if ! grep -Fxq "$seam_reader" <<<"$named"; then
+    printf '    FAIL %s does not read %s; this check measured nothing\n' "$seam_reader" "$seam_name"
+    failed=1
+fi
+while IFS= read -r file; do
+    [[ -z "$file" || "$file" == "$seam_reader" || "$file" == tests/whole_screen/* ]] && continue
+    printf '    FAIL %s names %s; only %s and tests/whole_screen/ may\n' "$file" "$seam_name" "$seam_reader"
+    failed=1
+done <<<"$named"
+declared=$(grep -nE '^[[:space:]]*pub mod proof;' "$seam_root" || true)
+if [[ $(grep -c . <<<"$declared") -ne 1 ]]; then
+    printf '    FAIL %s declares pub mod proof; %d times, not once\n' "$seam_root" "$(grep -c . <<<"$declared")"
+    failed=1
+else
+    line=${declared%%:*}
+    if [[ "$(sed -n "$((line - 1))p" "$seam_root")" != '#[cfg(feature = "proof")]' ]]; then
+        printf '    FAIL %s:%s declares pub mod proof; without #[cfg(feature = "proof")] on the line above\n' "$seam_root" "$line"
+        failed=1
+    fi
+fi
+proof_feature=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c '
+import json, sys
+
+OWNER, FEATURE = "crucible-app", "proof"
+ALLOWED = {"crucible-external-harnesses/proof"}
+packages = json.load(sys.stdin)["packages"]
+owner = [package for package in packages if package["name"] == OWNER]
+if len(owner) != 1 or FEATURE not in owner[0]["features"]:
+    sys.exit(0)
+for enabled in owner[0]["features"][FEATURE]:
+    if enabled not in ALLOWED:
+        print(f"{OWNER}/{FEATURE} turns on {enabled}; it may turn on only {sorted(ALLOWED)}")
+tested = 0
+for package in packages:
+    name = package["name"]
+    keys = set()
+    for dependency in package["dependencies"]:
+        if dependency["name"] != OWNER:
+            continue
+        keys.add(dependency.get("rename") or dependency["name"])
+        if FEATURE not in dependency["features"]:
+            continue
+        kind = dependency["kind"] or "normal"
+        if kind == "dev":
+            tested += 1
+        else:
+            print(f"{name} turns on {OWNER}/{FEATURE} in a {kind} dependency, which a release build resolves")
+    for feature, enables in package["features"].items():
+        if name == OWNER:
+            named = feature != FEATURE and FEATURE in enables
+        else:
+            named = any(f"{key}{joint}{FEATURE}" in enables for key in keys for joint in ("/", "?/"))
+        if named:
+            print(f"{name} turns on {OWNER}/{FEATURE} through its feature {feature}, which a release build can ask for")
+if tested:
+    print("measured")
+')
+if ! grep -Fxq measured <<<"$proof_feature"; then
+    printf '    FAIL crucible-app was not found declaring proof and a package turning it on for its tests; this check measured nothing\n'
+    failed=1
+fi
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == measured ]] && continue
+    printf '    FAIL %s\n' "$line"
+    failed=1
+done <<<"$proof_feature"
+
+section "the external route is removable"
+# Running a conversation on an installed agent is one route a release can drop
+# by deleting what it adds, so every tracked file that names it is one this list
+# marks removable, whole or in the route's part. The names are the harness crate
+# and its fake peer, the configuration's `externalAgent` access with its
+# `ExternalAgent` type and `externalAgents` block, and the `agent:` content-use
+# routes. A driver's bare name is not one, since native code names the vendor's
+# models. A listed `.rs` file brings its `tests.rs` and `tests/` along, and an
+# entry no tracked file matches fails, so the list stays the one a removal reads.
+removable=(
+    crates/crucible-external-harnesses
+    # The application's route: the backends, the launch, the turn and its
+    # translation, the accounts, the test build's registry, the `agent:` rows,
+    # the writes, the start-up arm, the switch, and the refusals they raise.
+    crates/crucible-app/src/{access,backends,launching,external,outside}.rs
+    crates/crucible-app/src/{proof,content_use,remember,startup,switching}.rs
+    crates/crucible-app/src/{conversation,error,lib,client}.rs
+    crates/crucible-app/src/client/{accounts,performing,reading}.rs
+    crates/crucible-app/src/proof/accounts.rs
+    crates/crucible-app/src/doctor.rs crates/crucible-app/src/providers/tests.rs
+    # The install of an agent's pinned release and the command that runs it.
+    crates/crucible-app/src/installing.rs src/cli.rs src/cli/agents.rs
+    crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
+    crates/crucible-app/tests/headless/external/routing.rs
+    crates/crucible-app/Cargo.toml
+    # The configuration's access variant and block, their rows and checks.
+    crates/crucible-config/src/{lib,shape,remember,error,settings}.rs
+    crates/crucible-config/src/settings/access.rs crates/crucible-config/src/shape/rows/tests.rs
+    crates/crucible-config/src/document/check.rs
+    schema/crucible-code-schema.json
+    # The client contract's account commands and their variants.
+    crates/crucible-client-api/src/{command,outcome,pending,snapshot,wire,tests}.rs
+    # The terminal's choosers and the whole-screen cases over them.
+    src/cli/converse/command/{login,logout}.rs
+    tests/whole_screen/{agents,main,watched}.rs scripts/screen-baseline.json
+    Cargo.toml Cargo.lock scripts/sh/repo-checks.sh
+    docs/providers/{agents,index,providers,content-use}.md
+    docs/configuration/configuration.md docs/reference/cli.md
+    docs/security/index.md docs/sessions/sessions.md
+    docs/getting-started/{troubleshooting,how-crucible-works}.md
+    README.md CONTRIBUTING.md
+)
+pathspecs=()
+for entry in "${removable[@]}"; do
+    if [[ -z "$(git ls-files -- "$entry")" ]]; then
+        printf '    FAIL %s is listed as removable and no tracked file is\n' "$entry"
+        failed=1
+    fi
+    pathspecs+=("$entry")
+    if [[ $entry == *.rs && $entry != */tests.rs ]]; then
+        pathspecs+=("${entry%.rs}/tests.rs" "${entry%.rs}/tests")
+    fi
+done
+naming=$({
+    git grep -l -F -e crucible-external-harnesses -e crucible_external_harnesses \
+        -e crucible-fake-peer -e externalAgent -e ExternalAgent
+    git grep -l -E '(^|[^A-Za-z_-])agent:[a-z]'
+} | LC_ALL=C sort -u)
+if [[ -z "$naming" ]]; then
+    printf '    FAIL no tracked file names the external route; this check measured nothing\n'
+    failed=1
+fi
+listed=$(git ls-files -- "${pathspecs[@]}" | LC_ALL=C sort -u)
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    printf '    FAIL %s names the external route and is not listed as removable\n' "$file"
+    failed=1
+done < <(LC_ALL=C comm -23 <(printf '%s\n' "$naming") <(printf '%s\n' "$listed"))
+
 section "no spawned thread in the hosted crates"
-# No shipped source in the transport, MCP, or extension crates starts its own
-# thread: a `thread::spawn` in any of the three fails, which is also what keeps
+# No shipped source in the transport, MCP, extension or external-harnesses
+# crates starts its own thread: a `thread::spawn` in any of the four fails, which is also what keeps
 # a detached pipe thread from coming back. Sync calls remain —
 # `Frames::next_frame`/`Written::send` and `Hosted::greet`/`catalogue`/`call` —
 # so this checks threads, not all blocking. Files that
@@ -1135,6 +1339,7 @@ while IFS= read -r file; do
     shipped+=("$file")
 done < <(
     find crates/crucible-transport/src crates/crucible-mcp/src crates/crucible-extension/src \
+        crates/crucible-external-harnesses/src \
         -name '*.rs' -type f \
         -not -name 'tests.rs' -not -name 'testing.rs' -not -path '*/tests/*' |
         LC_ALL=C sort
@@ -1305,7 +1510,9 @@ fi
 # for a reason the probe cannot see. What each probe names is written down
 # whole, so a new import is a decision taken here. `generate-models` names
 # `crucible_types` for the modalities it reads, and again in the text of the
-# table it writes, which is compiled where the table is kept.
+# table it writes, which is compiled where the table is kept; its drift report
+# names `crucible_app` for the shipped provider lists and rungs it compares,
+# which are the composition itself, and `crucible_models` for the rung ladder.
 # `bench-grep` and `bench-tools` name `crucible_tools` for the tool worker they
 # lend the calls they time, so what they time includes handing the work to it,
 # `crucible_runtime` for the future their permission prompts answer with, and
@@ -1329,6 +1536,8 @@ src/bin/bench-tools.rs crucible_sandbox_local
 src/bin/bench-tools.rs crucible_tools
 src/bin/bench-tools.rs crucible_types
 src/bin/bench-tools.rs crucible_workspace
+src/bin/generate-models.rs crucible_app
+src/bin/generate-models.rs crucible_models
 src/bin/generate-models.rs crucible_types'
 probe_sources=(src/bin/*.rs)
 if ((${#probe_sources[@]} == 0)); then
@@ -1352,23 +1561,28 @@ while IFS= read -r line; do
 done <<<"$probes"
 
 section "a request read from bytes is decided about first"
-# Five commands change what the session may do or whom it acts as: a permission
-# mode, the sandbox, and an account signed in or out. The application performs
+# Nine commands change what the session may do or whom it acts as: a permission
+# mode, the sandbox, an account signed in or out, an installed agent
+# disconnected, removed or signed out, and a provider connected through one. The application performs
 # them for whoever hands them in, which is safe while every request is built on
 # the host by the front end standing there. `Request::decode` is where one could
 # come from somewhere else, and nothing that ships calls it. A file that starts
-# to is written down here with what it does about each of the five, so that
+# to is written down here with what it does about each of the nine, so that
 # reading requests from outside is a decision taken command by command and not
 # a line added. A row is `file command what-is-done-about-it`.
 request_owner=crates/crucible-client-api/src
-authority='cycle_mode
+authority='connect
+cycle_mode
+disconnect
 login
 logout
+remove_integration
 sandbox
-set_mode'
+set_mode
+sign_out'
 decided=''
 kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep -oE '"[a-z_]+"' | tr -d '"' | sort)
-# The five were picked out of the eighteen commands there were. Asking for the
+# The first five were picked out of the eighteen commands there were. Asking for the
 # release notes, the nineteenth, changes nothing a session may do, and neither
 # does asking for a speed, the twentieth: it changes what a request costs, not
 # what the session may reach or whom it acts as. Asking how the window is spent,
@@ -1379,9 +1593,17 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # the sandbox or an account: the menu's own test refuses a row over a key that
 # loosens what crucible does unasked. Asking a plan for its limits, the
 # twenty-fourth, reads figures the vendor keeps about the credential already in
-# use and changes nothing either. One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 24)); then
-    printf '    FAIL the client contract no longer has the 24 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 24 in this check\n'
+# use and changes nothing either. Disconnecting an installed agent, the
+# twenty-fifth, takes an account out of the session's reach, so it joined the
+# five. Removing an installed agent's settings, the twenty-sixth, takes the
+# same account out of reach for good, so it joined them too. Signing an
+# installed agent out, the twenty-seventh, takes every instance on its sign-in
+# out of reach and signs the agent's own program out, so it joined them as
+# well. Connecting a provider through an installed agent, the twenty-eighth,
+# changes whom the session acts as for that provider, so it joined them too.
+# One more is one nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 28)); then
+    printf '    FAIL the client contract no longer has the 28 commands the nine were picked out of; decide whether the new one changes what a session may do, then move the 28 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -1429,13 +1651,15 @@ done <<<"$decided"
 # Reading bytes is one way a request arrives from somewhere else. The other is
 # an adapter that reads a format of its own and builds the command: the variants
 # are public, and no `decode` is named on that road. So the files that name one
-# of the five are written down too. They are the terminal, which builds them
+# of the nine are written down too. They are the terminal, which builds them
 # from keys pressed on the host, and the application, which performs them, or,
-# at the door that asks a plan for its limits, refuses them unperformed. A
+# at the door that asks a plan for its limits and the door for an installed
+# agent's account, refuses those it does not own unperformed. A
 # file that joins them is one more place a session's mode, sandbox or account
 # can be changed from, and it is added here by somebody who looked at where its
 # commands come from.
-naming='crates/crucible-app/src/client/asking.rs
+naming='crates/crucible-app/src/client/accounts.rs
+crates/crucible-app/src/client/asking.rs
 crates/crucible-app/src/client/performing.rs
 crates/crucible-app/src/client/turning.rs
 src/cli/converse.rs
@@ -1465,13 +1689,13 @@ named=$(grep -rlE --include='*.rs' "(^|[^A-Za-z0-9_])Command::($variants)([^A-Za
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     if ! grep -Fxq "$file" <<<"$naming"; then
-        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the five if that is outside the host, then add the file here\n' "$file"
+        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the nine if that is outside the host, then add the file here\n' "$file"
         failed=1
     fi
 done <<<"$named"
 while IFS= read -r file; do
     if ! grep -Fxq "$file" <<<"$named"; then
-        printf '    FAIL %s was not found naming one of the five; take it out, or the search measured nothing\n' "$file"
+        printf '    FAIL %s was not found naming one of the nine; take it out, or the search measured nothing\n' "$file"
         failed=1
     fi
 done <<<"$naming"

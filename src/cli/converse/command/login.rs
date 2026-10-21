@@ -17,7 +17,9 @@
 //! name. Several rows left stand under the headings of their kinds; one opens
 //! its screen at once; none is said in one line naming the words.
 //!
-//! A row whose provider holds a credential says on its next screen what will be
+//! A row holding its provider's credential first asks whether that credential
+//! is used as it is stored, which reaches the provider with no credential
+//! typed or written, or replaced. Replacing it says on the next screen what will be
 //! replaced. Nothing is replaced until the new one is stored, so a sign-in that
 //! fails, is refused or expires leaves the store as it was and says what is
 //! unchanged. A sign-in stopped by Escape while its credential is being written
@@ -53,14 +55,32 @@
 //!
 //! A window with no room to stand a panel in, and a run with no keyboard, are
 //! given each row as the whole line to type: `/login` and the words that leave
-//! that row alone. Every row comes off the registry, so a way in this build
-//! offers and cannot be typed is not a state that exists.
+//! that row alone. Every provider's row comes off the registry, so a provider
+//! this build offers and cannot be typed is not a state that exists.
+//!
+//! Where this build offers an installed agent, the first panel has a third
+//! row, whatever provider is being asked or none: the provider an agent signs
+//! in to, reached through that sign-in, and this conversation moved onto it.
+//! It is the application's connect, asked for as any front end asks for it,
+//! and every question it stops on — which agent, whether its program was
+//! found, the hold before it is first started, whether it is signed in —
+//! is the application's, drawn here whole. Escape answers the way that
+//! leaves everything as it is, which the application takes back up a level
+//! or ends; one that ends unconnected stands the first panel again. Keys
+//! pressed while the application worked between questions are dropped, so
+//! none answers a question its reader never saw. Only that row is not given
+//! a line to type: a connect is answered in panels, and a window with no
+//! room for one does not offer it.
 
 use std::borrow::Cow;
 use std::time::Duration;
 
 use crucible_app::Conversation;
-use crucible_app::client::Performed;
+use crucible_app::client::accounts::{
+    CONNECT_UNSAVED, CONNECTED, DISCONNECTED, HOLD_UNKEPT, NOT_CONFIRMED_STOPPED, REMOVED,
+    STILL_REFERENCED, THIS_RUN_ONLY, UNMOVED, moved_onto,
+};
+use crucible_app::client::{Account, Performed, snapshot};
 use crucible_app::content_use;
 use crucible_app::providers::{
     List, Misfit, Providers, Row as Way, Rows, Served, key_variables, offered,
@@ -68,17 +88,20 @@ use crucible_app::providers::{
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
-use crucible_client_api::Command;
+use crucible_client_api::{Agents, Command, LogoutOutcome, Outcome};
 use crucible_tui::{
     Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
     characters, clip, fold, pressed,
 };
 
 use crate::cli::Fatal;
-use crate::cli::client::astray;
+use crate::cli::client::{Question, Reply, astray};
 use crate::cli::converse::picking::{self, Picked};
 use crate::cli::converse::secret::{self, Asked};
 use crate::cli::converse::warning::{self, Answer, Put};
+use crate::cli::converse::{region, typing};
+use crate::cli::draw::flattened;
+use crate::cli::style::Style;
 
 use super::{Terms, about, say};
 
@@ -93,8 +116,13 @@ const ACCOUNT_ROUTE_SAYS: &str = "Usage included in your paid plan";
 pub(super) const KEY_ROUTE_SHOWN: &str = "Provide your own API key";
 pub(super) const KEY_ROUTE_SAYS: &str = "API usage billing";
 
-/// The first panel: two ways to pay, whatever the store holds.
-const FIRST: [Offered<'static>; 2] = [
+/// The row that leads to an installed agent, and what it says.
+const AGENT_ROUTE_SHOWN: &str = "Use an installed coding agent";
+const AGENT_ROUTE_SAYS: &str = "Sign in through an official harness";
+
+/// The first panel: two ways to pay, whatever the store holds, and an
+/// installed agent's account third, where one is offered.
+const FIRST: [Offered<'static>; 3] = [
     Offered {
         name: ACCOUNT_ROUTE_SHOWN,
         says: ACCOUNT_ROUTE_SAYS,
@@ -103,7 +131,14 @@ const FIRST: [Offered<'static>; 2] = [
         name: KEY_ROUTE_SHOWN,
         says: KEY_ROUTE_SAYS,
     },
+    Offered {
+        name: AGENT_ROUTE_SHOWN,
+        says: AGENT_ROUTE_SAYS,
+    },
 ];
+
+/// How many of [`FIRST`] stand where no installed agent is offered.
+const PAID: usize = 2;
 
 /// The sentence under the first panel.
 const HOW: &str = "Choose how usage is paid for.";
@@ -145,6 +180,10 @@ const STOPPING: &str = "stopping; waiting for anything being stored…";
 
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
+
+/// What a connect whose question had no room to stand says.
+const CRAMPED_CONNECT: &str =
+    "! connecting needs an answer first; make the window taller and try /login again";
 
 /// What the box's absence leaves behind, when the window had no room for it.
 ///
@@ -372,26 +411,40 @@ fn reaching(way: &Way, rows: &Rows) -> String {
 /// The first panel, the list of the kind chosen on it, and the screen of the
 /// row chosen from that, until one of them is done.
 fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fatal> {
+    let offered = snapshot(walk.conversation).agents == Agents::Available;
+    let shown = if offered {
+        &FIRST[..]
+    } else {
+        FIRST.get(..PAID).unwrap_or_default()
+    };
     let mut first = 0;
     loop {
         let panel = Panel {
             source: None,
             title: TITLE,
             said: Some(HOW),
-            shown: &FIRST,
+            told: &[],
+            shown,
             chosen: first,
             footer: CANCEL,
         };
-        let (list, said) = match picking::pick(walk.renderer, walk.terms.style(), panel)? {
+        let picked = picking::pick(walk.renderer, walk.terms.style(), panel)?;
+        if let Picked::Took(at) = picked {
+            first = at;
+        }
+        let (list, said) = match picked {
             Picked::Took(0) => (List::Subscription, ACCOUNTS),
-            Picked::Took(_) => (List::Key, SAID),
+            Picked::Took(1) => (List::Key, SAID),
+            Picked::Took(_) => match connected(walk)? {
+                Closed::Back => continue,
+                closed => return Ok(closed),
+            },
             Picked::Left => {
                 say(walk.renderer, LEFT)?;
                 return Ok(Closed::Done);
             }
             Picked::Cramped => return Ok(Closed::Cramped),
         };
-        first = usize::from(list == List::Key);
 
         let listed = listed(rows, list);
         let listing = Listing {
@@ -405,6 +458,137 @@ fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fa
             closed => return Ok(closed),
         }
     }
+}
+
+/// The third row: an installed agent connected by the application's connect,
+/// which reaches the provider the agent signs in to, each of its questions
+/// drawn here. Back where it ended unconnected, so the first panel stands
+/// again.
+fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
+    let style = walk.terms.style();
+    let renderer = &mut *walk.renderer;
+    let mut cramped = false;
+    let performed = walk.terms.operate(
+        walk.conversation,
+        Command::Connect { instance: None },
+        |question| {
+            let replied = answered(renderer, style, question)?;
+            cramped |= replied.is_none();
+            Ok::<_, Fatal>(replied)
+        },
+    )?;
+    if cramped {
+        say(walk.renderer, CRAMPED_CONNECT)?;
+        return Ok(Closed::Done);
+    }
+
+    let Some((line, connected)) = ended(&performed) else {
+        return Ok(Closed::Back);
+    };
+    say(walk.renderer, &line)?;
+    if connected {
+        executing(walk.renderer, walk.conversation, style)?;
+    }
+    Ok(Closed::Done)
+}
+
+/// The line an account operation ends on, and whether a provider is now
+/// reached through an agent: nothing where nobody went on with it.
+pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
+    let Performed::Account(account) = performed else {
+        return Some((astray(performed), false));
+    };
+    Some(match account {
+        Account::Undecided | Account::Unconnected => return None,
+        Account::Connected => (CONNECTED.to_owned(), true),
+        Account::Moved(instance) => (moved_onto(instance), true),
+        Account::Unmoved(reason) => (format!("{UNMOVED} ({reason})"), true),
+        Account::ConnectUnsaved(problem) => (format!("! {CONNECT_UNSAVED} {problem}"), false),
+        Account::HoldUnkept(problem) => (format!("! {HOLD_UNKEPT} {problem}"), false),
+        Account::Disconnected { stopped: true } => (DISCONNECTED.to_owned(), false),
+        Account::Disconnected { stopped: false } => (format!("! {NOT_CONFIRMED_STOPPED}"), false),
+        Account::ThisRunOnly(problem) => (format!("! {THIS_RUN_ONLY} {problem}"), false),
+        Account::Removed => (REMOVED.to_owned(), false),
+        Account::StillReferenced(provider) => (format!("! {provider} {STILL_REFERENCED}"), false),
+        Account::Unremoved(problem) => (format!("! {problem}"), false),
+        // The sentence alone: what the agent's program printed is not drawn.
+        Account::SignedOut | Account::SignOutUnverified(_) => {
+            let said = match account.outcome() {
+                Outcome::Logout(
+                    LogoutOutcome::AgentSignedOut { said }
+                    | LogoutOutcome::SignOutUnverified { said },
+                ) => said.as_str().to_owned(),
+                other => format!("! the application answered {}", other.kind()),
+            };
+            let warned = matches!(account, Account::SignOutUnverified(_));
+            (if warned { format!("! {said}") } else { said }, false)
+        }
+        Account::Contended(contended) => (format!("! {contended}"), false),
+    })
+}
+
+/// Who runs this conversation's turns now, and who is paid for them, as any
+/// front end reads it: nothing where no agent runs them.
+pub(super) fn executing<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    conversation: &Conversation,
+    style: Style,
+) -> Result<(), Fatal> {
+    if let Some([execution, billing]) = typing::route(conversation) {
+        say(
+            renderer,
+            &format!("{execution} {} {billing}", style.glyphs().dot()),
+        )?;
+    }
+    Ok(())
+}
+
+/// Draws `question` as a panel and reads keys until it is answered: nothing
+/// where it had no room to stand. Escape answers the way that leaves
+/// everything as it is, which a question puts last.
+pub(super) fn answered<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    question: &Question,
+) -> Result<Option<Reply>, Fatal> {
+    Ok(match question {
+        Question::Account(confirmation) => {
+            // Keys pressed while the application worked answer nothing.
+            region::unheard(renderer)?;
+            let flat = drawn_facts(&confirmation.facts);
+            let told: Vec<&str> = flat.iter().map(String::as_str).collect();
+            let shown: Vec<Offered<'_>> = confirmation
+                .choices
+                .iter()
+                .map(|(name, says)| Offered { name, says })
+                .collect();
+            let panel = Panel {
+                title: TITLE,
+                said: Some(&confirmation.asks),
+                source: None,
+                told: &told,
+                shown: &shown,
+                chosen: 0,
+                footer: BACK,
+            };
+            match picking::pick(renderer, style, panel)? {
+                Picked::Took(at) => Some(Reply::Took(at)),
+                Picked::Left => Some(Reply::Took(shown.len().saturating_sub(1))),
+                Picked::Cramped => None,
+            }
+        }
+        Question::Warning(warned) => match warning::ask(renderer, style, warned, Put::Launch)? {
+            Answer::Yes => Some(Reply::Yes),
+            Answer::Back => Some(Reply::No),
+            Answer::Cramped => None,
+        },
+    })
+}
+
+/// `facts` as a panel draws them: each can carry an agent's own words, so
+/// none of their control bytes reach the terminal.
+fn drawn_facts(facts: &[String]) -> Vec<String> {
+    facts.iter().map(flattened).collect()
 }
 
 /// The rows of one list, in the order the registry gives them.
@@ -479,6 +663,7 @@ impl Listing<'_> {
                 source: None,
                 title: TITLE,
                 said: Some(self.said),
+                told: &[],
                 shown: &shown,
                 chosen: at,
                 footer: self.footer,
@@ -664,6 +849,19 @@ fn opening<T: Terminal>(
         )?;
         return Ok(Closed::Done);
     };
+    // A row holding its provider's credential is asked about first, so the
+    // credential already stored is taken without being given again.
+    if walk.held.contains(way) {
+        match holding_choice(way, opened, walk)? {
+            Holding::Use => {
+                warning::stored(walk.renderer, walk.terms, &content_use::row_route(way))?;
+                taken(named, walk.renderer, walk.conversation, walk.terms)?;
+                return Ok(Closed::Done);
+            }
+            Holding::Replace => {}
+            Holding::Closed(closed) => return Ok(closed),
+        }
+    }
     match way.kind {
         // The row a provider's key has always been read for, opened by the
         // command: the way `/login anthropic` comes in.
@@ -674,6 +872,62 @@ fn opening<T: Terminal>(
         Kind::Key => keyed(way, named, opened, walk),
         Kind::Account => signed(way, opened, walk),
     }
+}
+
+/// What is done with a row's credential already stored.
+enum Holding {
+    /// Taken as it is stored.
+    Use,
+    /// Given again, through the row's key box or sign-in.
+    Replace,
+    /// Neither: the screen closed as it says.
+    Closed(Closed),
+}
+
+/// Asks whether the credential `way` holds is used as it is or replaced.
+fn holding_choice<T: Terminal>(
+    way: &Way,
+    opened: Opened,
+    walk: &mut Walk<'_, T>,
+) -> Result<Holding, Fatal> {
+    let glyphs = walk.terms.style().glyphs();
+    let title = drawn(way.shown, glyphs);
+    let said = format!("A {} is stored for this row.", credential(way));
+    let replace = match way.kind {
+        Kind::Key => "give another key in its place",
+        Kind::Account => "sign in again in its place",
+    };
+    let shown = [
+        Offered {
+            name: "Use it",
+            says: "ask with what is stored, nothing typed",
+        },
+        Offered {
+            name: "Replace it",
+            says: replace,
+        },
+    ];
+    let panel = Panel {
+        source: None,
+        title: &title,
+        said: Some(&said),
+        told: &[],
+        shown: &shown,
+        chosen: 0,
+        footer: opened.leaves(),
+    };
+    Ok(
+        match picking::pick(walk.renderer, walk.terms.style(), panel)? {
+            Picked::Took(0) => Holding::Use,
+            Picked::Took(_) => Holding::Replace,
+            Picked::Left if opened == Opened::Below => Holding::Closed(Closed::Back),
+            Picked::Left => {
+                say(walk.renderer, LEFT)?;
+                Holding::Closed(Closed::Done)
+            }
+            Picked::Cramped => Holding::Closed(Closed::Cramped),
+        },
+    )
 }
 
 /// The key box for `way`, and the key written down under its name.
@@ -770,6 +1024,7 @@ fn signed<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Res
             source: None,
             title: &title,
             said: Some("Choose where to finish account authorization."),
+            told: &[],
             shown: &shown,
             chosen: at,
             footer: opened.leaves(),
@@ -1300,9 +1555,10 @@ fn remedy(failed: &AuthError) -> &'static str {
 /// file written a line ago; what it buys is that somebody who has just stored a
 /// credential can type at the session in front of them.
 ///
-/// Authentication never chooses a model or effort, and never retires the pair
-/// in force. Where nothing names a model, the line says so; where a provider is
-/// already answering, the line points at `/model` instead — that is the other
+/// Authentication never retires the model and effort in force. Where nobody
+/// was being asked, the conversation asks for the model the configuration
+/// names, else the provider's default, and the line names it; where nothing is
+/// asked even then, the line points at `/model` instead — that is the other
 /// half of a first minute, and a session that stopped at "credential stored"
 /// would leave the reader to find that out from the next refusal.
 fn taken<T: Terminal>(
@@ -1321,6 +1577,40 @@ fn taken<T: Terminal>(
         // Said now rather than left for it: a session that looked configured and
         // refused every turn is the state this whole command exists to end.
         LoggedIn::Unusable(problem) => return say(renderer, &format!("! {problem}")),
+
+        // The installed agent keeps answering this run, so the line says when
+        // the credential is used instead, and says so only once it is written.
+        LoggedIn::NextLaunch {
+            provider,
+            unwritten: Some(problem),
+        } => {
+            say(renderer, &format!("! {problem}"))?;
+            return say(
+                renderer,
+                &format!("login successful; {provider} is still reached through its agent"),
+            );
+        }
+        LoggedIn::NextLaunch {
+            provider,
+            unwritten: None,
+        } => {
+            return say(
+                renderer,
+                &format!(
+                    "login successful; {provider} is asked directly from the next launch; \
+                     this conversation stays on its agent"
+                ),
+            );
+        }
+        LoggedIn::Stored { provider } => {
+            return say(
+                renderer,
+                &format!(
+                    "login successful; the credential for {provider} is stored; \
+                     this conversation stays on its agent"
+                ),
+            );
+        }
 
         // A credential says a provider can be reached and never which to ask, so
         // where another provider is already answering, it keeps the session it
@@ -1344,6 +1634,15 @@ fn taken<T: Terminal>(
             super::cache::retained(renderer, super::Laid::Hung, retained)?;
             unwritten
         }
+        LoggedIn::MovedOff {
+            provider,
+            retained,
+            unwritten,
+        } => {
+            super::cache::retained(renderer, super::Laid::Hung, retained)?;
+            say(renderer, &moved_off(provider))?;
+            unwritten
+        }
     };
 
     // Written down as well as switched to, so the next run here opens on the
@@ -1354,7 +1653,7 @@ fn taken<T: Terminal>(
         say(renderer, &format!("! {problem}"))?;
     }
 
-    let model = conversation.runner().model();
+    let model = conversation.settled().model();
     let said = if model.is_empty() {
         "login successful; choose a model with /model".to_owned()
     } else {
@@ -1362,6 +1661,15 @@ fn taken<T: Terminal>(
     };
 
     say(renderer, &said)
+}
+
+/// What a person is told where a login moved the conversation off its agent
+/// onto `provider`, or a model taken in `/model` did.
+pub(super) fn moved_off(provider: &str) -> String {
+    format!(
+        "this conversation left its agent for {provider}, in a new session; \
+         /resume lists the one it left"
+    )
 }
 
 #[cfg(test)]

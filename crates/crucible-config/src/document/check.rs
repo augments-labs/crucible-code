@@ -10,7 +10,7 @@
 mod tests;
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use crucible_types::shown::{Escaping, escaped};
 use serde_core::Serialize as _;
@@ -529,6 +529,143 @@ impl Reader<'_> {
         Ok(())
     }
 
+    /// Refuses a provider's access, or an agent instance, that writes a key
+    /// its variant does not read; and an instance whose program or profile is
+    /// named by a path that is not rooted.
+    ///
+    /// Not a shape rule: the shape has one declaration per block, and which of
+    /// its keys apply is decided by another key in it. Here rather than in the
+    /// resolver, because the resolver has no file or position to name, and a
+    /// key nothing reads is one the reader believes is in force.
+    pub(super) fn access(&self, value: &Value) -> Result<(), ConfigError> {
+        let external = settings::access::EXTERNAL;
+        let providers = value.get("providers").and_then(Value::as_object);
+        for (name, block) in providers.into_iter().flatten() {
+            let Some(access) = block.get("access") else {
+                continue;
+            };
+            let kind = access
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let instance = access.get("instance").is_some();
+            if kind == external && !instance {
+                return Err(ConfigError::Variant {
+                    file: self.file.into(),
+                    path: format!("providers.{name}.access").into(),
+                    at: At::of("access", self.text),
+                    problem: format!(
+                        "an {external} access needs instance, the externalAgents entry it is reached through"
+                    )
+                    .into(),
+                });
+            }
+            if kind != external && instance {
+                return Err(ConfigError::Variant {
+                    file: self.file.into(),
+                    path: format!("providers.{name}.access.instance").into(),
+                    at: At::of("instance", self.text),
+                    problem: format!(
+                        "only an {external} access is reached through an instance, and this one is {kind}"
+                    )
+                    .into(),
+                });
+            }
+        }
+
+        let instances = value.get("externalAgents").and_then(Value::as_object);
+        for (name, record) in instances.into_iter().flatten() {
+            let at = At::of(name, self.text);
+            let written = record.get("driver").and_then(Value::as_str);
+            let Some(driver) = settings::access::Driver::ALL
+                .into_iter()
+                .find(|driver| Some(driver.name()) == written)
+            else {
+                continue;
+            };
+            for other in settings::access::Driver::ALL {
+                let foreign = other.profile_key();
+                if other != driver && record.get(foreign).is_some() {
+                    return Err(ConfigError::Variant {
+                        file: self.file.into(),
+                        path: format!("externalAgents.{name}.{foreign}").into(),
+                        at: At::of(foreign, self.text),
+                        problem: format!(
+                            "{foreign} is read only for {}, and this instance's driver is {}, whose profile is {}",
+                            other.name(),
+                            driver.name(),
+                            driver.profile_key()
+                        )
+                        .into(),
+                    });
+                }
+            }
+
+            if let Some(found) = record.get("executable").and_then(Value::as_str) {
+                let program = Path::new(found);
+                if !program.is_absolute() && !bare_name(found) {
+                    return Err(ConfigError::Unrooted {
+                        file: self.file.into(),
+                        path: format!("externalAgents.{name}.executable").into(),
+                        found: found.into(),
+                        at,
+                    });
+                }
+            }
+
+            for key in ["model", "effort"] {
+                if !driver.takes_model() && record.get(key).is_some() {
+                    return Err(ConfigError::Variant {
+                        file: self.file.into(),
+                        path: format!("externalAgents.{name}.{key}").into(),
+                        at: At::of(key, self.text),
+                        problem: format!(
+                            "an {} agent chooses its own model, so {key} is not read for it",
+                            driver.name()
+                        )
+                        .into(),
+                    });
+                }
+            }
+            if let Some(found) = record.get("model").and_then(Value::as_str)
+                && !settings::access::model_name(found)
+            {
+                return Err(ConfigError::Variant {
+                    file: self.file.into(),
+                    path: format!("externalAgents.{name}.model").into(),
+                    at: At::of("model", self.text),
+                    problem: settings::access::MODEL_NAMED.into(),
+                });
+            }
+
+            let key = driver.profile_key();
+            if driver.profile_needed() && record.get(key).is_none() {
+                return Err(ConfigError::Needed {
+                    file: self.file.into(),
+                    path: format!("externalAgents.{name}").into(),
+                    name: key.into(),
+                    said: format!(
+                        "an {} agent keeps its sign-in in a profile directory of its own, so it is never one another Google product shares",
+                        driver.name()
+                    )
+                    .into(),
+                    at,
+                });
+            }
+            if let Some(found) = record.get(key).and_then(Value::as_str)
+                && !Path::new(found).is_absolute()
+            {
+                return Err(ConfigError::Relative {
+                    file: self.file.into(),
+                    path: format!("externalAgents.{name}.{key}").into(),
+                    found: found.into(),
+                    at,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// The same refusal from three places, built once.
     /// Refuses a block holding more than the key that declares it reads.
     ///
@@ -1013,4 +1150,14 @@ fn file_of(problem: &ConfigError, workspace: &Path) -> String {
         }
         _ => workspace.display().to_string(),
     }
+}
+
+/// Whether `found` is one program name for `PATH` to answer: a single name,
+/// with no separator anywhere, that names no directory.
+fn bare_name(found: &str) -> bool {
+    !found.contains(std::path::is_separator)
+        && matches!(
+            Path::new(found).components().collect::<Vec<_>>().as_slice(),
+            [Component::Normal(_)]
+        )
 }

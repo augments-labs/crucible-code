@@ -1,7 +1,10 @@
 //! Putting a pending action to a front end, and settling it on its answer.
 //!
 //! A turn stops twice over: when the permission engine wants to know whether a
-//! call may run, and when a model puts questions to the person. Either way the
+//! call may run, and when a model puts questions to the person. A turn an
+//! installed agent runs stops a third way, when the agent asks leave to act,
+//! and is put through the same front as a permission question is, by the
+//! [`Asker`] a turn is handed. Either way the
 //! stop is given an identity minted here, put to the [`Front`] as a
 //! [`Pending`], and held until a [`Decision`] naming that identity and
 //! answering that kind of question comes back. The count identities come from
@@ -21,6 +24,10 @@
 //! as sent would be cut is denied without being put, unless the front end says
 //! it draws from the whole value it is lent ([`Front::draws_whole`]). Either
 //! way no identity is spent on an action nobody was shown.
+//!
+//! An installed agent's leave is answered to the agent, which acts on it inside
+//! its own sandbox: what comes back is the contract's decision, never anything
+//! the permission engine reads.
 //!
 //! A decision is never a permission. It is read here, against the action this
 //! module itself put, and what the engine is handed is a
@@ -55,11 +62,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_client_api::bounds::ITEMS;
+use crucible_client_api::inspection::Claim;
 use crucible_client_api::pending::Operation;
 use crucible_client_api::{
     Asked, Capabilities, Capability, Choice, Decision, Effect, ErrorCode, Lasting, Pending,
     PendingId, Picked, Refusal, Ruling, Said, Text,
 };
+use crucible_execution::{Confinement, Detail};
 use crucible_runtime::BoxFuture;
 use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
 use crucible_types::{Answered, Question, ToolCall};
@@ -105,6 +114,75 @@ pub enum Shown<'a> {
     Questions(&'a [Question]),
     /// The route a send would go on, whose vendor uses what is sent.
     Warning(&'a Warned),
+    /// What an installed agent asked leave to do, and who would do it.
+    External(Leave<'a>),
+    /// Which way an account operation on an installed agent goes on.
+    Account(&'a Confirmation),
+}
+
+/// What an installed agent asked leave to do, as the host holds it, whole,
+/// and who would do it: the agent's own words for the action, read as a
+/// client is told them, beside who runs it and how far it is held in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Leave<'a> {
+    /// The agent's name for the tool that would act.
+    pub tool: &'a str,
+    /// The spelling its rules are matched against.
+    pub summary: &'a str,
+    /// The kind of thing it would do.
+    pub effect: Effect,
+    /// The line that would run, or what would be sent, as the call carried
+    /// it: nothing for a read or a change to a file.
+    pub sent: Option<&'a str>,
+    /// Whether a command would be left running after its turn has ended.
+    pub left_running: bool,
+    /// Who acts on it: the agent, by the name its configured instance goes by.
+    pub acting: Acting<'a>,
+}
+
+/// Who runs an installed agent's actions, and how they are held in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Acting<'a> {
+    /// The configured instance that runs them.
+    pub instance: &'a str,
+    /// How the actions it takes on this machine are held in, in the sandbox's
+    /// own word: nothing where nothing has said.
+    pub confinement: Option<Claim>,
+}
+
+impl<'a> Acting<'a> {
+    /// The actions of `instance`, held in as `claims` says.
+    #[must_use]
+    pub fn new(instance: &'a str, claims: &crucible_execution::Capabilities) -> Self {
+        Self {
+            instance,
+            confinement: claims
+                .confinement()
+                .map(|confined| claimed(confined.level())),
+        }
+    }
+}
+
+/// The sandbox's word for confinement `level`, as `crucible sandbox inspect`
+/// says it.
+const fn claimed(level: Confinement) -> Claim {
+    match level {
+        Confinement::HardEnforced => Claim::Enforced,
+        Confinement::Observed => Claim::Observed,
+        Confinement::Unsupported => Claim::Unsupported,
+    }
+}
+
+/// An account operation's question, as the host holds it, whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confirmation {
+    /// What is being asked.
+    pub asks: String,
+    /// What the operation would affect, a sentence each.
+    pub facts: Vec<String>,
+    /// The ways it may go, each a name and what it does. The first is the one
+    /// recommended; the last leaves everything as it is.
+    pub choices: Vec<(String, String)>,
 }
 
 /// Whoever answers pending actions: a terminal, or a consumer with none.
@@ -166,6 +244,8 @@ pub(crate) enum Settled {
     Declined,
     /// Send anyway.
     Accepted,
+    /// The choice of this name.
+    Picked(Said),
 }
 
 /// Holds `decision` against `pending`, the one action it may settle.
@@ -188,18 +268,40 @@ pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, R
                 Err(ErrorCode::InvalidArgument.into())
             }
         }
-        (Pending::Questions { .. } | Pending::Warning { .. }, Decision::Declined { .. }) => {
-            Ok(Settled::Declined)
-        }
+        (
+            Pending::Questions { .. } | Pending::Warning { .. } | Pending::Account { .. },
+            Decision::Declined { .. },
+        ) => Ok(Settled::Declined),
         (Pending::Warning { .. }, Decision::Accepted { .. }) => Ok(Settled::Accepted),
+        (Pending::Account { choices, .. }, Decision::Picked { choice, .. }) => {
+            if choices
+                .iter()
+                .any(|one| one.name.as_str() == choice.as_str())
+            {
+                Ok(Settled::Picked(choice))
+            } else {
+                Err(ErrorCode::InvalidArgument.into())
+            }
+        }
         (
             Pending::Permission { .. },
-            Decision::Answered { .. } | Decision::Declined { .. } | Decision::Accepted { .. },
+            Decision::Answered { .. }
+            | Decision::Declined { .. }
+            | Decision::Accepted { .. }
+            | Decision::Picked { .. },
         )
-        | (Pending::Questions { .. }, Decision::Ruled { .. } | Decision::Accepted { .. })
-        | (Pending::Warning { .. }, Decision::Ruled { .. } | Decision::Answered { .. }) => {
-            Err(ErrorCode::WrongDecision.into())
-        }
+        | (
+            Pending::Questions { .. },
+            Decision::Ruled { .. } | Decision::Accepted { .. } | Decision::Picked { .. },
+        )
+        | (
+            Pending::Warning { .. },
+            Decision::Ruled { .. } | Decision::Answered { .. } | Decision::Picked { .. },
+        )
+        | (
+            Pending::Account { .. },
+            Decision::Ruled { .. } | Decision::Answered { .. } | Decision::Accepted { .. },
+        ) => Err(ErrorCode::WrongDecision.into()),
     }
 }
 
@@ -224,6 +326,21 @@ fn turned_away(front: &mut dyn Front, refusal: Refusal, tries: &mut usize) -> bo
 
 /// What is answered where nobody will: no, and only this once.
 const DENIED: (Verdict, Remember) = (Verdict::Deny, Remember::Never);
+
+/// Whoever answers the pending actions of a turn: the permission engine's
+/// questions, and those an installed agent raises while it runs a turn.
+pub trait Asker: Ask {
+    /// Puts `pending`, which an installed agent raised and `acting` would act
+    /// on, and answers what was decided. No, unless the asker says otherwise:
+    /// an asker that puts nothing has nobody to say yes.
+    fn pending<'a>(
+        &'a mut self,
+        _pending: &'a crucible_execution::Pending,
+        _acting: Acting<'a>,
+    ) -> BoxFuture<'a, crucible_execution::Decision> {
+        Box::pin(std::future::ready(crucible_execution::Decision::Deny))
+    }
+}
 
 /// The permission engine's asking, put through a [`Front`].
 pub struct Deciding<'a> {
@@ -288,28 +405,116 @@ impl Ask for Deciding<'_> {
             };
             let shown = Shown::Call { call, sensitivity };
 
-            let mut tries = 0;
-            loop {
-                let Some(decision) = self.front.put(&pending, shown).await else {
-                    return DENIED;
+            ruled(self.front, &pending, shown)
+                .await
+                .map_or(DENIED, |(ruling, lasting)| {
+                    (verdict(ruling), remember(lasting))
+                })
+        })
+    }
+}
+
+impl Asker for Deciding<'_> {
+    /// Puts an installed agent's leave to act as a permission question is put,
+    /// under the same capability and the same rule about words that would be
+    /// cut, and answers the agent with the ruling. An agent's question is not
+    /// put: no front holds a free answer to one yet, so it is declined.
+    fn pending<'a>(
+        &'a mut self,
+        pending: &'a crucible_execution::Pending,
+        acting: Acting<'a>,
+    ) -> BoxFuture<'a, crucible_execution::Decision> {
+        Box::pin(async move {
+            const DENY: crucible_execution::Decision = crucible_execution::Decision::Deny;
+            let crucible_execution::Pending::Permission {
+                tool,
+                summary,
+                detail,
+            } = pending
+            else {
+                return DENY;
+            };
+            if !self.capabilities.has(Capability::Permissions) {
+                return DENY;
+            }
+
+            // Words the agent's reader already cut are not the question, even
+            // to a front that draws the whole value: it is that value.
+            let (effect, asked) = outside(detail);
+            let clipped = tool.incomplete()
+                || summary.incomplete()
+                || match detail {
+                    Detail::Command { sent, .. } | Detail::Network { sent } => sent.incomplete(),
+                    Detail::Reads | Detail::ReadsOutside | Detail::MutatesFile => false,
                 };
-                let refusal = match settle(&pending, decision) {
-                    Ok(Settled::Ruled(ruling, lasting)) => {
-                        return (verdict(ruling), remember(lasting));
-                    }
-                    // `settle` gives a permission nothing else; refused the
-                    // same way all the same, so that a new arm cannot become a
-                    // yes.
-                    Ok(Settled::Answered(_) | Settled::Declined | Settled::Accepted) => {
-                        ErrorCode::WrongDecision.into()
-                    }
-                    Err(refusal) => refusal,
-                };
-                if turned_away(self.front, refusal, &mut tries) {
-                    return DENIED;
+            let named = tool.as_str();
+            let tool = Text::cut(named);
+            let subject = Text::cut(summary.as_str());
+            let cut = match &asked {
+                Operation::Command { sent, .. } | Operation::Network { sent } => sent.truncated(),
+                Operation::Other => false,
+            };
+            if clipped
+                || ((tool.truncated() || subject.truncated() || cut) && !self.front.draws_whole())
+            {
+                return DENY;
+            }
+
+            let put = Pending::Permission {
+                id: mint(),
+                tool,
+                effect,
+                subject,
+                asked,
+            };
+            let (sent, left_running) = match detail {
+                Detail::Command { sent, left_running } => (Some(sent.as_str()), *left_running),
+                Detail::Network { sent } => (Some(sent.as_str()), false),
+                Detail::Reads | Detail::ReadsOutside | Detail::MutatesFile => (None, false),
+            };
+            let shown = Shown::External(Leave {
+                tool: named,
+                summary: summary.as_str(),
+                effect,
+                sent,
+                left_running,
+                acting,
+            });
+            match ruled(self.front, &put, shown).await {
+                Some((Ruling::Allow, Lasting::Once)) => {
+                    crucible_execution::Decision::Allow(crucible_execution::Lasting::Once)
                 }
+                Some((Ruling::Allow, Lasting::Session)) => {
+                    crucible_execution::Decision::Allow(crucible_execution::Lasting::Session)
+                }
+                Some((Ruling::Deny, _)) | None => DENY,
             }
         })
+    }
+}
+
+/// Puts the permission question `pending` through `front` until a ruling fits
+/// it, or `None` where nobody answered or too many decisions fit nothing.
+async fn ruled(
+    front: &mut dyn Front,
+    pending: &Pending,
+    shown: Shown<'_>,
+) -> Option<(Ruling, Lasting)> {
+    let mut tries = 0;
+    loop {
+        let decision = front.put(pending, shown).await?;
+        let refusal = match settle(pending, decision) {
+            Ok(Settled::Ruled(ruling, lasting)) => return Some((ruling, lasting)),
+            // `settle` gives a permission nothing else; refused the same way
+            // all the same, so that a new arm cannot become a yes.
+            Ok(
+                Settled::Answered(_) | Settled::Declined | Settled::Accepted | Settled::Picked(_),
+            ) => ErrorCode::WrongDecision.into(),
+            Err(refusal) => refusal,
+        };
+        if turned_away(front, refusal, &mut tries) {
+            return None;
+        }
     }
 }
 
@@ -364,7 +569,9 @@ pub async fn questions(
                 );
             }
             Ok(Settled::Declined) => return None,
-            Ok(Settled::Ruled(..) | Settled::Accepted) => ErrorCode::WrongDecision.into(),
+            Ok(Settled::Ruled(..) | Settled::Accepted | Settled::Picked(_)) => {
+                ErrorCode::WrongDecision.into()
+            }
             Err(refusal) => refusal,
         };
         if turned_away(front, refusal, &mut tries) {
@@ -410,11 +617,81 @@ pub async fn warned(capabilities: Capabilities, front: &mut dyn Front, warned: &
         let refusal = match settle(&pending, decision) {
             Ok(Settled::Accepted) => return true,
             Ok(Settled::Declined) => return false,
-            Ok(Settled::Ruled(..) | Settled::Answered(_)) => ErrorCode::WrongDecision.into(),
+            Ok(Settled::Ruled(..) | Settled::Answered(_) | Settled::Picked(_)) => {
+                ErrorCode::WrongDecision.into()
+            }
             Err(refusal) => refusal,
         };
         if turned_away(front, refusal, &mut tries) {
             return false;
+        }
+    }
+}
+
+/// Puts an account operation's `confirmation` through `front`, and answers
+/// with the place in its choices of the one picked, or `None` where nobody
+/// picked one: the client did not say it answers account questions, it
+/// declined, it answered nothing, or it was turned away [`TRIES`] times.
+///
+/// Put whole or not at all, as a permission question is: a sentence about
+/// what would change, cut short, is not what the person agreed to.
+pub async fn confirmed(
+    capabilities: Capabilities,
+    front: &mut dyn Front,
+    confirmation: &Confirmation,
+) -> Option<usize> {
+    if !capabilities.has(Capability::Account) || confirmation.choices.len() > ITEMS {
+        return None;
+    }
+    let asks = Text::cut(&confirmation.asks);
+    let facts: Vec<Text> = confirmation
+        .facts
+        .iter()
+        .map(|fact| Text::cut(fact))
+        .collect();
+    let choices: Vec<Choice> = confirmation
+        .choices
+        .iter()
+        .enumerate()
+        .map(|(at, (name, says))| Choice {
+            name: Text::cut(name),
+            says: Text::cut(says),
+            recommended: at == 0,
+        })
+        .collect();
+    let cut = asks.truncated()
+        || facts.iter().any(Text::truncated)
+        || choices
+            .iter()
+            .any(|choice| choice.name.truncated() || choice.says.truncated());
+    if facts.len() > ITEMS || (cut && !front.draws_whole()) {
+        return None;
+    }
+    let pending = Pending::Account {
+        id: mint(),
+        asks,
+        facts,
+        choices,
+    };
+
+    let mut tries = 0;
+    loop {
+        let decision = front.put(&pending, Shown::Account(confirmation)).await?;
+        let refusal = match settle(&pending, decision) {
+            Ok(Settled::Picked(choice)) => {
+                return confirmation
+                    .choices
+                    .iter()
+                    .position(|(name, _)| name == choice.as_str());
+            }
+            Ok(Settled::Declined) => return None,
+            Ok(Settled::Ruled(..) | Settled::Answered(_) | Settled::Accepted) => {
+                ErrorCode::WrongDecision.into()
+            }
+            Err(refusal) => refusal,
+        };
+        if turned_away(front, refusal, &mut tries) {
+            return None;
         }
     }
 }
@@ -446,7 +723,7 @@ fn put(question: &Question) -> Option<Asked> {
 }
 
 /// The kind of thing a call would do, as a client is told it.
-const fn effect(sensitivity: &Sensitivity) -> Effect {
+pub(crate) const fn effect(sensitivity: &Sensitivity) -> Effect {
     match sensitivity {
         Sensitivity::ReadOnly { .. } => Effect::Reads,
         Sensitivity::ReadsOutside { .. } => Effect::ReadsOutside,
@@ -462,7 +739,7 @@ const fn effect(sensitivity: &Sensitivity) -> Effect {
 /// against and drops what tells two such calls apart; this is what the
 /// terminal's panel quotes instead. A read or a change of a file is said whole
 /// by its subject.
-fn operation(call: &ToolCall, sensitivity: &Sensitivity) -> Operation {
+pub(crate) fn operation(call: &ToolCall, sensitivity: &Sensitivity) -> Operation {
     match sensitivity {
         Sensitivity::SpawnsProcess { command } => Operation::Command {
             sent: Text::cut(command.sent()),
@@ -474,6 +751,31 @@ fn operation(call: &ToolCall, sensitivity: &Sensitivity) -> Operation {
         Sensitivity::ReadOnly { .. }
         | Sensitivity::ReadsOutside { .. }
         | Sensitivity::MutatesFile { .. } => Operation::Other,
+    }
+}
+
+/// What an installed agent's action would do, and exactly what it would run or
+/// send, as a client is told them: the one reading of a [`Detail`], which
+/// says for the runner's own calls what [`effect`] and [`operation`] say, so a
+/// client is told the same of the same action whichever backend asked.
+pub(crate) fn outside(detail: &Detail) -> (Effect, Operation) {
+    match detail {
+        Detail::Command { sent, left_running } => (
+            Effect::SpawnsProcess,
+            Operation::Command {
+                sent: Text::cut(sent.as_str()),
+                left_running: *left_running,
+            },
+        ),
+        Detail::Network { sent } => (
+            Effect::ReachesNetwork,
+            Operation::Network {
+                sent: Text::cut(sent.as_str()),
+            },
+        ),
+        Detail::Reads => (Effect::Reads, Operation::Other),
+        Detail::ReadsOutside => (Effect::ReadsOutside, Operation::Other),
+        Detail::MutatesFile => (Effect::MutatesFile, Operation::Other),
     }
 }
 

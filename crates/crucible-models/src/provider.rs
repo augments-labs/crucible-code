@@ -784,8 +784,8 @@ pub trait Provider: Send + Sync {
     ///
     /// The default is the ordinary request whatever the speed, which is the
     /// answer of a provider whose vendor serves no fast form. A provider that
-    /// has one writes it where `speed` is [`Speed::Fast`] and the model's
-    /// [`Provider::fast`] form is a [`FastForm::Field`], and nowhere else.
+    /// has one writes it where the model's [`Provider::fast`] form is
+    /// [`FastForm::carried`] at `speed`, and nowhere else.
     ///
     /// # Errors
     ///

@@ -91,4 +91,13 @@ impl FastForm {
     pub const fn switched(self) -> bool {
         matches!(self, Self::Field(_))
     }
+
+    /// Whether a request asked at `speed` carries this form: only one asked
+    /// at [`Speed::Fast`] of a form the request carries. A provider writes
+    /// the form by it in [`crate::Provider::stream_at`], and what the request
+    /// is priced at turns on it, so both ask here.
+    #[must_use]
+    pub const fn carried(self, speed: Speed) -> bool {
+        matches!(speed, Speed::Fast) && self.switched()
+    }
 }

@@ -195,6 +195,34 @@ fn a_provider_holding_a_key_both_ways_is_one_provider_rather_than_two() {
 }
 
 #[test]
+fn a_provider_whose_access_names_an_agent_is_reachable_with_no_credential_of_its_own() {
+    // The agent signs in for itself, so a provider it runs for holds nothing
+    // crucible could read, and is reached all the same: named in the
+    // configuration it is the one asked, and alone it is the one there is.
+    let agent = r#""providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "mine"}}},
+        "externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}"#;
+    for (at, document) in [
+        format!(r#"{{"provider": "anthropic", {agent}}}"#),
+        format!("{{{agent}}}"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let sample = Sample::new(&format!("agent-chosen-{at}"));
+        let settings = sample.user(&document);
+
+        let found = landing(&settings, &holding(&[]), &StoredCredentials::default())
+            .expect("a provider an agent runs for");
+
+        assert_eq!(
+            found.map(|found| found.name),
+            Some("anthropic"),
+            "{document}"
+        );
+    }
+}
+
+#[test]
 fn a_stored_key_and_an_exported_key_leave_the_provider_for_model_to_choose() {
     let sample = Sample::new("stored-ambiguous");
     let keys = sample.stored("openai");
@@ -357,12 +385,14 @@ fn a_provider_this_build_does_not_serve_is_refused_before_anything_is_drawn() {
 
 #[test]
 fn every_variable_a_key_is_read_from_is_named_the_usual_one_included() {
-    // `apiKeyEnv` moves where anthropic's key is read from. The usual name can
+    // Naming another variable moves where anthropic's key is read from. The usual name can
     // still hold one exported before the setting was written, so both are
     // named, and every other provider keeps its own.
     let sample = Sample::new("key-variables");
-    let settings =
-        sample.user(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"anthropic": {{{}}}}}}}"#,
+        crate::access::naming("WORK_ANTHROPIC_KEY")
+    ));
     let providers = catalogue();
 
     let named: Vec<&str> = key_variables(&providers, &settings).collect();
@@ -428,7 +458,10 @@ fn the_variable_a_key_is_looked_for_in_is_the_one_the_configuration_names() {
     // the vendor's usual name would miss it and leave the machine looking as
     // though nothing were set up.
     let sample = Sample::new("keyed-variable");
-    let settings = sample.user(r#"{"providers": {"openai": {"apiKeyEnv": "WORK_OPENAI_KEY"}}}"#);
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"openai": {{{}}}}}}}"#,
+        crate::access::naming("WORK_OPENAI_KEY")
+    ));
 
     let found = lands(&settings, &holding(&["WORK_OPENAI_KEY"])).expect("one key");
 
@@ -473,13 +506,14 @@ fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
 }
 
 #[test]
-fn six_requested_models_have_exact_limits_and_supported_effort_ladders() {
+fn seven_requested_models_have_exact_limits_and_supported_effort_ladders() {
     for (provider, model, window, output) in [
         ("google", "gemini-3.8-flash", 1_048_576, 65_536),
         ("google", "gemini-3.7-flash", 1_048_576, 65_536),
         ("google", "gemini-3.6-flash", 1_048_576, 65_536),
         ("google", "gemini-3.1-pro-preview", 1_048_576, 65_536),
         ("anthropic", "claude-fable-5-1", 1_000_000, 128_000),
+        ("anthropic", "claude-haiku-5-5", 1_000_000, 128_000),
         ("openai", "gpt-6-astra", 922_000, 128_000),
     ] {
         let served = serving(provider);
@@ -519,7 +553,10 @@ fn google_key_discovery_preserves_empty_custom_stored_and_ambiguous_choices() {
             .is_none()
     );
     let sample = Sample::new("google-key-discovery");
-    let custom = sample.user(r#"{"providers":{"google":{"apiKeyEnv":"WORK_GEMINI"}}}"#);
+    let custom = sample.user(&format!(
+        r#"{{"providers":{{"google":{{{}}}}}}}"#,
+        crate::access::naming("WORK_GEMINI")
+    ));
     assert!(
         lands(&custom, &holding(&["GEMINI_API_KEY"]))
             .unwrap()
@@ -1177,12 +1214,14 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
     // provider built by a fixture. Both halves: a variable only the handed
     // lookup holds is found, and one only the process could hold is not.
     let sample = Sample::new("serving-again-lookup");
-    let settings =
-        sample.user(r#"{"providers": {"openai": {"apiKeyEnv": "CRUCIBLE_FIXTURE_ONLY_KEY"}}}"#);
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"openai": {{{}}}}}}}"#,
+        crate::access::naming("CRUCIBLE_FIXTURE_ONLY_KEY")
+    ));
     let stored = StoredCredentials::default();
 
     let handed = re_serving(
-        settings.clone(),
+        (settings.clone(), crate::access::Rewritten::new()),
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|name| (name == "CRUCIBLE_FIXTURE_ONLY_KEY").then(|| "not-a-key".into())),
         HttpTurns::unavailable(),
@@ -1195,7 +1234,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
     );
 
     let empty = re_serving(
-        settings,
+        (settings, crate::access::Rewritten::new()),
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|_| None),
         HttpTurns::unavailable(),
@@ -1385,7 +1424,7 @@ fn serving_again_tells_the_consent_what_the_provider_is_served_on() {
     );
 
     let again = re_serving(
-        Settings::default(),
+        (Settings::default(), crate::access::Rewritten::new()),
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|_| None),
         HttpTurns::unavailable(),
@@ -1407,7 +1446,7 @@ fn a_provider_is_read_again_from_the_store_and_an_unreadable_store_settles_nothi
     let settings = sample.user("{}");
     let resolve = |store| {
         resolving(
-            settings.clone(),
+            (settings.clone(), crate::access::Rewritten::new()),
             Subscriptions::production(&crucible_auth::Renewals::new()),
             &catalogue(),
             std::sync::Arc::new(|_: &str| None),
@@ -1507,6 +1546,7 @@ fn openai_and_anthropic_list_their_current_models_before_the_ones_they_replace()
             "claude-opus-5",
             "claude-sonnet-5-5",
             "claude-sonnet-5",
+            "claude-haiku-5-5",
             "claude-haiku-4-5",
         ]
     );
@@ -1522,6 +1562,7 @@ fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
         ("openai", "gpt-6-luna", &Effort::LADDER[..]),
         ("anthropic", "claude-opus-5-5", &Effort::LADDER[..]),
         ("anthropic", "claude-sonnet-5-5", &Effort::LADDER[..]),
+        ("anthropic", "claude-haiku-5-5", &Effort::LADDER[..]),
         // `max` on 1.3 is named by some of Meta's pages and left out by its
         // parameter lists, so it is not offered until a source settles it.
         ("meta", "muse-spark-1.3", up_to_xhigh),
@@ -1794,4 +1835,82 @@ fn a_minimax_plan_key_is_named_apart_from_a_minimax_api_key() {
     let key = words("minimax-named-key", "minimax@minimaxi.com");
     assert_eq!(plan, "MiniMax Token Plan · minimaxi.com key");
     assert_ne!(plan, key);
+}
+
+/// A default is a model its provider offers, so `/model` shows what a login
+/// asked for among the models it lists.
+#[test]
+fn every_default_is_one_of_its_provider_s_models() {
+    for one in every() {
+        assert!(
+            one.models.iter().any(|model| model.name == one.default),
+            "{}'s default {} is not among its models",
+            one.name,
+            one.default
+        );
+    }
+}
+
+/// A credential that serves only some of its provider's models serves the
+/// default, so a login with it is not answered with a refusal.
+#[test]
+fn every_credential_that_narrows_the_models_serves_the_default() {
+    let providers = catalogue();
+    for row in ROWS {
+        let Some(serves) = row.serves() else {
+            continue;
+        };
+        let default = offered(&providers)
+            .find(|one| one.name == row.provider)
+            .expect("a row's provider is offered")
+            .default;
+        assert!(
+            serves.contains(&default),
+            "{} serves {serves:?}, not {default}",
+            row.shown
+        );
+    }
+}
+
+/// Each default and the rung its rule derives, as approved.
+#[test]
+fn every_default_is_asked_at_the_approved_rung() {
+    let providers = catalogue();
+    let defaulted: Vec<_> = offered(&providers)
+        .map(|one| {
+            (
+                one.name,
+                one.default,
+                default_rung(&rungs(&providers, one.name, one.default)),
+            )
+        })
+        .collect();
+    assert_eq!(
+        defaulted,
+        [
+            ("anthropic", "claude-opus-5-5", Some(Effort::Medium)),
+            ("deepseek", "deepseek-v4-pro", Some(Effort::High)),
+            ("google", "gemini-3.8-flash", Some(Effort::Medium)),
+            ("meta", "muse-spark-1.3", Some(Effort::Medium)),
+            ("mimo", "mimo-v2.6-pro", None),
+            ("minimax", "MiniMax-M3", None),
+            ("moonshot", "k3", Some(Effort::High)),
+            ("openai", "gpt-6.1-sol", Some(Effort::Medium)),
+            ("qwen", "qwen3.7-plus", None),
+            ("xai", "grok-4.7", Some(Effort::Medium)),
+            ("zai", "glm-5.3", Some(Effort::High)),
+        ]
+    );
+}
+
+/// Medium where it is served, else the first rung above it, else the
+/// strongest below it, and none where there are none.
+#[test]
+fn a_default_rung_is_medium_or_the_nearest_above_it() {
+    use Effort::{High, Low, Max, Medium, Xhigh};
+    assert_eq!(default_rung(&[Low, Medium, High]), Some(Medium));
+    assert_eq!(default_rung(&[Low, High, Max]), Some(High));
+    assert_eq!(default_rung(&[Max, Xhigh]), Some(Xhigh));
+    assert_eq!(default_rung(&[Low]), Some(Low));
+    assert_eq!(default_rung(&[]), None);
 }

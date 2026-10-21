@@ -33,14 +33,20 @@
 //! that call's result and is drawn as one. So the record is the same shape
 //! whichever way it went, and it is the shape it has when nothing was asked at
 //! all.
+//!
+//! **An installed agent's leave to act is put on the same panel**, from the
+//! words the agent sent, with the row under the payload saying who runs it and
+//! how far its actions are held in. Its third answer is a plain no: the agent
+//! is told it may not, and its turn goes on without the action.
 
+use crucible_client_api::pending::Effect;
 use crucible_tools::{Account, Remember, Sensitivity, Verdict};
-use crucible_tui::{Key, Pressed, Question, Renderer, Terminal};
+use crucible_tui::{Glyphs, Key, Pressed, Question, Renderer, Terminal};
 use crucible_types::ToolCall;
 
 use crate::cli::Fatal;
 use crate::cli::draw::{flattened, pascal};
-use crate::cli::seen::Answer;
+use crate::cli::seen::{Answer, Leaving};
 use crate::cli::style::Style;
 
 use super::region::{self, Ended, Moved, step};
@@ -50,13 +56,24 @@ use super::region::{self, Ended, Moved, step};
 /// `always` is not among them: durable rules have no trusted per-workspace
 /// store yet, so this offers only answers whose lifetime it can honour.
 const ANSWERS: [(&str, Answer); 3] = [
-    ("Yes, once", (Verdict::Allow, Remember::Never)),
-    (
-        "Yes, and don't ask again this session",
-        (Verdict::Allow, Remember::Session),
-    ),
+    (ONCE, (Verdict::Allow, Remember::Never)),
+    (SESSION, (Verdict::Allow, Remember::Session)),
     DENIED,
 ];
+
+/// The first answer.
+const ONCE: &str = "Yes, once";
+
+/// The second.
+const SESSION: &str = "Yes, and don't ask again this session";
+
+/// The answers an installed agent's leave to act is offered, meaning what
+/// [`ANSWERS`] mean in the same order.
+///
+/// Only the third is worded apart: a no to an agent is a no to that action,
+/// and the agent's turn goes on without it, so a refusal promising to end the
+/// turn would be a promise nothing keeps.
+const LEFT: [&str; 3] = [ONCE, SESSION, "No"];
 
 /// The refusal, spelled once.
 ///
@@ -120,6 +137,7 @@ struct Words {
     subject: String,
     payload: String,
     description: String,
+    acting: String,
     attribution: String,
     explanation: Vec<String>,
     statement: &'static str,
@@ -196,11 +214,57 @@ impl Words {
             subject,
             payload,
             description: flattened(account.description()),
+            acting: String::new(),
             // The name the call went out under rather than the one the subject
             // shows, because this row is about who wrote the paragraphs and the
             // model wrote them under this spelling.
             attribution: format!("{}'s own account of this call:", call.name),
             explanation: account.explanation().map(flattened).collect(),
+            statement,
+        }
+    }
+}
+
+impl Words {
+    /// What to say about the leave `leaving` asks, drawn with `glyphs`.
+    ///
+    /// Its subject and statement are worded as a call with the same effect
+    /// is, so one kind of action reads alike whoever asks for it. The payload
+    /// is what the agent sent where it sent something, and otherwise the
+    /// spelling its rules are matched against. The row under it is
+    /// crucible's: who runs the action, and how far it is held in.
+    fn leaving(leaving: &Leaving, glyphs: Glyphs) -> Self {
+        let name = pascal(&flattened(&leaving.tool));
+
+        let (subject, statement) = match leaving.effect {
+            Effect::Reads => (format!("{name} file"), "This read needs your verdict."),
+            Effect::ReadsOutside => (
+                format!("{name} file"),
+                "This read needs your verdict. The file is outside the workspace.",
+            ),
+            Effect::MutatesFile => (format!("{name} file"), "This change needs your verdict."),
+            Effect::SpawnsProcess => (
+                format!("{name} command"),
+                if leaving.left_running {
+                    "This command needs your verdict. It will be left running \
+                     after the turn that starts it has ended."
+                } else {
+                    "This command needs your verdict."
+                },
+            ),
+            Effect::ReachesNetwork => (
+                format!("{name} request"),
+                "This request needs your verdict. It leaves your machine.",
+            ),
+        };
+
+        Self {
+            subject,
+            payload: flattened(leaving.subject()),
+            description: String::new(),
+            acting: flattened(leaving.acting(glyphs.dot())),
+            attribution: String::new(),
+            explanation: Vec::new(),
             statement,
         }
     }
@@ -321,17 +385,44 @@ pub(super) fn ask<T: Terminal>(
 ) -> Result<Answered, Fatal> {
     let words = Words::of(call, sensitivity, account);
 
+    stand(renderer, style, &words, ANSWERS.map(|(said, _)| said))
+}
+
+/// Stands the panel for the leave an installed agent asks, and reads keys
+/// until it is answered.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+pub(super) fn leave<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    leaving: &Leaving,
+) -> Result<Answered, Fatal> {
+    let words = Words::leaving(leaving, style.glyphs());
+
+    stand(renderer, style, &words, LEFT)
+}
+
+/// Stands a panel saying `words`, offering `said` as the answers [`ANSWERS`]
+/// are in the same order.
+fn stand<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    words: &Words,
+    said: [&str; 3],
+) -> Result<Answered, Fatal> {
     // One entry, because a command is one thing being agreed to however many
     // rows it folds to. The slice is for a call that would show two, and none
     // does yet.
     let payload = [words.payload.as_str()];
-    let said = ANSWERS.map(|(said, _)| said);
     let told: Vec<&str> = words.explanation.iter().map(String::as_str).collect();
 
     let mut question = Question {
         subject: &words.subject,
         payload: &payload,
         description: &words.description,
+        acting: &words.acting,
         attribution: "",
         explanation: &[],
         from: 0,
