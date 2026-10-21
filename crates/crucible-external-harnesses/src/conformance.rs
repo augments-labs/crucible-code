@@ -48,6 +48,9 @@ const ASLEEP: Duration = Duration::from_mins(1);
 /// watched.
 const WATCHED: Duration = Duration::from_millis(400);
 
+/// How often the beat of a grandchild is looked for while its turn runs.
+const LOOKED_FOR: Duration = Duration::from_millis(20);
+
 /// Every case, in the order [`run`] plays them.
 pub const CASES: &[&str] = &[
     "a clean turn ends answered",
@@ -373,16 +376,30 @@ impl Suite<'_> {
                 // its first exchange, so the program waits on no more.
                 let first = set.opening.first().map_or(0, |(heard, _)| *heard);
                 let reply = Reply::new().hear(first).linger().pause(ASLEEP);
-                let played = self.one(&here, reply, React::Interrupt, None).await?;
-                expect(&played.result, Outcome::Cancelled)?;
-                let Some(first) = fake_peer::lingering(&here) else {
-                    return Err("the agent's own process never began".to_owned());
+                // A beat is a truncate and then a write, so a stop landing
+                // between the two leaves nothing to read afterwards: whether
+                // the grandchild began is seen while the turn runs.
+                let playing = self.one(&here, reply, React::Interrupt, None);
+                tokio::pin!(playing);
+                let mut began = false;
+                let played = loop {
+                    tokio::select! {
+                        played = &mut playing => break played?,
+                        () = tokio::time::sleep(LOOKED_FOR), if !began => {
+                            began = fake_peer::lingering(&here).is_some();
+                        }
+                    }
                 };
+                expect(&played.result, Outcome::Cancelled)?;
+                if !began {
+                    return Err("the agent's own process never began".to_owned());
+                }
+                let first = fake_peer::lingering(&here);
                 tokio::time::sleep(WATCHED).await;
                 match fake_peer::lingering(&here) {
-                    Some(last) if last == first => Ok(()),
+                    last if last == first => Ok(()),
                     last => Err(format!(
-                        "the agent's own process still beats ({first} then {last:?})"
+                        "the agent's own process still beats ({first:?} then {last:?})"
                     )),
                 }
             }
@@ -535,5 +552,217 @@ fn refused(result: &Result<Outcome, Failure>) -> Result<(), String> {
     match result {
         Err(_) => Ok(()),
         Ok(outcome) => Err(format!("the turn ended {outcome:?}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The suite's cases, held to what they say they judge.
+
+    use std::fs::OpenOptions;
+    use std::io;
+    use std::path::{Path, PathBuf};
+    use std::process::ExitStatus;
+    use std::sync::Arc;
+
+    use crucible_execution::Decision;
+    use crucible_runtime::BoxFuture;
+    use crucible_sandbox::{
+        SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxError, SandboxInput,
+        SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxOutput, SandboxProcess,
+        SandboxRequest, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
+    };
+    use crucible_sandbox_local::LocalSandbox;
+    use tokio::runtime::Handle;
+
+    use super::{CASES, Set, Suite};
+    use crate::fake_peer::{self, Plain};
+    use crate::tests::Owned;
+
+    /// The local sandbox, except that a stop leaves the grandchild's beat as
+    /// a stop landing between a beat's truncating open and its write does:
+    /// empty, for good.
+    struct Torn(Arc<dyn SandboxService>);
+
+    impl SandboxService for Torn {
+        fn probe(
+            &self,
+        ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>>
+        {
+            self.0.probe()
+        }
+
+        fn prepare(
+            &self,
+            request: SandboxRequest,
+        ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+            // The fake peer's grandchild beats into the file of this name in
+            // the directory it was started in; the test checks it was torn.
+            let beat = request.policy().working_directory().join("lingering");
+            Box::pin(async move {
+                let inner = self.0.prepare(request).await?;
+                let session: Box<dyn SandboxSession> = Box::new(TornSession { inner, beat });
+                Ok(session)
+            })
+        }
+    }
+
+    /// A session whose started process tears the beat at `beat` when stopped.
+    struct TornSession {
+        inner: Box<dyn SandboxSession>,
+        beat: PathBuf,
+    }
+
+    impl SandboxSession for TornSession {
+        fn inspection(&self) -> &SandboxInspection {
+            self.inner.inspection()
+        }
+
+        fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+            self.inner.materialize()
+        }
+
+        // The host starts its agent and never stages one apart.
+        fn stage<'a>(
+            self: Box<Self>,
+            command: SandboxCommand,
+        ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+        where
+            Self: 'a,
+        {
+            self.inner.stage(command)
+        }
+
+        fn start<'a>(
+            self: Box<Self>,
+            command: SandboxCommand,
+        ) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+        where
+            Self: 'a,
+        {
+            Box::pin(async move {
+                let inner = self.inner.start(command).await?;
+                let process: Box<dyn SandboxProcess> = Box::new(TornProcess {
+                    inner,
+                    beat: self.beat,
+                });
+                Ok(process)
+            })
+        }
+    }
+
+    /// The local process, which truncates the beat at `beat` once stopped.
+    struct TornProcess {
+        inner: Box<dyn SandboxProcess>,
+        beat: PathBuf,
+    }
+
+    impl SandboxProcess for TornProcess {
+        fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>> {
+            self.inner.take_stdin()
+        }
+
+        fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+            self.inner.take_async_stdin()
+        }
+
+        fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+            self.inner.take_stdout()
+        }
+
+        fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+            self.inner.take_stderr()
+        }
+
+        fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            self.inner.try_wait()
+        }
+
+        fn ended(&mut self) -> bool {
+            self.inner.ended()
+        }
+
+        fn publication_outcome(&self) -> Option<SandboxLifecycle> {
+            self.inner.publication_outcome()
+        }
+
+        fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+            Box::pin(async move {
+                let stopped = self.inner.stop().await;
+                torn(&self.beat);
+                stopped
+            })
+        }
+
+        fn stop_sync(&mut self) -> io::Result<()> {
+            let stopped = self.inner.stop_sync();
+            torn(&self.beat);
+            stopped
+        }
+
+        fn inspection(&self) -> &SandboxInspection {
+            self.inner.inspection()
+        }
+
+        fn usage(&self) -> SandboxUsage {
+            self.inner.usage()
+        }
+
+        fn violation(&self) -> Option<SandboxViolation> {
+            self.inner.violation()
+        }
+    }
+
+    /// Opens `beat` truncating, as a beat does, and writes nothing, as a beat
+    /// stopped before its write does. Where there is no beat, makes none.
+    fn torn(beat: &Path) {
+        let _ = OpenOptions::new().write(true).truncate(true).open(beat);
+    }
+
+    /// The lines of the fake peer's own plain dialect.
+    fn plain() -> Set {
+        Set {
+            opening: vec![(1, Vec::new())],
+            effect: "file src/lib.rs".to_owned(),
+            ask: |native| format!("ask {native} read the notes"),
+            answer: |native, decision| match decision {
+                Decision::Allow(_) => format!("allow {native}"),
+                Decision::Deny => format!("deny {native}"),
+                Decision::Answer(text) => format!("answer {native} {}", text.as_str()),
+            },
+            answered: "end".to_owned(),
+            cancelled: "cancelled".to_owned(),
+            stop: Some("cancel".to_owned()),
+        }
+    }
+
+    /// A stop that lands between a beat's truncating open and its write leaves
+    /// nothing to read afterwards, and the agent it ended had still begun.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::expect_used)]
+    async fn a_stop_that_tears_the_last_beat_still_finds_the_agent_began() {
+        let at = Owned::new("torn-beat");
+        let set = plain();
+        let local: Arc<dyn SandboxService> =
+            Arc::new(LocalSandbox::new().watching_on(Handle::current()));
+        let suite = Suite {
+            service: Arc::new(Torn(local)),
+            dialect: || Box::new(Plain),
+            set: &set,
+            directory: &at.0,
+        };
+        let index = CASES
+            .iter()
+            .position(|case| *case == "an unheeded stop ends the agent and what it started")
+            .expect("the case is played");
+
+        let judged = suite.case(index).await;
+
+        let here = at.0.join(format!("case-{index}"));
+        assert!(
+            here.join("lingering").is_file() && fake_peer::lingering(&here).is_none(),
+            "the stop tore the beat"
+        );
+        assert_eq!(judged, Ok(()));
     }
 }
