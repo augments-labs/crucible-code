@@ -77,8 +77,8 @@ use std::time::Duration;
 
 use crucible_app::Conversation;
 use crucible_app::client::accounts::{
-    CONNECT_UNSAVED, CONNECTED, DISCONNECTED, HOLD_UNKEPT, NOT_CONFIRMED_STOPPED, REMOVED,
-    STILL_REFERENCED, THIS_RUN_ONLY, UNMOVED, moved_onto,
+    CONNECT_UNSAVED, CONNECTED, DISCONNECTED, HOLD_UNKEPT, NOT_CONFIRMED_STOPPED, REMOVAL_UNSAVED,
+    REMOVED, STILL_REFERENCED, THIS_RUN_ONLY, UNMOVED, moved_onto,
 };
 use crucible_app::client::{Account, Performed, snapshot};
 use crucible_app::content_use;
@@ -511,6 +511,7 @@ pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
         Account::Removed => (REMOVED.to_owned(), false),
         Account::StillReferenced(provider) => (format!("! {provider} {STILL_REFERENCED}"), false),
         Account::Unremoved(problem) => (format!("! {problem}"), false),
+        Account::RemovalUnsaved(problem) => (format!("! {REMOVAL_UNSAVED} {problem}"), false),
         // The sentence alone: what the agent's program printed is not drawn.
         Account::SignedOut | Account::SignOutUnverified(_) => {
             let said = match account.outcome() {
