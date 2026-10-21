@@ -45,7 +45,7 @@
 //! that [`Steps`] hands out for one `externalAgents` entry share one control
 //! between them, so a route rebuilt for that entry, by a resume, a move onto
 //! the agent or a connect, starts no run beside one the route it replaces
-//! left held.
+//! left held. A [`Runs`] made by [`Runs::new`] has a control of its own.
 //!
 //! An account step on any instance the configuration names, the
 //! conversation's route or not, is taken through [`Steps`], under the same
@@ -820,9 +820,10 @@ pub struct Steps {
     registry: &'static Registry,
     /// The `PATH` an agent's program is looked for on.
     path: Option<OsString>,
-    /// What every run of an `externalAgents` entry is launched on, by the
-    /// entry's name, made when the entry's first run is asked for. An entry
-    /// is one the configuration names, so there are no more than it has.
+    /// What every [`Runs`] this hands out for an `externalAgents` entry is
+    /// launched on, by the entry's name, made when the entry's first is asked
+    /// for. An entry is one the configuration names, so there are no more than
+    /// it has.
     controls: Mutex<HashMap<Box<str>, Control>>,
 }
 
@@ -920,7 +921,7 @@ impl Steps {
 
     /// Runs of `agent`, the entry `instance`, each launched under the policy
     /// and the yeses every step is, and on the control every other [`Runs`]
-    /// of that entry is launched on.
+    /// this hands out for that entry is launched on.
     #[must_use]
     pub fn runs(&self, agent: Agent, instance: &str) -> Runs {
         Runs {

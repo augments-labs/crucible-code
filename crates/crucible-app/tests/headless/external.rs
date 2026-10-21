@@ -4309,7 +4309,7 @@ fn a_route_rebuilt_for_one_instance_starts_no_run_beside_the_one_it_left() -> Re
     let steps = steps(&launching, &peer);
     let (model, effort) = (launching.agent.model(), launching.agent.effort());
 
-    let (refused, beside_other) = runtime()?.block_on(async {
+    let (refused, beside_other, relaunched) = runtime()?.block_on(async {
         let rebuilt = |instance: &str| steps.runs(launching.agent.clone(), instance);
         let (first, again, other) = (rebuilt("work"), rebuilt("work"), rebuilt("home"));
         let held = first.launch(Mode::Ask, model, effort, None).await?;
@@ -4328,11 +4328,20 @@ fn a_route_rebuilt_for_one_instance_starts_no_run_beside_the_one_it_left() -> Re
             Err(_) => false,
         };
         held.close().await?;
-        Ok::<_, Failed>((refused, beside_other))
+        // Released, the entry is not wedged: the rebuilt route starts its run.
+        let relaunched = match again.launch(Mode::Ask, model, effort, None).await {
+            Ok(next) => {
+                next.close().await?;
+                None
+            }
+            Err(failure) => Some(failure.reason().as_str().to_owned()),
+        };
+        Ok::<_, Failed>((refused, beside_other, relaunched))
     })?;
 
     assert_eq!(refused.as_deref(), Some("this agent is already running"));
     assert!(beside_other, "another instance's run was refused");
+    assert_eq!(relaunched, None, "the released entry refused its next run");
     Ok(())
 }
 
