@@ -17,7 +17,7 @@ use std::task::Poll;
 use crucible_app::access::Route;
 use crucible_app::backends::{REGISTRY, Registry, Row};
 use crucible_app::client::{self, Front, Shown};
-use crucible_app::content_use::{Consent, Routes};
+use crucible_app::content_use::{Consent, LAUNCHING, Routes};
 use crucible_app::external::External;
 use crucible_app::launching::{Agent, Launcher, Steps};
 use crucible_app::outside::{Installed, Relaunch};
@@ -4327,9 +4327,11 @@ fn a_prompt_that_would_start_an_unanswered_agent_asks_its_route_first() -> Resul
         assert!(
             matches!(
                 picking.put.as_slice(),
-                [Pending::Warning { route, .. }] if route.as_str() == "agent:claude"
+                [Pending::Warning { route, sentence, .. }]
+                    if route.as_str() == "agent:claude"
+                        && sentence.as_str().ends_with(LAUNCHING)
             ),
-            "{case}: {:?}",
+            "{case}: the client is not told what starting the agent runs: {:?}",
             picking.put
         );
         let written = std::fs::read_to_string(&choosing)?;

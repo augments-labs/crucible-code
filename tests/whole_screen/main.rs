@@ -2716,7 +2716,7 @@ fn the_login_panel_says_what_starting_an_agent_runs_and_going_back_starts_nothin
     window.types_until("", "Nothing starts");
     let launch = window.picture();
     assert!(
-        launch.contains("runs this profile's hooks, MCP servers and plugins"),
+        launch.contains("Starting it runs the hooks, helper commands, MCP servers and plugins"),
         "{launch}"
     );
     assert!(
