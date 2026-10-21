@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crucible_execution::{
-    Cost, Decision, Detail, Event, Failure, Lasting, Outcome, Pending, TurnRequest,
+    Cost, Decision, Detail, Event, Failure, Lasting, Outcome, Pending, SessionFate, TurnRequest,
 };
 use crucible_types::TurnId;
 use serde_json::{Value, json};
@@ -481,4 +481,38 @@ fn a_permission_asked_after_a_stop_is_never_answered_yes() {
         .unwrap();
 
     assert!(matches!(acts.as_slice(), [Act::Ask { .. }]), "{acts:?}");
+}
+
+/// Asked to load a session it kept, an agent that has none by that name ends
+/// the turn saying the session is gone; refused for want of a sign-in, or
+/// refused a new session the same way, the session is not said to be gone.
+#[test]
+fn only_a_kept_session_the_agent_cannot_find_is_said_to_be_gone() {
+    let not_found = json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32002, "message": "Resource not found"}}).to_string();
+    let sign_in = json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "Authentication required"}}).to_string();
+    for (resume, method, refused, fate) in [
+        (Some("kept"), "session/load", &not_found, SessionFate::Gone),
+        (Some("kept"), "session/load", &sign_in, SessionFate::Kept),
+        (None, "session/new", &not_found, SessionFate::Kept),
+    ] {
+        let mut acp = Acp::new(PROFILE);
+        let _ = acp.request(Shape {
+            workspace: Some(Path::new("/work")),
+            resume,
+            ..Shape::default()
+        });
+        let _ = acp.open(&TurnRequest::new(TurnId::FIRST, "hello")).unwrap();
+        let opening = acp.heard(&initialized(1)).unwrap();
+        let [Act::Send(open)] = opening.as_slice() else {
+            panic!("{opening:?}")
+        };
+        assert!(open.contains(method), "{open}");
+
+        let acts = acp.heard(refused).unwrap();
+
+        let Some(Act::Fail(failure)) = acts.last() else {
+            panic!("{acts:?}")
+        };
+        assert_eq!(failure.fate(), fate, "{method}: {refused}");
+    }
 }

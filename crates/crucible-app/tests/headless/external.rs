@@ -48,6 +48,8 @@ use super::{Failed, Nobody, Script, Tree, saying};
 
 #[path = "external/routing.rs"]
 mod routing;
+#[path = "external/session.rs"]
+mod session;
 
 /// The runtime an agent's turns run on: its pipes are read on it, so it
 /// drives input and output as the application's own does.

@@ -57,6 +57,14 @@ pub fn sign_in_required(id: u64) -> String {
     refused(id, -32000, "Authentication required")
 }
 
+/// The refusal of request `id`, which asked for a session the agent kept, for
+/// want of any session by that name: the protocol's code for a resource not
+/// found, as the reference adapter refuses a session it cannot load.
+#[must_use]
+pub fn session_gone(id: u64) -> String {
+    refused(id, -32002, "Resource not found")
+}
+
 /// The end of prompt `id`, for `reason`.
 #[must_use]
 pub fn stopped(id: u64, reason: &str) -> String {
