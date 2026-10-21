@@ -34,8 +34,8 @@
 //! and nothing else: a host never stops a process it did not start. A run
 //! that could not be confirmed to have stopped keeps its agent's one place, so
 //! no other run of that agent is started beside it. A launch whose future is
-//! dropped before it ends gives the place up the same way, and keeps it only
-//! when it was waiting on the stop of a process it could not speak to.
+//! dropped before it ends releases the place, except when it was waiting on
+//! the stop of a process it could not speak to.
 
 use std::borrow::Cow;
 use std::fmt;

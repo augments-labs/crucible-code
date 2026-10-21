@@ -1449,10 +1449,8 @@ async fn a_launch_dropped_after_its_spawn_leaves_the_next_launch_unrefused() {
     )
     .await;
 
-    assert!(!matches!(next, Err(Refusal::Busy)), "{next:?}");
-    if let Ok(host) = next {
-        host.stop(STOP_GRACE).await.expect("stopped");
-    }
+    let host = next.expect("the agent's place is free");
+    host.stop(STOP_GRACE).await.expect("stopped");
 }
 
 /// A launch given up on while the stop of a process it could not speak to was
