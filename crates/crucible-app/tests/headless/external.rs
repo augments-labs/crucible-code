@@ -46,6 +46,8 @@ use crucible_types::{
 
 use super::{Failed, Nobody, Script, Tree, saying};
 
+#[path = "external/refusing.rs"]
+mod refusing;
 #[path = "external/routing.rs"]
 mod routing;
 #[path = "external/session.rs"]
