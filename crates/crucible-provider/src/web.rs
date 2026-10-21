@@ -367,8 +367,9 @@ impl AnthropicWeb {
             body.number("max_tokens", if fetching { FETCH_CEILING } else { CEILING });
             if crate::anthropic::bound(self.model.as_ref()) {
                 // This fresh side request has no thinking history to bind.
-                // Fable is always adaptive; leave its effort default unchosen
-                // and let it select the tool rather than forcing a rejected mode.
+                // A bound model is sent adaptive thinking; leave its effort
+                // default unchosen and let it select the tool rather than
+                // forcing a rejected mode.
                 body.object("thinking", |thinking| {
                     thinking.text("type", "adaptive");
                 });
@@ -424,7 +425,8 @@ impl AnthropicWeb {
         Ok(answered)
     }
 
-    /// A Fable side response can include private thinking beside web results.
+    /// A side response from a model `anthropic::bound` admits can include private
+    /// thinking beside web results.
     /// Keep typed failure facts but never expose arbitrary response prose/code.
     fn failure(&self, error: SourceError) -> SourceError {
         if !crate::anthropic::bound(self.model.as_ref()) {
