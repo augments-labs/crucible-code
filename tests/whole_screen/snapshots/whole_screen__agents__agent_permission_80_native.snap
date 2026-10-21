@@ -1,9 +1,8 @@
 ---
 source: tests/whole_screen/agents.rs
-assertion_line: 65
 expression: picture
 ---
-80x40 cursor 38,0 scrollback 0
+80x40 cursor 39,0 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -29,6 +28,7 @@ expression: picture
 |                                                                                |
 |                                                                                |
 |                                                                                |
+|                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│  Bash command                                                                │|
 |│                                                                              │|
@@ -43,4 +43,3 @@ expression: picture
 |│    3. No                                                                     │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |  esc to cancel                                                                 |
-|                                                                                |
