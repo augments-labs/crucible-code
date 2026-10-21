@@ -37,6 +37,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -1189,20 +1190,41 @@ impl Host {
     /// # Errors
     ///
     /// [`Unstopped`] where it could not be confirmed to have stopped, so that
-    /// its process may still be running.
+    /// its process may still be running; it keeps the error that left the
+    /// stop unconfirmed, where there was one.
     pub async fn stop(mut self, grace: Duration) -> Result<(), Unstopped> {
         self.finish(grace).await;
-        let unconfirmed = matches!(self.finished, Some(Finish::Unreaped(_)) | None);
+        // The error is taken out of the host, which must still read as not
+        // confirmed stopped when it drops: a stop begun and not finished.
+        let unconfirmed = match self.finished.take() {
+            Some(Finish::Unreaped(cause)) => {
+                self.stopping = true;
+                Some(Unstopped::Unreaped(cause))
+            }
+            None => Some(Unstopped::Unfinished),
+            finished @ Some(_) => {
+                self.finished = finished;
+                None
+            }
+        };
         drop(self);
-        if unconfirmed { Err(Unstopped) } else { Ok(()) }
+        unconfirmed.map_or(Ok(()), Err)
     }
 }
 
 /// A run that could not be confirmed to have stopped: its process may still
 /// be running.
-#[derive(Debug, Clone, Copy, thiserror::Error)]
-#[error("this agent's run could not be confirmed to have stopped, so it may still be running")]
-pub struct Unstopped;
+#[derive(Debug, thiserror::Error)]
+pub enum Unstopped {
+    /// Stopping it failed or was not answered in time, and this is the error
+    /// the stop left.
+    #[error("this agent's run could not be confirmed to have stopped, so it may still be running")]
+    Unreaped(#[source] io::Error),
+
+    /// Stopping it never finished.
+    #[error("this agent's run was not stopped to its end, so it may still be running")]
+    Unfinished,
+}
 
 /// The weakest claim among what confines a process at all: its filesystem,
 /// its descriptors, its descendants, the kernel's surface and its privileges.
