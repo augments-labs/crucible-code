@@ -478,8 +478,9 @@ fn a_stream_waited_on_off_a_runtime_is_an_error_rather_than_a_panic() {
 
 /// A waiting read is woken by bytes written to a pipe whose writer stays open,
 /// so it is the read interest the reactor was given that woke it: a pipe
-/// registered for anything but reading is woken only by its writer closing,
-/// which every other test's writer does.
+/// registered for anything but reading is not woken by bytes, only by its
+/// writer closing, which this test's writer does not do before the read
+/// answers.
 #[cfg(unix)]
 #[test]
 fn a_waiting_read_is_woken_by_bytes_while_the_writer_stays_open() {
