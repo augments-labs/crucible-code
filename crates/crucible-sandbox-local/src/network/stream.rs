@@ -244,18 +244,26 @@ mod tests {
 
         // Small writes exercise backpressure on Windows too: Winsock can
         // accept one large send into a correspondingly large kernel buffer.
+        //
+        // The bound is on the stall alone. Filling the buffers first takes as
+        // long as the machine takes, so the clock restarts at every write that
+        // returns and reads only the time since the last one.
         let payload = [b'w'; 8192];
-        let started = Instant::now();
-        let result = (0..8192).try_for_each(|_| stream.write_all(&payload));
-        let elapsed = started.elapsed();
+        let mut progressed = Instant::now();
+        let result = (0..8192).try_for_each(|_| {
+            stream.write_all(&payload)?;
+            progressed = Instant::now();
+            Ok::<(), io::Error>(())
+        });
+        let stalled = progressed.elapsed();
         drop(written);
         assert_eq!(
             result.expect_err("stalled write must expire").kind(),
             io::ErrorKind::TimedOut
         );
         assert!(
-            elapsed < Duration::from_secs(2),
-            "pending write exceeded its short idle bound: {elapsed:?}"
+            stalled < Duration::from_secs(2),
+            "stalled write exceeded its short idle bound: {stalled:?}"
         );
 
         life.stop();
