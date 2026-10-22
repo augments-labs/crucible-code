@@ -18,8 +18,9 @@
 //! A turn holds the run while it is under way, and gives it back however it
 //! ends. A turn whose caller stopped waiting may have left the program
 //! mid-answer, and one whose run ended left nothing to answer, so neither run
-//! takes a further turn: the next prompt stops it and is refused. An
-//! interrupt reaches only a turn under way, and one rung as a turn ends is
+//! takes a further turn: the next prompt stops it and is refused before its
+//! turn begins, so that whoever holds the run can launch another for that
+//! prompt. An interrupt reaches only a turn under way, and one rung as a turn ends is
 //! forgotten when the run is given back. Closing asks a turn under way to stop
 //! and waits, for at most [`CLOSING`], until it gives the run back, then holds
 //! the run while it stops it, so that every close returns once nothing the run
