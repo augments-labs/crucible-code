@@ -8,6 +8,41 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.48.1] - 2026-10-22
+
+**Crucible 0.48.1 starts installed coding agents faster and fixes how they
+launch, stop and sign out.**
+Starting an agent no longer reads its program first, which took about 670 ms
+for a 64 MiB program on a CPU without SHA instructions. A launch cancelled
+mid-start, a stop the agent ignored and a session the agent lost no longer keep
+the conversation from its next turn, and a route rebuilt for the same agent
+starts no second run beside the first. Signing out of an agent now asks before
+running it, an agent that is not installed is refused before any question, and
+a removal that cannot be saved says the agent was stopped.
+
+### Changed
+
+- **Starting an installed agent no longer reads its program first.** crucible used to digest up to 64 MiB of the agent's program three times per start, about 670 ms on a desktop CPU without SHA instructions. It now compares the program's metadata instead: size, modification time, inode and change time on Unix, where a same-size replacement is still refused, and size and modification time only on Windows.
+
+### Fixed
+
+- **A launch cancelled mid-start no longer wedges its agent.** Dropping an external agent's launch after its process started used to leave every later launch refused as already running. The place is now released, and kept only when the stop of a process crucible could not speak to was abandoned.
+- **A gone agent session no longer blocks the conversation.** When Antigravity answers that the session crucible asked it to resume does not exist, that message fails with what the agent said, and the next one starts a new agent session instead of asking for the lost one again.
+- **An installed agent's launch question now says everything starting it runs.** The terminal and clients with no terminal both say that starting the agent runs the hooks, helper commands, MCP servers and plugins its profile names, and any the project's own settings name. Before, the terminal left out helper commands and project settings, and other clients were told only the vendor's words.
+- **`/model` can leave an agent that chooses its own model.** On the route of an agent such as Antigravity, `/model provider/model` now moves the conversation onto that provider's model, in a new session, as it does from a client with no terminal, instead of saying the agent chooses its own model.
+- **The no-models warning now names the installed coding agent.** With nothing set up, it tells you to run `/login` to sign in or to use an installed coding agent, or to set an API key variable, and no longer sends you to `/model` after a login that already took a model. The agent pages no longer say an agent may fail to run in the conversation's mode.
+- **A prompt sent after a stop the agent ignored is no longer lost.** When an installed agent did not heed a stop within its grace, the next prompt was refused before it reached the agent and had to be typed again. It now goes to a new run of the agent, resuming its session, and if the old run cannot be confirmed stopped, the prompt is refused and says so.
+- **A route rebuilt for the same agent no longer starts a second run beside one still held.** After `/resume`, a move onto an agent or a connect, crucible now refuses to launch a run while an earlier run of that agent entry is live or could not be confirmed stopped.
+- **Signing an agent out now asks before it runs the agent.** Signing out of an agent you had not yet agreed to start used to write off its instances and report the sign-out unverified, without asking you anything. Now the question comes first, and saying no changes nothing.
+- **A stop abandoned partway now says so.** When an external agent's run is given up on before its stop finishes, the error now says the run "was not stopped to its end" instead of reading like a stop that failed to reap. The error behind a failed stop is now kept with it.
+- **A client that did not say it answers account questions can no longer connect an agent by itself.** Such a connect now ends undecided before the agent is started, instead of moving the conversation and writing the route when the agent was already signed in.
+- **Connecting to or signing out of an agent that is not installed no longer asks about content use first.** The "cannot be started" message now comes before the question, and nothing is recorded for a launch that cannot happen.
+- **A removal that cannot be saved now says the agent was stopped.** When an installed agent's settings cannot be taken out of the configuration file, `/logout` and clients are now told the agent is stopped for this run only and its settings are still saved, instead of only that the removal failed.
+
+### Documentation
+
+- **The agents guide now says which Claude Code session rules are kept.** Allowing a command for the rest of the session keeps the command itself even when it holds `;`, `|` or `$`. Only a rule for the commands that begin with such words is dropped, as before.
+
 ## [0.48.0] - 2026-10-21
 
 **Crucible 0.48.0 lets an installed coding agent take a conversation's turns.**
@@ -5390,7 +5425,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.48.1...HEAD
+[0.48.1]: https://github.com/augments-labs/crucible-code/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/augments-labs/crucible-code/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/augments-labs/crucible-code/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/augments-labs/crucible-code/compare/v0.46.0...v0.47.0
