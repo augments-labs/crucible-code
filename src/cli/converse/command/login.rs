@@ -505,7 +505,9 @@ pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
         Account::Moved(instance) => (moved_onto(instance), true),
         Account::Unmoved(reason) => (format!("{UNMOVED} ({reason})"), true),
         Account::ConnectUnsaved(problem) => (format!("! {CONNECT_UNSAVED} {problem}"), false),
-        Account::HoldUnkept(problem) => (format!("! {HOLD_UNKEPT} {problem}"), false),
+        Account::HoldUnkept(problem) | Account::SignOutHoldUnkept(problem) => {
+            (format!("! {HOLD_UNKEPT} {problem}"), false)
+        }
         Account::Disconnected { stopped: true } => (DISCONNECTED.to_owned(), false),
         Account::Disconnected { stopped: false } => (format!("! {NOT_CONFIRMED_STOPPED}"), false),
         Account::ThisRunOnly(problem) => (format!("! {THIS_RUN_ONLY} {problem}"), false),
