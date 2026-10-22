@@ -37,19 +37,16 @@ review agent flagged it" is not a problem statement. -->
 
 ## What does this PR change?
 
-<!-- One to three sentences. What, not why; the why is the section above. -->
+<!-- One to three sentences. What, not why; the why is the section above.
+A pull request carries one reason to change, decided by purpose rather than
+changed-line arithmetic. If it looks like more than one change, say what ties
+the parts together, as code and the proof that cannot compile apart from it
+are one change; if nothing does, stop and split it. -->
 
 ## What alternatives did you consider?
 
 <!-- What else you tried or evaluated, and why it was worse. If you
 considered nothing else, say so; know that a reviewer reads that as a flag. -->
-
-## Is this one change?
-
-<!-- Scope is decided by purpose, not changed-line arithmetic. If the PR
-carries more than one reason to change, stop and split it. Code and the proof
-that cannot compile apart from it are one change; say so if it looks like
-two. -->
 
 ## Which surfaces does it touch?
 
