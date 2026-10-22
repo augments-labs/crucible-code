@@ -410,8 +410,9 @@ impl Drop for Asking<'_> {
 }
 
 /// The agent's place while a launch is under way: released when the launch
-/// ends in a refusal or its future is dropped, unless a stop it abandoned
-/// left a process that was not confirmed ended, as a host's drop does.
+/// ends in a refusal or its future is dropped, unless a process was left that
+/// was not confirmed ended, as a host's drop does. That is a stop it abandoned,
+/// or a stop of a process it could not speak to that failed or never answered.
 struct Launching<'s>(Option<&'s Shared>);
 
 impl Launching<'_> {
