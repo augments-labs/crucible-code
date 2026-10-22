@@ -604,7 +604,13 @@ async fn every_close_and_turn_after_an_unconfirmed_stop_fails() {
     .to_string();
     assert_eq!(first.map_err(|error| error.to_string()), Err(said.clone()));
     assert_eq!(second.map_err(|error| error.to_string()), Err(said.clone()));
-    assert_eq!(prompted.err().map(|error| error.to_string()), Some(said));
+    assert_eq!(
+        prompted.err().map(|error| error.to_string()),
+        Some(said.clone())
+    );
+    // The text carries the stop's own cause beside the sentence, whatever
+    // `unstopped` is built from.
+    assert!(said.contains("the scope did not answer"), "{said}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
