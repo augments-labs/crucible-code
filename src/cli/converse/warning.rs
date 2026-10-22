@@ -218,9 +218,7 @@ pub(super) fn held<T: Terminal>(
         // A loop reading lines rather than keys has nobody to put a panel
         // to, and neither has one whose raw mode never came up.
         if !held.answers.keys {
-            return Err(Fatal::Unanswered(
-                format!("{}: {} {ELSEWHERE}", warned.shown, warned.warning.sentence).into(),
-            ));
+            return Err(Fatal::Unanswered(unanswered(&warned)));
         }
         break match ask(renderer, terms.style(), &warned, Put::Send)? {
             Answer::Yes => match recorded(terms, &warned) {
@@ -239,6 +237,18 @@ pub(super) fn held<T: Terminal>(
     }
     renderer.commit(&said)?;
     Ok(true)
+}
+
+/// What a run with no terminal says when `warned` has no yes: the route's
+/// name, the vendor's sentence with what starting an installed agent runs
+/// after it where the route is one, and where to answer.
+pub(super) fn unanswered(warned: &Warned) -> Box<str> {
+    format!(
+        "{}: {} {ELSEWHERE}",
+        warned.shown,
+        content_use::full_sentence(warned)
+    )
+    .into()
 }
 
 /// The warned route `work` would go on with no yes: the one a send to the

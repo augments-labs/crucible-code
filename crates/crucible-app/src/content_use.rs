@@ -18,7 +18,9 @@
 //! driver, is always asked about once before its first launch, with
 //! [`LAUNCHING`] beside whatever its vendor says, because a launch is
 //! execution and not only a request. A client with no terminal is put the
-//! same words, closing the warning's sentence.
+//! same words, closing the warning's sentence, and so is a run with no
+//! terminal that ends unanswered and a client whose question was declined;
+//! [`full_sentence`] is the one place they are joined.
 //!
 //! **The hold.** Every HTTP client built outside tests that can reach a vendor
 //! is handed a [`Consent`], asked before each request leaves; the release
@@ -243,6 +245,18 @@ const ANTIGRAVITY: Warning = Warning {
 pub const LAUNCHING: &str = "Starting it runs the hooks, helper commands, MCP servers and \
                              plugins its profile names, and any the project's own settings \
                              name, which may send content on their own.";
+
+/// The sentence a route's warning is put in to a reader: the vendor's, and
+/// for an installed agent's route [`LAUNCHING`] after it, so a question, a
+/// refusal and a run with no terminal say the same words.
+#[must_use]
+pub fn full_sentence(warned: &Warned) -> String {
+    if launches(warned.route) {
+        format!("{} {LAUNCHING}", warned.warning.sentence)
+    } else {
+        warned.warning.sentence.to_owned()
+    }
+}
 
 /// Every warned route this build has.
 pub const WARNED: [Warned; 19] = [

@@ -4472,8 +4472,17 @@ fn a_prompt_that_would_start_an_unanswered_agent_asks_its_route_first() -> Resul
                 assert!(resumed_as(&peer, EARLIER), "{:?}", fake_peer::argued(&peer));
                 assert_eq!(users(conversation.settled()), ["before", "after"]);
             }
-            (None, Outcome::Turn(TurnOutcome::Warned { route, .. })) => {
+            (
+                None,
+                Outcome::Turn(TurnOutcome::Warned {
+                    route, sentence, ..
+                }),
+            ) => {
                 assert_eq!(route.as_str(), "agent:claude");
+                assert!(
+                    sentence.as_str().ends_with(LAUNCHING),
+                    "the refusal does not say what starting the agent runs: {sentence:?}"
+                );
                 assert!(!written.contains("agent:claude"), "{written}");
                 assert_eq!(
                     fake_peer::argued(&peer).len(),
