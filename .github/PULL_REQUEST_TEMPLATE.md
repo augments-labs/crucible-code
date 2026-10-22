@@ -14,15 +14,16 @@ Security issues do not belong here. See SECURITY.md.
 
 ## Who made this change? (required)
 
-<!-- A human, an agent, or both may write this PR. Say which; when both
-did, say which part each wrote, and for an agent say which one and where it
+<!-- Say who orchestrated this PR, a human, an agent or both: whoever
+decided why it exists and what it changes, which need not be whoever wrote it.
+Then name every model that wrote any of it, the part each wrote, and where it
 ran. Contributions are weighed by how they were made: a behaviour claim
 reasoned from documentation is held to a different bar than one grounded in
 a real session. Hiding the authoring environment is grounds for closing it. -->
 
 | Field | Value |
 | --- | --- |
-| Written by | human / agent / both |
+| Orchestrated by | human / agent / both |
 | Model + exact id | <!-- every model that wrote any of it, and which part each wrote; or n/a when no agent did --> |
 | Harness + version | <!-- the IDE, CLI, or runner, or n/a --> |
 | Human who reviewed this diff | <!-- a person, not a role; while the box below is empty, who is being asked --> |
