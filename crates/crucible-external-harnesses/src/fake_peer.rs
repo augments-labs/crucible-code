@@ -411,11 +411,14 @@ pub(crate) fn installed(
             Ok(()) | Err(_) => {}
         }
     }
-    // A link has no file open for writing, which a process forked meanwhile
-    // could inherit and keep the new executable from being run.
-    if fs::hard_link(peer, &target).is_err() {
-        fs::copy(peer, &target)?;
-    }
+    // A copy, never a link: a link shares the built peer's one inode, and
+    // every other test's link and unlink moves that inode's change time,
+    // which a launch compares with the time it found. The copy is written and
+    // closed here before anything runs it, and std opens it close-on-exec; the
+    // exposure left is a process forked by another test thread while it is
+    // open for writing, which holds that descriptor until it executes and can
+    // make running this one fail with "text file busy" for that moment.
+    fs::copy(peer, &target)?;
     fs::write(directory.join(SCRIPT), script.encoded())?;
     Ok(target)
 }
