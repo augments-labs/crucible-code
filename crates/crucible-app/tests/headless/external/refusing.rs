@@ -7,8 +7,9 @@
 //! is written; nobody is asked to agree to a launch that cannot happen, and
 //! the command ends undecided, as it does where a person declines. The consent
 //! here has no file to write a yes to, so what a yes would have recorded is
-//! not asserted; only that the route is not put where it has no yes, that the
-//! file is left as it was, and the command's outcome.
+//! not asserted; only that the route is not put where it has no yes, and the
+//! command's outcome. The case whose route has its yes also asserts that the
+//! user file is left as it was and that the agent's program is not started.
 
 use crucible_app::client;
 use crucible_client_api::{
@@ -120,13 +121,13 @@ fn a_sign_out_whose_program_is_missing_writes_nothing_on_an_answered_route() -> 
 
     let (outcome, file) = accounting(&tree, &mut outside, &asked, &mut picking)?;
 
-    assert_eq!(outcome, Outcome::Logout(LogoutOutcome::Undecided));
     assert_eq!(file, missing, "nothing was written");
     assert_eq!(
         fake_peer::played(&outside.peer) - before,
         0,
         "the agent's program was started"
     );
+    assert_eq!(outcome, Outcome::Logout(LogoutOutcome::Undecided));
     let told = picking.put.get(1).is_some_and(|put| match put {
         Pending::Account { asks, facts, .. } => {
             asks.as_str() == "Claude Code cannot be started."
