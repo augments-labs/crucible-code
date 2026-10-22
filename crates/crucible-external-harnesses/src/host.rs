@@ -541,7 +541,8 @@ impl Host {
     /// # Errors
     ///
     /// [`Refusal`] for each reason the launch did not start a process, or
-    /// started one and stopped it again.
+    /// started one and stopped it again, or could not confirm that it had,
+    /// which refuses the launches after it as well.
     pub async fn launch(
         service: Arc<dyn SandboxService>,
         runtime: Handle,
@@ -660,7 +661,16 @@ impl Host {
         let stopping = Unconfirmed(Some(&control.shared));
         let pipes = Pipes::taken(process.as_mut(), patience, runtime).await;
         stopping.confirmed();
-        let pipes = pipes.map_err(|_| Refusal::Unspoken)?;
+        let pipes = pipes.map_err(|unspoken| {
+            // A stop that was not confirmed leaves a process that may still be
+            // running, which keeps the agent's place as an abandoned one does.
+            if unspoken.cleanup.is_some() {
+                control.shared.unstopped.store(true, Ordering::SeqCst);
+            }
+            Refusal::Unspoken {
+                cleanup: unspoken.cleanup,
+            }
+        })?;
         Ok(Self {
             process,
             frames: Frames::new(pipes.heard),
