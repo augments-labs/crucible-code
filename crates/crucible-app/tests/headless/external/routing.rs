@@ -693,3 +693,46 @@ fn a_sign_out_of_an_unanswered_agent_asks_its_route_before_anything_changes() ->
     }
     Ok(())
 }
+
+/// A sign-out of an agent whose route has no yes, accepted where the yes
+/// cannot be written down because the consent has no file, ends as a connect
+/// does in that case: the client is told the yes could not be written, with
+/// the problem, and nothing is stopped, written or started.
+#[test]
+fn a_sign_out_whose_yes_cannot_be_written_says_nothing_changed() -> Result<(), Failed> {
+    let tree = Tree::new("external-sign-out-yes-unwritten")?;
+    let script = connected([claude::clean(), Reply::new(), claude::signed_out()]);
+    let mut outside = Outside::new(&tree, &script)?;
+    outside.unanswer();
+    for _ in 0..500 {
+        if fake_peer::played(&outside.peer) >= 3 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let before = fake_peer::played(&outside.peer);
+    let asked = Asked {
+        installed: (SHARED, "work"),
+        command: &|instance| Command::SignOut { instance },
+        asking: Asking::every(),
+        after: None,
+    };
+    let mut picking = Picking::of([Some(client::accounts::SIGN_OUT), Some("Accept")]);
+
+    let (outcome, file) = accounting(&tree, &mut outside, &asked, &mut picking)?;
+    let started = fake_peer::played(&outside.peer) - before;
+
+    match &outcome {
+        Outcome::Logout(LogoutOutcome::HoldUnkept { said, problem }) => {
+            assert_eq!(said.as_str(), client::accounts::HOLD_UNKEPT);
+            assert!(!problem.message.as_str().is_empty(), "{problem:?}");
+        }
+        other => return Err(format!("{other:?}").into()),
+    }
+    assert!(asked_route(&picking.put), "{:?}", picking.put);
+    assert_eq!(file, SHARED, "an instance was written off");
+    assert_eq!(started, 0, "the agent's program was started");
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_ok(), "the run was stopped: {turned:?}");
+    Ok(())
+}

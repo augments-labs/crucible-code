@@ -418,6 +418,7 @@ impl LogoutOutcome {
                 Writing::kind("sign_out_unverified").text("said", said)
             }
             Self::StillReferenced { said } => Writing::kind("still_referenced").text("said", said),
+            Self::HoldUnkept { said, problem } => failed("hold_unkept", problem).text("said", said),
             Self::Undecided => Writing::kind("undecided"),
         }
         .finish()
@@ -464,6 +465,10 @@ impl LogoutOutcome {
             },
             "still_referenced" => Self::StillReferenced {
                 said: fields.text("said")?,
+            },
+            "hold_unkept" => Self::HoldUnkept {
+                said: fields.text("said")?,
+                problem: problem(&mut fields)?,
             },
             "undecided" => Self::Undecided,
             _ => return Err(ErrorCode::Malformed.into()),

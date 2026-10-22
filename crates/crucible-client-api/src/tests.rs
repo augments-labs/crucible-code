@@ -584,6 +584,10 @@ fn login_outcomes() -> Vec<Outcome> {
         Outcome::Logout(LogoutOutcome::AgentSignedOut { said: marked() }),
         Outcome::Logout(LogoutOutcome::SignOutUnverified { said: marked() }),
         Outcome::Logout(LogoutOutcome::StillReferenced { said: marked() }),
+        Outcome::Logout(LogoutOutcome::HoldUnkept {
+            said: marked(),
+            problem: problem(),
+        }),
         Outcome::Logout(LogoutOutcome::Undecided),
     ]
 }
@@ -1198,34 +1202,35 @@ const fn command_arm(one: &Command) -> (usize, usize) {
 
 const fn logout_arm(one: &LogoutOutcome) -> (usize, usize) {
     match one {
-        LogoutOutcome::CacheHeld(_) => (0, 16),
-        LogoutOutcome::Unforgotten { .. } => (1, 16),
-        LogoutOutcome::Kept { .. } => (2, 16),
+        LogoutOutcome::CacheHeld(_) => (0, 17),
+        LogoutOutcome::Unforgotten { .. } => (1, 17),
+        LogoutOutcome::Kept { .. } => (2, 17),
         LogoutOutcome::StillServed {
             standing: Standing::Environment(_),
             ..
-        } => (3, 16),
+        } => (3, 17),
         LogoutOutcome::StillServed {
             standing: Standing::StoredKey,
             ..
-        } => (4, 16),
+        } => (4, 17),
         LogoutOutcome::StillServed {
             standing: Standing::Subscription,
             ..
-        } => (5, 16),
+        } => (5, 17),
         LogoutOutcome::StillServed {
             standing: Standing::External { .. },
             ..
-        } => (6, 16),
-        LogoutOutcome::SignedOut { .. } => (7, 16),
-        LogoutOutcome::Disconnected { .. } => (8, 16),
-        LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { .. } => (9, 16),
-        LogoutOutcome::StoppedForThisRunOnly { .. } => (10, 16),
-        LogoutOutcome::IntegrationRemoved { .. } => (11, 16),
-        LogoutOutcome::StillReferenced { .. } => (12, 16),
-        LogoutOutcome::Undecided => (13, 16),
-        LogoutOutcome::AgentSignedOut { .. } => (14, 16),
-        LogoutOutcome::SignOutUnverified { .. } => (15, 16),
+        } => (6, 17),
+        LogoutOutcome::SignedOut { .. } => (7, 17),
+        LogoutOutcome::Disconnected { .. } => (8, 17),
+        LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped { .. } => (9, 17),
+        LogoutOutcome::StoppedForThisRunOnly { .. } => (10, 17),
+        LogoutOutcome::IntegrationRemoved { .. } => (11, 17),
+        LogoutOutcome::StillReferenced { .. } => (12, 17),
+        LogoutOutcome::Undecided => (13, 17),
+        LogoutOutcome::AgentSignedOut { .. } => (14, 17),
+        LogoutOutcome::SignOutUnverified { .. } => (15, 17),
+        LogoutOutcome::HoldUnkept { .. } => (16, 17),
     }
 }
 
