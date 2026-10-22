@@ -23,7 +23,7 @@ use crucible_session::{RouteBinding, Session};
 use crucible_tools::Mode;
 use crucible_types::Transcript;
 
-use super::{Launching, Outside, runtime, turn};
+use super::{Launching, Outside, answered, runtime, turn};
 use crate::{Failed, Script, Tree};
 
 /// Antigravity's own row, reaching no host, as [`row`] is Claude Code's.
@@ -267,5 +267,46 @@ fn a_session_refused_for_another_reason_is_resumed_by_the_next_turn() -> Result<
         "a refusal that says nothing of the session let it go"
     );
     assert!(matches!(third, Ok(Turned::Ran(_))), "{third:?}");
+    Ok(())
+}
+
+/// On a route whose agent chooses its own model, a model of the provider that
+/// agent itself reaches is still refused: the agent is not started with a
+/// model from here, so no provider is reachable by choosing one. The refusal
+/// says the model is not chosen from here, and the conversation stays on its
+/// route in the session it was in, with nothing written.
+#[test]
+fn a_model_of_the_agent_s_own_provider_is_refused_where_it_chooses_its_own() -> Result<(), Failed> {
+    use crucible_client_api::{Command, Execution, ModelOutcome, Name, Outcome};
+
+    let tree = Tree::new("external-model-own-provider")?;
+    let mut outside = on_antigravity(&tree, &Peer::of([]))?;
+    let left = outside.conversation.session().id().cloned();
+    let standing = crucible_app::client::snapshot(&outside.conversation).execution;
+    assert!(matches!(standing, Execution::Instance(_)), "{standing:?}");
+
+    let refused = answered(
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new(Driver::Antigravity.provider())?,
+            model: Name::new("gemini-3.8-flash")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    assert_eq!(
+        problem.message.as_str(),
+        "this conversation is on antigravity, whose model is not chosen from here"
+    );
+    assert_eq!(
+        crucible_app::client::snapshot(&outside.conversation).execution,
+        standing
+    );
+    assert_eq!(outside.conversation.session().id().cloned(), left);
+    assert!(!crucible_config::user(&tree.home()?).exists());
     Ok(())
 }
