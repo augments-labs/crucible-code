@@ -13,6 +13,15 @@ any other provider is refused at start. A disconnected agent, or one whose
 program cannot be run, is refused before anything is recorded. The sections
 below say how each agent is run.
 
+The agent's program is looked at when it is selected, and again before each
+start, without reading it. On Unix crucible compares its length,
+modification time, device, inode and change time, so a rewrite, a replacement,
+a `chmod`, a `chown` or a new hard link to it each count as a change. On
+Windows it compares length and modification time alone, which a program
+allowed to write the file can restore. A program that is no longer the one
+selected is refused with a sentence naming it, and is selected anew when
+crucible is started again.
+
 `/login` in a conversation running on an agent offers all three choices. For
 the provider the agent reaches, a subscription or key is stored, the
 provider's `access` is rewritten from `externalAgent` to `subscription` or
