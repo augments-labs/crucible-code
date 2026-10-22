@@ -204,13 +204,14 @@ the agent's turn goes on without it. Allowing for
 the rest of the session keeps, for that session alone and never in its settings
 files, only the agent's rules for the command you were asked about: the command
 itself, or every command that begins with the words a rule names followed by a
-space, such as every `git` command for `git:*`. A rule is not kept when it has a
-wildcard anywhere in it (`*`, `?`, `[` or `{`), when it is for any tool other
-than `Bash`, when it has no letter or digit in the words it names, when those
-words start or end with a space, or when it holds any other whitespace, such as
-a tab (U+0009) or a no-break space (U+00A0): a rule with a no-break space between
-`ls` and `-la` is dropped. A rule that holds a byte-order mark (U+FEFF) is not
-kept either. Shell syntax (``; & | < > ( ) $ ` " ' \ =``) is checked only in the
+space, such as every `git` command for `git:*`. A rule is not kept when the
+command you were asked about is neither its command nor one that begins with its
+words followed by a space, such as `gitx status` for `git:*`, or when it is for
+any tool other than `Bash`. Apart from a final `:*`, a rule is not kept when the
+words it names have a wildcard (`*`, `?`, `[` or `{`), no letter or digit, a
+space at the start or end, or any other whitespace, such as a tab (U+0009) or a
+no-break space (U+00A0): a rule with a no-break space between `ls` and `-la` is
+dropped. A rule whose words hold a byte-order mark (U+FEFF) is not kept either. Shell syntax (``; & | < > ( ) $ ` " ' \ =``) is checked only in the
 words before `:*`, so a rule for the commands that begin with words holding any
 of it is not kept; the command itself is kept even when it holds shell syntax,
 if it passes the checks above. Where the agent offers no such rule, or says its
