@@ -422,14 +422,55 @@ fn mark_activity(activity: &AtomicU64, started: Instant) {
 mod tests {
     use super::{NetworkRelay, pump};
     use std::io::{Read, Write};
+    use std::os::unix::fs::DirBuilderExt;
     use std::os::unix::net::UnixListener;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::Duration;
 
+    /// A private directory a test binds its socket in, removed when the test
+    /// ends.
+    ///
+    /// A socket path must fit the 104 bytes Darwin gives `sun_path` (108 on
+    /// Linux), and `TMPDIR` is as long as its owner made it, so the directory
+    /// is made under `/tmp` rather than under `std::env::temp_dir()`. The
+    /// process identifier and a count make it unique to this test, so parallel
+    /// tests and parallel runs never share one.
+    struct SocketDir(PathBuf);
+
+    impl SocketDir {
+        fn new() -> Self {
+            /// How many directories this process has made.
+            static MADE: AtomicU64 = AtomicU64::new(0);
+
+            let made = MADE.fetch_add(1, Ordering::Relaxed);
+            let path = PathBuf::from(format!("/tmp/crucible-relay-{}-{made}", std::process::id()));
+            // A run that crashed leaves its directory behind, and a process
+            // identifier is eventually reused.
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&path)
+                .expect("a private socket directory");
+            Self(path)
+        }
+
+        fn socket(&self) -> PathBuf {
+            self.0.join("host.sock")
+        }
+    }
+
+    impl Drop for SocketDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn relay_forwards_private_socket_bytes_both_directions() {
-        let root = std::env::temp_dir().join(format!("crucible-network-{}", std::process::id()));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let host = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
@@ -450,16 +491,12 @@ mod tests {
         assert_eq!(&bytes, b"pong");
         relay.stop().expect("stop");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
     fn relay_preserves_response_after_client_half_close() {
-        let root = std::env::temp_dir().join(format!(
-            "crucible-network-half-close-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let host = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
@@ -483,16 +520,12 @@ mod tests {
         assert_eq!(&response, b"response");
         relay.stop().expect("stop");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
     fn relay_preserves_response_after_host_stops_reading() {
-        let root = std::env::temp_dir().join(format!(
-            "crucible-network-host-stops-reading-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let host = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
@@ -539,16 +572,14 @@ mod tests {
         sender.join().expect("sender");
         relay.stop().expect("stop");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
         received.expect("response after the host stopped reading");
         assert_eq!(&response, b"a response, in parts");
     }
 
     #[test]
     fn reset_connection_does_not_poison_listener_cleanup_or_reconnect() {
-        let root =
-            std::env::temp_dir().join(format!("crucible-network-reset-{}", std::process::id()));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let (reset_done_tx, reset_done_rx) = std::sync::mpsc::channel();
         let host = thread::spawn(move || {
@@ -581,14 +612,12 @@ mod tests {
         assert_eq!(&response, b"pong");
         relay.stop().expect("normal cleanup");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
     fn active_one_way_download_prevents_read_idle_expiry() {
-        let root =
-            std::env::temp_dir().join(format!("crucible-network-download-{}", std::process::id()));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let host = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
@@ -613,16 +642,12 @@ mod tests {
         }
         relay.stop().expect("stop");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
     fn delayed_first_response_still_forwards_during_opposite_activity() {
-        let root = std::env::temp_dir().join(format!(
-            "crucible-network-delayed-response-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let (request_tx, request_rx) = std::sync::mpsc::channel();
         let host = thread::spawn(move || {
@@ -690,16 +715,12 @@ mod tests {
         assert_eq!(&response, b"response");
         relay.stop().expect("stop");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
     fn delayed_second_response_starts_a_fresh_write_deadline() {
-        let root = std::env::temp_dir().join(format!(
-            "crucible-network-delayed-second-response-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let (first_tx, first_rx) = std::sync::mpsc::channel();
         let (second_tx, second_rx) = std::sync::mpsc::channel();
@@ -753,7 +774,6 @@ mod tests {
         assert_eq!(&responses[8..], b"second__");
         relay.stop().expect("stop");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
@@ -813,11 +833,8 @@ mod tests {
 
     #[test]
     fn relay_closes_when_client_stops_reading() {
-        let root = std::env::temp_dir().join(format!(
-            "crucible-network-stalled-peer-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let (closed_tx, closed_rx) = std::sync::mpsc::channel();
         let host = thread::spawn(move || {
@@ -885,14 +902,12 @@ mod tests {
         relay.stop().expect("stop");
         host.join().expect("host");
         assert!(closed, "stalled host write must expire");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
     fn relay_cancellation_joins_an_active_connection() {
-        let root =
-            std::env::temp_dir().join(format!("crucible-network-cancel-{}", std::process::id()));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let host = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
@@ -905,7 +920,6 @@ mod tests {
         thread::sleep(Duration::from_millis(100));
         relay.stop().expect("stop");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
@@ -928,9 +942,8 @@ mod tests {
 
     #[test]
     fn relay_closes_an_idle_connection() {
-        let root =
-            std::env::temp_dir().join(format!("crucible-network-idle-{}", std::process::id()));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let host = thread::spawn(move || {
             let (_stream, _) = listener.accept().expect("accept");
@@ -946,14 +959,12 @@ mod tests {
         assert_eq!(guest.read(&mut byte).expect("read"), 0);
         relay.stop().expect("stop");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 
     #[test]
     fn relay_rejects_the_seventeenth_connection() {
-        let root =
-            std::env::temp_dir().join(format!("crucible-network-limit-{}", std::process::id()));
-        let _ = std::fs::remove_file(&root);
+        let dir = SocketDir::new();
+        let root = dir.socket();
         let listener = UnixListener::bind(&root).expect("host listener");
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -985,6 +996,5 @@ mod tests {
         relay.stop().expect("stop");
         release_tx.send(()).expect("release host");
         host.join().expect("host");
-        let _ = std::fs::remove_file(root);
     }
 }
