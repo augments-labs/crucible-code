@@ -153,7 +153,8 @@ of a session the agent ran does. The question then stands when the next
 message is sent, with the same added line: `Use it anyway` writes the yes and
 starts the agent with the message, and anything else leaves the message in the
 prompt box. A run with no terminal to ask on ends there, as on any route asked
-about.
+about, with the same added sentence after the vendor's. A client that declines
+the question is told the same words.
 
 ## A `baseUrl` crucible recognises
 

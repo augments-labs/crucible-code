@@ -5,7 +5,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use crucible_app::content_use::{Consent, Routes, Serving, WARNED};
+use crucible_app::content_use::{Consent, LAUNCHING, Routes, Serving, WARNED, agent_route};
 use crucible_runner::Tools;
 use crucible_session::Session;
 use crucible_tui::{Recording, Renderer};
@@ -13,6 +13,8 @@ use crucible_tui::{Recording, Renderer};
 use crate::cli::Fatal;
 use crate::cli::converse::{First, Terms, converse};
 use crate::cli::fake::Script;
+
+use crate::cli::converse::warning::unanswered;
 
 use super::{opening, paired, plain, saying, scripted};
 
@@ -150,4 +152,32 @@ fn compact_with_no_model_to_ask_is_answered_before_the_route_is_asked_about() {
     assert!(ended.is_ok(), "{ended:?}");
     let written = renderer.terminal().written();
     assert!(written.contains("No model selected"), "{written}");
+}
+
+#[test]
+fn an_installed_agent_with_no_yes_is_unanswered_with_what_starting_it_runs() {
+    // The question shown on a terminal says what starting the agent runs
+    // after the vendor's sentence; a run with no terminal to ask on says it
+    // in the same place, and still ends on where to answer.
+    let route = agent_route("claude");
+    let claude = WARNED
+        .iter()
+        .find(|warned| warned.route == route)
+        .expect("Claude Code's route is warned");
+
+    let said = unanswered(claude);
+
+    let launched = format!("{} {LAUNCHING}", claude.warning.sentence);
+    assert!(said.contains(&launched), "{said}");
+    assert!(said.ends_with("answer it once in a terminal."), "{said}");
+}
+
+#[test]
+fn a_route_that_launches_nothing_is_unanswered_without_that_sentence() {
+    let google = WARNED
+        .iter()
+        .find(|warned| warned.route == "key:google")
+        .expect("the Google key row is warned");
+
+    assert!(!unanswered(google).contains(LAUNCHING));
 }

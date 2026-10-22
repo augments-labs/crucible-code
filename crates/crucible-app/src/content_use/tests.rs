@@ -1078,3 +1078,23 @@ fn a_launch_is_held_until_its_agent_route_has_a_yes() {
 fn the_launch_sentence_is_documented() {
     assert!(DOCUMENTED.contains(LAUNCHING), "{LAUNCHING}");
 }
+
+/// An installed agent's route is put with what starting it runs after the
+/// vendor's sentence, and every other route with the vendor's alone; the
+/// whole of either fits what a client is put.
+#[test]
+fn only_an_agent_s_sentence_has_the_launch_sentence_after_the_vendor_s() {
+    for warned in &WARNED {
+        let said = full_sentence(warned);
+        if launches(warned.route) {
+            assert_eq!(said, format!("{} {LAUNCHING}", warned.warning.sentence));
+        } else {
+            assert_eq!(said, warned.warning.sentence, "{}", warned.route);
+        }
+        assert!(
+            !crucible_client_api::Text::cut(&said).truncated(),
+            "{}",
+            warned.route
+        );
+    }
+}

@@ -37,7 +37,7 @@
 //! | sign out, the file not written, the conversation on one of the instances sharing the scope | sign out | [`LogoutOutcome::StoppedForThisRunOnly`] |
 //! | sign out, the file not written, the conversation on none of them | sign out | [`ErrorCode::Failed`] |
 //! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
-//! | sign out | sign out, its agent's route unanswered, the yes not written | [`ErrorCode::Failed`] |
+//! | sign out | sign out, its agent's route unanswered, the yes not written | [`LogoutOutcome::HoldUnkept`] |
 //! | sign out, its agent's route unanswered, the agent cannot be started | sign out | [`LogoutOutcome::Undecided`], the route not asked |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
@@ -155,8 +155,7 @@ pub enum Account {
     /// written first could not be: for a removal, the file could not be read
     /// or the conversation was not on the instance; for a disconnect, the
     /// conversation was not on the instance; for a sign-out, the conversation
-    /// was on none of the instances sharing the credential scope, or the yes
-    /// to the agent's content-use route could not be written.
+    /// was on none of the instances sharing the credential scope.
     Unremoved(RememberError),
     /// The instance's run in this conversation was stopped and it takes no new
     /// work, and its settings could not be taken out of the file, so they are
@@ -189,6 +188,9 @@ pub enum Account {
     /// The yes to the agent's content-use route could not be written down,
     /// so nothing of the agent's was started and nothing changed.
     HoldUnkept(RememberError),
+    /// As [`Account::HoldUnkept`], for a sign-out: the agent's program was
+    /// not run and no instance was stopped.
+    SignOutHoldUnkept(RememberError),
     /// Nobody went on with a connect, so nothing changed.
     Unconnected,
     /// It did not begin, or could not be kept as it went.
@@ -259,6 +261,10 @@ impl Account {
                     problem: Problem::failed(problem),
                 });
             }
+            Self::SignOutHoldUnkept(problem) => LogoutOutcome::HoldUnkept {
+                said: Text::cut(HOLD_UNKEPT),
+                problem: Problem::failed(problem),
+            },
             Self::Unconnected => return Outcome::Login(LoginOutcome::Undecided),
             Self::Contended(Contended::Busy) => {
                 return Outcome::Refused(ErrorCode::Busy.into());
@@ -652,7 +658,10 @@ async fn launch_asked(
     if !super::deciding::warned(capabilities, front, &warned).await {
         return Some(Account::Undecided);
     }
-    consent.accept(&warned).err().map(Account::Unremoved)
+    consent
+        .accept(&warned)
+        .err()
+        .map(Account::SignOutHoldUnkept)
 }
 
 /// Takes every instance in `sharing` out of use from Crucible, durably, and

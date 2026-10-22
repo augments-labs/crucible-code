@@ -526,6 +526,14 @@ pub enum LogoutOutcome {
         /// What the person is told, which names the provider.
         said: Text,
     },
+    /// The yes to the agent's content-use route could not be written down, so
+    /// the agent's program was not started and nothing changed.
+    HoldUnkept {
+        /// What the person is told.
+        said: Text,
+        /// Why it could not be written down.
+        problem: Problem,
+    },
     /// Nobody chose a way to go on, so nothing changed: the client could not
     /// be asked, or it cancelled.
     Undecided,
