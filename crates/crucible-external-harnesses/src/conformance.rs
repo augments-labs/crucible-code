@@ -376,9 +376,9 @@ impl Suite<'_> {
                 // its first exchange, so the program waits on no more.
                 let first = set.opening.first().map_or(0, |(heard, _)| *heard);
                 let reply = Reply::new().hear(first).linger().pause(ASLEEP);
-                // A beat is a truncate and then a write, so a stop landing
-                // between the two leaves nothing to read afterwards: whether
-                // the grandchild began is seen while the turn runs.
+                // A beat is written beside the file and renamed over it, so a
+                // read never lands on half of one: whether the grandchild
+                // began is seen while the turn runs.
                 let playing = self.one(&here, reply, React::Interrupt, None);
                 tokio::pin!(playing);
                 let mut began = false;
