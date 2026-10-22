@@ -202,12 +202,21 @@ names the agent that would act and how far what it runs is held in, such as
 `execution: work · confinement: enforced`; a no refuses that action alone, and
 the agent's turn goes on without it. Allowing for
 the rest of the session keeps, for that session alone and never in its settings
-files, only the agent's rules for the command you were asked about: the command
-itself, or every command that begins with the words a rule names, such as every
-`git` command for `git:*`. A rule with a wildcard, a rule for any other tool,
-and a rule for the commands that begin with words holding shell syntax, such as
-`;`, `|`, `$`, a quote or `=`, are not kept; the command itself is kept even
-when it holds shell syntax. Where the agent offers no such rule, or says its
+files, only the agent's rules for the command you were asked about. A rule
+without `:*` is kept only when it is that command itself. A rule ending in
+`:*` is kept only when that command is the words before the `:*`, or begins
+with them followed by a space, such as `git` or every `git` command for
+`git:*`, but not `gitx status`. A rule is not kept for any tool other than
+`Bash`. Apart from a final `:*`, a rule is not kept when the words it
+names have a wildcard (`*`, `?`, `[` or `{`), no letter or digit, a space at
+the start or end, or
+any other whitespace, such as a tab (U+0009) or a no-break space (U+00A0): a
+rule with a no-break space between `ls` and `-la` is dropped. A rule whose
+words hold a byte-order mark (U+FEFF) is not kept either.
+Shell syntax (``; & | < > ( ) $ ` " ' \ =``) is checked only in the
+words before `:*`, so a rule for the commands that begin with words holding any
+of it is not kept; the command itself is kept even when it holds shell syntax,
+if it passes the checks above. Where the agent offers no such rule, or says its
 rule would allow more than you were asked, the allow is for that call alone.
 Once a turn is stopped, every question it asked is answered no, whatever was
 chosen.
