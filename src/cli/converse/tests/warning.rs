@@ -5,7 +5,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use crucible_app::content_use::{Consent, LAUNCHING, Routes, Serving, WARNED};
+use crucible_app::content_use::{Consent, LAUNCHING, Routes, Serving, WARNED, agent_route};
 use crucible_runner::Tools;
 use crucible_session::Session;
 use crucible_tui::{Recording, Renderer};
@@ -159,9 +159,10 @@ fn an_installed_agent_with_no_yes_is_unanswered_with_what_starting_it_runs() {
     // The question shown on a terminal says what starting the agent runs
     // after the vendor's sentence; a run with no terminal to ask on says it
     // in the same place, and still ends on where to answer.
+    let route = agent_route("claude");
     let claude = WARNED
         .iter()
-        .find(|warned| warned.route == "agent:claude")
+        .find(|warned| warned.route == route)
         .expect("Claude Code's route is warned");
 
     let said = unanswered(claude);
