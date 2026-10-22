@@ -14,18 +14,18 @@ Security issues do not belong here. See SECURITY.md.
 
 ## Who made this change? (required)
 
-<!-- We assume an agent wrote this PR. Say which one and where it ran, or
-state plainly that it was written by hand. Contributions are weighed by how
-they were made: a behaviour claim reasoned from documentation is held to a
-different bar than one grounded in a real session. Hiding the authoring
-environment is grounds for closing the PR. -->
+<!-- Say who orchestrated this PR, a human, an agent or both: whoever
+decided why it exists and what it changes, which need not be whoever wrote it.
+Then name every model that wrote any of it, the part each wrote, and where it
+ran. Contributions are weighed by how they were made: a behaviour claim
+reasoned from documentation is held to a different bar than one grounded in
+a real session. Hiding the authoring environment is grounds for closing it. -->
 
 | Field | Value |
 | --- | --- |
-| Written by | hand / agent |
-| Model + exact id | <!-- or n/a if by hand --> |
+| Orchestrated by | human / agent / both |
+| Model + exact id | <!-- every model that wrote any of it, and which part each wrote; or n/a when no agent did --> |
 | Harness + version | <!-- the IDE, CLI, or runner, or n/a --> |
-| Installed plugins | <!-- name and version of every plugin loaded, or none --> |
 | Human who reviewed this diff | <!-- a person, not a role; while the box below is empty, who is being asked --> |
 
 ## What problem did you hit?
@@ -38,19 +38,16 @@ review agent flagged it" is not a problem statement. -->
 
 ## What does this PR change?
 
-<!-- One to three sentences. What, not why; the why is the section above. -->
+<!-- One to three sentences. What, not why; the why is the section above.
+A pull request carries one reason to change, decided by purpose rather than
+changed-line arithmetic. If it looks like more than one change, say what ties
+the parts together, as code and the proof that cannot compile apart from it
+are one change; if nothing does, stop and split it. -->
 
 ## What alternatives did you consider?
 
 <!-- What else you tried or evaluated, and why it was worse. If you
 considered nothing else, say so; know that a reviewer reads that as a flag. -->
-
-## Is this one change?
-
-<!-- Scope is decided by purpose, not changed-line arithmetic. If the PR
-carries more than one reason to change, stop and split it. Code and the proof
-that cannot compile apart from it are one change; say so if it looks like
-two. -->
 
 ## Which surfaces does it touch?
 
