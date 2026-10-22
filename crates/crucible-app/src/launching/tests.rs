@@ -996,6 +996,7 @@ async fn a_route_starts_no_run_beside_one_it_still_holds() {
         Arc::new(SandboxEnablement::new(false, false)),
         agent(&registry, &peer),
         "work",
+        &Controls::default(),
     );
 
     let first = runs
@@ -1013,6 +1014,71 @@ async fn a_route_starts_no_run_beside_one_it_still_holds() {
 
     assert_eq!(refused.as_deref(), Some("this agent is already running"));
     assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 1);
+}
+
+/// The route a conversation is opened on at startup and the steps beside it
+/// are one instance's: a run of that route whose stop could not be confirmed
+/// is held against a run launched later through [`Steps::runs`], as a resume
+/// onto or back to the instance launches one, so no second process starts
+/// beside the one that may still be running.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_route_opened_at_startup_holds_against_a_later_run_of_its_instance() {
+    let sample = Sample::new("launch-startup-route-shares");
+    let peer = installed(
+        &sample,
+        &Script::of([Reply::new().hear_out(), Reply::lines(["in"])]),
+    );
+    let consent = granted();
+    let policy = conversation(&sample);
+    let registry = Registry::new(&SHIPPED);
+    let entry = entry(&sample, &peer);
+    let (runs, steps) = first_runs(
+        Some((
+            Launcher::new(
+                Arc::new(Stubborn(local())),
+                Handle::current(),
+                &policy,
+                &consent,
+            ),
+            agent(&registry, &peer),
+            entry.name(),
+        )),
+        Some((
+            Launcher::new(
+                Arc::new(Stubborn(local())),
+                Handle::current(),
+                &policy,
+                &consent,
+            ),
+            &STEPPED,
+            None,
+        )),
+        Arc::new(SandboxEnablement::new(false, false)),
+    );
+    let runs = runs.expect("the route's runs");
+    let steps = steps.expect("the steps");
+    let run = runs
+        .launch(Mode::Ask, None, None, None)
+        .await
+        .expect("started");
+    played_reaches(&peer, 1).await;
+    assert!(run.close().await.is_err(), "the stop was confirmed");
+    let (agent, _) = steps.onto(&entry, Mode::Ask).expect("startable");
+
+    let later = match steps
+        .runs(agent, entry.name())
+        .launch(Mode::Ask, None, None, None)
+        .await
+    {
+        Ok(second) => {
+            let _closed = second.close().await;
+            None
+        }
+        Err(failure) => Some(failure.reason().as_str().to_owned()),
+    };
+
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 1);
+    assert_eq!(later, Some(Refusal::Unstopped.to_string()));
 }
 
 /// A sandbox whose processes run as the local one's do, but which can never
