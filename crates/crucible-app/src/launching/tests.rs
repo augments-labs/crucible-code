@@ -891,6 +891,23 @@ fn steps(sandbox: Arc<dyn SandboxService>, policy: &SandboxPolicy, consent: &Con
     )
 }
 
+/// Waits until the peer installed beside `peer` has claimed `want` starts,
+/// which a slow process start may not have done when its launch returns, and
+/// fails the test if it has not within a bound. A start claims the next reply
+/// as its process reads the counter, so a step started before then could take
+/// the run's.
+async fn played_reaches(peer: &Path, want: usize) {
+    let here = peer.parent().expect("a directory");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while fake_peer::played(here) < want {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the peer's counter never reached {want}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 /// A run that could not be confirmed stopped may still be running, so no
 /// account step of its entry is started beside it either: the step reads as
 /// unreadable, saying what a run launched beside it is refused with, and the
@@ -912,6 +929,7 @@ async fn no_account_step_starts_beside_a_run_not_confirmed_stopped() {
         .launch(Mode::Ask, None, None, None)
         .await
         .expect("started");
+    played_reaches(&peer, 1).await;
     assert!(run.close().await.is_err(), "the stop was confirmed");
     let beside = match runs.launch(Mode::Ask, None, None, None).await {
         Ok(second) => {
@@ -951,6 +969,7 @@ async fn an_account_step_runs_beside_a_live_run_of_its_entry() {
         .launch(Mode::Ask, None, None, None)
         .await
         .expect("started");
+    played_reaches(&peer, 1).await;
 
     let read = steps.account(&entry, Account::Status).await;
     run.close().await.expect("closed");
