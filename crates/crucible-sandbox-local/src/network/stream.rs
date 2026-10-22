@@ -193,6 +193,15 @@ mod tests {
     use std::sync::mpsc::{self, TryRecvError};
     use std::thread;
 
+    // The lifetime deadline is absolute from creation, so a write that outlives
+    // its idle bound would still be cut off by it, and the stall measured would
+    // be the deadline less however long the buffers took to fill. Putting the
+    // deadline far past the 2 s bound keeps that from hiding a missing idle
+    // expiry on a slow machine: only the idle bound can end the stall early.
+    // The reverse writer outlasts the lifetime so it never closes first.
+    const LIFETIME: Duration = Duration::from_secs(30);
+    const REVERSE: Duration = Duration::from_mins(1);
+
     #[test]
     fn stalled_write_expires_despite_fresh_reverse_activity() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
@@ -204,7 +213,7 @@ mod tests {
                 .set_write_timeout(Some(Duration::from_millis(100)))
                 .expect("write timeout");
             let bytes = [b'r'; 1024];
-            let deadline = Instant::now() + Duration::from_secs(4);
+            let deadline = Instant::now() + REVERSE;
             // The socket stays open until the client's write has returned. A
             // reverse reader that falls behind times this write out, and
             // closing then, with the client's bytes unread, resets the
@@ -231,7 +240,7 @@ mod tests {
 
         let client = TcpStream::connect(address).expect("connect");
         let life = Lifetime::for_test(
-            Instant::now() + Duration::from_secs(3),
+            Instant::now() + LIFETIME,
             Arc::new(AtomicBool::new(false)),
             Duration::from_millis(200),
         );
@@ -244,18 +253,26 @@ mod tests {
 
         // Small writes exercise backpressure on Windows too: Winsock can
         // accept one large send into a correspondingly large kernel buffer.
+        //
+        // The bound is on the stall alone. Filling the buffers first takes as
+        // long as the machine takes, so the clock restarts at every write that
+        // returns and reads only the time since the last one.
         let payload = [b'w'; 8192];
-        let started = Instant::now();
-        let result = (0..8192).try_for_each(|_| stream.write_all(&payload));
-        let elapsed = started.elapsed();
+        let mut progressed = Instant::now();
+        let result = (0..8192).try_for_each(|_| {
+            stream.write_all(&payload)?;
+            progressed = Instant::now();
+            Ok::<(), io::Error>(())
+        });
+        let stalled = progressed.elapsed();
         drop(written);
         assert_eq!(
             result.expect_err("stalled write must expire").kind(),
             io::ErrorKind::TimedOut
         );
         assert!(
-            elapsed < Duration::from_secs(2),
-            "pending write exceeded its short idle bound: {elapsed:?}"
+            stalled < Duration::from_secs(2),
+            "stalled write exceeded its short idle bound: {stalled:?}"
         );
 
         life.stop();
