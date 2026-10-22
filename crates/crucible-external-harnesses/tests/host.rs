@@ -249,6 +249,20 @@ async fn a_program_changed_since_it_was_selected_is_not_started() {
     assert_eq!(fake_peer::played(&at.0), 0);
 }
 
+/// Waits until the peer installed in `here` has kept its counter at `want`,
+/// which a slow process start may not have done when the host's launch
+/// returns, and fails the test if it has not within a bound.
+async fn played_reaches(here: &Path, want: usize) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while fake_peer::played(here) < want {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the peer's counter never reached {want}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_run_of_one_agent_is_refused_while_the_first_lives() {
     let at = Owned::new("busy");
@@ -277,6 +291,7 @@ async fn a_second_run_of_one_agent_is_refused_while_the_first_lives() {
     .expect_err("one at a time");
 
     assert!(matches!(second, Refusal::Busy), "{second}");
+    played_reaches(&at.0, 1).await;
     first.stop(STOP_GRACE).await.expect("stopped");
     assert_eq!(fake_peer::played(&at.0), 1);
 }
@@ -305,6 +320,9 @@ async fn a_stop_abandoned_in_its_grace_leaves_a_relaunch_refused() {
     .await
     .expect("started");
 
+    // The stop is given up on only once the child has started and kept its
+    // counter, so that counter reads the one start whatever the start cost.
+    played_reaches(&at.0, 1).await;
     let abandoned = tokio::time::timeout(Duration::from_millis(200), host.stop(STOP_GRACE)).await;
     let relaunched = Host::launch(
         local(),
