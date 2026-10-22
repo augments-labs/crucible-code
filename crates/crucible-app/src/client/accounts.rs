@@ -36,6 +36,7 @@
 //! | sign out, the file not written | sign out | [`LogoutOutcome::StoppedForThisRunOnly`] |
 //! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
 //! | sign out | sign out, its agent's route unanswered, the yes not written | [`ErrorCode::Failed`] |
+//! | sign out, its agent's route unanswered, the agent cannot be started | sign out | [`LogoutOutcome::Undecided`], the route not asked |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
 //! | connect, signed in, already on the instance | the agent's route accepted | [`LoginOutcome::AgentConnected`] |
@@ -43,6 +44,7 @@
 //! | connect, signed in, the agent not startable | the agent's route accepted | [`LoginOutcome::AgentConnected`], naming none |
 //! | connect, signed in | the agent's route accepted; the file not written | [`LoginOutcome::ConnectUnsaved`] |
 //! | connect | the agent's route accepted; the yes not written | [`LoginOutcome::ConnectUnsaved`] |
+//! | connect, the agent's route unanswered, the agent cannot be started | cancel, back, or nobody | [`LoginOutcome::Undecided`], the route not asked |
 //! | connect | cancel, back, or nobody | [`LoginOutcome::Undecided`] |
 //! | connect, an instance the file does not name | nothing | [`ErrorCode::InvalidArgument`] |
 //! | connect, an agent whose provider this build does not offer | nothing | [`ErrorCode::UnknownProvider`] |
@@ -59,7 +61,10 @@
 //! A sign-out runs the agent's own program, so once it is chosen it puts the
 //! agent's content-use route to the client where that has no yes, before
 //! anything is changed: a no, or a yes that cannot be written down, leaves
-//! every instance, its run and the files as they were. Choosing to disconnect
+//! every instance, its run and the files as they were. An agent that would be
+//! refused before any process, as the launcher decides it, is said to be so
+//! first and the route is not asked: nobody agrees to a launch that cannot
+//! happen. Choosing to disconnect
 //! instead starts nothing of the agent's and asks nothing.
 //!
 //! A sign-out takes every instance sharing the credential scope out of use
@@ -84,8 +89,10 @@
 //! A connect reaches the one provider the agent signs in to, which the
 //! client does not name. For a client that did not say it answers account
 //! questions it is undecided at once, before the agent is started, even where
-//! the agent is signed in. Otherwise it starts nothing of the agent's before
-//! its content-use route has a yes, and then reads only whether the agent is
+//! the agent is signed in. Otherwise it says first, as a sign-out does, that
+//! an agent the launcher would refuse cannot be started, without asking its
+//! route, and starts nothing of the agent's before its content-use route has
+//! a yes, and then reads only whether the agent is
 //! signed in. Signed in, it is already connected, and nothing more is asked;
 //! not signed in, or not read either way, the client is told so, with the
 //! command that signs the agent in where it has one, and may check again,
@@ -117,6 +124,7 @@ use crucible_external_harnesses::{
 use super::deciding::{Confirmation, Front, confirmed};
 use super::performing::{Desk, Performed};
 use crate::Conversation;
+use crate::launching::Unlaunched;
 use crate::remember::{self, RememberError};
 
 /// What came of an account operation, in the application's own values.
@@ -603,9 +611,13 @@ fn signing_out(agent: &ExternalAgent, sharing: &[ExternalAgent], on: Option<&str
 }
 
 /// Puts `agent`'s route to `front` where it has no yes, before a sign-out
-/// changes anything, since the agent's own program is run for it. Answers the
-/// account to end the sign-out with where the route did not get its yes, or
-/// the yes could not be written down, and `None` where the sign-out may go on.
+/// changes anything, since the agent's own program is run for it. A launch
+/// the launcher would refuse, the program not installed or the row withheld,
+/// is said to be so first and the route is not put: nobody agrees to what
+/// cannot happen. Answers the account to end the sign-out with where the
+/// launch is so refused and the client goes no further, where the route did
+/// not get its yes, or the yes could not be written down, and `None` where the
+/// sign-out may go on.
 async fn launch_asked(
     conversation: &Conversation,
     request: &Request,
@@ -615,7 +627,21 @@ async fn launch_asked(
     let consent = conversation.consent()?;
     let row = crate::backends::REGISTRY.row(agent.driver())?;
     let warned = consent.asks(row.route).copied()?;
-    if !super::deciding::warned(request.capabilities(), front, &warned).await {
+    // A launch that is refused whatever the answer is not asked about.
+    let capabilities = request.capabilities();
+    if found(
+        conversation,
+        front,
+        capabilities,
+        agent,
+        (row, shown_as(conversation, row)),
+    )
+    .await
+        != Some(true)
+    {
+        return Some(Account::Undecided);
+    }
+    if !super::deciding::warned(capabilities, front, &warned).await {
         return Some(Account::Undecided);
     }
     consent.accept(&warned).err().map(Account::Unremoved)
@@ -732,12 +758,7 @@ async fn choose(
 ) -> Option<Chosen> {
     let capabilities = request.capabilities();
     let rows: Vec<&'static crate::backends::Row> = conversation.agents().shipping().collect();
-    let shown = |row: &crate::backends::Row| {
-        conversation
-            .consent()
-            .and_then(|consent| consent.routes().warned(row.route))
-            .map_or(row.driver.name(), |warned| warned.shown)
-    };
+    let shown = |row: &crate::backends::Row| shown_as(conversation, row);
     for _ in 0..CHECKS {
         let mut choices: Vec<(String, String)> = rows
             .iter()
@@ -843,6 +864,15 @@ async fn instance(
     )))
 }
 
+/// How `row`'s agent is named to a person: as its route is warned about,
+/// else by its driver.
+fn shown_as(conversation: &Conversation, row: &crate::backends::Row) -> &'static str {
+    conversation
+        .consent()
+        .and_then(|consent| consent.routes().warned(row.route))
+        .map_or(row.driver.name(), |warned| warned.shown)
+}
+
 /// The command `row`'s agent is run as: the same in every mode, and asking
 /// is a mode every row runs in.
 fn command(row: &crate::backends::Row) -> &'static str {
@@ -850,25 +880,33 @@ fn command(row: &crate::backends::Row) -> &'static str {
         .map_or(row.driver.name(), |dialect| dialect.program())
 }
 
-/// Whether `agent`'s program, of the row given and shown as named, is
-/// installed: told where it is not, with the command that installs it for an
-/// agent whose release crucible installs, the client may look again until it is or
-/// go back to the list of agents; nothing where it cancelled or answered
-/// nothing.
+/// Whether the launcher would start `agent`, of the row given and shown as
+/// named: told where it would not, the program not installed, with the command
+/// that installs it for an agent whose release crucible installs, or the row
+/// withheld, the client may look again until it would or go back; nothing
+/// where it cancelled or answered nothing. It decides as a start does, so what
+/// is said here is what a start would refuse.
 async fn found(
     conversation: &Conversation,
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
     agent: &ExternalAgent,
-    (row, shown): (&crate::backends::Row, &str),
+    (row, shown): (&'static crate::backends::Row, &str),
 ) -> Option<bool> {
     for _ in 0..CHECKS {
-        let discovery = conversation.steps().map_or(Discovery::Missing, |steps| {
-            steps.discover(agent.executable())
-        });
-        let Some([said, next]) = crate::installing::refusal(row, &discovery, shown, command(row))
-        else {
-            return Some(true);
+        // What a start would refuse, as the launcher decides it, so that what
+        // is said here and what a start does cannot differ.
+        let [said, next] = match conversation.steps() {
+            Some(steps) => match steps.refusal(row, agent) {
+                None => return Some(true),
+                Some(Unlaunched::NotInstalled(sentences)) => sentences,
+                Some(other) => [other.to_string(), "Choose another agent.".to_owned()],
+            },
+            None => match crate::installing::refusal(row, &Discovery::Missing, shown, command(row))
+            {
+                Some(sentences) => sentences,
+                None => return Some(true),
+            },
         };
         // Why it cannot start is a fact, which the terminal keeps however short
         // its window, rather than the question it gives up first.
@@ -921,6 +959,19 @@ async fn connect(
     if let Some(consent) = conversation.consent()
         && let Some(warned) = consent.asks(row.route).copied()
     {
+        // A launch that is refused whatever the answer is not asked about.
+        if found(
+            conversation,
+            front,
+            capabilities,
+            agent,
+            (row, shown_as(conversation, row)),
+        )
+        .await
+            != Some(true)
+        {
+            return Account::Unconnected;
+        }
         if !super::deciding::warned(capabilities, front, &warned).await {
             return Account::Unconnected;
         }
