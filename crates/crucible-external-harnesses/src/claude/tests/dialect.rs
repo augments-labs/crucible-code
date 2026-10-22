@@ -887,6 +887,16 @@ fn a_session_allow_keeps_only_the_rules_that_allow_what_was_asked() {
         ),
         ["git push origin", "git push:*", "git:*"]
     );
+    // Shell syntax in the words drops a rule that begins commands, but the
+    // command itself is kept when it is exactly what was asked about.
+    assert_eq!(
+        kept(
+            "Bash",
+            json!({"command": "ls; echo $HOME | wc"}),
+            &["ls; echo $HOME | wc", "ls;:*", "ls; echo $HOME | sh"],
+        ),
+        ["ls; echo $HOME | wc"]
+    );
     assert_eq!(
         kept(
             "Bash",
