@@ -91,3 +91,114 @@ fn a_session_name_is_kept_only_as_a_plain_word() {
         assert!(crate::launch::nameable(name), "{name:?}");
     }
 }
+
+/// A program put in the selected one's place that is the same size, with its
+/// modification time set back to what it was, is still not the one selected.
+#[cfg(unix)]
+#[test]
+fn a_same_size_program_with_its_time_restored_is_not_the_one_selected() {
+    use std::fs::{self, File, FileTimes};
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let at = super::Owned::new("restored-time");
+    let path = at.0.join("agent");
+    let bytes = |fill: u8| vec![fill; 4096];
+    let selected = |path: &std::path::Path| {
+        let Discovery::Found(program) = Discovery::of(Some(path)) else {
+            panic!("a program");
+        };
+        program
+    };
+    fs::write(&path, bytes(1)).expect("written");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("executable");
+    let modified = fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .expect("a modification time");
+    let restored = |path: &std::path::Path| {
+        File::options()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_times(FileTimes::new().set_modified(modified)))
+            .expect("time restored");
+    };
+
+    // Replaced by another file.
+    let program = selected(&path);
+    let beside = at.0.join("beside");
+    fs::write(&beside, bytes(2)).expect("written");
+    fs::set_permissions(&beside, fs::Permissions::from_mode(0o755)).expect("executable");
+    restored(&beside);
+    fs::rename(&beside, &path).expect("replaced");
+    assert!(
+        matches!(program.unchanged(), Err(Refusal::Changed(_))),
+        "a replacement"
+    );
+
+    // Rewritten where it lies. Before Linux 6.13 a change time comes from a
+    // clock that ticks every millisecond or few, and a rewrite inside the
+    // tick of the selection is not told apart, which the stamp's documentation
+    // says; so the rewrite waits for the change time to have moved on.
+    fs::write(&path, bytes(1)).expect("written");
+    restored(&path);
+    let program = selected(&path);
+    let ctime = |path: &std::path::Path| {
+        use std::os::unix::fs::MetadataExt as _;
+        let metadata = fs::metadata(path).expect("a change time");
+        (metadata.ctime(), metadata.ctime_nsec())
+    };
+    let selected_at = ctime(&path);
+    let scratch = at.0.join("scratch");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        // A file written now is stamped by the clock a rewrite would be.
+        fs::write(&scratch, [0_u8]).expect("written");
+        if ctime(&scratch) != selected_at {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the clock that stamps change times moved on within five seconds"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let mut file = File::options().write(true).open(&path).expect("opened");
+    file.write_all(&bytes(3)).expect("rewritten");
+    drop(file);
+    restored(&path);
+    assert!(
+        matches!(program.unchanged(), Err(Refusal::Changed(_))),
+        "a rewrite"
+    );
+
+    // Left alone, it is the one selected.
+    let program = selected(&path);
+    assert!(program.unchanged().is_ok());
+}
+
+/// Selecting a program and checking it again before each start look at its
+/// metadata and never read its bytes: a program that may be run and not read
+/// is found, and is still the one found.
+#[cfg(unix)]
+#[test]
+fn a_program_that_can_be_run_and_not_read_is_found_and_stays_found() {
+    use std::fs::{self, File};
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let at = super::Owned::new("run-only");
+    let path = at.0.join("agent");
+    fs::write(&path, [1_u8; 4096]).expect("written");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o111)).expect("run-only");
+    if File::open(&path).is_ok() {
+        // A user the mode does not bind (root) can read it, which would let
+        // a digest through unseen; there is nothing to prove as that user.
+        return;
+    }
+
+    let Discovery::Found(program) = Discovery::of(Some(&path)) else {
+        panic!("a program that may be run is found without being read");
+    };
+
+    assert!(program.unchanged().is_ok());
+    assert!(program.unchanged().is_ok());
+}

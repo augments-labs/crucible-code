@@ -671,10 +671,12 @@ strip = "symbols"
 [profile.bench]
 inherits = "release"
 
-# An external agent's program is identified by a digest of up to 64 MiB of it
-# before each start, and unoptimized that digest takes seconds where a release
-# build takes milliseconds. Every test that starts an agent pays it, enough to
-# run the release gate's single-machine suite past its time limit, so the one
-# crate that computes it is optimized in the builds tests use.
+# The sandbox backends digest the Bubblewrap executable they find, up to 64 MiB,
+# and the files a projection copies in, and a pinned agent release's archive is
+# digested before it is unpacked. Unoptimized, a digest of that much input takes
+# seconds, where a release build takes about a fifth of a second for 64 MiB.
+# Every test that starts a sandbox pays them, and the release gate's
+# single-machine suite has a time limit, so the one crate that computes them is
+# optimized in the builds tests use.
 [profile.dev.package.sha2]
 opt-level = 3

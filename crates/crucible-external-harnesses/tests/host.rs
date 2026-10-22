@@ -38,9 +38,6 @@ const SENTINEL: &str = "sentinel-c0ffee-5ec7e7";
 const ROUTE: &str = "agent:plain";
 
 /// Puts a changed copy of the program at `path` in its place.
-///
-/// Replaced rather than written into: an installed peer can be a link to the
-/// one Cargo built, and writing through it would change every other test's.
 #[allow(clippy::expect_used)]
 fn rewritten(path: &Path) {
     let mut bytes = fs::read(path).expect("readable");
