@@ -359,9 +359,9 @@ pub enum Unbuilt {
 /// with the platform's executable suffix, playing `script` from its first
 /// reply; and returns the path to configure as the agent's executable.
 ///
-/// The peer is the one Cargo built beside this test's executable, linked
-/// where it can be rather than copied, so a test that changes the installed
-/// program replaces the file instead of writing into it.
+/// The peer is a copy of the one Cargo built beside this test's executable,
+/// never a link to it, so another test's install or cleanup cannot move the
+/// change time a launch identifies it by.
 ///
 /// # Errors
 ///
