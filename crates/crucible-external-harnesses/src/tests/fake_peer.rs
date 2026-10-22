@@ -2,9 +2,13 @@
 
 use std::fs;
 use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use super::Owned;
-use crate::fake_peer::{BUILD, Reply, SCRIPT_FILES, Script, Unbuilt, installed};
+use crate::fake_peer::{
+    BUILD, Reply, SCRIPT_FILES, Script, Unbuilt, install, installed, lingering,
+};
 
 /// A script set added without its file in the stamp would let a stale peer
 /// play by rules its caller no longer knows.
@@ -65,4 +69,50 @@ fn a_script_reads_back_as_it_was_written() {
             .exit(4),
     ]);
     assert_eq!(Script::decoded(&script.encoded()), Some(script));
+}
+
+/// A grandchild that beats, ended when the test is, however it ends.
+struct Beating(Child);
+
+impl Drop for Beating {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A reader that catches the heartbeat between its truncate and its write
+/// would see an empty file, which reads as a grandchild that never beat or
+/// stopped.
+#[test]
+fn a_heartbeat_once_read_is_never_read_empty_while_the_grandchild_beats() {
+    let at = Owned::new("heartbeat");
+    let peer = install(&at.0, "claude", &Script::of([])).expect("built");
+    let _beating = Beating(
+        Command::new(&peer)
+            .arg("--linger")
+            .arg(&at.0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("started"),
+    );
+    let started = Instant::now();
+    while lingering(&at.0).is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the grandchild never beat"
+        );
+    }
+
+    let mut reads: u64 = 0;
+    let reading = Instant::now();
+    while reading.elapsed() < Duration::from_secs(3) {
+        reads += 1;
+        assert!(
+            lingering(&at.0).is_some(),
+            "the heartbeat read as none after it was read, on read {reads}"
+        );
+    }
 }
