@@ -435,9 +435,25 @@ pub enum Refusal {
     /// The sandbox would not start it.
     #[error("the sandbox would not start this agent: {0}")]
     Sandbox(#[from] crucible_sandbox::SandboxError),
-    /// It started without the pipes it is spoken to over, and was stopped.
-    #[error("this agent started without a pipe to speak to it over, and was stopped")]
-    Unspoken,
+    /// It started without the pipes it is spoken to over, and was stopped
+    /// where `cleanup` is `None`.
+    ///
+    /// Where the stop could not be confirmed, `cleanup` holds the error that
+    /// left it so, which is reached through `source` and kept out of the words.
+    #[error("this agent started without a pipe to speak to it over, and {}", stopped(.cleanup.as_ref()))]
+    Unspoken {
+        /// Why stopping it could not be confirmed, where it could not.
+        #[source]
+        cleanup: Option<std::io::Error>,
+    },
+}
+
+/// What became of a process that could not be spoken to, in a sentence's words.
+const fn stopped(cleanup: Option<&std::io::Error>) -> &'static str {
+    match cleanup {
+        None => "was stopped",
+        Some(_) => "stopping it could not be confirmed, so no other is started beside it",
+    }
 }
 
 /// A confinement claim, in a sentence's words.
