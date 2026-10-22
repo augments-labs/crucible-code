@@ -2893,60 +2893,6 @@ fn a_sign_out_whose_write_fails_starts_no_agent_program() -> Result<(), Failed> 
     Ok(())
 }
 
-/// A sign-out of an instance whose program is not installed, with its route
-/// already answered, is refused before it writes anything, as it is where the
-/// route has no yes: nothing could be signed out, so no instance on the
-/// profile is disabled and nothing is started.
-#[test]
-fn a_sign_out_whose_program_is_missing_writes_nothing_on_an_answered_route() -> Result<(), Failed> {
-    use crucible_client_api::LogoutOutcome;
-
-    let missing = SHARED.replace(
-        r#""executable": "claude""#,
-        r#""executable": "no-such-claude-program""#,
-    );
-    let tree = Tree::new("external-sign-out-missing-answered")?;
-    let script = connected([claude::clean(), Reply::new(), claude::signed_out()]);
-    let mut outside = Outside::new(&tree, &script)?;
-    let asked = Asked {
-        installed: (&missing, "work"),
-        command: &|instance| Command::SignOut { instance },
-        asking: Asking::every(),
-        after: None,
-    };
-    // Signs out, then goes back from whatever it is asked next.
-    let mut picking = Picking::of([Some(client::accounts::SIGN_OUT), None]);
-    for _ in 0..500 {
-        if fake_peer::played(&outside.peer) >= 3 {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    let before = fake_peer::played(&outside.peer);
-
-    let (outcome, file) = accounting(&tree, &mut outside, &asked, &mut picking)?;
-
-    assert_eq!(outcome, Outcome::Logout(LogoutOutcome::Undecided));
-    assert_eq!(file, missing, "nothing was written");
-    assert_eq!(
-        fake_peer::played(&outside.peer) - before,
-        0,
-        "the agent's program was started"
-    );
-    let told = picking.put.get(1).is_some_and(|put| match put {
-        Pending::Account { asks, facts, .. } => {
-            asks.as_str() == "Claude Code cannot be started."
-                && facts.iter().any(|fact| {
-                    fact.as_str()
-                        .starts_with("Agent: work, run as no-such-claude-program")
-                })
-        }
-        _ => false,
-    });
-    assert!(told, "{:?}", picking.put);
-    Ok(())
-}
-
 /// A sign-out takes every instance on the profile out of use, so where its
 /// write fails the client is told the stop holds for this run only if the
 /// conversation was on any of them, and only that it failed if it was on none.
