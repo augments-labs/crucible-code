@@ -14,18 +14,18 @@ Security issues do not belong here. See SECURITY.md.
 
 ## Who made this change? (required)
 
-<!-- We assume an agent wrote this PR. Say which one and where it ran, or
-state plainly that it was written by hand. Contributions are weighed by how
-they were made: a behaviour claim reasoned from documentation is held to a
-different bar than one grounded in a real session. Hiding the authoring
-environment is grounds for closing the PR. -->
+<!-- A human, an agent, or both may write this PR. Say which, and for an
+agent say which one and where it ran; when both did, say which part each
+wrote. Contributions are weighed by how they were made: a behaviour claim
+reasoned from documentation is held to a different bar than one grounded in a
+real session. Hiding the authoring environment is grounds for closing the
+PR. -->
 
 | Field | Value |
 | --- | --- |
-| Written by | hand / agent |
-| Model + exact id | <!-- or n/a if by hand --> |
+| Written by | human / agent / both |
+| Model + exact id | <!-- every model that wrote any of it, and which part each wrote; or n/a when no agent did --> |
 | Harness + version | <!-- the IDE, CLI, or runner, or n/a --> |
-| Installed plugins | <!-- name and version of every plugin loaded, or none --> |
 | Human who reviewed this diff | <!-- a person, not a role; while the box below is empty, who is being asked --> |
 
 ## What problem did you hit?

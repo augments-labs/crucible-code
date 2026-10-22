@@ -157,9 +157,10 @@ pays for that.
 - **Prior art accounted for.** Search open **and** closed pull requests and
   issues for the same problem or area first. If it was tried, say what is
   different now; if it is a duplicate, say so instead of opening another.
-- **Provenance disclosed.** Say what produced the change: a person's hand, or
-  an agent, with its exact model id, the harness and its version, and every
-  plugin loaded. It is weighed, not policed, since a claim reasoned out of
+- **Provenance disclosed.** Say who wrote the change: a human, an agent, or
+  both, and when both did, which part each wrote. Give the exact id of every
+  model that wrote any of it, with the part it wrote, and the harness and its
+  version. It is weighed, not policed, since a claim reasoned out of
   documentation reads differently from one a real session produced; hiding it
   is what closes a pull request.
 - **A person answering for it.** The complete diff reaches the person whose
