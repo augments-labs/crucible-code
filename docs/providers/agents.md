@@ -204,11 +204,12 @@ the agent's turn goes on without it. Allowing for
 the rest of the session keeps, for that session alone and never in its settings
 files, only the agent's rules for the command you were asked about. A rule
 without `:*` is kept only when it is that command itself. A rule ending in
-`:*` is kept only when that command begins with the words before the `:*`,
-followed by a space, such as every `git` command for `git:*`, but not
-`gitx status`. A rule is not kept for any tool other than `Bash`. Apart from
-a final `:*`, a rule is not kept when the words it names have a wildcard
-(`*`, `?`, `[` or `{`), no letter or digit, a space at the start or end, or
+`:*` is kept only when that command is the words before the `:*`, or begins
+with them followed by a space, such as `git` or every `git` command for
+`git:*`, but not `gitx status`. A rule is not kept for any tool other than
+`Bash`. Apart from a final `:*`, a rule is not kept when the words it
+names have a wildcard (`*`, `?`, `[` or `{`), no letter or digit, a space at
+the start or end, or
 any other whitespace, such as a tab (U+0009) or a no-break space (U+00A0): a
 rule with a no-break space between `ls` and `-la` is dropped. A rule whose
 words hold a byte-order mark (U+FEFF) is not kept either.
