@@ -682,6 +682,11 @@ impl Screen {
         }
     }
 
+    /// A size the window took at a byte not yet fed.
+    pub(crate) fn due(&self) -> Option<(usize, usize)> {
+        self.due.map(|due| (due.columns, due.rows))
+    }
+
     /// The size the window took that crucible has not drawn for yet.
     pub(crate) fn awaiting(&self) -> Option<(usize, usize)> {
         self.awaiting
