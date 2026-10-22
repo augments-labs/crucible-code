@@ -256,9 +256,10 @@ are the ones a reviewer cannot recover from the diff alone. A user-visible
 change gives its [changelog entry](#changelog-entries) under the template's
 surfaces section.
 
-It opens by asking who made the change, because a reviewer reads a generated
-diff with different questions than a hand-written one, and which model, harness
-and plugins produced it is part of reproducing the work. It closes by asking
+It opens by asking who made the change, a human, an agent or both, because a
+reviewer reads what an agent wrote with different questions than what a person
+wrote, and which models wrote which part, in which harness, is part of
+reproducing the work. It closes by asking
 whether a person has read the complete diff. A green gate is evidence about the
 checks that ran, not about whether the change answers the right problem, so
 that reading is a separate thing a pull request either has or is still waiting

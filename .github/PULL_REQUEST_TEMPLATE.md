@@ -14,12 +14,11 @@ Security issues do not belong here. See SECURITY.md.
 
 ## Who made this change? (required)
 
-<!-- A human, an agent, or both may write this PR. Say which, and for an
-agent say which one and where it ran; when both did, say which part each
-wrote. Contributions are weighed by how they were made: a behaviour claim
-reasoned from documentation is held to a different bar than one grounded in a
-real session. Hiding the authoring environment is grounds for closing the
-PR. -->
+<!-- A human, an agent, or both may write this PR. Say which; when both
+did, say which part each wrote, and for an agent say which one and where it
+ran. Contributions are weighed by how they were made: a behaviour claim
+reasoned from documentation is held to a different bar than one grounded in
+a real session. Hiding the authoring environment is grounds for closing it. -->
 
 | Field | Value |
 | --- | --- |
