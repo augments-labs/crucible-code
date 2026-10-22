@@ -97,12 +97,14 @@ impl fmt::Debug for Held {
 /// On Unix that is its length, modification time, device, inode and change
 /// time. The change time is the platform's own and cannot be set back, so a
 /// file put in its place by a rename, or of the same length and rewritten in
-/// place, is told apart even where its modification time was restored. The
-/// limit is the clock: a filesystem that stamps times from a coarse clock
-/// (Linux before 6.13 ticks every millisecond or few) does not tell apart a
-/// same-length rewrite within one tick of the selection. On Windows it is the
-/// length and modification time alone, which a program with the right to write
-/// the file can restore.
+/// place, is told apart even where its modification time was restored. A
+/// change to its permissions, owner or links moves the change time too, which
+/// is kept: the program is then no longer the one, with those permissions,
+/// owner and links, that was looked at. The limit is the clock: a filesystem
+/// that stamps times from a coarse clock (Linux before 6.13 ticks every
+/// millisecond or few) does not tell apart a same-length rewrite within one
+/// tick of the selection. On Windows it is the length and modification time
+/// alone, which a program with the right to write the file can restore.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Stamp {
     /// Its length.
@@ -409,8 +411,14 @@ impl Launch {
 /// Why a launch was refused before anything ran.
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
-    /// The program is not the one selected.
-    #[error("{} changed after it was selected; choose Check again to use it", .0.display())]
+    /// The program is not the one selected. A change to its contents counts,
+    /// and on Unix one to its permissions, owner or links does too, since any
+    /// of them moves the change time the selection kept.
+    #[error(
+        "{} changed after it was selected, in its contents or, on Unix, its permissions, \
+         owner or links; restart crucible to use it",
+        .0.display()
+    )]
     Changed(PathBuf),
     /// A sandbox is required and this one cannot be enforced.
     #[error(
