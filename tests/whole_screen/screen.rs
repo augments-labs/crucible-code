@@ -40,7 +40,12 @@
 //! mode by that and not by its rows.
 //!
 //! A new size is told to the screen at the point in crucible's output where
-//! the window took it, and takes effect one frame later at most. Crucible reads
+//! the window took it, and takes effect one frame later at most. The point
+//! is a count of the bytes crucible had written by then, which may be given
+//! ahead of the bytes themselves: what crucible drew for the new size can come
+//! off the terminal before whoever set the size learns it was set, so the
+//! screen holds the point and takes the size when its feed reaches that byte,
+//! however the reads are cut. Crucible reads
 //! the window's size before composing each frame, so what can still arrive
 //! laid out for the old size is bounded: the rest of the frame open at that
 //! point, whose first half was read already, or else one whole frame composed
@@ -243,6 +248,20 @@ pub(crate) struct Screen {
     /// The frame being read whole, while a size is awaited, to see whether it
     /// is the first drawn for it.
     collecting: Option<String>,
+    /// How many bytes have been fed, which is where in crucible's output the
+    /// screen has reached.
+    fed: usize,
+    /// A size the window took at a byte not yet fed.
+    due: Option<Due>,
+}
+
+/// A size the window took, and the byte of crucible's output it took it at.
+#[derive(Debug, Clone, Copy)]
+struct Due {
+    /// The count of bytes crucible had written when the window took the size.
+    at: usize,
+    columns: usize,
+    rows: usize,
 }
 
 /// A size the window took, and what may still arrive laid out for the old one.
@@ -572,6 +591,8 @@ impl Screen {
             pending: Vec::new(),
             awaiting: None,
             collecting: None,
+            fed: 0,
+            due: None,
         }
     }
 
@@ -595,8 +616,23 @@ impl Screen {
         self.alternate
     }
 
-    /// Takes bytes as they came off the terminal.
+    /// Takes bytes as they came off the terminal, telling the screen a size
+    /// that is due at a byte among them at that byte.
     pub(crate) fn feed(&mut self, bytes: &[u8]) {
+        if let Some(due) = self.due
+            && let Some((before, after)) = bytes.split_at_checked(due.at - self.fed)
+        {
+            self.due = None;
+            self.read_in(before);
+            self.resize(due.columns, due.rows);
+            return self.read_in(after);
+        }
+        self.read_in(bytes);
+    }
+
+    /// Takes bytes in the order they came off the terminal.
+    fn read_in(&mut self, bytes: &[u8]) {
+        self.fed += bytes.len();
         let mut data = std::mem::take(&mut self.pending);
         data.extend_from_slice(bytes);
         self.pending = data.split_off(readable(&data));
@@ -619,6 +655,31 @@ impl Screen {
             rows,
             spare: !self.is_holding(),
         });
+    }
+
+    /// Changes the size of the window at the byte of crucible's output `at`
+    /// counts to, the bytes fed so far included, as [`Self::resize`] would
+    /// have done had it been called once that byte was fed.
+    ///
+    /// A point already passed would have let bytes after it be drawn at the
+    /// old size, and a second point while one is due would tell the screen
+    /// two sizes it cannot order, so both are refused.
+    pub(crate) fn resize_at(&mut self, columns: usize, rows: usize, at: usize) {
+        assert!(
+            at >= self.fed,
+            "the window took {columns}x{rows} at byte {at}, which was fed already: {}",
+            self.fed
+        );
+        assert!(
+            self.due.is_none(),
+            "the window took {columns}x{rows} before the size it took last was reached"
+        );
+
+        if at == self.fed {
+            self.resize(columns, rows);
+        } else {
+            self.due = Some(Due { at, columns, rows });
+        }
     }
 
     /// The size the window took that crucible has not drawn for yet.
@@ -1801,6 +1862,68 @@ mod tests {
 
         assert!(!screen.is_holding());
         assert_eq!(screen.awaiting(), None);
+    }
+
+    /// What a native session wrote as its window went from 60x5 to 80x100,
+    /// taken off the terminal of a loaded run: one frame for 60 columns, then
+    /// the window's new size was set, then two frames crucible drew after it.
+    ///
+    /// The first [`RESIZED_AT`] bytes are the frame that had been read when
+    /// the size was set. Setting it took most of a millisecond on that
+    /// machine, and both later frames came off the terminal inside the call,
+    /// so a point taken once the call returned lay after the 80-column frame
+    /// and charged it to a 60-column window.
+    const RESIZED: &str = concat!(
+        "\x1b[?2026h\x1b[?25l\r\x1b[4A\x1b[J",
+        "⎿ 01a165be-020a-755f-adb5-db8b932a6211  just now  summarise \r\n",
+        "\r\n",
+        "\r\n",
+        "                                             99% window left\r\n",
+        "╭──────────────────────────────────────────────────────────╮\x1b[5G\x1b[?25h\x1b[?2026l",
+        "\x1b[?2026h\x1b[?25l\r\x1b[2A\x1b[J\r\n",
+        "                                             99% window left\r\n",
+        "╭──────────────────────────────────────────────────────────╮\r\n",
+        "│ ›                                                        │\r\n",
+        "╰──────────────────────────────────────────────────────────╯\r\n",
+        "ask mode on (shift+tab to cycle)   anthropic · claude-test-1",
+        "\x1b[2A\x1b[5G\x1b[?25h\x1b[?2026l",
+        "\x1b[?2026h\x1b[?25l\r\x1b[3A\x1b[J\r\n",
+        "                                                                 99% window left\r\n",
+        "╭──────────────────────────────────────────────────────────────────────────────╮\r\n",
+        "│ ›                                                                            │\r\n",
+        "╰──────────────────────────────────────────────────────────────────────────────╯\r\n",
+        "ask mode on (shift+tab to cycle)                       anthropic · claude-test-1",
+        "\x1b[2A\x1b[5G\x1b[?25h\x1b[?2026l",
+    );
+
+    /// How much of [`RESIZED`] had come off the terminal, read or still
+    /// queued, just before the window's size was set.
+    const RESIZED_AT: usize = 350;
+
+    #[test]
+    fn a_size_told_at_the_byte_the_window_took_it_charges_nothing_after_it_to_the_old_one() {
+        // The point is given ahead of the bytes, as a count of what has come
+        // off the terminal, so it holds however the reads that carry them
+        // are cut: whole, and one byte at a time.
+        for read in [RESIZED.len(), 1] {
+            let mut screen = Screen::native(60, 5);
+            screen.resize_at(80, 100, RESIZED_AT);
+            for bytes in RESIZED.as_bytes().chunks(read) {
+                screen.feed(bytes);
+            }
+
+            assert!(
+                screen.refusals().is_empty(),
+                "read {read} at a time: {:?}",
+                screen.refusals()
+            );
+            assert_eq!(screen.awaiting(), None, "read {read} at a time");
+            assert!(
+                screen.picture().starts_with("80x100 "),
+                "read {read} at a time: {}",
+                screen.picture()
+            );
+        }
     }
 
     #[test]
