@@ -223,7 +223,13 @@ described under [What is in a file](#what-is-in-a-file). Builds before it cannot
 resume a format 14 log and say it was written by a different version of
 crucible. A format 13 log, new or continued by a newer build, keeps its number
 and stays readable by a build that reads format 13, so going back to 0.47
-loses no session a provider's model ran.
+loses no session a provider's model ran. Format 15 adds one line, written where
+an installed agent said it has no session by the name it last gave, so that a
+session picked back up starts the agent on a new one rather than asking for
+that one again. Only that line carries the number: a session an agent ran is
+still headed 14, and going back to 0.48.1 refuses only a log in which an agent
+said its session was gone, saying it was written by a different version of
+crucible.
 
 Continuation is bound to its producing protocol, model compatibility, credential
 and recipient. A changed key, endpoint or incompatible provider receives visible
@@ -736,7 +742,11 @@ Further on, such a log can hold the agent's own name for the session, as an
 `external` line, and an `uncertain` line where a turn ended before the agent
 said whether what it set out to do was done, with what it reported under way.
 Each of these is preceded by a `{"requires_format":14}` line, so a build that
-does not know it refuses the log rather than skipping it. A name longer than
+does not know it refuses the log rather than skipping it. Where the agent says
+it has no session by the name it gave, a `gone` line repeats that name, preceded
+by a `{"requires_format":15}` line; read back, the log names no agent session
+until the agent names another, and the transcript above it is kept.
+A name longer than
 256 bytes, or a profile longer than 4 KiB, is refused rather than shortened,
 since a shortened one could match a different agent. The reported version is
 cut at 256 bytes and the work under way at 64 KiB, on a character boundary,

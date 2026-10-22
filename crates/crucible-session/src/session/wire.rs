@@ -51,6 +51,16 @@ pub(crate) const FORMAT: u32 = 14;
 /// for a line kind that release has a word for.
 pub(crate) const PROVIDER_LINES: u32 = 13;
 
+/// The guard on the line saying an installed agent has no session by the name
+/// it last gave: the one line kind added since [`FORMAT`].
+///
+/// A session's header stays [`FORMAT`] and only that line carries this number,
+/// so a release that reads up to [`FORMAT`] refuses only a log in which an
+/// agent said its session was gone, and rolling back to it loses no other
+/// session. Headed with this number, every session an agent ran here would be
+/// one that release refuses.
+pub(crate) const SESSION_GONE: u32 = 15;
+
 /// The formats this build reads, newest first.
 ///
 /// A log is refused rather than half-understood, and that is what this list is
@@ -86,12 +96,17 @@ pub(crate) const PROVIDER_LINES: u32 = 13;
 /// for it, and a turn that ended with its effects not known. A format-13 log
 /// was run by a provider's model and never wrote one. Older readers must refuse
 /// format 14: one would continue an agent's session on a provider's model.
+/// Format 14 is, because format 15 only adds a line kind saying the agent said
+/// it has no session by the name it last gave. A format-14 log never wrote
+/// one, and its last name is still the agent's. Older readers must refuse
+/// format 15: one would read past the line and resume the agent on a session
+/// it said was gone, and the first turn would fail as the last one did.
 ///
 /// A format that changed the meaning of a line does not go on this list however
 /// small the change looks. What it would buy is somebody's history; what it
 /// would cost is a session that looks fine and is missing turns, which is the
 /// failure the refusal exists for.
-pub(crate) const READS: &[u32] = &[14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3];
+pub(crate) const READS: &[u32] = &[15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3];
 
 /// Whether this build can replay a log written under `format`.
 pub(crate) fn readable(format: u32) -> bool {
@@ -106,7 +121,7 @@ pub(crate) fn required_format(line: &str) -> Option<bool> {
     Some(
         required
             .as_u64()
-            .is_some_and(|format| format <= u64::from(FORMAT)),
+            .is_some_and(|format| format <= u64::from(SESSION_GONE)),
     )
 }
 
@@ -119,7 +134,7 @@ pub(crate) fn has_continuation(line: &str) -> bool {
 
 /// Whether this format has the typed-context baseline introduced in format 10.
 pub(crate) const fn typed_context(format: Option<u32>) -> bool {
-    matches!(format, Some(10..=14))
+    matches!(format, Some(10..=15))
 }
 
 /// A whole line of framework history rather than a conversation line.
@@ -877,6 +892,27 @@ pub(crate) fn external(named: &ExternalRef) -> String {
 pub(crate) fn named(line: &str) -> Option<ExternalRef> {
     let value: Value = serde_json::from_str(line).ok()?;
     let named = value.get("external")?;
+    ExternalRef::new(
+        named.get("instance")?.as_str()?,
+        named.get("reference")?.as_str()?,
+    )
+    .ok()
+}
+
+/// The line saying the installed agent has no session by `named`, the name it
+/// gave.
+pub(crate) fn gone(named: &ExternalRef) -> String {
+    json!({
+        "gone": { "instance": named.instance(), "reference": named.reference() }
+    })
+    .to_string()
+}
+
+/// The name a gone line says the agent has no session by, or `None` if this
+/// is not one.
+pub(crate) fn went(line: &str) -> Option<ExternalRef> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let named = value.get("gone")?;
     ExternalRef::new(
         named.get("instance")?.as_str()?,
         named.get("reference")?.as_str()?,
@@ -1699,7 +1735,14 @@ mod tests {
         assert_eq!(routed(&route(&bare)), Some(bare));
 
         let named_as = ExternalRef::new("work", "3f2a-session").unwrap();
-        assert_eq!(named(&external(&named_as)), Some(named_as));
+        assert_eq!(named(&external(&named_as)), Some(named_as.clone()));
+        assert_eq!(went(&gone(&named_as)), Some(named_as.clone()));
+        assert_eq!(went(&external(&named_as)), None, "a name read back as gone");
+        assert_eq!(
+            named(&gone(&named_as)),
+            None,
+            "a gone name read back as given"
+        );
 
         let stopped = Uncertain::new("editing src/lib.rs", true);
         let read = uncertainty(&uncertain(&stopped)).expect("an uncertain line");
@@ -1707,7 +1750,11 @@ mod tests {
         assert!(read.under_way().incomplete());
 
         // Each kind is its own and none is a message.
-        for line in [line, external(&ExternalRef::new("w", "r").unwrap())] {
+        for line in [
+            line,
+            external(&ExternalRef::new("w", "r").unwrap()),
+            gone(&ExternalRef::new("w", "r").unwrap()),
+        ] {
             assert!(
                 uncertainty(&line).is_none() && message(&line).is_none(),
                 "{line}"
@@ -1741,6 +1788,7 @@ mod tests {
                     .reporting("2.1.0", false),
             ),
             external(&ExternalRef::new("work", "3f2a").unwrap()),
+            gone(&ExternalRef::new("work", "3f2a").unwrap()),
             uncertain(&Uncertain::new("editing", false)),
         ];
         for line in lines {
@@ -1753,6 +1801,17 @@ mod tests {
     fn the_format_moves_with_the_line_shape() {
         assert_eq!(FORMAT, 14);
         assert_eq!(PROVIDER_LINES, 13, "the format before agents ran sessions");
+        assert_eq!(
+            SESSION_GONE, 15,
+            "the guard on a line saying a session is gone"
+        );
+        assert_eq!(
+            READS.first(),
+            Some(&SESSION_GONE),
+            "the newest this build reads"
+        );
+        assert_eq!(required_format(r#"{"requires_format":15}"#), Some(true));
+        assert_eq!(required_format(r#"{"requires_format":16}"#), Some(false));
         assert!(readable(FORMAT));
         assert!(readable(13), "a log from before agents ran sessions");
         assert!(typed_context(Some(10)));
