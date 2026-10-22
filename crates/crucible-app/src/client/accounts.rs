@@ -37,7 +37,7 @@
 //! | sign out, the file not written, the conversation on one of the instances sharing the scope | sign out | [`LogoutOutcome::StoppedForThisRunOnly`] |
 //! | sign out, the file not written, the conversation on none of them | sign out | [`ErrorCode::Failed`] |
 //! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
-//! | sign out | sign out, its agent's route unanswered, the yes not written | [`ErrorCode::Failed`] |
+//! | sign out | sign out, its agent's route unanswered, the yes not written | [`LogoutOutcome::HoldUnkept`] |
 //! | sign out, its agent's route unanswered, the agent cannot be started | sign out | [`LogoutOutcome::Undecided`], the route not asked |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
