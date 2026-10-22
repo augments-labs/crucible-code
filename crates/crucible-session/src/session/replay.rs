@@ -802,12 +802,14 @@ pub(super) struct Replayed {
 /// was opened on, the agent's own name for the session, and a turn that ended
 /// with its effects not known. None is a message. The route is the line after
 /// the header or there is none; the others are kept only under a route, and
-/// of them the last of each kind is what holds.
+/// of them the last of each kind is what holds, but for a name the agent said
+/// it has no session by, which holds none.
 #[derive(Default)]
 pub(super) struct Ran {
     /// The installed agent the session was opened on, where one was.
     pub(super) route: Option<RouteBinding>,
-    /// The agent's own name for the session, unless a forgetting came after.
+    /// The agent's own name for the session, unless a forgetting, or the
+    /// agent saying it has no session by that name, came after.
     pub(super) external: Option<ExternalRef>,
     /// A turn that ended with its effects not known, unless a message or a
     /// forgetting came after it.
@@ -831,6 +833,11 @@ impl Ran {
                 .is_some_and(|route| route.instance() == named.instance())
             {
                 self.external = Some(named);
+            }
+        } else if let Some(gone) = wire::went(line) {
+            // Only the name it says is gone goes: one given since holds.
+            if self.external.as_ref() == Some(&gone) {
+                self.external = None;
             }
         } else if let Some(stopped) = wire::uncertainty(line) {
             if self.route.is_some() {

@@ -54,9 +54,10 @@
 //! no further turn: it is closed, and the next turn launches another through
 //! the [`Relaunch`] the conversation holds, resuming the agent's own session
 //! by the name the agent last gave it. A failure the backend says left the
-//! agent with no session by that name lets the name go, so the launch after
-//! it starts a new session rather than fail again asking for that one; no
-//! other failure does. Where the one closed could not be
+//! agent with no session by that name lets the name go, here and in the
+//! session's log, so the launch after it, or after the session is picked
+//! back up, starts a new session rather than fail again asking for that one;
+//! no other failure does. Where the one closed could not be
 //! confirmed stopped, that launch is refused instead, so no second run is
 //! started beside it. A run that ended in a turn that finished, as one whose
 //! stop was not heeded does, is found out by the next prompt: the backend
@@ -348,7 +349,8 @@ pub(crate) struct Outside {
     /// The effort the agent is launched at; `None` leaves it its own.
     effort: Option<Effort>,
     /// The agent's own name for its session, as last given, until a turn's
-    /// failure says the agent has no session by it.
+    /// failure says the agent has no session by it, which the session's log
+    /// is told too.
     named: Option<ExternalRef>,
     /// The next turn.
     turn: TurnId,
@@ -715,9 +717,14 @@ impl Outside {
         if let Err(Error::Failed(failure)) = &ended {
             match failure.fate() {
                 SessionFate::Kept => {}
-                // Resumed again it would fail again, so the next launch
-                // starts the agent on a session of its own.
-                SessionFate::Gone => self.named = None,
+                // Resumed again it would fail again, so the next launch, and
+                // the first after the session is picked back up, starts the
+                // agent on a session of its own.
+                SessionFate::Gone => {
+                    if let Some(gone) = self.named.take() {
+                        let _kept = session.gone(&gone);
+                    }
+                }
             }
         }
         let turned = match ended {
