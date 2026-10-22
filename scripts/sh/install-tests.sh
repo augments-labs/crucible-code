@@ -921,7 +921,9 @@ visible() {
 
 echo '==> piped output names each step and carries no escape sequence'
 piped_bin=$scratch/piped-bin
-piped=$(install_from "$asset" "$piped_bin" 2>&1)
+# A home of its own keeps the directory from printing as `~/...` when the
+# temporary directory sits under the real one.
+piped=$(HOME=$scratch/piped-home install_from "$asset" "$piped_bin" 2>&1)
 refuse 'piped install' "$piped" "$ESC"
 expect 'piped install' "$piped" "install: crucible $version for $platform-$architecture"
 expect 'piped install' "$piped" "install: detect platform: $platform-$architecture"
@@ -965,9 +967,10 @@ for glyphs in en_US.UTF-8 C; do
     expect "a $glyphs terminal" "$shown" 'status=0'
     [[ -x $shown_home/.local/bin/crucible ]]
 done
-# A directory outside the home is exported as it was resolved, on one line.
+# A directory outside the home is exported as it was resolved, on one line. The
+# home is the test's own, so the temporary directory is never under it.
 shown_bin=$scratch/shown-bin
-shown=$(in_terminal 80 env TERM=xterm "$INSTALL" --version "$version" \
+shown=$(in_terminal 80 env TERM=xterm HOME="$scratch/outside-home" "$INSTALL" --version "$version" \
     --dir "$shown_bin" --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
 expect 'a directory outside the home' "$shown" "export PATH=\"$shown_bin:\$PATH\""
 expect 'a directory outside the home' "$shown" 'status=0'
