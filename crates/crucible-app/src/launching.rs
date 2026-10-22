@@ -1025,5 +1025,22 @@ impl Steps {
     }
 }
 
+/// The runs of the route a conversation is opened on at startup, where it is
+/// opened on an agent's, and the steps beside it, where `stepping` lets them
+/// be built: the launcher, registry and `PATH` they take.
+#[must_use]
+pub(crate) fn first_runs(
+    route: Option<(Launcher<'_>, Agent, &str)>,
+    stepping: Option<(Launcher<'_>, &'static Registry, Option<OsString>)>,
+    enablement: Arc<SandboxEnablement>,
+) -> (Option<Runs>, Option<Steps>) {
+    let runs = route.map(|(launcher, agent, instance)| {
+        Runs::new(launcher, Arc::clone(&enablement), agent, instance)
+    });
+    let steps =
+        stepping.map(|(launcher, registry, path)| Steps::new(launcher, enablement, registry, path));
+    (runs, steps)
+}
+
 #[cfg(test)]
 pub(crate) mod tests;
