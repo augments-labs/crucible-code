@@ -152,3 +152,30 @@ fn a_same_size_program_with_its_time_restored_is_not_the_one_selected() {
     let program = selected(&path);
     assert!(program.unchanged().is_ok());
 }
+
+/// Selecting a program and checking it again before each start look at its
+/// metadata and never read its bytes: a program that may be run and not read
+/// is found, and is still the one found.
+#[cfg(unix)]
+#[test]
+fn a_program_that_can_be_run_and_not_read_is_found_and_stays_found() {
+    use std::fs::{self, File};
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let at = super::Owned::new("run-only");
+    let path = at.0.join("agent");
+    fs::write(&path, [1_u8; 4096]).expect("written");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o111)).expect("run-only");
+    if File::open(&path).is_ok() {
+        // A user the mode does not bind (root) can read it, which would let
+        // a digest through unseen; there is nothing to prove as that user.
+        return;
+    }
+
+    let Discovery::Found(program) = Discovery::of(Some(&path)) else {
+        panic!("a program that may be run is found without being read");
+    };
+
+    assert!(program.unchanged().is_ok());
+    assert!(program.unchanged().is_ok());
+}

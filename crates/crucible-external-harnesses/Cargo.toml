@@ -44,8 +44,9 @@ crucible-types.workspace = true
 # The journal's records and the fake peer's script are JSON, and a hand-written
 # reader for a file somebody could edit is a parser this crate would then own.
 serde_json.workspace = true
-# The executable's identity: a one-way digest of what was selected, taken once
-# when it is found. A start compares the file's metadata with what was found.
+# The journal file's name is a digest of its scope, and a pinned agent release's
+# archive is checked against the digest its pin names before anything is
+# written.
 sha2.workspace = true
 # Every refusal here is an enum this crate owns, and the derive writes the
 # `Display` and `source` impls rather than shipping a runtime.

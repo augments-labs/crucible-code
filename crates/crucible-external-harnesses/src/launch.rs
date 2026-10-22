@@ -2,12 +2,13 @@
 //!
 //! A [`Launch`] is every value one start needs, written out as plain values by
 //! the composition root: the program, which was found by an absolute lookup
-//! and is identified by what it was when it was selected (its bytes digested
-//! once, then its metadata compared at each start); the arguments and
-//! the environment, which start from nothing and hold only what the dialect
-//! names; the sandbox policy the child runs under; the session to resume and
-//! the profile directory, where there are any; and a [`Held`], which says the
-//! route's content-use hold answered yes.
+//! and is identified by what its metadata said when it was selected (its
+//! length and modification time, and on Unix its device, inode and change
+//! time), which is compared again at each start without reading a byte of it;
+//! the arguments and the environment, which start from nothing and hold only
+//! what the dialect names; the sandbox policy the child runs under; the
+//! session to resume and the profile directory, where there are any; and a
+//! [`Held`], which says the route's content-use hold answered yes.
 //!
 //! A `Held` is taken by value and is neither `Clone` nor `Copy`, so it starts
 //! at most one process: the launch that carries it is consumed by the one call
@@ -21,22 +22,12 @@
 //! sentences each is refused with.
 
 use std::fmt;
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crucible_execution::Confinement;
 use crucible_sandbox::SandboxPolicy;
-use sha2::{Digest, Sha256};
-
-/// The largest executable whose bytes are digested for its identity, once,
-/// when it is found. A larger one is identified by its metadata alone,
-/// because reading a few hundred megabytes would be a cost paid on every
-/// selection. A start never reads the bytes again: it compares the metadata
-/// taken when the program was found, which is its length and modification
-/// time everywhere, and on Unix its device, inode and change time too.
-pub const DIGESTED: u64 = 64 * 1024 * 1024;
 
 /// The most bytes a resume reference keeps, which is the session reference
 /// the execution contract allows.
@@ -98,37 +89,6 @@ impl fmt::Debug for Held {
     }
 }
 
-/// How many times the bytes of each file were digested, which a proof reads
-/// to hold a launch to digesting its program once. Kept per path, so that
-/// tests running side by side each read their own.
-#[cfg(any(test, feature = "proof"))]
-static DIGESTS: std::sync::Mutex<Vec<(PathBuf, usize)>> = std::sync::Mutex::new(Vec::new());
-
-/// How many times the bytes at `path` were digested.
-#[cfg(any(test, feature = "proof"))]
-#[must_use]
-pub fn digested(path: &Path) -> usize {
-    let counts = DIGESTS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    counts
-        .iter()
-        .find(|(counted, _)| counted == path)
-        .map_or(0, |(_, count)| *count)
-}
-
-/// Notes that the bytes at `path` are being digested.
-#[cfg(any(test, feature = "proof"))]
-fn counted(path: &Path) {
-    let mut counts = DIGESTS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match counts.iter_mut().find(|(counted, _)| counted == path) {
-        Some((_, count)) => *count += 1,
-        None => counts.push((path.to_path_buf(), 1)),
-    }
-}
-
 /// What a file's metadata says it is: enough to tell, without reading it,
 /// that it is not the file that was looked at.
 ///
@@ -168,52 +128,13 @@ impl Stamp {
     }
 }
 
-/// What a file looked like when it was selected.
-#[derive(Debug, Clone)]
-struct Identity {
-    /// What its metadata said.
-    stamp: Stamp,
-    /// A digest of its bytes, where it is no larger than [`DIGESTED`].
-    digest: Option<[u8; 32]>,
-}
-
-impl Identity {
-    /// What `path` is now, its bytes read once for their digest. The stamp is
-    /// taken from the file that was read, so the two describe one file.
-    fn of(path: &Path) -> io::Result<Self> {
-        let mut file = File::open(path)?;
-        let stamp = Stamp::of(&file.metadata()?);
-        let digest = if stamp.size <= DIGESTED {
-            #[cfg(any(test, feature = "proof"))]
-            counted(path);
-            let mut hasher = Sha256::new();
-            let mut buffer = vec![0_u8; 64 * 1024];
-            let mut file = (&mut file).take(DIGESTED);
-            loop {
-                let read = file.read(&mut buffer)?;
-                let Some(chunk) = buffer.get(..read) else {
-                    break;
-                };
-                if chunk.is_empty() {
-                    break;
-                }
-                hasher.update(chunk);
-            }
-            Some(hasher.finalize().into())
-        } else {
-            None
-        };
-        Ok(Self { stamp, digest })
-    }
-}
-
 /// A program found where it was looked for, and what it was then.
 #[derive(Debug, Clone)]
 pub struct Program {
     /// Where it is: absolute.
     path: PathBuf,
-    /// What it was when it was found.
-    identity: Identity,
+    /// What its metadata said when it was found.
+    stamp: Stamp,
 }
 
 impl Program {
@@ -223,25 +144,17 @@ impl Program {
         &self.path
     }
 
-    /// A digest of its bytes as they were when it was found, where it is no
-    /// larger than [`DIGESTED`].
-    #[must_use]
-    pub const fn digest(&self) -> Option<&[u8; 32]> {
-        self.identity.digest.as_ref()
-    }
-
-    /// Refuses when the file is no longer the one that was found. It reads
-    /// the file's metadata and not its bytes, which were read once, when it
-    /// was found: [`Discovery::of`] is the only digest of a program, and a
-    /// launch asks this twice without paying for another.
+    /// Refuses when the file is no longer the one that was found. It looks at
+    /// the file's metadata and never reads its bytes, so asking it before a
+    /// start, and again once the sandbox is prepared, costs a `stat` each.
     ///
     /// # Errors
     ///
     /// [`Refusal::Changed`] when its length, modification time or, on Unix,
-    /// device, inode or change time moved, or it can no longer be read.
+    /// device, inode or change time moved, or it can no longer be reached.
     pub fn unchanged(&self) -> Result<(), Refusal> {
         match fs::metadata(&self.path) {
-            Ok(now) if Stamp::of(&now) == self.identity.stamp => Ok(()),
+            Ok(now) if Stamp::of(&now) == self.stamp => Ok(()),
             Ok(_) | Err(_) => Err(Refusal::Changed(self.path.clone())),
         }
     }
@@ -272,13 +185,10 @@ impl Discovery {
         if !metadata.is_file() || !executable(&metadata) {
             return Self::NotExecutable(path.to_path_buf());
         }
-        match Identity::of(path) {
-            Ok(identity) => Self::Found(Program {
-                path: path.to_path_buf(),
-                identity,
-            }),
-            Err(_) => Self::NotExecutable(path.to_path_buf()),
-        }
+        Self::Found(Program {
+            path: path.to_path_buf(),
+            stamp: Stamp::of(&metadata),
+        })
     }
 
     /// What a refusal over this says, as the sentence and what to do next, for
