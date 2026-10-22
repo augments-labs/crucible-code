@@ -55,9 +55,15 @@
 //! conversation's route or not, is taken through [`Steps`], under the same
 //! policy at that moment and the same gates, and so is the run of a session
 //! an agent ran, picked back up on that agent from elsewhere. An account step
-//! runs on a control of its own, apart from any run's. What it read is all it returns:
-//! a step that could not be started reads as unreadable, saying why, so a
-//! caller claims nothing the step did not establish.
+//! runs on a control of its own, so it takes no part in the one-at-a-time
+//! bound of its entry's runs, and a status check beside a live run is never
+//! refused as busy. Of the control those runs share it reads one thing,
+//! whether a run could not be confirmed stopped, and where one could not it is
+//! refused, before any process, as a run launched beside that one would be. A
+//! step whose own stop could not be confirmed holds back none of the entry's
+//! runs. What it read is all it returns: a step that could not be started
+//! reads as unreadable, saying why, so a caller claims nothing the step did not
+//! establish.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -842,8 +848,9 @@ pub struct Steps {
     path: Option<OsString>,
     /// What every [`Runs`] this hands out for an `externalAgents` entry is
     /// launched on, by the entry's name, made when the entry's first is asked
-    /// for. An entry is one the configuration names, so there are no more than
-    /// it has.
+    /// for, and what an account step of the entry reads whether one of them
+    /// could not be confirmed stopped from. An entry is one the configuration
+    /// names, so there are no more than it has.
     controls: Mutex<HashMap<Box<str>, Control>>,
 }
 
@@ -886,6 +893,17 @@ impl Steps {
         let control = Control::new()?;
         kept.insert(instance.into(), control.clone());
         Some(control)
+    }
+
+    /// Whether a run of the entry `instance` could not be confirmed stopped;
+    /// an entry no run has been asked for yet has no control, and no such
+    /// run.
+    fn unstopped(&self, instance: &str) -> bool {
+        self.controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(instance)
+            .is_some_and(Control::unstopped)
     }
 
     /// What is installed as `executable`, looked for on the `PATH` every step
@@ -975,7 +993,8 @@ impl Steps {
     }
 
     /// What the account step `step` of the configured `agent` read, run to
-    /// its end; unreadable, saying why, where it could not be started.
+    /// its end; unreadable, saying why, where it could not be started or a
+    /// run of the entry could not be confirmed stopped.
     pub async fn account(&self, agent: &ExternalAgent, step: Account) -> Reading {
         let unreadable = |why: &str| Reading::Unreadable(Failure::new(why));
         let Some(chosen) = Agent::configured(agent, self.registry, |name| {
@@ -987,6 +1006,9 @@ impl Steps {
             Ok(dialect) => dialect,
             Err(refused) => return Reading::Unreadable(refused),
         };
+        if self.unstopped(agent.name()) {
+            return unreadable(&Refusal::Unstopped.to_string());
+        }
         let Some(control) = Control::new() else {
             return unreadable("no control for the agent's program");
         };
@@ -1004,4 +1026,4 @@ impl Steps {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
