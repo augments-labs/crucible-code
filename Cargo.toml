@@ -671,10 +671,11 @@ strip = "symbols"
 [profile.bench]
 inherits = "release"
 
-# An external agent's program is identified by a digest of up to 64 MiB of it
-# before each start, and unoptimized that digest takes seconds where a release
-# build takes milliseconds. Every test that starts an agent pays it, enough to
-# run the release gate's single-machine suite past its time limit, so the one
-# crate that computes it is optimized in the builds tests use.
+# An external agent's program is identified by a digest of up to 64 MiB of it,
+# taken once when it is found, and unoptimized that digest takes seconds where
+# a release build takes about a fifth of a second. Every test that finds an
+# agent's program pays it, enough to run the release gate's single-machine
+# suite past its time limit, so the one crate that computes it is optimized in
+# the builds tests use.
 [profile.dev.package.sha2]
 opt-level = 3

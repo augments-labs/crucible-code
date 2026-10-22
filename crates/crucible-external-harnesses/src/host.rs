@@ -652,7 +652,7 @@ impl Host {
             .collect();
         let patience = launch.patience();
         // Preparing can take a while, and the program is run as it was found
-        // or not at all.
+        // or not at all: its stamp is compared again, not its bytes.
         launch.program().unchanged()?;
         let mut process = session.start(command).await?;
         // Taking the pipes waits only where it stops a process it cannot

@@ -23,6 +23,8 @@ pub use host::{
 pub use journal::{
     Entries, HISTORY, JOURNAL_BYTES, Journal, JournalError, REFERENCE_BYTES, Record, Stage, Work,
 };
+#[cfg(feature = "proof")]
+pub use launch::digested;
 pub use launch::{DIGESTED, Discovery, Held, Launch, Program, RESUME_BYTES, Refusal, Request};
 pub use lifecycle::{Contended, Coordinator, Slot, needs_recovery};
 pub use pending::{Asked, NATIVE_BYTES};

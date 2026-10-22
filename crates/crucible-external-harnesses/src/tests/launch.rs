@@ -91,3 +91,64 @@ fn a_session_name_is_kept_only_as_a_plain_word() {
         assert!(crate::launch::nameable(name), "{name:?}");
     }
 }
+
+/// A program put in the selected one's place that is the same size, with its
+/// modification time set back to what it was, is still not the one selected.
+#[cfg(unix)]
+#[test]
+fn a_same_size_program_with_its_time_restored_is_not_the_one_selected() {
+    use std::fs::{self, File, FileTimes};
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let at = super::Owned::new("restored-time");
+    let path = at.0.join("agent");
+    let bytes = |fill: u8| vec![fill; 4096];
+    let selected = |path: &std::path::Path| {
+        let Discovery::Found(program) = Discovery::of(Some(path)) else {
+            panic!("a program");
+        };
+        program
+    };
+    fs::write(&path, bytes(1)).expect("written");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("executable");
+    let modified = fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .expect("a modification time");
+    let restored = |path: &std::path::Path| {
+        File::options()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_times(FileTimes::new().set_modified(modified)))
+            .expect("time restored");
+    };
+
+    // Replaced by another file.
+    let program = selected(&path);
+    let beside = at.0.join("beside");
+    fs::write(&beside, bytes(2)).expect("written");
+    fs::set_permissions(&beside, fs::Permissions::from_mode(0o755)).expect("executable");
+    restored(&beside);
+    fs::rename(&beside, &path).expect("replaced");
+    assert!(
+        matches!(program.unchanged(), Err(Refusal::Changed(_))),
+        "a replacement"
+    );
+
+    // Rewritten where it lies.
+    fs::write(&path, bytes(1)).expect("written");
+    restored(&path);
+    let program = selected(&path);
+    let mut file = File::options().write(true).open(&path).expect("opened");
+    file.write_all(&bytes(3)).expect("rewritten");
+    drop(file);
+    restored(&path);
+    assert!(
+        matches!(program.unchanged(), Err(Refusal::Changed(_))),
+        "a rewrite"
+    );
+
+    // Left alone, it is the one selected.
+    let program = selected(&path);
+    assert!(program.unchanged().is_ok());
+}

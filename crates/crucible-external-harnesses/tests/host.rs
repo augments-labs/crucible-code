@@ -16,7 +16,7 @@ use crucible_external_harnesses::fake_peer::{
 };
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Ran, Reading,
-    Refusal, Request, STOP_GRACE, Shape, Told, Unstopped,
+    Refusal, Request, STOP_GRACE, Shape, Told, Unstopped, digested,
 };
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
@@ -250,6 +250,22 @@ async fn a_program_changed_since_it_was_selected_is_not_started() {
 
     assert!(matches!(refused, Refusal::Changed(_)), "{refused}");
     assert_eq!(fake_peer::played(&at.0), 0);
+}
+
+/// A launch reads the program's bytes once, when it is selected: the checks
+/// that it is still the one selected, before and after its sandbox is
+/// prepared, do not read them again, since reading up to 64 MiB takes longer
+/// than the launch it guards.
+#[tokio::test(flavor = "multi_thread")]
+async fn one_launch_digests_its_program_once() {
+    let at = Owned::new("digested-once");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+
+    let ran = version(&program, &at.0, &control).await;
+
+    assert_eq!(ran.code, Some(0), "{}", ran.muttered);
+    assert_eq!(digested(program.path()), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

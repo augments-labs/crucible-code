@@ -2,7 +2,8 @@
 //!
 //! A [`Launch`] is every value one start needs, written out as plain values by
 //! the composition root: the program, which was found by an absolute lookup
-//! and is identified by what it was when it was selected; the arguments and
+//! and is identified by what it was when it was selected (its bytes digested
+//! once, then its metadata compared at each start); the arguments and
 //! the environment, which start from nothing and hold only what the dialect
 //! names; the sandbox policy the child runs under; the session to resume and
 //! the profile directory, where there are any; and a [`Held`], which says the
@@ -29,10 +30,12 @@ use crucible_execution::Confinement;
 use crucible_sandbox::SandboxPolicy;
 use sha2::{Digest, Sha256};
 
-/// The largest executable whose bytes are digested for its identity. A larger
-/// one is identified by its size and modification time alone, because reading
-/// a few hundred megabytes before every start would be a cost paid on every
-/// turn.
+/// The largest executable whose bytes are digested for its identity, once,
+/// when it is found. A larger one is identified by its metadata alone,
+/// because reading a few hundred megabytes would be a cost paid on every
+/// selection. A start never reads the bytes again: it compares the metadata
+/// taken when the program was found, which is its length and modification
+/// time everywhere, and on Unix its device, inode and change time too.
 pub const DIGESTED: u64 = 64 * 1024 * 1024;
 
 /// The most bytes a resume reference keeps, which is the session reference
@@ -95,26 +98,97 @@ impl fmt::Debug for Held {
     }
 }
 
-/// What a file looked like when it was selected.
+/// How many times the bytes of each file were digested, which a proof reads
+/// to hold a launch to digesting its program once. Kept per path, so that
+/// tests running side by side each read their own.
+#[cfg(any(test, feature = "proof"))]
+static DIGESTS: std::sync::Mutex<Vec<(PathBuf, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// How many times the bytes at `path` were digested.
+#[cfg(any(test, feature = "proof"))]
+#[must_use]
+pub fn digested(path: &Path) -> usize {
+    let counts = DIGESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    counts
+        .iter()
+        .find(|(counted, _)| counted == path)
+        .map_or(0, |(_, count)| *count)
+}
+
+/// Notes that the bytes at `path` are being digested.
+#[cfg(any(test, feature = "proof"))]
+fn counted(path: &Path) {
+    let mut counts = DIGESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match counts.iter_mut().find(|(counted, _)| counted == path) {
+        Some((_, count)) => *count += 1,
+        None => counts.push((path.to_path_buf(), 1)),
+    }
+}
+
+/// What a file's metadata says it is: enough to tell, without reading it,
+/// that it is not the file that was looked at.
+///
+/// On Unix that is its length, modification time, device, inode and change
+/// time. The change time is the platform's own and cannot be set back, so a
+/// file of the same length rewritten in place, or put in its place by a
+/// rename, is told apart even where its modification time was restored. On
+/// Windows it is the length and modification time alone, which a program with
+/// the right to write the file can restore.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Identity {
+struct Stamp {
     /// Its length.
     size: u64,
     /// When it was last written, where the platform says.
     modified: Option<SystemTime>,
+    /// Which file on which device it is, and when it last changed.
+    #[cfg(unix)]
+    node: (u64, u64, i64, i64),
+}
+
+impl Stamp {
+    /// What `metadata` says.
+    fn of(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt as _;
+        Self {
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            node: (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            ),
+        }
+    }
+}
+
+/// What a file looked like when it was selected.
+#[derive(Debug, Clone)]
+struct Identity {
+    /// What its metadata said.
+    stamp: Stamp,
     /// A digest of its bytes, where it is no larger than [`DIGESTED`].
     digest: Option<[u8; 32]>,
 }
 
 impl Identity {
-    /// What `path` is now.
+    /// What `path` is now, its bytes read once for their digest. The stamp is
+    /// taken from the file that was read, so the two describe one file.
     fn of(path: &Path) -> io::Result<Self> {
-        let metadata = fs::metadata(path)?;
-        let size = metadata.len();
-        let digest = if size <= DIGESTED {
-            let mut file = File::open(path)?.take(DIGESTED);
+        let mut file = File::open(path)?;
+        let stamp = Stamp::of(&file.metadata()?);
+        let digest = if stamp.size <= DIGESTED {
+            #[cfg(any(test, feature = "proof"))]
+            counted(path);
             let mut hasher = Sha256::new();
             let mut buffer = vec![0_u8; 64 * 1024];
+            let mut file = (&mut file).take(DIGESTED);
             loop {
                 let read = file.read(&mut buffer)?;
                 let Some(chunk) = buffer.get(..read) else {
@@ -129,11 +203,7 @@ impl Identity {
         } else {
             None
         };
-        Ok(Self {
-            size,
-            modified: metadata.modified().ok(),
-            digest,
-        })
+        Ok(Self { stamp, digest })
     }
 }
 
@@ -153,15 +223,25 @@ impl Program {
         &self.path
     }
 
-    /// Refuses when the file is no longer the one that was found.
+    /// A digest of its bytes as they were when it was found, where it is no
+    /// larger than [`DIGESTED`].
+    #[must_use]
+    pub const fn digest(&self) -> Option<&[u8; 32]> {
+        self.identity.digest.as_ref()
+    }
+
+    /// Refuses when the file is no longer the one that was found. It reads
+    /// the file's metadata and not its bytes, which were read once, when it
+    /// was found: [`Discovery::of`] is the only digest of a program, and a
+    /// launch asks this twice without paying for another.
     ///
     /// # Errors
     ///
-    /// [`Refusal::Changed`] when its size, modification time or digest moved,
-    /// or it can no longer be read.
+    /// [`Refusal::Changed`] when its length, modification time or, on Unix,
+    /// device, inode or change time moved, or it can no longer be read.
     pub fn unchanged(&self) -> Result<(), Refusal> {
-        match Identity::of(&self.path) {
-            Ok(now) if now == self.identity => Ok(()),
+        match fs::metadata(&self.path) {
+            Ok(now) if Stamp::of(&now) == self.identity.stamp => Ok(()),
             Ok(_) | Err(_) => Err(Refusal::Changed(self.path.clone())),
         }
     }
