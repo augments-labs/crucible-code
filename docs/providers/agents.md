@@ -211,7 +211,8 @@ any tool other than `Bash`. Apart from a final `:*`, a rule is not kept when the
 words it names have a wildcard (`*`, `?`, `[` or `{`), no letter or digit, a
 space at the start or end, or any other whitespace, such as a tab (U+0009) or a
 no-break space (U+00A0): a rule with a no-break space between `ls` and `-la` is
-dropped. A rule whose words hold a byte-order mark (U+FEFF) is not kept either. Shell syntax (``; & | < > ( ) $ ` " ' \ =``) is checked only in the
+dropped. A rule whose words hold a byte-order mark (U+FEFF) is not kept either.
+Shell syntax (``; & | < > ( ) $ ` " ' \ =``) is checked only in the
 words before `:*`, so a rule for the commands that begin with words holding any
 of it is not kept; the command itself is kept even when it holds shell syntax,
 if it passes the checks above. Where the agent offers no such rule, or says its
